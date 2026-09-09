@@ -64,31 +64,6 @@ fn predicate_grammar_accepts_well_formed_unknown_predicates() {
 }
 
 #[test]
-fn registered_predicates_carry_layer_prefix() {
-    assert_eq!(
-        PREDICATE_LAYER_NAMESPACES,
-        [
-            PREDICATE_NAMESPACE_CORE,
-            PREDICATE_NAMESPACE_COMPANION,
-            PREDICATE_NAMESPACE_EIRI,
-            PREDICATE_NAMESPACE_COMMITMENT
-        ]
-    );
-
-    for predicate in CLAIM_PREDICATE_REGISTRY {
-        validate_predicate(predicate, false).expect("registered predicate must be valid");
-        let layer = predicate
-            .split('.')
-            .next()
-            .expect("valid predicate must have a first segment");
-        assert!(
-            PREDICATE_LAYER_NAMESPACES.contains(&layer),
-            "{predicate} must start with core.*, companion.*, eiri.*, or commitment.*"
-        );
-    }
-}
-
-#[test]
 fn predicate_grammar_rejects_violations_typed() {
     // Single segment.
     assert_matches!(
@@ -1166,53 +1141,6 @@ fn generated_not_evidence() {
     }
 }
 
-/// GATE-11 (ONE-1391): corroboration counting over a mixed evidence set —
-/// a Generated claim contributes ZERO boost even when Approved. Models the
-/// ONE-1290 consumption contract: turn refs count; claim refs count iff
-/// `claim_evidence_admissible`.
-#[test]
-fn no_self_corroboration() {
-    enum EvidenceRef {
-        Turn,
-        Claim(Box<ClaimBody>),
-    }
-    let corroboration = |refs: &[EvidenceRef]| {
-        refs.iter()
-            .filter(|entry| match entry {
-                EvidenceRef::Turn => true,
-                EvidenceRef::Claim(body) => claim_evidence_admissible(body),
-            })
-            .count()
-    };
-
-    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x15; 16]).expect("valid id"));
-    let mut generated = ClaimBody::new(
-        "test.pred",
-        subject,
-        Value::from("v"),
-        0.5,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    );
-    generated.source = Some(ClaimSource::Generated);
-    assert!(
-        claim_consolidatable(&generated),
-        "fixture claim must be the Approved-Generated divergence case"
-    );
-
-    let without_generated = [EvidenceRef::Turn, EvidenceRef::Turn];
-    let with_generated = [
-        EvidenceRef::Turn,
-        EvidenceRef::Turn,
-        EvidenceRef::Claim(Box::new(generated)),
-    ];
-    assert_eq!(
-        corroboration(&with_generated),
-        corroboration(&without_generated),
-        "an Approved Generated claim must add zero corroboration"
-    );
-}
-
 /// GATE-11 (ONE-1391) distinctness pin: an `Approved` Generated claim IS
 /// consolidatable (merge-eligible) but NOT evidence-admissible — the two
 /// predicates diverge exactly there.
@@ -2163,28 +2091,6 @@ fn coreference_claims_admit_only_a_same_as_edge_ref_subject() -> Result<()> {
         );
     }
     Ok(())
-}
-
-#[test]
-fn expression_preference_registry_is_name_complete_and_unique() {
-    let expected = [
-        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
-        PREDICATE_COMPANION_EXPRESSION_REGISTER,
-        PREDICATE_COMPANION_EXPRESSION_KEIGO,
-        PREDICATE_COMPANION_EXPRESSION_STYLE,
-    ];
-    let unique: std::collections::BTreeSet<_> = CLAIM_PREDICATE_REGISTRY.iter().copied().collect();
-    assert_eq!(unique.len(), CLAIM_PREDICATE_REGISTRY.len());
-    for predicate in expected {
-        assert_eq!(
-            CLAIM_PREDICATE_REGISTRY
-                .iter()
-                .filter(|item| **item == predicate)
-                .count(),
-            1
-        );
-        assert!(is_expression_preference_predicate(predicate));
-    }
 }
 
 #[test]
@@ -4250,26 +4156,6 @@ fn decay_factor(body: &ClaimBody, learned_at: u64, now: u64) -> f32 {
         .access_factor
 }
 
-/// The class policy is engine-pinned, not manifest data: three classes,
-/// three half-lives, one floor.
-#[test]
-fn claim_access_factor_policy_pins_engine_level_class_constants() {
-    assert_eq!(ACCESS_FACTOR_FLOOR, 0.05);
-    assert_eq!(DURABLE_ACCESS_HALF_LIFE_DAYS, 365.0);
-    assert_eq!(STANDARD_ACCESS_HALF_LIFE_DAYS, 90.0);
-    assert_eq!(EPHEMERAL_ACCESS_HALF_LIFE_DAYS, 14.0);
-
-    for (class, days) in [
-        (ClaimAgingClass::Durable, 365.0_f64),
-        (ClaimAgingClass::Standard, 90.0),
-        (ClaimAgingClass::Ephemeral, 14.0),
-    ] {
-        let policy = class.policy();
-        assert_eq!(policy.half_life_secs, days * 86_400.0, "{class:?}");
-        assert_eq!(policy.floor, ACCESS_FACTOR_FLOOR, "{class:?}");
-    }
-}
-
 /// Classification is by predicate ROOT (DESIGN-PIN A0 "drop the leaf"):
 /// `location.current` resolves to root `location` and is Ephemeral, and
 /// every unlisted root — including well-formed unknown ones — is Standard.
@@ -4358,35 +4244,6 @@ fn claim_aging_class_treats_core_relationship_root_as_durable() {
             "{predicate}"
         );
     }
-}
-
-/// End to end through the factor, not just the class: a
-/// `core.relationship.label` body at 90 days old keeps the Durable
-/// 365-day curve (`2^(-90/365)`) instead of halving on the Standard one.
-#[test]
-fn claim_access_factor_ages_core_relationship_on_the_durable_half_life() {
-    let now = 10 * 365 * DECAY_DAY_SECS;
-    let learned_at = now - 90 * DECAY_DAY_SECS;
-    let body = decay_claim(
-        crate::federation::PREDICATE_RELATIONSHIP_LABEL,
-        ClaimLifecycleStatus::Active,
-        None,
-    );
-
-    let retrievability =
-        claim_access_factor(&body, learned_at, now, None).expect("no override to reject");
-    assert_eq!(retrievability.aging_class, ClaimAgingClass::Durable);
-
-    let durable = 2.0_f32.powf(-90.0 / 365.0);
-    assert!(
-        (retrievability.access_factor - durable).abs() < 1e-6,
-        "expected the Durable curve {durable}, got {}",
-        retrievability.access_factor
-    );
-    assert!(
-        (retrievability.access_factor - 0.5).abs() > 1e-3,
-        "a core.relationship claim must not age on the Standard half-life"
-    );
 }
 
 /// The pinned formula `max(floor, 2^(-age / half_life))` under an

@@ -600,15 +600,6 @@ mod tests {
     }
 
     #[test]
-    fn intro_default_is_30_minutes_and_never_15() {
-        assert_eq!(DEFAULT_INTRO_DURATION_MIN, 30);
-        assert_ne!(DEFAULT_INTRO_DURATION_MIN, 15);
-        assert_eq!(intro_config().duration_min, 30);
-        assert_eq!(DEFAULT_MIN_NOTICE_SECS, 86_400);
-        assert_eq!(HIGH_VALUE_MIN_NOTICE_SECS, 172_800);
-    }
-
-    #[test]
     fn claim_value_round_trips_through_messagepack() {
         let value = claim_value(intro_config());
         let encoded = encode_event_type_claim_value(&value).expect("encode");

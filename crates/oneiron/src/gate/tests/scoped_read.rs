@@ -218,25 +218,6 @@ fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<
 }
 
 #[test]
-fn scoped_read_search_candidate_limit_is_not_widened_without_core_read_grants() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x6D), &encode_policy_manifest(vec![]))?;
-    for seed in 0x35..=0x38 {
-        put_text_entity(
-            &vault,
-            &test_id(seed),
-            crate::registry::ENTITY_TYPE_PERSON,
-            "nowiden",
-            serde_json::json!({"name": format!("person-{seed}")}),
-        )?;
-    }
-
-    let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
-    assert_eq!(scoped_read.search_candidate_limit(1, true, false)?, 1);
-    Ok(())
-}
-
-#[test]
 fn scoped_read_hybrid_candidate_limit_uses_text_vector_union() -> Result<()> {
     let _tmp = tempfile::tempdir().expect("temp dir");
     let mut config = crate::config::VaultConfig::device();

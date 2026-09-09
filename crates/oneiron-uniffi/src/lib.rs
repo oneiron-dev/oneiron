@@ -316,14 +316,4 @@ mod tests {
         visit(Path::new(env!("CARGO_MANIFEST_DIR")));
     }
 
-    /// The in-crate half of the ledger guard; the external drift guard in
-    /// `tests/contract.rs` re-checks it through the public crate root.
-    #[test]
-    fn exported_ledgers_are_positionally_paired() {
-        assert_eq!(EXPORTED_UNIFFI_VERBS, PINNED_HEAD_CONTRACT_VERBS);
-        assert_eq!(
-            EXPORTED_UNIFFI_VERBS.len(),
-            EXPORTED_UNIFFI_RUST_NAMES.len()
-        );
-    }
 }

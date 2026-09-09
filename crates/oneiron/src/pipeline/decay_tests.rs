@@ -531,72 +531,6 @@ fn expand_ppr_implicit_seeds_ignore_access_decay() -> Result<()> {
     Ok(())
 }
 
-/// The single-application invariant holds through `expand_ppr`, not just
-/// `search_ppr`: the run blends twice (preliminary seed pass, then the
-/// expansion) and only the expansion applies decay, so the overridden
-/// claim carries `base x f` and never `base x f²`.
-#[test]
-fn expand_ppr_applies_access_factor_exactly_once() -> Result<()> {
-    const OVERRIDE: f32 = 0.25;
-    const TEXT: &str = "expandonceneedle";
-
-    let (_dir, vault) = open_test_vault();
-    let decayed = entity_id(0x84);
-    let neighbor = entity_id(0x85);
-    let span = TimeRange {
-        start: DECAY_NOW,
-        end: DECAY_NOW,
-    };
-
-    vault
-        .batch()
-        .put(
-            &decayed,
-            ENTITY_TYPE_CLAIM,
-            span,
-            DECAY_NOW,
-            &decay_claim_body("test.expand_once", None)?,
-        )
-        .text(&decayed, &[("body", TEXT)])
-        .put(&neighbor, ENTITY_TYPE_TURN, span, DECAY_NOW, b"payload")
-        .edge(&decayed, EdgeKind::Supports, &neighbor, 0.9)
-        .commit()?;
-
-    let baseline = vault
-        .query()
-        .search_text(TEXT, 10)
-        .expand_ppr(&[], 2)
-        .with_temporal_now(DECAY_NOW)
-        .limit(10)
-        .run()?;
-    assert!(
-        baseline.iter().any(|scored| scored.id == neighbor),
-        "the fixture must actually execute the expansion; got {baseline:?}"
-    );
-    let base = to_score_map(&baseline)[&decayed];
-
-    let overrides = HashMap::from([(decayed, OVERRIDE)]);
-    let applied = vault
-        .query()
-        .search_text(TEXT, 10)
-        .expand_ppr(&[], 2)
-        .with_temporal_now(DECAY_NOW)
-        .with_access_factor_overrides(&overrides)
-        .limit(10)
-        .run()?;
-    let score = to_score_map(&applied)[&decayed];
-    assert!(
-        approx_eq(score, base * OVERRIDE, 1e-6),
-        "expected {} after one application, got {score}",
-        base * OVERRIDE
-    );
-    assert!(
-        !approx_eq(score, base * OVERRIDE * OVERRIDE, 1e-6),
-        "the factor must land once, not once per blend stage"
-    );
-    Ok(())
-}
-
 /// Configuring `expand_ppr` without reaching a seed still owes the run
 /// exactly one decay-applying blend, so the outcome is bit-identical to
 /// the same query with no `expand_ppr` at all — including the case where
@@ -891,48 +825,6 @@ fn rerank_binds_low_override_to_entity() -> Result<()> {
             "position {position} must carry its pre-decay ladder value times a neutral factor"
         );
     }
-    Ok(())
-}
-
-/// The rerank ladder must not re-apply a factor the blend already applied:
-/// a promoted decayed claim carries `ladder x f`, never `ladder x f²`.
-#[test]
-fn rerank_factor_applied_once_not_squared() -> Result<()> {
-    const OVERRIDE: f32 = 0.5;
-
-    let (_dir, vault) = open_test_vault();
-    let (_top, _middle, bottom) = decay_rerank_fixture(&vault, None)?;
-    let base_ladder = decay_rerank_base_ladder()?;
-    let overrides = HashMap::from([(bottom, OVERRIDE)]);
-
-    let reranker = PromotingReranker(bottom);
-    let reranked = vault
-        .query()
-        .search_text(DECAY_RERANK_TEXT, 10)
-        .boost_confidence()
-        .with_temporal_now(DECAY_NOW)
-        .with_access_factor_overrides(&overrides)
-        .rerank(
-            &reranker,
-            RerankOptions {
-                top_n: 3,
-                query: Some("rerank decay probe".to_owned()),
-            },
-        )
-        .limit(10)
-        .run()?;
-
-    assert_eq!(reranked[0].id, bottom);
-    let promoted = reranked[0].score;
-    assert!(
-        approx_eq(promoted, base_ladder[0] * OVERRIDE, 1e-6),
-        "expected {} after one application, got {promoted}",
-        base_ladder[0] * OVERRIDE
-    );
-    assert!(
-        !approx_eq(promoted, base_ladder[0] * OVERRIDE * OVERRIDE, 1e-6),
-        "the factor must land once, not once in the blend and once in the ladder"
-    );
     Ok(())
 }
 

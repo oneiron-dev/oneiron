@@ -955,12 +955,6 @@ fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Re
 }
 
 #[test]
-fn durable_receipt_lineage_survives_terminal_projection() -> crate::Result<()> {
-    // Re-run the durable receipt fixture as an isolated lineage gate.
-    delivered_send_idempotency_survives_attempt_completion()
-}
-
-#[test]
 fn terminal_refresh_race_rejects_timezone_mutation_after_delivery() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x97);

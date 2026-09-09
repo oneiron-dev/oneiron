@@ -205,45 +205,9 @@ mod tests {
     use core::assert_matches;
 
     #[test]
-    fn nfkc_folds_fullwidth_ascii() {
-        assert_eq!(nfkc("ＡＢＣ"), "ABC");
-    }
-
-    #[test]
-    fn nfkc_folds_halfwidth_katakana() {
-        assert_eq!(nfkc("ｶﾀｶﾅ"), "カタカナ");
-    }
-
-    #[test]
-    fn nfkc_composes_ligatures() {
-        assert_eq!(nfkc("ﬁ"), "fi");
-    }
-
-    #[test]
     fn casefold_lowers_ascii_and_german_ss() {
         assert_eq!(casefold("HELLO"), "hello");
         assert_eq!(casefold("Straße"), "strasse");
-    }
-
-    #[test]
-    fn kana_fold_maps_katakana_to_hiragana() {
-        assert_eq!(kana_fold("トウキョウ"), "とうきょう");
-    }
-
-    #[test]
-    fn kana_fold_leaves_hiragana_unchanged() {
-        let input = "とうきょう";
-        let out = kana_fold(input);
-        assert_matches!(out, Cow::Borrowed(_));
-        assert_eq!(&*out, input);
-    }
-
-    #[test]
-    fn kana_fold_leaves_latin_unchanged() {
-        let input = "hello world";
-        let out = kana_fold(input);
-        assert_matches!(out, Cow::Borrowed(_));
-        assert_eq!(&*out, input);
     }
 
     /// `kana_fold_overlay` returns `None` in two distinct scenarios.

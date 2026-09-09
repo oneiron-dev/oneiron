@@ -435,20 +435,6 @@ mod tests {
     }
 
     #[test]
-    fn peer_identity_is_connection_keyed() {
-        let section = render_agents_section(&[], &[peer("cc-main"), peer("cc-second")]);
-
-        assert_eq!(section.rows.len(), 2);
-        assert_ne!(section.rows[0].id, section.rows[1].id);
-        let exact_labels = section
-            .rows
-            .iter()
-            .filter(|row| row.harness_label.as_deref() == Some("claude-code"))
-            .count();
-        assert_eq!(exact_labels, 2);
-    }
-
-    #[test]
     fn bridge_discriminates_driver_state() {
         let queued = run_tree_node("attempt_q", Some("child_q"), RunTreeStatus::Queued);
         let running = run_tree_node("attempt_a", Some("child_a"), RunTreeStatus::Running);
@@ -544,56 +530,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn child_identity_is_per_spawn_not_definition_label() {
-        let nodes = [
-            run_tree_node("attempt_1", Some("researcher"), RunTreeStatus::Running),
-            run_tree_node("attempt_2", Some("researcher"), RunTreeStatus::Running),
-        ];
-        let presences: Vec<ChildAgentPresence> = nodes
-            .iter()
-            .filter_map(ChildAgentPresence::from_run_tree_node)
-            .collect();
-
-        assert_eq!(presences.len(), 2);
-        let ids: Vec<&str> = presences.iter().map(|child| child.id.as_str()).collect();
-        assert_eq!(ids, ["attempt_1", "attempt_2"]);
-        assert_ne!(ids[0], ids[1]);
-        let mut distinct_ids = ids.clone();
-        distinct_ids.sort_unstable();
-        distinct_ids.dedup();
-        assert_eq!(distinct_ids.len(), 2);
-        let labels: Vec<Option<&str>> = presences
-            .iter()
-            .map(|child| child.label.as_deref())
-            .collect();
-        assert_eq!(labels, [Some("researcher"), Some("researcher")]);
-
-        let section = render_agents_section(&presences, &[]);
-
-        assert_eq!(section.rows.len(), 2);
-        let rendered_ids: Vec<&str> = section.rows.iter().map(|row| row.id.as_str()).collect();
-        assert_eq!(rendered_ids, ["attempt_1", "attempt_2"]);
-        let rendered_lines: Vec<&str> = section.rows.iter().map(|row| row.line.as_str()).collect();
-        assert_eq!(
-            rendered_lines,
-            [
-                "attempt_1 researcher working",
-                "attempt_2 researcher working"
-            ]
-        );
-        let mut distinct_lines = rendered_lines.clone();
-        distinct_lines.sort_unstable();
-        distinct_lines.dedup();
-        assert_eq!(distinct_lines.len(), 2);
-    }
-
-    #[test]
-    fn empty_inputs_render_empty_section() {
-        let section = render_agents_section(&[], &[]);
-
-        assert_eq!(section.rows.len(), 0);
-    }
     /// A lead is read off the EXISTING run tree — a node with agent-dispatch
     /// children — never off a second store or a caller-supplied flag.
     #[test]

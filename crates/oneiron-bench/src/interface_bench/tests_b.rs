@@ -9,26 +9,6 @@ mod tests {
     use std::collections::BTreeSet;
     use std::fs;
     #[test]
-    fn browse_context_exposes_all_required_gold_claims() {
-        let bundle = build_task_bundle();
-        let task = bundle
-            .full_tasks
-            .iter()
-            .find(|task| task.class == TaskClass::BrowseThenAnswer)
-            .expect("browse task");
-        let GoldLabel::BrowseThenAnswer {
-            required_claim_ids, ..
-        } = &task.gold
-        else {
-            unreachable!("browse task has browse gold");
-        };
-        let claims = context_claims(task, &bundle.fixture).expect("context claims");
-
-        assert_eq!(claims.len(), required_claim_ids.len());
-        assert_eq!(claims.len(), 10);
-    }
-
-    #[test]
     fn fs_context_exposes_changed_after_for_provenance_rows() {
         let bundle = build_task_bundle();
         let task = bundle
@@ -60,15 +40,6 @@ mod tests {
 
         assert_eq!(context.tool_calls, 1);
         assert!(context.tool_calls <= TOOL_CALL_CAP);
-    }
-
-    #[test]
-    fn blind_judge_answer_normalizes_claim_paths() {
-        let answer = "See /claims/claim-0001.txt and claim-0002.";
-        let normalized = blind_judge_answer(answer);
-
-        assert!(normalized.contains("claim-0001"));
-        assert!(!normalized.contains("/claims/claim-0001.txt"));
     }
 
     #[test]

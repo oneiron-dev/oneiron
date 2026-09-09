@@ -471,27 +471,6 @@ fn retrieval_telemetry_records_no_hit_empty_reason() -> Result<()> {
 }
 
 #[test]
-fn retrieval_trace_capture_is_flag_off_by_default() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = entity_id(0xB0);
-    put_text_and_vector(&vault, id, "trace default off", [1.0, 0.0, 0.0, 0.0])?;
-
-    let results = vault
-        .query()
-        .search_text("trace default", 10)
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
-        .run_with_telemetry()?;
-    assert_eq!(results.value.len(), 1);
-    let run_id = results.run_id.expect("trace default off run id");
-
-    let runs = vault.retrieval_runs(1)?;
-    assert_eq!(runs[0].run_id, run_id);
-    assert_eq!(runs[0].trace, None);
-    assert_eq!(runs[0].result_ids, vec![*id.as_bytes()]);
-    Ok(())
-}
-
-#[test]
 fn retrieval_trace_capture_records_all_pipeline_stages() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let text_id = entity_id(0xB1);

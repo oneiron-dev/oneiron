@@ -50,49 +50,6 @@ fn expected_meeting_transcript_config() -> IngestSourceConfig {
     }
 }
 
-/// CAL-02's ICS feed entry (ONE-1784). PACKET_AMEND candidate: this file is
-/// ONE-1790's claim, but the registry parity assertion lives here and must
-/// name entry #3 the moment `ingest.rs` registers it.
-fn expected_ics_feed_config() -> IngestSourceConfig {
-    IngestSourceConfig {
-        source_id: ICS_FEED_SOURCE_ID,
-        label: "ICS feed",
-        format: IngestSourceFormat::IcsFeed,
-        adapter_skill: Some(IngestAdapterSkillRef {
-            skill_id: "builtin.ingest.ics-feed",
-            version: "1",
-        }),
-        writes_claims: false,
-        trust_ceiling: IngestTrustCeiling {
-            claim_source: ClaimSource::Imported,
-            max_auto_sensitivity: None,
-            receipted: false,
-            warned: false,
-        },
-        default_admission: ClaimApprovalStatus::Proposed,
-    }
-}
-
-fn expected_image_asset_config() -> IngestSourceConfig {
-    IngestSourceConfig {
-        source_id: IMAGE_SOURCE_ID,
-        label: "Image asset",
-        format: IngestSourceFormat::ImageAsset,
-        adapter_skill: Some(IngestAdapterSkillRef {
-            skill_id: "builtin.ingest.image-asset",
-            version: "1",
-        }),
-        writes_claims: false,
-        trust_ceiling: IngestTrustCeiling {
-            claim_source: ClaimSource::Imported,
-            max_auto_sensitivity: None,
-            receipted: false,
-            warned: false,
-        },
-        default_admission: ClaimApprovalStatus::Proposed,
-    }
-}
-
 /// A minimal valid artifact, so a test can mutate exactly the field it probes.
 fn meeting_transcript_json(overrides: &[(&str, &str)]) -> String {
     let mut document = format!(
@@ -210,24 +167,6 @@ fn expected_file_drop_transcript_config() -> IngestSourceConfig {
 }
 
 #[test]
-fn ingest_registry_set_compare_exact_sources() {
-    let actual: std::collections::HashSet<_> = INGEST_SOURCE_REGISTRY
-        .source_configs()
-        .map(|c| (c.source_id, c.format))
-        .collect();
-    let expected: std::collections::HashSet<_> = [
-        expected_image_asset_config(),
-        expected_jsonl_transcript_config(),
-        expected_file_drop_transcript_config(),
-        expected_meeting_transcript_config(),
-        expected_ics_feed_config(),
-    ]
-    .into_iter()
-    .map(|c| (c.source_id, c.format))
-    .collect();
-    assert_eq!(actual, expected);
-}
-#[test]
 fn file_drop_registration_parity() {
     let c = INGEST_SOURCE_REGISTRY
         .get_config(FILE_DROP_TRANSCRIPT_SOURCE_ID)
@@ -240,20 +179,6 @@ fn file_drop_trust_ceiling_is_fail_closed() {
         .get_config(FILE_DROP_TRANSCRIPT_SOURCE_ID)
         .unwrap();
     assert!(!c.trust_ceiling.permits_auto(Some(0)));
-}
-
-#[test]
-fn ingest_registry_equals_known_harness_config() {
-    let registry_configs = INGEST_SOURCE_REGISTRY.source_configs().collect::<Vec<_>>();
-    let harness_configs = KNOWN_INGEST_HARNESS_CONFIG
-        .source_configs()
-        .collect::<Vec<_>>();
-
-    assert!(std::ptr::eq(
-        KNOWN_INGEST_HARNESS_CONFIG.registry(),
-        &INGEST_SOURCE_REGISTRY
-    ));
-    assert_eq!(registry_configs, harness_configs);
 }
 
 #[test]

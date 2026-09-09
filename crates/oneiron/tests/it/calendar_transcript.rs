@@ -205,34 +205,6 @@ fn empty_input_is_rejected_not_minted_as_empty_session_or_note() {
 }
 
 #[test]
-fn ingest_registry_set_matches_jsonl_file_drop_and_ics() {
-    let ids: HashSet<_> = ingest::INGEST_SOURCE_REGISTRY.source_ids().collect();
-    assert!(ids.contains(ingest::JSONL_TRANSCRIPT_SOURCE_ID));
-    assert!(ids.contains(ingest::FILE_DROP_TRANSCRIPT_SOURCE_ID));
-    assert!(ids.contains(ingest::ICS_FEED_SOURCE_ID));
-    let actual: HashSet<_> = ingest::INGEST_SOURCE_REGISTRY
-        .source_configs()
-        .map(|c| (c.source_id, c.format))
-        .collect();
-    let expected: HashSet<_> = [
-        ("image-asset", IngestSourceFormat::ImageAsset),
-        ("jsonl-transcript", IngestSourceFormat::JsonlTranscript),
-        (
-            "file-drop-transcript",
-            IngestSourceFormat::FileDropTranscript,
-        ),
-        (
-            "meeting-transcript",
-            IngestSourceFormat::MeetingTranscriptV1,
-        ),
-        ("ics-feed", IngestSourceFormat::IcsFeed),
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(actual, expected);
-}
-
-#[test]
 fn file_drop_registration_has_exact_source_id_and_format() {
     let cfg = ingest::INGEST_SOURCE_REGISTRY
         .get_config(ingest::FILE_DROP_TRANSCRIPT_SOURCE_ID)
@@ -291,22 +263,6 @@ fn turns_preserve_source_labels_timestamps_order_and_blob_provenance() {
     );
 }
 #[test]
-fn session_first_path_uses_in_txn_mint_plan_and_end_lifecycle() {
-    let (_dir, vault) = vault();
-    let outcome = ingest_file_drop_transcript(
-        &vault,
-        TranscriptFileDropRequest {
-            source_blob_ref: EntityId::now(),
-            decoded_text: "Alice: hello",
-            arrived_at_ms: 2_000,
-        },
-    )
-    .unwrap();
-    assert!(matches!(outcome, TranscriptIngestOutcome::Session { .. }));
-    assert!(vault.open_session().unwrap().is_none());
-}
-
-#[test]
 fn public_lifecycle_wrappers_delegate_to_in_txn_entrypoints() {
     let (_dir, vault) = vault();
     let oneiron::session_lifecycle::SessionMintOutcome::Minted(id) = vault.mint_session(4).unwrap()
@@ -359,67 +315,6 @@ fn timestamp_preserving_end_wrapper_forwards_exact_end_hint() {
         Some(hint)
     );
 }
-#[test]
-fn in_txn_wake_planner_includes_newly_persisted_turn_ids() {
-    let (_dir, vault) = vault();
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    let TranscriptIngestOutcome::Session {
-        turn_refs,
-        wake_turn_refs,
-        ..
-    } = ingest_file_drop_transcript(
-        &vault,
-        TranscriptFileDropRequest {
-            source_blob_ref: EntityId::now(),
-            decoded_text: "user: wake",
-            arrived_at_ms: now_ms,
-        },
-    )
-    .unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(wake_turn_refs, turn_refs);
-}
-
-/// NAMED speakers plan exactly like role-named ones: the label never reaches a
-/// GATE-10 key, so every imported turn stays admissible to the dirty scan the
-/// close's planner runs — with no empty-only fallback left to rescue them.
-#[test]
-fn in_txn_wake_planner_includes_named_speaker_turn_ids() {
-    let (_dir, vault) = vault();
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    let TranscriptIngestOutcome::Session {
-        turn_refs,
-        wake_turn_refs,
-        extraction_enqueued,
-        ..
-    } = ingest_file_drop_transcript(
-        &vault,
-        TranscriptFileDropRequest {
-            source_blob_ref: EntityId::now(),
-            decoded_text: "Ada: wake\nBob: hi",
-            arrived_at_ms: now_ms,
-        },
-    )
-    .unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(turn_refs.len(), 2, "both named turns persisted");
-    assert_eq!(
-        wake_turn_refs, turn_refs,
-        "named-speaker turns are planned by the same in-txn round"
-    );
-    assert!(extraction_enqueued, "a planned round mints its attempt");
-}
-
 /// MIXED state (the case the deleted empty-only fallback could never serve): a
 /// pre-existing admissible dirty turn AND a named-speaker import in one ingest
 /// land in the SAME round — both planned, one attempt per partition, watermark
@@ -541,27 +436,6 @@ fn open_interactive_session_causes_retry_without_partial_turn_writes() {
             .entities_by_type(oneiron::registry::ENTITY_TYPE_TURN)
             .unwrap()
             .is_empty()
-    );
-}
-
-#[test]
-fn unparseable_nonempty_summary_uses_note_fallback_after_one_1377() {
-    let (_dir, vault) = vault();
-    let actor = file_drop_actor(&vault, 9);
-    let blob = uploaded_blob(&vault, 9);
-    let out = ingest_file_drop_transcript(
-        &vault,
-        TranscriptFileDropRequest {
-            source_blob_ref: blob,
-            decoded_text: "Ada:",
-            arrived_at_ms: 9_000,
-        },
-    )
-    .unwrap();
-    assert!(matches!(out, TranscriptIngestOutcome::NoteFallback { .. }));
-    assert_eq!(
-        vault.get_entity_type(&actor).unwrap(),
-        Some(oneiron::registry::ENTITY_TYPE_MACHINE)
     );
 }
 

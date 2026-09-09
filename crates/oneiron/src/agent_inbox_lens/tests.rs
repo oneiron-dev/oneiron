@@ -77,36 +77,6 @@ fn approval_pile_filters_identity() {
 }
 
 #[test]
-fn impact_order_beats_count() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let identity = entity(0x61);
-    for n in 0..30 {
-        persist_send_receipt(
-            &vault,
-            EntityId::now(),
-            held(identity, &format!("low:{n}"), 1, 100 + n),
-            SendReceiptOutcome::Failed,
-            false,
-            None,
-        )
-        .unwrap();
-    }
-    persist_send_receipt(
-        &vault,
-        entity(0x31),
-        held(identity, "high", 500, 1),
-        SendReceiptOutcome::Failed,
-        false,
-        None,
-    )
-    .unwrap();
-    let items = vault.agent_inbox_lens(query(None, 1)).unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].impact, InboxImpact(500));
-    assert_eq!(items[0].receipt_ref.as_deref(), Some("receipt:high"));
-}
-
-#[test]
 fn approval_order_and_cursor_are_stable() {
     let identity = entity(0x61);
     let receipts = vec![

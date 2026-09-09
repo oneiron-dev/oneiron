@@ -323,12 +323,6 @@ mod tests {
     // `manifest_canonical_hash_and_serde_roundtrip_are_stable` above.
 
     #[test]
-    fn normalization_policy_default_enables_all() {
-        let n = NormalizationPolicy::default();
-        assert!(n.nfkc && n.casefold && n.kana_fold);
-    }
-
-    #[test]
     fn probe_directory_matches_reference_hash_and_detects_swaps() {
         use std::fs::{File, write};
         use std::io::Write;

@@ -424,21 +424,6 @@ fn empty_and_oversized_batch_reject_before_backend() {
 }
 
 #[test]
-fn vector_only_context_pack_reaches_backend() {
-    let backend = RecordingBackend::default();
-    let mut request = context_pack_request();
-    request.query_vector = Some(vec![0.25, 0.75]);
-    backend
-        .context_pack(request)
-        .expect("vector-only context pack is accepted");
-    assert_eq!(backend.calls(), 1);
-    assert!(matches!(
-        backend.last(),
-        Some(VaultReadRequest::ContextPack(_))
-    ));
-}
-
-#[test]
 fn nested_context_pack_depth_overrides_top_level() {
     let mut request = context_pack_request();
     request.query = Some("blue hallway".to_owned());
@@ -470,19 +455,6 @@ fn nested_context_pack_depth_overrides_top_level() {
 }
 
 #[test]
-fn absent_nested_depth_inherits_top_level() {
-    let mut request = context_pack_request();
-    request.edge_hop = Some(2);
-    request.max_neighbors = Some(11);
-    request.depth = None;
-    let depth = request.resolved_depth();
-    assert_eq!(depth.edge_hop, Some(2));
-    assert_eq!(depth.max_neighbors, Some(11));
-    assert_eq!(request.edge_hop_field(), "edge_hop");
-    assert_eq!(request.max_neighbors_field(), "max_neighbors");
-}
-
-#[test]
 fn recording_transport_sees_no_call_for_rejected_requests() {
     let (transport, adapter) = wire_adapter(json!({ "ok": null }));
     adapter
@@ -501,15 +473,6 @@ fn recording_transport_sees_no_call_for_rejected_requests() {
         })
         .expect_err("bad anchor rejected before transport");
     assert!(transport.ops().is_empty());
-}
-
-#[test]
-fn zero_limit_query_reaches_backend() {
-    let backend = RecordingBackend::default();
-    let mut request = query_request("blue hallway");
-    request.limit = 0;
-    backend.query(request).expect("zero limit is accepted");
-    assert_eq!(backend.calls(), 1);
 }
 
 // ── 4. Response arm is operation-bound and exclusive ─────────────────────

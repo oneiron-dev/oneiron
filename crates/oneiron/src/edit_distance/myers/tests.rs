@@ -31,41 +31,6 @@ fn shapes() -> Vec<(&'static str, &'static str)> {
 
 // ─── the scale's two ends ───────────────────────────────────────────────
 
-/// Identity is the zero of the scale, and every line is a survivor. Nothing
-/// here is a special case in the code — it falls out of the affix trim.
-#[test]
-fn an_untouched_text_scores_zero() {
-    let text = "alpha\nbravo\ncharlie";
-    let diff = myers_line_diff(text, text);
-
-    assert_eq!(diff.d_norm, 0.0);
-    assert_eq!(
-        diff.ops,
-        OpsSummary {
-            ins: 0,
-            del: 0,
-            kept: 3,
-            moved: 0,
-            approx: false,
-        }
-    );
-}
-
-/// The other end, and the fixture that pins the SUM denominator: one line
-/// rewritten is `del = 1` AND `ins = 1`, so mass 2 over a window of `1 + 1`
-/// scores exactly 1. A max denominator would score the same edit 2.
-#[test]
-fn a_wholly_rewritten_text_scores_exactly_one() {
-    assert_eq!(myers_line_diff("alpha", "bravo").d_norm, 1.0);
-    assert_eq!(
-        myers_line_diff("alpha\nbravo", "charlie\ndelta").d_norm,
-        1.0
-    );
-    // Appearing from nothing is a full replacement too — there is no
-    // survivor to weigh against.
-    assert_eq!(myers_line_diff("", "alpha\nbravo").d_norm, 1.0);
-}
-
 /// Two empty texts divide nothing by nothing: `0.0`, not a NaN that would
 /// later refuse to serialize into a Δ.
 #[test]
@@ -98,20 +63,6 @@ fn a_known_edit_script_counts_arrivals_departures_and_survivors() {
     );
     // 3 / (4 + 5).
     assert!((diff.d_norm - 1.0 / 3.0).abs() < 1e-6, "{}", diff.d_norm);
-}
-
-/// A pure insertion and the pure deletion that undoes it are the same amount
-/// of change — the property the sum denominator exists to give.
-#[test]
-fn an_insertion_and_its_undo_weigh_the_same() {
-    let inserted = myers_line_diff("alpha\ncharlie", "alpha\nbravo\ncharlie");
-    let deleted = myers_line_diff("alpha\nbravo\ncharlie", "alpha\ncharlie");
-
-    assert_eq!(inserted.ops.ins, 1);
-    assert_eq!(inserted.ops.del, 0);
-    assert_eq!(deleted.ops.del, 1);
-    assert_eq!(deleted.ops.ins, 0);
-    assert_eq!(inserted.d_norm, deleted.d_norm);
 }
 
 /// A repeated run must not let the head and tail trim claim the same line

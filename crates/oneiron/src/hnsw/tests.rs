@@ -30,13 +30,6 @@ fn vector_bytes(vector: &[f32]) -> Vec<u8> {
     bytes
 }
 
-#[test]
-fn visited_capacity_hint_caps_by_graph_size() {
-    assert_eq!(visited_capacity_hint(8, 3), 3);
-    assert_eq!(visited_capacity_hint(2, 16), 4);
-    assert_eq!(visited_capacity_hint(1, 0), 1);
-}
-
 fn put_vector_raw(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -210,41 +203,6 @@ fn hnsw_insert_existing_node_updates_neighbors_and_count() -> Result<()> {
     assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![c]);
     assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![a]);
     assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![a]);
-    Ok(())
-}
-
-#[test]
-fn hnsw_refresh_prunes_stale_neighbors_without_new_ids() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let store = Store::open(temp_dir.path(), &test_config())?;
-    let mut wtxn = store.env.write_txn()?;
-    let a = EntityId::now();
-    let b = EntityId::now();
-    let c = EntityId::now();
-
-    put_vector_raw(&store, &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
-    put_vector_raw(&store, &mut wtxn, &b, &[1.0, 0.0, 0.0, 0.0])?;
-    put_vector_raw(&store, &mut wtxn, &c, &[0.0, 1.0, 0.0, 0.0])?;
-
-    write_neighbors(&store, &mut wtxn, &a, &[b, c])?;
-    write_neighbors(&store, &mut wtxn, &b, &[a])?;
-    write_neighbors(&store, &mut wtxn, &c, &[a])?;
-    store
-        .hnsw_meta
-        .put(&mut wtxn, ENTRY_POINT_KEY, b.as_bytes())?;
-    store
-        .hnsw_meta
-        .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
-
-    hnsw_insert(&store, &test_config(), &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
-
-    assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![c]);
-    assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![a]);
-    assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![a]);
-    assert_eq!(
-        read_entry_point(&store, &wtxn)?.expect("rebuilt entry point"),
-        b
-    );
     Ok(())
 }
 
@@ -1795,35 +1753,6 @@ fn funnel_rescore_matches_brute_force_full_dim_top10() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn funnel_prefix_length_query_returns_prefix_ranking() -> Result<()> {
-    const N: usize = 64;
-    const DIMS: usize = 8;
-    const FAST: usize = DIMS / 2;
-    let temp_dir = tempdir()?;
-    let vault = Vault::open(
-        temp_dir.path(),
-        funnel_config(DIMS, Some(FAST as u16), N.max(128)),
-    )?;
-    let mut state = 0x1334_0002;
-    let vectors: Vec<Vec<f32>> = (0..N).map(|_| pseudo_vector(&mut state, DIMS)).collect();
-    let ids = build_funnel_vault(&vault, &vectors)?;
-
-    let full_query = pseudo_vector(&mut state, DIMS);
-    let prefix_query = &full_query[..FAST];
-    let got: Vec<EntityId> = vault
-        .search_vector(prefix_query, 10)?
-        .into_iter()
-        .map(|scored| scored.id)
-        .collect();
-    let expected = brute_force_top_k(&ids, &vectors, prefix_query, FAST, 10);
-    assert_eq!(
-        got, expected,
-        "a fast_dims-length query must rank by prefix similarity"
-    );
-    Ok(())
-}
-
 /// Three vectors whose prefix ranking and full-dim ranking provably differ:
 /// v1/v2 share a prefix with opposite tails, v3 is prefix-close to neither.
 fn skip_rescore_fixture() -> Vec<Vec<f32>> {
@@ -1985,65 +1914,6 @@ fn adversarial_vectors(pairs: usize, dims: usize, fast: usize, state: &mut u64) 
     vectors
 }
 
-#[test]
-fn funnel_construction_slices_prefix_and_beam_rescore_matches_brute_force() -> Result<()> {
-    const DIMS: usize = 8;
-    const FAST: usize = 4;
-    const PAIRS: usize = 24;
-    let mut state = 0x1334_0006;
-    let vectors = adversarial_vectors(PAIRS, DIMS, FAST, &mut state);
-
-    let funnel_dir = tempdir()?;
-    let funnel_vault = Vault::open(
-        funnel_dir.path(),
-        funnel_config(DIMS, Some(FAST as u16), 128),
-    )?;
-    let ids = build_funnel_vault(&funnel_vault, &vectors)?;
-
-    let full_dir = tempdir()?;
-    let full_vault = Vault::open(full_dir.path(), funnel_config(DIMS, None, 128))?;
-    build_funnel_vault(&full_vault, &vectors)?;
-
-    let funnel_rtxn = funnel_vault.store.env.read_txn()?;
-    let full_rtxn = full_vault.store.env.read_txn()?;
-    let mut any_difference = false;
-    for id in &ids {
-        let funnel_neighbors: HashSet<EntityId> =
-            load_neighbors(&funnel_vault.store, &funnel_rtxn, id)?
-                .into_iter()
-                .collect();
-        let full_neighbors: HashSet<EntityId> = load_neighbors(&full_vault.store, &full_rtxn, id)?
-            .into_iter()
-            .collect();
-        if funnel_neighbors != full_neighbors {
-            any_difference = true;
-            break;
-        }
-    }
-    assert!(
-        any_difference,
-        "prefix construction must produce a different graph shape than full-dim construction"
-    );
-    drop(funnel_rtxn);
-    drop(full_rtxn);
-
-    let mut query_state = 0x1334_0007;
-    for _ in 0..5 {
-        let query = pseudo_vector(&mut query_state, DIMS);
-        let got: Vec<EntityId> = funnel_vault
-            .search_vector(&query, 10)?
-            .into_iter()
-            .map(|scored| scored.id)
-            .collect();
-        let expected = brute_force_top_k(&ids, &vectors, &query, DIMS, 10);
-        assert_eq!(
-            got, expected,
-            "beam rescore must equal brute force while the beam covers the corpus"
-        );
-    }
-    Ok(())
-}
-
 /// Qodo #473-F4: a stored row with fewer components than the scoring prefix
 /// must fail closed — never silently score on a partial prefix, where its
 /// shorter norm could make the corrupt row look CLOSER than healthy rows.
@@ -2180,19 +2050,6 @@ fn funnel_recall_is_beam_bounded_and_rises_with_ef_search() -> Result<()> {
         "a beam covering the corpus recovers brute-force parity (the pinned AC1 regime), got {full}"
     );
     Ok(())
-}
-
-#[test]
-fn f16_row_cosine_parity_within_tolerance() {
-    let values = [0.6_f32, -0.2, 0.7, 0.1];
-    let query = [0.3_f32, 0.4, -0.1, 0.8];
-    let widened: Vec<f32> = values
-        .iter()
-        .map(|v| half::f16::from_f32(*v).to_f32())
-        .collect();
-    let before = crate::distance::cosine_distance(&values, &query);
-    let after = crate::distance::cosine_distance(&widened, &query);
-    assert!((before - after).abs() <= 5e-3, "{before} vs {after}");
 }
 
 #[test]

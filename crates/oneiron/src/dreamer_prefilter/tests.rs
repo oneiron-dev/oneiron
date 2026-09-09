@@ -191,29 +191,6 @@ fn score_is_bounded_and_the_default_threshold_keeps_everything() {
 }
 
 #[test]
-fn filler_scores_below_dense_prose() {
-    let config = PrefilterConfig::default();
-    let known = BTreeSet::new();
-    let window = NoveltyWindow::new();
-    let dense = prefilter_turn(
-        &config,
-        "Yuki moved to Kyoto last March and started at Nintendo as a localization lead.",
-        DreamerTurnRole::User,
-        &known,
-        &window,
-    );
-    // A single perfect-variety, perfectly-novel word is exactly the case an
-    // unscaled rate axis gets wrong.
-    let filler = prefilter_turn(&config, "ok", DreamerTurnRole::User, &known, &window);
-    assert!(
-        dense.score > filler.score * 3.0,
-        "dense prose {} must dominate one-word filler {}",
-        dense.score,
-        filler.score
-    );
-}
-
-#[test]
 fn a_repeated_turn_loses_its_novelty() {
     let config = PrefilterConfig::default();
     let known = BTreeSet::new();

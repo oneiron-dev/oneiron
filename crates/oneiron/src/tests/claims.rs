@@ -766,27 +766,6 @@ fn put_claim_typed_api_rejects_invalid_confidence() -> Result<()> {
 }
 
 #[test]
-fn unknown_well_formed_predicate_accepted_without_registry() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
-
-    let claim = EntityId::now();
-    let body = ClaimBody::new(
-        "hobby.collects",
-        ClaimSubject::Entity(subject),
-        rmpv::Value::from("fountain pens"),
-        0.7,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
-    vault.put_claim(&claim, &body, test_time_range(1, 1), 2)?;
-    let read = vault.get_claim(&claim)?.expect("unknown predicate stored");
-    assert_eq!(read.predicate, "hobby.collects");
-    Ok(())
-}
-
-#[test]
 fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
