@@ -46,7 +46,7 @@ use oneiron::memory::caps::{
 use oneiron::memory::{
     ClaimInput, CommitReceipt, Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED,
-    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
+    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
     WitnessReceipt, WitnessTurn,
 };
@@ -330,7 +330,13 @@ impl From<MemoryError> for FacadeApiError {
             // caller does not hold, which is what 403 means. The engine code
             // carries the specific meaning; the status only has to be an
             // honest 4xx so no client reads the body as success.
-            MEMORY_CODE_FORBIDDEN | MEMORY_CODE_LEASE_REQUIRED => StatusCode::FORBIDDEN,
+            // `OWNER_BINDING_REQUIRED` is a 403 for the same reason
+            // `FORBIDDEN` is: the authority log refuses this actor the verb.
+            // It carries its own code so a client can tell the authority door
+            // from the gate door, but the status is the same honest 403.
+            MEMORY_CODE_FORBIDDEN
+            | MEMORY_CODE_LEASE_REQUIRED
+            | MEMORY_CODE_OWNER_BINDING_REQUIRED => StatusCode::FORBIDDEN,
             // Both are "the store is not in a state that admits this", which
             // is the conflict family the rest of this plane already maps to
             // 409. `VAULT_LOCKED_SINGLE_WRITER` cannot arise server-side — it
