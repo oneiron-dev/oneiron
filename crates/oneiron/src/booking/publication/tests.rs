@@ -5,7 +5,7 @@ use crate::booking::{
     encode_event_type_claim_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
-use crate::memory::{ClaimInput, MEMORY_CODE_FORBIDDEN};
+use crate::memory::{ClaimInput, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED};
 use serde_json::json;
 
 #[path = "regressions.rs"]
@@ -440,7 +440,7 @@ fn public_booking_publication_requires_current_rooted_owner_authority() {
             .claim_upsert(&input(publication()))
             .expect_err("a human is not necessarily the owner")
             .code,
-        MEMORY_CODE_FORBIDDEN
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
     );
     let owner = vault.memory(id(2), EdgeActorClass::Human);
     let receipt = owner
@@ -477,13 +477,13 @@ fn public_booking_publication_requires_current_rooted_owner_authority() {
             .claim_upsert(&input(publication()))
             .expect_err("revoked owner")
             .code,
-        MEMORY_CODE_FORBIDDEN
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
     );
     assert_eq!(
         owner
             .claim_retract(&receipt.claim_short_id)
             .expect_err("revoked owner retract")
             .code,
-        MEMORY_CODE_FORBIDDEN
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
     );
 }

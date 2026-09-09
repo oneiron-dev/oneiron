@@ -363,10 +363,10 @@ fn a_stale_base_route_session_witness_commits_no_base_rows() {
             Some(&route),
         )
         .expect_err("a stale base route refuses the witness");
-    assert!(
-        refused.message.contains("off-record overlay generation"),
-        "the refusal is the stale-route family, got {refused:?}"
-    );
+    // The stale-route family maps to the refresh-and-retry code, NOT to the
+    // request-shape default: the turn was well formed and the remedy is a
+    // fresh write route.
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         {
             let rtxn = vault.store.env.read_txn().expect("read txn");
@@ -607,10 +607,9 @@ fn an_in_transaction_failure_releases_the_room_shell_claim() {
     let refused = facade
         .witness_into_session(&session, &turn("x".repeat(256 * 1024), 980), None)
         .expect_err("a turn larger than the whole room budget is refused");
-    assert!(
-        refused.message.contains("off-record overlay is full"),
-        "the refusal is the overlay-budget family, got {refused:?}"
-    );
+    // The room's hard byte budget is state, not request shape: the overlay-full
+    // family takes the refresh-and-retry code, not the BAD_REQUEST default.
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE);
 
     facade
         .witness_into_session(&session, &turn("small enough".to_owned(), 981), None)

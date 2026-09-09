@@ -214,13 +214,15 @@ pub(crate) fn surface_actor(auth: &CoreAuth) -> Result<oneiron::EntityId, ApiErr
 pub(crate) fn surface_error(error: oneiron::MemoryError) -> ApiError {
     match error.code.as_str() {
         oneiron::MEMORY_CODE_NOT_FOUND => ApiError::not_found("campaign_surface", None),
-        oneiron::MEMORY_CODE_FORBIDDEN => ApiError::new(
-            error.message,
-            ApiErrorDetails::Forbidden {
-                required_scope: None,
-            },
-            error.suggestions,
-        ),
+        oneiron::MEMORY_CODE_FORBIDDEN | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            ApiError::new(
+                error.message,
+                ApiErrorDetails::Forbidden {
+                    required_scope: None,
+                },
+                error.suggestions,
+            )
+        }
         oneiron::MEMORY_CODE_INVALID_STATE => ApiError::new(
             error.message,
             ApiErrorDetails::InvalidState {

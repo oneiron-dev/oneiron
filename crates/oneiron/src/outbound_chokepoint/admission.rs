@@ -314,7 +314,13 @@ pub(super) fn verify_booking_effect(
             if let Some(denial) = error.gate_denial_error() {
                 return IntentLedgerError::Engine(denial);
             }
-            if error.code == crate::memory::MEMORY_CODE_FORBIDDEN {
+            // Both authority codes land here: `OWNER_BINDING_REQUIRED` is the
+            // owner-binding half of the same refusal family FORBIDDEN carries,
+            // and classifying it as stale input would tell a caller to refresh
+            // state when the actor is simply no longer authorized.
+            if error.code == crate::memory::MEMORY_CODE_FORBIDDEN
+                || error.code == crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+            {
                 IntentLedgerError::InvalidBoundActor
             } else {
                 IntentLedgerError::InvalidInput(

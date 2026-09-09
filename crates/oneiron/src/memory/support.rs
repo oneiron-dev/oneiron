@@ -198,8 +198,13 @@ pub(super) fn verify_owner_actor_binding_in_txn(
     if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
         return Ok(());
     }
+    // Its OWN code, not the generic FORBIDDEN: `safe_delete` can be refused by
+    // the Gate on the same verb and that denial is FORBIDDEN too, so the code
+    // is what tells a caller which door it hit — and the remedy here (mint a
+    // BindActor entry signed by an owner device) is nothing the gate family's
+    // advice covers.
     Err(MemoryError::new(
-        MEMORY_CODE_FORBIDDEN,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED,
         format!(
             "actor {} holds no active owner binding in the authority log",
             actor.to_hex()

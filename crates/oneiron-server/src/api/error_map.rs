@@ -29,11 +29,13 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::InvalidCodeSymbolManifestBody
         | ErrorKind::InvalidAttemptQueueRecord
         | ErrorKind::InvalidAttemptQueueTransition
+        | ErrorKind::SurfaceEventCorrelationKindCollision
         | ErrorKind::MaintenanceKindNotWritable
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::StructuralKindZoneViolation
         | ErrorKind::StructuralKindCollision
         | ErrorKind::InvalidStructuralKindRegistration
+        | ErrorKind::PolicyManifestInvalid
         | ErrorKind::ClaimSelfSupersession
         | ErrorKind::ProvenanceClaimLifecycle
         | ErrorKind::AgentNotDispatchable
