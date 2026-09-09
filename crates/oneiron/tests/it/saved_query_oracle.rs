@@ -804,7 +804,12 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
         .evaluate_entity(&evaluation(&record, person)),
     )?;
     assert_eq!(closed.decision.verdict, MatchVerdict::NoMatch);
-    assert!(closed.decision.why.contains("scope"));
+    // The GRANT-CLOSED reason, not the stage-0 per-candidate one: both say
+    // "scope", and only the named constant separates them.
+    assert_eq!(
+        closed.decision.why,
+        oneiron::saved_query::SAVED_QUERY_WHY_SCOPE_CLOSED
+    );
     assert!(
         !closed.memo_hit,
         "the granted verdict's memo must not answer for a revoked grant"
@@ -887,7 +892,12 @@ fn declared_scope_is_applied_to_the_candidate_entity() -> Result<()> {
 
     let wrong_world = evaluate(outside)?;
     assert_eq!(wrong_world.decision.verdict, MatchVerdict::NoMatch);
-    assert!(wrong_world.decision.why.contains("scope"));
+    // The per-candidate stage-0 exclusion, not the grant-closed denial: the
+    // named constant is what proves declared scope was applied to THIS entity.
+    assert_eq!(
+        wrong_world.decision.why,
+        oneiron::saved_query::SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE
+    );
 
     let no_world = evaluate(unplaced)?;
     assert_eq!(
@@ -1959,15 +1969,16 @@ fn pack_drift_repair_ladder_is_ordered_and_fails_loud() -> Result<()> {
     // Rung 4: no viable rewrite — paused, loudly.
     let paused = drifting_query(&vault, owner)?;
     let unmapped = drift(UNRELATED);
-    let PackDriftResolution::Paused { error } =
-        repair_pack_drift(&vault, paused.query_ref, &paused.definition, &unmapped, 130)?
+    let PackDriftResolution::Paused {
+        error,
+        unmapped_predicates,
+    } = repair_pack_drift(&vault, paused.query_ref, &paused.definition, &unmapped, 130)?
     else {
         panic!("an unmapped predicate must pause the query");
     };
-    assert!(
-        error.contains(UNRELATED),
-        "the error must name the predicate"
-    );
+    // The rung is named by the predicate list, not by prose: an invalid
+    // migrated definition pauses too, and pauses with this list EMPTY.
+    assert_eq!(unmapped_predicates, vec![UNRELATED.to_owned()]);
     let stored = oneiron::saved_query::read_saved_query(&vault, owner, paused.query_ref)?
         .expect("record survives");
     assert_eq!(
@@ -2027,12 +2038,19 @@ fn pack_drift_rung_does_not_depend_on_predicate_order() -> Result<()> {
         let record = drifting_query(&vault, owner)?;
         let resolution =
             repair_pack_drift(&vault, record.query_ref, &record.definition, &moved, 100)?;
-        let PackDriftResolution::Paused { error } = resolution else {
+        let PackDriftResolution::Paused {
+            unmapped_predicates,
+            ..
+        } = resolution
+        else {
             panic!("order {order:?} must pause: an unmapped predicate has no viable rewrite");
         };
-        assert!(
-            error.contains(UNRELATED),
-            "the error must name the predicate"
+        // Order-independence, stated as the witness itself: the SAME predicate
+        // list comes back whichever way the affected set was ordered.
+        assert_eq!(
+            unmapped_predicates,
+            vec![UNRELATED.to_owned()],
+            "order {order:?}"
         );
         assert!(matches!(
             oneiron::saved_query::read_saved_query(&vault, owner, record.query_ref)?
