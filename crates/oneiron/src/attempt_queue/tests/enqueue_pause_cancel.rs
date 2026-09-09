@@ -409,15 +409,21 @@ fn attempt_queue_enqueue_uses_blake3_advisory_dedupe_key() -> Result<()> {
         panic!("expected enqueue");
     };
 
-    let index_key = dedupe_index_key("claim_extraction", "same");
-    assert_eq!(index_key.len(), DEDUPE_INDEX_KEY_LEN);
-    assert_ne!(index_key.as_slice(), b"\0\x10claim_extractionsame");
+    assert_eq!(
+        dedupe_index_key("claim_extraction", "same"),
+        DEDUPE_KEY_V1_CLAIM_EXTRACTION_SAME,
+        "the v1 dedupe key is an on-disk LMDB key: a new derivation orphans every live row"
+    );
+    assert_ne!(
+        DEDUPE_KEY_V1_CLAIM_EXTRACTION_SAME.as_slice(),
+        LEGACY_DEDUPE_KEY_CLAIM_EXTRACTION_SAME
+    );
 
     let rtxn = vault.store.env.read_txn()?;
     let stored_id = vault
         .store
         .attempt_dedupe
-        .get(&rtxn, &index_key)?
+        .get(&rtxn, &DEDUPE_KEY_V1_CLAIM_EXTRACTION_SAME)?
         .expect("dedupe row");
     assert_eq!(AttemptId::from_bytes(&stored_id)?, attempt.id);
 
@@ -434,15 +440,17 @@ fn attempt_queue_enqueue_self_heals_legacy_dedupe_index_key() -> Result<()> {
     else {
         panic!("expected enqueue");
     };
-    let blake3_key = dedupe_index_key("claim_extraction", "same");
-    let legacy_key = legacy_dedupe_index_key("claim_extraction", "same");
     {
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.attempt_dedupe.delete(&mut wtxn, &blake3_key)?;
         vault
             .store
             .attempt_dedupe
-            .put(&mut wtxn, &legacy_key, attempt.id.as_bytes())?;
+            .delete(&mut wtxn, &DEDUPE_KEY_V1_CLAIM_EXTRACTION_SAME)?;
+        vault.store.attempt_dedupe.put(
+            &mut wtxn,
+            LEGACY_DEDUPE_KEY_CLAIM_EXTRACTION_SAME,
+            attempt.id.as_bytes(),
+        )?;
         wtxn.commit()?;
     }
 
@@ -457,14 +465,14 @@ fn attempt_queue_enqueue_self_heals_legacy_dedupe_index_key() -> Result<()> {
     let stored_id = vault
         .store
         .attempt_dedupe
-        .get(&rtxn, &blake3_key)?
+        .get(&rtxn, &DEDUPE_KEY_V1_CLAIM_EXTRACTION_SAME)?
         .expect("self-healed BLAKE3 dedupe row");
     assert_eq!(AttemptId::from_bytes(&stored_id)?, attempt.id);
     assert!(
         vault
             .store
             .attempt_dedupe
-            .get(&rtxn, &legacy_key)?
+            .get(&rtxn, LEGACY_DEDUPE_KEY_CLAIM_EXTRACTION_SAME)?
             .is_none()
     );
 

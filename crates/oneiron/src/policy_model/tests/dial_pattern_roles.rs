@@ -684,9 +684,11 @@ fn the_strictest_matching_role_acts_and_every_id_is_receipted() -> Result<()> {
 #[test]
 fn ties_on_strictness_resolve_to_the_rule_written_first() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![
+    // Two rules of equal strictness, resolving to DIFFERENT rows: the row the
+    // verdict names is what says which of them acted.
+    let registry = hosted_edge_registry(hosted_two_row_policy(vec![
         decide_rule("hosted.first", "(?i)bomb"),
-        decide_rule("hosted.second", "(?i)build"),
+        decide_rule_for("hosted.second", "(?i)build", HOSTED_SELF_HARM_LABEL),
     ]));
     let pass = relay_pass(
         &vault,
@@ -695,15 +697,20 @@ fn ties_on_strictness_resolve_to_the_rule_written_first() -> Result<()> {
         &PolicyModelConfig::default(),
         None,
     )?;
-    let audit = pass
-        .boundary_verdict()
-        .expect("verdict")
-        .audit
-        .as_deref()
-        .expect("audit");
+    let verdict = pass.boundary_verdict().expect("verdict");
+    let audit = verdict.audit.as_deref().expect("audit");
     assert_eq!(
         audit.matched_pattern_ids,
         vec!["hosted.first".to_owned(), "hosted.second".to_owned()]
+    );
+    assert!(
+        matches!(
+            verdict.category,
+            PolicyVerdictCategory::HostedLegal { ref row_ref, .. }
+                if row_ref == "hosted:serious-crime"
+        ),
+        "the rule written first must win the tie, got {:?}",
+        verdict.category
     );
     assert_eq!(pass.resolution(), Some(RelayResolution::PatternDecided));
     Ok(())
