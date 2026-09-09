@@ -211,8 +211,9 @@ yrs = { version = "0.25", features = ["sync"] }
 # undeclared `#![cfg(feature = "sync")]` files it absorbed) is skipped —
 # not silently compiled to empty binaries — when `sync` is off.
 # `tests/it/main.rs` (default features) and the standalone trybuild targets
-# `tests/relay_attestation_compilefail.rs` and
-# `tests/consent_guard_compilefail.rs` are auto-discovered.
+# `tests/relay_attestation_compilefail.rs`,
+# `tests/consent_guard_compilefail.rs` and
+# `tests/secret_custody_compilefail.rs` are auto-discovered.
 [[test]]
 name = "it_sync"
 path = "tests/it_sync/main.rs"
