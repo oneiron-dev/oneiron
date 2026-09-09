@@ -101,7 +101,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/tests/mod.rs` | test | s | — | — | — |
 | `src/attempt_queue/tests/retry_chains.rs` | test | m | — | — | Retry minting, retry_of lineage queryability, and bounded depth counting |
 | `src/attempt_queue/tests/scoped_settlement.rs` | test | s | — | — | ONE-1904 × ONE-1876: caller-owned settlement keeps actor-scoped index ownership |
-| `src/attempt_queue/tests/support.rs` | test | m | 20 crate-vis | — | Shared fixtures, helpers, and telemetry captures for the attempt-queue tests |
+| `src/attempt_queue/tests/support.rs` | test | m | 22 crate-vis | — | Shared fixtures, helpers, and telemetry captures for the attempt-queue tests |
 | `src/attempt_queue/types.rs` | src | m | 17 struct · 11 enum · 25 fn · 1 const · 11 crate-vis | AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport, AttemptQueueRetryReason +20 | Durable wire, verb-input, and outcome types for the attempt queue |
 | `src/attempt_queue/validate/cancel_receipt_landing.rs` | src | m | 7 crate-vis | — | Cancel-receipt shape table, landing validators, and receipt/event append mutators |
 | `src/attempt_queue/validate/field_validators.rs` | src | m | 78 crate-vis | — | Length caps, error literals, and per-field validators plus lease/manifest mutators |
@@ -361,7 +361,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/transcript.rs` | src | m | 4 struct · 2 enum · 5 fn | FileDropTranscriptSource, ParsedTranscript, ParsedTranscriptTurn, TranscriptFileDropRequest, TranscriptIngestOutcome, TranscriptParse | — |
 | `src/calendar/tz.rs` | src | m | 1 struct · 2 fn | WallTime | IANA time-zone border (CAL-01) |
 | `src/campaign.rs` | src | s | 1 struct · 2 fn · 2 const · 7 mod | CrmPackRegistration | CRM pack engine-side registration home |
-| `src/campaign/claims/codec.rs` | src | m | 5 fn · 36 crate-vis | — | MessagePack codecs, write-door validator, and map/key/token toolkit |
+| `src/campaign/claims/codec.rs` | src | m | 7 fn · 34 crate-vis | — | MessagePack codecs, write-door validator, and map/key/token toolkit |
 | `src/campaign/claims/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | The CRM pack's claim families (CA-01) |
 | `src/campaign/claims/store.rs` | src | m | 3 fn · 5 crate-vis | — | Store-aware claim reads: stage CAS, live-head scans, and DNC matching |
 | `src/campaign/claims/tests.rs` | test | L | — | — | — |
@@ -520,7 +520,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/types.rs` | src | m | 18 struct · 4 enum · 1 fn · 1 const · 4 crate-vis | AskRequest, AskResponse, CodeExecuteRequest, CodeExecuteResponse, CodeSearchRequest, CodeSearchResponse, CoreBatchShortIdHydrateItem, CoreBatchShortIdHydrateRequest +14 | Query, hydrate, timeline and runtime-deferred request/response shapes |
 | `src/code_run/vault_read/validate.rs` | src | s | 7 crate-vis | — | Request-shape validation and short-reference parsing, run before any dispatch |
 | `src/code_sandbox/adapter.rs` | src | s | 1 struct · 1 trait · 6 fn | FakeSandboxAdapter, SandboxBoundaryAdapter | The boundary-adapter trait and the in-memory double that pins it |
-| `src/code_sandbox/contract.rs` | src | m | 2 struct · 5 enum · 25 fn · 3 const | SandboxBoundaryContract, SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestRuntime, SandboxGuestTier, SandboxImportClass, SandboxLinkedImport | Guest tier, runtime, language, import classes and the linked-import boundary contract |
+| `src/code_sandbox/contract.rs` | src | m | 2 struct · 5 enum · 26 fn · 3 const | SandboxBoundaryContract, SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestRuntime, SandboxGuestTier, SandboxImportClass, SandboxLinkedImport | Guest tier, runtime, language, import classes and the linked-import boundary contract |
 | `src/code_sandbox/credential.rs` | src | s | 6 struct · 1 enum · 14 fn | SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle, SandboxCredentialOperation, SandboxCredentialOutcome, SandboxFileRead, SandboxReadFile | Opaque credential handles and the read-only credential call ABI |
 | `src/code_sandbox/firecracker.rs` | src | s | 1 struct · 2 fn · 3 const | FirecrackerBackend | Firecracker microVM backend (Linux only, feature `microvm-firecracker`) |
 | `src/code_sandbox/microvm/adapter.rs` | src | s | 1 struct · 8 fn | MicroVmSandboxAdapter | The SandboxBoundaryAdapter implementation that binds a backend to the boundary contract |
@@ -548,7 +548,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codebase/repo_ref.rs` | src | s | 1 enum · 4 fn · 2 const · 2 crate-vis | RepoRef | RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization |
 | `src/codebase/snapshot.rs` | src | m | 3 struct · 9 fn · 2 type · 8 const · 3 crate-vis | CodebaseFileEntry, CodebaseSnapshot, CodebaseSnapshotMount | Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation |
 | `src/codebase/store.rs` | src | m | 9 fn · 7 crate-vis | — | Vault persistence for codebase snapshots: ingest methods, transactions, and index keys |
-| `src/codebase/tests.rs` | test | L | — | — | — |
+| `src/codebase/tests.rs` | test | XL | — | — | — |
 | `src/comm/claims.rs` | src | m | 2 struct · 5 enum · 8 fn · 1 type · 7 const · 8 crate-vis | ClaimClassDescriptorRow, CommClaim, CommClaimValue, CommClearOptOutOutcome, CommError, SendOverrideMatch, SendOverrideScope | Claim family predicates, key vocabulary, typed values, body build/parse/validate |
 | `src/comm/consent.rs` | src | m | 12 fn · 10 crate-vis | — | Human consent gates, send overrides and standing opt-out folds |
 | `src/comm/mod.rs` | src | m | 4 re-export · 4 crate-vis | — | Communication standing-state claims and the ARCH-0035 projector |
@@ -1198,7 +1198,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/chat/tests.rs` | test | L | — | — | `.chat` acceptance tests: depth→effort mapping, composer call counts, the zero-model minimal tier, the typed… |
 | `src/memory/claims.rs` | src | m | 5 struct · 1 enum · 6 fn · 1 const · 5 crate-vis | ClaimInput, CommitReceipt, DeleteReceipt, MemoryReceipt, PendingWrite, SafeDeleteReason | Claim lifecycle verbs: commit/upsert/retract, safe delete, and the internal commit-decision plumbing (gate… |
 | `src/memory/dreamer.rs` | src | s | 3 struct · 3 fn | ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView | Consolidation enqueue, dreamer attempt status, and claim seeding |
-| `src/memory/error.rs` | src | s | 2 struct · 1 fn · 1 type · 8 const · 4 crate-vis | MemoryError, MemoryGateDenial | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory/error.rs` | src | m | 2 struct · 1 fn · 1 type · 9 const · 4 crate-vis | MemoryError, MemoryGateDenial | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
 | `src/memory/expression_preference.rs` | src | s | 3 struct · 3 fn | ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView | Typed `companion.expression.*` doors on the [`Memory`] surface |
 | `src/memory/mod.rs` | src | s | 1 mod · 12 re-export · 6 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/outbound/calendar.rs` | src | s | 1 struct · 4 fn · 1 type | CalendarFreebusyIntervalDto | Calendar scoped-read surface (read/search/freebusy) plus the invite entry point |
@@ -1245,6 +1245,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/lifecycle/registry.rs` | src | s | 14 crate-vis | — | In-process session registry, entry state, publish/lookup/membership doors and ref vetting |
 | `src/off_record/lifecycle/session.rs` | src | m | 2 struct · 11 fn · 18 crate-vis | OffRecordSession, OffRecordSessionVault | Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, promote_turn, close |
 | `src/off_record/lifecycle/telemetry.rs` | src | s | 5 crate-vis | — | Retrieval-run registration door (register/finalize/discard, staged/published arms) |
+| `src/off_record/lifecycle/tests_session_reads.rs` | src | s | 3 crate-vis | — | Composed room reads: the session-scoped siblings of [`crate::Vault::entities_by_type`]… |
 | `src/off_record/lifecycle/types.rs` | src | s | 2 struct · 3 enum · 2 fn · 3 crate-vis | ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordSessionRecord | Public records, enums, constants and the executor-utterance label shared by all off-record children |
 | `src/off_record/lifecycle/vault_api.rs` | src | s | 6 fn · 2 crate-vis | — | Vault verbs: session vault handle, enter, mode flip, receipt log and close |
 | `src/off_record/mod.rs` | src | s | 2 re-export · 5 crate-vis | — | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
@@ -1424,7 +1425,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_model/tests/owner_decisions_ledger.rs` | test | m | — | — | Owner-plane decisions: exactly-one-row ledger, category/row-ref rules, block/help, notices and receipts |
 | `src/policy_model/tests/owner_manifest_binding.rs` | test | L | — | — | Owner manifest trust: world scoping, forgery/misspelling fail-closed, bindings, generation params… |
 | `src/policy_model/tests/receipt_binding_citations.rs` | test | L | — | — | Receipt-time binding rechecks, manifest movement mid-call, citations/parse bounds, streaming rationale audit |
-| `src/policy_model/tests/support.rs` | test | L | 84 crate-vis | — | Shared fixtures, mock backends, and pass drivers for policy-model tests |
+| `src/policy_model/tests/support.rs` | test | L | 87 crate-vis | — | Shared fixtures, mock backends, and pass drivers for policy-model tests |
 | `src/policy_model/verdict.rs` | src | m | 4 struct · 3 enum · 7 fn · 7 crate-vis | HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyVerdictCategory | What a classify pass concluded |
 | `src/ppr/cache_store.rs` | src | m | 29 crate-vis | — | PPR cache constants, TTL policy, cache IO, and binary codec |
 | `src/ppr/community.rs` | src | s | 7 crate-vis | — | Community-boost bridge adapter over ppr_community |
@@ -1521,7 +1522,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/run_tree/tests/breaker.rs` | test | s | — | — | — |
 | `src/run_tree/types.rs` | src | s | 7 struct · 4 enum | RunTree, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeFailureDiagram, RunTreeNode, RunTreeNodeMarker, RunTreeNodeMarkerKind +3 | Run-tree view types: nodes, status/event vocab, repairs, and markers |
 | `src/saved_query/definition.rs` | src | s | 6 struct · 2 enum · 7 fn · 2 const | CreateSavedQueryRequest, EvalMode, EvalPolicy, QueryScope, SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord, UpdateSavedQueryRequest | — |
-| `src/saved_query/evaluator.rs` | src | m | 3 struct · 3 fn · 6 crate-vis | EvaluationRequest, SavedQueryEvaluator, SavedQueryJudgeBinding | — |
+| `src/saved_query/evaluator.rs` | src | m | 3 struct · 3 fn · 2 const · 6 crate-vis | EvaluationRequest, SavedQueryEvaluator, SavedQueryJudgeBinding | — |
 | `src/saved_query/evidence.rs` | src | s | 7 struct · 1 enum · 5 fn · 1 const | EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence, SavedQueryDerivationEnvelope, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport | — |
 | `src/saved_query/filter.rs` | src | m | 1 struct · 3 enum · 5 fn · 1 crate-vis | ClaimComparison, EvidenceDependencies, FilterAst, MatcherSpec | — |
 | `src/saved_query/lifecycle.rs` | src | s | 4 fn · 2 crate-vis | — | — |
@@ -1864,8 +1865,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/actors_memory.rs` | src | m | 1 struct · 20 fn · 1 crate-vis | ActorBound | Vault actor binding, structural kinds and code-memory attachment |
 | `src/vault/doctor_manifest.rs` | src | m | 4 struct · 1 enum · 1 fn · 11 crate-vis | TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport | Vault doctor report and text-index manifest handshake |
 | `src/vault/edges.rs` | src | m | 13 fn · 8 crate-vis | — | Vault edge writes, adjacency queries and graph traversal |
-| `src/vault/entities.rs` | src | m | 1 struct · 17 fn · 11 crate-vis | HydratedShortId | Vault entity, vector, short-id and type-index reads and writes |
-| `src/vault/mod.rs` | src | s | 1 struct · 4 re-export · 3 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
+| `src/vault/entities.rs` | src | m | 1 struct · 17 fn · 12 crate-vis | HydratedShortId | Vault entity, vector, short-id and type-index reads and writes |
+| `src/vault/mod.rs` | src | s | 1 struct · 4 re-export · 4 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `src/vault/open.rs` | src | m | 10 fn · 7 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
 | `src/vault/search_retrieval.rs` | src | m | 21 fn · 5 crate-vis | — | Vault text and vector search, batch and query builders, and retrieval telemetry |
 | `src/vault/tests.rs` | test | L | — | — | — |
@@ -1936,6 +1937,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |
 | `tests/code_memory.rs` | test | XL | — | — | ARCH-0050 R6 L2 memory-over-code attachment mechanics — public contract suite (ONE-1608) |
 | `tests/common/mod.rs` | test | s | 3 crate-vis | — | Shared fixture helpers for `oneiron` integration tests |
+| `tests/consent_guard_compilefail.rs` | test | s | — | — | DEC-0006 invariant 5 (`the guard offers, never grants`): compile-fail proof that the guard→owner boundary is… |
+| `tests/consent_guard_compilefail/a_owner_stamp_struct_literal_private_fields.rs` | test | s | — | — | (a) A guard holding a `ConsentProposal` must not be able to struct-literal an `AuthenticatedOwner`: all… |
+| `tests/consent_guard_compilefail/b_no_proposal_to_owner_conversion.rs` | test | s | — | — | (b) There is no `From<ConsentProposal> for AuthenticatedOwner`: a proposal cannot be converted into the… |
+| `tests/consent_guard_compilefail/c_no_proposal_to_grant_conversion.rs` | test | s | — | — | (c) There is no `From<ConsentProposal> for ConsentGrant` either: the guard cannot skip the owner entirely… |
 | `tests/git_smart_http.rs` | test | L | — | — | Stock-git end-to-end coverage for the vault-as-origin serve wire (ARCH-0068 Phase A, ONE-1908) |
 | `tests/it/analyzer_asset_policy.rs` | test | s | — | — | License + asset governance gate for the analyzer (plan ONE-317 §11) |
 | `tests/it/booking_lifecycle.rs` | test | XL | — | — | ONE-1813 [BK-02] booking lifecycle oracle |
@@ -1952,7 +1957,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/campaign_compliance_oracle.rs` | test | m | — | — | ONE-1777 (CA-06) shipping oracle for the campaign-compliance dispatch gate |
 | `tests/it/campaign_enrollment_oracle.rs` | test | L | — | — | ONE-1774 (CA-03) cross-module oracle for the enrollment consequence writer |
 | `tests/it/campaign_send_hygiene_oracle.rs` | test | L | — | — | ONE-1776 (CA-05) cross-module oracle for send hygiene |
-| `tests/it/campaign_stage_ladder_oracle.rs` | test | L | — | — | ONE-1775 (CA-04) cross-module oracle for the stage ladder |
+| `tests/it/campaign_stage_ladder_oracle.rs` | test | XL | — | — | ONE-1775 (CA-04) cross-module oracle for the stage ladder |
 | `tests/it/cb_oracle_agents.rs` | test | XL | 38 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
 | `tests/it/cb_oracle_frame.rs` | test | m | — | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
 | `tests/it/cb_oracle_plugin.rs` | test | XL | 53 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
@@ -2008,5 +2013,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/relay_attestation_compilefail/b_identity_construction_outside_edge_auth.rs` | test | s | — | — | (b) `AuthenticatedConnectionIdentity` must not be constructible outside the edge-auth path: both fields are… |
 | `tests/relay_attestation_compilefail/b_identity_from_edge_auth_not_public.rs` | test | s | — | — | (b.2) ONE-1572 H1: ordinary downstream code must NOT be able to mint a `CloudVault` witness from public labels |
 | `tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs` | test | s | — | — | (c) External-privacy proof ONLY: the hosted-edge domain type is private to the crate, so it cannot even be… |
+| `tests/secret_custody_compilefail.rs` | test | s | — | — | SECRET-01 S1 read-plane discipline: compile-fail proof from an external-crate position |
+| `tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs` | test | s | — | — | (a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and… |
+| `tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs` | test | s | — | — | (b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`… |
 | `tests/vault_read_parity.rs` | test | L | — | — | ONE-1433 adapter parity suite: one read contract whose behavior does not change with deployment topology |
 | `tests/voice_segment_sync.rs` | test | s | — | — | The recorder's engine contract (VOX-08) |
