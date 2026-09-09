@@ -103,6 +103,35 @@ fn raw_escape_hits(rel: &str, source: &str) -> Vec<RawHit> {
     hits
 }
 
+/// Assembles the F2 hit map, counted per distinct hit.
+///
+/// The gate and the negative row below both go through this, so "an extra
+/// `with_write_txn` on the surface fails F2" is proved by the assembly the
+/// gate actually runs rather than by a copy of the pinned map incremented by
+/// hand.
+fn f2_actual_hits(sources: impl IntoIterator<Item = (String, String)>) -> BTreeMap<RawHit, usize> {
+    let mut actual = BTreeMap::<RawHit, usize>::new();
+    for (rel, source) in sources {
+        if !f2_surface_path(&rel) {
+            continue;
+        }
+        for hit in raw_escape_hits(&rel, &production_source(&source)) {
+            *actual.entry(hit).or_default() += 1;
+        }
+    }
+    actual
+}
+
+/// Every production file of `tree`, as the `(relative path, source)` pairs
+/// [`f2_actual_hits`] reads.
+fn f2_tree_pairs<'a>(
+    repo: &'a Path,
+    tree: &'a SourceTree,
+) -> impl Iterator<Item = (String, String)> + 'a {
+    tree.production_sources()
+        .map(move |(path, source)| (normalized(relative_path(repo, path)), source.to_owned()))
+}
+
 #[test]
 fn of060_f1_put_replicated_stays_sync_only() {
     let repo = repo_root();
@@ -251,21 +280,10 @@ fn of060_f1_external_mount_keeps_production_controls_scanned() {
 #[test]
 fn of060_f2_surface_raw_escape_hatches_are_pinned() {
     let repo = repo_root();
-    let mut actual = BTreeMap::<RawHit, usize>::new();
-
     let tree = SourceTree::read(&repo.join("crates"));
-    for (path, source) in tree.production_sources() {
-        let rel = normalized(relative_path(&repo, path));
-        if !f2_surface_path(&rel) {
-            continue;
-        }
-        for hit in raw_escape_hits(&rel, &production_source(source)) {
-            *actual.entry(hit).or_default() += 1;
-        }
-    }
 
     assert_eq!(
-        actual,
+        f2_actual_hits(f2_tree_pairs(&repo, &tree)),
         f2_expected_raw_escape_hits(),
         "OF-060 F2: surface raw escape-hatch references changed. New foreign/guest writes must go through a stamper; remove or intentionally update this pinned baseline."
     );
@@ -432,6 +450,8 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
 
 #[test]
 fn of060_f2_extra_booking_write_txn_is_not_pinned() {
+    let repo = repo_root();
+    let tree = SourceTree::read(&repo.join("crates"));
     let expected = f2_expected_raw_escape_hits();
     let booking_path = "crates/oneiron-server/src/api/booking/subject.rs";
     let approved_line = ".with_write_txn(|txn| {";
@@ -452,10 +472,9 @@ fn of060_f2_extra_booking_write_txn_is_not_pinned() {
         assert!(!test_only_by_path(rel) && f2_surface_path(rel));
         let extra_hits = raw_escape_hits(rel, &production_source(extra_line));
         assert_eq!(extra_hits.len(), 1);
-        let mut actual = expected.clone();
-        for hit in extra_hits {
-            *actual.entry(hit).or_default() += 1;
-        }
+        let actual = f2_actual_hits(
+            f2_tree_pairs(&repo, &tree).chain([(rel.to_owned(), extra_line.to_owned())]),
+        );
         assert_ne!(
             actual, expected,
             "OF-060 F2: extra booking with_write_txn must fail: {rel}: {extra_line}"
