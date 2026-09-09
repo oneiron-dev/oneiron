@@ -6728,7 +6728,6 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
       "re-export": 6
      }
     },
@@ -6836,7 +6835,7 @@
      "path": "src/codebase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 1,
       "re-export": 3
      }
     },
@@ -10451,7 +10450,7 @@
      "path": "src/edit_distance/delta/mod.rs",
      "purpose": "ED-01 (ARCH-0056 §2, ONE-1757): the amendment-Δ schema, its two capture lanes, and the chooser every…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 3
      }
     },
@@ -10586,7 +10585,7 @@
      "path": "src/edit_distance/graduation/answers.rs",
      "purpose": "Offer answers and the snooze-state machine",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 5
      }
@@ -13441,7 +13440,7 @@
      "path": "src/identity_topology/lifecycle_state.rs",
      "purpose": "Entity lifecycle state ([`EntityLifecycleState`]), its CRDT join, the zero-head-split ledger witness, and…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 6
      }
@@ -13453,7 +13452,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "re-export": 10
      }
     },
@@ -13480,7 +13479,6 @@
      "path": "src/identity_topology/op_undo.rs",
      "purpose": "The undo door: a counter-event appended over an applied merge/split, never a rewrite of the event it reverts…",
      "surface": {
-      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -13513,7 +13511,7 @@
      "path": "src/identity_topology/proposal_resolution.rs",
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -15167,7 +15165,6 @@
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
       "const": 10,
-      "crate-vis": 2,
       "fn": 8
      }
     },
@@ -15455,7 +15452,7 @@
      "path": "src/memory/structural/mod.rs",
      "purpose": "Structural puts (habit checkins, companion records, imported-claim admission, blob artifacts) and…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -19302,7 +19299,7 @@
      "path": "src/secret_lease/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 3,
       "re-export": 2
      }
     },
@@ -20780,7 +20777,7 @@
      "path": "src/store/commitment_due.rs",
      "purpose": "The commitment due index (CMT-2, ONE-1539)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 14
      }
     },
     {
@@ -20927,7 +20924,7 @@
      "path": "src/store/open_gates/mod.rs",
      "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 1
      }
     },
@@ -20986,7 +20983,7 @@
      "path": "src/store/outbound_send_receipt.rs",
      "purpose": "Outbound gate bindings, durable send receipts, and the delivered-send idempotency index",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -21061,7 +21058,7 @@
      "path": "src/store/pending_gate_consent/sequence_sweep.rs",
      "purpose": "Monotonic sequence allocator, high-water read, and sweep-state cursors for expiry/list sweeps",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -21189,7 +21186,7 @@
      "path": "src/store/short_id_alias.rs",
      "purpose": "Legacy short-id alias rows: resolve/insert/retarget, the short-id counter key, and the short-id prefix…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 15,
       "enum": 1
      }
     },
@@ -21210,7 +21207,7 @@
      "path": "src/store/structural_kind_registry/registry.rs",
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -21815,7 +21812,7 @@
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "fn": 1
      }
     },
@@ -21877,7 +21874,7 @@
      "path": "src/sync/quarantine/mod.rs",
      "purpose": "Quarantine sink (`x:` family) + needs-rematerialization (`rm:`) retry markers — no silent drops on the sync…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "re-export": 4
      }
     },

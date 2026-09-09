@@ -14,7 +14,7 @@ pub(crate) fn publication_write_key(id: EntityId) -> Vec<u8> {
     key
 }
 
-pub(crate) fn stage_publication_write(
+pub(super) fn stage_publication_write(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
@@ -26,7 +26,7 @@ pub(crate) fn stage_publication_write(
     Ok(())
 }
 
-pub(crate) fn finish_publication_write(
+pub(super) fn finish_publication_write(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,

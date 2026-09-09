@@ -25,7 +25,7 @@ const REPLAY_REMAT_MARKER_PROVENANCE_PREFIX: &str = "rmp:w:";
 /// an unrelated entity's successful purge can never discharge another
 /// entity's GDPR purge retry.
 #[must_use]
-pub(crate) fn remat_marker_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
+pub(super) fn remat_marker_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
     format!("{REMAT_MARKER_PREFIX}{window_key}:{}", id.to_hex())
 }
 
@@ -44,7 +44,7 @@ pub(super) fn replay_remat_marker_provenance_key(
 /// purge (or the read backing it) against the local active store fails.
 /// Deletes any replay provenance sidecar so a later terminal `x:` row cannot
 /// discharge delete-safety work without the entity's own tombstone success.
-pub(crate) fn set_remat_marker_in_txn(
+pub(in crate::sync) fn set_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
@@ -59,7 +59,7 @@ pub(crate) fn set_remat_marker_in_txn(
 
 /// Sets `rm:w:{window}:{entity_hex}` in its own write transaction.
 #[cfg_attr(not(test), allow(dead_code))] // batch path writes markers in-txn (ONE-521)
-pub(crate) fn set_remat_marker(
+pub(super) fn set_remat_marker(
     vault: &Vault,
     window_key: &str,
     id: &crate::entity_id::EntityId,
@@ -70,7 +70,7 @@ pub(crate) fn set_remat_marker(
 /// Sets a replay/quarantine-origin `rm:w:{window}:{entity_hex}` marker plus
 /// provenance sidecar. If an unproven marker already exists, preserve that
 /// stronger delete-safety/unknown provenance and do not add the sidecar.
-pub(crate) fn set_replay_remat_marker_in_txn(
+pub(in crate::sync) fn set_replay_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
@@ -90,7 +90,7 @@ pub(crate) fn set_replay_remat_marker_in_txn(
 
 /// Sets a replay/quarantine-origin `rm:w:{window}:{entity_hex}` marker in
 /// its own write transaction.
-pub(crate) fn set_replay_remat_marker(
+pub(in crate::sync) fn set_replay_remat_marker(
     vault: &Vault,
     window_key: &str,
     id: &crate::entity_id::EntityId,
@@ -102,7 +102,7 @@ pub(crate) fn set_replay_remat_marker(
 /// transaction. Only called when THAT entity's purge succeeded (or the
 /// entity is verifiably absent — the purge goal state), or when forward
 /// remat performed the actual healing write for that entity (ONE-1147).
-pub(crate) fn clear_remat_marker_in_txn(
+pub(in crate::sync) fn clear_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
@@ -118,7 +118,7 @@ pub(crate) fn clear_remat_marker_in_txn(
 /// True when an `rm:` marker is present without replay/quarantine
 /// provenance. Terminal quarantine must treat this as delete-safety/unknown
 /// provenance and leave it pending until the entity's tombstone goal holds.
-pub(crate) fn unproven_remat_marker_exists_in_txn(
+pub(in crate::sync) fn unproven_remat_marker_exists_in_txn(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     window_key: &str,
@@ -133,7 +133,7 @@ pub(crate) fn unproven_remat_marker_exists_in_txn(
 /// Clears a marker only when its sidecar proves replay/quarantine origin.
 /// Unproven markers survive terminal quarantine because they may represent
 /// delete-safety work from a failed tombstone purge.
-pub(crate) fn clear_replay_remat_marker_in_txn(
+pub(in crate::sync) fn clear_replay_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,

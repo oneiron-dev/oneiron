@@ -15,7 +15,7 @@ pub fn schema_version_bytes() -> [u8; 8] {
     SCHEMA_VERSION.to_le_bytes()
 }
 
-pub(crate) const ROOT_WINDOWS_KEY: &str = "windows";
+pub(super) const ROOT_WINDOWS_KEY: &str = "windows";
 const WINDOW_PRESENT_MARKER: &[u8] = b"1";
 
 /// Creates a new root Doc with the standard schema.

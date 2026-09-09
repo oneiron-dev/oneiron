@@ -420,7 +420,7 @@ pub(super) fn quarantine_and_neutralize_protected_tombstone_in_txn(
 /// running the same deterministic body predicate as replicated type-76
 /// ingestion. Other established protected kinds retain their existing
 /// classification; type-76 must never gain protection from its header alone.
-pub(crate) fn admitted_concurrent_delete_protected_header(
+pub(in crate::sync) fn admitted_concurrent_delete_protected_header(
     blob: &[u8],
 ) -> Option<EntityMetadataHeader> {
     let header = EntityMetadataHeader::parse(blob)?;

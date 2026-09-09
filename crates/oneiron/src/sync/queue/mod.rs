@@ -39,7 +39,7 @@ const UPDATE_PREFIX: &[u8] = b"q:";
 /// Prefix for embed job entries.
 const EMBED_PREFIX: &[u8] = b"e:";
 /// Prefix for delete-bearing sidecar markers (ONE-1135).
-pub(crate) const DELETE_BEARING_PREFIX: &[u8] = b"d:";
+const DELETE_BEARING_PREFIX: &[u8] = b"d:";
 /// Metadata key storing the last allocated update sequence number.
 const LAST_UPDATE_SEQ_KEY: &[u8] = b"m:last_update_seq";
 const ERR_SYNC_QUEUE_UPDATE_ROW: &str = "sync queue update row";
@@ -85,9 +85,8 @@ mod core;
 mod scrub;
 mod seq;
 
-pub(crate) use self::scrub::{
-    scrub_receiver_outbox_on_remote_hard_delete_in_txn, scrub_window_updates_in_txn,
-};
+pub(in crate::sync) use self::scrub::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
+pub(crate) use self::scrub::scrub_window_updates_in_txn;
 pub(crate) use self::seq::{
     delete_embed_job_in_txn, push_delete_bearing_in_txn, push_embed_job_in_txn,
 };

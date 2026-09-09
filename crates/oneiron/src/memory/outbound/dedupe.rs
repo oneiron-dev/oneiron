@@ -132,7 +132,7 @@ pub(super) fn outbound_intent_ref(attempt_id: AttemptId) -> String {
     format!("intent:{}", hex_string(attempt_id.as_bytes()))
 }
 
-pub(crate) fn parse_job_ref(job_ref: &str) -> MemoryResult<AttemptId> {
+pub(in crate::memory) fn parse_job_ref(job_ref: &str) -> MemoryResult<AttemptId> {
     let reference = job_ref
         .trim()
         .strip_prefix("job:")

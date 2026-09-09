@@ -133,5 +133,10 @@ pub(in crate::store) use pending_embedding::*;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 pub use short_id_alias::*;
-pub(crate) use structural_kind_registry::*;
+use structural_kind_registry::*;
+#[cfg(test)]
+pub(crate) use structural_kind_registry::{
+    STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
+    structural_kind_registry_key,
+};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};

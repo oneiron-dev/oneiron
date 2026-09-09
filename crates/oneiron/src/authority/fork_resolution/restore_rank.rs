@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::*;
 
-pub(crate) fn entry_ancestor_index(
+pub(in crate::authority) fn entry_ancestor_index(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>> {
     let mut index = BTreeMap::new();
@@ -29,7 +29,7 @@ pub(crate) fn entry_ancestor_index(
     index
 }
 
-pub(crate) fn restore_prefix_divergence(
+pub(in crate::authority) fn restore_prefix_divergence(
     group: &BTreeSet<AuthorityEntryHash>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
