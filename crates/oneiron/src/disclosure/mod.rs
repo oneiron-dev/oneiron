@@ -29,7 +29,7 @@ pub use self::tier_classification::{
 pub use self::vault_context::{DisclosureAssembly, DisclosureContext, presence_discretion_notice};
 
 pub(crate) use self::tier_classification::{disclosure_tier, validate_disclosure_claim_structure};
-pub(crate) use self::vault_context::disclosure_tier_a_marked_in;
+use self::vault_context::disclosure_tier_a_marked_in;
 
 #[cfg(test)]
 mod tests;

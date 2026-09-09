@@ -15,7 +15,7 @@ use super::verdict::PolicyClassifyDecision;
 /// Category label an owner-plane ROW carries into the rubric. Owner rows are
 /// free prose, so they share one label and are told apart by `row_ref` — which
 /// is also the vocabulary the owner plane's policy document answers in.
-pub(crate) const OWNER_POLICY_CATEGORY: &str = "owner_policy";
+const OWNER_POLICY_CATEGORY: &str = "owner_policy";
 const HOSTED_LEGAL_CATEGORY_PREFIX: &str = "hosted_legal/";
 
 /// Longest policy document the engine accepts, in bytes.
@@ -222,7 +222,7 @@ impl HostedLegalPolicy {
 
     /// Whether `label` is a category this policy publishes — the check a
     /// pattern rule and a model answer are both held to.
-    pub(crate) fn publishes_category(&self, label: &str) -> bool {
+    pub(super) fn publishes_category(&self, label: &str) -> bool {
         self.row_for_category(label).is_some()
     }
 
@@ -236,7 +236,7 @@ impl HostedLegalPolicy {
     /// reason the plane used to refuse a duplicate category outright. The rule
     /// is the same one [`Self::strictest_row`] and the owner plane already
     /// apply when several rows could govern.
-    pub(crate) fn row_for_category(&self, label: &str) -> Option<&HostedLegalRow> {
+    pub(super) fn row_for_category(&self, label: &str) -> Option<&HostedLegalRow> {
         let category = parse_hosted_category_label(label)?;
         strictest(self.rows.iter().filter(|row| row.category == category))
     }
@@ -246,7 +246,7 @@ impl HostedLegalPolicy {
     /// [`PolicyOutputContract::Binary`] violation has no label to route on, so
     /// this is what it resolves to — and a policy with no rows cannot resolve
     /// one at all, which the caller treats as an unreadable answer.
-    pub(crate) fn strictest_row(&self) -> Option<&HostedLegalRow> {
+    pub(super) fn strictest_row(&self) -> Option<&HostedLegalRow> {
         strictest(self.rows.iter())
     }
 }
@@ -267,7 +267,7 @@ fn strictest<'a>(rows: impl Iterator<Item = &'a HostedLegalRow>) -> Option<&'a H
 /// caller is expected to check [`PolicyManifestResolution::owner_policy_enabled`]
 /// first and skip classification entirely, but an empty rubric is the honest
 /// answer either way.
-pub(crate) fn owner_rubric_rows(
+pub(super) fn owner_rubric_rows(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
 ) -> Vec<PolicyRubricRow> {
@@ -290,7 +290,7 @@ pub(crate) fn owner_rubric_rows(
 }
 
 /// The hosted legal plane's rubric.
-pub(crate) fn hosted_rubric_rows(policy: &HostedLegalPolicy) -> Vec<PolicyRubricRow> {
+pub(super) fn hosted_rubric_rows(policy: &HostedLegalPolicy) -> Vec<PolicyRubricRow> {
     policy
         .rows
         .iter()
@@ -306,7 +306,7 @@ pub(crate) fn hosted_rubric_rows(policy: &HostedLegalPolicy) -> Vec<PolicyRubric
 
 /// The plane-qualified spelling of a hosted category. The prefix is what keeps
 /// a hosted label and an owner `row_ref` from ever colliding in one namespace.
-pub(crate) fn hosted_category_label(category: &str) -> String {
+pub(super) fn hosted_category_label(category: &str) -> String {
     format!("{HOSTED_LEGAL_CATEGORY_PREFIX}{category}")
 }
 
@@ -315,7 +315,7 @@ pub(crate) fn hosted_category_label(category: &str) -> String {
 /// checked against a vocabulary here — the engine has none; whether the
 /// POLICY publishes a row of it is
 /// [`HostedLegalPolicy::publishes_category`]'s question.
-pub(crate) fn parse_hosted_category_label(label: &str) -> Option<&str> {
+pub(super) fn parse_hosted_category_label(label: &str) -> Option<&str> {
     label.strip_prefix(HOSTED_LEGAL_CATEGORY_PREFIX)
 }
 

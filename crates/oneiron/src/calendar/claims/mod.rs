@@ -43,16 +43,18 @@ pub use self::values::{
     CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue, CalendarWallTimeValue,
 };
 
+pub(in crate::calendar) use self::codec::{
+    decode_attendee_value, decode_status_value, decode_time_kind_value, encode_event_outcome_value,
+};
 pub(crate) use self::codec::{
-    decode_attendee_value, decode_event_outcome_value, decode_passport_value, decode_status_value,
-    decode_time_kind_value, encode_event_outcome_value, validate_calendar_claim_structure,
+    decode_event_outcome_value, decode_passport_value, validate_calendar_claim_structure,
 };
 
 // These four decoders are named only by sibling test modules (`series` and
 // `tz`); the re-export exists in test builds so those paths keep resolving,
 // and is absent otherwise so the non-test build carries no unused import.
 #[cfg(test)]
-pub(crate) use self::codec::{
+pub(in crate::calendar) use self::codec::{
     decode_series_exception_value, decode_series_master_value, decode_successor_value,
     decode_wall_time_value,
 };

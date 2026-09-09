@@ -35,6 +35,6 @@ pub(crate) fn claim_corpus_id(body: &ClaimBody) -> Result<Option<CorpusId>> {
 /// interpret is not validated, not reshaped and not rejected, and a `scope`
 /// value that is not a map carries no recognized entry at all. Widening the
 /// opaque contract is not a side effect of adding a recognized entry to it.
-pub(crate) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Result<()> {
+pub(super) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Result<()> {
     corpus_id_from_scope(scope).map(|_| ())
 }

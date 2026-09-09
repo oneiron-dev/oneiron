@@ -58,7 +58,7 @@ pub const RESERVED_PREDICATE_NAMESPACE: &str = "edge";
 
 /// Reserved skill predicate namespace: `skill.*` claims are authored only by
 /// the crate-private skill-hub doors, never by the generic public Claim API.
-pub(crate) const RESERVED_SKILL_PREDICATE_NAMESPACE: &str = "skill";
+const RESERVED_SKILL_PREDICATE_NAMESPACE: &str = "skill";
 
 /// Reserved actor predicate namespace (ARCH-0053 §9, ONE-1739): `actor.*`
 /// claims are STATES with meaning-by-projection (doc-13 r1/r3) — the
@@ -68,7 +68,7 @@ pub(crate) const RESERVED_SKILL_PREDICATE_NAMESPACE: &str = "skill";
 /// policy-authorized generic `put_claim` could plant a trust-bearing head that
 /// the read path then honored. Engine doors keep writing through
 /// `put_reserved_claim_in_txn`, the same exemption `skill.*` uses.
-pub(crate) const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
+const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
 
 /// Claim predicate binding a Loro peer id (the device CRDT client id) to the
 /// [`crate::write_envelope::WriteActor`] behind it (ED-00, ONE-1756).
@@ -215,7 +215,7 @@ pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Resul
 /// reserved `edge`, `skill` or `actor` namespaces (D17, ARCH-0053 §9). Their
 /// writes and lifecycle transitions are owned by dedicated crate-private doors,
 /// so the generic Claim API rejects them.
-pub(crate) fn is_reserved_predicate(predicate: &str) -> bool {
+pub(super) fn is_reserved_predicate(predicate: &str) -> bool {
     is_edge_reserved_predicate(predicate) || is_engine_owned_reserved_predicate(predicate)
 }
 

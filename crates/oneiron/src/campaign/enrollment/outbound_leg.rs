@@ -25,7 +25,7 @@ use crate::outbound_intent_ledger::{BudgetClass, IntentDispatchResult};
 /// What one run of the outward leg did.
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum EnrollmentOutboundLeg {
+pub(super) enum EnrollmentOutboundLeg {
     /// The effect reached the chokepoint; this is what came back.
     Dispatched(IntentDispatchResult),
     /// The program step declares no outward leg.
@@ -64,7 +64,7 @@ pub(crate) enum EnrollmentOutboundLeg {
 // lands the leg has only its oracle. Same posture `gate.rs` takes for the
 // crate-visible effect surfaces it exposes ahead of their call sites.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn run_enrollment_outbound_leg<T: OutboundTransport>(
+pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     local_node_id: u64,

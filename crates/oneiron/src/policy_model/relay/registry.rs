@@ -388,7 +388,7 @@ impl EdgeServiceRegistry {
     /// bypassed. `cfg(test)` + `pub(crate)` on purpose: a production-reachable
     /// unchecked bind would make the guard cosmetic.
     #[cfg(test)]
-    pub(crate) fn bind_unvalidated_for_testing(
+    pub(in crate::policy_model) fn bind_unvalidated_for_testing(
         &mut self,
         service: &str,
         class: ConnectionClass,

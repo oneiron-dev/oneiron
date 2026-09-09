@@ -18,7 +18,7 @@ pub(crate) fn standing_outbound_grant_principal_index_prefix(
     Ok(key)
 }
 
-pub(crate) fn standing_outbound_grant_principal_index_key(
+pub(super) fn standing_outbound_grant_principal_index_key(
     principal_ref: &str,
     id: &EntityId,
 ) -> Result<Vec<u8>> {

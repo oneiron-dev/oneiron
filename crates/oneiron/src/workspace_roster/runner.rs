@@ -35,7 +35,7 @@ impl Vault {
     /// the resume path is exercised without staging a real crash. `None` means
     /// the run halted before [`MemberOnboardingStep::Complete`], leaving a
     /// journal a later call resumes from.
-    pub(crate) fn onboard_workspace_member_halting_after(
+    pub(super) fn onboard_workspace_member_halting_after(
         &self,
         intent: MemberOnboardingIntent,
         authenticated_writer: &WriteActor,
