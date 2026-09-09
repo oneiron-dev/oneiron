@@ -198,25 +198,37 @@ pub struct SurfacedFailure {
     pub pathology: Option<RetryLineagePathology>,
 }
 
+/// A reserved or dispatched healer slot with the case and surface it was
+/// opened from.
+///
+/// `surface.failed_attempt` is the failing row, and `surface.healer_slot` is
+/// `Some(slot)`; the surface is the single copy of both.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HealerOutcome {
+    pub case: HealerCase,
+    pub slot: HealerSlotOutcome,
+    pub surface: SurfacedFailure,
+}
+
 /// The typed result of one failure input.
 ///
 /// Every `Healer` value sets `surface.diagnosis = None` and
 /// `surface.healer_slot = Some(slot)`; a later healer-authored diagnosis
 /// update rides the healer's own propose lane and is outside this ticket.
+///
+/// Each arm's payload is boxed, which is the trade-off this type takes
+/// deliberately: an outcome is constructed once per failed attempt and
+/// consumed immediately, so one allocation on a path that has already lost a
+/// whole attempt is cheaper than moving three kilobytes of failure record
+/// through every caller and `Result` in between.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum FailureLadderOutcome {
     Retried {
         source_attempt_id: AttemptId,
-        scheduled_attempt: AttemptRecord,
+        scheduled_attempt: Box<AttemptRecord>,
         /// The failed source row's ordinal: failures so far, including current.
         consecutive_transients: NonZeroU16,
     },
-    Healer {
-        failed_attempt: AttemptRecord,
-        case: HealerCase,
-        slot: HealerSlotOutcome,
-        surface: SurfacedFailure,
-    },
-    Human(SurfacedFailure),
+    Healer(Box<HealerOutcome>),
+    Human(Box<SurfacedFailure>),
 }

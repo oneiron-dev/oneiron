@@ -11504,6 +11504,7 @@
       "FailureLadderOutcome",
       "HandleAttemptFailure",
       "HealerCase",
+      "HealerOutcome",
       "HealerRepairRoute",
       "RetryLineagePathology",
       "RetryOrdinal",
@@ -11514,7 +11515,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "struct": 3
+      "struct": 4
      }
     },
     {
