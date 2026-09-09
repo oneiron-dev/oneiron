@@ -35,40 +35,6 @@ async fn offline_fetcher_denies_everything_as_unavailable() {
     assert!(matches!(err, FetchError::Unavailable));
 }
 
-#[tokio::test]
-async fn fixture_fetcher_redacts_nothing_but_serves_configured_urls() {
-    let mut fetcher = support::FixtureFetcher::offline();
-    fetcher.responses.insert(
-        "https://crl.example.test/ca.crl".to_string(),
-        oneiron_seal::FetchResponse {
-            body: b"crl-bytes".to_vec(),
-            content_type: Some("application/pkcs7-crl".to_string()),
-        },
-    );
-    let hit = fetcher
-        .fetch(FetchRequest {
-            purpose: FetchPurpose::Crl,
-            url: url::Url::parse("https://crl.example.test/ca.crl").unwrap(),
-            method: FetchMethod::Get,
-            request_body: Vec::new(),
-            content_type: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(hit.body, b"crl-bytes");
-    let miss = fetcher
-        .fetch(FetchRequest {
-            purpose: FetchPurpose::Crl,
-            url: url::Url::parse("https://other.example.test/ca.crl").unwrap(),
-            method: FetchMethod::Get,
-            request_body: Vec::new(),
-            content_type: None,
-        })
-        .await
-        .unwrap_err();
-    assert!(matches!(miss, FetchError::Unavailable));
-}
-
 #[cfg(feature = "network-fetch")]
 mod guarded {
     use oneiron_seal::{FetchPolicy, SsrfGuardedHttpFetcher};

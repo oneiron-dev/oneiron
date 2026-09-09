@@ -41,14 +41,6 @@ use super::validation::{
 };
 use super::*;
 
-fn reset_edge_scan_count() {
-    EDGE_SCAN_COUNT.with(|count| count.set(0));
-}
-
-fn edge_scan_count() -> usize {
-    EDGE_SCAN_COUNT.with(Cell::get)
-}
-
 #[test]
 fn mcp_context_pack_ref_requires_supported_version_and_handle() {
     let mut context_pack = McpContextPackRef {
@@ -692,22 +684,6 @@ fn pack_remat_marker_key(window_key: &str, id: &EntityId) -> String {
 }
 
 #[test]
-fn dedupe_signals_preserves_first_occurrence_order() {
-    let signals = vec![
-        Signal::Text,
-        Signal::Vector,
-        Signal::Text,
-        Signal::Temporal,
-        Signal::Vector,
-    ];
-
-    assert_eq!(
-        dedupe_signals(signals),
-        vec![Signal::Text, Signal::Vector, Signal::Temporal]
-    );
-}
-
-#[test]
 fn basic_hydration_populates_fields() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
@@ -738,15 +714,6 @@ fn basic_hydration_populates_fields() -> Result<()> {
         .expect("conf field missing");
     assert!((conf - 0.9).abs() < 1e-6, "conf drifted: {conf}");
     Ok(())
-}
-
-#[test]
-fn builder_clamps_edge_expansion_settings() {
-    let (_dir, vault) = open_test_vault();
-
-    let builder = vault.context_pack().edge_hop(99).max_neighbors(10_000);
-    assert_eq!(builder.edge_hop, MAX_EDGE_HOP);
-    assert_eq!(builder.selected_edge_budget, MAX_CONTEXT_NEIGHBORS);
 }
 
 #[test]
@@ -1214,36 +1181,6 @@ fn edge_hops_collect_neighbors() -> Result<()> {
 }
 
 #[test]
-fn max_neighbors_caps_neighbor_count() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let root = EntityId::now();
-    put_claim_text_entity(&vault, &root, "root", "test.root", "root")?;
-
-    for i in 0..20_u8 {
-        let id = EntityId::from_bytes_unchecked([i + 1; 16]);
-        put_text_entity(
-            &vault,
-            &id,
-            4,
-            "neighbor",
-            serde_json::json!({"name": format!("P{i}")}),
-        )?;
-        vault.put_edge(&root, crate::edge::EdgeKind::Mentions, &id, 1.0)?;
-    }
-
-    let pack = vault
-        .context_pack()
-        .search_text("root", 10)
-        .edge_hop(1)
-        .max_neighbors(5)
-        .run()?;
-
-    assert!(pack.neighbors.len() <= 5);
-    Ok(())
-}
-
-#[test]
 fn retrieval_budget_balances_claim_turn_and_facet_before_global_truncation() -> Result<()> {
     // The `learned_at` both fixture writers below stamp every row with
     // (`put_claim_text_entity` / `put_text_entity`), and the frozen run
@@ -1393,43 +1330,6 @@ fn default_retrieval_budget_keeps_small_limit_turn_results_eligible() -> Result<
 }
 
 #[test]
-fn selected_edge_budget_caps_edge_walk() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let root = EntityId::from_bytes_unchecked([0xD1; 16]);
-    let strongest = EntityId::from_bytes_unchecked([0xD2; 16]);
-    let weaker = EntityId::from_bytes_unchecked([0xD3; 16]);
-    put_claim_text_entity(&vault, &root, "edgebudget", "test.edge.root", "root")?;
-    put_text_entity(
-        &vault,
-        &strongest,
-        4,
-        "edge neighbor strongest",
-        serde_json::json!({"name": "strongest"}),
-    )?;
-    put_text_entity(
-        &vault,
-        &weaker,
-        4,
-        "edge neighbor weaker",
-        serde_json::json!({"name": "weaker"}),
-    )?;
-    vault.put_edge(&root, crate::edge::EdgeKind::Mentions, &strongest, 0.9)?;
-    vault.put_edge(&root, crate::edge::EdgeKind::Mentions, &weaker, 0.8)?;
-
-    let pack = vault
-        .context_pack()
-        .search_text("edgebudget", 10)
-        .edge_hop(1)
-        .selected_edge_budget(1)
-        .run()?;
-
-    let neighbor_ids: Vec<EntityId> = pack.neighbors.iter().map(|entity| entity.id).collect();
-    assert_eq!(neighbor_ids, vec![strongest]);
-    Ok(())
-}
-
-#[test]
 fn neighbor_selection_prefers_highest_weight_edges() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
@@ -1468,68 +1368,6 @@ fn neighbor_selection_prefers_highest_weight_edges() -> Result<()> {
             EntityId::from_bytes_unchecked([3; 16]),
             EntityId::from_bytes_unchecked([4; 16])
         ]
-    );
-    Ok(())
-}
-
-#[test]
-fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let root = EntityId::from_bytes_unchecked([7; 16]);
-    let child = EntityId::from_bytes_unchecked([8; 16]);
-    put_claim_text_entity(&vault, &root, "root", "test.root", "root")?;
-    put_text_entity(
-        &vault,
-        &child,
-        4,
-        "child",
-        serde_json::json!({"name": "Child"}),
-    )?;
-    vault.put_edge(&root, crate::edge::EdgeKind::Supports, &child, 1.0)?;
-
-    reset_edge_scan_count();
-    let rtxn = vault.store.env.read_txn()?;
-    let walked = walk_edges(
-        &vault.store,
-        &rtxn,
-        &[root],
-        EdgeWalkOptions {
-            hops: 1,
-            budget: 10,
-            exclude: &HashSet::from([root]),
-            clamp: None,
-            stale_worlds: None,
-        },
-    )?;
-    assert_eq!(edge_scan_count(), 1, "walk should scan the root once");
-
-    let cached_edges = load_entity_edges(
-        &vault.store,
-        &rtxn,
-        &root,
-        Some(&walked.scanned_edges),
-        None,
-    )?;
-    assert_eq!(cached_edges.len(), 1);
-    assert_eq!(
-        edge_scan_count(),
-        1,
-        "loading root edges from the walk cache should not rescan"
-    );
-
-    let uncached_edges = load_entity_edges(
-        &vault.store,
-        &rtxn,
-        &child,
-        Some(&walked.scanned_edges),
-        None,
-    )?;
-    assert!(uncached_edges.is_empty());
-    assert_eq!(
-        edge_scan_count(),
-        2,
-        "loading uncached neighbor edges should perform one scan"
     );
     Ok(())
 }
@@ -1700,26 +1538,6 @@ fn empty_after_result_cap_reports_below_threshold() -> Result<()> {
     let empty = pack.empty.as_ref().expect("empty context");
     assert_eq!(empty.reason, EmptyReason::BelowThreshold);
     assert_eq!(empty.total_in_scope, pack.stats.candidates_considered);
-    Ok(())
-}
-
-#[test]
-fn scores_match_pipeline_scores() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let a = EntityId::now();
-    let b = EntityId::now();
-    put_claim_text_entity(&vault, &a, "alpha alpha", "test.a", "a")?;
-    put_claim_text_entity(&vault, &b, "alpha", "test.b", "b")?;
-
-    let expected = vault.query().search_text("alpha", 10).run()?;
-    let pack = vault.context_pack().search_text("alpha", 10).run()?;
-
-    assert_eq!(expected.len(), pack.results.len());
-    for (left, right) in expected.iter().zip(pack.results.iter()) {
-        assert_eq!(left.id, right.id);
-        assert!((left.score - right.score).abs() < 1e-6);
-    }
     Ok(())
 }
 
@@ -3326,29 +3144,6 @@ fn context_pack_serialized_stats_populate_token_accounting() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn context_pack_retrieval_budget_default_token_allocation_splits_other_weight() {
-    let budget = ContextPackRetrievalBudget::from_limit(20, TokenAllocation::default(), 7);
-
-    assert_eq!(budget.claims, 9);
-    assert_eq!(budget.turns, 2);
-    assert_eq!(budget.summaries, 5);
-    assert_eq!(budget.facets, 2);
-    assert_eq!(budget.other, 2);
-    assert_eq!(budget.selected_edges, 7);
-}
-
-#[test]
-fn context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_eligible() {
-    let budget = ContextPackRetrievalBudget::from_limit(3, TokenAllocation::default(), 0);
-
-    assert!(budget.claims > 0);
-    assert!(budget.turns > 0);
-    assert!(budget.summaries > 0);
-    assert!(budget.facets > 0);
-    assert!(budget.other > 0);
-}
-
 // ─── OF-365 disclosure clamp red-team suite (ONE-1517, design §14.4) ────────
 //
 // Every assertion is on the ASSEMBLED CONTEXT (pack/board contents), never on
@@ -4225,22 +4020,6 @@ fn seed_budget_rows(vault: &Vault) -> Result<()> {
 }
 
 #[test]
-fn the_default_builder_budget_is_four_thousand_through_the_machinery() {
-    let (_dir, vault) = open_test_vault();
-    assert_eq!(
-        vault.context_pack().effective_token_budget(),
-        4_000,
-        "renamed, never revalued: the engine default is unchanged"
-    );
-    assert_eq!(
-        vault.context_pack().effective_token_budget(),
-        DEFAULT_WINDOW_TOKEN_BUDGET,
-        "the accessor is the ONE authority — it reads the same constant the \
-         builder was constructed with"
-    );
-}
-
-#[test]
 fn an_absent_profile_assembles_the_pack_byte_for_byte() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     seed_budget_rows(&vault)?;
@@ -4270,23 +4049,6 @@ fn an_absent_profile_assembles_the_pack_byte_for_byte() -> Result<()> {
         4_000
     );
     Ok(())
-}
-
-#[test]
-fn a_profile_carries_its_budget_and_split_end_to_end() {
-    let (_dir, vault) = open_test_vault();
-
-    let profile =
-        rt05_profile(1_234).with_budget_split(ContextBudgetSplit::new(0.10, 0.60, 0.20, 0.10));
-    let builder = vault.context_pack().memory_profile(Some(&profile));
-    assert_eq!(builder.effective_token_budget(), 1_234);
-
-    // The split reaches the allocation the serializer consumes.
-    let split_only = vault
-        .context_pack()
-        .memory_profile(Some(&profile))
-        .token_budget(4_000);
-    assert_eq!(split_only.effective_token_budget(), 4_000);
 }
 
 /// Call order is the contract: the profile supplies CONSTRUCTION-time

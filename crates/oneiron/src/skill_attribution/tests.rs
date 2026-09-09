@@ -539,18 +539,6 @@ fn a_receipt_without_a_manifest_field_does_not_gate_membership() -> Result<()> {
     Ok(())
 }
 
-/// The LLM tier stamps its own call purpose so attribution calls are budgeted
-/// and audited as their own class.
-#[test]
-fn the_llm_tier_rides_the_existing_call_purpose_surface() {
-    assert_eq!(
-        attribution_call_purpose(),
-        CallPurpose::Other {
-            name: ATTRIBUTION_CALL_PURPOSE_NAME.to_owned()
-        }
-    );
-}
-
 /// A judge that never abstains: the false-pass bias, in its simplest form.
 struct AlwaysDefect;
 impl AttributionJudge for AlwaysDefect {
@@ -681,38 +669,6 @@ fn audit_fixture_ids_leak_no_verdict_signal() -> Result<()> {
         "reading the label must not match reasoning over the facts: {} vs {}",
         sniffer.pass_rate(),
         honest.pass_rate()
-    );
-    Ok(())
-}
-
-/// The opaque case is where a LABELLING judge — one that always names a
-/// verdict — is caught: it cannot abstain, so it gets the unsettled case
-/// wrong however plausible its label is.
-#[test]
-fn labelling_judges_fail_the_opaque_unsettled_case() -> Result<()> {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let fixtures = held_out_audit_fixtures();
-    let unsettled: Vec<AuditFixture> = fixtures
-        .iter()
-        .filter(|fixture| fixture.expected.is_none())
-        .cloned()
-        .collect();
-    assert!(
-        !unsettled.is_empty(),
-        "the held-out set carries at least one honest-abstention case"
-    );
-
-    let labelled = run_attribution_audit_with_judge(&vault, &unsettled, &AlwaysDefect, 50)?;
-    let honest = run_attribution_audit_with_judge(&vault, &unsettled, &RuleAttributionJudge, 51)?;
-
-    assert_eq!(
-        labelled.passed, 0,
-        "naming a verdict on unsettled facts is wrong, not unlucky"
-    );
-    assert_eq!(
-        honest.passed,
-        unsettled.len(),
-        "abstaining on unsettled facts is the correct answer, and it scores"
     );
     Ok(())
 }

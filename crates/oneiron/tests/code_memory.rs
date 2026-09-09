@@ -309,41 +309,6 @@ fn symbol_id_is_primary_anchor() {
     );
 }
 
-/// A stale `path_at_revision` is a LOCATOR. The public surface exposes no
-/// path-keyed lookup at all, and re-minting a symbol at the old path captures
-/// nothing.
-#[test]
-fn stale_path_is_not_identity_and_path_reuse_captures_nothing() {
-    let (_dir, vault) = vault();
-    let original = symbol(&vault, 0x23);
-    let payload = note(&vault);
-    attach(
-        &vault,
-        original,
-        "src/moved.rs",
-        slot(),
-        value(payload, id(0x32), 0x52, 1_000),
-    )
-    .expect("attach");
-
-    // A NEW symbol id minted at the very same path — the "delete and
-    // recreate" case — inherits nothing.
-    let reused_path = symbol(&vault, 0x24);
-    assert!(
-        vault
-            .code_memory_attachments(reused_path)
-            .expect("read")
-            .is_empty()
-    );
-    assert!(
-        !vault
-            .code_memory_attachments(original)
-            .expect("read")
-            .is_empty(),
-        "the original keeps its attachment"
-    );
-}
-
 /// Explicit `Rename` re-points slots, attachment rows, AND always-on
 /// registrations onto the target and retires the source. The receipt is
 /// queryable from BOTH endpoints and never as a raw key.

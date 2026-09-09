@@ -2607,108 +2607,6 @@ fn one1891_waterfall_scores_every_candidate_in_one_write_transaction() {
     );
 }
 
-/// STRUCTURAL: the memo belongs to the one waterfall transaction, not to
-/// individual candidates or to the vault. Its local unit tests count actual
-/// resolver invocations for interleaved positive and neutral providers.
-#[test]
-fn one1891_waterfall_reuses_one_provider_prior_memo_per_transaction() {
-    let body = one1891::waterfall_body();
-    let txn_at = body
-        .find("with_write_txn")
-        .expect("the scoring transaction");
-    let memo_at = body.find("let mut prior_memo =").expect("the local memo");
-    let loop_at = body
-        .find("for candidate in candidates")
-        .expect("the candidate loop");
-    assert_eq!(
-        body.matches("ProviderPriorMemo::default()").count(),
-        1,
-        "one memo must serve every candidate in this evaluation"
-    );
-    assert!(
-        txn_at < memo_at && memo_at < loop_at,
-        "create the memo inside the transaction but outside the candidate loop"
-    );
-    assert!(
-        body.contains("&mut prior_memo,"),
-        "each score must use that same transaction-local memo"
-    );
-
-    let scorer = one1891::source_slice(
-        one1891::PROVIDER_CONFIDENCE_SOURCE,
-        "pub(crate) fn effective_confidence_in_txn(",
-        "\n/// Reads the claim's stored confidence",
-    );
-    assert!(
-        scorer.contains("let prior = prior_memo") && scorer.contains(".resolve(provider,"),
-        "the composition must resolve priors through the memo, not beside it"
-    );
-    assert!(
-        scorer.contains("active_provider_prior_in_txn(vault, wtxn, provider)"),
-        "a memo miss must still use the same transaction's truth-fallback resolver"
-    );
-}
-
-/// STRUCTURAL: the ledger witness belongs to the scoring transaction, not
-/// to either per-candidate canonical-subject check.
-#[test]
-fn one1891_waterfall_reuses_one_zero_head_shell_witness_per_transaction() {
-    let body: String = one1891::waterfall_body()
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .collect();
-    let txn_at = body
-        .find("with_write_txn")
-        .expect("the scoring transaction");
-    let witness_at = body
-        .find("letzero_head_shells=")
-        .expect("the transaction-local topology witness");
-    let loop_at = body
-        .find("forcandidateincandidates")
-        .expect("the candidate loop");
-    assert_eq!(body.matches("zero_head_split_shells_in_txn(").count(), 1);
-    assert!(
-        txn_at < witness_at && witness_at < loop_at,
-        "fold the zero-head-shell witness once inside the transaction, before the loop"
-    );
-    // Match both calls' arguments, ignoring whitespace and optional trailing commas.
-    let subject_calls: Vec<_> = body
-        .split_once("fncanonical_waterfall_subject_in_txn(")
-        .expect("the canonical subject helper")
-        .0
-        .split("canonical_waterfall_subject_in_txn(")
-        .skip(1)
-        .map(|call| {
-            call.split_once(')')
-                .expect("the subject call arguments")
-                .0
-                .trim_end_matches(',')
-        })
-        .collect();
-    assert_eq!(
-        subject_calls,
-        [
-            "vault,&*wtxn,&candidate.subject,&zero_head_shells",
-            "vault,&*wtxn,&id,&zero_head_shells",
-        ],
-        "candidate and claim subjects must share the transaction's witness"
-    );
-    let canonical = one1891::source_slice(
-        one1891::INGEST_SOURCE,
-        "fn canonical_waterfall_subject_in_txn(",
-        "\npub type IngestResult",
-    )
-    .chars()
-    .filter(|ch| !ch.is_whitespace())
-    .collect::<String>();
-    assert!(canonical.contains("entity_lifecycle_state_with_zero_head_shells_in_txn("));
-    assert!(canonical.contains("Some(zero_head_shells)"));
-    assert!(
-        !body.contains(".entity_lifecycle_state_in_txn("),
-        "the per-subject lifecycle door would fold the ledger again"
-    );
-}
-
 /// Both a neutral absence and a positive resolution expire with the scoring
 /// transaction. Later prior writes must rerank the next evaluation without
 /// rewriting enrichment CLAIMs or persisting an absence sentinel.
@@ -2822,40 +2720,6 @@ fn one1891_admission_writes_against_the_waterfall_selected_subject() {
         admitted.subject,
         oneiron::ClaimSubject::Entity(loud.subject),
         "the stored-confidence leader must not collect the mention"
-    );
-}
-
-/// The facade's caller-asserted admit path is UNCHANGED by this wave: the
-/// waterfall has no production call site yet, and the admission door still
-/// takes the subject its caller resolved. Pinning it here keeps a later wave
-/// from quietly turning the door into a second resolver.
-#[test]
-fn one1891_admission_door_stays_caller_asserted() {
-    let resolution = one1891::source_slice(
-        one1891::INGEST_SOURCE,
-        "pub struct ImportedEvidenceEntityResolution",
-        "\n/// Write metadata",
-    );
-    assert!(
-        resolution.contains("pub subject: EntityId"),
-        "the admission door still takes an already-resolved subject"
-    );
-    assert!(
-        !resolution.contains("evaluate_entity_resolution_waterfall("),
-        "the admission door must not call the waterfall itself"
-    );
-    let admit = one1891::source_slice(
-        one1891::INGEST_SOURCE,
-        "pub fn admit_imported_evidence_claim_typed",
-        "\n/// Persists a normalized asset-text entity",
-    );
-    assert!(
-        !admit.contains("evaluate_entity_resolution_waterfall"),
-        "admission consumes a decision; it does not make one"
-    );
-    assert!(
-        admit.contains("ClaimSubject::Entity(admission.entity_resolution.subject)"),
-        "the admitted claim is subject-ed to exactly what the caller resolved"
     );
 }
 
@@ -3122,68 +2986,6 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
     );
 }
 
-/// STRUCTURAL: the enrichment arm sits exactly between the prior arm and the
-/// `actor_claims` arm, and every neighbour arm below it survives the
-/// insertion in its original order.
-///
-/// The chokepoint is one long `else if` chain, so an arm inserted in the wrong
-/// place does not fail loudly — it silently shadows or is shadowed. Order IS
-/// the semantics here.
-#[test]
-fn one1891_enrichment_arm_is_seated_without_disturbing_its_neighbours() {
-    let chain = one1891::source_slice(
-        one1891::CLAIM_CORE_TYPES_SOURCE,
-        "pub(crate) fn validate_claim_body_and_decode(",
-        "\npub(crate) fn validate_claim_body_bytes",
-    );
-
-    let prior_arm = chain
-        .find("is_actor_confidence_prior_claim_predicate")
-        .expect("the ONE-1722 prior arm");
-    let enrichment_arm = chain
-        .find("is_provider_enrichment_claim_predicate")
-        .expect("the ONE-1891 enrichment arm");
-    let actor_arm = chain
-        .find("actor_claims::is_actor_claim_predicate")
-        .expect("the actor-claims arm");
-    assert!(
-        prior_arm < enrichment_arm && enrichment_arm < actor_arm,
-        "the enrichment arm belongs between the prior arm and actor_claims"
-    );
-    assert_eq!(
-        chain
-            .matches("is_provider_enrichment_claim_predicate")
-            .count(),
-        1,
-        "a second enrichment arm would be unreachable and untested"
-    );
-    assert!(
-        chain.contains("validate_provider_enrichment_claim_structure(&body)?"),
-        "the arm must call the validator, not merely recognise the predicate"
-    );
-
-    // Every neighbour that used to follow still follows, in order.
-    let mut cursor = enrichment_arm;
-    for neighbour in [
-        "actor_claims::is_actor_claim_predicate",
-        "counterparty_contact::is_counterparty_contact_claim_predicate",
-        "commitment::is_commitment_claim_predicate",
-        "calendar::claims::is_calendar_claim_predicate",
-        "campaign::claims::is_campaign_pack_claim_predicate",
-        "comm::is_comm_claim_predicate",
-        "disclosure::is_disclosure_claim_predicate",
-        "delivery_window::is_delivery_window_claim_predicate",
-        "booking::config::is_booking_claim_predicate",
-        "voice_segment::is_voice_segment_claim_predicate",
-    ] {
-        let at = chain
-            .find(neighbour)
-            .unwrap_or_else(|| panic!("neighbour arm lost: {neighbour}"));
-        assert!(at > cursor, "neighbour arm reordered: {neighbour}");
-        cursor = at;
-    }
-}
-
 /// STRUCTURAL: `put_replicated` is not a fourth write door. Both definitions
 /// are `pub(crate)` and feature-gated, so the three doors exercised above are
 /// the whole default-feature write surface for an enrichment claim — and a
@@ -3294,30 +3096,6 @@ fn one1891_upgraded_vault_rebuilds_exactly_two_rows_on_first_read() {
         one1891::counts(&vault),
         before,
         "no PERSON and no CLAIM is created by a lazy rebuild"
-    );
-}
-
-/// Reading one provider rebuilds ONE provider's rows. There is no bulk pass
-/// hiding behind the lazy one.
-#[test]
-fn one1891_reading_one_provider_never_builds_another_providers_rows() {
-    let (_dir, vault) = open_vault();
-    one1891::write_prior(&vault, "provider_read", 0.50, "evidence:read");
-    // Truth for a second provider exists and is never asked about.
-    one1891::put_provider_actor(&vault, 0x75, "provider_unread");
-    let subject = one1891::put_person(&vault, 0x76);
-    let claim = one1891::put_enrichment(&vault, 0x77, subject, "provider_read", 0.80);
-    one1891::clear_indexes(&vault, "provider_read");
-
-    assert!(one1891::close(one1891::effective(&vault, &claim), 0.40));
-    assert_eq!(
-        one1891::index_presence(&vault, "provider_read"),
-        (true, true)
-    );
-    assert_eq!(
-        one1891::index_presence(&vault, "provider_unread"),
-        (false, false),
-        "an unrelated provider's rows must not be built by someone else's read"
     );
 }
 

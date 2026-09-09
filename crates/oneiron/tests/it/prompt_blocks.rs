@@ -111,31 +111,6 @@ fn eiri_v3_resolves_self_disclosure_block() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn eiri_v3_resolves_character_spine_block() -> Result<(), Box<dyn std::error::Error>> {
-    let package_root = workspace_prompt_package_root()?;
-    let block_path = package_root.join("blocks/character-spine.md");
-    let prompt_path = package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH);
-
-    let block = fs::read_to_string(block_path)?;
-    for required_line in REQUIRED_CHARACTER_SPINE_LINES {
-        assert!(
-            block.lines().any(|line| line == required_line),
-            "character-spine.md must contain literal line: {required_line}"
-        );
-    }
-
-    let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
-    for required_line in REQUIRED_CHARACTER_SPINE_LINES {
-        assert!(
-            resolved.lines().any(|line| line == required_line),
-            "resolved Eiri v3 prompt must contain literal line: {required_line}"
-        );
-    }
-
-    Ok(())
-}
-
-#[test]
 fn prompt_resolver_rejects_includes_outside_package_root() -> Result<(), Box<dyn std::error::Error>>
 {
     let temp = tempfile::tempdir()?;

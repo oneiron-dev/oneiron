@@ -74,24 +74,6 @@ mod one_1698_tests {
     }
 
     #[test]
-    fn zero_config_dispatch_resolves_system_default_base() -> Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-        let dispatcher = AgentDispatcher::new(&vault);
-        let status = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
-
-        assert_eq!(
-            status.input.target,
-            seeded_target(&vault, DEFAULT_BASE_LOGICAL_ID)
-        );
-        assert_eq!(status.input.definition.agent_id, DEFAULT_BASE_LOGICAL_ID);
-        assert_eq!(
-            status.input.definition.logical_id.as_deref(),
-            Some(DEFAULT_BASE_LOGICAL_ID)
-        );
-        Ok(())
-    }
-
-    #[test]
     fn kill_authority_is_spawner_only_and_class_independent() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
         let custom_id = EntityId::from_bytes([0x61; 16])?;

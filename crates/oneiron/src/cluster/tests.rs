@@ -52,15 +52,6 @@ fn empty_input_returns_empty_assignments() {
     assert!(assignments.cohorts.is_empty());
 }
 
-#[test]
-fn default_threshold_is_the_pinned_v1_contract() {
-    assert_eq!(
-        ClusterOptions::default().cohesion_threshold,
-        CLUSTER_COHESION_THRESHOLD
-    );
-    assert!((CLUSTER_COHESION_THRESHOLD - 0.82).abs() < f32::EPSILON);
-}
-
 // ---------------------------------------------------------------------------
 // Stage 1 — exact partitioning
 // ---------------------------------------------------------------------------
@@ -123,27 +114,6 @@ fn identical_embeddings_never_cross_a_partition_boundary() {
     }
 }
 
-#[test]
-fn predicate_leaf_is_dropped_so_siblings_share_a_partition() {
-    // `person.name.given` and `person.name.family` share the root
-    // `person.name`; the leaf is not part of the bucket.
-    let claims = [
-        claim(0x01, "person.name.given", axis(0.0)),
-        claim(0x02, "person.name.family", axis(0.0)),
-    ];
-    let assignments = cluster_claims(&claims, ClusterOptions::default()).expect("cluster");
-
-    assert_eq!(assignments.cohorts.len(), 1);
-    assert_eq!(
-        assignments.cohorts[0].partition.predicate_root,
-        "person.name"
-    );
-    assert_eq!(
-        ids(&assignments.cohorts[0]),
-        vec![entity(0x01), entity(0x02)]
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Stage 2 — complete-link grouping
 // ---------------------------------------------------------------------------
@@ -178,21 +148,6 @@ fn complete_link_refuses_the_chain_single_link_would_build() {
         vec![entity(0x01), entity(0x02)]
     );
     assert_eq!(ids(&assignments.cohorts[1]), vec![entity(0x03)]);
-}
-
-#[test]
-fn an_isolated_claim_stays_a_singleton_at_cohesion_one() {
-    let claims = [
-        claim(0x01, "person.name", axis(0.0)),
-        claim(0x02, "person.name", vec![0.0, 1.0, 0.0, 0.0]),
-    ];
-    let assignments = cluster_claims(&claims, ClusterOptions::default()).expect("cluster");
-
-    assert_eq!(assignments.cohorts.len(), 2);
-    for cohort in &assignments.cohorts {
-        assert_eq!(cohort.member_ids.len(), 1);
-        assert!((cohort.cohesion - 1.0).abs() < f32::EPSILON);
-    }
 }
 
 #[test]

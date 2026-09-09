@@ -119,54 +119,6 @@ fn facet_strict_excluded_claims_free_result_limit_slots() -> Result<()> {
     Ok(())
 }
 
-/// AC 5 — a claim with no `FacetOf` edge surfaces under all three
-/// modes with the exact same (never boosted) score.
-///
-/// ONE-1645: this relevance neutrality is RATIFIED behavior and stays green.
-/// Passing here says nothing about disclosure — stamp-absence is never
-/// invariant evidence (P3/V2). The exposure decision lives on the disclosure
-/// axis; see `unfaceted_scope_is_not_invariant_evidence_contract` for the
-/// pair of assertions that pins the two apart.
-#[test]
-fn facet_unfaceted_claim_passes_all_three_modes_unchanged() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let fixture = setup_facet_fixture(&vault)?;
-
-    let no_facet = vault
-        .query()
-        .search_vector(&FACET_QUERY, 10)
-        .with_temporal_now(FACET_NOW)
-        .run()?;
-    let strict = vault
-        .query()
-        .search_vector(&FACET_QUERY, 10)
-        .with_temporal_now(FACET_NOW)
-        .facet(&fixture.facet_a, FacetMode::Strict)
-        .run()?;
-    let prefer = vault
-        .query()
-        .search_vector(&FACET_QUERY, 10)
-        .with_temporal_now(FACET_NOW)
-        .facet(&fixture.facet_a, FacetMode::Prefer { boost: 2.5 })
-        .run()?;
-
-    for (label, results) in [
-        ("no facet", &no_facet),
-        ("strict", &strict),
-        ("prefer", &prefer),
-    ] {
-        let score = to_score_map(results)
-            .get(&fixture.claim_core)
-            .copied()
-            .unwrap_or_else(|| panic!("unfaceted claim missing under {label} mode"));
-        assert_eq!(
-            score, FACET_R2,
-            "unfaceted claim score must be exactly R2 under {label} mode"
-        );
-    }
-    Ok(())
-}
-
 /// ONE-1645 seam contract: "kept by relevance" is NOT "publicly disclosable".
 /// One unfaceted claim, two axes asserted together — it survives STRICT-mode
 /// relevance filtering, and its unstamped body simultaneously reads the

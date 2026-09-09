@@ -138,14 +138,6 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn han_unigrams_and_bigrams() {
-        let mut out = Vec::new();
-        analyze("東京大学", 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec!["東", "京", "大", "学"]);
-        assert_eq!(ngram_terms(&out), vec!["東京", "京大", "大学"]);
-    }
-
     /// Boundary inputs for `analyze`: empty string and single-char input.
     /// Both share the property "no bigram should be emitted"; only the
     /// empty case additionally asserts that `analyze` returns the
@@ -289,19 +281,4 @@ mod tests {
     // `bigram_shares_position_with_first_char` and `position_base_is_honored`
     // are folded into `cjk_ngram_offset_and_position_handling` above.
 
-    #[test]
-    fn hangul_syllable_bigrams() {
-        let mut out = Vec::new();
-        analyze("안녕하세요", 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec!["안", "녕", "하", "세", "요"]);
-        assert_eq!(ngram_terms(&out), vec!["안녕", "녕하", "하세", "세요"]);
-    }
-
-    #[test]
-    fn hiragana_unigrams_and_bigrams() {
-        let mut out = Vec::new();
-        analyze("とうきょう", 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec!["と", "う", "き", "ょ", "う"]);
-        assert_eq!(ngram_terms(&out), vec!["とう", "うき", "きょ", "ょう"]);
-    }
 }

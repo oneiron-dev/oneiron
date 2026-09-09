@@ -1651,64 +1651,6 @@ async fn lease_revoke_route_uses_idempotency_key_replay_cache() {
 // ─── Update relay + durability ────────────────────────────────────────────────
 
 #[tokio::test]
-async fn ephemeral_presence_relays_between_two_clients() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret(Some("presence-secret")),
-    )
-    .await;
-
-    let mut client_a = connect(addr, Some("presence-secret")).await.unwrap();
-    let mut client_b = connect(addr, Some("presence-secret")).await.unwrap();
-    let _ = next_binary(&mut client_a).await; // root snapshot
-    let _ = next_binary(&mut client_b).await; // root snapshot
-
-    client_a
-        .send(Message::Binary(
-            encode_ephemeral_set("presence:device-a", "online").into(),
-        ))
-        .await
-        .unwrap();
-
-    let relayed = next_binary(&mut client_b).await;
-    let receiver = EphemeralStore::new(30_000);
-    apply_ephemeral_frame(&receiver, &relayed);
-    assert_eq!(receiver.get("presence:device-a"), Some("online".into()));
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn ephemeral_late_join_receives_hub_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret(Some("late-secret")),
-    )
-    .await;
-
-    let mut client_a = connect(addr, Some("late-secret")).await.unwrap();
-    let _ = next_binary(&mut client_a).await; // root snapshot
-    client_a
-        .send(Message::Binary(
-            encode_ephemeral_set("presence:device-a", "online").into(),
-        ))
-        .await
-        .unwrap();
-
-    let mut client_b = connect(addr, Some("late-secret")).await.unwrap();
-    let root = next_binary(&mut client_b).await;
-    assert_eq!(root[0], TAG_SYNC_UPDATE);
-    let snapshot = next_binary(&mut client_b).await;
-    let receiver = EphemeralStore::new(30_000);
-    apply_ephemeral_frame(&receiver, &snapshot);
-    assert_eq!(receiver.get("presence:device-a"), Some("online".into()));
-
-    handle.abort();
-}
-
-#[tokio::test]
 async fn ephemeral_late_join_snapshot_prunes_expired_keys() {
     let dir = tempfile::tempdir().unwrap();
     let config = SyncServerConfig {

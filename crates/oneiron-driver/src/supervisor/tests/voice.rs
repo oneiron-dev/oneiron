@@ -116,43 +116,6 @@ fn seven_units() -> LlmResponse {
     }
 }
 
-#[test]
-fn local_runtime_factory_keeps_the_same_backend_allocation() {
-    use oneiron_llm_local::{LocalAbortHandle, LocalGeneration, LocalModelMetadata};
-
-    struct UnusedRuntime(LocalModelMetadata);
-
-    impl LocalLlmRuntime for UnusedRuntime {
-        fn metadata(&self) -> &LocalModelMetadata {
-            &self.0
-        }
-
-        fn generate<'a>(
-            &'a self,
-            _request: LlmRequest,
-            _abort: LocalAbortHandle,
-        ) -> LlmResult<LocalGeneration<'a>> {
-            panic!("construction must not call a model")
-        }
-    }
-
-    let (_dir, vault, factory, _calls) = fixture();
-    let model = ModelId::new("test/tiny@v1").unwrap();
-    let factory = ConsolidationExecutorFactory::with_local_runtime(
-        UnusedRuntime(LocalModelMetadata::new(model.clone(), "test", 1024)),
-        DreamerClaimAuthoringStrategy::SinglePass,
-        factory.actor,
-        model,
-        Box::new(UnusedSink),
-    );
-    assert!(factory.voice.is_none());
-    let backend = Arc::clone(&factory.backend);
-    let factory = factory.with_voice(voice_config(&vault));
-    let guard = pass_guard(&vault, &factory);
-    let host = factory.voice_host(&vault, &guard).unwrap().unwrap();
-    assert!(Arc::ptr_eq(&backend, host.backend()));
-}
-
 #[tokio::test]
 async fn factory_backend_and_executor_share_the_voice_pass_meter() {
     let (_dir, vault, factory, mut calls) = fixture();

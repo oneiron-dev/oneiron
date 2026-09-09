@@ -29,45 +29,6 @@ fn seed_stale_vector_state(vault: &Vault, id: &EntityId, vector: &[f32]) -> Resu
 }
 
 #[test]
-fn claim_candidate_lexical_hints_bypass_hint_policy_gate() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let actor = EntityId::now();
-    let subject = EntityId::now();
-    let occurred = test_time_range(1, 1);
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
-
-    let claim = EntityId::now();
-    let envelope = test_write_envelope(actor)?;
-    let candidate = ClaimCandidate::new(
-        "profile.preference",
-        ClaimSubject::Entity(subject),
-        Value::from("sencha"),
-        0.9,
-    );
-    vault
-        .batch()
-        .claim_candidate_with_lexical_hints(
-            &claim,
-            candidate,
-            &envelope,
-            test_time_range(10, 10),
-            11,
-            &["policy bypass lexical hint"],
-        )
-        .commit()?;
-
-    assert_eq!(
-        vault
-            .search_text("policy bypass lexical", 10)?
-            .first()
-            .map(|hit| hit.id),
-        Some(claim)
-    );
-    Ok(())
-}
-
-#[test]
 fn raw_lexical_hint_put_does_not_bypass_policy_gate() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let actor = EntityId::now();

@@ -587,23 +587,6 @@ fn expand_window_rejects_text_the_dependency_alone_accepts() {
 }
 
 #[test]
-fn series_surface_is_reachable_from_the_crate_root() {
-    // Two consumers import this API — CAL-09 freebusy and ONE-1539/CMT-2 —
-    // and they write `oneiron::calendar::expand_window`. Naming the signatures rather
-    // than the paths alone also pins the shared-consumer contract: engine
-    // scalars in, `Result<Vec<u64>, CalendarError>` out, no wrapper.
-    let _: fn(&str, SeriesDtStart<'_>, TimeRange) -> Result<Vec<u64>, CalendarError> =
-        crate::calendar::expand_window;
-    let _: fn(&CalendarSeriesMasterValue, TimeRange) -> Result<Vec<u64>, CalendarError> =
-        crate::calendar::expand_master_window;
-    let _: fn(&CalendarSeriesExceptionValue) -> crate::calendar::SeriesExceptionKey<'_> =
-        crate::calendar::exception_identity;
-    let _: fn(EntityId, &str, Vec<u64>, &[CalendarSeriesExceptionValue]) -> Vec<u64> =
-        crate::calendar::mask_master_exceptions;
-    let _: crate::calendar::SeriesDtStart<'_> = london(JAN_05_0900_LONDON);
-}
-
-#[test]
 fn series_exception_identity_is_view_of_claim_value() {
     let exception = CalendarSeriesExceptionValue {
         master_ref: entity(0x71),

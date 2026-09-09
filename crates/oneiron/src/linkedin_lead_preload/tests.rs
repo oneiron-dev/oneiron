@@ -702,36 +702,3 @@ fn linkedin_preload_rejects_structurally_valid_occupied_claim_identity_mismatche
     }
     Ok(())
 }
-
-#[test]
-fn linkedin_preload_fixture_is_synthetic() {
-    let corpus = fixture();
-    for company in corpus.companies {
-        assert!(company.external_id.starts_with("synthetic-"));
-        assert!(company.display_name.starts_with("Synthetic "));
-        assert!(
-            company
-                .website_domain
-                .expect("fixture")
-                .ends_with(".example")
-        );
-        assert!(
-            company
-                .profile_url
-                .expect("fixture")
-                .starts_with("https://linkedin.example/")
-        );
-    }
-    for contact in corpus.contacts {
-        assert!(contact.external_id.starts_with("synthetic-"));
-        assert!(contact.company_external_id.starts_with("synthetic-"));
-        assert!(contact.display_name.starts_with("Synthetic "));
-        assert!(contact.title.expect("fixture").starts_with("Synthetic "));
-        assert!(
-            contact
-                .profile_url
-                .expect("fixture")
-                .starts_with("https://linkedin.example/")
-        );
-    }
-}

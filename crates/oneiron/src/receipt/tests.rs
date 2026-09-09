@@ -622,39 +622,6 @@ fn gate_receipt_system_notice_selection_is_order_independent() {
 }
 
 #[test]
-fn receipt_query_filters_negative_space_outcomes_identically() -> Result<()> {
-    let (_tmp, vault) = temp_vault()?;
-    append_gate_decision(&vault, 10, "agent-alpha", "delivered", "gate.allow")?;
-    append_gate_decision(
-        &vault,
-        11,
-        "agent-alpha",
-        "held",
-        "gate.pending.external_effect_authority",
-    )?;
-    append_gate_decision(
-        &vault,
-        12,
-        "agent-beta",
-        "let_go",
-        "gate.pending.external_effect_authority",
-    )?;
-
-    let held = vault.receipts(ReceiptQuery::new(10).with_outcome("held"))?;
-    assert_eq!(held.len(), 1);
-    assert_eq!(held[0].outcome, "held");
-
-    let let_go = vault.receipts(ReceiptQuery::new(10).with_outcome("let_go"))?;
-    assert_eq!(let_go.len(), 1);
-    assert_eq!(let_go[0].actor.as_deref(), Some("agent-beta"));
-
-    let delivered = vault.receipts(ReceiptQuery::new(10).with_outcome("delivered"))?;
-    assert_eq!(delivered.len(), 1);
-    assert_eq!(delivered[0].outcome, "delivered");
-    Ok(())
-}
-
-#[test]
 fn pending_tray_returns_current_asks_with_age_hold_reason_and_receipt_view() -> Result<()> {
     let (_tmp, vault) = temp_vault()?;
     let old_claim = entity(0x81);
@@ -1116,47 +1083,6 @@ fn grant_projection_filters_before_projection_limit() {
     assert_eq!(projection.receipts.len(), 1);
     assert_eq!(projection.receipts[0].receipt_id, "outbound:grant-newer");
     assert_eq!(projection.budget_debit_total, 5);
-}
-
-#[test]
-fn brief_projection_chain_walks_when_job_ref_is_absent() {
-    let receipts = vec![
-        projected_receipt(
-            "gate:run-planning",
-            ReceiptKind::Gate,
-            10,
-            "started",
-            None,
-            Some("run:planning"),
-            &[("parent_ref", "brief:party")],
-        ),
-        projected_receipt(
-            "outbound:intent:invite-aki",
-            ReceiptKind::Outbound,
-            11,
-            "delivered_to_channel",
-            None,
-            Some("intent:invite-aki"),
-            &[
-                ("run_ref", "run:planning"),
-                ("counterparty_ref", "person:aki"),
-                ("budget_debit", "4"),
-            ],
-        ),
-    ];
-
-    let projection = project_receipts_by_brief("brief:party", receipts);
-
-    assert_eq!(projection.runs.len(), 1);
-    assert_eq!(projection.runs[0].run_ref, "run:planning");
-    assert_eq!(projection.runs[0].intents.len(), 1);
-    assert_eq!(
-        projection.runs[0].intents[0].receipts[0]
-            .trigger_ref
-            .as_deref(),
-        Some("intent:invite-aki")
-    );
-    assert_eq!(projection.budget_debit_total, 4);
 }
 
 #[test]

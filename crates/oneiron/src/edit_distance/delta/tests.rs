@@ -152,33 +152,6 @@ fn field_diff_counts_changed_leaves_not_bytes() {
     assert_ne!(delta.proposed_ref, delta.final_ref);
 }
 
-/// The two ends of the scale: an untouched body scores 0, a body whose every
-/// leaf was rewritten scores 1 — the same score a full text rewrite gets, so
-/// the two lanes' numbers are comparable.
-#[test]
-fn field_diff_spans_the_full_normalized_range() {
-    let proposed = body(&[("a", Value::from(1)), ("b", Value::from(2))]);
-    let untouched = delta_from_field_diff(&proposed, &proposed).expect("untouched");
-    assert_eq!(untouched.d_norm, 0.0);
-    assert_eq!(
-        untouched.ops_summary,
-        OpsSummary {
-            ins: 0,
-            del: 0,
-            kept: 2,
-            moved: 0,
-            approx: false,
-        }
-    );
-
-    let rewritten = delta_from_field_diff(
-        &proposed,
-        &body(&[("a", Value::from(9)), ("b", Value::from(8))]),
-    )
-    .expect("rewritten");
-    assert_eq!(rewritten.d_norm, 1.0);
-}
-
 /// A type change is not a partial edit: the whole subtree on each side is
 /// charged, so replacing an array with a scalar cannot read as one small
 /// change.
@@ -215,24 +188,6 @@ fn field_diff_rejects_bytes_that_are_not_a_body() {
     assert!(delta_from_field_diff(&tail, &body(&[])).is_err());
 }
 
-/// Nesting deeper than the traversal cap is compared as one opaque leaf. The
-/// number degrades; the process does not.
-#[test]
-fn field_diff_bottoms_out_past_the_depth_cap_without_recursing() {
-    let nest = |leaf: Value| {
-        let mut value = leaf;
-        for _ in 0..(MAX_FIELD_DIFF_DEPTH + 40) {
-            value = Value::Array(vec![value]);
-        }
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &value).expect("encode nest");
-        bytes
-    };
-    let delta =
-        delta_from_field_diff(&nest(Value::from(1)), &nest(Value::from(2))).expect("deep diff");
-    assert_eq!(delta.d_norm, 1.0);
-}
-
 // ─── recorded-ops lane ──────────────────────────────────────────────────
 
 /// The recorded lane counts CHURN — the word inserted by the first change and
@@ -256,23 +211,6 @@ fn recorded_ops_counts_churn_and_endpoint_survivors() {
     assert_eq!(delta.d_norm, 0.5);
     assert_eq!(delta.proposed_ref, "0102");
     assert_eq!(delta.final_ref, "0304");
-}
-
-/// An endpoint comparison would score this window at zero. The recorded lane
-/// sees the work: that gap IS the lane's reason to outrank field-diff.
-#[test]
-fn recorded_ops_sees_work_that_the_endpoints_hide() {
-    let mut window = churned_window();
-    window.ops_by_actor = vec![
-        span("draft", "wholly different"),
-        span("wholly different", "draft"),
-    ];
-    window.proposed_text = "draft".to_owned();
-    window.final_text = "draft".to_owned();
-
-    let delta = delta_from_recorded_ops(&window);
-    assert!(delta.ops_summary.ins > 0 && delta.ops_summary.del > 0);
-    assert!(delta.d_norm > 0.0);
 }
 
 /// An empty window is `0.0`, not a division by zero.

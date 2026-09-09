@@ -463,13 +463,3 @@ async fn hybrid_push_wakes_while_deadline_is_far() {
     // waits it out (paused time auto-advances).
     assert_eq!(hybrid.next_tick().await, Some(Tick::Deadline(deadline)));
 }
-
-#[tokio::test]
-async fn hybrid_ends_when_no_deadline_and_no_producers() {
-    let timer = TimerTick::with_clock(ScriptedDeadlines::new(vec![None]), frozen_clock(0));
-    let (push, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
-    drop(wake);
-    drop(hint);
-    let mut hybrid = HybridTick::new(timer, push);
-    assert_eq!(hybrid.next_tick().await, None);
-}

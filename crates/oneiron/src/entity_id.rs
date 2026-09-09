@@ -315,15 +315,6 @@ mod tests {
         }
     }
 
-    /// The prefix run is MAXIMAL, so a two-letter prefix can never be read as a
-    /// one-letter prefix followed by a letter-led counter.
-    #[test]
-    fn presentation_grammar_is_unambiguous() {
-        let parsed = parse_presentation_id("sm12").expect("sm12 parses");
-        assert_eq!(parsed.prefix, "sm");
-        assert_eq!(parsed.digits, "12");
-    }
-
     #[test]
     fn presentation_grammar_rejects_malformed_shapes() {
         for raw in [

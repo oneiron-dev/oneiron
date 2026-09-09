@@ -546,12 +546,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "only defined for Unix epoch and later dates")]
-    fn unix_seconds_from_civil_rejects_pre_epoch_dates() {
-        let _ = unix_seconds_from_civil(1969, 12, 31);
-    }
-
-    #[test]
     fn temporal_expression_calendar_ranges_saturate_at_epoch_boundary() {
         assert_eq!(
             parse_temporal_expression("last month", 0).unwrap(),

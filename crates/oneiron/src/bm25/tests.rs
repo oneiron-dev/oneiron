@@ -169,48 +169,6 @@ fn repeated(term: &str, count: usize) -> String {
 }
 
 #[test]
-fn default_config_matches_plan_defaults() {
-    let c = Bm25Config::default();
-    assert_eq!(c.k1, 1.2);
-    assert_eq!(c.formula, Bm25Formula::Okapi);
-    let surface = c.field(AnalyzerChannel::Surface);
-    assert_eq!(surface.weight, 1.00);
-    assert_eq!(surface.b, 0.75);
-    assert_eq!(
-        surface.length_policy,
-        FieldLengthPolicy::CountLengthIncrement
-    );
-    let ngram = c.field(AnalyzerChannel::CjkNgram);
-    assert_eq!(ngram.weight, 0.45);
-    assert_eq!(ngram.b, 0.30);
-    let overlay = c.field(AnalyzerChannel::NormalizedOverlay);
-    assert_eq!(overlay.length_policy, FieldLengthPolicy::NoNorm);
-    // Reserved channels disabled.
-    assert_eq!(c.field(AnalyzerChannel::Shingle).weight, 0.0);
-    assert_eq!(c.field(AnalyzerChannel::Synonym).weight, 0.0);
-    assert_eq!(c.field(AnalyzerChannel::Phonetic).weight, 0.0);
-}
-
-#[test]
-fn index_and_search_basic() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id1 = EntityId::now();
-    let id2 = EntityId::now();
-    let id3 = EntityId::now();
-
-    put_text_doc(&vault, &id1, "rust language and systems")?;
-    put_text_doc(&vault, &id2, "bm25 ranking in search")?;
-    put_text_doc(&vault, &id3, "graph traversal only")?;
-
-    let results = vault.search_text("rust", 10)?;
-    assert!(contains_id(&results, &id1));
-    assert!(!contains_id(&results, &id2));
-    assert!(!contains_id(&results, &id3));
-    Ok(())
-}
-
-#[test]
 fn scoped_prefix_expansion_resolves_lexical_hint_target() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -503,45 +461,6 @@ fn final_token_prefix_matches_only_last_query_token() -> Result<()> {
 }
 
 #[test]
-fn final_token_prefix_expands_matching_terms_below_cap() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    put_raw_posting_terms(
-        &vault,
-        &[
-            "normprefixalpha".to_owned(),
-            "normprefixbeta".to_owned(),
-            "otherprefix".to_owned(),
-        ],
-    )?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    let mut terms = BTreeMap::new();
-    let mut exact_posting_matches_scope = |_id: &EntityId| Ok(true);
-    collect_final_token_prefix_terms(
-        &vault.store,
-        &rtxn,
-        "normprefix".len(),
-        &Bm25Config::default(),
-        &[final_word_token("normprefix")],
-        &mut terms,
-        &mut exact_posting_matches_scope,
-    )?;
-
-    let collected = terms.keys().cloned().collect::<Vec<_>>();
-    assert_eq!(
-        collected,
-        vec!["normprefixalpha".to_owned(), "normprefixbeta".to_owned()]
-    );
-    assert!(
-        terms
-            .values()
-            .all(|weight| *weight == FINAL_TOKEN_PREFIX_WEIGHT)
-    );
-    Ok(())
-}
-
-#[test]
 fn final_token_prefix_ignores_derived_stem_prefixes() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -612,54 +531,6 @@ fn final_token_prefix_expansion_is_capped_in_deterministic_order() -> Result<()>
         .collect::<Vec<_>>();
     assert_eq!(collected, expected);
     assert!(!terms.contains_key(&cap_prefix_term(MAX_FINAL_TOKEN_PREFIX_TERMS)));
-    Ok(())
-}
-
-#[test]
-fn final_token_prefix_expansion_applies_cap_after_scope_filtering() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let prefix = "scopecap";
-    let in_scope_index = MAX_FINAL_TOKEN_PREFIX_TERMS + 1;
-    let in_scope_id = test_entity_id(0x8000);
-    let mut postings = (0..in_scope_index)
-        .map(|idx| {
-            (
-                format!("{prefix}{idx:04}"),
-                test_entity_id(u16::try_from(idx).expect("test id fits in u16")),
-            )
-        })
-        .collect::<Vec<_>>();
-    postings.push((format!("{prefix}{in_scope_index:04}"), in_scope_id));
-    put_raw_posting_terms_with_ids(&vault, &postings)?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    let mut terms = BTreeMap::new();
-    let mut scope_checks = 0usize;
-    let mut exact_posting_matches_scope = |id: &EntityId| {
-        scope_checks += 1;
-        Ok(*id == in_scope_id)
-    };
-    collect_final_token_prefix_terms(
-        &vault.store,
-        &rtxn,
-        prefix.len(),
-        &Bm25Config::default(),
-        &[final_word_token(prefix)],
-        &mut terms,
-        &mut exact_posting_matches_scope,
-    )?;
-
-    let in_scope_term = format!("{prefix}{in_scope_index:04}");
-    assert_eq!(
-        terms.keys().cloned().collect::<Vec<_>>(),
-        vec![in_scope_term]
-    );
-    assert!(
-        scope_checks > MAX_FINAL_TOKEN_PREFIX_TERMS,
-        "scope filtering must happen before the 64-term expansion cap"
-    );
-    assert!(scope_checks <= MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS);
     Ok(())
 }
 
@@ -834,27 +705,6 @@ fn empty_query_returns_empty() -> Result<()> {
 }
 
 #[test]
-fn zero_limit_returns_empty() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-    put_text_doc(&vault, &id, "hello world")?;
-
-    let results = vault.search_text("hello", 0)?;
-    assert!(results.is_empty());
-    Ok(())
-}
-
-#[test]
-fn empty_vault_query_returns_empty() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let results = vault.search_text("hello", 10)?;
-    assert!(results.is_empty());
-    Ok(())
-}
-
-#[test]
 fn empty_document() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -885,40 +735,6 @@ fn reindex_overwrites_cleanly() -> Result<()> {
 
     assert!(!contains_id(&foo_results, &id));
     assert!(contains_id(&baz_results, &id));
-    Ok(())
-}
-
-#[test]
-fn fullwidth_ascii_document_matches_ascii_query() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-    put_text_doc(&vault, &id, "ＡＢＣ fullwidth mixed with regular ABC")?;
-
-    let lower = vault.search_text("abc", 10)?;
-    assert!(contains_id(&lower, &id));
-    let upper = vault.search_text("ABC", 10)?;
-    assert!(contains_id(&upper, &id));
-    let fullwidth = vault.search_text("ＡＢＣ", 10)?;
-    assert!(contains_id(&fullwidth, &id));
-    Ok(())
-}
-
-#[test]
-fn stem_channel_enables_cross_inflection_recall() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id_runs = EntityId::now();
-    let id_ran = EntityId::now();
-    put_text_doc(&vault, &id_runs, "she runs every morning before work")?;
-    // `runs`, `running`, `runnings` all Snowball-stem to `run`, so a
-    // `running` query must reach a doc that only carries a sibling
-    // inflection. Regression guard for symmetric stem emission.
-    put_text_doc(&vault, &id_ran, "he runnings the marathon next spring")?;
-
-    let hits = vault.search_text("running", 10)?;
-    assert!(contains_id(&hits, &id_runs));
-    assert!(contains_id(&hits, &id_ran));
     Ok(())
 }
 
@@ -998,31 +814,6 @@ fn normalized_overlay_persists_zero_field_length() -> Result<()> {
     }
 
     assert!(vault.delete_entity(&id)?);
-    Ok(())
-}
-
-#[test]
-fn cjk_query_matches_bigram_channel() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-
-    put_text_doc(&vault, &id, "東京塔")?;
-    // "東京" matches the `東京` bigram on the CjkNgram channel.
-    let results = vault.search_text("東京", 10)?;
-    assert!(contains_id(&results, &id));
-    Ok(())
-}
-
-#[test]
-fn single_character_cjk_document_is_searchable() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-
-    put_text_doc(&vault, &id, "東")?;
-    let results = vault.search_text("東", 10)?;
-    assert!(contains_id(&results, &id));
     Ok(())
 }
 

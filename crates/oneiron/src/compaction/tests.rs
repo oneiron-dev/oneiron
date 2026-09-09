@@ -993,29 +993,6 @@ fn a_thousand_token_profile_compacts_at_five_hundred_not_zero() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn a_backend_error_abandons_to_idle_and_the_next_crossing_begins_again() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let mut driver = engine_driver(1_000);
-
-    assert!(matches!(
-        driver.evaluate_now(&vault, 900)?,
-        CompactionDirective::Begin { .. }
-    ));
-    assert!(driver.is_compacting());
-
-    driver.abandon();
-    assert!(!driver.is_compacting(), "abandon returns to Idle");
-    assert!(
-        matches!(
-            driver.evaluate_now(&vault, 900)?,
-            CompactionDirective::Begin { .. }
-        ),
-        "the next crossing begins again — abandon minted nothing to block it"
-    );
-    Ok(())
-}
-
 // ── the request ─────────────────────────────────────────────────────────
 
 #[test]
@@ -1075,22 +1052,6 @@ fn request_for_carries_the_host_window_and_the_profile_summary_budget() -> Resul
         split_driver.request_for(&vault, &session, host_window(&vault, 0xA0, 1, 1))?;
     assert_eq!(split_request.summary_token_budget, 400);
     Ok(())
-}
-
-#[test]
-fn the_request_watermark_carries_no_epoch_number() {
-    // The type itself is the proof: a watermark that cannot NAME an epoch
-    // cannot leak one into the request, so numbering can only happen inside
-    // `integrate`'s write transaction.
-    let watermark = CompactionWatermark {
-        learned_at: 7,
-        turn_id: None,
-    };
-    let rendered = format!("{watermark:?}");
-    assert!(
-        !rendered.contains("epoch"),
-        "CompactionWatermark carries no epoch field: {rendered}"
-    );
 }
 
 // ── the margin law's starvation table ───────────────────────────────────

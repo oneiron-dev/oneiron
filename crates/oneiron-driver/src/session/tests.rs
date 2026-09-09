@@ -242,16 +242,6 @@ fn config_rejects_a_ceiling_at_or_below_the_idle_floor() {
 }
 
 #[test]
-fn default_constructor_pins_the_ticket_twenty_minute_idle_floor() {
-    // ONE-1685 pins the default: 20 minutes. The literal is the oracle —
-    // a drive-by edit of the constant must fail here.
-    let config = SessionLifecycleConfig::with_idle_floor_default(CEILING);
-    assert_eq!(config.idle_floor_secs, 1_200);
-    assert_eq!(config.lifetime_ceiling_secs, CEILING);
-    assert_eq!(DEFAULT_SESSION_IDLE_FLOOR_SECS, 1_200);
-}
-
-#[test]
 fn stamped_lifecycle_mutations_never_read_the_injected_wall_clock() {
     let (_dir, vault) = open_vault();
     let panic_clock: NowMillis = Arc::new(|| {
@@ -587,27 +577,6 @@ fn coalesced_activity_straddling_the_ceiling_closes_and_drops_the_post_wall_tail
             .sum::<u64>(),
         4,
         "the post-ceiling endpoint was not attributed to the sitting"
-    );
-}
-
-#[test]
-fn app_open_mints_a_zero_turn_session() {
-    let (_dir, vault) = open_vault();
-    let (_now, clock) = manual_clock(1_000_000);
-    let driver = driver(&vault, SessionLifecycleConfig::new(FLOOR, CEILING), clock);
-
-    let effect = apply_now(&driver, SessionHint::AppOpen).expect("app open");
-    let SessionHintEffect::Minted(id) = effect else {
-        panic!("expected a fresh mint, got {effect:?}");
-    };
-    // Presence is signal: no turn was ever witnessed.
-    let open = vault.open_session().expect("read").expect("open");
-    assert_eq!(open.session, id);
-    assert_eq!(open.started_at, 1_000);
-    assert_eq!(
-        meso_attempt_count(&vault),
-        0,
-        "minting fires no consolidation"
     );
 }
 

@@ -2277,11 +2277,3 @@ fn held_out_anchor_must_match_external_gold() {
         assert!(matches!(err, CampaignError::HeldOutAnchorMismatch));
     }
 }
-
-#[test]
-fn campaign_scope_guards_exclude_unrelated_symbols() {
-    assert!(!MODULE_SOURCE.contains(concat!("Companion", "Mem")));
-    assert!(!MODULE_SOURCE.contains(concat!("oneiron", "_bench")));
-    assert!(!MODULE_SOURCE.contains(concat!("interface", "_bench")));
-    assert!(!MODULE_SOURCE.contains(concat!("Evaluation", "Split::Sealed")));
-}

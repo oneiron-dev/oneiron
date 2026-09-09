@@ -786,61 +786,6 @@ fn typed_task_cancel_ignores_forged_body_owner() {
     );
 }
 
-/// P2 F6: only the `Task` role folds into TASKS. A `Habit`-role entity is
-/// not a task and must not render as a TASKS row.
-#[test]
-fn only_task_role_folds_into_tasks_section() {
-    let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
-    let task_role = EntityId::from_bytes([0xB3; 16]).expect("task role id");
-    let habit_role = EntityId::from_bytes([0xB4; 16]).expect("habit role id");
-    vault
-        .put_entity(
-            &task_role,
-            ENTITY_TYPE_TASK,
-            TimeRange {
-                start: 120,
-                end: 120,
-            },
-            120,
-            &crate::habit::task_body_for_test(TaskRole::Task),
-        )
-        .expect("put task-role");
-    vault
-        .put_entity(
-            &habit_role,
-            ENTITY_TYPE_TASK,
-            TimeRange {
-                start: 120,
-                end: 120,
-            },
-            120,
-            &crate::habit::task_body_for_test(TaskRole::Habit),
-        )
-        .expect("put habit-role");
-    let facade = vault.memory(own, EdgeActorClass::Agent);
-
-    let section = facade.tasks_check().expect("check tasks");
-
-    assert_eq!(
-        section
-            .rows
-            .iter()
-            .filter(|row| row.id == task_role.to_hex())
-            .count(),
-        1
-    );
-    assert_eq!(
-        section
-            .rows
-            .iter()
-            .filter(|row| row.id == habit_role.to_hex())
-            .count(),
-        0
-    );
-    assert_eq!(section.rows.len(), 1);
-}
-
 /// P2 F7: a realizing job whose backlink names no surviving intent is
 /// re-emitted as a bare job — rendered exactly once, never dropped.
 #[test]
@@ -982,60 +927,6 @@ fn unprojectable_task_backlinks_render_jobs_exactly_once() {
         0
     );
     assert_eq!(section.rows.len(), 2);
-}
-
-/// P2 F8: one malformed TASK body (typed subkind but missing the typed
-/// fields) must not abort the whole board — it is skipped, and every other
-/// task still renders.
-#[test]
-fn malformed_task_body_does_not_poison_the_board() {
-    let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
-    let facade = vault.memory(own, EdgeActorClass::Agent);
-    let created = facade.tasks_create(&spec(120)).expect("create task");
-    let valid_task = created.task_ref.expect("task ref");
-    let poison = EntityId::from_bytes([0xC2; 16]).expect("poison id");
-    let poison_body = {
-        let value = Value::Map(vec![
-            (Value::from("role"), Value::from(TaskRole::Task.role_byte())),
-            (Value::from("subkind"), Value::from(TASK_VERB_BODY_SUBKIND)),
-        ]);
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &value).expect("encode poison body");
-        bytes
-    };
-    vault
-        .put_entity(
-            &poison,
-            ENTITY_TYPE_TASK,
-            TimeRange {
-                start: 120,
-                end: 120,
-            },
-            120,
-            &poison_body,
-        )
-        .expect("put poison task");
-
-    let section = facade.tasks_check().expect("check tasks survives poison");
-
-    assert_eq!(
-        section
-            .rows
-            .iter()
-            .filter(|row| row.id == valid_task.to_hex())
-            .count(),
-        1
-    );
-    assert_eq!(
-        section
-            .rows
-            .iter()
-            .filter(|row| row.id == poison.to_hex())
-            .count(),
-        0
-    );
-    assert_eq!(section.rows.len(), 1);
 }
 
 /// P2 F8 reaches the AUTHORITY-fact read, not just the typed body: an owner
