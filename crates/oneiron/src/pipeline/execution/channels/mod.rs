@@ -4,12 +4,14 @@ mod admit;
 mod post_blend;
 mod ppr_expand;
 mod rerank;
+mod text;
 mod trace_assembly;
 
-use self::admit::{AdmitSignal, ChannelAccumulator};
+use self::admit::ChannelAccumulator;
 use self::post_blend::{PostBlend, PostBlendInputs};
 use self::ppr_expand::{PprExpandInputs, PprExpandState};
 use self::rerank::{RerankApplied, RerankLadderInputs};
+use self::text::TextChannelInputs;
 use self::trace_assembly::TraceInputs;
 use super::super::blend::{
     AccessFactorApplication, RetrievalBlendConfig, RetrievalChannelIndexes,
@@ -17,23 +19,15 @@ use super::super::blend::{
 };
 use super::super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::super::builder::PipelineBuilder;
-use super::super::channels::{
-    execute_phonetic, scoped_text_channel_limit, truncate_widened_channel_results_to_scope,
-};
+use super::super::channels::execute_phonetic;
 use super::super::corpus_filter::CorpusFilter;
-use super::super::filters::{
-    apply_claim_status_gate, apply_relationship_filter, claim_status_gate_allows,
-    import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
-};
+use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
 use super::super::trace::{record_ppr_cache_outcome, retrieval_trace_fused_scores};
-use super::super::types::{
-    ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PPR_DAMPING, RelMode,
-};
+use super::super::types::{ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode};
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
 use crate::bm25::Bm25Config;
 use crate::context_pack::EmptyReason;
-use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
@@ -85,7 +79,6 @@ impl PipelineBuilder<'_> {
             );
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
-            let mut text_channel_index = None;
             let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, &rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache {
@@ -122,70 +115,14 @@ impl PipelineBuilder<'_> {
                 include_stale: authority_filter.include_stale,
                 ..ClaimStatusGateCache::default()
             };
-            let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
-                && *limit > 0
-                && self.candidate_filter.is_none()
-            {
-                let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
-                    expansion.grounded_query.as_str()
-                });
-                let exact_posting_fails_claim_gate = {
-                    let mut exact_posting_fails_claim_gate = |id: &EntityId| {
-                        claim_status_gate_allows(
-                            &self.vault.store,
-                            &rtxn,
-                            id,
-                            &mut metadata_cache,
-                            &mut claim_gate_widening_probe,
-                        )
-                        .map(|allowed| !allowed)
-                    };
-                    crate::bm25::final_token_exact_posting_matches(
-                        &self.vault.store,
-                        &rtxn,
-                        &self.vault.analyzer,
-                        bm25_config,
-                        text_query,
-                        &mut exact_posting_fails_claim_gate,
-                    )?
-                };
-                if exact_posting_fails_claim_gate {
-                    true
-                } else {
-                    let mut classify_prefix_posting = |id: &EntityId| {
-                        let rejected_by_gate = !claim_status_gate_allows(
-                            &self.vault.store,
-                            &rtxn,
-                            id,
-                            &mut metadata_cache,
-                            &mut claim_gate_widening_probe,
-                        )?;
-                        let matches_scope = !rejected_by_gate
-                            && pipeline_candidate_matches_filters_and_gate(
-                                &self.vault.store,
-                                &rtxn,
-                                id,
-                                filter_config,
-                                &mut metadata_cache,
-                                &mut claim_gate_widening_probe,
-                            )?;
-                        Ok(crate::bm25::PrefixExpansionPostingDecision {
-                            matches_scope,
-                            rejected_by_gate,
-                        })
-                    };
-                    crate::bm25::final_token_prefix_expansion_has_scoped_and_rejected_postings(
-                        &self.vault.store,
-                        &rtxn,
-                        &self.vault.analyzer,
-                        bm25_config,
-                        text_query,
-                        &mut classify_prefix_posting,
-                    )?
-                }
-            } else {
-                false
-            };
+            let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
+                &rtxn,
+                bm25_config,
+                hyde_expansion,
+                filter_config,
+                &mut metadata_cache,
+                &mut claim_gate_widening_probe,
+            )?;
             let text_scope_widening_active = codebase_scope_active
                 || self.has_strict_text_scope_filter()
                 || occurred_range.is_some()
@@ -244,162 +181,23 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
-            if let Some((query, limit)) = &self.text_search {
-                let scoped_text_limit = scoped_text_channel_limit(
-                    &self.vault.store,
-                    &rtxn,
-                    if overrides.widen_channel_limits {
-                        retry_channel_limit(*limit)
-                    } else {
-                        *limit
-                    },
-                    text_scope_widening_active,
-                )?;
-                let text_channel_limit = if recency.is_some() {
-                    scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
-                } else {
-                    scoped_text_limit
-                };
-                let mut prefix_probe_claim_gate = claim_gate_widening_probe;
-                let mut exact_posting_matches_scope = |id: &EntityId| {
-                    pipeline_candidate_matches_filters_and_gate(
-                        &self.vault.store,
-                        &rtxn,
-                        id,
-                        filter_config,
-                        &mut metadata_cache,
-                        &mut prefix_probe_claim_gate,
-                    )
-                };
-                let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
-                    expansion.grounded_query.as_str()
-                });
-                let search = if self.candidate_filter.is_some() {
-                    crate::bm25::search_text_filtered_with_recency
-                } else {
-                    crate::bm25::search_text_scoped_with_recency
-                };
-                let mut text_results = search(
-                    &self.vault.store,
-                    &rtxn,
-                    &self.vault.analyzer,
+            let text_channel_index = self.run_text_channel(
+                &rtxn,
+                TextChannelInputs {
                     bm25_config,
-                    text_query,
-                    if self.candidate_filter.is_some() {
-                        *limit
-                    } else {
-                        text_channel_limit
-                    },
-                    crate::bm25::Bm25SearchOptions {
-                        recency: None,
-                        exact_posting_matches_scope: &mut exact_posting_matches_scope,
-                    },
-                )?;
-                diagnostics.succeeded.push(RetrievalSignal::Text);
-                if self.candidate_filter.is_none()
-                    && text_channel_limit > *limit
-                    && text_scope_widening_active
-                {
-                    let scoped_result_limit = if recency.is_some() {
-                        limit.saturating_mul(PER_SCAN_CAP_FACTOR)
-                    } else {
-                        *limit
-                    };
-                    truncate_widened_channel_results_to_scope(
-                        &mut text_results,
-                        &self.vault.store,
-                        &rtxn,
-                        scoped_result_limit,
-                        filter_config,
-                        &mut metadata_cache,
-                        &mut prefix_probe_claim_gate,
-                    )?;
-                }
-                import_claim_gate_decisions_for_scores(
-                    &mut claim_gate,
-                    &mut prefix_probe_claim_gate,
-                    &text_results,
-                );
-                text_channel_index = Some(acc.admit_channel(
-                    RetrievalSignal::Text,
-                    text_results,
-                    &self.vault.store,
-                    &rtxn,
+                    hyde_expansion,
+                    overrides: &overrides,
+                    recency,
                     filter_config,
-                    &mut metadata_cache,
-                )?);
-                for query in overrides.extra_text_queries {
-                    let retry_scoped_text_limit = scoped_text_channel_limit(
-                        &self.vault.store,
-                        &rtxn,
-                        retry_channel_limit(*limit),
-                        text_scope_widening_active,
-                    )?;
-                    let retry_text_channel_limit = if recency.is_some() {
-                        retry_scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
-                    } else {
-                        retry_scoped_text_limit
-                    };
-                    let mut retry_prefix_probe_claim_gate = ClaimStatusGateCache {
-                        include_stale: authority_filter.include_stale,
-                        ..ClaimStatusGateCache::default()
-                    };
-                    let mut retry_exact_posting_matches_scope = |id: &EntityId| {
-                        pipeline_candidate_matches_filters_and_gate(
-                            &self.vault.store,
-                            &rtxn,
-                            id,
-                            filter_config,
-                            &mut metadata_cache,
-                            &mut retry_prefix_probe_claim_gate,
-                        )
-                    };
-                    let mut results = crate::bm25::search_text_scoped_with_recency(
-                        &self.vault.store,
-                        &rtxn,
-                        &self.vault.analyzer,
-                        bm25_config,
-                        query,
-                        retry_text_channel_limit,
-                        crate::bm25::Bm25SearchOptions {
-                            recency: None,
-                            exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
-                        },
-                    )?;
-                    if retry_text_channel_limit > *limit && text_scope_widening_active {
-                        let scoped_result_limit = if recency.is_some() {
-                            limit.saturating_mul(PER_SCAN_CAP_FACTOR)
-                        } else {
-                            *limit
-                        };
-                        truncate_widened_channel_results_to_scope(
-                            &mut results,
-                            &self.vault.store,
-                            &rtxn,
-                            scoped_result_limit,
-                            filter_config,
-                            &mut metadata_cache,
-                            &mut retry_prefix_probe_claim_gate,
-                        )?;
-                    }
-                    import_claim_gate_decisions_for_scores(
-                        &mut claim_gate,
-                        &mut retry_prefix_probe_claim_gate,
-                        &results,
-                    );
-                    acc.admit_channel(
-                        AdmitSignal {
-                            components: RetrievalSignal::Text,
-                            trace: RetrievalSignal::HydeRetry,
-                        },
-                        results,
-                        &self.vault.store,
-                        &rtxn,
-                        filter_config,
-                        &mut metadata_cache,
-                    )?;
-                }
-            }
+                    authority_filter,
+                    text_scope_widening_active,
+                    claim_gate_widening_probe,
+                },
+                &mut acc,
+                &mut diagnostics,
+                &mut metadata_cache,
+                &mut claim_gate,
+            )?;
 
             if let Some(codes) = &self.phonetic_search {
                 let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
