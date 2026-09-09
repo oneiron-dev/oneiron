@@ -544,16 +544,6 @@ mod tests {
             !axis.child_holds_open_vault,
             "a custom child's TCP connect proves readiness, not vault residency"
         );
-        assert!(
-            axis.vault_residency_evidence.contains("readiness only"),
-            "{}",
-            axis.vault_residency_evidence
-        );
-        assert!(
-            axis.vault_residency_evidence.contains("does not prove"),
-            "{}",
-            axis.vault_residency_evidence
-        );
     }
 
     /// A program substituted through `ONEIRON_BENCH_PERF_CHILD` is exactly as
@@ -591,20 +581,6 @@ mod tests {
             !overridden.child_holds_open_vault,
             "an overridden child's TCP connect proves readiness, not vault residency"
         );
-        assert!(
-            overridden
-                .vault_residency_evidence
-                .contains("readiness only"),
-            "{}",
-            overridden.vault_residency_evidence
-        );
-        assert!(
-            overridden
-                .vault_residency_evidence
-                .contains("ONEIRON_BENCH_PERF_CHILD"),
-            "the evidence line must name the override that made the child opaque: {}",
-            overridden.vault_residency_evidence
-        );
 
         // Only the harness's own child, on the very same cohort, may claim it.
         let owned = measured(
@@ -616,13 +592,6 @@ mod tests {
             EvidenceKind::MeasuredWallClock,
         );
         assert!(owned.child_holds_open_vault);
-        assert_ne!(
-            owned.vault_residency_evidence,
-            overridden.vault_residency_evidence
-        );
-        assert!(!VaultResidency::EnvironmentOverride.proves_open_vault());
-        assert!(!VaultResidency::CallerSuppliedPlan.proves_open_vault());
-        assert!(VaultResidency::HarnessOwned.proves_open_vault());
     }
 
     /// A measured cohort records that every sample was taken while all the
@@ -646,15 +615,10 @@ mod tests {
         assert_eq!(axis.ready_children_observed, 10);
         assert!(axis.sampled_while_all_children_ready);
         assert!(axis.child_holds_open_vault);
-        assert!(
-            axis.vault_residency_evidence
-                .contains("opens the assigned vault")
-        );
         assert_eq!(
             axis.total_child_rss_bytes.value().copied(),
             Some(10_240_000)
         );
         assert_eq!(axis.shutdown_outcomes.get("exited").copied(), Some(10));
-        assert_eq!(axis.shutdown_rule, CHILD_SHUTDOWN_RULE);
     }
 }

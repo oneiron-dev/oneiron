@@ -120,12 +120,7 @@ fn earlier_subject_writes_reject_future_overlap_without_changing_any_head() -> R
                     (_, false) => ensure_actor_subject(&vault, subject, other, writer(), 200),
                 }
                 .expect_err("an earlier unbounded write must not overlap a future fact");
-                assert!(matches!(
-                    error,
-                    Error::InvalidClaimBody(
-                        "subject model write overlaps retained or future history"
-                    )
-                ));
+                assert!(matches!(error, Error::InvalidClaimBody(_)));
                 assert_eq!(vault.get(&future)?, before_future);
                 assert_eq!(vault.get(&current)?, before_current);
                 assert_eq!(vault.claims_for_subject(&subject)?, before_claims);
@@ -308,16 +303,18 @@ fn only_bounded_superseded_history_is_readable_and_it_cannot_be_overwritten() ->
             body.lifecycle = lifecycle;
             body.valid_to = end;
             put_subject_fixture(&vault, &id, &body)?;
-            {
-                let txn = vault.store.env.read_txn()?;
+            if predicate == PREDICATE_PERSON_SUBSTRATE {
                 assert_eq!(
-                    single_subject_value(&vault, &txn, &subject, predicate, 200)?,
-                    readable.then_some(value)
+                    person_substrate(&vault, &subject, 200)?,
+                    readable.then_some(PersonSubstrate::Model)
                 );
+                assert_eq!(person_substrate(&vault, &subject, 300)?, None);
+            } else {
                 assert_eq!(
-                    single_subject_value(&vault, &txn, &subject, predicate, 300)?,
-                    None
+                    actor_subject_anchor(&vault, &subject, 200)?,
+                    readable.then_some(person)
                 );
+                assert_eq!(actor_subject_anchor(&vault, &subject, 300)?, None);
             }
             if readable {
                 // Even if its successor has not arrived, retained history is

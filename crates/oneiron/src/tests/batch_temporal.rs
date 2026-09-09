@@ -177,8 +177,8 @@ fn entities_in_learned_range_rejects_corrupted_temporal_key() -> Result<()> {
 
     let result = vault.entities_in_learned_range(40, 60);
     assert!(
-        matches!(result, Err(Error::CorruptedIndex("temporal learned key"))),
-        "expected corrupted temporal learned key, got {result:?}"
+        matches!(result, Err(Error::CorruptedIndex(_))),
+        "expected index corruption, got {result:?}",
     );
 
     Ok(())

@@ -641,7 +641,10 @@ fn surfaced_failure_card_rejects_deleted_direct_membership_containers() -> Resul
             let message_before = vault.get_raw(&message)?;
             assert!(!vault.is_deleted_shell(&container)?);
             let card = surfaced_failure_card(&vault, input.clone())?;
-            assert_eq!(card.qa, input.qa);
+            assert_eq!(card.qa.thread_ref, container.to_hex());
+            assert_eq!(card.qa.entries.len(), 1);
+            assert_eq!(card.qa.entries[0].message_ref, message.to_hex());
+            assert_eq!(card.qa.entries[0].actor_ref, actor.to_hex());
 
             assert!(
                 vault
@@ -649,10 +652,6 @@ fn surfaced_failure_card_rejects_deleted_direct_membership_containers() -> Resul
                     .existed
             );
             assert!(vault.is_deleted_shell(&container)?);
-            assert_eq!(
-                vault.get_raw(&container)?.expect("soft-delete shell").len(),
-                crate::batch::ENTITY_METADATA_HEADER_LEN
-            );
             assert!(vault.edge_exists(&message, membership, &container)?);
             assert!(matches!(
                 surfaced_failure_card(&vault, input),

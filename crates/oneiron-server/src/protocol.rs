@@ -363,7 +363,10 @@ mod tests {
 
     #[test]
     fn parse_message_unknown_tag() {
-        assert!(parse_message(&[50, 1, 2, 3]).is_err());
+        assert!(matches!(
+            parse_message(&[50, 1, 2, 3]),
+            Err(ProtocolError::UnknownTag(50)),
+        ));
     }
 
     #[test]

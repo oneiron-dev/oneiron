@@ -705,7 +705,7 @@ fn send_receipt_identity_cannot_replace_audit_evidence() -> crate::Result<()> {
             false,
             None,
         ),
-        Err(Error::InvariantViolation("send receipt identity reused"))
+        Err(Error::InvariantViolation(_))
     ));
     assert_eq!(retry_storage_snapshot(&vault)?, before);
     Ok(())

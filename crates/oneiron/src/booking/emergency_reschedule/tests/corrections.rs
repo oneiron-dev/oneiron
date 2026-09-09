@@ -266,12 +266,26 @@ fn owner_first_enumeration_and_per_item_fact_refusals_do_not_poison_the_batch() 
             )
             .unwrap();
     }
-    let mut refusals = Vec::new();
-    let rows = enumerate_with_refusals(&vault, &plan.request, NOW, &mut refusals).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].calendar.event_ref, plan.booking.calendar.event_ref);
-    assert_eq!(refusals.len(), 1);
-    assert_eq!(refusals[0].0, malformed.calendar.event_ref);
+    let batch = plan_emergency_reschedule(&vault, &plan.request, &calendars(), NOW).unwrap();
+    assert_eq!(batch.plans.len(), 1);
+    assert_eq!(
+        batch.plans[0].booking().calendar.event_ref,
+        plan.booking().calendar.event_ref,
+    );
+    assert_eq!(batch.refusals.len(), 1);
+    assert_eq!(batch.refusals[0].0, malformed.calendar.event_ref);
+    assert!(
+        batch
+            .plans
+            .iter()
+            .all(|planned| planned.booking().calendar.event_ref != other.calendar.event_ref),
+    );
+    assert!(
+        batch
+            .refusals
+            .iter()
+            .all(|(event, _)| *event != other.calendar.event_ref),
+    );
 }
 
 #[test]

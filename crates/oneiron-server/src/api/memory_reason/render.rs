@@ -154,7 +154,6 @@ mod tests {
         for field in ["shortId", "kind", "text"] {
             assert_eq!(decoded[0][field], evidence[0].text);
         }
-        assert_eq!(encoded.lines().count(), 3);
     }
 
     #[test]

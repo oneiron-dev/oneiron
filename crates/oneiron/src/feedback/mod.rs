@@ -117,7 +117,7 @@ mod tests;
 #[cfg(test)]
 use crate::config::VaultConfig;
 #[cfg(test)]
-use crate::genui::{ConsentActionDecision, ConsentActionEvaluation, ConsentAskCard};
+use crate::genui::{ConsentActionDecision, ConsentActionEvaluation};
 #[cfg(test)]
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundExecutionOutcome,

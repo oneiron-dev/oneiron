@@ -77,33 +77,77 @@ fn starts(masks: &[(EntityId, Vec<TimeRange>)]) -> Vec<(u64, u64)> {
 
 #[test]
 fn civil_date_arithmetic_round_trips_and_names_weekdays() {
-    assert_eq!(days_from_civil(1970, 1, 1), 0);
-    assert_eq!(civil_from_days(0), (1970, 1, 1));
-    assert_eq!(weekday_of(0), 3, "1970-01-01 was a Thursday");
-    for days in [-100_000_i64, -1, 0, 1, 20_000, 100_000] {
-        let (y, mo, d) = civil_from_days(days);
-        assert_eq!(days_from_civil(y, mo, d), days, "{y}-{mo}-{d}");
-    }
-    // 2026-03-02 is a Monday, and the week index is Monday-anchored.
-    let monday = days_from_civil(2026, 3, 2);
-    assert_eq!(weekday_of(monday), 0);
-    assert_eq!(week_of(monday), week_of(monday + 6));
-    assert_ne!(week_of(monday), week_of(monday + 7));
-    assert_ne!(week_of(monday), week_of(monday - 1));
+    let mut config = utc_host_config();
+    config.weekly_cap = Some(1);
+    let offer = |candidate: u64, booked: u64| {
+        let counts = BookingCounts {
+            daily: Vec::new(),
+            weekly: vec![BookingCountBucket {
+                window_start_utc: booked,
+                window_end_utc: booked + 3_600,
+                confirmed: 1,
+            }],
+        };
+        let masks = apply_event_type_knobs(
+            vec![(
+                id(HOST_A),
+                vec![TimeRange {
+                    start: candidate,
+                    end: candidate + 1_800,
+                }],
+            )],
+            &config,
+            "UTC",
+            &counts,
+        );
+        rank_and_emit(
+            route_host_masks(masks, RoutingMode::Either),
+            &config,
+            None,
+            "UTC",
+            &counts,
+        )
+    };
+    let sunday = MONDAY - 86_400 + 9 * 3_600;
+    let monday = MONDAY + 9 * 3_600;
+    assert!(offer(sunday, sunday - 6 * 86_400).slots.is_empty());
+    assert!(offer(monday, monday).slots.is_empty());
+    let monday_offer = offer(monday, sunday);
+    assert_eq!(monday_offer.slots.len(), 1);
+    assert_eq!(monday_offer.slots[0].start_utc, monday);
+    let sunday_offer = offer(sunday, monday);
+    assert_eq!(sunday_offer.slots.len(), 1);
+    assert_eq!(sunday_offer.slots[0].start_utc, sunday);
 }
 
 #[test]
 fn working_hours_convert_wall_windows_through_the_border() {
-    let masks = working_hours_mask(&utc_host_config(), monday()).expect("mask");
-    assert_eq!(starts(&masks), [(MONDAY + 9 * 3_600, MONDAY + 11 * 3_600)]);
+    let offer = |config: &EventTypeConfig| {
+        let masks = working_hours_mask(config, monday()).expect("mask");
+        let candidates = apply_event_type_knobs(masks, config, "UTC", &empty_counts());
+        rank_and_emit(
+            route_host_masks(candidates, RoutingMode::Either),
+            config,
+            None,
+            "UTC",
+            &empty_counts(),
+        )
+    };
+    let check = |config: &EventTypeConfig, start: u64, count: usize| {
+        let solved = offer(config);
+        assert_eq!(solved.slots.len(), count);
+        for index in 0..count {
+            assert!(solved.slots.iter().any(|slot| {
+                slot.start_utc == start + index as u64 * 1_800
+                    && slot.end_utc == start + (index as u64 + 1) * 1_800
+            }));
+        }
+    };
+    check(&utc_host_config(), MONDAY + 9 * 3_600, 4);
 
-    // The same civil window in a zone with an offset lands elsewhere in UTC,
-    // so the conversion is real rather than an identity.
     let shifted = config(vec![host(HOST_A, "Asia/Tokyo", vec![window(0, 9, 11)])]);
-    let masks = working_hours_mask(&shifted, monday()).expect("mask");
-    assert_eq!(starts(&masks), [(MONDAY, MONDAY + 2 * 3_600)]);
+    check(&shifted, MONDAY, 4);
 
-    // A window ending at midnight carries into the next civil day.
     let midnight = config(vec![host(
         HOST_A,
         "UTC",
@@ -113,36 +157,45 @@ fn working_hours_convert_wall_windows_through_the_border() {
             end_minute: MINUTES_PER_DAY,
         }],
     )]);
-    let masks = working_hours_mask(&midnight, monday()).expect("mask");
-    assert_eq!(starts(&masks), [(MONDAY + 23 * 3_600, MONDAY + 86_400)]);
+    check(&midnight, MONDAY + 23 * 3_600, 2);
 
-    // A window on another weekday contributes nothing.
     let tuesday_only = config(vec![host(HOST_A, "UTC", vec![window(1, 9, 11)])]);
-    assert!(starts(&working_hours_mask(&tuesday_only, monday()).expect("mask")).is_empty());
+    assert!(offer(&tuesday_only).slots.is_empty());
 }
 
 #[test]
 fn nonexistent_wall_boundary_skips_the_occurrence_without_shifting() {
-    // Europe/London springs forward 2026-03-29 at 01:00 local; 01:00-02:00
-    // does not exist. A window anchored inside the gap has no instants and
-    // is skipped; the neighbouring hour converts normally.
-    let sunday = MONDAY + 27 * 86_400; // 2026-03-29
+    // Europe/London springs forward on 2026-03-29; the gap is skipped.
+    let sunday = MONDAY + 27 * 86_400;
     let gap_window = TimeRange {
         start: sunday,
         end: sunday + 86_400,
     };
+    let offer = |config: &EventTypeConfig| {
+        let masks = working_hours_mask(config, gap_window).expect("mask");
+        let candidates = apply_event_type_knobs(masks, config, "UTC", &empty_counts());
+        rank_and_emit(
+            route_host_masks(candidates, RoutingMode::Either),
+            config,
+            None,
+            "UTC",
+            &empty_counts(),
+        )
+    };
     let gapped = config(vec![host(HOST_A, "Europe/London", vec![window(6, 1, 2)])]);
-    assert!(
-        starts(&working_hours_mask(&gapped, gap_window).expect("mask")).is_empty(),
-        "a skipped hour is never shifted into the adjacent one"
-    );
+    assert!(offer(&gapped).slots.is_empty());
 
     let ordinary = config(vec![host(HOST_A, "Europe/London", vec![window(6, 3, 4)])]);
-    assert_eq!(
-        starts(&working_hours_mask(&ordinary, gap_window).expect("mask")).len(),
-        1,
-        "the rejection is the gap, not the whole day"
-    );
+    let solved = offer(&ordinary);
+    assert_eq!(solved.slots.len(), 2);
+    for start in [sunday + 2 * 3_600, sunday + 2 * 3_600 + 1_800] {
+        assert!(
+            solved
+                .slots
+                .iter()
+                .any(|slot| { slot.start_utc == start && slot.end_utc == start + 1_800 })
+        );
+    }
 }
 
 #[test]
@@ -183,40 +236,36 @@ fn buffers_expand_existing_and_candidate_meetings() {
         let mut config = utc_host_config();
         config.pre_buffer_min = pre;
         config.post_buffer_min = post;
-        starts(&apply_buffers(
-            vec![(id(HOST_A), mask.clone(), busy.clone())],
+        config.slot_step_min = 15;
+        let masks = apply_buffers(vec![(id(HOST_A), mask.clone(), busy.clone())], &config);
+        let candidates = apply_event_type_knobs(masks, &config, "UTC", &empty_counts());
+        rank_and_emit(
+            route_host_masks(candidates, RoutingMode::Either),
             &config,
-        ))
+            None,
+            "UTC",
+            &empty_counts(),
+        )
     };
-
-    // No buffers: the busy hour alone is removed.
-    assert_eq!(
-        apply(0, 0),
-        [
-            (MONDAY + 9 * 3_600, MONDAY + 10 * 3_600),
-            (MONDAY + 11 * 3_600, MONDAY + 12 * 3_600)
-        ]
-    );
-    // The required gap either side is one meeting's post-buffer plus the
-    // other's pre-buffer, so pre-only and post-only shrink both sides.
-    assert_eq!(
-        apply(15, 0),
-        [
-            (MONDAY + 9 * 3_600, MONDAY + 10 * 3_600 - 900),
-            (MONDAY + 11 * 3_600 + 900, MONDAY + 12 * 3_600)
-        ]
-    );
-    assert_eq!(apply(0, 15), apply(15, 0), "the gap is pre + post");
-    assert_eq!(
-        apply(15, 15),
-        [
-            (MONDAY + 9 * 3_600, MONDAY + 10 * 3_600 - 1_800),
-            (MONDAY + 11 * 3_600 + 1_800, MONDAY + 12 * 3_600)
-        ]
-    );
-    // A buffer wide enough to reach the mask edges clips rather than
-    // underflowing, and adjacent busy runs coalesce.
-    assert!(apply(180, 180).is_empty());
+    let check = |pre: u16, post: u16, minutes: &[u64]| {
+        let solved = apply(pre, post);
+        assert_eq!(solved.slots.len(), minutes.len());
+        for minute in minutes {
+            let start = MONDAY + minute * 60;
+            assert!(
+                solved
+                    .slots
+                    .iter()
+                    .any(|slot| { slot.start_utc == start && slot.end_utc == start + 1_800 })
+            );
+        }
+    };
+    check(0, 0, &[540, 555, 570, 660, 675, 690]);
+    // A fifteen-minute grid distinguishes asymmetric from combined buffers.
+    check(15, 0, &[540, 555, 675, 690]);
+    check(0, 15, &[540, 555, 675, 690]);
+    check(15, 15, &[540, 690]);
+    assert!(apply(180, 180).slots.is_empty());
 }
 
 #[test]
@@ -226,24 +275,31 @@ fn notice_24h_and_48h_presets_clip_candidates() {
         let mut config = utc_host_config();
         config.min_notice_secs = notice;
         config.booking_window_secs = horizon;
-        starts(&enforce_notice_and_window(
-            mask.clone(),
-            MONDAY,
-            monday(),
+        let masks = enforce_notice_and_window(mask.clone(), MONDAY, monday(), &config);
+        let candidates = apply_event_type_knobs(masks, &config, "UTC", &empty_counts());
+        rank_and_emit(
+            route_host_masks(candidates, RoutingMode::Either),
             &config,
-        ))
+            None,
+            "UTC",
+            &empty_counts(),
+        )
     };
-    assert_eq!(clip(0, 30 * 86_400), [(MONDAY, MONDAY + 86_400)]);
-    assert_eq!(
-        clip(24 * 3_600, 30 * 86_400),
-        [],
-        "a 24h notice consumes the whole first day"
-    );
-    assert_eq!(
-        clip(12 * 3_600, 30 * 86_400),
-        [(MONDAY + 12 * 3_600, MONDAY + 86_400)]
-    );
-    assert_eq!(clip(48 * 3_600, 30 * 86_400), []);
+    for (notice, first, count) in [(0, MONDAY, 48), (12 * 3_600, MONDAY + 12 * 3_600, 24)] {
+        let solved = clip(notice, 30 * 86_400);
+        assert_eq!(solved.slots.len(), count);
+        for index in 0..count {
+            let start = first + index as u64 * 1_800;
+            assert!(
+                solved
+                    .slots
+                    .iter()
+                    .any(|slot| { slot.start_utc == start && slot.end_utc == start + 1_800 })
+            );
+        }
+    }
+    assert!(clip(24 * 3_600, 30 * 86_400).slots.is_empty());
+    assert!(clip(48 * 3_600, 30 * 86_400).slots.is_empty());
 }
 
 #[test]
@@ -255,7 +311,27 @@ fn constrained_booking_window_clips_far_future_slots() {
     let mut config = utc_host_config();
     config.booking_window_secs = 7 * 86_400;
     let clipped = enforce_notice_and_window(vec![(id(HOST_A), vec![far])], MONDAY, far, &config);
-    assert_eq!(starts(&clipped), [(MONDAY, MONDAY + 7 * 86_400)]);
+    let candidates = apply_event_type_knobs(clipped, &config, "UTC", &empty_counts());
+    let solved = rank_and_emit(
+        route_host_masks(candidates, RoutingMode::Either),
+        &config,
+        None,
+        "UTC",
+        &empty_counts(),
+    );
+    let horizon = MONDAY + 7 * 86_400;
+    assert_eq!(solved.slots.len(), 7 * 48);
+    for index in 0..7 * 48 {
+        let start = MONDAY + index * 1_800;
+        assert!(
+            solved
+                .slots
+                .iter()
+                .any(|slot| { slot.start_utc == start && slot.end_utc == start + 1_800 })
+        );
+    }
+    assert!(solved.slots.iter().all(|slot| slot.end_utc <= horizon));
+    assert!(!solved.slots.iter().any(|slot| slot.start_utc >= horizon));
 }
 
 #[test]
@@ -267,20 +343,29 @@ fn duration_and_step_cut_candidates_on_the_epoch_grid() {
             end: MONDAY + 10 * 3_600 + 1_800,
         }],
     )];
-    let config = utc_host_config();
-    assert_eq!(config.duration_min, 30);
-    let slots = apply_event_type_knobs(mask, &config, "UTC", &empty_counts());
-    assert_eq!(
-        starts(&slots),
-        [
-            (MONDAY + 9 * 3_600, MONDAY + 9 * 3_600 + 1_800),
-            (MONDAY + 9 * 3_600 + 1_800, MONDAY + 10 * 3_600),
-            (MONDAY + 10 * 3_600, MONDAY + 10 * 3_600 + 1_800),
-        ]
-    );
+    let mut config = utc_host_config();
+    config.duration_min = 30;
+    config.slot_step_min = 30;
+    let offer = |mask| {
+        let candidates = apply_event_type_knobs(mask, &config, "UTC", &empty_counts());
+        rank_and_emit(
+            route_host_masks(candidates, RoutingMode::Either),
+            &config,
+            None,
+            "UTC",
+            &empty_counts(),
+        )
+    };
+    let solved = offer(mask);
+    assert_eq!(solved.slots.len(), 3);
+    for start in [
+        MONDAY + 9 * 3_600,
+        MONDAY + 9 * 3_600 + 1_800,
+        MONDAY + 10 * 3_600,
+    ] {
+        assert!(solved.slots.iter().any(|slot| slot.start_utc == start));
+    }
 
-    // An unaligned mask start snaps forward onto the shared grid, so two
-    // hosts always propose the same instants.
     let ragged = vec![(
         id(HOST_A),
         vec![TimeRange {
@@ -288,16 +373,20 @@ fn duration_and_step_cut_candidates_on_the_epoch_grid() {
             end: MONDAY + 10 * 3_600 + 1_800,
         }],
     )];
-    assert_eq!(
-        starts(&apply_event_type_knobs(
-            ragged,
-            &config,
-            "UTC",
-            &empty_counts()
-        ))[0]
-            .0,
-        MONDAY + 9 * 3_600 + 1_800
-    );
+    let ragged_solved = offer(ragged);
+    assert_eq!(ragged_solved.slots.len(), 2);
+    for start in [MONDAY + 9 * 3_600 + 1_800, MONDAY + 10 * 3_600] {
+        assert!(
+            ragged_solved
+                .slots
+                .iter()
+                .any(|slot| slot.start_utc == start)
+        );
+    }
+    for slot in solved.slots.iter().chain(ragged_solved.slots.iter()) {
+        assert_eq!(slot.end_utc - slot.start_utc, 1_800);
+        assert_eq!(slot.start_utc % 1_800, 0);
+    }
 }
 
 #[test]
@@ -309,10 +398,31 @@ fn visitor_local_daily_and_weekly_caps_use_typed_booking_counts() {
             end: MONDAY + 10 * 3_600,
         }],
     )];
+    let offer = |config: &EventTypeConfig, tz: &str, counts: &BookingCounts| {
+        let candidates = apply_event_type_knobs(mask.clone(), config, tz, counts);
+        rank_and_emit(
+            route_host_masks(candidates, RoutingMode::Either),
+            config,
+            None,
+            tz,
+            counts,
+        )
+    };
+    let check_available = |solved: SolveResult| {
+        assert_eq!(solved.slots.len(), 2);
+        for start in [MONDAY + 9 * 3_600, MONDAY + 9 * 3_600 + 1_800] {
+            assert!(
+                solved
+                    .slots
+                    .iter()
+                    .any(|slot| { slot.start_utc == start && slot.end_utc == start + 1_800 })
+            );
+        }
+    };
     let mut config = utc_host_config();
     config.daily_cap = Some(1);
 
-    // One confirmed booking on the visitor's Monday fills the daily cap.
+    // One confirmed booking fills the visitor's Monday in UTC.
     let counts = BookingCounts {
         daily: vec![BookingCountBucket {
             window_start_utc: MONDAY + 3_600,
@@ -321,41 +431,14 @@ fn visitor_local_daily_and_weekly_caps_use_typed_booking_counts() {
         }],
         weekly: Vec::new(),
     };
-    assert!(
-        apply_event_type_knobs(mask.clone(), &config, "UTC", &counts)
-            .iter()
-            .all(|(_, slots)| slots.is_empty())
-    );
+    assert!(offer(&config, "UTC", &counts).slots.is_empty());
 
-    // The SAME table, read in a zone eight hours behind. There the bucket's
-    // 01:00Z start is the previous local day while the 09:00Z candidates are
-    // this one, so the bucket charges a different day and the candidates
-    // survive. In UTC both fall on one day and the cap binds — which is what
-    // proves the cap is the VISITOR's, not UTC's.
-    assert_eq!(
-        starts(&apply_event_type_knobs(
-            mask.clone(),
-            &config,
-            "America/Los_Angeles",
-            &counts
-        ))
-        .len(),
-        2
-    );
+    // The same bucket belongs to the previous local day in Los Angeles.
+    check_available(offer(&config, "America/Los_Angeles", &counts));
 
-    // Sparse table: a period with no bucket has zero confirmed bookings.
-    assert_eq!(
-        starts(&apply_event_type_knobs(
-            mask.clone(),
-            &config,
-            "UTC",
-            &empty_counts()
-        ))
-        .len(),
-        2
-    );
+    // An absent bucket means zero confirmed bookings.
+    check_available(offer(&config, "UTC", &empty_counts()));
 
-    // Weekly caps aggregate every bucket in the Monday-anchored week.
     let mut weekly = config;
     weekly.daily_cap = None;
     weekly.weekly_cap = Some(3);
@@ -374,13 +457,9 @@ fn visitor_local_daily_and_weekly_caps_use_typed_booking_counts() {
             },
         ],
     };
-    assert!(
-        apply_event_type_knobs(mask.clone(), &weekly, "UTC", &spread)
-            .iter()
-            .all(|(_, slots)| slots.is_empty()),
-        "2 + 1 confirmed reaches a weekly cap of 3"
-    );
-    // A bucket in the FOLLOWING week does not charge this one.
+    assert!(offer(&weekly, "UTC", &spread).slots.is_empty());
+
+    // A following Tuesday's bucket does not charge this week.
     let next_week = BookingCounts {
         daily: Vec::new(),
         weekly: vec![BookingCountBucket {
@@ -389,10 +468,7 @@ fn visitor_local_daily_and_weekly_caps_use_typed_booking_counts() {
             confirmed: 3,
         }],
     };
-    assert_eq!(
-        starts(&apply_event_type_knobs(mask, &weekly, "UTC", &next_week)).len(),
-        2
-    );
+    check_available(offer(&weekly, "UTC", &next_week));
 }
 
 #[test]
@@ -637,18 +713,21 @@ fn slot_mask_carries_the_half_open_window_and_nothing_else() {
     );
     assert!(mask.flex_used);
     let json = serde_json::to_value(&mask).expect("serialize");
-    assert_eq!(
-        json.as_object()
-            .expect("object")
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        [
-            "event_type",
-            "window_start_utc",
-            "window_end_utc",
-            "slots",
-            "flex_used"
-        ]
-    );
+    let keys = json
+        .as_object()
+        .expect("object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let expected = [
+        "event_type",
+        "window_start_utc",
+        "window_end_utc",
+        "slots",
+        "flex_used",
+    ];
+    assert_eq!(keys.len(), expected.len());
+    for key in expected {
+        assert!(keys.contains(&key), "missing wire key: {key}");
+    }
 }

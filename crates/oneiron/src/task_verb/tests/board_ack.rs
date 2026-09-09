@@ -971,9 +971,7 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
 
     assert!(matches!(
         vault.task_authority_state(forked),
-        Err(crate::error::Error::InvariantViolation(
-            "task authority owner fork"
-        ))
+        Err(crate::error::Error::InvariantViolation(_))
     ));
 
     let section = facade.tasks_check().expect("check tasks survives the fork");
@@ -1010,9 +1008,10 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
     assert_eq!(section.rows.len(), 2);
     // The by-id door agrees with the scan on the poisoned task: hidden here
     // too, never answered with bits the fold could not verify.
-    assert_eq!(
-        task_presence_for_id(&vault, forked).expect("by-id door survives the fork"),
-        None
+    assert!(
+        task_presence_for_id(&vault, forked)
+            .expect("by-id door survives the fork")
+            .is_none()
     );
 }
 
@@ -1056,20 +1055,15 @@ fn a_malformed_authority_fact_row_does_not_poison_the_board() {
 
     assert!(matches!(
         vault.task_authority_state(poisoned),
-        Err(crate::error::Error::InvalidTaskBody(
-            "task authority fact subject"
-        ))
+        Err(crate::error::Error::InvalidTaskBody(_))
     ));
-    assert_eq!(
-        vault
-            .task_authority_state(healthy)
-            .expect("the re-pointed proof still names its own subject"),
-        Some(crate::task_authority::TaskAuthorityState {
-            owner_ref: own,
-            cancelled: false,
-            acked: false,
-        })
-    );
+    let authority = vault
+        .task_authority_state(healthy)
+        .expect("the re-pointed proof still names its own subject")
+        .expect("healthy task still proves an owner");
+    assert_eq!(authority.owner_ref, own);
+    assert!(!authority.cancelled);
+    assert!(!authority.acked);
 
     let section = facade
         .tasks_check()
@@ -1103,8 +1097,9 @@ fn a_malformed_authority_fact_row_does_not_poison_the_board() {
         1
     );
     assert_eq!(section.rows.len(), 2);
-    assert_eq!(
-        task_presence_for_id(&vault, poisoned).expect("by-id door survives the poison"),
-        None
+    assert!(
+        task_presence_for_id(&vault, poisoned)
+            .expect("by-id door survives the poison")
+            .is_none()
     );
 }

@@ -789,37 +789,33 @@ fn consent_reversibility_is_host_classified_biased_permissive() {
 /// vault-wide destruction · security-control disable · mass secret-export."
 #[test]
 fn consent_catastrophe_floor_is_closed_any_trust_non_rememberable() {
-    // EXACT version and set equality — the set is CLOSED, so this asserts
-    // membership, order, and length, not merely "contains".
+    // The version and membership are closed; array order is not the contract.
     assert_eq!(CATASTROPHE_FLOOR_VERSION, 1);
-    assert_eq!(
-        CATASTROPHE_FLOOR_V1,
-        [
-            CatastropheClass::WidenOwnAuthority,
-            CatastropheClass::KeyRecovery,
+    let expected = [
+        (CatastropheClass::WidenOwnAuthority, "widen_own_authority"),
+        (CatastropheClass::KeyRecovery, "key_recovery"),
+        (
             CatastropheClass::VaultWideDestruction,
-            CatastropheClass::SecurityControlDisable,
-            CatastropheClass::MassSecretExport,
-        ]
-    );
-    assert_eq!(CATASTROPHE_FLOOR_V1.len(), 5);
-    assert_eq!(
-        CATASTROPHE_FLOOR_V1.map(CatastropheClass::as_str),
-        [
-            "widen_own_authority",
-            "key_recovery",
             "vault_wide_destruction",
+        ),
+        (
+            CatastropheClass::SecurityControlDisable,
             "security_control_disable",
-            "mass_secret_export",
-        ]
-    );
+        ),
+        (CatastropheClass::MassSecretExport, "mass_secret_export"),
+    ];
+    assert_eq!(CATASTROPHE_FLOOR_V1.len(), 5);
+    for (catastrophe, wire) in expected {
+        assert!(CATASTROPHE_FLOOR_V1.contains(&catastrophe));
+        assert_eq!(catastrophe.as_str(), wire);
+        assert_eq!(CatastropheClass::parse(wire), Some(catastrophe));
+    }
 
     let (_dir, vault, owner) = owner_vault();
 
     for catastrophe in CATASTROPHE_FLOOR_V1 {
-        // GATED AT ANY TRUST LEVEL — even with a covering standing grant AND a
-        // matching approve-once receipt in hand, which is the strongest
-        // "all-yes owner" state the system can be in.
+        // Even covering standing authority and exact approve-once evidence
+        // cannot bypass the in-moment gate.
         let bound = action_bound("agent-a", catastrophe.as_str(), &["scope:all"]);
         let effect = ComposedEffect::new(
             EffectFacts::new("authority.op")
@@ -847,7 +843,6 @@ fn consent_catastrophe_floor_is_closed_any_trust_non_rememberable() {
             catastrophe.as_str()
         );
 
-        // NON-REMEMBERABLE — rejected from standing-grant minting outright.
         assert_eq!(
             vault
                 .create_standing_grant(&owner, bound)
@@ -859,8 +854,7 @@ fn consent_catastrophe_floor_is_closed_any_trust_non_rememberable() {
         );
     }
 
-    // It is the ONLY always-gate: an ordinary irreversible op with a covering
-    // grant runs, so the floor is not just "irreversible ops always ask".
+    // An ordinary irreversible operation with covering authority still runs.
     let ordinary = action_bound("agent-a", "send", &["channel:email"]);
     let effect = ComposedEffect::new(irreversible_send_facts())
         .with_action_requirement(ordinary.clone())
@@ -871,8 +865,6 @@ fn consent_catastrophe_floor_is_closed_any_trust_non_rememberable() {
         ConsentDecision::Auto
     );
 
-    // Round-trips through the pinned strings, so a receipt naming a floor
-    // member is machine-readable and no member string drifts.
     for catastrophe in CATASTROPHE_FLOOR_V1 {
         assert_eq!(
             CatastropheClass::parse(catastrophe.as_str()),

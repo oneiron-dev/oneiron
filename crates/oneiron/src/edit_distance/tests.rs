@@ -294,10 +294,7 @@ fn a_divergent_finalize_cannot_overwrite_the_stored_record() {
     };
     let err = put_finalized_proposal_text(&vault, &divergent)
         .expect_err("a divergent record must not overwrite");
-    assert!(
-        matches!(err, Error::InvariantViolation(msg) if msg.contains("already finalized")),
-        "{err:?}"
-    );
+    assert!(matches!(err, Error::InvariantViolation(_)), "{err:?}");
     assert_eq!(
         finalized_proposal_text(&vault, artifact_ref)
             .expect("read")

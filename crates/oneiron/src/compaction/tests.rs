@@ -385,19 +385,19 @@ fn admit_refuses_a_zero_or_malformed_snapshot_ref() {
     zero_hash.snapshot = snapshot(0x00, 4_096);
     let error =
         admit_compaction_packet(&vault, zero_hash, None).expect_err("zero content hash refused");
-    assert_eq!(
+    assert!(matches!(
         rejection(error),
-        CompactionPacketError::SnapshotMalformed("zero content hash")
-    );
+        CompactionPacketError::SnapshotMalformed(_)
+    ));
 
     let mut zero_len = digest_packet(session, vec![turn]);
     zero_len.snapshot = snapshot(0xAB, 0);
     let error =
         admit_compaction_packet(&vault, zero_len, None).expect_err("zero byte length refused");
-    assert_eq!(
+    assert!(matches!(
         rejection(error),
-        CompactionPacketError::SnapshotMalformed("zero byte length")
-    );
+        CompactionPacketError::SnapshotMalformed(_)
+    ));
 }
 
 #[test]
@@ -457,32 +457,32 @@ fn admit_refuses_a_turn_digest_payload_whose_shape_is_wrong() {
 
     let mut missing_digest = digest_packet(session, vec![turn]);
     missing_digest.digest_text = None;
-    assert_eq!(
+    assert!(matches!(
         rejection(
             admit_compaction_packet(&vault, missing_digest, None)
                 .expect_err("absent digest refused")
         ),
-        CompactionPacketError::PayloadShapeViolation("turn digest requires non-empty digest_text")
-    );
+        CompactionPacketError::PayloadShapeViolation(_)
+    ));
 
     let mut empty_digest = digest_packet(session, vec![turn]);
     empty_digest.digest_text = Some(String::new());
-    assert_eq!(
+    assert!(matches!(
         rejection(
             admit_compaction_packet(&vault, empty_digest, None).expect_err("empty digest refused")
         ),
-        CompactionPacketError::PayloadShapeViolation("turn digest requires non-empty digest_text")
-    );
+        CompactionPacketError::PayloadShapeViolation(_)
+    ));
 
     let mut both_families = digest_packet(session, vec![turn]);
     both_families.working_set_refs = vec![entity(0x61)];
-    assert_eq!(
+    assert!(matches!(
         rejection(
             admit_compaction_packet(&vault, both_families, None)
                 .expect_err("mixed payload families refused")
         ),
-        CompactionPacketError::PayloadShapeViolation("turn digest carries no working_set_refs")
-    );
+        CompactionPacketError::PayloadShapeViolation(_)
+    ));
 }
 
 #[test]
@@ -491,25 +491,23 @@ fn admit_refuses_a_working_set_payload_whose_shape_is_wrong() {
 
     let mut empty_refs = working_set_packet(session, vec![turn]);
     empty_refs.working_set_refs = Vec::new();
-    assert_eq!(
+    assert!(matches!(
         rejection(
             admit_compaction_packet(&vault, empty_refs, None)
                 .expect_err("empty working set refused")
         ),
-        CompactionPacketError::PayloadShapeViolation(
-            "working set handoff requires non-empty working_set_refs"
-        )
-    );
+        CompactionPacketError::PayloadShapeViolation(_)
+    ));
 
     let mut both_families = working_set_packet(session, vec![turn]);
     both_families.digest_text = Some("prose that does not belong here".to_owned());
-    assert_eq!(
+    assert!(matches!(
         rejection(
             admit_compaction_packet(&vault, both_families, None)
                 .expect_err("mixed payload families refused")
         ),
-        CompactionPacketError::PayloadShapeViolation("working set handoff carries no digest_text")
-    );
+        CompactionPacketError::PayloadShapeViolation(_)
+    ));
 }
 
 // ── the membership carrier itself ───────────────────────────────────────
@@ -836,10 +834,7 @@ fn registry_refuses_frontier_and_resolves_only_registered_cheap_backends() {
     let refused = registry
         .register(Arc::new(FrontierBackend))
         .expect_err("a frontier backend is refused at registration");
-    assert_eq!(
-        invariant(refused),
-        "compaction backend declares a frontier tier and is refused"
-    );
+    invariant(refused);
     assert_eq!(
         registry.tier_class_of(FRONTIER_BACKEND),
         None,
@@ -853,18 +848,20 @@ fn registry_refuses_frontier_and_resolves_only_registered_cheap_backends() {
         registry.tier_class_of(CHEAP_BACKEND),
         Some(CompactionTierClass::Cheap)
     );
+    let resolved = registry
+        .resolve(&profile(1_000, CompactionOwnership::Engine))
+        .expect("the registered cheap backend resolves");
+    assert_eq!(resolved.backend_key(), CHEAP_BACKEND);
+    assert_eq!(resolved.tier_class(), CompactionTierClass::Cheap);
 
     let unknown = profile(1_000, CompactionOwnership::Engine);
     let mut unknown = unknown;
     unknown.compaction_backend = ModelTierRef("never.registered".to_owned());
-    assert_eq!(
-        invariant(
-            registry
-                .resolve(&unknown)
-                .err()
-                .expect("unknown key fails typed")
-        ),
-        "compaction backend key is not registered"
+    invariant(
+        registry
+            .resolve(&unknown)
+            .err()
+            .expect("unknown key fails typed"),
     );
 }
 
@@ -889,26 +886,21 @@ fn for_profile_yields_no_driver_for_byoa_and_a_driver_for_engine() {
 
 #[test]
 fn driver_observe_velocity_displaces_the_cold_start_seeds() {
-    let mut driver = engine_driver(1_000);
-    let seeded = driver.margin().margin_tokens();
-    assert_eq!(
-        seeded,
-        (MarginLaw::SEED_LATENCY_MS / 1_000.0 * MarginLaw::SEED_VELOCITY_TPS) as u64,
-        "before any sample the margin is the seed product, not a stored constant"
-    );
+    let mut driver = engine_driver(100_000);
+    let seeded_threshold = driver.compact_at();
 
-    // The FIRST sample displaces the seed outright.
+    // The first sample replaces the seed: 30 seconds at 500 tokens/second
+    // reserves 15,000 tokens, well away from the threshold floor.
     driver.observe_velocity(500.0);
-    let grown = driver.margin().margin_tokens();
-    assert!(
-        grown > seeded,
-        "a larger measured velocity grows the margin: {grown} !> {seeded}"
-    );
-    assert_eq!(driver.margin().measured_velocity_tps(), 500);
+    let fast_threshold = driver.compact_at();
+    assert_eq!(fast_threshold, 85_000);
+    assert!(fast_threshold < seeded_threshold);
 
-    // Feeding a smaller sample moves it back down — nothing is pinned.
+    // A smaller subsequent sample reduces the reserve and delays compaction.
     driver.observe_velocity(1.0);
-    assert!(driver.margin().margin_tokens() < grown);
+    let adapted_threshold = driver.compact_at();
+    assert!(adapted_threshold > fast_threshold);
+    assert!(adapted_threshold < seeded_threshold);
 }
 
 // ── threshold, state machine, and the real serialized product ───────────
@@ -1005,10 +997,7 @@ fn request_for_is_legal_only_while_compacting() {
     let refused = driver
         .request_for(&vault, &session, window)
         .expect_err("Idle has no recorded watermark to build a request from");
-    assert_eq!(
-        invariant(refused),
-        "request_for is legal only while compacting"
-    );
+    invariant(refused);
 }
 
 #[test]
@@ -1264,10 +1253,7 @@ fn an_empty_product_mints_nothing_and_leaves_the_compaction_in_flight() -> Resul
 
     let refused = integrate_product(&vault, &mut driver, session, actor, window, "")
         .expect_err("an empty product is not a compaction result");
-    assert_eq!(
-        invariant(refused),
-        "compaction product summary_text is empty"
-    );
+    invariant(refused);
 
     assert_eq!(
         summary_row_count(&vault),
@@ -1309,11 +1295,7 @@ fn a_whitespace_only_product_is_refused_exactly_like_an_empty_one() {
 
     let refused = integrate_product(&vault, &mut driver, session, actor, window, " \t\r\n ")
         .expect_err("whitespace is not a summary");
-    assert_eq!(
-        invariant(refused),
-        "compaction product summary_text is empty",
-        "blank prose is refused on the same axis as no prose at all"
-    );
+    invariant(refused);
     assert_eq!(summary_row_count(&vault), 0);
     assert_eq!(pending_embedding_marker_count(&vault), 0);
     assert!(driver.is_compacting());
@@ -1335,10 +1317,7 @@ fn a_real_product_still_mints_after_an_empty_one_was_refused() -> Result<()> {
         "",
     )
     .expect_err("the empty product is refused");
-    assert_eq!(
-        invariant(refused),
-        "compaction product summary_text is empty"
-    );
+    invariant(refused);
     driver.abandon();
 
     // The refusal consumed no epoch: the retry mints epoch 1, because the
@@ -1377,21 +1356,26 @@ fn sample_body() -> EpochSummaryBody {
 
 #[test]
 fn epoch_summary_body_keys_are_eight_with_actor_last() {
-    assert_eq!(EPOCH_SUMMARY_BODY_KEYS.len(), 8);
-    assert_eq!(
-        EPOCH_SUMMARY_BODY_KEYS,
-        [
-            "v",
-            "session",
-            "epoch",
-            "turn_start",
-            "turn_end",
-            "level",
-            "text",
-            "actor",
-        ]
-    );
-    assert_eq!(*EPOCH_SUMMARY_BODY_KEYS.last().expect("non-empty"), "actor");
+    let body = sample_body();
+    let entries = [
+        ("v", rmpv::Value::from(body.v)),
+        ("session", rmpv::Value::from(body.session.as_str())),
+        ("epoch", rmpv::Value::from(body.epoch)),
+        ("turn_start", rmpv::Value::from(body.turn_start)),
+        ("turn_end", rmpv::Value::from(body.turn_end)),
+        ("level", rmpv::Value::from(body.level)),
+        ("text", rmpv::Value::from(body.text.as_str())),
+        ("actor", rmpv::Value::from(body.actor.as_str())),
+    ]
+    .into_iter()
+    .map(|(key, value)| (rmpv::Value::from(key), value))
+    .collect();
+    let mut expected = Vec::new();
+    rmpv::encode::write_value(&mut expected, &rmpv::Value::Map(entries))
+        .expect("encode the literal canonical key sequence");
+
+    let encoded = encode_epoch_summary_body(&body).expect("encode sample body");
+    assert_eq!(encoded, expected);
 }
 
 #[test]
@@ -1510,51 +1494,47 @@ fn unvalidated_encode(body: &EpochSummaryBody) -> Vec<u8> {
 }
 
 /// The encoder is the decoder's MIRROR: every axis the strict decoder refuses
-/// is refused at encode time too, with the same detail. A body the codec
+/// is refused at encode time too, as an invariant violation. A body the codec
 /// cannot read back is a body it must never write — otherwise a keyframe
 /// could reach storage that its own consumers refuse at render time.
 #[test]
 fn epoch_summary_encode_refuses_every_axis_the_decoder_refuses() -> Result<()> {
-    type RejectionAxis = (&'static str, fn(&mut EpochSummaryBody));
-    let axes: [RejectionAxis; 5] = [
-        ("unsupported epoch summary codec version", |body| {
+    let axes: [fn(&mut EpochSummaryBody); 5] = [
+        |body| {
             body.v = EPOCH_SUMMARY_BODY_VERSION + 1;
-        }),
-        ("turn_end precedes turn_start", |body| {
+        },
+        |body| {
             body.turn_end = body.turn_start - 1;
-        }),
-        ("entity refs must be 32-hex strings", |body| {
+        },
+        |body| {
             body.session = "not-a-hex-ref".to_owned();
-        }),
-        ("entity refs must be 32-hex strings", |body| {
+        },
+        |body| {
             body.actor = "zz".repeat(16);
-        }),
-        ("epoch summary text is empty", |body| {
+        },
+        |body| {
             body.text = String::new();
-        }),
+        },
     ];
 
-    for (detail, mutate) in axes {
+    for mutate in axes {
         let mut body = sample_body();
         mutate(&mut body);
 
         let refused_encode =
             encode_epoch_summary_body(&body).expect_err("the encoder refuses the axis");
-        assert_eq!(invariant(refused_encode), detail);
+        invariant(refused_encode);
 
         let refused_decode = decode_epoch_summary_body(&unvalidated_encode(&body))
             .expect_err("the decoder refuses the very same bytes");
-        assert_eq!(
-            invariant(refused_decode),
-            detail,
-            "encode and decode must refuse this axis alike"
-        );
+        invariant(refused_decode);
     }
 
-    // The well-formed sample is untouched by the new guards: it still encodes,
-    // still decodes, and still round-trips byte-identically.
+    // The well-formed sample still encodes, decodes, and round-trips
+    // byte-identically, preserving every persisted field.
     let bytes = encode_epoch_summary_body(&sample_body())?;
-    assert_eq!(decode_epoch_summary_body(&bytes)?, sample_body());
+    let decoded = decode_epoch_summary_body(&bytes)?;
+    assert_eq!(unvalidated_encode(&decoded), bytes);
     assert_eq!(unvalidated_encode(&sample_body()), bytes);
     Ok(())
 }

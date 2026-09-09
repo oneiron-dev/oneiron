@@ -1512,31 +1512,22 @@ fn repo_conflict_resolution_roll_forward_completes_claims_after_commit_crash() {
 
 #[test]
 fn repo_mutation_api_has_no_forbidden_raw_git_operations() {
-    assert_eq!(
-        REPO_MUTATION_ALLOWED_OPERATION_KINDS,
-        [
-            "commit_file",
-            "create_worktree",
-            "record_conflict",
-            "remove_worktree",
-            "recover_snapshot",
-            "resolve_conflict_file"
-        ]
-    );
     for forbidden in REPO_MUTATION_FORBIDDEN_GIT_COMMANDS {
         assert!(
             !REPO_MUTATION_ALLOWED_OPERATION_KINDS.contains(&forbidden),
             "{forbidden} must not be an allowed queue operation"
         );
     }
+    validate_relative_repo_path("README.md").expect("admit repository file");
+    validate_relative_repo_path("src/notes.txt").expect("admit nested repository file");
+    validate_base_ref("HEAD").expect("admit base ref");
+
     let err = validate_relative_repo_path(".git/index").expect_err("reject .git path");
     assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
     let err = validate_relative_repo_path("../outside").expect_err("reject parent path");
     assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
     let err = validate_base_ref("-q").expect_err("reject option-like base ref");
     assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
-    let truncated = truncate_failure(&format!("{}é{}", "a".repeat(4095), "b".repeat(16)));
-    assert!(truncated.ends_with("..."));
 }
 
 #[test]

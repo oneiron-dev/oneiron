@@ -53,7 +53,7 @@ use self::queue::{
     repo_mutation_file_lock,
 };
 #[cfg(test)]
-use self::support::{path_arg, truncate_failure, utf8_trimmed};
+use self::support::{path_arg, utf8_trimmed};
 #[cfg(test)]
 use self::trailer::{REPO_PROVENANCE_TRAILER_PREFIX, commit_message_with_provenance_trailer};
 #[cfg(test)]

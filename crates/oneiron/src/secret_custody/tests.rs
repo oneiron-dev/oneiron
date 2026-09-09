@@ -77,10 +77,38 @@ fn tier_orders_by_exposure() {
 
 #[test]
 fn body_keys_are_thirteen_and_complete() {
-    assert_eq!(SECRET_CUSTODY_BODY_KEYS.len(), 13);
-    assert_eq!(SECRET_CUSTODY_BODY_KEYS[0], "schema_version");
-    assert_eq!(SECRET_CUSTODY_BODY_KEYS[4], "value_bytes");
-    assert_eq!(SECRET_CUSTODY_BODY_KEYS[12], "policy_floor_snapshot");
+    let rec = record("api-key", CustodyClass::CrossVault, b"hunter2", vec![]);
+    let bytes = encode_secret_custody_body(&rec).expect("encode");
+    let entries = floor::policy_manifest_body_map(&bytes)
+        .ok()
+        .flatten()
+        .expect("encoded custody body must be a canonical MessagePack map");
+    let required_keys = [
+        "schema_version",
+        "name",
+        "class",
+        "device_only",
+        "value_bytes",
+        "status",
+        "registered_at",
+        "rotated_at",
+        "rotation_generation",
+        "bindings",
+        "manifest_ref",
+        "declared_paths",
+        "policy_floor_snapshot",
+    ];
+    assert_eq!(entries.len(), required_keys.len());
+    for key in required_keys {
+        assert!(
+            floor::required_value(&entries, key).is_some(),
+            "encoded body must contain exactly one {key} key",
+        );
+    }
+    let version = floor::required_value(&entries, "schema_version")
+        .and_then(floor::as_u64)
+        .expect("schema version must be an unsigned integer");
+    assert_eq!(version, 1);
 }
 
 #[test]
@@ -121,9 +149,10 @@ fn record_debug_redacts_value_bytes() {
         !dbg.contains("super-secret-value"),
         "Debug must never leak the value, got: {dbg}"
     );
+    let numeric_bytes = format!("{:?}", b"super-secret-value".to_vec());
     assert!(
-        dbg.contains("<redacted"),
-        "Debug shows a redacted marker: {dbg}"
+        !dbg.contains(&numeric_bytes),
+        "Debug must never leak the numeric value bytes, got: {dbg}"
     );
 }
 
@@ -927,6 +956,34 @@ fn device_only_is_stored_but_inert_on_cross_vault() {
     let back = decode_secret_custody_body(&bytes).expect("decode");
     assert!(back.device_only);
     assert_eq!(back.class, CustodyClass::CrossVault);
-    // The cross-vault floor band stays door-only regardless of the dial.
-    assert_eq!(floor().cross_vault, TierBand::only(CustodyTier::T0Doored));
+
+    for device_only in [false, true] {
+        let (_dir, vault) = temp_vault();
+        let mut doored = record(
+            "xv",
+            CustodyClass::CrossVault,
+            b"v",
+            vec![binding("door:receive-pack", CustodyTier::T0Doored)],
+        );
+        doored.device_only = device_only;
+        let id = vault
+            .register_secret(doored)
+            .expect("admit door-only binding");
+        assert_eq!(vault.resolve_secret_ref("xv").expect("resolve"), Some(id));
+
+        for ceiling in [CustodyTier::T1Leased, CustodyTier::T2LocalRegistered] {
+            let mut wider = record(
+                "xv-wider",
+                CustodyClass::CrossVault,
+                b"v",
+                vec![binding("door:receive-pack", ceiling)],
+            );
+            wider.device_only = device_only;
+            assert!(
+                vault.register_secret(wider).is_err(),
+                "cross-vault must reject exposure above T0 for either dial setting",
+            );
+            assert_eq!(vault.resolve_secret_ref("xv-wider").expect("resolve"), None,);
+        }
+    }
 }

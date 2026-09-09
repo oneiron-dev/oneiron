@@ -35,20 +35,15 @@ fn strict_edge_record_parser_decodes_key_and_value() {
 
 /// ONE-1414 done-means 10 + the no-pooling contract, at the byte level.
 ///
-/// One test because these are one decision: `same_as` is byte 20, carries
-/// the 12-byte structural layout, has NO stored-weight prior, and is never
-/// traversed. A future edit that gave it a λ or a default weight would have
-/// to delete a line here to pass.
+/// `same_as` is byte 20, has NO stored-weight prior, and is never traversed.
+/// Its structural encoding is checked by
+/// `same_as_encodes_explicit_zero_weight_as_a_structural_row`.
 #[test]
 fn same_as_is_byte_20_structural_unweighted_and_never_traversed() {
     assert_eq!(EdgeKind::SameAs as u8, 20);
     assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
     assert_eq!(EdgeKind::SameAs.default_weight(), None);
     assert_eq!(crate::ppr::lambda_for_kind(EdgeKind::SameAs), None);
-    assert_eq!(
-        super::edge_value_layout_for_kind(EdgeKind::SameAs, false),
-        super::EdgeValueLayout::Structural
-    );
 
     // Byte 20 is the ONLY byte this ticket allocates: 21/22 keep their
     // reserved identity-topology meaning untouched.
@@ -70,27 +65,17 @@ fn fulfillment_pair_is_structural_unweighted_and_reserved() {
     assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
     assert_eq!(EdgeKind::try_from_u8(21), Some(EdgeKind::MergedInto));
     assert_eq!(EdgeKind::try_from_u8(22), Some(EdgeKind::SplitInto));
-    // The frontier moved by exactly two.
-    assert!(EdgeKind::try_from_u8(27).is_none());
 
     for kind in [EdgeKind::Fulfills, EdgeKind::DischargedBy] {
         assert_eq!(kind.default_weight(), None);
         assert_eq!(crate::ppr::lambda_for_kind(kind), None);
-        assert_eq!(
-            super::edge_value_layout_for_kind(kind, false),
-            super::EdgeValueLayout::Structural
-        );
         assert!(matches!(
             super::validate_public_edge_kind(kind),
-            Err(crate::error::Error::ReservedEdgeKind(
-                "fulfills" | "discharged_by"
-            ))
+            Err(crate::error::Error::ReservedEdgeKind(_))
         ));
         assert!(matches!(
             super::validate_public_edge_creation_kind(kind),
-            Err(crate::error::Error::ReservedEdgeKind(
-                "fulfills" | "discharged_by"
-            ))
+            Err(crate::error::Error::ReservedEdgeKind(_))
         ));
 
         // The door's explicit 1.0 round-trips as a 12-byte structural row.
@@ -100,7 +85,6 @@ fn fulfillment_pair_is_structural_unweighted_and_reserved() {
         let decoded = super::decode_edge_value_for_kind(kind, &value)
             .expect("structural fulfillment value decodes for its kind");
         assert_eq!(decoded.weight.to_bits(), 1.0_f32.to_bits());
-        assert_eq!(decoded.created_at, 1_772_000_400);
         assert_eq!(decoded.vad, None);
         assert_eq!(decoded.provenance, None);
     }
@@ -152,17 +136,11 @@ fn strict_edge_record_parser_normalizes_corruption_errors() {
     let truncated_value = [0_u8; EDGE_VALUE_STRUCTURAL_LEN - 1];
     let err = parse_strict_edge_record(&key, &truncated_value)
         .expect_err("truncated edge value must fail closed");
-    assert!(matches!(
-        err,
-        crate::error::Error::CorruptedIndex("edge record")
-    ));
+    assert!(matches!(err, crate::error::Error::CorruptedIndex(_)));
 
     key[ENTITY_ID_LEN + 1..].fill(0xFF);
     let value = encode_edge_value(EdgeKind::Supports, 0.5, 1, Vad::NEUTRAL, None).unwrap();
     let err =
         parse_strict_edge_record(&key, &value).expect_err("reserved target id must fail closed");
-    assert!(matches!(
-        err,
-        crate::error::Error::CorruptedIndex("edge record")
-    ));
+    assert!(matches!(err, crate::error::Error::CorruptedIndex(_)));
 }

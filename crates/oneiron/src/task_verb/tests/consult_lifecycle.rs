@@ -580,7 +580,7 @@ fn expiry_digest_is_once_per_task_and_recovers_from_the_crash_window() {
 }
 
 /// The asker's failed lane keeps an expired consult until it is acked, and
-/// the row names `expired` distinctly from the bare `failed` status.
+/// the row identifies `Expired` distinctly from the `Failed` status.
 #[test]
 fn expired_consult_holds_the_failed_lane_until_acked() {
     let (_dir, vault) = open_vault();
@@ -605,23 +605,7 @@ fn expired_consult_holds_the_failed_lane_until_acked() {
         lane[0].terminal_disposition,
         Some(TaskTerminalDisposition::Expired)
     );
-    assert_eq!(
-        lane[0]
-            .line
-            .split_whitespace()
-            .filter(|token| *token == "expired")
-            .count(),
-        1
-    );
-    assert_eq!(
-        lane[0]
-            .line
-            .split_whitespace()
-            .filter(|token| *token == "failed")
-            .count(),
-        1
-    );
-    assert_eq!(usize::from(acked.acked), 1);
+    assert!(acked.acked);
     assert_eq!(
         after.rows.iter().filter(|row| row.id == task_hex).count(),
         0

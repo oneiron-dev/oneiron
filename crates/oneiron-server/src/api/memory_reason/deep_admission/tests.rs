@@ -98,7 +98,12 @@ fn deep_admission_missing_lease_blocks_completed_and_spent_error_results() {
             error.code(),
             crate::error::ErrorCode::DeepRetrievalUnavailable
         );
-        assert!(!admission.finalized.get());
+        // Failed finalization must not make a later settlement succeed.
+        let error = admission.settle().unwrap_err();
+        assert_eq!(
+            error.code(),
+            crate::error::ErrorCode::DeepRetrievalUnavailable
+        );
         drop(admission);
         assert_eq!(missing.read().used_units, 0);
         assert_eq!(owner.read().reserved_units, 10);
@@ -119,7 +124,12 @@ fn deep_admission_aborted_lease_blocks_even_zero_usage_success() {
             error.code(),
             crate::error::ErrorCode::DeepRetrievalUnavailable
         );
-        assert!(!admission.finalized.get());
+        // Failed finalization must not make an aborted lease settle successfully.
+        let error = admission.settle().unwrap_err();
+        assert_eq!(
+            error.code(),
+            crate::error::ErrorCode::DeepRetrievalUnavailable
+        );
         drop(admission);
         assert_eq!(guard.read().used_units, 0);
         assert_eq!(guard.read().reserved_units, 0);

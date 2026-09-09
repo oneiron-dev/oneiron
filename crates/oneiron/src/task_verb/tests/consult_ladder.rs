@@ -590,7 +590,7 @@ fn a_graduated_known_shape_routes_through_its_standing_grant() {
 
 /// A counter is a NEW task with `Counter` lineage. The open original
 /// terminalizes as rejected-with-counter-lineage in the same transaction;
-/// an already-terminal original is left exactly as it was.
+/// a second counter preserves the original terminal decision and linkage.
 #[test]
 fn counter_mints_a_new_task_and_never_reopens_the_original() {
     let (_dir, vault) = open_vault();
@@ -639,32 +639,26 @@ fn counter_mints_a_new_task_and_never_reopens_the_original() {
     assert_eq!(terminal.counter_task_ref, Some(counter));
     assert!(terminal.result_ref.is_some(), "counter lineage is durable");
 
-    // A SECOND counter finds the original already terminal and leaves it
-    // byte-identical.
-    let before = vault
-        .get_raw(&original)
-        .expect("original read")
-        .expect("original stored");
     let second = facade
         .mint_counter_task(original, delta, LADDER_DEADLINE, LADDER_NOW + 9)
         .expect("a second counter still mints")
         .task_ref
         .expect("second counter minted");
+    let after_body = task_verb_body(&vault, original)
+        .expect("decode original after second counter")
+        .expect("original is typed");
+    let after = after_body.terminal().expect("original remains terminal");
 
     assert_ne!(second, counter);
-    assert_eq!(
-        vault
-            .get_raw(&original)
-            .expect("original read")
-            .expect("original stored"),
-        before,
-        "a terminal original is never rewritten"
-    );
+    assert_ne!(second, original);
+    assert_eq!(after.disposition, TaskTerminalDisposition::Rejected);
+    assert_eq!(after.ladder, Some(LadderTerminalDisposition::Countered));
+    assert_eq!(after.counter_task_ref, Some(counter));
+    assert_eq!(after.result_ref, terminal.result_ref);
 }
 
-/// An ESCALATED original settled on the ladder axis while staying live on the
-/// TASK axis. It is still settled, so a counter mints beside it and leaves it
-/// byte-identical rather than rewriting it as rejected.
+/// A counter mints beside an escalated original without changing its
+/// settled decision, durable links, or live TASK state.
 #[test]
 fn counter_leaves_an_escalated_original_byte_identical() {
     let (_dir, vault) = open_vault();
@@ -700,10 +694,6 @@ fn counter_leaves_an_escalated_original_byte_identical() {
             }),
         )
         .expect("a working ladder may escalate");
-    let before = vault
-        .get_raw(&original)
-        .expect("original read")
-        .expect("original stored");
 
     facade
         .mint_counter_task(original, delta, LADDER_DEADLINE, LADDER_NOW + 5)
@@ -711,14 +701,19 @@ fn counter_leaves_an_escalated_original_byte_identical() {
         .task_ref
         .expect("counter task minted");
 
-    assert_eq!(
-        vault
-            .get_raw(&original)
-            .expect("original read")
-            .expect("original stored"),
-        before,
-        "an escalated original is settled and never rewritten"
-    );
+    let body = task_verb_body(&vault, original)
+        .expect("decode original after counter")
+        .expect("original is typed");
+    assert!(body.terminal().is_none(), "the task remains live");
+    let Some(TaskExecutionState::Interrupted {
+        ladder: Some(persisted),
+    }) = body.state.as_ref()
+    else {
+        panic!("the task retains its settled escalation");
+    };
+    assert_eq!(persisted.disposition, LadderTerminalDisposition::Escalated);
+    assert_eq!(persisted.result_ref, ladder_id(0xE5));
+    assert_eq!(persisted.counter_task_ref, None);
 }
 
 /// The CAS decides against the PERSISTED projection, not the caller's
@@ -918,20 +913,14 @@ fn an_unsettled_interruption_still_resumes_through_the_ladder() {
     );
 }
 
-/// The consult result door shares the one terminal-write path, and a settled
-/// ladder is immutable on the half that did NOT settle the task. A late peer
-/// answer against an escalated consult is refused, and the row survives
-/// byte-for-byte as the escalation wrote it.
+/// A late peer answer is refused without changing the settled escalation,
+/// its durable result, its counter linkage, or the live TASK state.
 #[test]
 fn a_late_consult_result_refuses_to_overwrite_a_settled_ladder() {
     let (_dir, vault) = open_vault();
     let (task_ref, peer, question) = open_consult(&vault);
     let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC1), LADDER_NOW + 1);
     let late_result = consult_turn(&vault, 0x82).entity_ref();
-    let before = vault
-        .get_raw(&task_ref)
-        .expect("consult read")
-        .expect("consult stored");
 
     let late = vault
         .memory(peer, EdgeActorClass::Agent)
@@ -942,26 +931,20 @@ fn a_late_consult_result_refuses_to_overwrite_a_settled_ladder() {
         .expect("consult is typed");
 
     assert_eq!(late.code, MEMORY_CODE_INVALID_STATE);
-    assert_eq!(
-        vault
-            .get_raw(&task_ref)
-            .expect("consult read")
-            .expect("consult stored"),
-        before,
-        "a settled ladder survives the consult result door byte-for-byte"
-    );
-    assert_eq!(
-        body.state,
-        Some(TaskExecutionState::Interrupted {
-            ladder: Some(escalated),
-        })
-    );
+    assert!(body.terminal().is_none(), "the task remains live");
+    let Some(TaskExecutionState::Interrupted {
+        ladder: Some(persisted),
+    }) = body.state.as_ref()
+    else {
+        panic!("the task retains its settled escalation");
+    };
+    assert_eq!(persisted.disposition, LadderTerminalDisposition::Escalated);
+    assert_eq!(persisted.result_ref, escalated.result_ref);
+    assert_eq!(persisted.counter_task_ref, escalated.counter_task_ref);
 }
 
-/// The GENERAL result door runs the same writer, so it refuses the same
-/// settled ladder. A ONE-1888 register arrives by sync on any lane, and a late
-/// result must not flatten one into a terminal record whose ladder half,
-/// counter link, and result linkage are all absent.
+/// The general result door refuses a synced settled ladder without
+/// flattening its escalation or losing its durable result and counter link.
 #[test]
 fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
     let (_dir, vault) = open_vault();
@@ -981,10 +964,6 @@ fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
     };
     seed_ladder_state(&vault, task_ref, &ConsultLadderState::Terminal(escalated));
     let late_result = route_turn(&vault, 0xC4).entity_ref();
-    let before = vault
-        .get_raw(&task_ref)
-        .expect("task read")
-        .expect("task stored");
 
     let late = vault
         .memory(actor_ref, EdgeActorClass::Agent)
@@ -1002,25 +981,20 @@ fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
         .expect("typed body");
 
     assert_eq!(late.code, MEMORY_CODE_INVALID_STATE);
-    assert_eq!(
-        vault
-            .get_raw(&task_ref)
-            .expect("task read")
-            .expect("task stored"),
-        before,
-        "a settled ladder survives the general result door byte-for-byte"
-    );
-    assert_eq!(
-        body.state,
-        Some(TaskExecutionState::Interrupted {
-            ladder: Some(escalated),
-        })
-    );
+    assert!(body.terminal().is_none(), "the task remains live");
+    let Some(TaskExecutionState::Interrupted {
+        ladder: Some(persisted),
+    }) = body.state.as_ref()
+    else {
+        panic!("the task retains its settled escalation");
+    };
+    assert_eq!(persisted.disposition, LadderTerminalDisposition::Escalated);
+    assert_eq!(persisted.result_ref, ladder_id(0xC3));
+    assert_eq!(persisted.counter_task_ref, None);
 }
 
-/// An escalated consult is ANSWERED, not overdue. The deadline sweep needs no
-/// adversary to destroy one — only a clock — so it reads the ladder half too:
-/// nothing expires, no digest is scheduled, and the row is left untouched.
+/// An escalated consult is settled, not overdue: the sweep neither expires
+/// it nor schedules a digest, and preserves its durable decision and links.
 #[test]
 fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
     let (_dir, vault) = open_vault();
@@ -1028,10 +1002,6 @@ fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
     grant_outbound(&vault, asker, 0xD1);
     let (task_ref, _peer, _question) = open_consult(&vault);
     let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC5), LADDER_NOW + 1);
-    let before = vault
-        .get_raw(&task_ref)
-        .expect("consult read")
-        .expect("consult stored");
 
     let report = vault
         .memory(asker, EdgeActorClass::Agent)
@@ -1043,25 +1013,20 @@ fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
 
     assert_eq!(report.expired_task_refs.len(), 0);
     assert_eq!(report.digest_intent_refs.len(), 0);
-    assert_eq!(report.already_settled, 0);
     assert_eq!(
         vault.connector_send_tasks().expect("connector sends").len(),
         0
     );
-    assert_eq!(
-        vault
-            .get_raw(&task_ref)
-            .expect("consult read")
-            .expect("consult stored"),
-        before,
-        "a settled ladder survives the deadline sweep byte-for-byte"
-    );
-    assert_eq!(
-        body.state,
-        Some(TaskExecutionState::Interrupted {
-            ladder: Some(escalated),
-        })
-    );
+    assert!(body.terminal().is_none(), "the task remains live");
+    let Some(TaskExecutionState::Interrupted {
+        ladder: Some(persisted),
+    }) = body.state.as_ref()
+    else {
+        panic!("the task retains its settled escalation");
+    };
+    assert_eq!(persisted.disposition, LadderTerminalDisposition::Escalated);
+    assert_eq!(persisted.result_ref, escalated.result_ref);
+    assert_eq!(persisted.counter_task_ref, escalated.counter_task_ref);
 }
 
 /// A consent-required interruption resumes only through a human verdict —

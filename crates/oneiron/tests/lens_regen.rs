@@ -924,12 +924,12 @@ fn result_set_references_resolve_at_their_declared_role() {
     for (flavor, expected_role, expected_names) in [
         (
             CandidateFlavor::RetargetResultSetRows,
-            "ClaimSet",
+            LensHandleRole::ClaimSet,
             (ROWS_PRIMARY_HANDLE, ROWS_SECONDARY_HANDLE),
         ),
         (
             CandidateFlavor::SwapSelectAllPredicate,
-            "QueryResult",
+            LensHandleRole::QueryResult,
             (FILTER_PRIMARY_HANDLE, FILTER_SECONDARY_HANDLE),
         ),
     ] {
@@ -944,31 +944,31 @@ fn result_set_references_resolve_at_their_declared_role() {
             .chain(diff.added_referenced_handles())
         {
             assert_eq!(
-                format!("{:?}", entry.role()),
+                entry.role(),
                 expected_role,
                 "{flavor:?} resolves {} at its declared role",
-                entry.name().as_str()
+                entry.name().as_str(),
             );
         }
         assert_eq!(
-            handle_pairs(diff.removed_referenced_handles())
-                .into_iter()
-                .map(|(name, _)| name)
+            diff.removed_referenced_handles()
+                .iter()
+                .map(|entry| entry.name().as_str())
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from([expected_names.0.to_owned()])
+            BTreeSet::from([expected_names.0]),
         );
         assert_eq!(
-            handle_pairs(diff.added_referenced_handles())
-                .into_iter()
-                .map(|(name, _)| name)
+            diff.added_referenced_handles()
+                .iter()
+                .map(|entry| entry.name().as_str())
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from([expected_names.1.to_owned()])
+            BTreeSet::from([expected_names.1]),
         );
 
         // A reference is never a declaration: it reports only in its own dimension.
         assert!(
             diff.added_handles().is_empty() && diff.removed_handles().is_empty(),
-            "{flavor:?} declared no new reach"
+            "{flavor:?} declared no new reach",
         );
     }
 }
@@ -978,11 +978,12 @@ fn result_set_references_resolve_at_their_declared_role() {
 #[test]
 fn compile_failure_rolls_back_to_last_good() {
     let outcome = run(CandidateFlavor::FailCompile);
-    let message = expect_rollback(&outcome, LensRegenFailurePhase::Compile);
-    assert!(
-        message.contains("did not compile"),
-        "the compile failure is recorded: {message}"
-    );
+    expect_rollback(&outcome, LensRegenFailurePhase::Compile);
+    assert!(matches!(
+        &outcome,
+        LensRegenOutcome::RolledBack { failure, .. }
+            if matches!(failure.phase(), LensRegenFailurePhase::Compile)
+    ));
 }
 
 #[test]
@@ -1155,9 +1156,10 @@ fn stale_targeted_request_rolls_back() {
 #[test]
 fn summary_prompt_rerun_failure_rolls_back() {
     let outcome = run(CandidateFlavor::FailSummaryPromptRerun);
-    let message = expect_rollback(&outcome, LensRegenFailurePhase::SummaryPromptRerun);
-    assert!(
-        message.contains("summary prompt rerun"),
-        "the rerun failure is recorded: {message}"
-    );
+    expect_rollback(&outcome, LensRegenFailurePhase::SummaryPromptRerun);
+    assert!(matches!(
+        &outcome,
+        LensRegenOutcome::RolledBack { failure, .. }
+            if matches!(failure.phase(), LensRegenFailurePhase::SummaryPromptRerun)
+    ));
 }

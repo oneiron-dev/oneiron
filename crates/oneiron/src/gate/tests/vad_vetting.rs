@@ -211,25 +211,18 @@ mod vad_vetting_tests {
                     assert!(has_pending_gate_consent(&vault, &claim)?);
                     assert_eq!(
                         vault.get_claim(&claim)?.expect("uncommitted").approval,
-                        ClaimApprovalStatus::Proposed
+                        ClaimApprovalStatus::Proposed,
                     );
                 } else {
-                    assert!(matches!(
-                        result,
-                        Err(Error::InvalidClaimBody(
-                            "claim VAD state claims cannot be consolidated"
-                        ))
-                    ));
+                    assert!(matches!(result, Err(Error::InvalidClaimBody(_))));
                     assert!(!has_pending_gate_consent(&vault, &claim)?);
                     assert_eq!(
                         vault.get_claim(&claim)?.expect("committed").approval,
-                        ClaimApprovalStatus::Approved
+                        ClaimApprovalStatus::Approved,
                     );
                     assert!(matches!(
                         vault.consolidate_claim_vad_now(&claim, 30),
-                        Err(Error::InvalidClaimBody(
-                            "claim VAD state claims cannot be consolidated"
-                        ))
+                        Err(Error::InvalidClaimBody(_))
                     ));
                 }
                 assert_eq!(
@@ -239,7 +232,7 @@ mod vad_vetting_tests {
                         .find(|edge| edge.kind == EdgeKind::Mentions)
                         .expect("semantic")
                         .vad,
-                    Some(Vad::NEUTRAL)
+                    Some(Vad::NEUTRAL),
                 );
             }
         }
@@ -281,11 +274,11 @@ mod vad_vetting_tests {
             })?;
             assert!(matches!(
                 generic_approve(&vault, claim, door, false),
-                Err(Error::CorruptedIndex("VAD annotation claim"))
+                Err(Error::CorruptedIndex(_))
             ));
             assert_eq!(
                 vault.get_claim(&claim)?.expect("durable approval").approval,
-                ClaimApprovalStatus::Approved
+                ClaimApprovalStatus::Approved,
             );
             assert!(!has_pending_gate_consent(&vault, &claim)?);
             vault.with_write_txn(|wtxn| {
@@ -301,7 +294,7 @@ mod vad_vetting_tests {
             let retry = vault.consolidate_claim_vad_now(&claim, crate::unix_seconds_now())?;
             assert_eq!(
                 retry.reappraisal.active_claim_id,
-                recovered.reappraisal.active_claim_id
+                recovered.reappraisal.active_claim_id,
             );
             assert_eq!(retry.reappraisal.created_claim_id, None);
         }
@@ -553,12 +546,7 @@ mod vad_vetting_tests {
                 vault.resolve_gate_consent_bundle(&owner, bundle.bundle_id, RUN, action, 20);
             let stored = vault.get_claim(&claim)?.expect("committed member");
             if action == GateConsentBundleAction::Approve {
-                assert!(matches!(
-                    result,
-                    Err(Error::InvalidClaimBody(
-                        "claim VAD state claims cannot be consolidated"
-                    ))
-                ));
+                assert!(matches!(result, Err(Error::InvalidClaimBody(_))));
                 assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
                 assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
             } else {

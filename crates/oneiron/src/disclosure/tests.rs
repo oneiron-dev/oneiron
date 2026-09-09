@@ -232,6 +232,10 @@ fn tier_rule_3_unstamped_claim_fails_closed_to_tier_a() -> Result<()> {
 #[test]
 fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let ctx = DisclosureContext::resolve(
+        &vault,
+        InterlocutorSet::with_session_owner(vec![Interlocutor::unknown("guest", true)]),
+    )?;
     let rtxn = vault.store.env.read_txn()?;
     let id = test_id(0x15);
 
@@ -242,21 +246,21 @@ fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
         "channel_identity.state",
         "voice_print.status",
     ] {
-        let body = claim_with_scope(predicate, None);
+        let body = claim_with_scope(predicate, Some(sensitivity_scope("public")));
         assert_eq!(
             disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&body))?,
             DisclosureTier::TierA,
             "predicate {predicate} must be Tier A"
         );
+        assert!(!ctx.admits(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&body))?);
     }
-    // The control carries an explicit public stamp so this test isolates rule
-    // 4: without one it would fail closed at rule 3 on the ONE-1645 unstamped
-    // floor before ever reaching the predicate check.
+    // Public sensitivity isolates rule 4 from the unstamped rule-3 floor.
     let control = claim_with_scope("profile.hobby", Some(sensitivity_scope("public")));
     assert_eq!(
         disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&control))?,
         DisclosureTier::TierB
     );
+    assert!(ctx.admits(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&control))?);
     Ok(())
 }
 
@@ -575,17 +579,31 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
     let contact_b = test_id(0x52);
     seed_contact(&vault, contact_a, "a@example.com");
     seed_contact(&vault, contact_b, "b@example.com");
+    let entities = [test_id(0x61), test_id(0x62), test_id(0x63)];
+    for id in &entities {
+        put_turn(&vault, id);
+    }
+    let check_admission = |ctx: &DisclosureContext, expected: [bool; 3]| -> Result<()> {
+        let rtxn = vault.store.env.read_txn()?;
+        for (id, allowed) in entities.iter().zip(expected) {
+            assert_eq!(
+                ctx.admits(&vault.store, &rtxn, id, ENTITY_TYPE_TURN, None)?,
+                allowed,
+            );
+        }
+        Ok(())
+    };
 
-    // OwnerAlone / Supervised carry no scope.
+    // OwnerAlone and Supervised do not require a contact allowlist.
     let ctx = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
     assert_eq!(ctx.mode(), DisclosureMode::OwnerAlone);
-    assert!(ctx.scope.is_none());
+    check_admission(&ctx, [true, true, true])?;
     let ctx = DisclosureContext::resolve(
         &vault,
         InterlocutorSet::with_session_owner(vec![known(contact_a, "a@example.com")]),
     )?;
     assert_eq!(ctx.mode(), DisclosureMode::Supervised);
-    assert!(ctx.scope.is_none());
+    check_admission(&ctx, [true, true, true])?;
 
     // Unknown party -> deny-all.
     let ctx = DisclosureContext::resolve(
@@ -593,22 +611,16 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         InterlocutorSet::without_owner(vec![Interlocutor::unknown("guest", true)]),
     )?;
     assert_eq!(ctx.mode(), DisclosureMode::AbsenceClamp);
-    assert!(
-        ctx.scope
-            .as_ref()
-            .expect("deny-all scope")
-            .entities
-            .is_empty()
-    );
+    check_admission(&ctx, [false, false, false])?;
 
     // Contact without a scope row -> deny-all.
     let ctx = DisclosureContext::resolve(
         &vault,
         InterlocutorSet::without_owner(vec![known(contact_a, "a@example.com")]),
     )?;
-    assert!(ctx.scope.as_ref().expect("scope").entities.is_empty());
+    check_admission(&ctx, [false, false, false])?;
 
-    // Active scope loads; a second party with a disjoint scope intersects.
+    // Active scopes admit only their shared allowlist when folded.
     let scope_a = DisclosureScope::task_scoped("alpha", vec![test_id(0x61), test_id(0x62)], 100)?;
     let scope_b = DisclosureScope::task_scoped("beta", vec![test_id(0x62), test_id(0x63)], 100)?;
     vault.set_counterparty_disclosure_scope(&contact_a, &scope_a)?;
@@ -617,10 +629,7 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         &vault,
         InterlocutorSet::without_owner(vec![known(contact_a, "a@example.com")]),
     )?;
-    assert_eq!(
-        ctx.scope.as_ref().expect("scope").entities,
-        vec![test_id(0x61), test_id(0x62)]
-    );
+    check_admission(&ctx, [true, true, false])?;
     let ctx = DisclosureContext::resolve(
         &vault,
         InterlocutorSet::without_owner(vec![
@@ -628,11 +637,7 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
             known(contact_b, "b@example.com"),
         ]),
     )?;
-    assert_eq!(
-        ctx.scope.as_ref().expect("intersected scope").entities,
-        vec![test_id(0x62)],
-        "DEC-0005 most-restrictive-wins"
-    );
+    check_admission(&ctx, [false, true, false])?;
 
     // A revoked scope contributes deny-all.
     let mut revoked = scope_b;
@@ -643,7 +648,7 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         &vault,
         InterlocutorSet::without_owner(vec![known(contact_b, "b@example.com")]),
     )?;
-    assert!(ctx.scope.as_ref().expect("deny-all").entities.is_empty());
+    check_admission(&ctx, [false, false, false])?;
     Ok(())
 }
 
@@ -756,15 +761,35 @@ fn presence_discretion_notice_matches_pinned_template() {
         Interlocutor::unknown("unknown speaker 2", true),
     ]);
     let notice = presence_discretion_notice(&set);
-    assert_eq!(
-        notice,
-        "Others present: Kenji (known_contact, first contact: user_introduction), \
-         unknown speaker 2 (unknown). Don't volunteer personal or sensitive information; \
-         if asked about private matters, defer to the owner."
-    );
+    assert!(notice.contains("Kenji (known_contact"));
+    assert!(notice.contains("unknown speaker 2 (unknown)"));
     assert!(
         !notice.contains("owner (owner)"),
         "the Owner entry never appears under Others present"
+    );
+
+    // Verify discretion through admission, not the wording of the instruction.
+    let (_tmp, vault) = temp_vault();
+    let ctx = DisclosureContext::resolve(&vault, set).expect("resolve supervised context");
+    assert_eq!(ctx.mode(), DisclosureMode::Supervised);
+    assert!(ctx.assembly(0).notice.is_some());
+    let rtxn = vault.store.env.read_txn().expect("read transaction");
+    let id = test_id(0x15);
+    let protected = claim_with_scope("affect.trigger", Some(sensitivity_scope("public")));
+    assert!(
+        !ctx.admits(
+            &vault.store,
+            &rtxn,
+            &id,
+            ENTITY_TYPE_CLAIM,
+            Some(&protected)
+        )
+        .expect("protected admission")
+    );
+    let public = claim_with_scope("profile.hobby", Some(sensitivity_scope("public")));
+    assert!(
+        ctx.admits(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&public))
+            .expect("public admission")
     );
 }
 
@@ -780,9 +805,12 @@ fn assembly_and_receipt_stamp_are_mode_keyed() -> Result<()> {
     )?;
     let assembly = supervised.assembly(3);
     assert_eq!(assembly.mode, "supervised");
-    assert!(assembly.notice.as_deref().is_some_and(|notice| {
-        notice.starts_with("Others present: kenji@example.com (known_contact")
-    }));
+    let notice = assembly
+        .notice
+        .as_deref()
+        .expect("supervised presence notice");
+    assert!(notice.contains("kenji@example.com (known_contact"));
+    assert!(!notice.contains("owner (owner)"));
     assert_eq!(assembly.clamped_out, 3);
     assert_eq!(assembly.interlocutors.len(), 2);
     assert_eq!(
@@ -926,20 +954,12 @@ fn corrupt_scope_row_fails_closed_to_absence_clamp_not_error() -> Result<()> {
         crate::error::ErrorKind::InvalidDisclosureScope
     );
 
-    // Resolution fails CLOSED: no error, deny-all scope for that contact.
+    // Resolution fails CLOSED without propagating the corruption error.
     let ctx = DisclosureContext::resolve(
         &vault,
         InterlocutorSet::without_owner(vec![known(contact_id, "kenji@example.com")]),
     )?;
     assert_eq!(ctx.mode(), DisclosureMode::AbsenceClamp);
-    assert!(
-        ctx.scope
-            .as_ref()
-            .expect("deny-all scope")
-            .entities
-            .is_empty(),
-        "corrupt row narrows to the empty scope"
-    );
 
     // Full assembly: empty pack, not an error and not a wider pack — the
     // previously-allowlisted party is no longer admitted.

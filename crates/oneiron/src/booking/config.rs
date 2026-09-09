@@ -716,9 +716,11 @@ mod tests {
     #[test]
     fn booking_claim_descriptor_rows_are_complete() {
         let rows = claim_class_descriptors();
-        assert_eq!(rows.len(), 2, "one row per exact predicate");
-        assert_eq!(rows[0].predicate, BOOKING_EVENT_TYPE_PREDICATE);
-        assert!(is_booking_claim_predicate(rows[0].predicate));
+        let event_type_row = rows
+            .iter()
+            .find(|row| row.predicate == BOOKING_EVENT_TYPE_PREDICATE)
+            .expect("booking event type descriptor must be present");
+        assert!(is_booking_claim_predicate(event_type_row.predicate));
         for row in &rows {
             assert!(
                 ["recorded", "human_ruled", "ordinary"].contains(&row.write_class),

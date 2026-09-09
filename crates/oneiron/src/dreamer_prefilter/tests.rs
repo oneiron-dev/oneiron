@@ -201,31 +201,59 @@ fn a_repeated_turn_loses_its_novelty() {
     window.observe(text);
     let repeat = prefilter_turn(&config, text, DreamerTurnRole::User, &known, &window);
 
-    assert!(
-        first.features[PREFILTER_FEATURE_NOVELTY] > 0.0,
-        "the first statement of a thing is novel"
-    );
-    assert_eq!(
-        repeat.features[PREFILTER_FEATURE_NOVELTY], 0.0,
-        "saying exactly the same thing again is not news"
-    );
     assert!(repeat.score < first.score);
+
+    let config = PrefilterConfig {
+        threshold: f32::midpoint(repeat.score, first.score),
+        ..config
+    };
+    let first = prefilter_turn(
+        &config,
+        text,
+        DreamerTurnRole::User,
+        &known,
+        &NoveltyWindow::new(),
+    );
+    let repeat = prefilter_turn(&config, text, DreamerTurnRole::User, &known, &window);
+    assert!(first.pass);
+    assert!(!repeat.pass);
 }
 
 #[test]
 fn a_capitalized_span_is_one_mention_and_openers_are_not_mentions() {
+    let config = PrefilterConfig {
+        weights: PrefilterWeights {
+            len: 0.0,
+            ttr: 0.0,
+            entity_density: 1.0,
+            novelty: 0.0,
+            role: 0.0,
+        },
+        ..PrefilterConfig::default()
+    };
+    let window = NoveltyWindow::new();
     let known = BTreeSet::new();
-    assert_eq!(entity_mentions(&["Kyoto", "Station"], &known), 1);
-    assert_eq!(entity_mentions(&["Kyoto", "and", "Osaka"], &known), 2);
-    // "The" opens a sentence; it does not name anything.
-    assert_eq!(entity_mentions(&["The", "train", "was", "late"], &known), 0);
+    let score = |text: &str, names: &BTreeSet<String>| {
+        prefilter_turn(&config, text, DreamerTurnRole::User, names, &window).score
+    };
 
+    let single = score("Kyoto station", &known);
+    let span = score("Kyoto Station", &known);
+    let separated = score("Kyoto and Osaka", &known);
+    assert!(single > 0.0);
+    assert_eq!(span, single);
+    assert!(separated > span);
+
+    // "The" opens a sentence; it does not name anything.
+    let unnamed = score("the train was late", &known);
+    assert_eq!(score("The train was late", &known), unnamed);
+    assert!(single > unnamed);
+
+    let unknown = score("mika called", &known);
     let known = BTreeSet::from(["mika".to_owned()]);
-    assert_eq!(
-        entity_mentions(&["mika", "called"], &known),
-        1,
-        "a caller-supplied known name counts uncapitalized"
-    );
+    let named = score("mika called", &known);
+    assert!(named > unknown);
+    assert_eq!(named, single);
 }
 
 #[test]
@@ -253,17 +281,60 @@ fn an_unreadable_body_passes_unscored_rather_than_being_dropped() {
 
 #[test]
 fn the_novelty_window_is_causal_and_bounded() {
+    let config = PrefilterConfig::default();
+    let known = BTreeSet::new();
+    let expired_text = "amber birds circle distant mountains";
     let mut window = NoveltyWindow::new();
+    let first = prefilter_turn(
+        &config,
+        expired_text,
+        DreamerTurnRole::User,
+        &known,
+        &window,
+    );
+    window.observe(expired_text);
+    let repeat = prefilter_turn(
+        &config,
+        expired_text,
+        DreamerTurnRole::User,
+        &known,
+        &window,
+    );
+    assert!(repeat.score < first.score);
+
     for ordinal in 0..(NOVELTY_WINDOW_TURNS + 4) {
         window.observe(&format!(
             "distinct sentence number {ordinal} about something"
         ));
     }
-    assert_eq!(
-        window.recent.len(),
-        NOVELTY_WINDOW_TURNS,
-        "the window forgets past its bound rather than growing without limit"
+    let expired = prefilter_turn(
+        &config,
+        expired_text,
+        DreamerTurnRole::User,
+        &known,
+        &window,
     );
+    assert_eq!(expired.score, first.score);
+
+    let recent_text = format!(
+        "distinct sentence number {} about something",
+        NOVELTY_WINDOW_TURNS + 3,
+    );
+    let fresh = prefilter_turn(
+        &config,
+        &recent_text,
+        DreamerTurnRole::User,
+        &known,
+        &NoveltyWindow::new(),
+    );
+    let recent = prefilter_turn(
+        &config,
+        &recent_text,
+        DreamerTurnRole::User,
+        &known,
+        &window,
+    );
+    assert!(recent.score < fresh.score);
 }
 
 // ── config: durable, live, and validated ────────────────────────────────────
@@ -445,7 +516,7 @@ fn separating_threshold() -> f32 {
 #[test]
 fn a_disabled_screen_plans_byte_identically() {
     let (_dir, vault) = open_vault();
-    let (_conversation, ids, _) = seed_fixture_corpus(&vault);
+    let (conversation, ids, high_value_ids) = seed_fixture_corpus(&vault);
 
     vault
         .set_prefilter_config(PrefilterConfig {
@@ -455,21 +526,24 @@ fn a_disabled_screen_plans_byte_identically() {
         })
         .expect("disable");
     let disabled = plan_now(&vault);
-    assert_eq!(
-        planned_turn_ids(&disabled).len(),
-        ids.len(),
-        "a disabled screen drops nothing, whatever its threshold says"
-    );
+    assert_eq!(planned_turn_ids(&disabled), ids);
+    for plan in &disabled {
+        assert_eq!(plan.key.conversation_ref, conversation);
+        assert!(plan.key.world_ref.is_none());
+        assert!(plan.key.facet_ref.is_none());
+    }
 
     // The shipped default is enabled — and equally lossless.
     vault
         .set_prefilter_config(PrefilterConfig::default())
         .expect("default");
-    assert_eq!(
-        plan_now(&vault),
-        disabled,
-        "the shipped default plans byte-identically to a disabled screen"
-    );
+    let default = plan_now(&vault);
+    assert_eq!(planned_turn_ids(&default), ids);
+    for plan in &default {
+        assert_eq!(plan.key.conversation_ref, conversation);
+        assert!(plan.key.world_ref.is_none());
+        assert!(plan.key.facet_ref.is_none());
+    }
 
     // The same config with a real cut is where planning diverges.
     vault
@@ -478,7 +552,9 @@ fn a_disabled_screen_plans_byte_identically() {
             ..PrefilterConfig::default()
         })
         .expect("enable");
-    assert_ne!(plan_now(&vault), disabled);
+    let screened_ids = planned_turn_ids(&plan_now(&vault));
+    assert_eq!(screened_ids, high_value_ids);
+    assert_ne!(screened_ids, ids);
 }
 
 #[test]
@@ -825,24 +901,18 @@ fn skipped_turns_advance_the_watermark_and_the_rescan_door_re_sweeps_them() {
         .expect("close")
         .expect("ended");
 
-    // I2: a skipped turn is CONSUMED by the round that skipped it. It does not
-    // sit in the working set forever, re-scanned by every later round.
-    let watermark = read_watermark(&vault, MESO).expect("watermark");
-    let still_dirty = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
+    // Make skipped turns visible to planning if the close failed to consume them.
+    vault
+        .set_prefilter_config(PrefilterConfig::default())
+        .expect("restore lossless policy");
     assert!(
-        still_dirty.is_empty(),
+        plan_now(&vault).is_empty(),
         "skipped turns must not be re-scanned forever"
     );
 
-    // I7: and the explicit door re-opens them for a fresh sweep.
+    // I7: the explicit door re-opens them for a fresh sweep.
     reopen_prefilter_rescan(&vault, MESO, 0).expect("rescan door");
-    let watermark = read_watermark(&vault, MESO).expect("watermark");
-    let re_swept = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
-    assert_eq!(
-        re_swept.len(),
-        ids.len(),
-        "an explicit rescan re-sweeps everything the screen dropped"
-    );
+    assert_eq!(planned_turn_ids(&plan_now(&vault)), ids);
 }
 
 #[test]

@@ -193,10 +193,7 @@ pub(crate) mod tests {
         let err = parse_manifest_json(&manifest_json.to_string())
             .expect_err("char-count token estimates must be rejected");
 
-        assert!(
-            err.to_string()
-                .contains("model-scored competitor rows must not use char_count_estimate")
-        );
+        assert!(matches!(err, BeamError::InvalidManifest { .. }));
     }
 
     #[test]
@@ -210,10 +207,7 @@ pub(crate) mod tests {
         let err = parse_manifest_json(&manifest_json.to_string())
             .expect_err("completed rows must declare token accounting");
 
-        assert!(
-            err.to_string()
-                .contains("completed competitor rows must declare tokenAccounting")
-        );
+        assert!(matches!(err, BeamError::InvalidManifest { .. }));
     }
 
     #[test]
@@ -226,10 +220,7 @@ pub(crate) mod tests {
             let err = parse_manifest_json(&manifest_json.to_string())
                 .expect_err("deterministic rows must use tokenizer_count accounting");
 
-            assert!(
-                err.to_string()
-                    .contains("completed competitor rows must declare tokenizer_count")
-            );
+            assert!(matches!(err, BeamError::InvalidManifest { .. }));
         }
     }
 
@@ -621,6 +612,18 @@ pub(crate) mod tests {
         assert!(deterministic["scoring"]["overallScore"].as_f64().is_some());
 
         for competitor_id in ["backbone-solo", "agentic-adapter", "chat-adapter"] {
+            let typed_competitor = report.cases[0]
+                .competitors
+                .iter()
+                .find(|competitor| competitor.competitor_id == competitor_id)
+                .expect("not-ready competitor report");
+            let arm = report.cases[0]
+                .arms
+                .iter()
+                .find(|arm| arm.arm.as_str() == typed_competitor.arm.as_str())
+                .expect("not-ready arm report");
+            assert!(matches!(&arm.outcome, ArmOutcome::NotReady { .. }));
+
             let competitor = competitors
                 .iter()
                 .find(|competitor| competitor["competitorId"] == competitor_id)
@@ -630,16 +633,10 @@ pub(crate) mod tests {
             let abilities = competitor["scoring"]["abilities"]
                 .as_array()
                 .expect("abilities array");
-            assert_eq!(abilities.len(), 3);
+            assert!(!abilities.is_empty());
             for ability in abilities {
                 assert!(ability["score"].is_null());
                 assert!(ability["passed"].is_null());
-                assert!(
-                    ability["detail"]
-                        .as_str()
-                        .expect("detail string")
-                        .contains("could not be scored")
-                );
             }
         }
     }

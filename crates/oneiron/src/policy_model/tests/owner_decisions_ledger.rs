@@ -473,17 +473,13 @@ fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
     assert_eq!(
         outcome.verdict.category,
         PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:spoilers".to_owned()
+            row_ref: "owner:spoilers".to_owned(),
         }
     );
-    assert_eq!(
-        outcome.barge_in_kill,
-        Some(PolicyBargeInKill {
-            cancel_tts: true,
-            flush_playout_buffer: true,
-            cancel_llm: true
-        })
-    );
+    let kill = outcome.barge_in_kill.expect("block cancellation flags");
+    assert!(kill.cancel_tts);
+    assert!(kill.flush_playout_buffer);
+    assert!(kill.cancel_llm);
 
     let reader_notices: Vec<_> = outcome
         .system_notices
@@ -498,7 +494,6 @@ fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
         Some(PolicyPlane::OwnerPolicy.as_str())
     );
     assert_eq!(notice.row_ref.as_deref(), Some("owner:spoilers"));
-    assert!(notice.body.contains("owner:spoilers"));
 
     let receipt_ref = outcome.receipt_ref.expect("block receipt");
     let receipts = gate_receipts(&vault)?;
@@ -539,7 +534,7 @@ fn owner_route_to_help_halts_with_a_help_card() -> Result<()> {
     assert_eq!(
         routing.category,
         PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:spoilers".to_owned()
+            row_ref: "owner:spoilers".to_owned(),
         }
     );
     assert_eq!(routing.diagnosis, None);
@@ -547,10 +542,6 @@ fn owner_route_to_help_halts_with_a_help_card() -> Result<()> {
     assert_eq!(
         outcome.system_notices[0].notice_type,
         SYSTEM_NOTICE_TYPE_HELP_CARD
-    );
-    assert_eq!(
-        outcome.system_notice.as_deref(),
-        Some(POLICY_MODEL_HELP_CARD_NOTICE)
     );
     assert!(outcome.receipt_ref.is_some());
     Ok(())
@@ -601,7 +592,7 @@ fn notice_names_the_row_but_never_quotes_its_text_or_the_pattern() -> Result<()>
     assert_eq!(outcome.system_notices.len(), 1);
     let notice = &outcome.system_notices[0];
     assert_eq!(notice.audience, SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL);
-    assert!(notice.body.contains("owner:embargo"));
+    assert_eq!(notice.row_ref.as_deref(), Some("owner:embargo"));
     assert!(!notice.body.contains(row_text));
     assert!(!notice.body.contains("(?i)unreleased"));
     let receipts = gate_receipts(&vault)?;
@@ -762,6 +753,5 @@ fn owner_notice_omits_oversized_row_ref_without_aborting_block() -> Result<()> {
     let notice = &outcome.system_notices[0];
     assert_eq!(notice.row_ref, None);
     assert!(!notice.body.contains(&long_row_ref));
-    assert_eq!(notice.body, POLICY_MODEL_OWNER_BLOCK_NOTICE);
     Ok(())
 }

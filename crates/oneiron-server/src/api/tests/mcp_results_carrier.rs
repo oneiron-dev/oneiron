@@ -414,21 +414,22 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
         setup_page("carrier-page-2", json!({ "limit": 50, "cursor": cursor })),
     )
     .await;
+    let carrier = &continued["result"]["carrier"];
+    assert_eq!(carrier["class"], Value::from("carrier"));
+    let frame = &carrier["frame"];
+    assert_eq!(frame["epoch"], Value::from(board_epoch));
     assert_eq!(
-        continued["result"]["carrier"],
-        json!({
-            "class": "carrier",
-            "frame": {
-                "epoch": board_epoch,
-                "kind": {
-                    "kind": "delta",
-                    "payload": [{ "key": "TASKS:continuation", "line": "queued after page one" }],
-                },
-            },
-        }),
+        frame["kind"]["kind"],
+        Value::from("delta"),
         "a setup continuation drains the queued same-epoch delta instead of \
          re-minting page one's keyframe: {continued:?}"
     );
+    let payload = frame["kind"]["payload"]
+        .as_array()
+        .expect("the continuation delta carries rows");
+    assert_eq!(payload.len(), 1);
+    assert_eq!(payload[0]["key"], Value::from("TASKS:continuation"));
+    assert_eq!(payload[0]["line"], Value::from("queued after page one"));
 
     {
         let mut registry = server.mcp_registry.lock().await;

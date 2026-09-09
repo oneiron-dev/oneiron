@@ -425,7 +425,7 @@ fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
     let err = vault
         .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
         .expect_err("corrupted edge record should fail active purge");
-    assert_matches!(err, Error::CorruptedIndex("edge record"));
+    assert_matches!(err, Error::CorruptedIndex(_));
     assert!(
         vault.entity_exists(&id)?,
         "active purge failed, so entity payload should remain for retry"

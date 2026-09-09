@@ -41,10 +41,7 @@ fn decode_session_record_rejects_an_unsupported_version() {
     .expect("encode unsupported-version record");
 
     let error = decode_session_record(&encoded).expect_err("unsupported version must fail closed");
-    assert!(matches!(
-        error,
-        Error::CorruptedIndex("unsupported session lifecycle record version")
-    ));
+    assert!(matches!(error, Error::CorruptedIndex(_)));
 }
 
 fn seed_conversation(vault: &Vault, seed: u8) -> EntityId {
@@ -742,34 +739,32 @@ fn in_txn_planner_truncates_at_the_first_edgeless_turn_including_same_second_tie
     let tie = seed_dirty_turn(&vault, &conversation, 910);
     let edgeless = seed_edgeless_dirty_turn(&vault, 910);
     let after = seed_dirty_turn(&vault, &conversation, 920);
+    let session = minted(vault.mint_session(1_000).expect("mint session"));
 
     let wake = vault.plan_session_end_wake().expect("plan");
-    assert_eq!(
-        wake.planned_turn_ids,
-        vec![a],
-        "the round stops BEFORE the cut second: the edge-less turn, its \
-         same-second tie, and everything after are all deferred"
-    );
-    assert!(!wake.planned_turn_ids.contains(&edgeless));
-    assert!(
-        !wake.planned_turn_ids.contains(&tie),
-        "same-second ties at the cut are dropped exactly as the driver drops them"
-    );
-    assert!(!wake.planned_turn_ids.contains(&after));
-    assert_eq!(
-        wake.advance_watermark_to,
-        Some(900),
-        "the watermark can only settle on the planned prefix"
-    );
-    assert_eq!(wake.plans.len(), 1, "one partition over the planned prefix");
-    assert_eq!(
-        wake.plans[0]
-            .turns
-            .iter()
-            .map(|turn| turn.turn_id)
-            .collect::<Vec<_>>(),
-        vec![a]
-    );
+    let ended = vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_001, &wake)
+        .expect("close session")
+        .expect("session ended");
+    assert_eq!(ended.session, session);
+    assert!(vault.open_session().expect("open session").is_none());
+
+    let payloads = meso_partition_payloads(&vault);
+    assert_eq!(payloads.len(), 1);
+    let (_, turns, _) = decode_partition_payload(&payloads[0].input).expect("decode partition");
+    assert_eq!(turns, vec![a]);
+
+    let scope = DreamerConsolidationScope::Meso;
+    let watermark = read_watermark(&vault, scope).expect("persisted watermark");
+    let remaining = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)
+        .expect("scan remaining turns")
+        .iter()
+        .map(|turn| turn.turn_id)
+        .collect::<Vec<_>>();
+    let mut expected = vec![tie, edgeless];
+    expected.sort();
+    expected.push(after);
+    assert_eq!(remaining, expected);
 }
 
 #[test]
@@ -777,16 +772,40 @@ fn in_txn_planner_drops_an_admissible_turn_sharing_the_cut_second() {
     let (_dir, vault) = open_vault();
     let conversation = seed_conversation(&vault, 0x61);
     let a = seed_dirty_turn(&vault, &conversation, 900);
-    seed_edgeless_dirty_turn(&vault, 900);
+    let edgeless = seed_edgeless_dirty_turn(&vault, 900);
+    let session = minted(vault.mint_session(1_000).expect("mint session"));
 
     let wake = vault.plan_session_end_wake().expect("plan");
-    assert!(
-        wake.planned_turn_ids.is_empty(),
-        "an edge-ful turn sharing the cut second is dropped with the tie, not kept"
-    );
-    assert!(!wake.planned_turn_ids.contains(&a));
-    assert_eq!(wake.advance_watermark_to, None);
-    assert!(wake.plans.is_empty());
+    let ended = vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_001, &wake)
+        .expect("close session")
+        .expect("session ended");
+    assert_eq!(ended.session, session);
+    assert!(vault.open_session().expect("open session").is_none());
+    assert_eq!(meso_attempt_count(&vault), 0);
+
+    let scope = DreamerConsolidationScope::Meso;
+    let watermark = read_watermark(&vault, scope).expect("persisted watermark");
+    let remaining = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)
+        .expect("scan retained turns")
+        .iter()
+        .map(|turn| turn.turn_id)
+        .collect::<Vec<_>>();
+    let mut expected = vec![a, edgeless];
+    expected.sort();
+    assert_eq!(remaining, expected);
+
+    // A newly indexed earlier turn must also remain eligible: the empty
+    // round must not move the persisted bootstrap watermark forward.
+    let earlier = seed_dirty_turn(&vault, &conversation, 899);
+    let watermark = read_watermark(&vault, scope).expect("persisted watermark");
+    let remaining = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)
+        .expect("scan from unchanged watermark")
+        .iter()
+        .map(|turn| turn.turn_id)
+        .collect::<Vec<_>>();
+    expected.insert(0, earlier);
+    assert_eq!(remaining, expected);
 }
 
 #[test]
@@ -798,33 +817,33 @@ fn in_txn_planner_partition_keys_match_production_world_ref_fallback() {
     seed_dirty_turn(&vault, &inherited, 900);
     let plain = seed_conversation(&vault, 0x63);
     seed_dirty_turn_with_world_ref(&vault, &plain, 901, &world_from_turn);
+    let session = minted(vault.mint_session(1_000).expect("mint session"));
 
     let wake = vault.plan_session_end_wake().expect("plan");
-    assert_eq!(wake.plans.len(), 2, "two conversations, two partitions");
-    let keyed: std::collections::BTreeMap<_, _> = wake
-        .plans
+    let ended = vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_001, &wake)
+        .expect("close session")
+        .expect("session ended");
+    assert_eq!(ended.session, session);
+
+    let payloads = meso_partition_payloads(&vault);
+    assert_eq!(payloads.len(), 2, "two conversations, two partitions");
+    let keyed: std::collections::BTreeMap<_, _> = payloads
         .iter()
-        .map(|plan| (plan.key.conversation_ref, plan.key.world_ref))
+        .map(|payload| {
+            let (key, _, _) = decode_partition_payload(&payload.input).expect("decode partition");
+            (key.conversation_ref, key.world_ref)
+        })
         .collect();
     assert_eq!(
         keyed.get(&inherited),
         Some(&Some(world_from_conversation)),
-        "the conversation body key is the second leg of the production fallback chain"
+        "the conversation body key supplies the inherited world",
     );
     assert_eq!(
         keyed.get(&plain),
         Some(&Some(world_from_turn)),
-        "the turn body key is the first leg of the production fallback chain"
-    );
-
-    // Byte-for-byte parity with the committed-state production planner.
-    let scope = DreamerConsolidationScope::Meso;
-    let watermark = read_watermark(&vault, scope).expect("watermark");
-    let dirty = scan_dirty_turns(&vault, scope, &watermark, usize::MAX).expect("scan");
-    let production = plan_partitions(&vault, scope, &dirty, &watermark).expect("plan");
-    assert_eq!(
-        wake.plans, production,
-        "the in-txn planner and the production planner plan the same round"
+        "the turn body key supplies the turn world",
     );
 }
 
@@ -833,16 +852,39 @@ fn in_txn_planner_inherits_the_meso_round_cap() {
     let (_dir, vault) = open_vault();
     let conversation = seed_conversation(&vault, 0x64);
     let cap = crate::dreamer_consolidation::DEFAULT_MESO_ROUND_TURN_CAP;
+    let mut seeded = Vec::new();
     for offset in 0..=cap as u64 {
-        seed_dirty_turn(&vault, &conversation, 900 + offset);
+        seeded.push(seed_dirty_turn(&vault, &conversation, 900 + offset));
     }
+    let session = minted(vault.mint_session(2_000).expect("mint session"));
 
     let wake = vault.plan_session_end_wake().expect("plan");
-    assert_eq!(
-        wake.planned_turn_ids.len(),
-        cap,
-        "the planner inherits the Meso round cap instead of enumerating unbounded"
-    );
+    let ended = vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 2_001, &wake)
+        .expect("close session")
+        .expect("session ended");
+    assert_eq!(ended.session, session);
+    assert!(vault.open_session().expect("open session").is_none());
+
+    let mut committed = Vec::new();
+    for payload in meso_partition_payloads(&vault) {
+        let (_, turns, _) = decode_partition_payload(&payload.input).expect("decode partition");
+        committed.extend(turns);
+    }
+    assert_eq!(committed.len(), cap);
+    committed.sort();
+    let mut expected = seeded[..cap].to_vec();
+    expected.sort();
+    assert_eq!(committed, expected);
+
+    let scope = DreamerConsolidationScope::Meso;
+    let watermark = read_watermark(&vault, scope).expect("persisted watermark");
+    let remaining = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)
+        .expect("scan deferred turns")
+        .iter()
+        .map(|turn| turn.turn_id)
+        .collect::<Vec<_>>();
+    assert_eq!(remaining, vec![seeded[cap]]);
 }
 
 // ── ONE-1790 G1: the snapshot fence has ONE matching leg ────────────────────

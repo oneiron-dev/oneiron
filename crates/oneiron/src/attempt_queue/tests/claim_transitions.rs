@@ -255,21 +255,45 @@ fn attempt_queue_claim_cleans_malformed_ready_rows_and_continues() -> Result<()>
     };
     assert_eq!(claimed.id, attempt.id);
 
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .attempt_ready
-            .get(&rtxn, &malformed_key)?
-            .is_none()
-    );
-    assert!(
-        vault
-            .store
-            .attempt_ready
-            .get(&rtxn, &malformed_value_key)?
-            .is_none()
-    );
+    assert!(matches!(
+        queue.claim(ClaimAttempt {
+            lease_owner: "worker-b".to_owned(),
+            now: 20,
+        })?,
+        ClaimOutcome::Empty,
+    ));
+
+    let EnqueueOutcome::Enqueued(subsequent) = queue.enqueue(enqueue("subsequent", None, 30))?
+    else {
+        panic!("expected subsequent enqueue");
+    };
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-b".to_owned(),
+        now: 40,
+    })?
+    else {
+        panic!("expected subsequent claim");
+    };
+    assert_eq!(claimed.id, subsequent.id);
+
+    let CompleteOutcome::Completed(completed) = queue.complete(CompleteAttempt {
+        id: claimed.id,
+        lease_owner: "worker-b".to_owned(),
+        attempt_count: claimed.attempt_count,
+        now: 41,
+    })?
+    else {
+        panic!("expected subsequent completion");
+    };
+    assert_eq!(completed.id, subsequent.id);
+
+    assert!(matches!(
+        queue.claim(ClaimAttempt {
+            lease_owner: "worker-c".to_owned(),
+            now: 42,
+        })?,
+        ClaimOutcome::Empty,
+    ));
 
     Ok(())
 }

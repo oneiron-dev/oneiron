@@ -447,7 +447,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/checkout.rs` | src | s | 1 fn · 2 mod · 2 re-export | — | — |
 | `src/checkout/env_blueprint/blueprint.rs` | src | m | 6 struct · 4 enum · 1 trait · 10 fn · 1 type · 3 const · 6 crate-vis | CheckoutEnvPlan, EnvBlueprint, EnvBlueprintError, EnvBlueprintStages, EnvBlueprintStore, EnvStep, EnvValue, KnowledgeInput +3 | Blueprint model, deterministic validation pass (incl. shell-string lint), materialization policy, vault… |
 | `src/checkout/env_blueprint/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | Declarative per-repository environment blueprints for checkouts (CSTDY-07) |
-| `src/checkout/env_blueprint/tests.rs` | test | m | — | — | — |
+| `src/checkout/env_blueprint/tests.rs` | test | L | — | — | — |
 | `src/checkout/env_blueprint/values.rs` | src | s | 5 struct · 11 fn · 9 crate-vis | EnvKey, EnvSecretRef, EnvStepId, RepoRelativeGlob, RepoRelativePath | Typed string newtypes (step id, repo paths/globs, env keys, secret refs) and their shared check_*… |
 | `src/checkout/lease/codec.rs` | src | m | 1 fn · 12 crate-vis | — | Lease storage codec: vault_meta key builders, txn load/store, and MessagePack codecs |
 | `src/checkout/lease/lifecycle.rs` | src | m | 1 struct · 8 fn | CheckoutLeaseService | Lease state machine: claim, renew, reclaim, settle, and teardown plus fence guards |
@@ -1066,14 +1066,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_topology/event_body_codec.rs` | src | m | 16 crate-vis | — | The low-level MessagePack field codec for the type-76 event body, plus the stateless admission checks every… |
 | `src/identity_topology/ledger_fold.rs` | src | s | 2 struct · 1 enum · 1 fn · 2 crate-vis | IdentityTopologyAction, IdentityTopologyEvent, IdentityTopologyFold | The deterministic fold over the append-only op log: the action/event/fold shapes, the undo-currency rule… |
 | `src/identity_topology/lifecycle_state.rs` | src | m | 1 enum · 6 fn · 9 crate-vis | EntityLifecycleState | Entity lifecycle state ([`EntityLifecycleState`]), its CRDT join, the zero-head-split ledger witness, and… |
-| `src/identity_topology/mod.rs` | src | s | 10 re-export · 10 crate-vis | — | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
+| `src/identity_topology/mod.rs` | src | s | 10 re-export · 9 crate-vis | — | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
 | `src/identity_topology/op_apply.rs` | src | m | 1 struct · 1 enum · 3 fn · 5 crate-vis | IdentityOpOutcome, IdentityOpWrite | The apply door: the per-write consent metadata, the door outcome, the merge/split/facet/assert_distinct… |
 | `src/identity_topology/op_undo.rs` | src | s | 1 fn · 1 crate-vis | — | The undo door: a counter-event appended over an applied merge/split, never a rewrite of the event it reverts… |
 | `src/identity_topology/op_vocabulary.rs` | src | s | 6 struct · 2 enum · 1 fn · 2 crate-vis | AssertDistinctOp, FacetOp, FacetSpec, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp, SurvivorshipPlan | The typed identity-topology op vocabulary (ARCH-0055 §2): merge, split, facet and assert_distinct, plus the… |
 | `src/identity_topology/proposal_resolution.rs` | src | m | 3 fn · 6 crate-vis | — | The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds… |
 | `src/identity_topology/reassignment_map.rs` | src | m | 3 struct · 1 enum · 2 fn · 10 crate-vis | ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget | The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the… |
 | `src/identity_topology/replicated_event_validation.rs` | src | s | 9 crate-vis | — | Sync-path ingest for the type-76 family: event reads, participant and actor validation shared with the local… |
-| `src/identity_topology/shell_edge_reconcile.rs` | src | m | 9 crate-vis | — | Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the… |
+| `src/identity_topology/shell_edge_reconcile.rs` | src | m | 7 crate-vis | — | Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the… |
 | `src/identity_topology/store_entity_helpers.rs` | src | s | 7 crate-vis | — | Store-level (pre-vault) readers for the type-76 entity kind: the helpers the batch write/materialize path… |
 | `src/identity_topology/stored_event.rs` | src | m | 1 struct · 1 enum · 6 fn · 1 crate-vis | StoredIdentityOpAction, StoredIdentityOpEvent | The type-76 wire record types: one stored ledger event, the action payload it carries, and their pinned… |
 | `src/identity_topology/tests.rs` | test | XL | — | — | ONE-1743 (MS-01) unit tests: op vocabulary, the full (state, op) transition table, the seq-ordered ledger… |
@@ -1090,7 +1090,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/mod.rs` | src | s | 1 mod · 6 re-export | — | Ingest source registry and source-local normalization |
 | `src/ingest/registry.rs` | src | m | 6 struct · 1 enum · 1 trait · 18 fn · 5 const · 2 static | IngestAdapterSkillRef, IngestHarnessConfig, IngestSource, IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry, IngestTrustCeiling | Ingest source registry: source ids, configs, harness, registry map, and the ingest source trait |
 | `src/ingest/resolution.rs` | src | s | 3 struct · 1 enum · 1 fn | EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision, ScoredEntityResolutionCandidate | ARCH-0024 entity-resolution waterfall: candidate scoring, routing, and canonical subject |
-| `src/ingest/tests.rs` | test | L | — | — | — |
+| `src/ingest/tests.rs` | test | m | — | — | — |
 | `src/ingest/transcripts.rs` | src | m | 2 struct | JsonlTranscriptSource, MeetingTranscriptSource | Transcript sources: JSONL, file-drop, and meeting normalization plus document helpers |
 | `src/ingest/types.rs` | src | s | 4 struct · 1 enum · 1 type | IngestError, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote, NormalizedIngestRecord | Normalized ingest types: batch, record, claim, and note plus the ingest result and error |
 | `src/interlocutor.rs` | src | m | 4 struct · 3 enum · 25 fn | Interlocutor, InterlocutorClass, InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp, PresenceEvidence | Interlocutor resolution substrate (OF-365 ILD-1) |
@@ -1473,7 +1473,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/field_set.rs` | src | s | 1 struct · 12 fn · 1 crate-vis | ContextReceiptFields | — |
 | `src/receipt/grant.rs` | src | m | 4 struct · 1 fn · 6 crate-vis | StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery | — |
 | `src/receipt/identity_kind.rs` | src | m | 2 fn · 3 crate-vis | — | — |
-| `src/receipt/kernel.rs` | src | m | 6 struct · 1 enum · 10 fn · 4 const · 90 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | — |
+| `src/receipt/kernel.rs` | src | m | 6 struct · 1 enum · 10 fn · 4 const · 89 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | — |
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 12 crate-vis | — | — |
 | `src/receipt/mod.rs` | src | s | 8 re-export · 6 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
@@ -1733,10 +1733,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/diagnostic_tests.rs` | test | m | — | — | — |
 | `src/sync/bridge/edges.rs` | src | m | 5 crate-vis | — | Edge-delta materialization and per-op quarantine bookkeeping |
 | `src/sync/bridge/entities.rs` | src | m | 6 crate-vis | — | Entity-delta materialization and the per-entity blob writer |
-| `src/sync/bridge/mod.rs` | src | s | 3 re-export · 6 crate-vis | — | Entity bridge: CRDT ↔ LMDB materialization observers |
+| `src/sync/bridge/mod.rs` | src | s | 3 re-export · 5 crate-vis | — | Entity bridge: CRDT ↔ LMDB materialization observers |
 | `src/sync/bridge/observers.rs` | src | m | 5 struct · 1 trait · 13 fn · 1 const · 9 crate-vis | LiveQueryTee, MaterializedDiffSummary, Materializer, ObserverAState, OriginMark, OutboundSink | Observer A/B registration and the shared Materializer/OutboundSink state |
 | `src/sync/bridge/tests.rs` | test | XL | — | — | — |
-| `src/sync/bridge/tombstones.rs` | src | m | 5 crate-vis | — | Tombstone materialization, savepoint batching, and protected-header handling |
+| `src/sync/bridge/tombstones.rs` | src | m | 3 crate-vis | — | Tombstone materialization, savepoint batching, and protected-header handling |
 | `src/sync/client/base.rs` | src | s | 1 struct · 14 fn · 3 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/federated.rs` | src | s | 6 fn · 1 crate-vis | — | Federated admission and staged vault-import confirmation |
 | `src/sync/client/inbound.rs` | src | m | 3 fn · 1 crate-vis | — | Inbound wire dispatch, window-update import, and bulk history transfer |

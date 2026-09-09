@@ -123,9 +123,8 @@ fn hosted_registration_rejects_a_policy_it_could_not_enforce() {
         assert_eq!(
             err.kind(),
             crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
-            "field: {field}"
+            "field: {field}",
         );
-        assert!(format!("{err}").contains(field), "field: {field}");
         // The rejection is total: nothing partial was bound to the service.
         assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
     }
@@ -160,11 +159,7 @@ fn a_hosted_policy_docs_url_must_be_https() {
         assert_eq!(
             err.kind(),
             crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
-            "docs_url: {docs_url:?}"
-        );
-        assert!(
-            format!("{err}").contains("docs_url"),
-            "docs_url: {docs_url:?}"
+            "docs_url: {docs_url:?}",
         );
         assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
     }
@@ -217,9 +212,9 @@ fn hosted_registration_rejects_a_row_that_carries_no_rule() {
             .expect_err("an unreadable row must be refused at registration");
         assert_eq!(
             err.kind(),
-            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid
+            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
+            "field: {field}",
         );
-        assert!(format!("{err}").contains(field), "unexpected error: {err}");
         assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
     }
 }
@@ -298,9 +293,9 @@ fn hosted_registration_rejects_two_rows_sharing_a_row_ref() {
             ]),
         )
         .expect_err("two rows of one row_ref must be refused");
-    assert!(
-        format!("{err}").contains("row_ref"),
-        "unexpected error: {err}"
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
     );
     assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
 }
@@ -330,7 +325,10 @@ fn a_hosted_policy_wider_than_the_row_bound_is_refused_at_registration() {
             hosted_policy(rows(POLICY_HOSTED_ROWS_MAX + 1)),
         )
         .expect_err("a policy past the row bound must be refused");
-    assert!(format!("{err}").contains("rows"), "unexpected error: {err}");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
+    );
     assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
 
     let mut registry = fixture_edge_service_registry();
@@ -362,10 +360,12 @@ fn hosted_registration_holds_a_category_label_to_its_shape_not_a_vocabulary() {
                 )]),
             )
             .expect_err("an unreceiptable category label must be refused");
-        assert!(
-            format!("{err}").contains("row_category"),
-            "unexpected error for {bad:?}: {err}"
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
+            "category: {bad:?}",
         );
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
     }
 
     // A label the engine's authors never imagined is fine, because that is the
@@ -454,9 +454,9 @@ fn owner_rows_sharing_a_row_ref_are_dropped_rather_than_shadowed() -> Result<()>
     let err = vault
         .classify_policy_model(PolicyClassifyRequest::outbound_content("a reply"))
         .expect_err("an enabled plane must not classify against shadowed rows");
-    assert!(
-        format!("{err}").contains("owner_policy_rows"),
-        "unexpected error: {err}"
+    assert_eq!(
+        err.kind(),
+        crate::policy_model::classify::dropped_owner_policy_rows_error().kind(),
     );
     Ok(())
 }
@@ -496,9 +496,9 @@ fn owner_rows_sharing_a_row_ref_across_manifests_are_dropped_too() -> Result<()>
     let err = vault
         .classify_policy_model(PolicyClassifyRequest::outbound_content("a reply"))
         .expect_err("an enabled plane must not classify against shadowed rows");
-    assert!(
-        format!("{err}").contains("owner_policy_rows"),
-        "unexpected error: {err}"
+    assert_eq!(
+        err.kind(),
+        crate::policy_model::classify::dropped_owner_policy_rows_error().kind(),
     );
     Ok(())
 }

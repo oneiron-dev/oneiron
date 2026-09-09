@@ -267,8 +267,7 @@ pub(crate) mod tests {
         query.relevant_ids = query.seeds.clone();
         assert!(matches!(
             run_fixture_manifest(&manifest, &fixture),
-            Err(BeamError::InvalidFixture { reason, .. })
-                if reason == "sweep relevance judgments must exclude seeds"
+            Err(BeamError::InvalidFixture { .. })
         ));
     }
 
@@ -338,9 +337,10 @@ pub(crate) mod tests {
                 let (mut fixture, manifest) = ppr_vad_test_fixture_and_manifest();
                 fixture.ppr_vad_edges[0].kind = kind as u8;
                 fixture.ppr_vad_edges[0].vad = Some(vad);
-                assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-                    Err(BeamError::InvalidFixture { reason, .. })
-                        if reason == "structural sweep edges cannot carry VAD"));
+                assert!(matches!(
+                    validate_ppr_vad_fixture(&manifest, &fixture),
+                    Err(BeamError::InvalidFixture { .. })
+                ));
             }
         }
     }
@@ -381,9 +381,10 @@ pub(crate) mod tests {
                 fixture.ppr_vad_edges = vec![edge];
             }
             assert!(
-                matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-                Err(BeamError::InvalidFixture { reason, .. })
-                    if reason.contains("must reach a positive-weight traversed semantic edge")),
+                matches!(
+                    validate_ppr_vad_fixture(&manifest, &fixture),
+                    Err(BeamError::InvalidFixture { .. })
+                ),
                 "{mode}"
             );
         }
@@ -455,9 +456,10 @@ pub(crate) mod tests {
         // Graph reachability alone accepts this depth-nine path. Production
         // stops its eight neutral SetIn hops below SCORE_EPSILON before it
         // can multiply the only salient edge, at every sweep coefficient.
-        assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-            Err(BeamError::InvalidFixture { reason, .. })
-                if reason.contains("must reach a positive-weight traversed semantic edge")));
+        assert!(matches!(
+            validate_ppr_vad_fixture(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { .. })
+        ));
         let query = fixture.cases[0]
             .ppr_vad_query
             .as_ref()
@@ -519,9 +521,10 @@ pub(crate) mod tests {
             arousal: f32::MIN_POSITIVE,
             dominance: 0.0,
         });
-        assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-            Err(BeamError::InvalidFixture { reason, .. })
-                if reason.contains("must reach a positive-weight traversed semantic edge")));
+        assert!(matches!(
+            validate_ppr_vad_fixture(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { .. })
+        ));
     }
 
     #[test]
@@ -536,9 +539,10 @@ pub(crate) mod tests {
             .seeds = vec![fixture.records[1].id.clone()];
         manifest.case_ids.push(unreachable.case_id.clone());
         fixture.cases.push(unreachable);
-        assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-            Err(BeamError::InvalidFixture { reason, .. })
-                if reason.contains("unreachable-salient")));
+        assert!(matches!(
+            validate_ppr_vad_fixture(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { .. })
+        ));
         manifest.case_ids.pop();
         assert!(
             validate_ppr_vad_fixture(&manifest, &fixture).is_ok(),

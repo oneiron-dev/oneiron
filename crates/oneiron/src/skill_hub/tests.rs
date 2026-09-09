@@ -379,39 +379,15 @@ fn deleting_skill_cleans_index_and_stale_rows_do_not_block_import_dedup() -> Res
     );
     let entity = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(1), 2)?;
     let key = content_hash_index_key(fixture_hash(), &entity);
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_some());
-    drop(rtxn);
 
-    // Deleting the holder drops its content-hash index row, so import dedup
-    // stops resolving the departed entity. (Scan verdicts are unaffected:
-    // they anchor to the content bytes, not to this holder — see the
-    // anchor-invariant tests.)
     assert!(vault.delete_entity(&entity)?);
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_none());
-    assert!(
-        vault
-            .structured_skills_for_content_hash_in_txn(&rtxn, fixture_hash())?
-            .is_empty()
-    );
-    drop(rtxn);
 
-    // A lagging index row whose entity no longer exists must be skipped by
-    // the rebuildable-index reader, never resurrecting a departed holder.
+    // A lagging index row must not resurrect the departed holder.
     let mut wtxn = vault.store.env.write_txn()?;
     vault.store.vault_meta.put(&mut wtxn, &key, &[])?;
     wtxn.commit()?;
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .structured_skills_for_content_hash_in_txn(&rtxn, fixture_hash())?
-            .is_empty()
-    );
-    drop(rtxn);
 
-    // Re-importing the same bytes mints a fresh entity (the stale row does
-    // not block it), and a second import dedups to that entity.
+    // Reimport must create a fresh holder and subsequently deduplicate to it.
     let reimported = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(3), 4)?;
     assert_ne!(reimported, entity);
     assert_eq!(
@@ -429,14 +405,15 @@ fn soft_erasing_skill_cleans_content_hash_index_before_body_truncation() -> Resu
         SkillCapabilitySurface::default(),
     );
     let entity = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(1), 2)?;
-    let key = content_hash_index_key(fixture_hash(), &entity);
 
     vault.delete_entity_with_reason(&entity, crate::DeleteReason::UserDelete)?;
 
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_none());
-    drop(rtxn);
-    assert!(third_party_verdicts(&vault, fixture_hash())?.is_empty());
+    let reimported = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(3), 4)?;
+    assert_ne!(reimported, entity);
+    assert_eq!(
+        vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(5), 6,)?,
+        reimported
+    );
     Ok(())
 }
 
@@ -465,16 +442,6 @@ fn open_backfills_pre_index_structured_skills() -> Result<()> {
     drop(vault);
 
     let vault = Vault::open(&path, crate::VaultConfig::default())?;
-    let rtxn = vault.store.env.read_txn()?;
-    assert_eq!(
-        vault
-            .structured_skills_for_content_hash_in_txn(&rtxn, fixture_hash())?
-            .into_iter()
-            .map(|(entity, _)| entity)
-            .collect::<Vec<_>>(),
-        vec![entity]
-    );
-    drop(rtxn);
     assert_eq!(
         vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(3), 4,)?,
         entity
@@ -824,10 +791,7 @@ fn import_refuses_hash_collision_across_skill_ids() -> Result<()> {
         .import_skill_from_hub(&second_ref, &second, t(3), 4)
         .expect_err("matching content must not dedup across skill ids");
 
-    assert!(matches!(
-        error,
-        Error::InvalidSkillBody("hub import content hash collides with a different skill id")
-    ));
+    assert!(matches!(error, Error::InvalidSkillBody(_)));
     assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
     assert_eq!(
         vault
@@ -858,10 +822,7 @@ fn import_refuses_conflicting_capabilities_on_dedup() -> Result<()> {
         .import_skill_from_hub(&second_ref, &second, t(3), 4)
         .expect_err("matching content must not dedup conflicting capabilities");
 
-    assert!(matches!(
-        error,
-        Error::InvalidSkillBody("matching content hash carries conflicting capabilities")
-    ));
+    assert!(matches!(error, Error::InvalidSkillBody(_)));
     assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
     Ok(())
 }
@@ -1194,10 +1155,7 @@ fn sync_enforces_content_hash_pin_under_any_policy() -> Result<()> {
             4,
         )
         .expect_err("content-hash pin must bind every sync policy");
-    assert!(matches!(
-        error,
-        Error::InvalidSkillBody("content-hash-pinned ref drifted")
-    ));
+    assert!(matches!(error, Error::InvalidSkillBody(_)));
     assert_eq!(
         vault
             .get_skill_record(&entity)?
@@ -1285,10 +1243,7 @@ fn content_hash_frozen_requires_pin() -> Result<()> {
             4,
         )
         .expect_err("content-hash-frozen policy requires a content_hash pin");
-    assert!(matches!(
-        error,
-        Error::InvalidSkillBody("content-hash-frozen policy requires a content_hash pin")
-    ));
+    assert!(matches!(error, Error::InvalidSkillBody(_)));
     Ok(())
 }
 

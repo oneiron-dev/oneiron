@@ -308,39 +308,50 @@ fn a_zero_threshold_is_refused() {
 
 #[test]
 fn the_chooser_routes_tone_lexicon_swaps_to_the_lexical_lane() {
-    assert_eq!(
-        classify_substitution("regards", "cheers"),
-        SubstitutionClass::Lexical
-    );
-    assert_eq!(
-        classify_substitution("dear sir", "hi"),
-        SubstitutionClass::Lexical
-    );
-    // Punctuation rides on prose; the sign-off underneath is still a sign-off.
-    assert_eq!(
-        classify_substitution("regards,", "cheers,"),
-        SubstitutionClass::Lexical
-    );
-    assert_eq!(
-        classify_substitution("fri", "mon"),
-        SubstitutionClass::Content
-    );
-    // One unlisted token on one side is enough: the safe direction is a
-    // proposal a human reads.
-    assert_eq!(
-        classify_substitution("please", "please invoice"),
-        SubstitutionClass::Content
-    );
+    let (_dir, vault) = temp_vault();
+    let run = miner_run(&vault);
+    let skill = put_skill(&vault);
+    let actor = put_actor(&vault);
+    for (index, (from, to, lexical)) in [
+        ("regards", "cheers", true),
+        ("dear sir", "hi", true),
+        // Punctuation rides on prose; the sign-off underneath is still a sign-off.
+        ("regards,", "cheers,", true),
+        ("fri", "mon", false),
+        // One unlisted token on one side must route to human-reviewed content.
+        ("please", "please invoice", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let scope = format!("chooser-{index}");
+        land_sign_offs(&vault, actor, &scope, MINER_K_DEFAULT as usize)
+            .expect("land cluster evidence");
+        let mut cluster = sign_off_cluster(&vault, &scope).expect("cluster");
+        cluster.from = from.to_owned();
+        cluster.to = to.to_owned();
+        cluster.skill = Some(skill);
+        let outcome = emit_cluster(&vault, &run, &cluster, cluster.at).expect("route cluster");
+        if lexical {
+            assert!(matches!(outcome, Some(MinedOutcome::PreferenceClaim(_))));
+        } else {
+            assert!(matches!(outcome, Some(MinedOutcome::SkillEditProposal(_))));
+        }
+    }
 }
 
 #[test]
 fn the_tone_lexicon_is_sorted() {
-    let mut sorted = TONE_LEXICON;
-    sorted.sort_unstable();
-    assert_eq!(
-        TONE_LEXICON, sorted,
-        "membership is a binary search, so the table must stay sorted"
-    );
+    for token in TONE_LEXICON {
+        assert!(matches!(
+            classify_substitution(token, "cheers"),
+            SubstitutionClass::Lexical,
+        ));
+        assert!(matches!(
+            classify_substitution("regards", token),
+            SubstitutionClass::Lexical,
+        ));
+    }
 }
 
 #[test]
@@ -999,17 +1010,78 @@ fn a_rejected_skill_edit_is_silent_inside_its_cooldown_and_speaks_after_it() -> 
 
 #[test]
 fn a_pure_insertion_or_deletion_is_not_a_substitution() {
-    assert_eq!(substitution_pair("hello", "hello there"), None);
-    assert_eq!(substitution_pair("hello there", "hello"), None);
-    assert_eq!(substitution_pair("same", "same"), None);
-    assert_eq!(substitution_pair("", ""), None);
+    let (_dir, vault) = temp_vault();
+    let run = miner_run(&vault);
+    let actor = put_actor(&vault);
+    let skill = put_skill(&vault);
+    for (case, (before, after)) in [
+        ("hello", "hello there"),
+        ("hello there", "hello"),
+        ("same", "same"),
+        ("", ""),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let scope = format!("non-substitution-{case}");
+        for index in 0..MINER_K_DEFAULT as usize {
+            let mut amendment = sign_off(
+                &format!("gate:{scope}-{index}"),
+                &scope,
+                actor,
+                index,
+                100 + index as u64,
+            );
+            amendment.proposed = before.to_owned();
+            amendment.finalized = after.to_owned();
+            amendment.skill = Some(skill);
+            amendment.land(&vault).expect("land amendment");
+        }
+    }
+    let outcomes = run_substitution_miner(&vault, &run).expect("mine amendments");
+    assert!(emitted(&outcomes).is_empty());
 }
 
 #[test]
 fn normalization_is_lowercase_trim_and_collapse_only() {
-    let pair = substitution_pair("say   Dear  Sir now", "say Hi now").expect("substitution");
-    assert_eq!(pair.from, "dear sir");
-    assert_eq!(pair.to, "hi");
+    let (_dir, vault) = temp_vault();
+    let run = miner_run(&vault);
+    let actor = put_actor(&vault);
+    let variants = [
+        ("say   Dear  Sir now", "say Hi now"),
+        ("say dear sir now", "say hi now"),
+        ("say  DEAR   SIR now", "say HI now"),
+    ];
+    for index in 0..MINER_K_DEFAULT as usize {
+        let (before, after) = variants[index % variants.len()];
+        let mut amendment = sign_off(
+            &format!("gate:normalization-{index}"),
+            "normalization",
+            actor,
+            index,
+            100 + index as u64,
+        );
+        amendment.proposed = before.to_owned();
+        amendment.finalized = after.to_owned();
+        amendment.land(&vault).expect("land normalization evidence");
+    }
+    let outcomes = run_substitution_miner(&vault, &run).expect("mine normalization evidence");
+    let proposals = emitted(&outcomes);
+    assert!(matches!(
+        proposals.as_slice(),
+        [MinedOutcome::PreferenceClaim(_)],
+    ));
+    let rows = preference_rows(&vault, &actor).expect("read preferences");
+    assert_eq!(rows.len(), 1);
+    let (_, body) = &rows[0];
+    assert_eq!(
+        value_field(body, PREFERENCE_VALUE_KEY_FROM).as_deref(),
+        Some("dear sir"),
+    );
+    assert_eq!(
+        value_field(body, PREFERENCE_VALUE_KEY_TO).as_deref(),
+        Some("hi"),
+    );
 }
 
 #[test]
@@ -1017,7 +1089,25 @@ fn a_rewrite_past_the_token_bound_is_not_clustered() {
     let long: String = (0..=MAX_SUBSTITUTION_TOKENS)
         .map(|index| format!("word{index} "))
         .collect();
-    assert_eq!(substitution_pair("x", long.trim()), None);
+    let (_dir, vault) = temp_vault();
+    let run = miner_run(&vault);
+    let actor = put_actor(&vault);
+    let skill = put_skill(&vault);
+    for index in 0..MINER_K_DEFAULT as usize {
+        let mut amendment = sign_off(
+            &format!("gate:oversized-{index}"),
+            "oversized",
+            actor,
+            index,
+            100 + index as u64,
+        );
+        amendment.proposed = "x".to_owned();
+        amendment.finalized = long.trim().to_owned();
+        amendment.skill = Some(skill);
+        amendment.land(&vault).expect("land oversized amendment");
+    }
+    let outcomes = run_substitution_miner(&vault, &run).expect("mine oversized amendments");
+    assert!(emitted(&outcomes).is_empty());
 }
 
 #[test]

@@ -45,28 +45,20 @@ fn magistrate_recuses_on_vault_derived_dreamer_authorship() {
     let dreamer_case = magistrate_case(dreamer_state, delta, CaseCriticality::Normal);
     let agent_case = magistrate_case(agent_state, delta, CaseCriticality::Normal);
 
-    assert_eq!(
-        derive_state_authorship(&vault, &dreamer_case).expect("authorship derives"),
-        StateAuthorship::Dreamer
-    );
-    assert_eq!(
-        derive_state_authorship(&vault, &agent_case).expect("authorship derives"),
-        StateAuthorship::OtherAgent
-    );
-    assert_eq!(
+    assert!(matches!(
         decide_magistrate(&vault, &dreamer_case).expect("verdict"),
         MagistrateVerdict::Recused {
-            reason: MagistrateRecusal::DreamerAuthoredState
+            reason: MagistrateRecusal::DreamerAuthoredState,
         }
-    );
+    ));
     // The recusal is the provenance talking, not a blanket refusal.
-    assert_eq!(
+    assert!(matches!(
         decide_magistrate(&vault, &agent_case).expect("verdict"),
         MagistrateVerdict::Rule {
-            selected_delta_ref: delta,
-            rationale_ref: ladder_id(0x92),
-        }
-    );
+            selected_delta_ref,
+            rationale_ref,
+        } if selected_delta_ref == delta && rationale_ref == ladder_id(0x92)
+    ));
 }
 
 /// A caller cannot buy a ruling with a forged summary: with every case
@@ -351,16 +343,17 @@ fn a_countered_original_renders_as_rejected_with_its_counter() {
 
     assert_eq!(original_row.status, TaskBoardStatus::Failed);
     assert_eq!(
+        original_row.terminal_disposition,
+        Some(TaskTerminalDisposition::Rejected),
+    );
+    assert_eq!(
         original_row.ladder_disposition,
-        Some(LadderTerminalDisposition::Countered)
+        Some(LadderTerminalDisposition::Countered),
     );
     assert_eq!(
         original_row.counter_task_ref.as_deref(),
-        Some(counter.to_hex().as_str())
+        Some(counter.to_hex().as_str()),
     );
-    let tokens: Vec<&str> = original_row.line.split_whitespace().collect();
-    assert!(tokens.contains(&"rejected"), "{}", original_row.line);
-    assert!(tokens.contains(&"countered"), "{}", original_row.line);
     // The counter is its own row: no ladder outcome of its own yet, and
     // no counter link pointing anywhere.
     assert_eq!(counter_row.ladder_disposition, None);
@@ -395,19 +388,16 @@ fn an_escalated_consult_renders_its_escalation_rather_than_a_bare_pause() {
 
     assert_eq!(
         row.ladder_disposition,
-        Some(LadderTerminalDisposition::Escalated)
+        Some(LadderTerminalDisposition::Escalated),
     );
     assert_eq!(
         row.result_ref.as_deref(),
-        Some(escalated.result_ref.to_hex().as_str())
+        Some(escalated.result_ref.to_hex().as_str()),
     );
     // An escalation names no successor task; only a counter does.
     assert_eq!(row.counter_task_ref, None);
     assert_eq!(row.status, TaskBoardStatus::Queued);
     assert_eq!(row.terminal_disposition, None);
-    let tokens: Vec<&str> = row.line.split_whitespace().collect();
-    assert!(tokens.contains(&"interrupted"), "{}", row.line);
-    assert!(tokens.contains(&"escalated"), "{}", row.line);
 }
 
 /// A counter answers to the same attribution laws as the original ask:

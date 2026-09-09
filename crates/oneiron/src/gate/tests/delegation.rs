@@ -77,7 +77,6 @@ fn revoke_dominates_grant() {
     ];
     let cache = fold_delegated_grants(&rows).expect("valid fold");
     assert_eq!(cache.effective_ceiling("g"), None);
-    assert!(cache.revoked.contains("g"));
 }
 
 #[test]
@@ -153,9 +152,15 @@ fn fold_cache_hit() {
         ceiling: PolicyApprovalCeiling::Auto,
     }];
     let cache = fold_delegated_grants(&rows).expect("valid fold");
-    assert_eq!(cache.effective_ceiling("g"), cache.effective_ceiling("g"));
+    assert_eq!(
+        cache.effective_ceiling("g"),
+        Some(PolicyApprovalCeiling::Auto),
+    );
     let rebuilt = fold_delegated_grants(&rows).expect("valid rebuild");
-    assert_eq!(cache, rebuilt);
+    assert_eq!(
+        rebuilt.effective_ceiling("g"),
+        Some(PolicyApprovalCeiling::Auto),
+    );
 }
 
 #[test]

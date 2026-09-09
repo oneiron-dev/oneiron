@@ -669,26 +669,58 @@ fn visitor_zone_is_validated_at_calendar_border() {
         })
     };
 
-    // A malformed or case-mangled zone is a typed rejection, never a silent
-    // fall back to UTC that would answer with somebody else's clock.
+    // Invalid zones must not silently fall back to UTC.
     for bogus in ["Mars/Olympus_Mons", "europe/london", "", "Not A Zone"] {
         assert!(
             matches!(solver(bogus), Err(BookingError::InvalidConstraint(_))),
             "{bogus} must fail typed"
         );
     }
-    // A real zone solves, and what comes back is UTC — no wall time, no offset,
-    // and no zone label rides the result.
     let solved = solver("Pacific/Auckland").expect("a real zone solves");
     assert!(!solved.slots.is_empty());
-    let json = serde_json::to_string(&solved).expect("serialize");
-    for leak in ["Auckland", "tz", "wall", "offset", "+12", "+13"] {
-        assert!(!json.contains(leak), "SolveResult leaked {leak}: {json}");
+    let value = serde_json::to_value(&solved).expect("serialize");
+    let slots = value["slots"].as_array().expect("UTC slots array");
+    assert_eq!(slots.len(), solved.slots.len());
+    for slot in slots {
+        let fields = slot.as_object().expect("slot object");
+        let start = fields["start_utc"].as_u64().expect("numeric UTC start");
+        let end = fields["end_utc"].as_u64().expect("numeric UTC end");
+        assert!(start < end);
+        assert!(start >= monday().start && end <= monday().end + 1);
+    }
+    // Inspect field names, not arbitrary substrings of serialized values.
+    let mut pending = vec![&value];
+    while let Some(value) = pending.pop() {
+        if let Some(fields) = value.as_object() {
+            for (key, value) in fields {
+                assert!(
+                    !matches!(
+                        key.as_str(),
+                        "tz" | "timezone"
+                            | "time_zone"
+                            | "visitor_tz"
+                            | "host_tz"
+                            | "zone"
+                            | "zone_label"
+                            | "wall"
+                            | "wall_time"
+                            | "local_time"
+                            | "start_local"
+                            | "end_local"
+                            | "offset"
+                            | "utc_offset"
+                            | "offset_seconds"
+                    ),
+                    "SolveResult leaked timezone metadata in {key}"
+                );
+                pending.push(value);
+            }
+        } else if let Some(values) = value.as_array() {
+            pending.extend(values);
+        }
     }
 
-    // A host zone with a spring-forward gap keeps its typed behaviour at the
-    // border: the skipped hour has no instants, so it offers nothing, while the
-    // hour beside it converts normally.
+    // The skipped host hour offers nothing; an adjacent hour still converts.
     let sunday = TimeRange {
         start: MONDAY + 27 * 86_400,
         end: MONDAY + 28 * 86_400 - 1,
@@ -1177,39 +1209,63 @@ fn slot_mask_contains_no_calendar_or_event_detail() {
         Some(&mask),
     )
     .expect("slots projection");
-    let json = serde_json::to_string(&projection).expect("serialize");
-    for leak in [
+    assert!(matches!(&projection, RungProjection::Slots(_)));
+    let value = serde_json::to_value(&projection).expect("serialize");
+    let busy_id = test_id(BUSY_SEED).to_hex();
+    let host_id = test_id(HOST_A_SEED).to_hex();
+    let secrets = [
         SECRET_NAME,
         SECRET_DESCRIPTION,
         SECRET_ATTENDEE,
         "Boardroom",
-        "event_ref",
-        "attendee_refs",
-        "description",
-        "location",
-        "title",
-        &test_id(BUSY_SEED).to_hex(),
-        &test_id(HOST_A_SEED).to_hex(),
-    ] {
-        assert!(!json.contains(leak), "the slots rung leaked {leak}: {json}");
+        busy_id.as_str(),
+        host_id.as_str(),
+    ];
+    let mut pending = vec![&value];
+    while let Some(value) = pending.pop() {
+        if let Some(fields) = value.as_object() {
+            for (key, value) in fields {
+                assert!(
+                    !matches!(
+                        key.as_str(),
+                        "event_ref"
+                            | "attendee_refs"
+                            | "description"
+                            | "location"
+                            | "title"
+                            | "details"
+                            | "calendar_ref"
+                            | "calendar_refs"
+                    ),
+                    "the slots rung leaked field {key}"
+                );
+                for secret in secrets {
+                    assert!(!key.contains(secret), "the slots rung leaked {secret}");
+                }
+                pending.push(value);
+            }
+        } else if let Some(values) = value.as_array() {
+            pending.extend(values);
+        } else if let Some(text) = value.as_str() {
+            for secret in secrets {
+                assert!(!text.contains(secret), "the slots rung leaked {secret}");
+            }
+        }
     }
-    // Exactly the five mask fields cross the boundary.
+    // Exactly the five mask fields cross the boundary, in any order.
     let value = serde_json::to_value(&mask).expect("serialize mask");
-    assert_eq!(
-        value
-            .as_object()
-            .expect("object")
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        [
-            "event_type",
-            "window_start_utc",
-            "window_end_utc",
-            "slots",
-            "flex_used"
-        ]
-    );
+    let fields = value.as_object().expect("object");
+    let expected = [
+        "event_type",
+        "window_start_utc",
+        "window_end_utc",
+        "slots",
+        "flex_used",
+    ];
+    assert_eq!(fields.len(), expected.len());
+    for key in expected {
+        assert!(fields.contains_key(key), "mask is missing {key}");
+    }
 }
 
 #[test]

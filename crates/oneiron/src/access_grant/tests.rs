@@ -176,38 +176,62 @@ fn calendar_grant() -> AccessGrant {
 
 #[test]
 fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
-    // The pre-existing companion-profile encoding is byte-identical after the
-    // append: same keys, same kind tag, same order.
+    // Preserve the pre-existing companion-profile wire encoding.
     let companion = test_grant();
     assert_eq!(
         encode_access_grant_body(&companion)?,
         grant_map(valid_entries())
     );
-    assert_eq!(
-        decode_access_grant_body(&grant_map(valid_entries()))?,
-        companion
-    );
+    let decoded_companion = decode_access_grant_body(&grant_map(valid_entries()))?;
+    assert!(decoded_companion.allows_companion_profile_read(
+        &entity(0x51),
+        &entity(0xB1),
+        &entity(0xC1),
+    ));
+    assert!(!decoded_companion.allows_companion_profile_read(
+        &entity(0x52),
+        &entity(0xB1),
+        &entity(0xC1),
+    ));
 
-    // And the new scope round-trips on its own pinned key set.
+    // The calendar scope round-trips and authorizes only its audience and calendar.
     let grant = calendar_grant();
     let encoded = encode_access_grant_body(&grant)?;
     validate_access_grant_body_bytes(&encoded)?;
-    assert_eq!(decode_access_grant_body(&encoded)?, grant);
+    let decoded = decode_access_grant_body(&encoded)?;
+    assert_eq!(
+        decoded.calendar_disclosure_rung(&entity(0x52), &entity(0xB2)),
+        Some(DisclosureRung::Titles),
+    );
+    assert_eq!(
+        decoded.calendar_disclosure_rung(&entity(0x51), &entity(0xB2)),
+        None,
+    );
+    assert_eq!(
+        decoded.calendar_disclosure_rung(&entity(0x52), &entity(0xB1)),
+        None,
+    );
 
-    let scope = encode_scope(&grant.scope);
-    let Value::Map(entries) = &scope else {
+    // Inspect the scope actually emitted by the public body encoder.
+    let mut cursor = encoded.as_slice();
+    let body = rmpv::decode::read_value(&mut cursor).expect("decode encoded body");
+    let Value::Map(body_entries) = &body else {
+        panic!("body encodes as a map");
+    };
+    let scope = &body_entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("scope"))
+        .expect("body contains scope")
+        .1;
+    let Value::Map(entries) = scope else {
         panic!("scope encodes as a map");
     };
     let keys: Vec<&str> = entries
         .iter()
         .map(|(key, _)| key.as_str().expect("string key"))
         .collect();
-    assert_eq!(keys, SCOPE_KEYS_CALENDAR);
-    assert_eq!(
-        entries[0].1.as_str(),
-        Some(SCOPE_KIND_CALENDAR),
-        "the kind tag selects the key set"
-    );
+    assert_eq!(keys, ["kind", "calendar_ref", "rung"]);
+    assert_eq!(entries[0].1.as_str(), Some("calendar"));
     assert_eq!(entries[2].1.as_str(), Some("titles"));
 
     // A scope may not borrow the other kind's keys.

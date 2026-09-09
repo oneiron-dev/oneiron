@@ -765,6 +765,7 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
     assert_ne!(base.space_id, repreprocessed.space_id);
     assert_ne!(revised.space_id, repreprocessed.space_id);
     assert_eq!(base.space_id, base.derived_space_id());
+    let old_space_id = base.space_id.clone();
 
     // A hand-edited space_id never validates.
     let forged = VoiceEmbeddingSpaceV1 {
@@ -805,10 +806,11 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
     })?;
     let active = stored_print(&vault, subject)?.expect("re-enrolled print");
     assert_eq!(active.space.space_id, revised.space_id);
-    assert_eq!(
-        print_family_rows(&vault, subject)?.len(),
-        2,
-        "one active pointer plus exactly one print row survive re-enrollment"
+    assert!(
+        !print_family_rows(&vault, subject)?
+            .iter()
+            .any(|(key, _)| key == &voice_print_key(&subject, &old_space_id)),
+        "the obsolete centroid must be deleted, not merely deactivated"
     );
 
     let roster = vault.resolve_voice_segments(&match_request(
@@ -819,7 +821,18 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
     ))?;
     assert!(matches!(
         evidence_of(&roster, "seg-1"),
-        VoiceAttributionEvidence::EnrolledPrint { .. }
+        VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } if *subject_ref == subject
+    ));
+
+    let roster = vault.resolve_voice_segments(&match_request(
+        "call-obsolete-space",
+        &old_space_id,
+        vec![segment("seg-1", 0, vector, &old_space_id)],
+        Vec::new(),
+    ))?;
+    assert!(matches!(
+        evidence_of(&roster, "seg-1"),
+        VoiceAttributionEvidence::ResidualCluster { .. }
     ));
     Ok(())
 }
@@ -1624,7 +1637,6 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
         ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentAskCard,
         ConsentSurface,
     };
-    use std::any::TypeId;
 
     let (_tmp, vault) = temp_vault();
     let subject = test_id(0x68);
@@ -1652,20 +1664,6 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
     assert!(
         *score >= VOICE_MATCH_THRESHOLD_DEFAULT,
         "the seam is tested against an accepted match"
-    );
-
-    // Not a consent actor: three distinct types, none of which IS one.
-    assert_ne!(
-        TypeId::of::<VoiceSessionRosterV1>(),
-        TypeId::of::<ConsentActorIdentity>()
-    );
-    assert_ne!(
-        TypeId::of::<VoiceResolvedSegment>(),
-        TypeId::of::<ConsentActorIdentity>()
-    );
-    assert_ne!(
-        TypeId::of::<VoiceAttributionEvidence>(),
-        TypeId::of::<ConsentActorIdentity>()
     );
 
     // The most a caller can assemble from roster data is a CLAIMED voice path
@@ -1712,12 +1710,11 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
         ConsentSurface::Voice,
         1_000,
     )?;
-    assert_eq!(
+    assert!(matches!(
         card.evaluate_action(&request, &owner)
             .expect_err("a voice similarity match must not clear a consequential action")
             .kind(),
         ErrorKind::ConsentUnauthenticatedActor,
-        "the matched speaker label is evidence, not an authenticated actor"
-    );
+    ));
     Ok(())
 }

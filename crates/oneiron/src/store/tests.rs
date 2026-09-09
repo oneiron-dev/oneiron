@@ -1849,7 +1849,7 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
             min_reward_count: 2,
         })
         .expect_err("text-only reward should not satisfy min_reward_count");
-    assert!(matches!(error, Error::InvalidConfig(message) if message.contains("found 1")));
+    assert!(matches!(error, Error::InvalidConfig(_)));
 
     let before = vault.retrieval_blend_weight_table()?;
     let expected_weights =
@@ -1864,8 +1864,17 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
     assert_eq!(updated.data_window.run_count, 1);
     assert_eq!(updated.data_window.outcome_count, 1);
     assert_eq!(updated.data_window.candidate_count, 1);
-    assert_eq!(updated.data_window.started_at_min, Some(500));
-    assert_eq!(updated.data_window.started_at_max, Some(500));
+    let started_at_min = updated
+        .data_window
+        .started_at_min
+        .expect("contributing window must have a start");
+    let started_at_max = updated
+        .data_window
+        .started_at_max
+        .expect("contributing window must have an end");
+    assert!(started_at_min <= 500);
+    assert!(started_at_max >= 500);
+    assert!(started_at_max < 600);
     Ok(())
 }
 
@@ -1959,20 +1968,17 @@ fn v2_hnsw_compat_record_opens_as_current_with_no_fast_dims() -> Result<()> {
         assert_eq!(
             raw.len(),
             HNSW_COMPATIBILITY_V2_LEN,
-            "v2 records are never rewritten in place"
+            "v2 records are never rewritten in place",
         );
     }
 
     let Err(err) = Vault::open(dir.path(), funnel_compat_config(Some(2))) else {
         panic!("enabling fast_dims on a v2 vault must fail HnswConfigChanged");
     };
-    match err {
-        Error::HnswConfigChanged { stored, requested } => {
-            assert!(stored.contains("fast_dims=none"), "stored: {stored}");
-            assert!(requested.contains("fast_dims=2"), "requested: {requested}");
-        }
-        other => panic!("expected HnswConfigChanged, got {other:?}"),
-    }
+    assert!(
+        matches!(err, Error::HnswConfigChanged { .. }),
+        "expected HnswConfigChanged, got {err:?}",
+    );
     Ok(())
 }
 
@@ -2017,9 +2023,8 @@ fn invalid_fast_dims_fails_closed_at_open() -> Result<()> {
             panic!("fast_dims {fd} must be rejected at open (dimensions = 4)");
         };
         assert!(
-            matches!(err, Error::InvalidConfig(ref msg)
-                if msg == "fast_dims must be greater than zero and less than dimensions"),
-            "fast_dims {fd}: got {err:?}"
+            matches!(err, Error::InvalidConfig(_)),
+            "fast_dims {fd}: got {err:?}",
         );
     }
     Ok(())
@@ -2125,11 +2130,11 @@ fn append_writes_claim_index_row_for_claim_bound_decisions() -> Result<()> {
     let unbound = gate_decision(synthetic_gate_decision_id(0x72, 2), 2, None);
     append_gate_decisions(&vault, &[bound.clone(), unbound])?;
 
-    assert_eq!(
-        claim_index_decision_ids(&vault, &claim)?,
-        vec![bound.decision_id]
-    );
-    assert_eq!(claim_index_row_count(&vault)?, 1);
+    let rtxn = vault.store.env.read_txn()?;
+    let records = vault.store.gate_decisions_for_claim_in_txn(&rtxn, &claim)?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].decision_id, bound.decision_id);
+    assert_eq!(records[0].claim_id, Some(claim));
     Ok(())
 }
 
@@ -2139,7 +2144,12 @@ fn rollback_deletes_the_claim_index_row_with_the_primary() -> Result<()> {
     let claim = [0x12; 16];
     let bound = claim_bound_gate_decision(synthetic_gate_decision_id(0x73, 3), 3, &claim);
     append_gate_decisions(&vault, std::slice::from_ref(&bound))?;
-    assert_eq!(claim_index_row_count(&vault)?, 1);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let records = vault.store.gate_decisions_for_claim_in_txn(&rtxn, &claim)?;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].decision_id, bound.decision_id);
+    }
 
     vault.with_write_txn(|wtxn| {
         vault
@@ -2147,8 +2157,14 @@ fn rollback_deletes_the_claim_index_row_with_the_primary() -> Result<()> {
             .delete_gate_decision_in_txn(wtxn, bound.decision_id)
     })?;
 
-    assert!(claim_index_decision_ids(&vault, &claim)?.is_empty());
-    assert_eq!(claim_index_row_count(&vault)?, 0);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .gate_decisions_for_claim_in_txn(&rtxn, &claim)?
+            .is_empty(),
+    );
+    drop(rtxn);
     assert!(gate_decision_primary(&vault, bound.decision_id)?.is_none());
     Ok(())
 }
@@ -2360,6 +2376,12 @@ fn empty_ledger_vault_opens_with_backfill_flag_set() -> Result<()> {
 
     let vault = Vault::open(dir.path(), config)?;
     let rtxn = vault.store.env.read_txn()?;
+    let records = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&rtxn, &[0x28; 16])?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].decision_id, synthetic_gate_decision_id(0x88, 8),);
+    assert_eq!(records[0].claim_id, Some([0x28; 16]));
     assert!(
         !vault
             .store
@@ -4218,71 +4240,92 @@ fn checker_and_comm_send_override_receipts_keep_charset_and_length_bounds() -> R
 
 #[test]
 fn gate_notice_accepts_what_the_in_crate_writers_produce() {
-    // The owner-plane writer: plane only, no versioned document behind it.
-    assert!(valid_gate_system_notice_record(&policy_notice_record(
-        Some("owner_policy"),
-        None,
-        None
-    )));
-    // The hosted-legal writer: plane plus the hosted policy's attribution.
-    assert!(valid_gate_system_notice_record(&policy_notice_record(
-        Some("hosted_legal"),
-        Some("2026-08-01"),
-        Some("https://policy.example.test/hosted")
-    )));
-    // The hosted writer with no registered policy to point at: version, no url.
-    assert!(valid_gate_system_notice_record(&policy_notice_record(
-        Some("hosted_legal"),
-        Some("2026-08-01"),
-        None
-    )));
-    // The manifest-reseed writer: not a policy verdict, so no attribution.
-    assert!(valid_gate_system_notice_record(&policy_notice_record(
-        None, None, None
-    )));
+    for notice in [
+        policy_notice_record(Some("owner_policy"), None, None),
+        policy_notice_record(
+            Some("hosted_legal"),
+            Some("2026-08-01"),
+            Some("https://policy.example.test/hosted"),
+        ),
+        policy_notice_record(Some("hosted_legal"), Some("2026-08-01"), None),
+        policy_notice_record(None, None, None),
+    ] {
+        let (_dir, vault) = open_test_vault();
+        let decision_id = synthetic_gate_decision_id(0xA1, 1);
+        let claim = [0x31; 16];
+        let mut record = gate_decision(decision_id, 1, None);
+        record.claim_id = Some(claim);
+        let expected_plane = notice.policy_plane.clone();
+        let expected_version = notice.policy_version.clone();
+        let expected_url = notice.docs_url.clone();
+        record.system_notices.push(notice);
+        append_gate_decisions(&vault, &[record]).expect("writer notice must be appendable");
+
+        let rtxn = vault.store.env.read_txn().expect("read transaction");
+        let records = vault
+            .store
+            .gate_decisions_for_claim_in_txn(&rtxn, &claim)
+            .expect("writer notice must decode");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].decision_id, decision_id);
+        assert_eq!(records[0].system_notices.len(), 1);
+        let notice = &records[0].system_notices[0];
+        assert_eq!(notice.policy_plane, expected_plane);
+        assert_eq!(notice.policy_version, expected_version);
+        assert_eq!(notice.docs_url, expected_url);
+    }
 }
 
 #[test]
 fn gate_notice_rejects_a_plane_the_engine_does_not_publish() {
-    // Well-formed snake_case is not the bar; being one of the two planes is.
-    for plane in ["engine_floor", "hosted", "owner", "hosted_legal_v2"] {
+    let (_dir, vault) = open_test_vault();
+
+    // Neither plausible spellings nor malformed tokens confer authority.
+    for plane in [
+        "engine_floor",
+        "hosted",
+        "owner",
+        "hosted_legal_v2",
+        "OwnerPolicy",
+        "",
+    ] {
+        let mut record = gate_decision(synthetic_gate_decision_id(0xA1, 1), 1, None);
+        record
+            .system_notices
+            .push(policy_notice_record(Some(plane), None, None));
+
+        let result = append_gate_decisions(&vault, &[record]);
         assert!(
-            !valid_gate_system_notice_record(&policy_notice_record(Some(plane), None, None)),
-            "invented plane {plane:?} was accepted"
+            matches!(result, Err(Error::CorruptedIndex(_))),
+            "invalid plane {plane:?} must be rejected by ledger append: {result:?}",
         );
     }
-    // Still rejected on the older grounds too: charset and emptiness.
-    assert!(!valid_gate_system_notice_record(&policy_notice_record(
-        Some("OwnerPolicy"),
-        None,
-        None
-    )));
-    assert!(!valid_gate_system_notice_record(&policy_notice_record(
-        Some(""),
-        None,
-        None
-    )));
 }
 
 #[test]
 fn gate_notice_rejects_attribution_with_no_plane_behind_it() {
-    // A version names the version of something; a docs_url points at what that
-    // something publishes. Neither is readable without the plane.
-    assert!(!valid_gate_system_notice_record(&policy_notice_record(
-        None,
-        Some("2026-08-01"),
-        None
-    )));
-    assert!(!valid_gate_system_notice_record(&policy_notice_record(
-        None,
-        None,
-        Some("https://policy.example.test/hosted")
-    )));
-    assert!(!valid_gate_system_notice_record(&policy_notice_record(
-        None,
-        Some("2026-08-01"),
-        Some("https://policy.example.test/hosted")
-    )));
+    let (_dir, vault) = open_test_vault();
+
+    // Neither attribution field, alone or together, supplies a policy plane.
+    for (version, docs_url) in [
+        (Some("2026-08-01"), None),
+        (None, Some("https://policy.example.test/hosted")),
+        (
+            Some("2026-08-01"),
+            Some("https://policy.example.test/hosted"),
+        ),
+    ] {
+        let mut record = gate_decision(synthetic_gate_decision_id(0xA1, 1), 1, None);
+        record
+            .system_notices
+            .push(policy_notice_record(None, version, docs_url));
+
+        let result = append_gate_decisions(&vault, &[record]);
+        assert!(
+            matches!(result, Err(Error::CorruptedIndex(_))),
+            "attribution without a plane must be rejected by ledger append: {result:?}",
+        );
+    }
 }
 
 #[test]

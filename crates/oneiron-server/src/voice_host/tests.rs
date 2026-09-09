@@ -251,11 +251,9 @@ async fn budget_denial_and_provider_error_preserve_exact_revision_for_retry() {
         Err(HostError::Llm(LlmError::BudgetDenied(_)))
     ));
     assert!(calls.try_recv().is_err());
-    assert_eq!(
-        budget.read(),
-        before_denial,
-        "denial creates no reservation or spend"
-    );
+    let after_denial = budget.read();
+    assert_eq!(after_denial.reserved_units, before_denial.reserved_units);
+    assert_eq!(after_denial.used_units, before_denial.used_units);
     assert!(host.prepare(&token, 0, "older".to_owned(), true).is_err());
     assert!(host.prepare(&token, 1, "changed".to_owned(), true).is_err());
     budget.abort(&held.lease).unwrap();
@@ -289,7 +287,7 @@ async fn budget_denial_and_provider_error_preserve_exact_revision_for_retry() {
     };
     assert_eq!(request.transcript, "final");
     assert_eq!(vault.retrieval_runs(200).unwrap().len(), 1);
-    assert!(host.lock().unwrap().open.is_none());
+    assert!(host.prepare(&token, 2, "next".to_owned(), false).is_err());
 }
 
 #[tokio::test]

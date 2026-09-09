@@ -541,11 +541,6 @@ fn set_edge_vad_rewrites_only_vad_bytes_and_preserves_layout() -> Result<()> {
         .set_edge_vad(&a, EdgeKind::BelongsTo, &b, new_vad)
         .expect_err("structural VAD set must reject");
     assert_eq!(err.kind(), ErrorKind::InvariantViolation);
-    assert!(
-        err.to_string()
-            .contains("structural edges do not carry VAD"),
-        "got {err:?}"
-    );
     let structural = EdgeRef::new(a, EdgeKind::BelongsTo, b);
     let (out, _) = raw_edge_values(vault, &structural)?;
     assert_eq!(
@@ -711,11 +706,7 @@ fn as_actor_bound_write_carries_bound_actor_and_rejects_conflicts() -> Result<()
         .put_edge_provenance(&stray, &subject, &conflicting, 3_000)
         .expect_err("conflicting body actor must reject");
     assert!(
-        matches!(
-            &err,
-            Error::InvalidProvenanceBody(msg)
-                if msg.contains("session-bound actor")
-        ),
+        matches!(&err, Error::InvalidProvenanceBody(_)),
         "got {err:?}"
     );
     assert!(

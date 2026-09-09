@@ -670,23 +670,42 @@ fn offer_never_mints_grant() {
     for n in 1..=12 {
         review(&vault, &scope, n, DraftReviewOutcome::ApprovedUntouched);
     }
-    let before = snapshot(&vault);
+    let grant_count = vault.active_standing_consent_grants().unwrap().len();
+    let consent_records = || {
+        vault
+            .store
+            .gate_decisions(usize::MAX)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.decision_id, row.outcome, row.grant_ref))
+            .collect::<Vec<_>>()
+    };
+    let before = consent_records();
     let offer = vault
         .evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now())
         .unwrap()
         .unwrap();
-    assert_eq!(snapshot(&vault), before);
     assert_eq!(
-        vault
-            .verify_channel_identity_autonomy(&request, &owner)
-            .unwrap(),
-        state
+        vault.active_standing_consent_grants().unwrap().len(),
+        grant_count
     );
+    assert_eq!(consent_records(), before);
+    let verified = vault
+        .verify_channel_identity_autonomy(&request, &owner)
+        .unwrap();
+    assert_eq!(verified.mode.identity_ref, state.mode.identity_ref);
+    assert_eq!(
+        verified.mode.relationship_context,
+        state.mode.relationship_context,
+    );
+    assert_eq!(verified.mode.rung, state.mode.rung);
+    assert_eq!(verified.mode.read_grant_ref, state.mode.read_grant_ref);
+    assert_eq!(verified.mode.action_grant_ref, state.mode.action_grant_ref);
     assert!(
         !vault
             .authorize_and_consume_channel_identity_grant(
                 &state.mode.action_grant_ref.unwrap(),
-                &candidate(&request, 1)
+                &candidate(&request, 1),
             )
             .unwrap()
     );
@@ -715,24 +734,57 @@ fn authenticated_apply_verify_is_exact_and_idempotent() {
     let first = vault
         .apply_channel_identity_autonomy(&request, &owner)
         .unwrap();
-    let before = snapshot(&vault);
-    assert_eq!(
+    let consent_records = || {
         vault
+            .store
+            .gate_decisions(usize::MAX)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.decision_id, row.outcome, row.grant_ref))
+            .collect::<Vec<_>>()
+    };
+    let before = consent_records();
+    let assert_exact = |state: &ChannelIdentityAutonomyState| {
+        assert_eq!(state.mode.identity_ref, request.read_envelope.identity_ref);
+        assert_eq!(
+            state.mode.relationship_context,
+            request.relationship_context
+        );
+        assert_eq!(state.mode.rung, request.rung);
+        assert_eq!(state.mode.read_grant_ref, first.mode.read_grant_ref);
+        assert_eq!(state.mode.action_grant_ref, first.mode.action_grant_ref);
+        assert_eq!(
+            state.read_envelope.identity_ref,
+            request.read_envelope.identity_ref,
+        );
+        assert_eq!(
+            state.read_envelope.label_allowlist,
+            request.read_envelope.label_allowlist,
+        );
+        assert_eq!(
+            state.read_envelope.thread_allowlist,
+            request.read_envelope.thread_allowlist,
+        );
+        let action = state.action_envelope.as_ref().unwrap();
+        let desired = request.action_envelope.as_ref().unwrap();
+        assert_eq!(action.identity_ref, desired.identity_ref);
+        assert_eq!(action.relationship_context, desired.relationship_context);
+        assert_eq!(action.counterparty_class, desired.counterparty_class);
+        assert_eq!(action.max_actions, desired.max_actions);
+        assert_eq!(action.window_secs, desired.window_secs);
+    };
+    assert_exact(&first);
+    assert_exact(
+        &vault
             .apply_channel_identity_autonomy(&request, &owner)
             .unwrap(),
-        first
     );
-    assert_eq!(
-        vault
+    assert_exact(
+        &vault
             .verify_channel_identity_autonomy(&request, &owner)
             .unwrap(),
-        first
     );
-    assert_eq!(
-        snapshot(&vault),
-        before,
-        "no new consent receipts on exact replay"
-    );
+    assert_eq!(consent_records(), before);
     let mut wrong = request.clone();
     wrong.action_envelope.as_mut().unwrap().max_actions += 1;
     assert!(
@@ -745,7 +797,12 @@ fn authenticated_apply_verify_is_exact_and_idempotent() {
             .verify_channel_identity_autonomy(&wrong, &owner)
             .is_err()
     );
-    assert_eq!(snapshot(&vault), before);
+    assert_exact(
+        &vault
+            .verify_channel_identity_autonomy(&request, &owner)
+            .unwrap(),
+    );
+    assert_eq!(consent_records(), before);
     assert!(
         vault
             .authenticate_owner(request.actor_ref, "agent", true, GateDecisionId::now())
@@ -757,7 +814,7 @@ fn authenticated_apply_verify_is_exact_and_idempotent() {
                 owner.actor(),
                 owner.principal_ref(),
                 false,
-                GateDecisionId::now()
+                GateDecisionId::now(),
             )
             .is_err()
     );
@@ -870,19 +927,44 @@ fn evidence_is_attributed_deduplicated_and_scope_isolated() {
         .unwrap();
     let scope = review_scope(&request);
     let evidence = persist_review(&vault, &scope, 1, DraftReviewOutcome::ApprovedUntouched);
+    let consent_records = || {
+        vault
+            .store
+            .gate_decisions(usize::MAX)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.decision_id, row.outcome, row.grant_ref))
+            .collect::<Vec<_>>()
+    };
+    let before_wrong_actor = consent_records();
     assert!(
         vault
             .record_graduation_evidence(
                 evidence.clone(),
-                &WriteActor::new(entity(9), EdgeActorClass::Agent)
+                &WriteActor::new(entity(9), EdgeActorClass::Agent),
             )
             .is_err()
     );
+    assert!(
+        vault
+            .evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(consent_records(), before_wrong_actor);
     let actor = WriteActor::new(scope.actor_ref, EdgeActorClass::Agent);
     vault
         .record_graduation_evidence(evidence.clone(), &actor)
         .unwrap();
-    let before = snapshot(&vault);
+    let admitted = vault
+        .evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        admitted.evidence_refs,
+        std::slice::from_ref(&evidence.receipt_ref)
+    );
+    let before = consent_records();
     for _ in 0..12 {
         assert!(
             vault
@@ -895,7 +977,12 @@ fn evidence_is_attributed_deduplicated_and_scope_isolated() {
             .record_graduation_evidence_as_owner(evidence, &owner)
             .is_err()
     );
-    assert_eq!(snapshot(&vault), before);
+    let after = vault
+        .evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now())
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.evidence_refs, admitted.evidence_refs);
+    assert_eq!(consent_records(), before);
     assert!(
         vault
             .evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now())
@@ -1075,12 +1162,16 @@ fn owner_can_apply_another_context_without_reminting_shared_read_authority() {
         .unwrap();
     assert_eq!(first.mode.read_grant_ref, second.mode.read_grant_ref);
     assert_ne!(first.mode.action_grant_ref, second.mode.action_grant_ref);
+    let verified = vault
+        .verify_channel_identity_autonomy(&request, &owner)
+        .unwrap();
     assert_eq!(
-        vault
-            .verify_channel_identity_autonomy(&request, &owner)
-            .unwrap(),
-        second
+        verified.mode.relationship_context,
+        RelationshipContext::PersonalFriends,
     );
+    assert_eq!(verified.mode.rung, ChannelIdentityAutonomyRung::DraftOnly);
+    assert_eq!(verified.mode.read_grant_ref, second.mode.read_grant_ref);
+    assert_eq!(verified.mode.action_grant_ref, second.mode.action_grant_ref);
 }
 
 #[test]
@@ -1152,7 +1243,34 @@ fn posture_never_authorizes_missing_or_mismatched_grants() {
     let state = vault
         .apply_channel_identity_autonomy(&request, &owner)
         .unwrap();
-    let before = snapshot(&vault);
+    let consent_records = || {
+        vault
+            .store
+            .gate_decisions(usize::MAX)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.decision_id, row.outcome, row.grant_ref))
+            .collect::<Vec<_>>()
+    };
+    let before = consent_records();
+    let assert_unchanged = || {
+        let resolved = vault
+            .resolve_channel_identity_autonomy_mode(
+                &request.read_envelope.identity_ref,
+                &request.relationship_context,
+                crate::unix_seconds_now(),
+            )
+            .unwrap();
+        assert_eq!(resolved.identity_ref, state.mode.identity_ref);
+        assert_eq!(
+            resolved.relationship_context,
+            state.mode.relationship_context
+        );
+        assert_eq!(resolved.rung, state.mode.rung);
+        assert_eq!(resolved.read_grant_ref, state.mode.read_grant_ref);
+        assert_eq!(resolved.action_grant_ref, state.mode.action_grant_ref);
+        assert_eq!(consent_records(), before);
+    };
     let mut mode = state.mode.clone();
     mode.rung = ChannelIdentityAutonomyRung::AutonomousWithinEnvelope;
     assert!(
@@ -1160,6 +1278,7 @@ fn posture_never_authorizes_missing_or_mismatched_grants() {
             .set_channel_identity_autonomy_mode(mode, &owner, crate::unix_seconds_now())
             .is_err()
     );
+    assert_unchanged();
     let mut mode = state.mode.clone();
     mode.action_grant_ref = Some(entity(0x88));
     assert!(
@@ -1167,14 +1286,15 @@ fn posture_never_authorizes_missing_or_mismatched_grants() {
             .set_channel_identity_autonomy_mode(mode, &owner, crate::unix_seconds_now())
             .is_err()
     );
-    let mut mode = state.mode;
+    assert_unchanged();
+    let mut mode = state.mode.clone();
     mode.read_grant_ref = None;
     assert!(
         vault
             .set_channel_identity_autonomy_mode(mode, &owner, crate::unix_seconds_now())
             .is_err()
     );
-    assert_eq!(snapshot(&vault), before);
+    assert_unchanged();
 }
 
 #[test]
@@ -1217,18 +1337,41 @@ fn owner_review_exception_requires_authentication_and_preserves_attribution() {
     let scope = review_scope(&request);
     let evidence = persist_review(&vault, &scope, 1, DraftReviewOutcome::ApprovedUntouched);
     let reference = evidence.receipt_ref.clone();
+    let consent_records = || {
+        vault
+            .store
+            .gate_decisions(usize::MAX)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.decision_id, row.outcome, row.grant_ref))
+            .collect::<Vec<_>>()
+    };
+    let before_unauthenticated = consent_records();
     assert!(
         vault
             .record_graduation_evidence(
                 evidence.clone(),
-                &WriteActor::new(owner.actor(), EdgeActorClass::Human)
+                &WriteActor::new(owner.actor(), EdgeActorClass::Human),
             )
             .is_err()
     );
+    assert!(
+        vault
+            .evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(consent_records(), before_unauthenticated);
     vault
         .record_graduation_evidence_as_owner(evidence.clone(), &owner)
         .unwrap();
-    let before = snapshot(&vault);
+    let admitted = vault
+        .evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now())
+        .unwrap()
+        .unwrap();
+    assert_eq!(admitted.scope.actor_ref, request.actor_ref);
+    assert_eq!(admitted.evidence_refs, std::slice::from_ref(&reference));
+    let before = consent_records();
     assert!(
         vault
             .record_graduation_evidence_as_owner(evidence.clone(), &owner)
@@ -1238,11 +1381,11 @@ fn owner_review_exception_requires_authentication_and_preserves_attribution() {
         vault
             .record_graduation_evidence(
                 evidence,
-                &WriteActor::new(scope.actor_ref, EdgeActorClass::Agent)
+                &WriteActor::new(scope.actor_ref, EdgeActorClass::Agent),
             )
             .is_err()
     );
-    assert_eq!(snapshot(&vault), before);
+    assert_eq!(consent_records(), before);
     let offer = vault
         .evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now())
         .unwrap()
@@ -1639,9 +1782,14 @@ fn graduation_rejects_capped_source_hiding_a_duplicate_review() {
             Ok(())
         })
         .unwrap();
+    let conflicting = crate::receipt::attempt_pack_receipt(&vault, &evidence.receipt_ref)
+        .unwrap()
+        .unwrap();
+    assert_eq!(conflicting.receipt_id, evidence.receipt_ref);
+    assert_eq!(conflicting.actor, Some(entity(0x72).to_hex()));
     assert_eq!(
-        crate::receipt::attempt_pack_receipt(&vault, &evidence.receipt_ref).unwrap(),
-        Some(receipt)
+        conflicting.fields.get("review_outcome").map(String::as_str),
+        Some("rejected"),
     );
     let scan = vault
         .scan_receipts(ReceiptQuery::new(MAX_RECEIPT_QUERY_SCAN).with_kind(ReceiptKind::Outbound))
@@ -1653,20 +1801,20 @@ fn graduation_rejects_capped_source_hiding_a_duplicate_review() {
             .fields
             .get("review_outcome")
             .map(String::as_str),
-        Some("approved_untouched")
+        Some("approved_untouched"),
     );
     assert!(
         !scan.complete,
-        "one visible match is not proof of uniqueness"
+        "one visible match is not proof of uniqueness",
     );
     let continuation = scan.continuation.unwrap();
     assert_eq!(
         continuation.attempt_pack_before,
-        Some(format!("attempt_receipt:v1:attempt:{:032x}", 1).into_bytes())
+        Some(format!("attempt_receipt:v1:attempt:{:032x}", 1).into_bytes()),
     );
     assert!(
         continuation.next_record.is_none(),
-        "the source, not the result limit, hid the duplicate"
+        "the source, not the result limit, hid the duplicate",
     );
     assert_review_rejected(&vault, &owner, &evidence);
     assert!(

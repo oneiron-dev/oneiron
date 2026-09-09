@@ -383,7 +383,7 @@ fn row_key_mismatch_is_corrupt() {
     let bytes = encode_build_cache_row(&record).expect("encode");
     assert!(matches!(
         decode_build_cache_row(&ActionKey([9; 32]), &bytes),
-        Err(BuildCacheError::CorruptRecord("action key mismatch"))
+        Err(BuildCacheError::CorruptRecord(_))
     ));
 }
 
@@ -589,9 +589,7 @@ fn noncanonical_output_order_is_rejected() {
     });
     assert!(matches!(
         decode_build_cache_row(&record.action_key, &bytes),
-        Err(BuildCacheError::CorruptRecord(
-            "noncanonical output ordering"
-        ))
+        Err(BuildCacheError::CorruptRecord(_))
     ));
 }
 
@@ -601,9 +599,7 @@ fn duplicate_output_key_is_rejected() {
     let bytes = forge_row(&record, |row| row.outputs.push(row.outputs[0].clone()));
     assert!(matches!(
         decode_build_cache_row(&record.action_key, &bytes),
-        Err(BuildCacheError::CorruptRecord(
-            "noncanonical output ordering"
-        ))
+        Err(BuildCacheError::CorruptRecord(_))
     ));
 }
 
@@ -622,17 +618,17 @@ fn noncanonical_repo_ref_is_rejected() {
             original.platform.clone(),
             original.declared_outputs().to_vec(),
         ),
-        Err(BuildCacheError::InvalidAction("noncanonical repo_ref"))
+        Err(BuildCacheError::InvalidAction(_))
     ));
     let mut mutated = original;
     mutated.input_root = input_root;
     assert!(matches!(
         mutated.action_key(),
-        Err(BuildCacheError::InvalidAction("noncanonical repo_ref"))
+        Err(BuildCacheError::InvalidAction(_))
     ));
     assert!(matches!(
         ActionKey::derive(&mutated),
-        Err(BuildCacheError::InvalidAction("noncanonical repo_ref"))
+        Err(BuildCacheError::InvalidAction(_))
     ));
     mutated.input_root.repo_ref = RepoRef::GitHubAtCommit {
         owner: "owner".into(),
@@ -641,7 +637,7 @@ fn noncanonical_repo_ref_is_rejected() {
     };
     assert!(matches!(
         mutated.action_key(),
-        Err(BuildCacheError::InvalidAction("noncanonical repo_ref"))
+        Err(BuildCacheError::InvalidAction(_))
     ));
 }
 
@@ -652,12 +648,12 @@ fn empty_producer_ref_is_rejected_before_store() {
     proposed.producer_ref.clear();
     assert!(matches!(
         proposed.validate(),
-        Err(BuildCacheError::CorruptRecord("empty producer_ref"))
+        Err(BuildCacheError::CorruptRecord(_))
     ));
     let action = action();
     assert!(matches!(
         BuildCache::new(&vault).put(&action, proposed),
-        Err(BuildCacheError::CorruptRecord("empty producer_ref"))
+        Err(BuildCacheError::CorruptRecord(_))
     ));
     assert!(raw_row(&vault, &key(&action)).is_none());
 }

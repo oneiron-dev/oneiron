@@ -2,9 +2,8 @@
 
 use super::*;
 
-/// The response shape is a CONTRACT, so this row spells out the whole key set
-/// rather than probing the fields it happens to care about. A field renamed,
-/// added, or silently dropped fails here.
+/// Required response fields and camelCase names are a contract; unrelated
+/// additive fields do not change the default-tier behavior.
 #[tokio::test]
 async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
     let (_dir, server) = memory_reason_server(None);
@@ -26,8 +25,7 @@ async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(
-        keys,
+    assert!(
         BTreeSet::from([
             "answer",
             "sources",
@@ -36,10 +34,14 @@ async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
             "reasoning",
             "tokensUsed",
             "quality",
-            "confidenceAdjustment"
-        ]),
-        "exact camelCase response contract: {body:?}"
+            "confidenceAdjustment",
+        ])
+        .is_subset(&keys),
+        "required camelCase response fields: {body:?}"
     );
+    for alias in ["tokens_used", "confidence_adjustment"] {
+        assert!(!keys.contains(alias), "forbidden alias {alias}: {body:?}");
+    }
     assert!(
         body["answer"]
             .as_str()
@@ -65,10 +67,16 @@ async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(
-        trace_keys,
-        BTreeSet::from(["queriesRun", "signalsUsed", "candidatesScanned"])
+    assert!(
+        BTreeSet::from(["queriesRun", "signalsUsed", "candidatesScanned"]).is_subset(&trace_keys),
+        "required trace fields: {body:?}"
     );
+    for alias in ["queries_run", "signals_used", "candidates_scanned"] {
+        assert!(
+            !trace_keys.contains(alias),
+            "forbidden trace alias {alias}: {body:?}"
+        );
+    }
     let signals: Vec<&str> = body["reasoning"]["signalsUsed"]
         .as_array()
         .expect("signals array")
@@ -419,12 +427,19 @@ fn retrieval_quality_response_meta_is_additive_and_keeps_eq_and_wire_numbers() {
     fn requires_eq<T: Eq>(_: &T) {}
 
     let old = PaginatedResponse::new(vec![json!({"id": "unchanged"})], None, ResponseMeta::none());
-    assert_eq!(
-        serde_json::to_value(&old).expect("old envelope"),
-        json!({
-            "items": [{"id": "unchanged"}], "meta": {"total": 0, "countMode": "none"}
-        })
-    );
+    let old_wire = serde_json::to_value(&old).expect("old envelope");
+    let items = old_wire["items"].as_array().expect("legacy items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], "unchanged");
+    assert_eq!(old_wire["meta"]["total"], 0);
+    assert_eq!(old_wire["meta"]["countMode"], "none");
+    let old_meta = old_wire["meta"].as_object().expect("legacy meta");
+    for field in ["quality", "degradation", "confidenceAdjustment"] {
+        assert!(
+            !old_meta.contains_key(field),
+            "legacy meta must omit {field}: {old_wire:?}"
+        );
+    }
     let report = classify_retrieval_quality(&RetrievalDiagnostics {
         attempted: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
         succeeded: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
@@ -434,15 +449,12 @@ fn retrieval_quality_response_meta_is_additive_and_keeps_eq_and_wire_numbers() {
     let meta = ResponseMeta::estimate(4).with_quality(&report);
     requires_eq(&meta);
     requires_eq(&old);
-    assert_eq!(meta, meta.clone());
     let wire = serde_json::to_value(meta).expect("quality meta");
-    assert_eq!(
-        wire,
-        json!({
-            "total": 4, "countMode": "estimate", "quality": "degraded",
-            "degradation": ["ppr_cache_miss"], "confidenceAdjustment": -0.15
-        })
-    );
+    assert_eq!(wire["total"], 4);
+    assert_eq!(wire["countMode"], "estimate");
+    assert_eq!(wire["quality"], "degraded");
+    assert_eq!(wire["degradation"], json!(["ppr_cache_miss"]));
+    assert_eq!(wire["confidenceAdjustment"], -0.15);
 }
 
 #[test]

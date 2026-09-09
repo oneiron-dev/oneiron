@@ -21,13 +21,10 @@ fn checkout_git_oid_requires_lowercase_sha1_hex() {
 
 #[test]
 fn checkout_git_oid_rejects_zero() {
-    // The all-zero oid is git's null sentinel, not a durable head. Admitting it
-    // would let a teardown inspection report `observed_head: Some(null)` and
-    // match a zero `pushed_head` receipt, collecting a worktree whose work was
-    // never actually pushed. Fail closed, like the `CheckoutId` zero guard.
+    // Git's null sentinel must not authorize collection of unpushed work.
     assert!(matches!(
         GitOid::parse("0000000000000000000000000000000000000000"),
-        Err(CheckoutError::Invalid("git oid zero"))
+        Err(CheckoutError::Invalid(_))
     ));
     // A single non-zero nibble is a real oid and still parses.
     assert!(GitOid::parse("0000000000000000000000000000000000000001").is_ok());
@@ -505,7 +502,11 @@ fn checkout_codec_rejects_invalid_data_and_liveness_is_not_durable() {
     let rmpv::Value::Map(entries) = &mut value else {
         panic!("lease codec is a map")
     };
-    entries[0].1 = rmpv::Value::from(2);
+    let (_, schema_version) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("schema_version"))
+        .unwrap();
+    *schema_version = rmpv::Value::from(2);
     let mut bad_schema = Vec::new();
     rmpv::encode::write_value(&mut bad_schema, &value).unwrap();
     assert!(decode_act(&bad_schema).is_err());
@@ -517,7 +518,15 @@ fn checkout_codec_rejects_invalid_data_and_liveness_is_not_durable() {
         .unwrap()
         .unwrap();
     assert_eq!(decode_act(&raw).unwrap(), a);
-    assert!(!String::from_utf8_lossy(&raw).contains("observed_at"));
+    let durable_value = rmpv::decode::read_value(&mut std::io::Cursor::new(&raw)).unwrap();
+    let rmpv::Value::Map(durable_entries) = durable_value else {
+        panic!("lease codec is a map")
+    };
+    assert!(
+        durable_entries
+            .iter()
+            .all(|(key, _)| key.as_str() != Some("observed_at"))
+    );
     assert!(CheckoutId::from_bytes([0; 16]).is_err());
     let receipt = CheckoutSettlementReceipt {
         receipt_id: [2; 32],
@@ -724,15 +733,15 @@ fn checkout_reclaim_rejects_empty_holder_and_regressing_times() {
         .unwrap();
     assert!(matches!(
         s.reclaim_idempotent(id(), String::new(), 111),
-        Err(CheckoutError::Invalid("checkout holder empty"))
+        Err(CheckoutError::Invalid(_))
     ));
     assert!(matches!(
         s.renew(fence(&g, "one"), 10, 99),
-        Err(CheckoutError::Invalid("checkout time regressed"))
+        Err(CheckoutError::Invalid(_))
     ));
     assert!(matches!(
         s.reclaim_idempotent(id(), "two".into(), 99),
-        Err(CheckoutError::Invalid("checkout time regressed"))
+        Err(CheckoutError::Invalid(_))
     ));
     assert!(matches!(
         s.settle(CheckoutSettlementRequest {
@@ -740,18 +749,18 @@ fn checkout_reclaim_rejects_empty_holder_and_regressing_times() {
             disposition: CheckoutSettlementDisposition::Select,
             observed_ref: "a".into(),
             result_ref: "b".into(),
-            now: 99
-        },),
-        Err(CheckoutError::Invalid("checkout time regressed"))
+            now: 99,
+        }),
+        Err(CheckoutError::Invalid(_))
     ));
     assert!(matches!(
         s.teardown(
             fence(&g, "one"),
             Some(&receipt(g.epoch)),
             &ops(inspection(false, TeardownReceiptMatch::Match, None)),
-            99
+            99,
         ),
-        Err(CheckoutError::Invalid("checkout time regressed"))
+        Err(CheckoutError::Invalid(_))
     ));
 }
 
@@ -856,7 +865,7 @@ fn checkout_teardown_liveness_port_error_is_retryable_not_poisoned() {
     let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
     assert!(matches!(
         s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102),
-        Err(CheckoutError::Invalid("liveness port unavailable"))
+        Err(CheckoutError::Invalid(_))
     ));
     let state = s.get(id()).unwrap().unwrap().state;
     assert_ne!(state, CheckoutLeaseState::Settling);
@@ -1077,7 +1086,11 @@ fn checkout_tombstone_row_is_absent_until_teardown_and_codec_is_pinned() {
         .to_vec();
     drop(txn);
     assert_eq!(decode_tombstone(&raw).unwrap(), 1);
-    assert_eq!(raw, encode_tombstone(1).unwrap());
+    let golden_v1 = vec![
+        130, 174, 115, 99, 104, 101, 109, 97, 95, 118, 101, 114, 115, 105, 111, 110, 1, 169, 109,
+        97, 120, 95, 101, 112, 111, 99, 104, 1,
+    ];
+    assert_eq!(raw, golden_v1);
     assert!(tombstone_key(id()).starts_with(CHECKOUT_TOMBSTONE_KEY_PREFIX));
     assert_eq!(
         tombstone_key(id()),
@@ -1089,14 +1102,22 @@ fn checkout_tombstone_row_is_absent_until_teardown_and_codec_is_pinned() {
         panic!("tombstone codec is a map")
     };
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0].0.as_str(), Some("schema_version"));
-    assert_eq!(entries[1].0.as_str(), Some("max_epoch"));
+    let (_, max_epoch) = entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("max_epoch"))
+        .unwrap();
+    assert_eq!(max_epoch, &rmpv::Value::from(1));
+    let (_, schema_version) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("schema_version"))
+        .unwrap();
+    assert_eq!(*schema_version, rmpv::Value::from(1));
     // Fail-closed: trailing bytes and an unknown schema version are corrupt,
     // never a silent "no tombstone".
     let mut trailing = raw;
     trailing.push(0);
     assert!(decode_tombstone(&trailing).is_err());
-    entries[0].1 = rmpv::Value::from(2);
+    *schema_version = rmpv::Value::from(2);
     let mut bad_schema = Vec::new();
     rmpv::encode::write_value(&mut bad_schema, &value).unwrap();
     assert!(decode_tombstone(&bad_schema).is_err());

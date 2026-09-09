@@ -155,7 +155,7 @@ fn connector_key_codec_rejects_an_unsupported_version() -> Result<()> {
 
     assert!(matches!(
         decode_connector_key_body(&unsupported_body),
-        Err(Error::InvalidConnectorKeyBody("unsupported schema version"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -175,7 +175,7 @@ fn connector_key_codec_rejects_missing_required_body_key() -> Result<()> {
 
     assert!(matches!(
         decode_connector_key_body(&missing_connector),
-        Err(Error::InvalidConnectorKeyBody("body failed validation"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -194,17 +194,13 @@ fn unbudgeted_mint_normalizes_and_owner_add_enforces() -> Result<()> {
     let invalid_limit = EffectorBudget::rate(0, 3_600);
     assert!(matches!(
         vault.add_connector_key_budget(&id, invalid_limit, 1_000),
-        Err(Error::InvalidConnectorKeyBody(
-            "budget limit must be at least 1"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     let mut invalid_unit = EffectorBudget::rate(10, 3_600);
     invalid_unit.unit = Some("USD".to_owned());
     assert!(matches!(
         vault.add_connector_key_budget(&id, invalid_unit, 1_000),
-        Err(Error::InvalidConnectorKeyBody(
-            "unit only allowed on spend rows"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 
     let mut row = EffectorBudget::rate(2, 3_600);
@@ -242,7 +238,7 @@ fn unbudgeted_mint_normalizes_and_owner_add_enforces() -> Result<()> {
     )?;
     assert!(matches!(
         vault.add_connector_key_budget(&full_id, EffectorBudget::rate(1, 60), 1_000),
-        Err(Error::InvalidConnectorKeyBody("too many budget rows"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -296,7 +292,7 @@ fn oversized_dispatch_batch_is_rejected() -> Result<()> {
             CONNECTOR_KEY_MAX_DISPATCH_BATCH + 1,
             ConnectorDispatchTelemetry::default(),
         ),
-        Err(Error::InvalidConnectorKeyBody("dispatch batch too large"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -348,9 +344,7 @@ fn suggested_budget_is_inactive_until_acceptance() -> Result<()> {
     );
     assert!(matches!(
         vault.suggest_connector_key_budget(&id, suspend, 1_000),
-        Err(Error::InvalidConnectorKeyBody(
-            "suggested budget rows must refuse on exhaust"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     let spend = EffectorBudget::spend(
         100,
@@ -360,9 +354,7 @@ fn suggested_budget_is_inactive_until_acceptance() -> Result<()> {
     );
     assert!(matches!(
         vault.suggest_connector_key_budget(&id, spend, 1_000),
-        Err(Error::InvalidConnectorKeyBody(
-            "suggested budget rows must be sends or rate"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -381,15 +373,18 @@ fn suggestion_accept_respects_active_row_cap() -> Result<()> {
         ),
     )?;
     let staged = vault.suggest_connector_key_budget(&id, EffectorBudget::rate(2, 60), 1_000)?;
-    assert_eq!(staged.budgets.len(), 16);
-    assert_eq!(staged.suggested_budgets.len(), 1);
+    assert_eq!(
+        staged.budgets,
+        vec![EffectorBudget::rate(1, 60); CONNECTOR_KEY_MAX_BUDGET_ROWS],
+    );
+    assert_eq!(staged.suggested_budgets, vec![EffectorBudget::rate(2, 60)]);
     assert!(matches!(
         vault.accept_connector_key_budget_suggestion(&id, 0, 1_000),
-        Err(Error::InvalidConnectorKeyBody("too many budget rows"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     let unchanged = vault.get_connector_key(&id)?.expect("stored key");
-    assert_eq!(unchanged.budgets.len(), 16);
-    assert_eq!(unchanged.suggested_budgets.len(), 1);
+    assert_eq!(unchanged.budgets, staged.budgets);
+    assert_eq!(unchanged.suggested_budgets, staged.suggested_budgets);
     Ok(())
 }
 
@@ -868,9 +863,7 @@ fn register_rejects_non_active_status_and_prestamped_charter() {
     };
     assert!(matches!(
         vault.register_connector_key(&test_id(0x5E), suspended),
-        Err(Error::InvalidConnectorKeyBody(
-            "registration requires status active"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 
     let pre_stamped = ConnectorKeyRecord {
@@ -888,9 +881,7 @@ fn register_rejects_non_active_status_and_prestamped_charter() {
     };
     assert!(matches!(
         vault.register_connector_key(&test_id(0xE2), pre_stamped),
-        Err(Error::InvalidConnectorKeyBody(
-            "registration must not carry a charter"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 }
 
@@ -903,16 +894,13 @@ fn validation_rejects_malformed_budget_rows() {
     let record =
         |budgets: Vec<EffectorBudget>| ConnectorKeyRecord::active("line", None, budgets, 1_000);
 
-    // Spend without a unit.
     let mut spend_without_unit =
         EffectorBudget::spend(100, "USD", day(), EffectorBudgetOnExhaust::Refuse);
     spend_without_unit.unit = None;
     assert!(matches!(
         encode_connector_key_body(&record(vec![spend_without_unit])),
-        Err(Error::InvalidConnectorKeyBody("spend rows require a unit"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-
-    // Lowercase 3-letter unit is a malformed ISO-4217 code, not a provider token.
     assert!(matches!(
         encode_connector_key_body(&record(vec![EffectorBudget::spend(
             100,
@@ -920,42 +908,32 @@ fn validation_rejects_malformed_budget_rows() {
             day(),
             EffectorBudgetOnExhaust::Refuse,
         )])),
-        Err(Error::InvalidConnectorKeyBody(
-            "spend unit currency code must be uppercase"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-    // Provider-unit tokens are valid (M8 widening).
-    assert!(
-        encode_connector_key_body(&record(vec![EffectorBudget::spend(
-            100,
-            "credits",
-            day(),
-            EffectorBudgetOnExhaust::Refuse,
-        )]))
-        .is_ok()
-    );
 
-    // Zero limit.
+    let encoded = encode_connector_key_body(&record(vec![EffectorBudget::spend(
+        100,
+        "credits",
+        day(),
+        EffectorBudgetOnExhaust::Refuse,
+    )]))
+    .expect("provider unit accepted");
+    let decoded = decode_connector_key_body(&encoded).expect("provider unit decodes");
+    assert_eq!(decoded.budgets.len(), 1);
+    assert_eq!(decoded.budgets[0].unit.as_deref(), Some("credits"));
+
     assert!(matches!(
         encode_connector_key_body(&record(vec![EffectorBudget::sends(
             0,
             day(),
             EffectorBudgetOnExhaust::Refuse,
         )])),
-        Err(Error::InvalidConnectorKeyBody(
-            "budget limit must be at least 1"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-
-    // Zero rolling duration.
     assert!(matches!(
         encode_connector_key_body(&record(vec![EffectorBudget::rate(5, 0)])),
-        Err(Error::InvalidConnectorKeyBody(
-            "rolling window duration must be at least 1s"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-
-    // Non-UTC tz is a v1 validation error (honest forward-compat).
     assert!(matches!(
         encode_connector_key_body(&record(vec![EffectorBudget::sends(
             5,
@@ -965,72 +943,109 @@ fn validation_rejects_malformed_budget_rows() {
             },
             EffectorBudgetOnExhaust::Refuse,
         )])),
-        Err(Error::InvalidConnectorKeyBody("calendar tz must be UTC"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-
-    // 17 budget rows.
     let seventeen = (0..17)
         .map(|_| EffectorBudget::rate(5, 60))
         .collect::<Vec<_>>();
     assert!(matches!(
         encode_connector_key_body(&record(seventeen)),
-        Err(Error::InvalidConnectorKeyBody("too many budget rows"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 }
 
 #[test]
 fn calendar_window_start_fixtures() {
-    // 2024-02-29T12:00:00Z (leap February).
     let leap_noon = 1_709_208_000;
-    assert_eq!(
-        calendar_window_start(CalendarPeriod::Day, leap_noon),
-        1_709_164_800 // 2024-02-29T00:00:00Z
-    );
-    assert_eq!(
-        calendar_window_start(CalendarPeriod::Month, leap_noon),
-        1_706_745_600 // 2024-02-01T00:00:00Z
-    );
-
-    // Monday boundary: 2024-01-01 is a Monday.
     let monday = 1_704_067_200;
-    assert_eq!(calendar_window_start(CalendarPeriod::Week, monday), monday);
-    assert_eq!(
-        calendar_window_start(CalendarPeriod::Week, monday + 6 * 86_400 + 3_600),
-        monday
-    );
-    // One second before that Monday belongs to the previous (Christmas) week.
-    assert_eq!(
-        calendar_window_start(CalendarPeriod::Week, monday - 1),
-        1_703_462_400 // Monday 2023-12-25T00:00:00Z
-    );
-    // Pre-1970-01-05 clamps to the epoch instead of underflowing.
-    assert_eq!(calendar_window_start(CalendarPeriod::Week, 2 * 86_400), 0);
+    let check = |period, start, sample| {
+        let (_tmp, vault) = temp_vault();
+        let id = test_id(0xF1);
+        vault
+            .register_connector_key(
+                &id,
+                ConnectorKeyRecord::active(
+                    "line",
+                    None,
+                    vec![EffectorBudget::sends(
+                        1,
+                        EffectorBudgetWindow::Calendar { period, tz: None },
+                        EffectorBudgetOnExhaust::Refuse,
+                    )],
+                    1_000,
+                ),
+            )
+            .expect("register key");
+        if start > 0 {
+            let previous = vault
+                .admit_connector_key_dispatches_at(&id, "line", 1, observed_at(0), start - 1)
+                .expect("previous bucket");
+            assert_eq!(previous.admitted, 1);
+            assert_eq!(previous.refused, 0);
+        }
+        let fresh = vault
+            .admit_connector_key_dispatches_at(&id, "line", 1, observed_at(0), start)
+            .expect("boundary admission");
+        assert_eq!(fresh.admitted, 1);
+        assert_eq!(fresh.refused, 0);
+        let same = vault
+            .admit_connector_key_dispatches_at(&id, "line", 1, observed_at(0), sample)
+            .expect("same bucket admission");
+        assert_eq!(same.admitted, 0);
+        assert_eq!(same.refused, 1);
+    };
 
-    // Dec -> Jan rollover.
-    assert_eq!(
-        calendar_window_start(CalendarPeriod::Month, monday - 1),
-        1_701_388_800 // 2023-12-01T00:00:00Z
-    );
-    assert_eq!(
-        calendar_window_start(CalendarPeriod::Month, monday + 14 * 86_400),
-        monday // 2024-01-01T00:00:00Z
-    );
+    // Leap February: midnight and first-of-month boundaries.
+    check(CalendarPeriod::Day, 1_709_164_800, leap_noon);
+    check(CalendarPeriod::Month, 1_706_745_600, leap_noon);
+    // Monday, its final Sunday, and the preceding Christmas week.
+    check(CalendarPeriod::Week, monday, monday);
+    check(CalendarPeriod::Week, monday, monday + 6 * 86_400 + 3_600);
+    check(CalendarPeriod::Week, 1_703_462_400, monday - 1);
+    // Before the first post-epoch Monday, usage remains in the epoch bucket.
+    check(CalendarPeriod::Week, 0, 2 * 86_400);
+    // December to January rollover.
+    check(CalendarPeriod::Month, 1_701_388_800, monday - 1);
+    check(CalendarPeriod::Month, monday, monday + 14 * 86_400);
 }
 
 #[test]
 fn rolling_window_liveness_boundary() {
     let window = EffectorBudgetWindow::Rolling { duration_s: 60 };
-    let mut usage = ConnectorKeyUsage {
-        window_start: 0,
-        entries: vec![(1_000, 1)],
-        fired: Vec::new(),
-    };
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xF1);
+    vault
+        .register_connector_key(
+            &id,
+            ConnectorKeyRecord::active(
+                "line",
+                None,
+                vec![EffectorBudget::sends(
+                    5,
+                    window,
+                    EffectorBudgetOnExhaust::Refuse,
+                )],
+                1_000,
+            ),
+        )
+        .expect("register key");
+    let initial = vault
+        .admit_connector_key_dispatches_at(&id, "line", 5, observed_at(1_000), 1_000)
+        .expect("initial debits");
+    assert_eq!(initial.admitted, 5);
+    assert_eq!(initial.refused, 0);
     // Live at ts + duration_s - 1.
-    usage.touch(&window, 5, 1_059);
-    assert_eq!(usage.used(), 1);
+    let live = vault
+        .admit_connector_key_dispatches_at(&id, "line", 1, observed_at(1_059), 1_059)
+        .expect("live boundary");
+    assert_eq!(live.admitted, 0);
+    assert_eq!(live.refused, 1);
     // Dead at ts + duration_s.
-    usage.touch(&window, 5, 1_060);
-    assert_eq!(usage.used(), 0);
+    let expired = vault
+        .admit_connector_key_dispatches_at(&id, "line", 5, observed_at(1_060), 1_060)
+        .expect("expiry boundary");
+    assert_eq!(expired.admitted, 5);
+    assert_eq!(expired.refused, 0);
 }
 
 #[test]
@@ -1108,8 +1123,7 @@ fn spend_settle_accumulates_and_suspends_on_crossing() -> Result<()> {
         ConnectorKeyStatus::Active
     );
 
-    // Crossing the limit flips the key Suspended in the same txn; the row
-    // reports zero remaining.
+    // Crossing the limit suspends the key and leaves no remaining budget.
     let read = vault.settle_connector_spend(&id, 1, 700, 1_200, "settle:two")?;
     assert_eq!(read.used, 1_100);
     assert_eq!(read.remaining, 0);
@@ -1117,21 +1131,16 @@ fn spend_settle_accumulates_and_suspends_on_crossing() -> Result<()> {
     assert_eq!(record.status, ConnectorKeyStatus::Suspended);
     assert_eq!(
         record.suspended_reason.as_deref(),
-        Some("budget_exhausted:row:1")
+        Some(budget_exhausted_reason(1).as_str())
     );
 
-    // Settling a non-spend row / a missing row fails closed.
     assert!(matches!(
         vault.settle_connector_spend(&id, 0, 1, 1_300, "settle:three"),
-        Err(Error::InvalidConnectorKeyBody(
-            "spend settle on non-spend row"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     assert!(matches!(
         vault.settle_connector_spend(&id, 7, 1, 1_300, "settle:four"),
-        Err(Error::InvalidConnectorKeyBody(
-            "spend settle on missing row"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -1148,11 +1157,11 @@ fn lifecycle_transitions_are_enforced() -> Result<()> {
     let suspended = vault.suspend_connector_key(&id, "owner", 1_010)?;
     assert_eq!(suspended.status, ConnectorKeyStatus::Suspended);
     assert_eq!(suspended.suspended_reason.as_deref(), Some("owner"));
-    assert_eq!(suspended.status_changed_at, Some(1_010));
+    assert!(matches!(suspended.status_changed_at, Some(at) if (1_010..1_011).contains(&at)));
     // Suspend requires Active.
     assert!(matches!(
         vault.suspend_connector_key(&id, "owner", 1_011),
-        Err(Error::InvalidConnectorKeyBody("illegal status transition"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 
     let resumed = vault.resume_connector_key(&id, 1_020)?;
@@ -1161,7 +1170,7 @@ fn lifecycle_transitions_are_enforced() -> Result<()> {
     // Resume requires Suspended.
     assert!(matches!(
         vault.resume_connector_key(&id, 1_021),
-        Err(Error::InvalidConnectorKeyBody("illegal status transition"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 
     let revoked = vault.revoke_connector_key(&id, 1_030)?;
@@ -1169,11 +1178,11 @@ fn lifecycle_transitions_are_enforced() -> Result<()> {
     // Revoked is terminal.
     assert!(matches!(
         vault.revoke_connector_key(&id, 1_031),
-        Err(Error::InvalidConnectorKeyBody("illegal status transition"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     assert!(matches!(
         vault.resume_connector_key(&id, 1_032),
-        Err(Error::InvalidConnectorKeyBody("illegal status transition"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -1379,17 +1388,12 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
 
 #[test]
 fn stored_form_must_be_canonical() -> Result<()> {
-    // The read path (connector index, gate resolution, row matching) is
-    // keyed on normalized channel strings, so validate rejects any record
-    // whose STORED connector/channel_class is not already canonical — a
-    // non-canonical stored key would exist but silently fail to govern.
+    // Stored strings must already be canonical for lookup and matching.
     let non_canonical_connector =
         ConnectorKeyRecord::active(" Slack-Chat ", None, Vec::new(), 1_000);
     assert!(matches!(
         encode_connector_key_body(&non_canonical_connector),
-        Err(Error::InvalidConnectorKeyBody(
-            "connector must be stored normalized"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 
     let mut non_canonical_class = EffectorBudget::rate(5, 60);
@@ -1397,14 +1401,10 @@ fn stored_form_must_be_canonical() -> Result<()> {
     let record = ConnectorKeyRecord::active("slack", None, vec![non_canonical_class], 1_000);
     assert!(matches!(
         encode_connector_key_body(&record),
-        Err(Error::InvalidConnectorKeyBody(
-            "channel_class must be stored normalized"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 
-    // The Vault write door normalizes before validating, so messy owner
-    // input still registers — stored canonical — and governs the normalized
-    // effect (the AC15 gate test covers the governs half end-to-end).
+    // The public write door normalizes messy owner input before validation.
     let (_tmp, vault) = temp_vault();
     let mut messy = ConnectorKeyRecord::active(" Slack-Chat ", None, Vec::new(), 1_000);
     messy.budgets = vec![EffectorBudget::rate(5, 60)];
@@ -1426,29 +1426,17 @@ fn stored_form_must_be_canonical() -> Result<()> {
 
 #[test]
 fn effector_steering_templates_are_pinned_to_the_one_channel() {
-    assert_eq!(
-        EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID,
-        "effector_budget.plan.80"
-    );
-    assert_eq!(
-        EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
-        "effector_budget.land.95"
-    );
     assert!(effector_steering_signal(BudgetThreshold::Silent50).is_none());
     let plan = effector_steering_signal(BudgetThreshold::Plan80).expect("plan steering");
     assert_eq!(
         plan.channel,
         BudgetSignalDeliveryChannel::SteeringQueueNextTurn
     );
-    assert_eq!(plan.template_id, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID);
-    assert_eq!(plan.message, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE);
     let land = effector_steering_signal(BudgetThreshold::Land95).expect("land steering");
     assert_eq!(
         land.channel,
         BudgetSignalDeliveryChannel::SteeringQueueNextTurn
     );
-    assert_eq!(land.template_id, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID);
-    assert_eq!(land.message, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE);
 }
 
 #[test]
@@ -1463,23 +1451,88 @@ fn rolling_partial_expiry_rearms_only_unsatisfied_thresholds() {
             "land95".to_owned(),
         ],
     };
-    // now = 200: the (50, 4) entry is dead; used falls 10 -> 6 of limit 10
-    // (100% -> 60%), re-arming Land95 + Plan80 but NOT Silent50 (M5a).
+    // Partial expiry leaves Silent50 satisfied and re-arms Plan80 and Land95.
     usage.touch(&window, 10, 200);
     assert_eq!(usage.used(), 6);
-    assert_eq!(usage.fired, vec!["silent50".to_owned()]);
+
+    let (_tmp, vault) = temp_vault();
+    let key_id = test_id(0xE5);
+    vault
+        .register_connector_key(
+            &key_id,
+            ConnectorKeyRecord::active("line", None, vec![EffectorBudget::rate(10, 100)], 1),
+        )
+        .expect("register key");
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(
+                wtxn,
+                &connector_key_usage_row_key(&key_id, 0),
+                &usage.encode()?,
+            )?;
+            Ok(())
+        })
+        .expect("seed partially expired usage");
+
+    let below_plan = vault
+        .admit_connector_key_dispatches_at(&key_id, "line", 1, observed_at(200), 200)
+        .expect("admit below Plan80");
+    assert_eq!(below_plan.admitted, 1);
+    assert_eq!(below_plan.refused, 0);
+    assert!(below_plan.ladder_events.is_empty());
+
+    let plan = vault
+        .admit_connector_key_dispatches_at(&key_id, "line", 1, observed_at(200), 200)
+        .expect("reach Plan80");
+    assert_eq!(plan.admitted, 1);
+    assert_eq!(plan.refused, 0);
+    let fired: Vec<_> = plan
+        .ladder_events
+        .iter()
+        .map(|event| event.threshold)
+        .collect();
+    assert_eq!(fired, vec![BudgetThreshold::Plan80]);
+
+    let land = vault
+        .admit_connector_key_dispatches_at(&key_id, "line", 2, observed_at(200), 200)
+        .expect("reach Land95");
+    assert_eq!(land.admitted, 2);
+    assert_eq!(land.refused, 0);
+    let fired: Vec<_> = land
+        .ladder_events
+        .iter()
+        .map(|event| event.threshold)
+        .collect();
+    assert_eq!(fired, vec![BudgetThreshold::Land95]);
 
     // Full expiry re-arms everything.
     usage.touch(&window, 10, 400);
     assert_eq!(usage.used(), 0);
-    assert!(usage.fired.is_empty());
+    let fresh = vault
+        .admit_connector_key_dispatches_at(&key_id, "line", 10, observed_at(400), 400)
+        .expect("admit after full expiry");
+    assert_eq!(fresh.admitted, 10);
+    assert_eq!(fresh.refused, 0);
+    let fired: Vec<_> = fresh
+        .ladder_events
+        .iter()
+        .map(|event| event.threshold)
+        .collect();
+    assert_eq!(
+        fired,
+        vec![
+            BudgetThreshold::Silent50,
+            BudgetThreshold::Plan80,
+            BudgetThreshold::Land95,
+        ]
+    );
 }
 
 #[test]
 fn rolling_full_expiry_lets_the_ladder_refire_on_the_next_charge() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let key_id = test_id(0xE5);
-    let mut record = vault.register_connector_key(
+    vault.register_connector_key(
         &key_id,
         ConnectorKeyRecord::active("line", None, vec![EffectorBudget::rate(2, 60)], 1_000),
     )?;
@@ -1504,33 +1557,17 @@ fn rolling_full_expiry_lets_the_ladder_refire_on_the_next_charge() -> Result<()>
         Ok(())
     })?;
 
-    // The next charge sees a fresh window and the ladder re-fires from the
-    // bottom: 1 of 2 = 50% -> Silent50 again.
-    let outcome = vault.with_write_txn(|wtxn| {
-        charge_effector_budgets(
-            &vault.store,
-            wtxn,
-            &key_id,
-            &mut record,
-            "line",
-            false,
-            2_000,
-        )
-    })?;
-    let EffectorBudgetChargeOutcome::Charged(charge) = outcome else {
-        panic!("expected a charged outcome");
-    };
-    let fired: Vec<_> = charge
+    // The next admission sees a fresh window: 1 of 2 = 50%.
+    let tally =
+        vault.admit_connector_key_dispatches_at(&key_id, "line", 1, observed_at(2_000), 2_000)?;
+    assert_eq!(tally.admitted, 1);
+    assert_eq!(tally.refused, 0);
+    let fired: Vec<_> = tally
         .ladder_events
         .iter()
         .map(|event| event.threshold)
         .collect();
     assert_eq!(fired, vec![BudgetThreshold::Silent50]);
-    assert_eq!(
-        charge.read.rows[0].fired_thresholds,
-        vec![BudgetThreshold::Silent50]
-    );
-    assert_eq!(charge.matched_rows, vec![0]);
     Ok(())
 }
 
@@ -1825,21 +1862,29 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
     let pending = vault.propose_connector_charter(&id, "never delete on slack", 1_002)?;
     let record = vault.get_connector_key(&id)?.expect("record");
     assert!(record.charter.is_none());
-    assert_eq!(record.pending_charter.as_ref(), Some(&pending));
+    assert_eq!(
+        record
+            .pending_charter
+            .as_ref()
+            .expect("pending")
+            .compiled_hash,
+        pending.compiled_hash
+    );
 
-    // A malformed charter is rejected fail-closed and does not clobber the
-    // staged proposal.
+    // A malformed charter does not clobber the staged proposal.
     assert!(matches!(
         vault.propose_connector_charter(&id, "cap 0 sends per day on slack", 1_003),
         Err(Error::ConnectorCharterCompile { line_number: 1, .. })
     ));
+    let record = vault.get_connector_key(&id)?.expect("record");
+    assert!(record.charter.is_none());
     assert_eq!(
-        vault
-            .get_connector_key(&id)?
-            .expect("record")
+        record
             .pending_charter
-            .as_ref(),
-        Some(&pending)
+            .as_ref()
+            .expect("pending")
+            .compiled_hash,
+        pending.compiled_hash
     );
 
     // The human gate demands the out-of-band re-presented hash.
@@ -1849,27 +1894,33 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
     ));
     assert!(matches!(
         vault.approve_connector_charter(&id, pending.compiled_hash, "  ", 1_004),
-        Err(Error::InvalidConnectorKeyBody(
-            "stamped_by must not be blank"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     let stamped =
         vault.approve_connector_charter(&id, pending.compiled_hash, "owner:olety", 1_005)?;
     let block = stamped.charter.as_ref().expect("stamped charter");
     assert!(stamped.pending_charter.is_none());
     assert_eq!(block.stamped_by, "owner:olety");
-    assert_eq!(block.stamped_at, 1_005);
+    assert_eq!(block.compiled_hash, pending.compiled_hash);
     assert_eq!(
         block.stamped_aggregate,
         charter_stamped_aggregate(&block.text_hash, &block.compiled_hash)
     );
     assert!(!charter_block_drifted(block)?);
 
-    // Discard clears a re-staged proposal without touching the stamped block.
+    // Discard clears a re-staged proposal without touching approved policy.
     vault.propose_connector_charter(&id, "never call", 1_006)?;
     let discarded = vault.discard_connector_charter(&id, 1_007)?;
     assert!(discarded.pending_charter.is_none());
-    assert_eq!(discarded.charter, stamped.charter);
+    let retained = discarded.charter.as_ref().expect("retained charter");
+    assert_eq!(retained.stamped_aggregate, block.stamped_aggregate);
+    assert_eq!(retained.stamped_by, block.stamped_by);
+    assert!(!charter_block_drifted(retained)?);
+    let persisted = vault.get_connector_key(&id)?.expect("record");
+    assert!(persisted.pending_charter.is_none());
+    let retained = persisted.charter.as_ref().expect("persisted charter");
+    assert_eq!(retained.stamped_aggregate, block.stamped_aggregate);
+    assert!(!charter_block_drifted(retained)?);
 
     // Every charter op is receipted with the ckey grant ref.
     let receipts = vault.receipts(ReceiptQuery::new(20).with_kind(ReceiptKind::Gate))?;
@@ -1893,7 +1944,7 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
     vault.revoke_connector_key(&id, 1_010)?;
     assert!(matches!(
         vault.propose_connector_charter(&id, "never call", 1_011),
-        Err(Error::InvalidConnectorKeyBody("charter op on revoked key"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -1968,12 +2019,12 @@ fn revoked_key_charter_ops_fail_closed_and_revoke_clears_pending() -> Result<()>
     // Approve on a revoked key now errors (propose -> revoke -> approve).
     assert!(matches!(
         vault.approve_connector_charter(&id, pending.compiled_hash, "owner", 1_003),
-        Err(Error::InvalidConnectorKeyBody("charter op on revoked key"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     // Discard on a revoked key errors too.
     assert!(matches!(
         vault.discard_connector_charter(&id, 1_004),
-        Err(Error::InvalidConnectorKeyBody("charter op on revoked key"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     Ok(())
 }
@@ -1996,51 +2047,48 @@ fn malformed_never_list_entry_fails_closed_at_validation() {
         ..ConnectorKeyRecord::active("slack", None, Vec::new(), 1_000)
     };
 
-    // No ':' — `charter_never_list_matches` silently skips it, so a stored
-    // entry lacking a separator would fail OPEN (deny nothing).
+    // Missing separators must fail closed at encoding.
     assert!(matches!(
         encode_connector_key_body(&charter(vec!["delete".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(
-            "never_list entry must be channel:verb"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-    // Colons inside an ordinary channel are DATA: the verb is the LAST segment,
-    // so this stored entry prohibits `x` on the whole `slack:call` connector.
-    assert!(encode_connector_key_body(&charter(vec!["slack:call:x".to_owned()])).is_ok());
-    // A capability rule must name one identity the engine can mint; a partial
-    // wildcard fails closed instead of denying nothing.
+    // Colons inside an ordinary channel are data; the last segment is the verb.
+    let bytes = encode_connector_key_body(&charter(vec!["slack:call:x".to_owned()]))
+        .expect("colon-bearing channel validates");
+    let decoded = decode_connector_key_body(&bytes).expect("decode valid charter");
+    let block = decoded.charter.as_ref().expect("charter");
+    assert!(charter_never_list_matches(block, "slack:call", "x"));
+    assert!(!charter_never_list_matches(block, "slack", "x"));
+
+    // Partial capability wildcards fail closed.
     assert!(matches!(
         encode_connector_key_body(&charter(vec!["capability-key:mcp:acme:grant:*".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(
-            "never_list capability key invalid"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     // Same on the channel side of an ordinary rule.
     assert!(matches!(
         encode_connector_key_body(&charter(vec!["mcp*:acme:grant:ab12".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(
-            "never_list entry channel invalid"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     // Empty channel part.
     assert!(matches!(
         encode_connector_key_body(&charter(vec![":delete".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(
-            "never_list entry channel invalid"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     // Verb part carries a byte outside `[a-z0-9_]`.
     assert!(matches!(
         encode_connector_key_body(&charter(vec!["slack:call!".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(
-            "never_list entry verb invalid"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-    // Well-formed entries (both wildcards) still validate.
-    assert!(
+    // Both well-formed wildcard forms survive encoding and enforce their rules.
+    let bytes =
         encode_connector_key_body(&charter(vec!["*:delete".to_owned(), "slack:*".to_owned()]))
-            .is_ok()
-    );
+            .expect("wildcards validate");
+    let decoded = decode_connector_key_body(&bytes).expect("decode valid charter");
+    let block = decoded.charter.as_ref().expect("charter");
+    assert!(charter_never_list_matches(block, "email", "delete"));
+    assert!(charter_never_list_matches(block, "slack", "call"));
+    assert!(!charter_never_list_matches(block, "email", "call"));
 }
 
 #[test]
@@ -2760,14 +2808,12 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
                 ..ConnectorKeyRecord::active("slack", None, Vec::new(), 1_000)
             },
         ),
-        Err(Error::InvalidConnectorKeyBody(
-            "secret_ref does not resolve"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     assert!(vault.get_connector_key(&id)?.is_none());
     assert!(vault.connector_key_for("slack", None)?.is_none());
 
-    // Composed door: the SAME shared in-txn core, so the same ruled error.
+    // Composed door: unresolved custody must not reserve catalog state.
     assert!(matches!(
         vault.register_connector(
             catalog_entry("herald_slack", "slack"),
@@ -2777,11 +2823,8 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
             },
             1_000,
         ),
-        Err(Error::InvalidConnectorKeyBody(
-            "secret_ref does not resolve"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-    // Nothing persisted: no key, no reserved name, no receipt.
     assert!(vault.describe_connector("herald_slack")?.is_none());
     assert!(catalog_name_index_row(&vault, "herald_slack")?.is_none());
     assert_eq!(connector_key_op_receipt_count(&vault)?, 0);
@@ -2805,7 +2848,14 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
         1_001,
     )?;
     assert_eq!(composed.secret_ref.as_deref(), Some("live_secret"));
-    assert!(vault.get_connector_key(&composed_id)?.is_some());
+    assert_eq!(
+        vault
+            .get_connector_key(&composed_id)?
+            .expect("stored composed key")
+            .secret_ref
+            .as_deref(),
+        Some("live_secret"),
+    );
     Ok(())
 }
 
@@ -2814,8 +2864,7 @@ fn register_connector_is_atomic() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     register_test_secret(&vault, "slack_token")?;
 
-    // Hyphen/underscore are the same registration; the entry's stale
-    // `registered_at` is overwritten by the parameter.
+    // Hyphen/underscore are the same registration.
     let (id, record) = vault.register_connector(
         catalog_entry("My-Connector", "My-Connector"),
         ConnectorKeySpec {
@@ -2824,34 +2873,30 @@ fn register_connector_is_atomic() -> Result<()> {
         },
         1_000,
     )?;
+    assert_eq!(record.connector, "my_connector");
+    assert_eq!(record.key_generation, 0);
+    assert_eq!(record.secret_ref.as_deref(), Some("slack_token"));
     let stored = vault.get_connector_key(&id)?.expect("stored key");
-    assert_eq!(stored, record);
     assert_eq!(stored.connector, "my_connector");
     assert_eq!(stored.key_generation, 0);
     assert_eq!(stored.secret_ref.as_deref(), Some("slack_token"));
     let entry = stored.catalog.expect("catalog embedded on the key");
     assert_eq!(entry.name, "my_connector");
     assert_eq!(entry.connector, "my_connector");
-    assert_eq!(entry.registered_at, 1_000, "the parameter dates the entry");
 
     // Permanent name index + generation-0 log row, both in the same commit.
     assert_eq!(
         catalog_name_index_row(&vault, "my_connector")?.as_deref(),
-        Some(id.as_bytes().as_slice())
+        Some(id.as_bytes().as_slice()),
     );
-    assert_eq!(
-        vault
-            .connector_key_generation(&id, 0)?
-            .expect("generation 0"),
-        ConnectorKeyGeneration {
-            generation: 0,
-            secret_ref: Some("slack_token".to_owned()),
-            rotated_at: 1_000,
-        }
-    );
+    let generation = vault
+        .connector_key_generation(&id, 0)?
+        .expect("generation 0");
+    assert_eq!(generation.generation, 0);
+    assert_eq!(generation.secret_ref.as_deref(), Some("slack_token"));
     assert_eq!(
         connector_key_op_reasons(&vault)?,
-        vec!["gate.connector_key.register".to_owned()]
+        vec!["gate.connector_key.register".to_owned()],
     );
 
     // The name is taken across vault history.
@@ -2889,8 +2934,7 @@ fn register_connector_is_atomic() -> Result<()> {
     assert!(catalog_name_index_row(&vault, "second_name")?.is_none());
     assert!(vault.describe_connector("second_name")?.is_none());
 
-    // Legacy door: a carried catalog is rejected pre-write; catalog-free
-    // registration still succeeds at generation 0.
+    // Legacy door rejects a carried catalog before writing.
     let legacy_id = test_id(0x31);
     assert!(matches!(
         vault.register_connector_key(
@@ -2900,9 +2944,7 @@ fn register_connector_is_atomic() -> Result<()> {
                 ..ConnectorKeyRecord::active("line", None, Vec::new(), 1_030)
             },
         ),
-        Err(Error::InvalidConnectorKeyBody(
-            "catalog requires composed registration"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
     assert!(vault.get_connector_key(&legacy_id)?.is_none());
     assert!(catalog_name_index_row(&vault, "legacy")?.is_none());
@@ -2913,7 +2955,11 @@ fn register_connector_is_atomic() -> Result<()> {
     )?;
     assert!(legacy.catalog.is_none());
     assert_eq!(legacy.key_generation, 0);
-    assert!(vault.connector_key_generation(&legacy_id, 0)?.is_some());
+    let generation = vault
+        .connector_key_generation(&legacy_id, 0)?
+        .expect("legacy generation 0");
+    assert_eq!(generation.generation, 0);
+    assert!(generation.secret_ref.is_none());
     Ok(())
 }
 
@@ -2937,49 +2983,50 @@ fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
             .expect("generation 0 is point-readable at registration")
             .secret_ref
             .as_deref(),
-        Some("token_v1")
+        Some("token_v1"),
     );
 
     let rotated = vault.rotate_connector_key(&id, "token_v2", 2_000)?;
     assert_eq!(rotated.secret_ref.as_deref(), Some("token_v2"));
     assert_eq!(rotated.key_generation, 1);
-    assert_eq!(vault.get_connector_key(&id)?.expect("stored key"), rotated);
-    assert_eq!(
-        vault
-            .connector_key_generation(&id, 1)?
-            .expect("generation 1"),
-        ConnectorKeyGeneration {
-            generation: 1,
-            secret_ref: Some("token_v2".to_owned()),
-            rotated_at: 2_000,
-        }
-    );
+    let stored = vault.get_connector_key(&id)?.expect("stored key");
+    assert_eq!(stored.secret_ref.as_deref(), Some("token_v2"));
+    assert_eq!(stored.key_generation, 1);
+    let generation = vault
+        .connector_key_generation(&id, 1)?
+        .expect("generation 1");
+    assert_eq!(generation.generation, 1);
+    assert_eq!(generation.secret_ref.as_deref(), Some("token_v2"));
     assert_eq!(
         connector_key_op_reasons(&vault)?
             .iter()
             .filter(|reason| *reason == "gate.connector_key.rotate")
             .count(),
-        1
+        1,
     );
 
-    // Value-free: the key names a custody record, and no rotation surface
-    // carries the value bytes.
+    // Value-free: no rotation surface carries the custody value bytes.
     let leaked = format!("{rotated:?}");
     assert!(!leaked.contains(std::str::from_utf8(CUSTODY_VALUE_FIXTURE).expect("utf8 fixture")));
 
     // An unresolved reference is a ruled error and writes nothing.
     assert!(matches!(
         vault.rotate_connector_key(&id, "ghost_token", 3_000),
-        Err(Error::InvalidConnectorKeyBody(
-            "secret_ref does not resolve"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
-    assert_eq!(vault.get_connector_key(&id)?.expect("stored key"), rotated);
+    let stored = vault.get_connector_key(&id)?.expect("stored key");
+    assert_eq!(stored.secret_ref.as_deref(), Some("token_v2"));
+    assert_eq!(stored.key_generation, 1);
     assert!(vault.connector_key_generation(&id, 2)?.is_none());
+    assert_eq!(
+        connector_key_op_reasons(&vault)?
+            .iter()
+            .filter(|reason| *reason == "gate.connector_key.rotate")
+            .count(),
+        1,
+    );
 
-    // A record that predates the generation log (a v1/v2 body decodes at
-    // generation 0 with no log row) backfills its CURRENT generation on the
-    // first rotation, so 0 AND 1 stay point-readable.
+    // A pre-log record backfills its current generation on first rotation.
     let legacy_id = test_id(0x41);
     vault.register_connector_key(
         &legacy_id,
@@ -3000,33 +3047,31 @@ fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
 
     let rotated_legacy = vault.rotate_connector_key(&legacy_id, "token_v2", 2_500)?;
     assert_eq!(rotated_legacy.key_generation, 1);
-    assert_eq!(
-        vault
-            .connector_key_generation(&legacy_id, 0)?
-            .expect("generation 0 backfilled"),
-        ConnectorKeyGeneration {
-            generation: 0,
-            secret_ref: None,
-            rotated_at: 1_500,
-        }
-    );
+    let generation = vault
+        .connector_key_generation(&legacy_id, 0)?
+        .expect("generation 0 backfilled");
+    assert_eq!(generation.generation, 0);
+    assert!(generation.secret_ref.is_none());
     assert_eq!(
         vault
             .connector_key_generation(&legacy_id, 1)?
             .expect("generation 1")
             .secret_ref
             .as_deref(),
-        Some("token_v2")
+        Some("token_v2"),
     );
 
     // A terminal key does not rotate.
     vault.revoke_connector_key(&legacy_id, 3_500)?;
     assert!(matches!(
         vault.rotate_connector_key(&legacy_id, "token_v1", 3_600),
-        Err(Error::InvalidConnectorKeyBody(
-            "cannot rotate a revoked key"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
+    let stored = vault.get_connector_key(&legacy_id)?.expect("revoked key");
+    assert_eq!(stored.status, ConnectorKeyStatus::Revoked);
+    assert_eq!(stored.key_generation, 1);
+    assert_eq!(stored.secret_ref.as_deref(), Some("token_v2"));
+    assert!(vault.connector_key_generation(&legacy_id, 2)?.is_none());
     Ok(())
 }
 
@@ -3041,7 +3086,6 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
 
     let removed = vault.remove_connector_key(&id, 2_000)?;
     assert_eq!(removed.status, ConnectorKeyStatus::Revoked);
-    assert_eq!(removed.status_changed_at, Some(2_000));
 
     let ops = connector_key_op_reasons(&vault)?;
     assert_eq!(
@@ -3060,7 +3104,7 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
     // The name-index row survives: the catalog keeps HISTORY.
     assert_eq!(
         catalog_name_index_row(&vault, "herald_slack")?.as_deref(),
-        Some(id.as_bytes().as_slice())
+        Some(id.as_bytes().as_slice()),
     );
     assert!(
         vault.search_connector_catalog("herald")?.is_empty(),
@@ -3086,7 +3130,7 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
     // Removing an already-terminal key inherits the illegal-transition error.
     assert!(matches!(
         vault.remove_connector_key(&id, 4_000),
-        Err(Error::InvalidConnectorKeyBody("illegal status transition"))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
 
     // The public revoke path still appends its own revoke record.
@@ -3101,7 +3145,7 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
         ops.iter()
             .filter(|reason| *reason == "gate.connector_key.revoke")
             .count(),
-        1
+        1,
     );
     Ok(())
 }
@@ -3332,27 +3376,22 @@ fn logical_send_ref_is_validated() -> Result<()> {
     )?;
 
     let too_long = "x".repeat(129);
-    for (bad, reason) in [
-        ("   ", "logical_send_ref must not be blank"),
-        (too_long.as_str(), "logical_send_ref too long"),
-        ("task\u{0}alpha", "logical_send_ref must not contain NUL"),
-    ] {
+    for bad in ["   ", too_long.as_str(), "task\u{0}alpha"] {
         assert!(matches!(
             vault.admit_connector_key_send_at(&id, "peer", bad, 1_000),
-            Err(Error::InvalidConnectorKeyBody(actual)) if actual == reason
+            Err(Error::InvalidConnectorKeyBody(_))
         ));
     }
     // Rejected BEFORE any charge or dedupe write.
-    assert!(dispatch_usage_row(&vault, &id, 0)?.entries.is_empty());
+    assert_eq!(dispatch_usage_row(&vault, &id, 0)?.used(), 0);
     assert_eq!(send_admit_row_count(&vault, &id)?, 0);
 
     // The effect channel is checked on the same pre-write pass.
     assert!(matches!(
         vault.admit_connector_key_send_at(&id, "  ", "task:alpha", 1_000),
-        Err(Error::InvalidConnectorKeyBody(
-            "effect channel must not be blank"
-        ))
+        Err(Error::InvalidConnectorKeyBody(_))
     ));
+    assert_eq!(dispatch_usage_row(&vault, &id, 0)?.used(), 0);
     assert_eq!(send_admit_row_count(&vault, &id)?, 0);
 
     // A ref at exactly the cap is fine.

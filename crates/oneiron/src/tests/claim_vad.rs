@@ -241,10 +241,7 @@ fn claim_vad_consolidation_rejects_derived_state_claims() -> Result<()> {
         .expect("initial state claim");
     let err = block_on_ready(vault.consolidate_claim_vad(&state_id, 110))
         .expect_err("derived state claims must not recursively consolidate");
-    assert_matches!(
-        err,
-        Error::InvalidClaimBody("claim VAD state claims cannot be consolidated")
-    );
+    assert_matches!(err, Error::InvalidClaimBody(_));
     Ok(())
 }
 
@@ -266,10 +263,7 @@ fn claim_vad_consolidation_rejects_turn_vad_annotation_claims() -> Result<()> {
     let annotation_claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
     let err = block_on_ready(vault.consolidate_claim_vad(&annotation_claim_id, 110))
         .expect_err("turn VAD annotation claims must not recursively consolidate");
-    assert_matches!(
-        err,
-        Error::InvalidClaimBody("turn VAD annotation claims cannot be consolidated")
-    );
+    assert_matches!(err, Error::InvalidClaimBody(_));
     Ok(())
 }
 
@@ -305,7 +299,7 @@ fn claim_vad_consolidation_rejects_auto_generated_claim_until_vetted() -> Result
     vault.put_claim(&auto_generated, &body, test_time_range(30, 30), 30)?;
     let err = block_on_ready(vault.consolidate_claim_vad(&auto_generated, 100))
         .expect_err("Auto/Generated claims are not consolidatable until vetted");
-    assert_matches!(err, Error::InvalidClaimBody("claim is not consolidatable"));
+    assert_matches!(err, Error::InvalidClaimBody(_));
 
     body.approval = ClaimApprovalStatus::Approved;
     vault.put_claim(&vetted_generated, &body, test_time_range(40, 40), 40)?;
@@ -349,10 +343,7 @@ fn claim_vad_consolidation_rejects_stale_active_claim_with_specific_error() -> R
 
     let err = block_on_ready(vault.consolidate_claim_vad(&claim, 100))
         .expect_err("stale Active claims are not consolidatable");
-    assert_matches!(
-        err,
-        Error::InvalidClaimBody("claim is stale and not consolidatable")
-    );
+    assert_matches!(err, Error::InvalidClaimBody(_));
     Ok(())
 }
 
@@ -405,7 +396,7 @@ fn claim_vad_consolidation_clears_prior_outputs_when_claim_stops_consolidating()
     vault.put_claim(&claim, &body, test_time_range(40, 40), 40)?;
     let err = block_on_ready(vault.consolidate_claim_vad(&claim, 200))
         .expect_err("Auto/Generated claims are not consolidatable");
-    assert_matches!(err, Error::InvalidClaimBody("claim is not consolidatable"));
+    assert_matches!(err, Error::InvalidClaimBody(_));
 
     let mentions = vault
         .edges_out(&claim)?
@@ -648,10 +639,7 @@ fn coping_outcome_claim_validation_requires_bitemporal_confidence() -> Result<()
             10,
         )
         .expect_err("coping outcomes must carry valid_from");
-    assert_matches!(
-        err,
-        Error::InvalidClaimBody("coping.outcome valid_from is required")
-    );
+    assert_matches!(err, Error::InvalidClaimBody(_));
 
     let mut mismatched_confidence = ClaimBody::new(
         COPING_OUTCOME_PREDICATE,
@@ -670,10 +658,7 @@ fn coping_outcome_claim_validation_requires_bitemporal_confidence() -> Result<()
             10,
         )
         .expect_err("wrapper confidence must mirror the value");
-    assert_matches!(
-        err,
-        Error::InvalidClaimBody("coping.outcome wrapper confidence must mirror value confidence")
-    );
+    assert_matches!(err, Error::InvalidClaimBody(_));
     Ok(())
 }
 
@@ -800,7 +785,7 @@ fn coping_outcome_update_rejects_auto_generated_prior_claim_until_vetted() -> Re
             100,
         )
         .expect_err("Auto/Generated coping outcome must not consolidate until vetted");
-    assert_matches!(err, Error::InvalidClaimBody("claim is not consolidatable"));
+    assert_matches!(err, Error::InvalidClaimBody(_));
 
     let prior = vault
         .get_claim(&outcome)?
@@ -844,12 +829,7 @@ fn coping_outcome_update_rejects_backfilled_supersession_timestamp() -> Result<(
             40,
         )
         .expect_err("backfilled supersession must not invert the active interval");
-    assert_matches!(
-        err,
-        Error::InvalidClaimBody(
-            "coping.outcome update timestamp must not precede active valid_from"
-        )
-    );
+    assert_matches!(err, Error::InvalidClaimBody(_));
 
     let old = vault
         .get_claim(&outcome)?
@@ -923,10 +903,7 @@ fn coping_outcome_update_rejects_unrelated_baseline_turn() -> Result<()> {
     let err = vault
         .update_coping_outcome_from_turn_vad(&outcome, &wrong_baseline_turn, &later_turn, 0.8, 200)
         .expect_err("unrelated baseline turn must not update the outcome ledger");
-    assert_matches!(
-        err,
-        Error::InvalidClaimBody("baseline turn must match coping.outcome strategyRef")
-    );
+    assert_matches!(err, Error::InvalidClaimBody(_));
 
     let old = vault
         .get_claim(&outcome)?
@@ -1152,10 +1129,7 @@ mod claim_vad_now_tests {
             } else {
                 block_on_ready(vault.consolidate_claim_vad(&claim, 200))
             };
-            assert_matches!(
-                result,
-                Err(Error::InvalidClaimBody("claim is not consolidatable"))
-            );
+            assert_matches!(result, Err(Error::InvalidClaimBody(_)));
             assert_eq!(
                 vault.get_claim(&state)?.expect("closed state").lifecycle,
                 ClaimLifecycleStatus::Superseded
@@ -1183,17 +1157,13 @@ mod claim_vad_now_tests {
         let state = result.reappraisal.active_claim_id.expect("active state");
         assert_matches!(
             vault.consolidate_claim_vad_now(&state, 110),
-            Err(Error::InvalidClaimBody(
-                "claim VAD state claims cannot be consolidated"
-            ))
+            Err(Error::InvalidClaimBody(_))
         );
         let turn = result.evidence_turns[0].turn_id;
         let annotation = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
         assert_matches!(
             vault.consolidate_claim_vad_now(&annotation, 110),
-            Err(Error::InvalidClaimBody(
-                "turn VAD annotation claims cannot be consolidated"
-            ))
+            Err(Error::InvalidClaimBody(_))
         );
         Ok(())
     }

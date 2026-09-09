@@ -27,7 +27,7 @@ pub(crate) use self::snapshot::{
 // module through `use super::*`; after the directory split the seam re-imports
 // them so the extracted sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
-use self::keyspace::{KeyspaceState, OverlayMutation};
+use self::keyspace::OverlayMutation;
 #[cfg(test)]
 use self::overlay::{ACTIVE_SEGMENT, OverlayLifecycleState};
 #[cfg(test)]

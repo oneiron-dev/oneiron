@@ -342,10 +342,10 @@ fn standard_specificity_ignores_unreadable_inbound_mentions() -> TestResult {
         assert!(scoped.get(&hidden)?.is_none());
     }
     let after = scoped.search_with_effort(&request)?;
-    assert_eq!(
-        after, baseline,
-        "hidden edges must not change visible scores or order"
-    );
+    assert_eq!(hit_ids(&after), hit_ids(&baseline));
+    for (after_hit, baseline_hit) in after.hits.iter().zip(&baseline.hits) {
+        assert_eq!(after_hit.score, baseline_hit.score);
+    }
     Ok(())
 }
 

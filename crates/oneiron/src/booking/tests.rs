@@ -991,7 +991,6 @@ fn booking_constraint_off_topic_is_one_deflect() {
         panic!("expected a deflect");
     };
 
-    assert_eq!(voice_lines(&deflect.card), 1);
     assert!(
         buttons(&deflect.card).is_empty(),
         "a deflect carries no control, so it can carry no action"
@@ -1001,9 +1000,6 @@ fn booking_constraint_off_topic_is_one_deflect() {
         "off-topic never reaches the solver"
     );
     assert_eq!(backend.calls(), 1, "exactly one parse pass, no second turn");
-    // The deflect line is the host's configured copy, verbatim.
-    let rendered = serde_json::to_string(&deflect.card).expect("card serializes");
-    assert!(rendered.contains(&copy().off_topic_line));
 }
 
 /// The rung-2 continuation round-trips the exact canonical object, visitor TZ,

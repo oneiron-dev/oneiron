@@ -211,7 +211,7 @@ fn resume_on_owner_approve() -> Result<()> {
         "owner-authenticated replay does not retrip"
     );
 
-    // The next original write starts a fresh window.
+    // Each actor's next original write starts a fresh window.
     breaker_write(
         &vault,
         test_id(0x33),
@@ -225,9 +225,58 @@ fn resume_on_owner_approve() -> Result<()> {
         stored_claim_body(&vault, &test_id(0x33))?.approval,
         ClaimApprovalStatus::Auto
     );
-    let fresh = breaker_row(&vault, run, &actor)?.expect("fresh row");
-    assert_eq!(fresh.event_timestamps().len(), 1);
-    assert_eq!(fresh.tripped_at(), None);
+    breaker_write(
+        &vault,
+        test_id(0x34),
+        other_actor,
+        0x54,
+        run,
+        ClaimApprovalStatus::Auto,
+        11,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x34))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    assert_eq!(breaker_trip_receipts(&vault)?.len(), trip_receipts_before);
+
+    // The fresh windows still enforce the threshold for both actors.
+    breaker_write(
+        &vault,
+        test_id(0x35),
+        actor,
+        0x55,
+        run,
+        ClaimApprovalStatus::Auto,
+        12,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x35))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    assert_eq!(
+        breaker_trip_receipts(&vault)?.len(),
+        trip_receipts_before + 1
+    );
+    breaker_write(
+        &vault,
+        test_id(0x36),
+        other_actor,
+        0x56,
+        run,
+        ClaimApprovalStatus::Auto,
+        13,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x36))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        breaker_trip_receipts(&vault)?.len(),
+        trip_receipts_before + 2
+    );
     Ok(())
 }
 

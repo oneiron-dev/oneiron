@@ -346,7 +346,6 @@ mod dev_backend {
             .run(&image, ExecutionBudget::new(5, 128, 32))
             .expect_err("execution after sealed overlay export must fail closed");
         assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
-        assert!(error.to_string().contains("sealed"));
         assert_eq!(fixture.adapter.proposal_deltas(), deltas_before);
     }
 

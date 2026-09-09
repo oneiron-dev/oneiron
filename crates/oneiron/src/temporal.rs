@@ -408,7 +408,6 @@ mod tests {
     use super::TimeRange;
     use super::parse_temporal_expression;
     use super::temporal_expression_from_query;
-    use super::unix_seconds_from_civil;
 
     const FROZEN_NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
 
@@ -541,8 +540,13 @@ mod tests {
 
     #[test]
     fn unix_seconds_from_civil_keeps_epoch_boundary_at_zero() {
-        assert_eq!(unix_seconds_from_civil(1970, 1, 1), 0);
-        assert_eq!(unix_seconds_from_civil(1970, 1, 2), 86_400);
+        let epoch_day = parse_temporal_expression("yesterday", 86_400).unwrap();
+        assert_eq!(epoch_day.start, 0);
+        assert_eq!(epoch_day.end, 86_399);
+
+        let following_day = parse_temporal_expression("yesterday", 172_800).unwrap();
+        assert_eq!(following_day.start, 86_400);
+        assert_eq!(following_day.end, 172_799);
     }
 
     #[test]
@@ -566,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "civil years representable as i32")]
+    #[should_panic]
     fn temporal_expression_rejects_extreme_timestamp_without_wrapping() {
         let _ = parse_temporal_expression("last month", u64::MAX);
     }

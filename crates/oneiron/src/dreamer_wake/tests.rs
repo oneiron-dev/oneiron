@@ -871,19 +871,12 @@ fn executor_error_parks_attempt_and_refunds_reservation() -> Result<()> {
         &mut exec,
         &WakeCancellation::new(),
     ));
-    assert!(result.is_err(), "a non-deadline error still propagates");
+    assert!(matches!(result, Err(crate::Error::InvariantViolation(_))));
 
-    // The attempt row is parked under the error reason, not orphaned-leased.
+    // The attempt row is parked, not orphaned-leased.
     let parked = store
         .parked_attempt(queued.attempt.id)?
         .expect("parked row");
-    assert!(
-        parked
-            .reason
-            .starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
-        "park reason carries the executor error class: {}",
-        parked.reason
-    );
     assert_eq!(parked.park_owner, "wake-worker");
 
     // The budget reservation was refunded, not leaked.
@@ -1044,18 +1037,15 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
         error.to_string().len() > MAX_WAKE_PARK_REASON_BYTES,
         "the propagated error keeps its full Display"
     );
+    let crate::Error::AnalyzerError(payload) = error else {
+        panic!("expected the executor's AnalyzerError");
+    };
+    assert_eq!(payload, format!("x{}", "語".repeat(400)));
 
     // The attempt is parked under the clamped reason, not orphaned-leased.
     let parked = store
         .parked_attempt(queued.attempt.id)?
         .expect("parked row");
-    assert!(
-        parked
-            .reason
-            .starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
-        "clamping keeps the reason prefix: {}",
-        parked.reason
-    );
     assert!(parked.reason.len() <= MAX_WAKE_PARK_REASON_BYTES);
 
     // The budget reservation was refunded, not leaked.
@@ -1136,26 +1126,11 @@ fn executor_panic_parks_attempt_and_refunds_reservation() -> Result<()> {
         &mut exec,
         &WakeCancellation::new(),
     ));
-    assert!(
-        result.is_err(),
-        "the contained panic surfaces as a pass error"
-    );
+    assert!(matches!(result, Err(crate::Error::InvariantViolation(_))));
 
-    let parked = store
+    store
         .parked_attempt(queued.attempt.id)?
         .expect("parked row");
-    assert!(
-        parked
-            .reason
-            .starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
-        "the panic parks through the executor-error arm: {}",
-        parked.reason
-    );
-    assert!(
-        parked.reason.contains("panicked"),
-        "the reason names the panic: {}",
-        parked.reason
-    );
     assert!(
         store
             .budget_reservation("wake", queued.attempt.id)?

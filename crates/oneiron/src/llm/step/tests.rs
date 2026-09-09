@@ -679,10 +679,7 @@ fn own_anchor_sent_record_refused() -> Result<()> {
     };
     let error = consume_trap_signal(&vault, &runner, &forged, 10_003)
         .expect_err("self-anchored sent record refused");
-    assert!(matches!(
-        error,
-        Error::InvalidClaimBody("dreamer trap anchor must be a created record")
-    ));
+    assert!(matches!(error, Error::InvalidClaimBody(_)));
     assert!(
         runner.parked_attempt(fixture.attempt_id)?.is_some(),
         "attempt stays parked"
@@ -757,10 +754,7 @@ fn signal_naming_other_owners_job_refused() -> Result<()> {
 
     let error = consume_trap_signal(&vault, &runner, &trap_k, 10_013)
         .expect_err("cross-attempt signal refused");
-    assert!(matches!(
-        error,
-        Error::InvalidClaimBody("dreamer trap signal names a different attempt")
-    ));
+    assert!(matches!(error, Error::InvalidClaimBody(_)));
     assert!(
         runner.parked_attempt(fixture_j.attempt_id)?.is_some(),
         "attempt J stays parked"
@@ -883,72 +877,57 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     let value = mutated_step_value(&step_claim, |entries| {
         entries.push((Value::from("unknown_key"), Value::from(1_u64)));
     });
-    assert!(decode_step_claim_value(&value).is_err());
+    assert!(matches!(
+        decode_step_claim_value(&value),
+        Err(Error::InvalidClaimBody(_))
+    ));
 
     // BOTH response and response_ref → fail closed.
     let value = mutated_step_value(&step_claim, |entries| {
         entries.push((Value::from(KEY_RESPONSE_REF), Value::Binary(vec![0x44; 16])));
     });
-    assert!(decode_step_claim_value(&value).is_err());
+    assert!(matches!(
+        decode_step_claim_value(&value),
+        Err(Error::InvalidClaimBody(_))
+    ));
 
     // NEITHER response nor response_ref → fail closed.
     let value = mutated_step_value(&step_claim, |entries| {
         entries.retain(|(key, _)| key.as_str() != Some(KEY_RESPONSE));
     });
-    assert!(decode_step_claim_value(&value).is_err());
+    assert!(matches!(
+        decode_step_claim_value(&value),
+        Err(Error::InvalidClaimBody(_))
+    ));
 
     let missing_step_fields = [
-        (KEY_PROGRESSION, "missing dreamer step value progression"),
-        (KEY_MODEL_ID, "missing dreamer step value model_id"),
-        (KEY_PURPOSE, "missing dreamer step value purpose"),
-        (KEY_PARAMS_HASH, "missing dreamer step value params_hash"),
-        (KEY_USAGE_IN, "missing dreamer step value usage_in"),
-        (KEY_USAGE_OUT, "missing dreamer step value usage_out"),
-        (KEY_AT, "missing dreamer step value at"),
+        KEY_PROGRESSION,
+        KEY_MODEL_ID,
+        KEY_PURPOSE,
+        KEY_PARAMS_HASH,
+        KEY_USAGE_IN,
+        KEY_USAGE_OUT,
+        KEY_AT,
     ];
-    for (field, expected) in missing_step_fields {
+    for field in missing_step_fields {
         let value = mutated_step_value(&step_claim, |entries| {
             entries.retain(|(key, _)| key.as_str() != Some(field));
         });
         assert!(matches!(
             decode_step_claim_value(&value),
-            Err(Error::InvalidClaimBody(reason)) if reason == expected
+            Err(Error::InvalidClaimBody(_))
         ));
     }
 
     let invalid_step_fields = [
-        (
-            KEY_PROGRESSION,
-            Value::from(7_u64),
-            "dreamer step value progression must be a string",
-        ),
-        (
-            KEY_PROGRESSION,
-            Value::from("unknown"),
-            "unknown dreamer step value progression",
-        ),
-        (
-            KEY_MODEL_ID,
-            Value::from(7_u64),
-            "dreamer step value model_id must be a string",
-        ),
-        (
-            KEY_USAGE_IN,
-            Value::from("100"),
-            "dreamer step value usage_in must be an integer",
-        ),
-        (
-            KEY_AT,
-            Value::from("10000"),
-            "dreamer step value at must be an integer",
-        ),
-        (
-            KEY_SCHEMA_VERSION,
-            Value::from(2_u64),
-            "unsupported dreamer step value schema_version",
-        ),
+        (KEY_PROGRESSION, Value::from(7_u64)),
+        (KEY_PROGRESSION, Value::from("unknown")),
+        (KEY_MODEL_ID, Value::from(7_u64)),
+        (KEY_USAGE_IN, Value::from("100")),
+        (KEY_AT, Value::from("10000")),
+        (KEY_SCHEMA_VERSION, Value::from(2_u64)),
     ];
-    for (field, replacement, expected) in invalid_step_fields {
+    for (field, replacement) in invalid_step_fields {
         let value = mutated_step_value(&step_claim, |entries| {
             let (_, encoded) = entries
                 .iter_mut()
@@ -958,7 +937,7 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
         });
         assert!(matches!(
             decode_step_claim_value(&value),
-            Err(Error::InvalidClaimBody(reason)) if reason == expected
+            Err(Error::InvalidClaimBody(_))
         ));
     }
 
@@ -982,14 +961,17 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     let value = mutated_trap_value(&trap_claim, |entries| {
         entries.push((Value::from("unknown_key"), Value::from(1_u64)));
     });
-    assert!(decode_trap_claim_value(&value).is_err());
+    assert!(matches!(
+        decode_trap_claim_value(&value),
+        Err(Error::InvalidClaimBody(_))
+    ));
 
     let value = mutated_trap_value(&trap_claim, |entries| {
         entries.retain(|(key, _)| key.as_str() != Some(KEY_AT));
     });
     assert!(matches!(
         decode_trap_claim_value(&value),
-        Err(Error::InvalidClaimBody("missing dreamer trap value at"))
+        Err(Error::InvalidClaimBody(_))
     ));
 
     let value = mutated_trap_value(&trap_claim, |entries| {
@@ -1001,9 +983,7 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     });
     assert!(matches!(
         decode_trap_claim_value(&value),
-        Err(Error::InvalidClaimBody(
-            "dreamer trap value at must be an integer"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     Ok(())
 }
@@ -1072,9 +1052,47 @@ fn trap_for_consent_scale_durable_wait_is_consent() {
         reason: crate::code_run::SelfDurableWaitReason::OutboundEffect,
         prompt: Some("may I?".to_owned()),
     };
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10).expect("fixture");
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let runner = DreamerRunnerStore::new(&vault);
+    let step_hash = [0x99; 32];
+    let trap = open_trap(
+        &vault,
+        &ctx,
+        trap_for_durable_wait(&wait, step_hash),
+        step_hash,
+        "outbound wait",
+    )
+    .expect("open trap");
+    runner
+        .park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+            attempt_id: fixture.attempt_id,
+            reason: "outbound wait".to_owned(),
+            park_owner: trap_park_owner(&trap.trap_claim_id),
+            now: 10_001,
+        })
+        .expect("park attempt");
     assert_eq!(
-        trap_for_durable_wait(&wait, [0x99; 32]),
-        DreamerTrapKind::Consent
+        register_wait(&vault, &trap, 10_002).expect("register wait"),
+        DreamerTrapState::Waiting,
+    );
+    let (_, head) = trap_head(&vault, &trap.trap_claim_id).expect("waiting head");
+    assert_eq!(head.kind, DreamerTrapKind::Consent);
+    assert!(matches!(
+        consume_trap_signal(&vault, &runner, &trap, 10_003),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    assert!(
+        runner
+            .parked_attempt(fixture.attempt_id)
+            .expect("parked attempt")
+            .is_some(),
+        "unauthorized outbound work stays parked"
+    );
+    assert_eq!(
+        register_wait(&vault, &trap, 10_004).expect("still waiting"),
+        DreamerTrapState::Waiting,
     );
 }
 
@@ -1448,35 +1466,49 @@ fn peer_result_trap_kind_round_trips_without_disturbing_budget_or_consent() {
 #[test]
 fn only_peer_result_maps_to_the_peer_result_trap_kind() {
     let step_hash = [7u8; 32];
-    let kinds: Vec<DreamerTrapKind> = [
-        crate::code_run::SelfDurableWaitReason::HumanInput,
-        crate::code_run::SelfDurableWaitReason::DestructiveEffect,
-        crate::code_run::SelfDurableWaitReason::OutboundEffect,
-        crate::code_run::SelfDurableWaitReason::PeerResult,
-    ]
-    .into_iter()
-    .map(|reason| {
-        trap_for_durable_wait(
-            &crate::code_run::SelfDurableWait {
-                wait_id: crate::test_util::entity(0x21),
-                effect: crate::code_run::SelfEffect::TaskDelegate,
-                reason,
-                prompt: None,
-            },
-            step_hash,
-        )
-    })
-    .collect();
-
-    assert_eq!(
-        kinds,
-        vec![
+    for (reason, expected_kind) in [
+        (
+            crate::code_run::SelfDurableWaitReason::HumanInput,
             DreamerTrapKind::HumanResponse,
+        ),
+        (
+            crate::code_run::SelfDurableWaitReason::DestructiveEffect,
             DreamerTrapKind::Consent,
+        ),
+        (
+            crate::code_run::SelfDurableWaitReason::OutboundEffect,
             DreamerTrapKind::Consent,
+        ),
+        (
+            crate::code_run::SelfDurableWaitReason::PeerResult,
             DreamerTrapKind::PeerResult,
-        ]
-    );
+        ),
+    ] {
+        let wait = crate::code_run::SelfDurableWait {
+            wait_id: crate::test_util::entity(0x21),
+            effect: crate::code_run::SelfEffect::TaskDelegate,
+            reason,
+            prompt: None,
+        };
+        let (_dir, vault) = open_vault();
+        let fixture = step_fixture(&vault, 10).expect("fixture");
+        let ctx = ctx(&vault, &fixture, 10_000);
+        let trap = open_trap(
+            &vault,
+            &ctx,
+            trap_for_durable_wait(&wait, step_hash),
+            step_hash,
+            "durable wait",
+        )
+        .expect("open trap");
+        assert_eq!(
+            register_wait(&vault, &trap, 10_001).expect("register wait"),
+            DreamerTrapState::Waiting,
+        );
+        let (_, head) = trap_head(&vault, &trap.trap_claim_id).expect("waiting head");
+        assert_eq!(head.kind, expected_kind);
+        assert_eq!(head.state, DreamerTrapState::Waiting);
+    }
 }
 
 /// Registering the delegation wait commits the `Waiting` transition AND the

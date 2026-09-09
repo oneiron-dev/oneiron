@@ -221,9 +221,10 @@ mod tests {
     #[test]
     fn detect_window_truncates_at_char_boundary() {
         let text = "とう".repeat(1000);
-        let out = truncate_at_char_boundary(&text, DETECT_WINDOW_BYTES);
-        assert!(out.len() <= DETECT_WINDOW_BYTES);
-        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+        assert!(matches!(
+            detect_with_whichlang(&text),
+            Some(LanguageHint::Ja),
+        ));
     }
 
     #[test]
@@ -243,10 +244,19 @@ mod tests {
 
     #[test]
     fn unique_ascii_letter_tokens_counts_distinct_casefolded_words() {
-        assert_eq!(unique_ascii_letter_tokens("the the THE"), 1);
-        assert_eq!(unique_ascii_letter_tokens("apple pear apple"), 2);
-        assert_eq!(unique_ascii_letter_tokens("one two three"), 3);
-        assert_eq!(unique_ascii_letter_tokens(""), 0);
-        assert_eq!(unique_ascii_letter_tokens("   "), 0);
+        let lowercase = "apple ".repeat(20);
+        assert!(matches!(
+            detect_with_whichlang(&lowercase),
+            Some(LanguageHint::En),
+        ));
+
+        // Keep the three spellings inside the detection window and exceed the
+        // short-ASCII threshold. The overwhelmingly repeated "apple" input
+        // otherwise routes to French when the low-entropy fallback is bypassed.
+        let mixed_case = "apple ".repeat(80) + "Apple APPLE";
+        assert!(matches!(
+            detect_with_whichlang(&mixed_case),
+            Some(LanguageHint::En),
+        ));
     }
 }
