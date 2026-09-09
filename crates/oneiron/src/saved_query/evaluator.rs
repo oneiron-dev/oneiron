@@ -170,7 +170,7 @@ impl SavedQueryEvaluator<'_> {
                 (no_match("stage-1 filter did not match"), false)
             }
         } else {
-            (no_match("entity is outside the effective scope"), false)
+            (no_match(SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE), false)
         };
 
         put_verdict_memo(
@@ -208,7 +208,7 @@ impl SavedQueryEvaluator<'_> {
         };
         Ok(StagedOutcome {
             outcome: EvaluationOutcome {
-                decision: no_match("effective scope is closed against owner grants"),
+                decision: no_match(SAVED_QUERY_WHY_SCOPE_CLOSED),
                 evidence_hash: compute_evidence_hash(request.definition, &evidence)?,
                 memo_hit: false,
             },
@@ -671,6 +671,26 @@ fn judge_failure(code: String) -> Error {
         code,
     }
 }
+
+/// The stage-0 answer when the CANDIDATE ENTITY is not in the effective scope:
+/// its world membership, read from the evidence, does not satisfy the saved
+/// query's declared scope.
+///
+/// Named because it is one of two textually similar scope refusals whose
+/// causes are different — this one is per-candidate and reads evidence, while
+/// [`SAVED_QUERY_WHY_SCOPE_CLOSED`] is the whole query being shut out by the
+/// owner's grants and reads nothing. A caller rendering a `NoMatch` memo has
+/// to tell them apart, and `why` is persisted verbatim in
+/// [`crate::saved_query::VerdictMemoRow`], so the text is fixed: this constant
+/// names the existing bytes, it does not change them.
+pub const SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE: &str = "entity is outside the effective scope";
+
+/// The denied answer when the OWNER GRANTS close the effective scope: no
+/// evidence is read and no memo is written.
+///
+/// The sibling of [`SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE`]; see it for why
+/// both are named.
+pub const SAVED_QUERY_WHY_SCOPE_CLOSED: &str = "effective scope is closed against owner grants";
 
 fn no_match(why: &str) -> MatchDecision {
     MatchDecision {
