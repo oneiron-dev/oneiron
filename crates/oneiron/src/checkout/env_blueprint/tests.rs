@@ -3,7 +3,7 @@ use super::*;
 use crate::checkout::lease::{CheckoutId, CheckoutLeaseAct, CheckoutLeaseState};
 use crate::checkout::resolve_checkout_environment;
 use crate::config::VaultConfig;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 
 use tempfile::TempDir;
 
@@ -14,6 +14,19 @@ const COMMIT_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 /// verdict wins over the contextual grammar errors instead of merely proving
 /// that no secret-shaped fixture was present.
 const AWS_FIXTURE: &str = "AKIA0123456789ABCDEF";
+/// The frozen `env_blueprint_repo_hash` of the identity `github:owner/repo`,
+/// in lowercase hex.
+///
+/// `env_blueprint_key` is the PERSISTED `vault_meta` key of the blueprint row,
+/// so the domain string, the hashed identity, and the hash construction are
+/// all on-disk facts. Recomputing the hash in the test from
+/// `ENV_BLUEPRINT_REPO_KEY_DOMAIN` would move with any change to them and stay
+/// green while every existing row was orphaned; the cross-commit store test
+/// would not see it either, because it writes and reads under the same new
+/// key. Only a literal catches a consistent key-format migration. Same shape
+/// as `HASH_FIXTURE_HEX` in `web_fetch::tests`.
+const ENV_BLUEPRINT_GITHUB_OWNER_REPO_HASH_HEX: &str =
+    "ae6a7f7868dfbc8a494afd5826c80da8758f13595f2a57003d1bd0f96ef52de9";
 
 fn vault_fixture() -> (Vault, TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -216,10 +229,15 @@ fn env_blueprint_identity_is_commit_stripped_and_domain_separated() {
     let hash = env_blueprint_repo_hash(&repo_a);
     assert_eq!(&key[ENV_BLUEPRINT_KEY_PREFIX.len()..], &hash[..]);
 
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(ENV_BLUEPRINT_REPO_KEY_DOMAIN);
-    hasher.update(b"github:owner/repo");
-    assert_eq!(hash, *hasher.finalize().as_bytes());
+    assert_eq!(
+        bytes_to_hex_lower(&hash),
+        ENV_BLUEPRINT_GITHUB_OWNER_REPO_HASH_HEX
+    );
+    assert_eq!(
+        key,
+        [ENV_BLUEPRINT_KEY_PREFIX, &hash[..]].concat(),
+        "the persisted key is the prefix followed by exactly the frozen hash"
+    );
 }
 
 #[test]
