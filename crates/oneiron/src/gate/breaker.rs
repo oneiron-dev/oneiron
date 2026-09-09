@@ -38,7 +38,7 @@ use crate::vault::Vault;
 use super::resolution::PolicyManifestResolution;
 
 /// Encoding version of the durable `vault_meta` breaker row.
-pub(crate) const GATE_BREAKER_ROW_SCHEMA_VERSION: u8 = 1;
+const GATE_BREAKER_ROW_SCHEMA_VERSION: u8 = 1;
 
 /// Engine-default event budget inside one rolling window.
 pub(super) const GATE_BREAKER_DEFAULT_MAX_EVENTS: u32 = 30;
@@ -47,7 +47,7 @@ pub(super) const GATE_BREAKER_DEFAULT_MAX_EVENTS: u32 = 30;
 pub(super) const GATE_BREAKER_WINDOW_SECS: u64 = 600;
 
 /// Optional policy-manifest key carrying the two-field threshold override.
-pub(crate) const GATE_BREAKER_POLICY_KEY: &str = "actor_burst_breaker";
+pub(super) const GATE_BREAKER_POLICY_KEY: &str = "actor_burst_breaker";
 
 /// Manifest field naming the per-window event budget.
 const GATE_BREAKER_MAX_EVENTS_KEY: &str = "max_events";
@@ -56,21 +56,21 @@ const GATE_BREAKER_MAX_EVENTS_KEY: &str = "max_events";
 const GATE_BREAKER_WINDOW_SECS_KEY: &str = "window_secs";
 
 /// Gate `content_kind` of the synthetic trip receipt.
-pub(crate) const GATE_BREAKER_CONTENT_KIND: &str = "circuit_breaker";
+pub(super) const GATE_BREAKER_CONTENT_KIND: &str = "circuit_breaker";
 
 /// Ledger outcome of the synthetic trip receipt.
-pub(crate) const GATE_BREAKER_OUTCOME_TRIPPED: &str = "breaker_tripped";
+pub(super) const GATE_BREAKER_OUTCOME_TRIPPED: &str = "breaker_tripped";
 
 /// Record-level reason code stamped on the synthetic trip receipt. The
 /// receipt is not a claim verdict, so its raw `gate.`-prefixed string rides
 /// [`GateDecisionRecord::reason_codes`] rather than the typed vocabulary.
-pub(crate) const GATE_BREAKER_REASON_TRIPPED: &str = "gate.breaker.tripped";
+pub(super) const GATE_BREAKER_REASON_TRIPPED: &str = "gate.breaker.tripped";
 
 /// Exact-value anchor for the demoted decision's typed reason. Production
 /// decision construction uses [`super::decision::GateReasonCode`]; this
 /// constant exists so tests can pin the wire string in one place.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) const GATE_BREAKER_REASON_PENDING: &str = "gate.pending.actor_burst_breaker";
+pub(super) const GATE_BREAKER_REASON_PENDING: &str = "gate.pending.actor_burst_breaker";
 
 /// `vault_meta` key family of the durable breaker rows.
 const GATE_BREAKER_META_PREFIX: &[u8] = b"gate.breaker.v1:";
@@ -84,7 +84,7 @@ const GATE_BREAKER_RECEIPT_DOMAIN: &[u8] = b"oneiron/gate/actor-burst-breaker-re
 /// valid `actor_burst_breaker` override; see
 /// [`parse_gate_breaker_thresholds`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct GateBreakerThresholds {
+pub(super) struct GateBreakerThresholds {
     pub max_events: u32,
     pub window_secs: u64,
 }
@@ -116,7 +116,7 @@ pub struct GateBreakerRunProjection {
 /// neither relax nor clear an already-tripped row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct GateBreakerRowV1 {
+pub(super) struct GateBreakerRowV1 {
     schema_version: u8,
     thresholds: GateBreakerThresholds,
     event_timestamps: Vec<u64>,
@@ -135,7 +135,7 @@ impl GateBreakerRowV1 {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn tripped_at(&self) -> Option<u64> {
+    pub(super) fn tripped_at(&self) -> Option<u64> {
         self.tripped_at
     }
 
@@ -145,7 +145,7 @@ impl GateBreakerRowV1 {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn event_timestamps(&self) -> &[u64] {
+    pub(super) fn event_timestamps(&self) -> &[u64] {
         &self.event_timestamps
     }
 }
@@ -153,7 +153,7 @@ impl GateBreakerRowV1 {
 /// The ordinary outcome one gate event would otherwise land, restricted to
 /// the two the breaker counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GateBreakerCandidate {
+pub(super) enum GateBreakerCandidate {
     Auto,
     Proposed,
 }
@@ -161,7 +161,7 @@ pub(crate) enum GateBreakerCandidate {
 /// One pure rolling-window transition. Storage I/O and decision mutation stay
 /// outside so the boundary rules are table-testable.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateBreakerTransition {
+pub(super) struct GateBreakerTransition {
     row: GateBreakerRowV1,
     outcome: GateBreakerCandidate,
     tripped_now: bool,
@@ -178,7 +178,7 @@ pub(crate) struct GateBreakerTransition {
 /// synthetic receipt binds them. What the caller needs back is only what it
 /// cannot see for itself, which is how the event's own decision must change.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateBreakerApplied {
+pub(super) struct GateBreakerApplied {
     /// The event must land pending rather than automatically.
     pub(crate) decision_is_proposed: bool,
     /// The typed breaker-pending reason belongs on this decision. False for an
@@ -195,7 +195,7 @@ pub(crate) struct GateBreakerApplied {
 }
 
 /// Byte-exact restore instructions for one event's breaker mutation.
-pub(crate) type GateBreakerUndo = (Vec<u8>, Option<Vec<u8>>, Option<GateDecisionId>);
+pub(super) type GateBreakerUndo = (Vec<u8>, Option<Vec<u8>>, Option<GateDecisionId>);
 
 /// A duplicate, absent, or malformed override never disables the breaker:
 /// it contributes no candidate, so the resolver uses the engine defaults.
@@ -313,7 +313,7 @@ fn encode_gate_breaker_row(row: &GateBreakerRowV1) -> Result<Vec<u8>> {
         .map_err(|_| Error::InvariantViolation("gate breaker row encode failed"))
 }
 
-pub(crate) fn decode_gate_breaker_row(raw: &[u8]) -> Result<GateBreakerRowV1> {
+fn decode_gate_breaker_row(raw: &[u8]) -> Result<GateBreakerRowV1> {
     let row: GateBreakerRowV1 =
         rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("gate breaker row"))?;
     if row.schema_version != GATE_BREAKER_ROW_SCHEMA_VERSION
@@ -331,7 +331,7 @@ pub(crate) fn decode_gate_breaker_row(raw: &[u8]) -> Result<GateBreakerRowV1> {
 
 /// The pure rolling-window transition. See the module docs for why the order
 /// below is exact.
-pub(crate) fn evaluate_gate_breaker_event(
+pub(super) fn evaluate_gate_breaker_event(
     row: Option<GateBreakerRowV1>,
     live_thresholds: GateBreakerThresholds,
     candidate: GateBreakerCandidate,
@@ -406,7 +406,7 @@ fn log_len(row: &GateBreakerRowV1) -> u32 {
 /// Binds a trip receipt's `diff_handle` to the exact trip without minting an
 /// entity. Every trip fact — run, actor, post-append count, snapshot — rides
 /// this hash; the record's own `actor_ref` carries the actor.
-pub(crate) fn gate_breaker_trip_handle(
+pub(super) fn gate_breaker_trip_handle(
     dreamer_run_id: &str,
     actor_ref: &EntityId,
     tripped_at: u64,
@@ -437,7 +437,7 @@ pub(crate) fn gate_breaker_trip_handle(
     clippy::too_many_arguments,
     reason = "the trip receipt binds the triggering decision's own manifest version and frontier, which are not derivable here"
 )]
-pub(crate) fn apply_gate_breaker_in_txn(
+pub(super) fn apply_gate_breaker_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     dreamer_run_id: &str,
@@ -555,7 +555,7 @@ pub(crate) fn undo_gate_breaker_in_txn(
 /// has validated the live bundle and BEFORE it replays or declines a member.
 /// A later failure in that transaction rolls the deletes back with everything
 /// else, so an unresolved bundle never leaves the run unpaused.
-pub(crate) fn clear_gate_breaker_rows_for_run_in_txn(
+pub(super) fn clear_gate_breaker_rows_for_run_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     dreamer_run_id: &str,
@@ -615,7 +615,7 @@ impl Vault {
 
 /// Test-only reader for one exact actor/run row's raw bytes.
 #[cfg(test)]
-pub(crate) fn gate_breaker_row_bytes_for_test(
+pub(super) fn gate_breaker_row_bytes_for_test(
     store: &Store,
     txn: &RoTxn<'_>,
     dreamer_run_id: &str,
@@ -632,7 +632,7 @@ pub(crate) fn gate_breaker_row_bytes_for_test(
 /// exactly what "engine time advanced past the whole window" looks like from
 /// the row's side.
 #[cfg(test)]
-pub(crate) fn put_gate_breaker_row_for_test(
+pub(super) fn put_gate_breaker_row_for_test(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     dreamer_run_id: &str,
@@ -647,7 +647,7 @@ pub(crate) fn put_gate_breaker_row_for_test(
 
 /// Test-only reader for one exact actor/run row.
 #[cfg(test)]
-pub(crate) fn gate_breaker_row_for_test(
+pub(super) fn gate_breaker_row_for_test(
     store: &Store,
     txn: &RoTxn<'_>,
     dreamer_run_id: &str,
@@ -661,7 +661,7 @@ pub(crate) fn gate_breaker_row_for_test(
 
 /// Test-only count of the rows one run holds.
 #[cfg(test)]
-pub(crate) fn gate_breaker_run_row_count_for_test(
+pub(super) fn gate_breaker_run_row_count_for_test(
     store: &Store,
     txn: &RoTxn<'_>,
     dreamer_run_id: &str,
@@ -671,7 +671,7 @@ pub(crate) fn gate_breaker_run_row_count_for_test(
 
 /// Test-only constructor for the pure transition's table tests.
 #[cfg(test)]
-pub(crate) fn gate_breaker_row_for_transition_test(
+pub(super) fn gate_breaker_row_for_transition_test(
     thresholds: GateBreakerThresholds,
     event_timestamps: Vec<u64>,
     tripped_at: Option<u64>,
@@ -694,7 +694,7 @@ impl GateBreakerTransition {
         self.outcome
     }
 
-    pub(crate) fn tripped_now(&self) -> bool {
+    pub(super) fn tripped_now(&self) -> bool {
         self.tripped_now
     }
 

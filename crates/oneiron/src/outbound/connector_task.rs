@@ -98,7 +98,7 @@ pub(super) struct ConnectorActorBody {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ConnectorSendAttemptPayload {
+pub(super) struct ConnectorSendAttemptPayload {
     pub(crate) task_ref: String,
 }
 

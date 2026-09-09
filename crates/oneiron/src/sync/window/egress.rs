@@ -42,7 +42,7 @@ use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 /// normally. Edge targets are deliberately not re-tested: the K4 taint guard
 /// refuses any base edge naming a live overlay member, so `edges_out` over
 /// base rows cannot produce one.
-pub(crate) fn window_packing_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
+pub(super) fn window_packing_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
     vault.store.off_record_sessions.contains_entity(id)
 }
 
@@ -159,7 +159,7 @@ pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u
 
 /// Scrubs the live state and chooses ordinary versus shallow snapshot bytes
 /// using the durable per-window history-free pin.
-pub(crate) fn export_scrubbed_window_snapshot(
+pub(in crate::sync) fn export_scrubbed_window_snapshot(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,

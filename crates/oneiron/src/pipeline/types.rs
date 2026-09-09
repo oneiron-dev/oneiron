@@ -73,7 +73,7 @@ pub const DEFAULT_RECENCY_HALF_LIFE_DAYS: f32 = 28.0;
 /// RET-010c recency half-life table, keyed by entity type byte. Values are
 /// explicit contract rows, not derived from type defaults; unknown dynamic
 /// type bytes fall back to [`DEFAULT_RECENCY_HALF_LIFE_DAYS`].
-pub(crate) const RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE: &[(u8, f32)] = &[
+pub(super) const RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE: &[(u8, f32)] = &[
     (ENTITY_TYPE_CLAIM, 28.0),
     (ENTITY_TYPE_TURN, 28.0),
     (ENTITY_TYPE_SESSION, 28.0),

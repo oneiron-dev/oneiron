@@ -17,7 +17,7 @@ use crate::vault::entity_id_from_type_index_key;
 /// identity that will carry the send. Missing, unregistered, or inactive
 /// identities resolve to `None`. Multiple eligible identities instead return
 /// [`Error::InvalidConfig`]: automatic selection must not send without a unique sender.
-pub(crate) fn resolve_channel_identity_ref_for_connector(
+pub(in crate::outbound) fn resolve_channel_identity_ref_for_connector(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     connector_key: &str,
@@ -77,7 +77,7 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
 }
 
 /// An explicit channel identity always wins; otherwise resolve it cheaply.
-pub(crate) fn enrich_dispatch_channel_identity(
+pub(in crate::outbound) fn enrich_dispatch_channel_identity(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     connector_key: &str,

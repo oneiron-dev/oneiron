@@ -45,20 +45,17 @@ pub use self::types::{
     is_campaign_pack_claim_predicate,
 };
 
-pub(crate) use self::codec::{
-    decode_comm_jurisdiction_value, validate_campaign_pack_claim_structure,
-};
+pub(crate) use self::codec::validate_campaign_pack_claim_structure;
+pub(in crate::campaign) use self::codec::decode_comm_jurisdiction_value;
 
 // These three decoders are named only by the sibling test module; the
 // re-export exists in test builds so those paths keep resolving, and is
 // absent otherwise so the non-test build carries no unused import.
 #[cfg(test)]
-pub(crate) use self::codec::{
-    decode_comm_bounce_value, decode_crm_fit_value, decode_do_not_contact_value,
-};
-pub(crate) use self::store::{
-    counterparty_do_not_contact_in_txn, identical_live_head_in_txn,
-    live_campaign_member_head_in_txn,
+use self::codec::{decode_comm_bounce_value, decode_crm_fit_value, decode_do_not_contact_value};
+pub(crate) use self::store::counterparty_do_not_contact_in_txn;
+pub(in crate::campaign) use self::store::{
+    identical_live_head_in_txn, live_campaign_member_head_in_txn,
 };
 
 #[cfg(test)]

@@ -155,7 +155,7 @@ impl IdentityTopologyOp {
     /// reconcile pass — there is nothing here for a trigger to re-run.
     /// A map item is never a participant: participants must exist and be
     /// `Active` at the door, and a map item must not.
-    pub(crate) fn deferred_reassignment_items(&self) -> Vec<EntityId> {
+    pub(super) fn deferred_reassignment_items(&self) -> Vec<EntityId> {
         match self {
             Self::Split(op) => op
                 .reassignment

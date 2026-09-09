@@ -63,7 +63,7 @@ impl Store {
     /// Sequence allocation is internal and monotonic, so hostile caller-chosen
     /// claim IDs cannot insert work behind an active fence. This makes a cycle
     /// finite even while new higher-key rows are being inserted.
-    pub(crate) fn critical_confirm_sweep_state_in_txn(
+    fn critical_confirm_sweep_state_in_txn(
         &self,
         txn: &RoTxn<'_>,
         key: &[u8],
@@ -94,7 +94,7 @@ impl Store {
         Ok((cursor, fence))
     }
 
-    pub(crate) fn put_critical_confirm_sweep_state_in_txn(
+    fn put_critical_confirm_sweep_state_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         key: &[u8],

@@ -41,7 +41,7 @@ use super::request::PolicyClassifyRequest;
 use super::verdict::{PolicyClassifyVerdict, PolicyVerdictCategory};
 
 impl Vault {
-    pub(crate) fn append_policy_model_gate_receipt(
+    pub(super) fn append_policy_model_gate_receipt(
         &self,
         request: &PolicyClassifyRequest,
         verdict: &PolicyClassifyVerdict,
@@ -69,7 +69,7 @@ impl Vault {
     /// receipt re-checks its policy binding there, so a manifest that moved
     /// after the pass cannot be receipted under a binding nobody can
     /// reproduce.
-    pub(crate) fn append_policy_model_gate_receipt_in_txn(
+    pub(super) fn append_policy_model_gate_receipt_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         request: &PolicyClassifyRequest,
@@ -107,7 +107,7 @@ impl Vault {
 /// The `gate.`-namespaced trace a verdict contributes to its ledger row. The
 /// gate ledger requires every reason code to sit under `gate.`, so policy and
 /// relay codes both ride that prefix.
-pub(crate) fn policy_model_reason_codes(verdict: &PolicyClassifyVerdict) -> Vec<String> {
+pub(super) fn policy_model_reason_codes(verdict: &PolicyClassifyVerdict) -> Vec<String> {
     let mut reasons = vec![format!(
         "gate.policy_model.{}",
         verdict.decision.ledger_str()

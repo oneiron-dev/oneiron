@@ -45,8 +45,8 @@ pub(in crate::store) use self::keys::{
 #[cfg(test)]
 pub(in crate::store) use self::ledger::encode_gate_decision;
 #[cfg(test)]
-pub(crate) use self::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
+pub(in crate::store) use self::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
 #[cfg(test)]
-pub(crate) use self::vet::GATE_SYSTEM_NOTICE_PLANE_TOKENS;
+pub(in crate::store) use self::vet::GATE_SYSTEM_NOTICE_PLANE_TOKENS;
 #[cfg(test)]
 pub(in crate::store) use self::vet::{valid_gate_receipt_reason, valid_gate_system_notice_record};

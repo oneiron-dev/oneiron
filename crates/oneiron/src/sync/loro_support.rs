@@ -36,7 +36,7 @@ pub(crate) fn map_contains_binary(map: &LoroMap, key: &str) -> bool {
 /// Presence check for tombstone maps: ANY value or container under the key
 /// counts as present (fail closed). Entities/edges maps must keep using
 /// the Binary-only helpers.
-pub(crate) fn map_contains_key(map: &LoroMap, key: &str) -> bool {
+fn map_contains_key(map: &LoroMap, key: &str) -> bool {
     map.get(key).is_some()
 }
 
@@ -45,7 +45,7 @@ pub(crate) fn map_contains_key(map: &LoroMap, key: &str) -> bool {
 /// EMPTY vec — which `decode_tombstone_value` decodes as HARD (fail
 /// closed); an absent key yields `None`. Entities/edges maps must keep
 /// using [`map_get_bytes`].
-pub(crate) fn map_get_tombstone_value(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+fn map_get_tombstone_value(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
     match map.get(key)? {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
         _ => Some(Vec::new()),
@@ -111,7 +111,7 @@ pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) 
 /// non-Binary `_ =>` arms in `bridge.rs`, which persist an `x:` row instead
 /// of skipping. The Binary-only [`map_for_each_bytes`] leaves a non-Binary
 /// op invisible to replay: no x: row, no log — a silent drop.
-pub(crate) fn map_for_each_value_bytes(map: &LoroMap, mut f: impl FnMut(&str, Option<&[u8]>)) {
+pub(super) fn map_for_each_value_bytes(map: &LoroMap, mut f: impl FnMut(&str, Option<&[u8]>)) {
     map.for_each(|key, value| match value {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => f(key, Some(&bytes)),
         _ => f(key, None),
@@ -125,7 +125,7 @@ pub(crate) fn map_for_each_value_bytes(map: &LoroMap, mut f: impl FnMut(&str, Op
 /// malformed remote tombstone must never be invisible to replay.
 /// Entities/edges maps use [`map_for_each_value_bytes`], which surfaces
 /// non-Binary values as `None` for quarantine instead (ONE-1157).
-pub(crate) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
+pub(super) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
     map.for_each(|key, value| match value {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => f(key, &bytes),
         _ => f(key, &[]),

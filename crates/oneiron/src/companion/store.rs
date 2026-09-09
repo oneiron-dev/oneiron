@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::vault::entity_id_from_type_index_key;
 
-pub(crate) fn companion_record_id_for_key_in_txn(
+pub(super) fn companion_record_id_for_key_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: &CompanionRecordKey,
@@ -38,7 +38,7 @@ pub(crate) fn companion_record_id_for_key_in_txn(
     Ok(None)
 }
 
-pub(crate) fn companion_record_any_id_for_key_in_txn(
+pub(super) fn companion_record_any_id_for_key_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: &CompanionRecordKey,

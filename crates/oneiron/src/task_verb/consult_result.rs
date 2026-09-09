@@ -172,7 +172,7 @@ impl TaskVerbBody {
 }
 
 #[derive(Debug)]
-pub(crate) struct CancelTargetState {
+pub(super) struct CancelTargetState {
     pub(super) owned: bool,
     pub(super) task_ref: Option<EntityId>,
     pub(super) attempts: Vec<(AttemptId, AttemptState)>,

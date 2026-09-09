@@ -41,7 +41,7 @@ use crate::{EntityId, Vault};
 /// the spec is `Serialize`/`Deserialize` wire data, a sink is not
 /// serializable, and an actor field on the wire would be caller-asserted
 /// identity. `None` on either leaves every verb's behavior unchanged.
-pub(crate) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
+pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
     vault: &Vault,
     oracle: &dyn SlotOracle,
     attempt: &BookingLifecycleAttempt,
@@ -90,7 +90,7 @@ pub(crate) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
 ///
 /// [`BookingError::InvalidConstraint`] when a claimed extension has no live,
 /// session-bound lease behind it.
-pub(crate) fn resolve_hold_expiry(
+fn resolve_hold_expiry(
     vault: &Vault,
     session_key: &SessionKey,
     lease: &HoldLeaseSpec,

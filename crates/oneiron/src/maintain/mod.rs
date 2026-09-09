@@ -5,7 +5,8 @@ mod short_ids;
 mod text_ops;
 
 pub use self::builder::{MaintenanceBuilder, MaintenanceReport};
-pub(crate) use self::hnsw_rebuild::{rebuild_hnsw_if_dropped, validate_rebuild_vector};
+use self::hnsw_rebuild::rebuild_hnsw_if_dropped;
+pub(crate) use self::hnsw_rebuild::validate_rebuild_vector;
 
 #[cfg(test)]
 mod tests;

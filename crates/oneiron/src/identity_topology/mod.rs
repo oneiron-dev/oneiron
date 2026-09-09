@@ -120,7 +120,7 @@ pub(crate) use lifecycle_state::{
     shell_edge_sources_for_store_in_txn, zero_head_split_shells_for_store_in_txn,
 };
 pub(crate) use op_vocabulary::is_identity_topology_op_kind;
-pub(crate) use reassignment_map::{
+use reassignment_map::{
     REASSIGNMENT_ORIGIN_META_PREFIX, REASSIGNMENT_TARGET_META_PREFIX, ReassignmentContext,
     apply_reassignment_in_txn,
 };
@@ -131,8 +131,8 @@ pub(crate) use shell_edge_reconcile::{
     reconcile_identity_topology_for_materialized_entities_in_txn,
     reconcile_shell_edges_after_eviction_in_txn,
 };
-pub(crate) use wire_keys::{
-    IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, IDENTITY_TOPOLOGY_SEQ_KEY,
+pub(crate) use wire_keys::{IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, IDENTITY_TOPOLOGY_SEQ_KEY};
+use wire_keys::{
     MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES, MAX_IDENTITY_TOPOLOGY_EVENT_FACETS,
     MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS,
 };

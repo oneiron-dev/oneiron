@@ -141,7 +141,7 @@ pub(super) fn check_hosted_media_hash_matches(
     Ok(())
 }
 
-pub(crate) fn hosted_media_type_for_blob(path: &str, bytes: &[u8]) -> Option<&'static str> {
+pub(super) fn hosted_media_type_for_blob(path: &str, bytes: &[u8]) -> Option<&'static str> {
     sniff_hosted_media_type(bytes).or_else(|| hosted_media_type_for_path(path))
 }
 

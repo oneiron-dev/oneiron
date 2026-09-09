@@ -24,7 +24,7 @@ const EVENT_BODY_NAME_KEY: &str = "name";
 /// Selection itself is deferred to CAL-02, but a blank `system` token is
 /// malformed input in every future baseline, so it fails now rather than
 /// becoming a silently-ignored no-op once the passport index lands.
-pub(crate) fn validate_selectors(calendars: &[CalendarSel]) -> Result<()> {
+pub(in crate::calendar) fn validate_selectors(calendars: &[CalendarSel]) -> Result<()> {
     for selector in calendars {
         if selector
             .system

@@ -14,7 +14,7 @@ use super::kind_string_for_type;
 /// hard-delete marker check and before any staging, so a refusal costs no
 /// entity bytes, edges, text postings, temporal rows, or short ids, and a
 /// concurrent create resolves to exactly one winner and one refusal.
-pub(crate) fn ensure_structural_create_in_txn(
+pub(super) fn ensure_structural_create_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

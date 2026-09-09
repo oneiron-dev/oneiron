@@ -47,7 +47,7 @@ impl OutboundDispatchPipeline {
     /// Dispatches an outbound intent after validating the facade-bound actor
     /// in the exact gate-decision transaction. The general dispatch API stays
     /// available to engine-owned callers whose actor model is different.
-    pub(crate) fn dispatch_with_verified_actor<S: OutboundExecutionSink>(
+    pub(in crate::outbound) fn dispatch_with_verified_actor<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
         request: OutboundDispatchRequest,

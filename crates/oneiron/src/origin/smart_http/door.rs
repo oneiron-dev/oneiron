@@ -97,7 +97,7 @@ impl DoorAdmissionStamp {
 /// Crate-visible on purpose: its methods name the canonical door types, which
 /// `credential_door.rs` publishes to this crate and to no one else. The
 /// transport reaches the seam through [`serve`], never by holding a door type.
-pub(crate) trait DoorHook: Send + Sync {
+pub(super) trait DoorHook: Send + Sync {
     /// Admits an authenticated receive-pack.
     ///
     /// `presented` is the capability slip the caller carried, or `None` in
@@ -121,7 +121,7 @@ pub(crate) trait DoorHook: Send + Sync {
 /// The seam's no-op default: it stamps the admission the transport already
 /// proved and returns a clean verdict. It scans nothing and refuses nothing, so
 /// the seam is present without adding behavior.
-pub(crate) struct NoopDoorHook;
+pub(super) struct NoopDoorHook;
 
 impl DoorHook for NoopDoorHook {
     fn admit_receive_pack(

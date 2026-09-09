@@ -206,7 +206,7 @@ impl Vault {
     /// [`Vault::prefilter_config`] through a caller-owned write transaction,
     /// so the in-transaction session-close planner screens under exactly the
     /// policy its own commit will be judged by.
-    pub(crate) fn prefilter_config_in_txn(&self, txn: &heed::RwTxn<'_>) -> Result<PrefilterConfig> {
+    pub(super) fn prefilter_config_in_txn(&self, txn: &heed::RwTxn<'_>) -> Result<PrefilterConfig> {
         let Some(raw) = self.store.vault_meta.get(txn, PREFILTER_CONFIG_KEY)? else {
             return Ok(PrefilterConfig::default());
         };

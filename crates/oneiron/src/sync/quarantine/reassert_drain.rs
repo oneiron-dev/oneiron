@@ -33,7 +33,7 @@ const REASSERT_MARKER_PREFIX: &str = "ra:w:";
 
 /// Formats the `ra:w:{window}:{entity_hex}` re-assertion marker key.
 #[must_use]
-pub(crate) fn reassert_marker_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
+pub(super) fn reassert_marker_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
     format!("{REASSERT_MARKER_PREFIX}{window_key}:{}", id.to_hex())
 }
 
@@ -48,7 +48,7 @@ pub(crate) fn reassert_marker_key(window_key: &str, id: &crate::entity_id::Entit
 /// delegate). Soft-over-hard staging folds into `apply_tombstone_batch`'s
 /// single top-level write txn so materialize never opens a per-item
 /// committing helper for staged work (ONE-521).
-pub(crate) fn enqueue_tombstone_reassert_marker_in_txn(
+pub(in crate::sync) fn enqueue_tombstone_reassert_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
@@ -71,7 +71,7 @@ pub(crate) fn enqueue_tombstone_reassert_marker_in_txn(
 /// (same pattern as [`set_remat_marker`] / [`set_remat_marker_in_txn`]).
 /// Used by pre-batch door paths (e.g. tombstone REMOVAL deltas) that are
 /// not part of staged batch materialization.
-pub(crate) fn enqueue_tombstone_reassert_marker(
+pub(in crate::sync) fn enqueue_tombstone_reassert_marker(
     vault: &Vault,
     window_key: &str,
     id: &crate::entity_id::EntityId,
@@ -210,7 +210,7 @@ pub fn drain_reassert_markers(
 /// them set for retry. Idempotent on double-drain: the second pass finds no
 /// markers (and a re-applied hard value is downgrade-blocked/no-op at every
 /// consumer — never-downgrade).
-pub(crate) fn drain_reassert_markers_for_window(
+pub(in crate::sync) fn drain_reassert_markers_for_window(
     vault: &Arc<Vault>,
     user_id: &str,
     manager: &Arc<crate::sync::manager::WindowManager>,
@@ -317,13 +317,13 @@ pub(crate) fn drain_reassert_markers_for_window(
 // fire synchronously on the committing thread).
 #[cfg(test)]
 thread_local! {
-    pub(crate) static INJECT_PURGE_FAILURES: std::cell::Cell<u32> =
+    pub(in crate::sync) static INJECT_PURGE_FAILURES: std::cell::Cell<u32> =
         const { std::cell::Cell::new(0) };
     /// Purge attempts to let THROUGH before [`INJECT_PURGE_FAILURES`] starts
     /// counting down. A batch applies N tombstones under one transaction
     /// (ONE-521), so targeting a specific item — the middle one — needs a
     /// skip count, not just a failure count.
-    pub(crate) static INJECT_PURGE_FAILURES_SKIP: std::cell::Cell<u32> =
+    pub(in crate::sync) static INJECT_PURGE_FAILURES_SKIP: std::cell::Cell<u32> =
         const { std::cell::Cell::new(0) };
 }
 
@@ -385,7 +385,7 @@ pub(crate) fn apply_replayed_tombstone_for_sync(
 /// its own. The caller decides the durability boundary — Observer B's
 /// tombstone batch runs each item in a nested savepoint under ONE top-level
 /// transaction, so an item's failure rolls back only that item.
-pub(crate) fn apply_replayed_tombstone_for_sync_in_txn(
+pub(in crate::sync) fn apply_replayed_tombstone_for_sync_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &crate::entity_id::EntityId,

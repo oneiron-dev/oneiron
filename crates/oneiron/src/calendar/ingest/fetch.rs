@@ -205,7 +205,7 @@ impl crate::ingest::IngestSource for IcsFeedSource {
 /// Re-archiving identical bytes is the blob store's own dedupe no-op.
 /// Returns the provenance ref admitted claims carry as their source record
 /// prefix.
-pub(crate) fn archive_raw_feed(
+pub(super) fn archive_raw_feed(
     vault: &Vault,
     config: &IcsFeedPollConfig,
     body: &[u8],

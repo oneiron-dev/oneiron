@@ -296,7 +296,7 @@ fn decode_member_derivation(value: &Value) -> Result<CampaignMemberDerivation> {
 }
 
 /// Decodes a `crm.fit` value.
-pub(crate) fn decode_crm_fit_value(value: &Value) -> Result<CrmFitValue> {
+pub(super) fn decode_crm_fit_value(value: &Value) -> Result<CrmFitValue> {
     let entries = value_map(value)?;
     let keys = [KEY_ICP_SCOPE, KEY_VERDICT];
     validate_keys(entries, &keys, &keys)?;
@@ -420,7 +420,7 @@ pub fn encode_do_not_contact_value(value: &CommDoNotContactValue) -> Value {
 }
 
 /// Decodes a `comm.do_not_contact` value.
-pub(crate) fn decode_do_not_contact_value(value: &Value) -> Result<CommDoNotContactValue> {
+pub(super) fn decode_do_not_contact_value(value: &Value) -> Result<CommDoNotContactValue> {
     let entries = value_map(value)?;
     validate_keys(entries, &[KEY_CHANNEL, KEY_SCOPE], &[KEY_SCOPE])?;
     let channel = optional_string(entries, KEY_CHANNEL)?;
@@ -457,7 +457,7 @@ pub fn encode_comm_bounce_value(value: &CommBounceValue) -> Value {
 }
 
 /// Decodes a `comm.bounce` value.
-pub(crate) fn decode_comm_bounce_value(value: &Value) -> Result<CommBounceValue> {
+pub(super) fn decode_comm_bounce_value(value: &Value) -> Result<CommBounceValue> {
     let entries = value_map(value)?;
     let keys = [KEY_CHANNEL, KEY_BOUNCE, KEY_SENDER_REF, KEY_OCCURRED_AT];
     validate_keys(entries, &keys, &keys)?;
@@ -473,7 +473,9 @@ pub(crate) fn decode_comm_bounce_value(value: &Value) -> Result<CommBounceValue>
 }
 
 /// Decodes a `comm.jurisdiction` value.
-pub(crate) fn decode_comm_jurisdiction_value(value: &Value) -> Result<CommJurisdictionValue> {
+pub(in crate::campaign) fn decode_comm_jurisdiction_value(
+    value: &Value,
+) -> Result<CommJurisdictionValue> {
     let entries = value_map(value)?;
     let keys = [KEY_JURISDICTION, KEY_OBSERVED_AT];
     validate_keys(entries, &keys, &keys)?;

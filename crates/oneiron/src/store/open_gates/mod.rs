@@ -32,9 +32,11 @@ pub(crate) use self::open_version_keys::{
 // bare through `use super::*`, but no non-test code outside `open_gates/`
 // reaches them through the seam, so the re-exports live under `cfg(test)`.
 #[cfg(test)]
-pub(crate) use self::manifest_storage_gates::StorageAbiGate;
+pub(in crate::store) use self::manifest_storage_gates::StorageAbiGate;
 #[cfg(test)]
 pub(in crate::store) use self::manifest_storage_gates::gate_storage_abi_value;
+#[cfg(test)]
+pub(in crate::store) use self::open_version_keys::STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR;
 #[cfg(test)]
 pub(in crate::store) use self::open_version_keys::{
     HNSW_COMPATIBILITY_LEN, HNSW_COMPATIBILITY_V2_LEN, HNSW_COMPATIBILITY_V2_VERSION,
@@ -43,6 +45,5 @@ pub(in crate::store) use self::open_version_keys::{
 };
 #[cfg(test)]
 pub(crate) use self::open_version_keys::{
-    HNSW_CONFIG_KEY, STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
-    TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+    HNSW_CONFIG_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
 };

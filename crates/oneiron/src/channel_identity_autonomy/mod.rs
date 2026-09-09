@@ -19,7 +19,7 @@ pub use self::types::{
     PREDICATE_AUTONOMY_MODE, PREDICATE_GRADUATION_EVIDENCE, PREDICATE_MAILBOX_READ_ENVELOPE,
 };
 
-pub(crate) use self::codec::invalid_autonomy;
+use self::codec::invalid_autonomy;
 
 #[cfg(test)]
 mod tests;

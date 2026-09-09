@@ -90,7 +90,7 @@ enum LaneFact<T> {
 
 /// The calendar facts one EVENT's admitted claims carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CalendarEventFacts {
+pub(in crate::calendar) struct CalendarEventFacts {
     time_kind: LaneFact<CalendarTimeKindValue>,
     status: LaneFact<CalendarStatus>,
     systems: Vec<String>,
@@ -144,7 +144,7 @@ pub(crate) struct CalendarEventRow {
     /// the interval `[0, 0]` and starts occupying Unix second zero in both
     /// range search and the busy union.
     pub(crate) occurred: Option<TimeRange>,
-    pub(crate) facts: CalendarEventFacts,
+    pub(in crate::calendar) facts: CalendarEventFacts,
 }
 
 /// Collects the calendar facts an EVENT's admitted claims carry.
@@ -223,7 +223,7 @@ fn replace_when_lower<T>(slot: &mut Option<(EntityId, T)>, id: EntityId, value: 
 }
 
 /// Reads one EVENT's admitted calendar row.
-pub(crate) fn event_row(read: &CalendarRead<'_>, id: EntityId) -> Result<Option<CalendarEventRow>> {
+pub(super) fn event_row(read: &CalendarRead<'_>, id: EntityId) -> Result<Option<CalendarEventRow>> {
     let vault = read.vault();
     let Some(header) = vault.read_entity_header(&id)? else {
         return Ok(None);

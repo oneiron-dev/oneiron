@@ -15,7 +15,7 @@ use crate::{EntityId, Vault};
 ///
 /// Persistence and index maintenance are CAL-02's; this only builds the value,
 /// so no parallel passport type exists in booking.
-pub(crate) fn outbound_passport_value(
+fn outbound_passport_value(
     system: String,
     uid: String,
     sequence: u32,

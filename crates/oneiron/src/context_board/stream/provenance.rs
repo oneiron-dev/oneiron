@@ -16,7 +16,7 @@ impl VerifiedOwnTaskEvent {
     pub(crate) fn actor_ref(&self) -> &str {
         &self.actor_ref
     }
-    pub(crate) fn consultee_ref(&self) -> &str {
+    pub(super) fn consultee_ref(&self) -> &str {
         &self.actor_ref
     }
     pub(crate) fn event_ref(&self) -> &str {
@@ -26,14 +26,14 @@ impl VerifiedOwnTaskEvent {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum WakeMintError {
+pub(super) enum WakeMintError {
     ConnectionMissing(StreamConnectionId),
     TaskMissing(String),
     NotOwnTask { task_ref: String, actor_ref: String },
 }
 
 #[allow(dead_code)]
-pub(crate) trait OwnTaskProvenanceSource {
+pub(super) trait OwnTaskProvenanceSource {
     fn routing_actor_for_own_task(
         &self,
         c: &StreamConnectionId,
@@ -68,7 +68,7 @@ impl ChildEvent {
     pub(crate) fn child_ref(&self) -> &str {
         &self.child_ref
     }
-    pub(crate) fn parent_actor_ref(&self) -> &str {
+    pub(super) fn parent_actor_ref(&self) -> &str {
         &self.parent_actor_ref
     }
     pub(crate) fn event_ref(&self) -> &str {
@@ -78,19 +78,19 @@ impl ChildEvent {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ChildMintError {
+pub(super) enum ChildMintError {
     ChildMissing(String),
     ParentMissing(String),
     ProvenanceMismatch { child_ref: String },
 }
 
 #[allow(dead_code)]
-pub(crate) trait ChildProvenanceSource {
+pub(super) trait ChildProvenanceSource {
     fn parent_actor_ref(&self, c: &str) -> Result<String, ChildMintError>;
 }
 
 #[allow(dead_code)]
-pub(crate) fn mint_child_event(
+pub(super) fn mint_child_event(
     src: &dyn ChildProvenanceSource,
     c: &str,
     e: &str,

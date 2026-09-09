@@ -252,7 +252,7 @@ pub fn intent_ledger_records(vault: &Vault) -> IntentLedgerResult<IntentLedgerLi
 /// This is a quiescent startup sweep and must not run concurrently with live
 /// dispatch of the same intent. ONE-1690/the driver owns lease-based concurrency.
 #[cfg(test)]
-pub(crate) fn recover_outbound_intents<S: OutboundSender + ?Sized>(
+pub(super) fn recover_outbound_intents<S: OutboundSender + ?Sized>(
     vault: &Vault,
     sender: &mut S,
     now_ms: u64,

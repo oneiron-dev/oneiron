@@ -64,7 +64,7 @@ pub use self::repo::{GitWireRepo, GitWireRepoIdentity};
 pub use self::wire_reads::GitWire;
 
 pub(crate) use self::bridge::{redact_bridged_failure, run_bridged_git_argv};
-pub(crate) use self::process::GitWireProcessOutput;
+use self::process::GitWireProcessOutput;
 pub(crate) use self::repo::lock_repository;
 // The guard type itself is only named outside this module by the
 // `repo_mutation` queue tests; production callers hold it through

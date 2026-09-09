@@ -46,7 +46,7 @@ pub(crate) fn hnsw_insert(
 /// [`hnsw_insert`] with unit-operation accounting: `ops` increments once per
 /// row read/write/delete and once per beam-search node/vector access, so
 /// tests can pin the localized-update complexity class (ONE-324 AC5).
-pub(crate) fn hnsw_insert_probed(
+pub(super) fn hnsw_insert_probed(
     store: &Store,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,

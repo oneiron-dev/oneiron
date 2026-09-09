@@ -62,7 +62,7 @@ pub(crate) mod tests {
     }
 
     /// A repository with one commit on `refs/heads/main`.
-    pub(crate) fn seeded_repo() -> (tempfile::TempDir, PathBuf, GitOid) {
+    pub(in crate::origin) fn seeded_repo() -> (tempfile::TempDir, PathBuf, GitOid) {
         let dir = tempfile::tempdir().expect("repo tempdir");
         let root = dir.path().canonicalize().expect("canonical repo root");
         git(&root, &["init", "--initial-branch=main"]);
@@ -76,11 +76,11 @@ pub(crate) mod tests {
         wire.open_repo(repo_ref, root).expect("open repo")
     }
 
-    pub(crate) fn main_ref() -> GitRefName {
+    pub(in crate::origin::publication) fn main_ref() -> GitRefName {
         GitRefName::parse_full("refs/heads/main").expect("ref name")
     }
 
-    pub(crate) fn fixture_provenance(
+    pub(in crate::origin::publication) fn fixture_provenance(
         vault: &Vault,
         request: &OriginPublicationRequest,
     ) -> EntityId {
@@ -92,7 +92,10 @@ pub(crate) mod tests {
         id
     }
 
-    pub(crate) fn authorize_fixture(vault: &Vault, request: &mut OriginPublicationRequest) {
+    pub(in crate::origin::publication) fn authorize_fixture(
+        vault: &Vault,
+        request: &mut OriginPublicationRequest,
+    ) {
         request.provenance_claim_id = fixture_provenance(vault, request);
     }
 
@@ -122,13 +125,16 @@ pub(crate) mod tests {
 
     /// The repo id the protocol itself derives, so a fixture and the code
     /// under test always agree about which repository a row belongs to.
-    pub(crate) fn repo_id_of(vault: &Vault, repo: &GitWireRepo) -> EntityId {
+    pub(in crate::origin::publication) fn repo_id_of(
+        vault: &Vault,
+        repo: &GitWireRepo,
+    ) -> EntityId {
         vault.origin_repo_id_for(repo).expect("repo id")
     }
 
     /// Rewinds `refs/heads/main` behind the protocol's back, which is what a
     /// crash before the CAS looks like from the journal's point of view.
-    pub(crate) fn force_ref(root: &Path, oid: &GitOid) {
+    pub(in crate::origin::publication) fn force_ref(root: &Path, oid: &GitOid) {
         git(root, &["update-ref", "refs/heads/main", oid.as_str()]);
     }
 

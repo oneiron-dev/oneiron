@@ -170,7 +170,7 @@ pub fn decode_public_booking_page_value(value: &rmpv::Value) -> Result<BookingPa
 /// Structural claim gate, used by the existing booking/config family dispatcher
 /// at every claim write door, including batch and rematerialization.
 /// Authority is checked separately against the same write/read transaction.
-pub(crate) fn validate_public_booking_page_claim(body: &ClaimBody) -> Result<()> {
+pub(super) fn validate_public_booking_page_claim(body: &ClaimBody) -> Result<()> {
     if body.predicate != BOOKING_PUBLIC_PAGE_PREDICATE
         || !matches!(body.subject, ClaimSubject::Entity(_))
         || body.scope.is_some()
@@ -230,7 +230,7 @@ pub fn load_public_booking_page(
     load_public_booking_page_in_txn(vault, &rtxn, page_ref, now)
 }
 
-pub(crate) fn load_public_booking_page_in_txn(
+fn load_public_booking_page_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     page_ref: EntityId,

@@ -94,7 +94,7 @@ pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 /// The single stamp the byte-space v3 migration branch accepts besides the
 /// current one — derived from [`STORAGE_ABI_VERSION`], never written as a
 /// historical literal.
-pub(crate) const STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR: u16 = STORAGE_ABI_VERSION - 1;
+pub(in crate::store) const STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR: u16 = STORAGE_ABI_VERSION - 1;
 
 const _: () = assert!(
     STORAGE_ABI_VERSION == 17,

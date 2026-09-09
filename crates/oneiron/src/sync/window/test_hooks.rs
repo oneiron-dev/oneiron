@@ -25,7 +25,7 @@ pub fn arm_receipt_local_write_race(id: EntityId, local_blob: Vec<u8>) {
     });
 }
 
-pub(crate) fn run_receipt_revocation_race(vault: &Vault) -> Result<()> {
+pub(super) fn run_receipt_revocation_race(vault: &Vault) -> Result<()> {
     let armed = RECEIPT_REVOCATION.with(|slot| slot.borrow_mut().take());
     if let Some((lease_key, revoked_row)) = armed {
         if revoked_row.is_empty() {

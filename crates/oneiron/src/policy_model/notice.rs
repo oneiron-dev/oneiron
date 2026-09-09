@@ -23,26 +23,26 @@ use super::planes::{HostedLegalPolicy, PolicyPlane};
 use super::request::PolicyModelConfig;
 use super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyVerdictCategory};
 
-pub(crate) const SYSTEM_NOTICE_CHANNEL: &str = "policy.notice";
+pub(super) const SYSTEM_NOTICE_CHANNEL: &str = "policy.notice";
 /// The audit channel. Separate from [`SYSTEM_NOTICE_CHANNEL`] so a host can
 /// route reader-facing notices and audit rows apart without inspecting bodies.
-pub(crate) const SYSTEM_NOTICE_CHANNEL_AUDIT: &str = "policy.audit";
-pub(crate) const SYSTEM_NOTICE_VOICE_SYSTEM: &str = "system";
-pub(crate) const SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL: &str = "user_and_model";
+pub(super) const SYSTEM_NOTICE_CHANNEL_AUDIT: &str = "policy.audit";
+pub(super) const SYSTEM_NOTICE_VOICE_SYSTEM: &str = "system";
+pub(super) const SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL: &str = "user_and_model";
 /// Addressed to neither the person nor the model: the substrate owner reading
 /// their own receipts.
-pub(crate) const SYSTEM_NOTICE_AUDIENCE_AUDIT: &str = "audit";
-pub(crate) const SYSTEM_NOTICE_TYPE_WARN: &str = "policy_warn";
-pub(crate) const SYSTEM_NOTICE_TYPE_BLOCK: &str = "policy_block";
-pub(crate) const SYSTEM_NOTICE_TYPE_HELP_CARD: &str = "policy_help_card";
-pub(crate) const SYSTEM_NOTICE_TYPE_MODEL_RATIONALE: &str = "policy_model_rationale";
+pub(super) const SYSTEM_NOTICE_AUDIENCE_AUDIT: &str = "audit";
+pub(super) const SYSTEM_NOTICE_TYPE_WARN: &str = "policy_warn";
+pub(super) const SYSTEM_NOTICE_TYPE_BLOCK: &str = "policy_block";
+pub(super) const SYSTEM_NOTICE_TYPE_HELP_CARD: &str = "policy_help_card";
+pub(super) const SYSTEM_NOTICE_TYPE_MODEL_RATIONALE: &str = "policy_model_rationale";
 
-pub(crate) const POLICY_MODEL_OWNER_WARN_NOTICE: &str = "Oneiron flagged this outbound content under one of your policy settings and delivered it unchanged.";
-pub(crate) const POLICY_MODEL_OWNER_BLOCK_NOTICE: &str =
+const POLICY_MODEL_OWNER_WARN_NOTICE: &str = "Oneiron flagged this outbound content under one of your policy settings and delivered it unchanged.";
+pub(super) const POLICY_MODEL_OWNER_BLOCK_NOTICE: &str =
     "Oneiron withheld this outbound content because one of your policy settings asked it to.";
-pub(crate) const POLICY_MODEL_HELP_CARD_NOTICE: &str =
+pub(super) const POLICY_MODEL_HELP_CARD_NOTICE: &str =
     "Oneiron routed this turn to a help card instead of delivering the content.";
-pub(crate) const POLICY_MODEL_HELP_MESSAGE: &str =
+pub(super) const POLICY_MODEL_HELP_MESSAGE: &str =
     "Support resources should be offered alongside the reply without diagnosing the person.";
 
 /// The hosted notice-body templates, split around the one variable part (the
@@ -50,23 +50,22 @@ pub(crate) const POLICY_MODEL_HELP_MESSAGE: &str =
 /// constants rather than inline literals precisely so
 /// [`HOSTED_NOTICE_TEMPLATE_MAX_FIXED_LEN`] cannot drift away from the strings
 /// it measures.
-pub(crate) const HOSTED_WARN_NOTICE_PREFIX: &str =
-    "The hosted relay service flagged this content under its ";
-pub(crate) const HOSTED_WARN_NOTICE_SUFFIX: &str = " legal policy and relayed it unchanged.";
-pub(crate) const HOSTED_BLOCK_NOTICE_PREFIX: &str =
+const HOSTED_WARN_NOTICE_PREFIX: &str = "The hosted relay service flagged this content under its ";
+const HOSTED_WARN_NOTICE_SUFFIX: &str = " legal policy and relayed it unchanged.";
+const HOSTED_BLOCK_NOTICE_PREFIX: &str =
     "The hosted relay service withheld this content under its ";
-pub(crate) const HOSTED_BLOCK_NOTICE_SUFFIX: &str = " legal policy.";
+const HOSTED_BLOCK_NOTICE_SUFFIX: &str = " legal policy.";
 
 /// The most a hosted notice body can add around a jurisdiction name. The
 /// ledger's body bound minus this is the room a jurisdiction has.
-pub(crate) const HOSTED_NOTICE_TEMPLATE_MAX_FIXED_LEN: usize = {
+pub(super) const HOSTED_NOTICE_TEMPLATE_MAX_FIXED_LEN: usize = {
     let warn = HOSTED_WARN_NOTICE_PREFIX.len() + HOSTED_WARN_NOTICE_SUFFIX.len();
     let block = HOSTED_BLOCK_NOTICE_PREFIX.len() + HOSTED_BLOCK_NOTICE_SUFFIX.len();
     if warn > block { warn } else { block }
 };
 
 /// The notice a verdict emits, or `None` when it emits none (a clean allow).
-pub(crate) fn policy_notice(
+pub(super) fn policy_notice(
     decision: PolicyClassifyDecision,
     category: &PolicyVerdictCategory,
     hosted: Option<&HostedLegalPolicy>,
@@ -175,7 +174,7 @@ fn hosted_notice(
 /// looked and answered `violation: 0`, and its reason is the pattern-tuning
 /// data the substrate owner reads. Deriving the plane from the category
 /// dropped exactly that row.
-pub(crate) fn policy_model_rationale_notice(
+pub(super) fn policy_model_rationale_notice(
     verdict: &PolicyClassifyVerdict,
     pass_plane: PolicyPlane,
     policy_version: Option<&str>,
@@ -258,6 +257,6 @@ const fn notice_type_for(decision: PolicyClassifyDecision) -> &'static str {
 }
 
 /// The single body a caller surfaces when it can only show one string.
-pub(crate) fn default_system_notice(notices: &[GateSystemNoticeRecord]) -> Option<String> {
+pub(super) fn default_system_notice(notices: &[GateSystemNoticeRecord]) -> Option<String> {
     notices.first().map(|notice| notice.body.clone())
 }

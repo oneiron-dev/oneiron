@@ -65,7 +65,9 @@ pub(crate) use self::stale::stale_stamped_worlds;
 // suites); the re-export is cfg(test) so the non-test build sees no unused
 // import, matching the flat module's test-only use.
 #[cfg(test)]
-pub(crate) use self::stale::{federation_stale_key, register_foreign_world_for_pact};
+pub(crate) use self::stale::federation_stale_key;
+#[cfg(test)]
+use self::stale::register_foreign_world_for_pact;
 
 #[cfg(test)]
 mod tests;

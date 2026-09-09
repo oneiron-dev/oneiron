@@ -26,8 +26,9 @@ pub(crate) use self::codec::{
     OUTBOUND_GRANT_FIELDS_FULL, OUTBOUND_GRANT_FIELDS_MINIMAL, OUTBOUND_GRANT_FIELDS_STANDARD,
     validate_standing_outbound_grant_body_bytes,
 };
+use self::index::standing_outbound_grant_principal_index_key;
 pub(crate) use self::index::{
-    standing_outbound_grant_principal_index_entity_id, standing_outbound_grant_principal_index_key,
+    standing_outbound_grant_principal_index_entity_id,
     standing_outbound_grant_principal_index_prefix,
 };
 pub(crate) use self::mint::standing_outbound_grant_in_txn;

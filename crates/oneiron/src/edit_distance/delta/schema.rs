@@ -150,6 +150,6 @@ pub(super) fn engine_ver() -> String {
 }
 
 /// Shared with the reconstructed lane's line counts.
-pub(crate) fn u32_saturating(value: usize) -> u32 {
+pub(in crate::edit_distance) fn u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }

@@ -71,7 +71,7 @@ pub(crate) use self::doors::{
 // The validator itself is reached through the write door; the direct
 // visibility below exists for the tests that pin its checks in isolation.
 #[cfg(test)]
-pub(crate) use self::dreamer_precommit::{
+use self::dreamer_precommit::{
     DREAMER_DEGENERATE_VALUE_PREFIXES, DREAMER_RUNTIME_RECORD_PREDICATES, DreamerPrecommitInput,
     validate_dreamer_precommit,
 };

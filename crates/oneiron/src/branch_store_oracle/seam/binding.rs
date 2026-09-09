@@ -52,7 +52,10 @@ pub(super) fn map_executor_error(error: Error) -> SeamError {
 /// residue the reopen finds is residue a real crash would have left.
 /// The session borrows the vault, so it could not have outlived this
 /// call anyway: the by-value signature makes the ordering a type fact.
-pub(crate) fn crash_and_reopen(dir: &std::path::Path, vault: Vault) -> Result<Vault> {
+pub(in crate::branch_store_oracle) fn crash_and_reopen(
+    dir: &std::path::Path,
+    vault: Vault,
+) -> Result<Vault> {
     drop(vault);
     Vault::open(dir, VaultConfig::default())
 }
@@ -64,7 +67,7 @@ pub(crate) fn crash_and_reopen(dir: &std::path::Path, vault: Vault) -> Result<Va
 /// a claim about all three tables, not just the record table: a job whose
 /// record row were suppressed but whose ready/dedupe rows landed would
 /// still be a room leaking into the background worker's view.
-pub(crate) fn attempt_row_counts(vault: &Vault) -> Result<(u64, u64, u64)> {
+pub(in crate::branch_store_oracle) fn attempt_row_counts(vault: &Vault) -> Result<(u64, u64, u64)> {
     let rtxn = vault.store.env.read_txn()?;
     Ok((
         vault.store.attempt_records.len(&rtxn)?,
@@ -82,7 +85,10 @@ pub(crate) fn attempt_row_counts(vault: &Vault) -> Result<(u64, u64, u64)> {
 /// (`sync_queue`), the `pe:` marker keyspace (`sync_state`), and all
 /// three attempt tables. Ids are matched as raw 16-byte needles, which is
 /// how every one of these keyspaces embeds an entity id.
-pub(crate) fn job_rows_referencing(vault: &Vault, ids: &[EntityId]) -> Result<usize> {
+pub(in crate::branch_store_oracle) fn job_rows_referencing(
+    vault: &Vault,
+    ids: &[EntityId],
+) -> Result<usize> {
     let rtxn = vault.store.env.read_txn()?;
     let mut hits = 0_usize;
     let mentions = |bytes: &[u8]| {
@@ -117,7 +123,7 @@ pub(crate) fn job_rows_referencing(vault: &Vault, ids: &[EntityId]) -> Result<us
 /// before its census: the atomicity assertion is about the rejected
 /// batch's rows, and a probe that minted its own source would charge the
 /// guard for the probe's setup.
-pub(crate) fn base_batch_referencing_overlay_id(
+pub(in crate::branch_store_oracle) fn base_batch_referencing_overlay_id(
     vault: &Vault,
     source: &EntityId,
     overlay_id: &EntityId,
@@ -141,13 +147,13 @@ fn map_taint_error(error: Error) -> SeamError {
 
 /// The actor key every ScopedRead probe in this oracle reads under, so
 /// the base and session halves differ ONLY in their target.
-pub(crate) fn scoped_read_actor_key() -> crate::claim::ScopedReadActorKey {
+pub(super) fn scoped_read_actor_key() -> crate::claim::ScopedReadActorKey {
     crate::claim::ScopedReadActorKey::new("branch-store-oracle")
         .expect("oracle scoped-read actor key")
 }
 
 /// Counts the claims `read` surfaces whose subject is `subject`.
-pub(crate) fn scoped_read_visible_claim_count(
+pub(super) fn scoped_read_visible_claim_count(
     read: &crate::claim::ScopedRead<'_>,
     subject: &EntityId,
 ) -> Result<usize> {
@@ -178,7 +184,7 @@ pub(crate) fn scoped_read_visible_claim_count(
 
 /// ONE-1728: number of claims a BASE-side ScopedRead surfaces for
 /// `subject` (the ledger's ScopedRead reader family, R10).
-pub(crate) fn base_scoped_read_visible_claim_count(
+pub(in crate::branch_store_oracle) fn base_scoped_read_visible_claim_count(
     vault: &Vault,
     subject: &EntityId,
 ) -> Result<usize> {
@@ -195,7 +201,7 @@ pub(crate) fn base_scoped_read_visible_claim_count(
 /// below — the same residue a killed process leaves, and the reason the
 /// session never gets to clean up after itself.
 #[cfg(feature = "sync")]
-pub(crate) fn promote_then_crash_post_commit(
+pub(in crate::branch_store_oracle) fn promote_then_crash_post_commit(
     dir: &std::path::Path,
 ) -> Result<(Vault, Vec<EntityId>, usize)> {
     let closure = {
@@ -221,7 +227,10 @@ pub(crate) fn promote_then_crash_post_commit(
 }
 
 /// ONE-1729: acquire a handle on a session ref, refusal mapped typed.
-pub(crate) fn bind_session(vault: &Vault, session_ref: &str) -> SeamResult<()> {
+pub(in crate::branch_store_oracle) fn bind_session(
+    vault: &Vault,
+    session_ref: &str,
+) -> SeamResult<()> {
     vault
         .off_record_session_vault()
         .bind(session_ref)
@@ -236,7 +245,7 @@ pub(crate) fn bind_session(vault: &Vault, session_ref: &str) -> SeamResult<()> {
 /// must be DISTINCT: a handle that outlived its room is closing/gone, and
 /// a ref no registry entry answers is not found. Folding them would hide
 /// the difference between "you are too late" and "that never existed".
-pub(crate) fn stale_handle_and_rebind_refusals(
+pub(in crate::branch_store_oracle) fn stale_handle_and_rebind_refusals(
     vault: &Vault,
     session_ref: &str,
 ) -> (SeamError, SeamError) {
@@ -260,7 +269,7 @@ pub(crate) fn stale_handle_and_rebind_refusals(
 }
 
 /// ONE-1729: one storage/dispatcher pairing and what run entry did with it.
-pub(crate) struct BindingMismatch {
+pub(in crate::branch_store_oracle) struct BindingMismatch {
     pub(crate) name: &'static str,
     /// The `InvalidConfig` payload run entry refused with, or `None` when
     /// the run was allowed to proceed.
@@ -344,7 +353,7 @@ fn run_entry_refusal(
 /// The third direction is the one a `session_ref`-only check misses: two
 /// CANONICAL runs whose refs compare equal (`None == None`) across
 /// different vaults.
-pub(crate) fn binding_mismatch_directions(
+pub(in crate::branch_store_oracle) fn binding_mismatch_directions(
     vault: &Vault,
     session: &SessionVault<'_>,
     other_vault: &Vault,
@@ -404,7 +413,7 @@ pub(crate) fn binding_mismatch_directions(
 
 /// ONE-1729 (R-20260807-02 rider 2): capture the run's route at RUN ENTRY,
 /// flip the room, then apply — through the STORED route, never a fresh one.
-pub(crate) fn apply_through_a_route_captured_before_a_flip(
+pub(in crate::branch_store_oracle) fn apply_through_a_route_captured_before_a_flip(
     session: &SessionVault<'_>,
 ) -> SeamResult<()> {
     let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
@@ -429,7 +438,7 @@ pub(crate) fn apply_through_a_route_captured_before_a_flip(
 /// and must refuse across the flip. A search door that minted its own
 /// route would sail through here — and land base telemetry for a run whose
 /// replay record sits in an overlay that is about to evaporate.
-pub(crate) fn search_through_a_route_captured_before_a_flip(
+pub(in crate::branch_store_oracle) fn search_through_a_route_captured_before_a_flip(
     session: &SessionVault<'_>,
 ) -> SeamResult<()> {
     let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
@@ -452,7 +461,7 @@ pub(crate) fn search_through_a_route_captured_before_a_flip(
 /// when the turn was allowed — the bypass this probe hunts, since
 /// `witness_turn` writes and would otherwise reach the session's room
 /// carrying the other binding's actor without the check `run` performs.
-pub(crate) fn witness_turn_with_mismatched_binding(
+pub(in crate::branch_store_oracle) fn witness_turn_with_mismatched_binding(
     vault: &Vault,
     session: &SessionVault<'_>,
 ) -> Result<Option<String>> {
@@ -491,7 +500,7 @@ pub(crate) fn witness_turn_with_mismatched_binding(
 /// cannot reach its transaction until that mutation has committed. A
 /// compare taken outside the transaction is therefore guaranteed stale by
 /// the time the put lands; a compare taken inside it cannot be.
-pub(crate) fn replay_put_racing_a_committed_change(
+pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
     vault: &Vault,
     session: &SessionVault<'_>,
 ) -> Result<Option<crate::error::ErrorKind>> {
@@ -541,7 +550,7 @@ pub(crate) fn replay_put_racing_a_committed_change(
 /// opening at `stored` is exactly how a fixture acquires that stamp. A
 /// populated directory already carries its stamp, so the reopen runs at
 /// `engine` and the gate compares the two.
-pub(crate) fn open_with_abi_pair(
+pub(in crate::branch_store_oracle) fn open_with_abi_pair(
     dir: &std::path::Path,
     stored: u16,
     engine: u16,

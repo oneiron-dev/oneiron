@@ -42,7 +42,7 @@ impl PolicyManifestResolution {
     /// The resolved opt-out posture. No pack carrying the key resolves to the
     /// restrictive default, `Escalate`.
     #[must_use]
-    pub(crate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
+    pub(in crate::gate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
         self.comm_opt_out_posture.unwrap_or_default()
     }
 
@@ -73,7 +73,7 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
-    pub(crate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
+    pub(in crate::gate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
         if self.is_fail_closed() {
             return PolicyCriticality::Critical;
         }
@@ -84,7 +84,7 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
-    pub(crate) fn sensitivity_for_predicate(&self, predicate: &str) -> PolicySensitivity {
+    pub(in crate::gate) fn sensitivity_for_predicate(&self, predicate: &str) -> PolicySensitivity {
         if self.is_fail_closed() {
             return PolicySensitivity::Sensitive;
         }

@@ -267,7 +267,7 @@ where
     }
 }
 
-pub(crate) struct StrBytes<I>(I);
+pub(super) struct StrBytes<I>(I);
 
 impl<'txn, I> Iterator for StrBytes<I>
 where

@@ -26,7 +26,7 @@ pub use self::types::{
 };
 
 #[cfg(test)]
-pub(crate) use self::storage::delete_code_symbol_manifest_in_txn;
+use self::storage::delete_code_symbol_manifest_in_txn;
 
 // The flat code_symbol.rs module used to provide these names to the sibling test
 // module through `use super::*`: every code_symbol-internal item the tests name
