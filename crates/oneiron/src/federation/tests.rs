@@ -1,5 +1,5 @@
 use super::*;
-use crate::claim::{CLAIM_PREDICATE_REGISTRY, ScopedReadActorKey};
+use crate::claim::CLAIM_PREDICATE_REGISTRY;
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::registry::{

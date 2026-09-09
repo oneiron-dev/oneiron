@@ -228,10 +228,7 @@ impl Oneiron {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        EXPORTED_UNIFFI_RUST_NAMES, EXPORTED_UNIFFI_VERBS, HEAD_MEMORY_PACK_SCHEMA_VERSION,
-        Oneiron, OneironError, OpenOptions, PINNED_HEAD_CONTRACT_VERBS,
-    };
+    use super::{HEAD_MEMORY_PACK_SCHEMA_VERSION, Oneiron, OneironError, OpenOptions};
     use std::path::Path;
     use std::sync::Arc;
 
@@ -315,5 +312,4 @@ mod tests {
 
         visit(Path::new(env!("CARGO_MANIFEST_DIR")));
     }
-
 }

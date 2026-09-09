@@ -280,5 +280,4 @@ mod tests {
 
     // `bigram_shares_position_with_first_char` and `position_base_is_honored`
     // are folded into `cjk_ngram_offset_and_position_handling` above.
-
 }

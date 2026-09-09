@@ -15,7 +15,6 @@ use oneiron::ingest::{self, IngestSourceFormat};
 use oneiron::write_envelope::WriteActor;
 use oneiron::{EntityId, Vault, VaultConfig};
 use sha2::Digest;
-use std::collections::HashSet;
 
 fn vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();

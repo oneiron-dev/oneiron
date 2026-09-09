@@ -558,5 +558,4 @@ mod tests {
         assert_eq!(fallback.sha.as_deref(), Some(OTHER_SHA));
         assert!(fallback.source.starts_with("current_executable:"));
     }
-
 }

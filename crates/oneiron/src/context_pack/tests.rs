@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet};
 
 use crate::Vault;
@@ -23,11 +22,8 @@ use crate::temporal::TimeRange;
 use crate::test_util::embedding_test_config;
 
 use super::builder::HydrateOptions;
-use super::edge_walk::{
-    EDGE_SCAN_COUNT, EdgeWalkOptions, MAX_EDGE_SCAN_RESULTS, load_entity_edges,
-    scan_edges_for_entity, walk_edges,
-};
-use super::empty_pack::{context_pack_empty_reason, dedupe_signals};
+use super::edge_walk::{MAX_EDGE_SCAN_RESULTS, scan_edges_for_entity};
+use super::empty_pack::context_pack_empty_reason;
 use super::hydration::{hydrate_entity, read_vector};
 use super::quarantine::{
     PACK_QUARANTINE_ROW, PackQuarantineContainer, PackQuarantineRecord,
@@ -3974,10 +3970,8 @@ fn psych_profile_pack_section_is_explicit_for_missing_fresh_and_stale() -> Resul
 // RT-05 (ONE-1687) — the window budget lifts from constant to profile
 // ═══════════════════════════════════════════════════════════════════════
 
-use crate::agent_def::{CompactionOwnership, ContextBudgetSplit, MemoryProfile};
+use crate::agent_def::{CompactionOwnership, MemoryProfile};
 use crate::llm::ModelTierRef;
-
-use super::types::DEFAULT_WINDOW_TOKEN_BUDGET;
 
 fn rt05_profile(budget: u64) -> MemoryProfile {
     MemoryProfile::new(

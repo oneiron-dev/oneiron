@@ -464,5 +464,4 @@ neighbors:
                 .contains("built-in BEAM smoke manifest must select a 128K token-budget case")
         );
     }
-
 }
