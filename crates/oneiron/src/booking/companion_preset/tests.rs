@@ -207,7 +207,7 @@ fn preset_is_pack_data_not_an_entity_kind() {
     // The pack row declares behaviour and nothing else: no id, no type
     // byte, no claim subject, no page.
     let row: serde_json::Value =
-        serde_json::from_str(include_str!("presets/eiri_friend_hangout_v1.json"))
+        serde_json::from_str(include_str!("presets/friend_hangout_v1.json"))
             .expect("the pack row is JSON");
     let mut keys: Vec<&str> = row["preset"]
         .as_object()
