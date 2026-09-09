@@ -388,8 +388,7 @@ impl Vault {
             &self.store,
             wtxn,
             &id,
-            body,
-            Some(envelope),
+            crate::gate::ClaimGateWrite::plain(body, Some(envelope)),
             policy,
             crate::gate::GateWriteMode {
                 record_decision: true,
