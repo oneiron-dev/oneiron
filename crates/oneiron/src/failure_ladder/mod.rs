@@ -33,7 +33,7 @@ pub use self::classify::{
 pub use self::ladder::{FailureLadder, failure_card_ref, failure_case_ref};
 pub(crate) use self::lineage::retry_lineage_ordinal;
 pub use self::lineage::{
-    FailureLadderOutcome, HandleAttemptFailure, HealerCase, HealerRepairRoute,
+    FailureLadderOutcome, HandleAttemptFailure, HealerCase, HealerOutcome, HealerRepairRoute,
     RetryLineagePathology, RetryOrdinal, SurfacedFailure,
 };
 pub use self::scope::{FailureEscalationMode, FailureScope, FailureScopePolicy};
