@@ -32,8 +32,8 @@ use oneiron::calendar::outcome::{
 use oneiron::campaign::claims::{
     CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue,
     CrmStageValue, EvidenceBasis, PREDICATE_CAMPAIGN_MEMBER, PREDICATE_CRM_STAGE,
-    StageEvidenceClass, StageKey, claim_class_descriptors, encode_campaign_member_value,
-    encode_crm_stage_value,
+    StageEvidenceClass, StageKey, claim_class_descriptors, decode_campaign_member_value,
+    decode_crm_stage_value, encode_campaign_member_value, encode_crm_stage_value,
 };
 use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CampaignEnrollmentAttemptPayload,
@@ -373,8 +373,10 @@ fn advanced(result: StageProjectResult) -> EntityId {
 
 /// Walks the ladder to `call_booked`, the state every calendar-outcome test
 /// starts from: a coded reply earns `replied`, an ICS evidence hook earns
-/// `call_booked`. Neither step reads a calendar outcome.
-fn walk_to_call_booked(vault: &Vault) {
+/// `call_booked`. Neither step reads a calendar outcome. Returns the
+/// `call_booked` head, so a test whose law is "the head did not move" can name
+/// the exact claim that must still be live.
+fn walk_to_call_booked(vault: &Vault) -> EntityId {
     advanced(
         apply_coded_reply(
             vault,
@@ -398,7 +400,7 @@ fn walk_to_call_booked(vault: &Vault) {
             PromotionMode::Auto,
         )
         .unwrap(),
-    );
+    )
 }
 
 fn record_outcome(vault: &Vault, outcome: EventOutcome) {
@@ -582,15 +584,13 @@ fn propose_mode_is_a_dial_not_a_gate() {
     let (id, body) = only_live_claim(&propose_vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(id, proposed_claim_ref);
     assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
-    assert_eq!(
-        body.value,
-        stage_value(
-            REPLIED,
-            StageEvidenceClass::MeaningfulReply,
-            vec![test_id(MESSAGE_SEED)],
-            REPLY_AT,
-        ),
-    );
+    // The dial moved the approval, not the payload: the proposed head is still
+    // the `replied` stage the same evidence earned under AUTO.
+    let stage = decode_crm_stage_value(&body.value).unwrap();
+    assert_eq!(stage.stage, key(REPLIED));
+    assert_eq!(stage.evidence_class, StageEvidenceClass::MeaningfulReply);
+    assert_eq!(stage.evidence_refs, vec![test_id(MESSAGE_SEED)]);
+    assert_eq!(stage.recorded_at, REPLY_AT);
 }
 
 // ---------------------------------------------------------------------------
@@ -714,15 +714,18 @@ fn coded_and_external_ingress_use_projector_only_path() {
         )
         .unwrap(),
     );
+    let stage =
+        decode_crm_stage_value(&only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value)
+            .unwrap();
+    assert_eq!(stage.stage, key(CALL_BOOKED));
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
-        stage_value(
-            CALL_BOOKED,
-            StageEvidenceClass::CalendarEvent,
-            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
-            BOOKING_AT,
-        ),
+        stage.evidence_refs,
+        vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
     );
+    assert_eq!(stage.evidence_class, StageEvidenceClass::CalendarEvent);
+    assert_eq!(stage.basis, EvidenceBasis::Machine);
+    assert_eq!(stage.recorded_at, BOOKING_AT);
+    assert_eq!(stage.campaign_ref, test_id(CAMPAIGN_SEED));
 
     // Neither ingress can put or supersede a `crm.stage` claim directly: the
     // projector is crate-visible, so an external caller cannot name it, and the
@@ -808,7 +811,7 @@ fn held_outcome_is_required_for_call_held() {
 fn silent_outcome_is_none_and_projects_unknown() {
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
-    walk_to_call_booked(&vault);
+    let booked_ref = walk_to_call_booked(&vault);
 
     // CAL-07's reader, on an EVENT nobody recorded anything about.
     let read = read_event_outcome(&vault, test_id(EVENT_SEED)).unwrap();
@@ -816,15 +819,14 @@ fn silent_outcome_is_none_and_projects_unknown() {
     assert_eq!(project_event_outcome(read), EventOutcome::Unknown);
 
     assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
+    let (head_id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
-        stage_value(
-            CALL_BOOKED,
-            StageEvidenceClass::CalendarEvent,
-            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
-            BOOKING_AT,
-        ),
+        head_id, booked_ref,
         "silence leaves the pipeline exactly where it was",
+    );
+    assert_eq!(
+        decode_crm_stage_value(&body.value).unwrap().stage,
+        key(CALL_BOOKED),
     );
 }
 
@@ -832,7 +834,7 @@ fn silent_outcome_is_none_and_projects_unknown() {
 fn explicit_unknown_never_promotes() {
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
-    walk_to_call_booked(&vault);
+    let booked_ref = walk_to_call_booked(&vault);
 
     record_outcome(&vault, EventOutcome::Unknown);
     assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
@@ -842,14 +844,11 @@ fn explicit_unknown_never_promotes() {
     record_outcome(&vault, EventOutcome::CancelledPreStart);
     assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
 
+    let (head_id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
+    assert_eq!(head_id, booked_ref, "the head did not move");
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
-        stage_value(
-            CALL_BOOKED,
-            StageEvidenceClass::CalendarEvent,
-            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
-            BOOKING_AT,
-        ),
+        decode_crm_stage_value(&body.value).unwrap().stage,
+        key(CALL_BOOKED)
     );
 }
 
@@ -962,16 +961,20 @@ fn call_held_cites_the_claim_the_outcome_was_read_from() {
 
     let (id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(id, advanced_ref);
+    let stage = decode_crm_stage_value(&body.value).unwrap();
     assert_eq!(
-        body.value,
-        stage_value(
-            CALL_HELD,
-            StageEvidenceClass::CalendarEventOutcome,
-            vec![held_claim],
-            OUTCOME_AT,
-        ),
+        stage.evidence_refs,
+        vec![held_claim],
         "the cited claim is the one the decided outcome was read from",
     );
+    assert_eq!(
+        stage.evidence_class,
+        StageEvidenceClass::CalendarEventOutcome
+    );
+    assert_eq!(stage.recorded_at, OUTCOME_AT);
+    assert_eq!(stage.stage, key(CALL_HELD));
+    assert_eq!(stage.basis, EvidenceBasis::Machine);
+    assert_eq!(stage.campaign_ref, test_id(CAMPAIGN_SEED));
 }
 
 #[test]
@@ -1033,18 +1036,20 @@ fn an_owner_attested_outcome_is_never_relabelled_machine() {
     );
     let (id, body) = only_live_claim(&attesting_vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(id, advanced_ref);
+    let stage = decode_crm_stage_value(&body.value).unwrap();
+    assert_eq!(stage.stage, key(CALL_HELD));
     assert_eq!(
-        body.value,
-        encode_crm_stage_value(&CrmStageValue {
-            campaign_ref: test_id(CAMPAIGN_SEED),
-            stage: key(CALL_HELD),
-            evidence_class: StageEvidenceClass::CalendarEventOutcome,
-            evidence_refs: vec![outcome_claim],
-            basis: EvidenceBasis::OwnerAttested,
-            recorded_at: OUTCOME_AT,
-        }),
+        stage.basis,
+        EvidenceBasis::OwnerAttested,
         "CAL-07's basis rides onto the stage head",
     );
+    assert_eq!(stage.evidence_refs, vec![outcome_claim]);
+    assert_eq!(
+        stage.evidence_class,
+        StageEvidenceClass::CalendarEventOutcome
+    );
+    assert_eq!(stage.campaign_ref, test_id(CAMPAIGN_SEED));
+    assert_eq!(stage.recorded_at, OUTCOME_AT);
     assert_eq!(
         body.source,
         Some(ClaimSource::UserStated),
@@ -1077,15 +1082,17 @@ fn positive_later_snoozes_and_reenters_at_touch_one() {
 
     // The membership is paused with a wake condition; channels and derivation
     // ride across the transition untouched.
-    let paused = CampaignMemberValue {
-        state: CampaignMemberState::Paused {
+    let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
+    let paused = decode_campaign_member_value(&body.value).unwrap();
+    assert_eq!(
+        paused.state,
+        CampaignMemberState::Paused {
             until: None,
             new_trigger: Some(true),
         },
-        ..enrolled_member()
-    };
-    let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
-    assert_eq!(body.value, encode_campaign_member_value(&paused));
+    );
+    assert_eq!(paused.channels, enrolled_member().channels);
+    assert_eq!(paused.derivation, enrolled_member().derivation);
 
     // `AtOrNewTrigger` persists BOTH fields.
     let both = ReentryPlan {
@@ -1097,18 +1104,21 @@ fn positive_later_snoozes_and_reenters_at_touch_one() {
         reentry_attempt: None,
     };
     let next = snooze_with_wake(&vault, &member_id, &both, BOOKING_AT).unwrap();
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
+    let at_or_new_trigger = decode_campaign_member_value(
+        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
             .1
             .value,
-        encode_campaign_member_value(&CampaignMemberValue {
-            state: CampaignMemberState::Paused {
-                until: Some(BOOKING_AT),
-                new_trigger: Some(true),
-            },
-            ..enrolled_member()
-        }),
+    )
+    .unwrap();
+    assert_eq!(
+        at_or_new_trigger.state,
+        CampaignMemberState::Paused {
+            until: Some(BOOKING_AT),
+            new_trigger: Some(true),
+        },
     );
+    assert_eq!(at_or_new_trigger.channels, enrolled_member().channels);
+    assert_eq!(at_or_new_trigger.derivation, enrolled_member().derivation);
 
     // A deadline alone sets only `until`.
     let dated = ReentryPlan {
@@ -1116,18 +1126,21 @@ fn positive_later_snoozes_and_reenters_at_touch_one() {
         ..both
     };
     snooze_with_wake(&vault, &next, &dated, BOOKING_AT + 60).unwrap();
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
+    let deadline_only = decode_campaign_member_value(
+        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
             .1
             .value,
-        encode_campaign_member_value(&CampaignMemberValue {
-            state: CampaignMemberState::Paused {
-                until: Some(BOOKING_AT + 60),
-                new_trigger: None,
-            },
-            ..enrolled_member()
-        }),
+    )
+    .unwrap();
+    assert_eq!(
+        deadline_only.state,
+        CampaignMemberState::Paused {
+            until: Some(BOOKING_AT + 60),
+            new_trigger: None,
+        },
     );
+    assert_eq!(deadline_only.channels, enrolled_member().channels);
+    assert_eq!(deadline_only.derivation, enrolled_member().derivation);
 }
 
 #[test]
@@ -1163,12 +1176,15 @@ fn reentry_rides_the_existing_enrollment_attempt_kind() {
         snooze_with_wake(&vault, &test_id(MEMBER_SEED), &plan, BOOKING_AT),
         Err(Error::EntityNotFound),
     ));
+    let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
-            .1
-            .value,
-        encode_campaign_member_value(&enrolled_member()),
+        member_id,
+        test_id(MEMBER_SEED),
         "a refused re-entry leaves the membership exactly as it was",
+    );
+    assert_eq!(
+        decode_campaign_member_value(&body.value).unwrap().state,
+        CampaignMemberState::Enrolled,
     );
 
     // Touch 1 is the only re-entry point.
@@ -1197,14 +1213,15 @@ fn complaint_and_exit_reuse_campaign_member_state() {
     .unwrap();
     assert_eq!(result, StageProjectResult::Routed(StageRoute::Suppressed));
     let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
+    let member = decode_campaign_member_value(&body.value).unwrap();
     assert_eq!(
-        body.value,
-        encode_campaign_member_value(&CampaignMemberValue {
-            state: CampaignMemberState::Suppressed,
-            ..enrolled_member()
-        }),
+        member.state,
+        CampaignMemberState::Suppressed,
         "suppression reuses CA-01 membership state; no second primitive is minted",
     );
+    assert_eq!(member.campaign, enrolled_member().campaign);
+    assert_eq!(member.channels, enrolled_member().channels);
+    assert_eq!(member.derivation, enrolled_member().derivation);
 
     let exited = apply_coded_reply(
         &vault,
@@ -1217,15 +1234,16 @@ fn complaint_and_exit_reuse_campaign_member_state() {
     )
     .unwrap();
     assert_eq!(exited, StageProjectResult::Routed(StageRoute::Exited));
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
+    let exited_member = decode_campaign_member_value(
+        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
             .1
             .value,
-        encode_campaign_member_value(&CampaignMemberValue {
-            state: CampaignMemberState::Exited,
-            ..enrolled_member()
-        }),
-    );
+    )
+    .unwrap();
+    assert_eq!(exited_member.state, CampaignMemberState::Exited);
+    assert_eq!(exited_member.campaign, enrolled_member().campaign);
+    assert_eq!(exited_member.channels, enrolled_member().channels);
+    assert_eq!(exited_member.derivation, enrolled_member().derivation);
     assert!(
         live_claims(&vault, person, PREDICATE_CRM_STAGE).is_empty(),
         "neither route invents a pipeline head",
@@ -1312,17 +1330,18 @@ fn owner_attested_is_allowed_only_after_proposal_sent() {
     );
     let (id, body) = only_live_claim(&deposit_vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(id, deposit);
+    let stage = decode_crm_stage_value(&body.value).unwrap();
     assert_eq!(
-        body.value,
-        encode_crm_stage_value(&CrmStageValue {
-            campaign_ref: test_id(CAMPAIGN_SEED),
-            stage: key(DEPOSIT_PAID),
-            evidence_class: StageEvidenceClass::CounterpartyLedger,
-            evidence_refs: vec![test_id(LEDGER_SEED)],
-            basis: EvidenceBasis::OwnerAttested,
-            recorded_at: DEPOSIT_AT,
-        }),
+        (stage.stage, stage.basis, stage.campaign_ref),
+        (
+            key(DEPOSIT_PAID),
+            EvidenceBasis::OwnerAttested,
+            test_id(CAMPAIGN_SEED),
+        ),
     );
+    assert_eq!(stage.evidence_refs, vec![test_id(LEDGER_SEED)]);
+    assert_eq!(stage.evidence_class, StageEvidenceClass::CounterpartyLedger);
+    assert_eq!(stage.recorded_at, DEPOSIT_AT);
 }
 
 #[test]
