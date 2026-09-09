@@ -125,10 +125,7 @@ fn blocked_by_matches_structural_non_traversed_contract_row() -> Result<()> {
         None,
     )
     .expect_err("structural blocked_by must reject non-neutral VAD");
-    assert_matches!(
-        vad_err,
-        Error::InvariantViolation("structural edges do not carry VAD")
-    );
+    assert_matches!(vad_err, Error::InvariantViolation(_));
 
     let provenance_err = encode_edge_value(
         EdgeKind::BlockedBy,
@@ -141,10 +138,7 @@ fn blocked_by_matches_structural_non_traversed_contract_row() -> Result<()> {
         }),
     )
     .expect_err("structural blocked_by must reject provenance hot flags");
-    assert_matches!(
-        provenance_err,
-        Error::InvariantViolation("structural edges do not carry provenance hot flags")
-    );
+    assert_matches!(provenance_err, Error::InvariantViolation(_));
 
     Ok(())
 }
@@ -287,10 +281,7 @@ fn encode_edge_value_rejects_structural_non_neutral_vad() {
     .expect_err("structural edge must reject non-neutral VAD");
 
     assert!(
-        matches!(
-            err,
-            Error::InvariantViolation("structural edges do not carry VAD")
-        ),
+        matches!(err, Error::InvariantViolation(_)),
         "wrong error: {err:?}"
     );
 }

@@ -117,8 +117,48 @@ fn patch_contents_overflow_reports_capacity_not_truncation() {
 
 #[test]
 fn field_name_is_deterministic_and_op_scoped() {
-    assert_eq!(field_name_for("op-a"), field_name_for("op-a"));
-    assert_ne!(field_name_for("op-a"), field_name_for("op-b"));
+    let p = prepared(&classic_pdf());
+    let emitted_name = |operation_id: &str| {
+        let kind = RevisionKind::Signature {
+            field_name: field_name_for(operation_id),
+            date_str: pdf_date(1_785_398_400_000),
+        };
+        let draft = append_revision(&p.bytes, &p.state, &kind, 1024).expect("revision");
+        let doc = Document::load_mem(&draft.bytes).expect("reload");
+        let catalog = doc.catalog().expect("catalog");
+        let (_, af) = doc
+            .dereference(catalog.get(b"AcroForm").expect("acroform"))
+            .expect("resolve acroform");
+        let fields = af
+            .as_dict()
+            .expect("acroform dict")
+            .get(b"Fields")
+            .and_then(Object::as_array)
+            .expect("fields");
+        let names: Vec<_> = fields
+            .iter()
+            .filter_map(|f| {
+                let (_, field) = doc.dereference(f).ok()?;
+                let field = field.as_dict().ok()?;
+                if !field.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig")) {
+                    return None;
+                }
+                Some(
+                    field
+                        .get(b"T")
+                        .and_then(Object::as_str)
+                        .expect("name")
+                        .to_vec(),
+                )
+            })
+            .collect();
+        assert_eq!(names.len(), 1, "one emitted signature field");
+        assert!(!names[0].is_empty());
+        names[0].clone()
+    };
+    let a = emitted_name("op-a");
+    assert_eq!(a, emitted_name("op-a"));
+    assert_ne!(a, emitted_name("op-b"));
 }
 
 #[test]
@@ -177,28 +217,39 @@ fn max_obj_respects_trailer_size_beyond_referenced_objects() {
     let size = i64::from(referenced_max) + 11;
     doc.trailer.set("Size", Object::Integer(size));
     let state = revision_state(&doc, &bytes).expect("state");
-    assert_eq!(
-        state.max_obj,
-        u32::try_from(size - 1).unwrap(),
-        "allocation must start past trailer /Size, not collide with free numbers"
-    );
+    let kind = RevisionKind::Signature {
+        field_name: field_name_for("unit-op"),
+        date_str: pdf_date(1_785_398_400_000),
+    };
+    let draft = append_revision(&bytes, &state, &kind, 1024).expect("revision");
+    let out = Document::load_mem(&draft.bytes).expect("reload");
+    let new_numbers: Vec<_> = out
+        .objects
+        .keys()
+        .filter(|id| !doc.objects.contains_key(id))
+        .map(|(n, _)| *n)
+        .collect();
+    assert!(!new_numbers.is_empty(), "revision must allocate objects");
+    assert!(new_numbers.iter().all(|n| i64::from(*n) >= size));
 }
 
 #[test]
 fn xref_helpers_never_overflow_on_extreme_offsets() {
-    assert!(matches!(
-        detect_xref_style(b"%PDF-1.4 garbage", u64::MAX),
-        XrefStyle::Stream
-    ));
-    let mut doc = Document::with_version("1.4");
-    doc.reference_table.entries.insert(
-        1,
-        lopdf::xref::XrefEntry::Normal {
-            offset: u32::MAX,
-            generation: 0,
-        },
-    );
-    assert!(!xref_offsets_consistent(&doc, b"tiny"));
+    let input = classic_pdf();
+    let marker = input
+        .windows(b"startxref".len())
+        .rposition(|w| w == b"startxref")
+        .expect("startxref");
+    for offset in [u64::MAX, u64::from(u32::MAX)] {
+        let mut bytes = input[..marker].to_vec();
+        bytes.extend_from_slice(format!("startxref\n{offset}\n%%EOF").as_bytes());
+        assert!(matches!(
+            validate_prepared(&bytes, &SealResourceLimits::default()),
+            Err(SealError::InputInvalid {
+                code: InputInvalidCode::MalformedXref,
+            })
+        ));
+    }
 }
 
 #[test]
@@ -208,40 +259,53 @@ fn pdf_date_format() {
 
 #[test]
 fn bare_eof_input_gets_exactly_one_eol_boundary() {
-    // The classic fixture ends in a bare %%EOF with no trailing EOL:
-    // the first appended object header must start on its OWN line,
-    // exactly one '\n' boundary — never `%%EOF4 0 obj`.
     let input = classic_pdf();
     assert!(input.ends_with(b"%%EOF"), "fixture must end in bare %%EOF");
     let p = prepared(&input);
     let draft = sign_revision(&p, 1024);
-    assert_eq!(draft.bytes[input.len()], b'\n', "missing EOL must be added");
-    assert_ne!(
-        draft.bytes[input.len() + 1],
-        b'\n',
-        "exactly one EOL boundary"
-    );
-    let first_obj = p.state.max_obj + 1;
-    let header = format!("{first_obj} 0 obj\n");
-    assert_eq!(
-        &draft.bytes[input.len() + 1..input.len() + 1 + header.len()],
-        header.as_bytes(),
-        "object header on its own line"
-    );
-    // The emitted revision round-trips through our own loader.
-    let state = reparse_revision(&draft.bytes, &SealResourceLimits::default())
-        .expect("revision must reparse");
-    assert_eq!(state.max_obj, first_obj + 3, "all four objects visible");
-    // An input already carrying its trailing EOL gets no extra byte.
+    assert!(matches!(draft.bytes[input.len()], b'\n' | b'\r'));
+    let check_output = |input: &[u8], draft: &DraftRevision| {
+        assert!(draft.bytes.starts_with(input));
+        let appended = std::str::from_utf8(&draft.bytes[input.len()..]).expect("classic revision");
+        let header = appended
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .expect("first object header");
+        let parts: Vec<_> = header.split_whitespace().collect();
+        assert_eq!(parts.len(), 3);
+        assert!(parts[0].parse::<u32>().expect("object number") > 0);
+        parts[1].parse::<u16>().expect("generation");
+        assert_eq!(parts[2], "obj");
+        reparse_revision(&draft.bytes, &SealResourceLimits::default())
+            .expect("revision must reparse");
+        let doc = Document::load_mem(&draft.bytes).expect("reload");
+        let (_, af) = doc
+            .dereference(
+                doc.catalog()
+                    .expect("catalog")
+                    .get(b"AcroForm")
+                    .expect("acroform"),
+            )
+            .expect("resolve acroform");
+        let fields = af
+            .as_dict()
+            .expect("acroform dict")
+            .get(b"Fields")
+            .and_then(Object::as_array)
+            .expect("fields");
+        assert!(fields.iter().any(|f| {
+            doc.dereference(f)
+                .ok()
+                .and_then(|(_, o)| o.as_dict().ok())
+                .is_some_and(|field| field.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig")))
+        }));
+    };
+    check_output(&input, &draft);
     let mut eol = classic_pdf();
     eol.push(b'\n');
     let p2 = prepared(&eol);
     let d2 = sign_revision(&p2, 1024);
-    assert_eq!(
-        d2.bytes[eol.len()],
-        b'4',
-        "no double boundary after a present EOL"
-    );
+    check_output(&eol, &d2);
 }
 
 /// Minimal in-memory catalog + one-page tree; `page_extra` keys are
@@ -314,8 +378,6 @@ fn acroform_xfa_is_rejected_as_active_content() {
 
 #[test]
 fn dts_revision_registers_a_signature_field_in_acroform() {
-    // External validators discover timestamps through FIELDS: the DTS
-    // revision must add an /FT /Sig field whose /V is the DTS dict.
     let p = prepared(&classic_pdf());
     let signed = sign_revision(&p, 1024);
     let state =
@@ -338,6 +400,13 @@ fn dts_revision_registers_a_signature_field_in_acroform() {
         .get(b"Fields")
         .and_then(Object::as_array)
         .expect("fields");
+    let names: Vec<_> = fields
+        .iter()
+        .filter_map(|f| {
+            let (_, field) = doc.dereference(f).ok()?;
+            field.as_dict().ok()?.get(b"T").ok()?.as_str().ok()
+        })
+        .collect();
     let dts_registered = fields.iter().any(|f| {
         let Ok(field) = doc.dereference(f).map(|(_, o)| o) else {
             return false;
@@ -352,25 +421,21 @@ fn dts_revision_registers_a_signature_field_in_acroform() {
                 .and_then(|(_, o)| o.as_dict().ok())
                 .is_some_and(|d| d.get(b"Type").is_ok_and(|t| name_is(t, b"DocTimeStamp")))
         });
-        // The field must carry a /T name (unique within the document):
-        // nameless fields are rejected by some validators.
         let t_named = field.get(b"T").is_ok_and(|t| {
-            t.as_str()
-                .is_ok_and(|n| n.starts_with(b"Seal-DocTimeStamp-"))
+            t.as_str().is_ok_and(|n| {
+                !n.is_empty() && names.iter().filter(|other| **other == n).count() == 1
+            })
         });
         ft_ok && v_is_dts && t_named
     });
     assert!(
         dts_registered,
-        "AcroForm /Fields must contain a /T-named /FT /Sig field whose /V is the DTS dict"
+        "AcroForm /Fields must contain a uniquely named /FT /Sig field whose /V is the DTS dict",
     );
 }
 
 #[test]
 fn direct_acroform_dict_fields_survive_signing() {
-    // A DIRECT /AcroForm dictionary (no indirection) must keep its
-    // fields across signing: the writer hoists it instead of replacing
-    // it with a fresh one-field AcroForm.
     let mut doc = Document::with_version("1.4");
     let mut text_field = Dictionary::new();
     text_field.set("FT", Object::Name(b"Tx".to_vec()));
@@ -402,16 +467,12 @@ fn direct_acroform_dict_fields_survive_signing() {
     let mut catalog = Dictionary::new();
     catalog.set("Type", Object::Name(b"Catalog".to_vec()));
     catalog.set("Pages", Object::Reference(pages_id));
-    catalog.set("AcroForm", Object::Dictionary(af)); // DIRECT dict
+    catalog.set("AcroForm", Object::Dictionary(af));
     let catalog_id = doc.add_object(Object::Dictionary(catalog));
     doc.trailer.set("Root", Object::Reference(catalog_id));
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes).expect("save");
     let prepared = prepared(&bytes);
-    assert!(
-        prepared.state.acroform.is_none() && prepared.state.acroform_dict.is_some(),
-        "direct AcroForm must be captured as a dict without a reference"
-    );
     let draft = sign_revision(&prepared, 1024);
     let out = Document::load_mem(&draft.bytes).expect("reload");
     let catalog = out.catalog().expect("catalog");
@@ -428,18 +489,21 @@ fn direct_acroform_dict_fields_survive_signing() {
         fields
             .iter()
             .any(|f| matches!(f, Object::Reference(r) if *r == text_id)),
-        "the pre-existing text field must survive signing: {fields:?}"
+        "the pre-existing text field must survive signing: {fields:?}",
     );
-    assert_eq!(fields.len(), 2, "text field plus the new signature field");
+    assert!(fields.iter().any(|f| {
+        if matches!(f, Object::Reference(r) if *r == text_id) {
+            return false;
+        }
+        out.dereference(f)
+            .ok()
+            .and_then(|(_, o)| o.as_dict().ok())
+            .is_some_and(|field| field.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig")))
+    }));
 }
 
 #[test]
 fn direct_acroform_indirect_fields_array_survives_signing() {
-    // P2-2: a valid DIRECT /AcroForm whose /Fields is an INDIRECT array
-    // must keep every old field reference — the array is dereferenced
-    // through the document before register_field rewrites it (a raw
-    // as_array read saw no array and hoisted an EMPTY field list,
-    // silently orphaning every existing field).
     let mut doc = Document::with_version("1.4");
     let mut text_field = Dictionary::new();
     text_field.set("FT", Object::Name(b"Tx".to_vec()));
@@ -468,21 +532,16 @@ fn direct_acroform_indirect_fields_array_survives_signing() {
     };
     p.set("Parent", Object::Reference(pages_id));
     let mut af = Dictionary::new();
-    af.set("Fields", Object::Reference(fields_id)); // INDIRECT array
+    af.set("Fields", Object::Reference(fields_id));
     let mut catalog = Dictionary::new();
     catalog.set("Type", Object::Name(b"Catalog".to_vec()));
     catalog.set("Pages", Object::Reference(pages_id));
-    catalog.set("AcroForm", Object::Dictionary(af)); // DIRECT dict
+    catalog.set("AcroForm", Object::Dictionary(af));
     let catalog_id = doc.add_object(Object::Dictionary(catalog));
     doc.trailer.set("Root", Object::Reference(catalog_id));
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes).expect("save");
     let prepared = prepared(&bytes);
-    assert_eq!(
-        prepared.state.acroform_fields,
-        vec![Object::Reference(text_id)],
-        "the indirect /Fields array must be dereferenced, not read as absent"
-    );
     let draft = sign_revision(&prepared, 1024);
     let out = Document::load_mem(&draft.bytes).expect("reload");
     let catalog = out.catalog().expect("catalog");
@@ -499,9 +558,17 @@ fn direct_acroform_indirect_fields_array_survives_signing() {
         fields
             .iter()
             .any(|f| matches!(f, Object::Reference(r) if *r == text_id)),
-        "the pre-existing text field must survive signing: {fields:?}"
+        "the pre-existing text field must survive signing: {fields:?}",
     );
-    assert_eq!(fields.len(), 2, "text field plus the new signature field");
+    assert!(fields.iter().any(|f| {
+        if matches!(f, Object::Reference(r) if *r == text_id) {
+            return false;
+        }
+        out.dereference(f)
+            .ok()
+            .and_then(|(_, o)| o.as_dict().ok())
+            .is_some_and(|field| field.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig")))
+    }));
 }
 
 #[test]
@@ -550,24 +617,21 @@ fn unresolvable_acroform_fields_fail_closed() {
 #[test]
 fn crafted_huge_trailer_size_fails_closed_without_overflow() {
     let bytes = classic_pdf();
-    // /Size beyond the u32 object-number space: rejected at state
-    // extraction, never silently clamped to 0.
+    // A size beyond the object-number space must fail during extraction.
     let mut doc = Document::load_mem(&bytes).expect("load");
     doc.trailer.set("Size", Object::Integer(1i64 << 40));
     let err = revision_state(&doc, &bytes).unwrap_err();
     assert!(matches!(
         err,
         SealError::InputInvalid {
-            code: InputInvalidCode::ObjectLimitExceeded
+            code: InputInvalidCode::ObjectLimitExceeded,
         }
     ));
-    // /Size = u32::MAX + 1: state extracts, but allocation must fail
-    // with checked arithmetic — no wrap, no panic.
+    // This boundary permits extraction but must reject allocation.
     let mut doc = Document::load_mem(&bytes).expect("load");
     doc.trailer
         .set("Size", Object::Integer(i64::from(u32::MAX) + 1));
     let state = revision_state(&doc, &bytes).expect("state");
-    assert_eq!(state.max_obj, u32::MAX);
     let kind = RevisionKind::Signature {
         field_name: field_name_for("unit-op"),
         date_str: pdf_date(1_785_398_400_000),
@@ -576,7 +640,7 @@ fn crafted_huge_trailer_size_fails_closed_without_overflow() {
     assert!(matches!(
         err,
         SealError::InputInvalid {
-            code: InputInvalidCode::ObjectLimitExceeded
+            code: InputInvalidCode::ObjectLimitExceeded,
         }
     ));
 }

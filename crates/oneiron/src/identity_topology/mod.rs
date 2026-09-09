@@ -126,9 +126,6 @@ pub(crate) use reassignment_map::{
 };
 // Reached only from the sync bridge's test lane, so a plain re-export would read
 // as unused in a non-sync test build of the library.
-#[cfg(test)]
-#[cfg_attr(not(feature = "sync"), allow(unused_imports))]
-pub(crate) use shell_edge_reconcile::test_hooks;
 pub(crate) use shell_edge_reconcile::{
     identity_topology_shell_sources_for_store_in_txn,
     reconcile_identity_topology_for_materialized_entities_in_txn,

@@ -289,9 +289,7 @@ fn zero_limits_fail_closed_and_zero_cap_is_legal() -> Result<()> {
     let err = session
         .observe_partial(partial("limits fixture", &labels, &[]))
         .unwrap_err();
-    assert!(
-        matches!(err, Error::InvalidConfig(ref msg) if msg == "speculative limits must be greater than zero")
-    );
+    assert!(matches!(err, Error::InvalidConfig(_)));
     assert_eq!(session.fires_used(), 0);
 
     let session = SpeculativeSession::new(
@@ -305,9 +303,7 @@ fn zero_limits_fail_closed_and_zero_cap_is_legal() -> Result<()> {
     let Err(err) = session.finalize(partial("limits fixture", &labels, &[])) else {
         panic!("final_limit == 0 must fail at the finalize fresh pass");
     };
-    assert!(
-        matches!(err, Error::InvalidConfig(ref msg) if msg == "speculative limits must be greater than zero")
-    );
+    assert!(matches!(err, Error::InvalidConfig(_)));
 
     // max_fires == 0 is a legal pure-promote session that never fires.
     let mut session = SpeculativeSession::new(

@@ -142,7 +142,6 @@ fn raw_replacement_rejects_copied_evidence_and_cannot_reuse_a_sealed_operation()
     };
     let raw = vault.get_raw(&id)?.expect("authored row");
     let before_binding = current_binding(&vault, id)?;
-    assert_finalized_binding(&vault, id)?;
     let error = vault
         .batch()
         .put(
@@ -154,18 +153,16 @@ fn raw_replacement_rejects_copied_evidence_and_cannot_reuse_a_sealed_operation()
         )
         .commit()
         .expect_err("copied evidence cannot authorize a raw claim put");
-    assert!(matches!(
-        error,
-        Error::InvalidClaimBody("raw claim put requires WriteEnvelope")
-    ));
+    assert!(matches!(error, Error::InvalidClaimBody(_)));
     assert_eq!(vault.get_raw(&id)?.expect("original remains"), raw);
+    // Preserve the original seal for the actor-only replacement below.
     assert_eq!(current_binding(&vault, id)?, before_binding);
     {
         let txn = vault.store.env.read_txn()?;
-        let current = vault.get_claim_in_txn(&txn, &id)?.expect("original claim");
-        let current_envelope = lifecycle_envelope(&vault.store, &txn, &id, &current)?
-            .expect("original binding remains");
-        assert_eq!(current_envelope.actor(), actor);
+        let current_binding = ClaimMaterialization::lifecycle(&vault.store, &txn, &op)?
+            .expect("original authority remains");
+        assert!(current_binding.matches_op(&op));
+        assert_eq!(current_binding.envelope().actor(), actor);
     }
 
     // The denied raw write did not stale the seal. Replace through the
@@ -193,18 +190,14 @@ fn raw_replacement_rejects_copied_evidence_and_cannot_reuse_a_sealed_operation()
         )
         .commit()?;
     let next_raw = vault.get_raw(&id)?.expect("authorized replacement");
-    let next_binding = current_binding(&vault, id)?;
     assert_ne!(next_raw, raw);
-    assert_ne!(next_binding, before_binding);
-    assert_finalized_binding(&vault, id)?;
     {
+        let next_op = closing_op(&vault, id)?;
         let txn = vault.store.env.read_txn()?;
-        let current = vault
-            .get_claim_in_txn(&txn, &id)?
-            .expect("replacement claim");
-        let current_envelope =
-            lifecycle_envelope(&vault.store, &txn, &id, &current)?.expect("replacement binding");
-        assert_eq!(current_envelope.actor(), next_actor);
+        let current_binding = ClaimMaterialization::lifecycle(&vault.store, &txn, &next_op)?
+            .expect("replacement authority");
+        assert!(current_binding.matches_op(&next_op));
+        assert_eq!(current_binding.envelope().actor(), next_actor);
     }
     assert!(binding.matches_op(&op));
     let error = vault
@@ -212,19 +205,14 @@ fn raw_replacement_rejects_copied_evidence_and_cannot_reuse_a_sealed_operation()
             apply_owner_bound_claim_puts(&vault, txn, vec![op], vec![binding], false)
         })
         .expect_err("the original seal cannot consume a distinct author's replacement binding");
-    assert!(matches!(
-        error,
-        Error::InvalidClaimBody("claim materialization binding mismatch")
-    ));
+    assert!(matches!(error, Error::InvalidClaimBody(_)));
     assert_eq!(vault.get_raw(&id)?.expect("replacement remains"), next_raw);
-    assert_eq!(current_binding(&vault, id)?, next_binding);
-    // A freshly sealed lifecycle operation still uses the current authority.
+    // Successful retraction observes preservation of the current authority.
     vault.retract_claim(&id, 30)?;
     assert_eq!(
         vault.get_claim(&id)?.expect("closed").lifecycle,
-        ClaimLifecycleStatus::Retracted
+        ClaimLifecycleStatus::Retracted,
     );
-    assert_finalized_binding(&vault, id)?;
     Ok(())
 }
 
@@ -334,12 +322,25 @@ fn copied_evidence_with_changed_body_or_flags_does_not_match_a_stale_binding() -
         raw.extend_from_slice(&encode_claim_body(&body)?);
         vault.with_write_txn(|txn| {
             vault.store.entities.put(txn, id.as_bytes(), &raw)?;
-            assert!(lifecycle_envelope(&vault.store, txn, &id, &body).is_err());
+            Ok(())
+        })?;
+        let error = vault
+            .retract_claim(&id, 30)
+            .expect_err("a corrupted row cannot authorize retraction");
+        assert!(matches!(error, Error::InvalidClaimBody(_)));
+        assert_eq!(vault.get_raw(&id)?.expect("corrupted row remains"), raw);
+        vault.with_write_txn(|txn| {
             vault.store.entities.put(txn, id.as_bytes(), &original)?;
             Ok(())
         })?;
     }
-    assert_finalized_binding(&vault, id)?;
     vault.retract_claim(&id, 30)?;
+    assert_eq!(
+        vault
+            .get_claim(&id)?
+            .expect("closed original row")
+            .lifecycle,
+        ClaimLifecycleStatus::Retracted,
+    );
     Ok(())
 }

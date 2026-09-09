@@ -138,10 +138,22 @@ fn a_relocated_block_costs_the_discount_of_a_replaced_one() {
 /// actually survive.
 #[test]
 fn move_pairing_respects_multiplicity() {
-    assert_eq!(pair_moves(&[7, 7, 7], &[7, 7]), 2);
-    assert_eq!(pair_moves(&[7, 7], &[7, 7, 7]), 2);
-    assert_eq!(pair_moves(&[1, 2], &[3, 4]), 0);
-    assert_eq!(pair_moves(&[], &[1]), 0);
+    // The longer anchor forces the repeated lines into the unmatched regions.
+    let before = "repeat\nrepeat\nrepeat\nanchor-a\nanchor-b\nanchor-c\nanchor-d\n";
+    let after = "anchor-a\nanchor-b\nanchor-c\nanchor-d\nrepeat\nrepeat\n";
+    let expected_score = (1.0 + 4.0 * MOVE_DISCOUNT) / 13.0;
+
+    let forward = myers_line_diff(before, after);
+    assert_eq!(forward.ops.moved, 2);
+    assert_eq!(forward.ops.del, 1);
+    assert_eq!(forward.ops.ins, 0);
+    assert!((forward.d_norm - expected_score).abs() < 1e-6);
+
+    let reverse = myers_line_diff(after, before);
+    assert_eq!(reverse.ops.moved, 2);
+    assert_eq!(reverse.ops.del, 0);
+    assert_eq!(reverse.ops.ins, 1);
+    assert!((reverse.d_norm - expected_score).abs() < 1e-6);
 }
 
 // ─── the cap ────────────────────────────────────────────────────────────

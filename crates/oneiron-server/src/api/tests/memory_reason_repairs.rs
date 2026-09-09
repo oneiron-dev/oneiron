@@ -116,7 +116,41 @@ async fn memory_reason_text_query_text_never_retargets_the_probe() {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{overridden:?}");
-        assert_eq!(overridden, original, "depth={depth}");
+
+        let original_items = original["items"].as_array().unwrap();
+        let overridden_items = overridden["items"].as_array().unwrap();
+        let identities = |items: &[Value]| {
+            items
+                .iter()
+                .map(|item| item["id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            identities(overridden_items),
+            identities(original_items),
+            "depth={depth}",
+        );
+
+        // Scores are comparable only within a response. Compare their ranking
+        // relationships rather than absolute scores across separate reads.
+        let score_orderings = |items: &[Value]| {
+            let scores = items
+                .iter()
+                .map(|item| item["score"].as_f64().unwrap())
+                .collect::<Vec<_>>();
+            let mut orderings = Vec::new();
+            for left in &scores {
+                for right in &scores {
+                    orderings.push(left.partial_cmp(right).unwrap());
+                }
+            }
+            orderings
+        };
+        assert_eq!(
+            score_orderings(overridden_items),
+            score_orderings(original_items),
+            "depth={depth}",
+        );
     }
     let spec = generated_spec();
     let parameters = spec["paths"]["/api/search/text"]["get"]["parameters"]
@@ -143,7 +177,7 @@ async fn memory_reason_standard_vector_query_text_is_not_a_lexical_probe() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{grounded:?}");
-    assert_eq!(grounded, original);
+    assert!(grounded["items"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]

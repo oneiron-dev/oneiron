@@ -118,8 +118,6 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 #[cfg(test)]
-use crate::edge::EdgeKind;
-#[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::Result;

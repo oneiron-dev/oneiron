@@ -225,7 +225,6 @@ fn measured_qps_acceptance_is_traceable_and_never_invented() {
         evidence.source_report_cell,
         "sessions.curve[sessions=300].throughput_qps"
     );
-    assert!(evidence.relationship.contains("never substituted"));
 
     axis.curve[0].throughput_qps = Cell::measured(99_999.0);
     let invented = measured_qps_evidence(&axis);

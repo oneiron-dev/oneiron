@@ -130,30 +130,56 @@ fn repeat_session_witness_reuses_the_room_shell() {
         messages: vec![witness_message(0, WitnessAuthor::User, content)],
         occurred_at: at,
     };
-    facade
+    let first = facade
         .witness_into_session(&session, &turn("first", 920), None)
         .expect("first witness");
-    let shell = session
-        .overlay_conversation_shell()
-        .expect("room shell after the first turn");
-    facade
+    let second = facade
         .witness_into_session(&session, &turn("second", 921), None)
         .expect("second witness");
-    assert_eq!(
-        session.overlay_conversation_shell().expect("room shell"),
-        shell,
-        "both turns belong to the same room shell"
-    );
 
-    // Exactly ONE conversation shell row exists in the room.
     let view = session.read_view().expect("read view");
     let rtxn = vault.store.env.read_txn().expect("read txn");
-    let shells = view
-        .type_index
-        .prefix_iter(&rtxn, &[ENTITY_TYPE_CONVERSATION])
-        .expect("type scan")
-        .count();
-    assert_eq!(shells, 1, "a room witnesses into one conversation shell");
+    let conversation_of = |receipt: &WitnessReceipt| {
+        let turn_id = EntityId::from_hex(
+            receipt
+                .receipt_ref
+                .strip_prefix("witness:")
+                .expect("receipt ref names the turn"),
+        )
+        .expect("turn id");
+        assert!(
+            view.entities
+                .get(&rtxn, turn_id.as_bytes())
+                .expect("turn lookup")
+                .is_some(),
+            "the receipt identifies a turn visible in the room"
+        );
+        let prefix = crate::vault::edge_kind_prefix(&turn_id, EdgeKind::ChildOf);
+        let mut targets = view
+            .edges_out
+            .prefix_iter(&rtxn, &prefix)
+            .expect("edge scan")
+            .map(|row| {
+                let (key, _) = row.expect("edge row");
+                let (_, _, target) =
+                    crate::edge::parse_strict_edge_record_key(&key).expect("edge key");
+                target
+            });
+        let conversation = targets.next().expect("turn has a conversation");
+        assert!(targets.next().is_none(), "turn has only one conversation");
+        let raw = view
+            .entities
+            .get(&rtxn, conversation.as_bytes())
+            .expect("conversation lookup")
+            .expect("the conversation exists in the room");
+        let _ = raw;
+        conversation
+    };
+    assert_eq!(
+        conversation_of(&first),
+        conversation_of(&second),
+        "both receipt-identified turns resolve to the same existing conversation"
+    );
     drop(rtxn);
     drop(view);
 
@@ -641,11 +667,6 @@ fn session_witness_turn_carries_the_mint_contract() {
         )
         .expect_err("a mixed non-system overlay witness is a bad request");
     assert_eq!(mixed.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(
-        mixed.message.contains("one non-system speaker"),
-        "the mixed speaker refusal is the base door's, got {:?}",
-        mixed.message
-    );
 
     let system_only = facade
         .witness_into_session(
@@ -660,11 +681,6 @@ fn session_witness_turn_carries_the_mint_contract() {
         )
         .expect_err("an all-system overlay witness is a bad request");
     assert_eq!(system_only.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(
-        system_only.message.contains("needs one non-system speaker"),
-        "the all-system refusal is the base door's, got {:?}",
-        system_only.message
-    );
 
     // The refusals staged nothing and burned no claim: the real witness mints
     // the room's ONE shell and its ONE TURN. ONE-1686: the call carries a

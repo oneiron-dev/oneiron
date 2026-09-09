@@ -56,14 +56,17 @@ fn exported_rust_names_camel_case_to_the_pinned_sdk_names() {
 
 #[test]
 fn pinned_verb_ledger_has_no_duplicates_and_no_actor_rebinding() {
-    let mut sorted = PINNED_HEAD_CONTRACT_VERBS.to_vec();
-    sorted.sort_unstable();
-    let mut deduped = sorted.clone();
-    deduped.dedup();
-    assert_eq!(sorted, deduped, "duplicate entry in the pinned verb ledger");
+    let mut unique = EXPORTED_UNIFFI_VERBS.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        EXPORTED_UNIFFI_VERBS.len(),
+        unique.len(),
+        "duplicate entry in the exported head surface",
+    );
 
     assert!(
-        !PINNED_HEAD_CONTRACT_VERBS.contains(&"asActor"),
+        !EXPORTED_UNIFFI_VERBS.contains(&"asActor"),
         "actor rebinding is a handle operation, not a head-contract verb",
     );
 }

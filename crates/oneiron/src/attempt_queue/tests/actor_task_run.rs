@@ -129,14 +129,22 @@ mod one_1876_tests {
         let hit = existing(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
         assert_eq!(hit.id, legacy.id);
 
-        // Read-only compatibility: the row is untouched, no actor was invented
-        // for it, and no v2 entry was manufactured on its behalf.
-        assert_eq!(queue.get(legacy.id)?.expect("legacy row"), legacy);
+        // Compatibility preserves the legacy row without inventing actor ownership.
+        let preserved = queue.get(legacy.id)?.expect("legacy row");
+        assert_eq!(preserved.id, legacy.id);
+        assert_eq!(preserved.kind, legacy.kind);
+        assert_eq!(preserved.payload, legacy.payload);
+        assert_eq!(preserved.dedupe_key.as_deref(), Some("shared"));
+        assert_eq!(preserved.dedupe_actor_ref, None);
+        assert_eq!(preserved.task_ref, legacy.task_ref);
+        assert_eq!(preserved.run_id, legacy.run_id);
+        assert_eq!(preserved.lease_owner, legacy.lease_owner);
+        assert_eq!(preserved.attempt_count, legacy.attempt_count);
+        assert!(matches!(preserved.state, AttemptState::Queued));
         assert_eq!(v1_owner(&vault, "shared")?, Some(legacy.id));
         assert_eq!(v2_owner(&vault, ACTOR_A, "shared")?, None);
 
-        // The window is bounded: once the legacy chain terminalizes, the next
-        // actor-scoped enqueue takes its own v2 entry.
+        // Once the legacy chain terminalizes, actor-scoped work owns its v2 entry.
         queue.intervene(InterveneAttempt {
             id: legacy.id,
             kind: AttemptInterventionKind::Cancel,
@@ -146,6 +154,7 @@ mod one_1876_tests {
         })?;
         let input = enqueue(KIND, Some("shared"), 40);
         let fresh = enqueued(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
+        assert_ne!(fresh.id, legacy.id);
         assert_eq!(fresh.dedupe_actor_ref.as_deref(), Some(ACTOR_A));
         assert_eq!(v2_owner(&vault, ACTOR_A, "shared")?, Some(fresh.id));
 
@@ -176,9 +185,16 @@ mod one_1876_tests {
         let hit = existing(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
         assert_eq!(hit.id, legacy.id);
 
-        // No duplicate row, no rewrite, no index promotion, and none of the
-        // actorless raw -> v1 self-heal.
-        assert_eq!(queue.get(legacy.id)?.expect("legacy row"), legacy);
+        // The pending legacy owner is preserved without index promotion.
+        let preserved = queue.get(legacy.id)?.expect("legacy row");
+        assert_eq!(preserved.id, legacy.id);
+        assert_eq!(preserved.kind, legacy.kind);
+        assert_eq!(preserved.dedupe_key.as_deref(), Some("raw"));
+        assert_eq!(preserved.dedupe_actor_ref, None);
+        assert_eq!(preserved.task_ref, legacy.task_ref);
+        assert_eq!(preserved.run_id, legacy.run_id);
+        assert_eq!(preserved.lease_owner, legacy.lease_owner);
+        assert!(matches!(preserved.state, AttemptState::Queued));
         assert_eq!(owner_of(&vault, &raw_key)?, Some(legacy.id));
         assert_eq!(owner_of(&vault, &v1_key)?, None);
         assert_eq!(v2_owner(&vault, ACTOR_A, "raw")?, None);
@@ -290,8 +306,15 @@ mod one_1876_tests {
         let decoded = decode_record(&encoded, id)?;
         assert_eq!(decoded.dedupe_actor_ref, None);
         assert_eq!(decoded.dedupe_key.as_deref(), Some("turn:legacy"));
-        // A defaulted row re-encodes and decodes unchanged.
-        assert_eq!(decode_record(&encode_record(&decoded)?, id)?, decoded);
+        assert_eq!(decoded.task_ref.as_deref(), Some("tk_legacy"));
+        assert_eq!(decoded.run_id.as_deref(), Some("run-legacy"));
+
+        // Re-encoding preserves legacy scope and attribution.
+        let round_tripped = decode_record(&encode_record(&decoded)?, id)?;
+        assert_eq!(round_tripped.dedupe_actor_ref, None);
+        assert_eq!(round_tripped.dedupe_key.as_deref(), Some("turn:legacy"));
+        assert_eq!(round_tripped.task_ref.as_deref(), Some("tk_legacy"));
+        assert_eq!(round_tripped.run_id.as_deref(), Some("run-legacy"));
 
         Ok(())
     }

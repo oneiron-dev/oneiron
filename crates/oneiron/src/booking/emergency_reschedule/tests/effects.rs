@@ -101,14 +101,31 @@ fn local_lifecycle_passport_and_item_state_commit_before_intent_freeze() {
         &consumer(&vault, NOW),
     )
     .unwrap();
-    assert_eq!(checkpoint(&vault, &plan), Some(item));
+    assert_eq!(item.calendar.event_ref, plan.booking().calendar.event_ref);
+    assert_eq!(item.calendar.sequence, 1);
+    assert!(!item.calendar_delivered);
+    assert!(!item.apology_delivered);
+    let committed_passports = passports(&vault, item.calendar.event_ref);
+    assert!(!committed_passports.is_empty());
     assert!(
-        passports(&vault, plan.booking.calendar.event_ref)
+        committed_passports
             .iter()
-            .all(|p| p.last_sequence == 1)
+            .all(|p| p.last_sequence == item.calendar.sequence)
     );
     assert!(emergency_records(&vault).is_empty());
-    execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
+
+    let recovered = execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
+    assert_eq!(recovered.calendar.event_ref, item.calendar.event_ref);
+    assert_eq!(recovered.calendar.sequence, item.calendar.sequence);
+    assert!(recovered.calendar_delivered);
+    assert!(recovered.apology_delivered);
+    let recovered_passports = passports(&vault, recovered.calendar.event_ref);
+    assert!(!recovered_passports.is_empty());
+    assert!(
+        recovered_passports
+            .iter()
+            .all(|p| p.last_sequence == item.calendar.sequence)
+    );
 }
 #[test]
 fn raw_ics_is_blob_backed_and_mime_is_connector_owned() {

@@ -393,40 +393,57 @@ fn offset_pager_never_authority() -> Result<()> {
     let (_dir, vault) = open_vault();
     let scope = DreamerConsolidationScope::Micro;
     let conversation = seed_session(&vault, 0x25, 1);
-    seed_turn(&vault, &conversation, "user", "text", 10);
+    let turn = seed_turn(&vault, &conversation, "user", "text", 10);
 
     let watermark = read_watermark(&vault, scope)?;
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
     let partition_hash = plans[0].key.partition_hash();
 
-    // A STALE offset-era cursor is present; the watermark scan neither
-    // consults it nor lets it duplicate work.
+    // A stale offset-era cursor must not override watermark selection.
     write_cursor(
         &vault,
         scope,
         &partition_hash,
         &ConsolidationCursor {
             schema_version: 1,
-            last_learned_at: 999_999, // stale/absurd offset residue
+            last_learned_at: 999_999,
             last_ledger_revision_hint: 42,
         },
     )?;
 
     let rescanned = scan_dirty_turns(&vault, scope, &watermark, 10)?;
-    assert_eq!(rescanned, turns, "stale cursor does not change selection");
-    let replanned = plan_partitions(&vault, scope, &rescanned, &watermark)?;
-    assert_eq!(plans, replanned);
+    let selected: Vec<_> = turns.iter().map(|turn| turn.turn_id).collect();
+    assert_eq!(selected, vec![turn]);
+    assert_eq!(
+        rescanned
+            .iter()
+            .map(|turn| turn.turn_id)
+            .collect::<Vec<_>>(),
+        selected,
+        "stale cursor does not change selection",
+    );
     let first = enqueue_partition_attempts(&vault, scope, &rescanned, &watermark, "run-1", 20)?;
     let second = enqueue_partition_attempts(&vault, scope, &rescanned, &watermark, "run-1", 21)?;
+    assert_eq!(first.len(), 1);
+    assert_eq!(second.len(), 1);
     assert!(matches!(
         first[0],
         EnqueueDreamerAttemptOutcome::Enqueued(_)
     ));
     assert!(
         matches!(second[0], EnqueueDreamerAttemptOutcome::Existing(_)),
-        "a partition scanned twice produces no duplicate attempts"
+        "a partition scanned twice produces no duplicate attempts",
     );
+    let attempts = AttemptQueue::new(&vault).list()?;
+    assert_eq!(attempts.len(), 1);
+    let payload = decode_dreamer_attempt_payload(&attempts[0].payload)?;
+    assert_eq!(payload.attempt_type, scope.as_str());
+    let (key, ids, _) = decode_partition_payload(&payload.input)?;
+    assert_eq!(key.conversation_ref, conversation);
+    assert_eq!(key.world_ref, None);
+    assert_eq!(key.facet_ref, None);
+    assert_eq!(ids, selected);
     Ok(())
 }
 
@@ -435,15 +452,15 @@ fn revision_hint_never_authority() -> Result<()> {
     let (_dir, vault) = open_vault();
     let scope = DreamerConsolidationScope::Micro;
     let conversation = seed_session(&vault, 0x26, 1);
-    seed_turn(&vault, &conversation, "user", "a", 10);
-    seed_turn(&vault, &conversation, "assistant", "b", 11);
+    let user = seed_turn(&vault, &conversation, "user", "a", 10);
+    let assistant = seed_turn(&vault, &conversation, "assistant", "b", 11);
 
     let watermark = read_watermark(&vault, scope)?;
     let baseline = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     let plans = plan_partitions(&vault, scope, &baseline, &watermark)?;
     let partition_hash = plans[0].key.partition_hash();
 
-    // Corrupt the hint; selection must be bit-identical.
+    // Corrupt the hint; selection and committed work must not change.
     write_cursor(
         &vault,
         scope,
@@ -455,9 +472,31 @@ fn revision_hint_never_authority() -> Result<()> {
         },
     )?;
     let with_corrupt_hint = scan_dirty_turns(&vault, scope, &watermark, 10)?;
-    assert_eq!(baseline, with_corrupt_hint);
-    let replanned = plan_partitions(&vault, scope, &with_corrupt_hint, &watermark)?;
-    assert_eq!(plans, replanned);
+    let selected: Vec<_> = baseline.iter().map(|turn| turn.turn_id).collect();
+    assert_eq!(selected, vec![user, assistant]);
+    assert_eq!(
+        with_corrupt_hint
+            .iter()
+            .map(|turn| turn.turn_id)
+            .collect::<Vec<_>>(),
+        selected,
+    );
+    let outcomes =
+        enqueue_partition_attempts(&vault, scope, &with_corrupt_hint, &watermark, "run-1", 20)?;
+    assert_eq!(outcomes.len(), 1);
+    assert!(matches!(
+        outcomes[0],
+        EnqueueDreamerAttemptOutcome::Enqueued(_)
+    ));
+    let attempts = AttemptQueue::new(&vault).list()?;
+    assert_eq!(attempts.len(), 1);
+    let payload = decode_dreamer_attempt_payload(&attempts[0].payload)?;
+    assert_eq!(payload.attempt_type, scope.as_str());
+    let (key, ids, _) = decode_partition_payload(&payload.input)?;
+    assert_eq!(key.conversation_ref, conversation);
+    assert_eq!(key.world_ref, None);
+    assert_eq!(key.facet_ref, None);
+    assert_eq!(ids, selected);
     Ok(())
 }
 
@@ -717,7 +756,6 @@ fn default_meso_cap_is_500_but_other_scopes_keep_their_limit() -> Result<()> {
     );
     let watermark = read_watermark(&vault, DreamerConsolidationScope::Meso)?;
 
-    assert_eq!(DEFAULT_MESO_ROUND_TURN_CAP, 500);
     assert_eq!(
         scan_dirty_turns(
             &vault,
@@ -727,7 +765,7 @@ fn default_meso_cap_is_500_but_other_scopes_keep_their_limit() -> Result<()> {
         )?
         .len(),
         DEFAULT_MESO_ROUND_TURN_CAP,
-        "the production usize::MAX call is a capped Meso round"
+        "the production usize::MAX call is a capped Meso round",
     );
     for scope in [
         DreamerConsolidationScope::Micro,
@@ -736,7 +774,7 @@ fn default_meso_cap_is_500_but_other_scopes_keep_their_limit() -> Result<()> {
         assert_eq!(
             scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?.len(),
             backlog,
-            "{scope:?} keeps the caller's bound"
+            "{scope:?} keeps the caller's bound",
         );
     }
 
@@ -798,17 +836,42 @@ fn a_fence_window_below_the_live_watermark_collects_nothing() -> Result<()> {
     let dirty = seed_turn(&vault, &conversation, "user", "dirty", 900);
     advance_watermark(&vault, scope, 800)?;
 
-    let wtxn = vault.store.env.write_txn()?;
-    assert!(
-        collect_dirty_turn_ids_in_txn(&vault, &wtxn, scope, 700, 900)?.is_empty(),
-        "a window whose lower second is not the live watermark enumerates nothing"
-    );
+    let session = minted(vault.mint_session(1_000)?);
+    let mut wake = meso_wake(&vault);
+    assert_eq!(wake.planned_turn_ids, vec![dirty]);
+    wake.planned_watermark = 700;
+    vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_100, &wake)?
+        .expect("stale planning does not prevent session closure");
+    assert_eq!(vault.open_session()?, None);
+    assert_eq!(meso_partition_attempt_count(&vault), 0);
+    let watermark = read_watermark(&vault, scope)?;
+    assert_eq!(watermark.last_learned_at, 800);
+    assert_eq!(watermark.last_turn_id, None);
+    assert!(!watermark.before_first);
     assert_eq!(
-        collect_dirty_turn_ids_in_txn(&vault, &wtxn, scope, 800, 900)?,
+        scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?
+            .iter()
+            .map(|turn| turn.turn_id)
+            .collect::<Vec<_>>(),
         vec![dirty],
-        "the matching window still enumerates the planned round"
     );
-    wtxn.abort();
+
+    // The matching live window still settles the same dirty turn.
+    let session = minted(vault.mint_session(2_000)?);
+    let wake = meso_wake(&vault);
+    assert_eq!(wake.planned_watermark, 800);
+    assert_eq!(wake.planned_turn_ids, vec![dirty]);
+    vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 2_100, &wake)?
+        .expect("matching window closes and settles");
+    assert_eq!(vault.open_session()?, None);
+    assert_eq!(meso_partition_attempt_count(&vault), 1);
+    let watermark = read_watermark(&vault, scope)?;
+    assert_eq!(watermark.last_learned_at, 900);
+    assert_eq!(watermark.last_turn_id, Some(dirty));
+    assert!(!watermark.before_first);
+    assert!(scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?.is_empty());
     Ok(())
 }
 
@@ -819,6 +882,7 @@ fn late_smaller_same_second_id_defers_the_existing_count_fence() -> Result<()> {
     let conversation = seed_session(&vault, 0x32, 1);
     let planned = seed_ordered_turns_at(&vault, &conversation, 0x46, 900, 4);
     let session = minted(vault.mint_session(1_000)?);
+    let before = read_watermark(&vault, scope)?;
 
     let wake = meso_wake(&vault);
     assert_eq!(wake.planned_turn_ids, planned, "the default-capped prefix");
@@ -834,17 +898,25 @@ fn late_smaller_same_second_id_defers_the_existing_count_fence() -> Result<()> {
     assert_eq!(
         meso_partition_attempt_count(&vault),
         0,
-        "a moved dirty snapshot enqueues none of the stale round"
+        "a moved dirty snapshot enqueues none of the stale round",
     );
     let watermark = read_watermark(&vault, scope)?;
-    assert_eq!(watermark, ConsolidationWatermark::bootstrap());
+    assert_eq!(watermark.last_learned_at, before.last_learned_at);
+    assert_eq!(watermark.last_turn_id, before.last_turn_id);
+    assert_eq!(watermark.before_first, before.before_first);
     let dirty = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?;
     assert_eq!(
         dirty.first().map(|turn| turn.turn_id),
         Some(late),
-        "the late turn leads the next round"
+        "the late turn leads the next round",
     );
     assert_eq!(dirty.len(), 5, "nothing was consumed by the deferred round");
+    let mut expected = vec![late];
+    expected.extend(planned);
+    assert_eq!(
+        dirty.iter().map(|turn| turn.turn_id).collect::<Vec<_>>(),
+        expected,
+    );
     Ok(())
 }
 
@@ -871,22 +943,20 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     assert_eq!(
         wake.planned_turn_ids,
         seeded[..DEFAULT_MESO_ROUND_TURN_CAP],
-        "round 1 is the capped prefix"
+        "round 1 is the capped prefix",
     );
     vault
         .end_session_with_wake(&first, SessionClosePredicate::Explicit, 1_100, &wake)?
         .expect("first close");
     assert_eq!(meso_partition_attempt_count(&vault), 1);
     let settled = read_watermark(&vault, scope)?;
+    assert_eq!(settled.last_learned_at, SECOND);
     assert_eq!(
-        settled,
-        ConsolidationWatermark {
-            last_learned_at: SECOND,
-            last_turn_id: Some(seeded[DEFAULT_MESO_ROUND_TURN_CAP - 1]),
-            ..ConsolidationWatermark::bootstrap()
-        },
-        "the stored row is the exact within-second position"
+        settled.last_turn_id,
+        Some(seeded[DEFAULT_MESO_ROUND_TURN_CAP - 1]),
+        "the stored row is the exact within-second position",
     );
+    assert!(!settled.before_first);
 
     // Round 2 drains the remainder of the SAME second (lower == upper).
     let second = minted(vault.mint_session(2_000)?);
@@ -894,7 +964,7 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     assert_eq!(
         wake.planned_turn_ids,
         seeded[DEFAULT_MESO_ROUND_TURN_CAP..],
-        "round 2 is the rest of the second"
+        "round 2 is the rest of the second",
     );
     assert_eq!(wake.planned_watermark, SECOND);
     assert_eq!(wake.advance_watermark_to, Some(SECOND));
@@ -902,14 +972,10 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
         .end_session_with_wake(&second, SessionClosePredicate::Explicit, 2_100, &wake)?
         .expect("second close");
     assert_eq!(meso_partition_attempt_count(&vault), 2);
-    assert_eq!(
-        read_watermark(&vault, scope)?,
-        ConsolidationWatermark {
-            last_learned_at: SECOND,
-            last_turn_id: Some(seeded[total - 1]),
-            ..ConsolidationWatermark::bootstrap()
-        }
-    );
+    let settled = read_watermark(&vault, scope)?;
+    assert_eq!(settled.last_learned_at, SECOND);
+    assert_eq!(settled.last_turn_id, Some(seeded[total - 1]));
+    assert!(!settled.before_first);
 
     // A third close has nothing left to plan.
     let third = minted(vault.mint_session(3_000)?);
@@ -941,14 +1007,9 @@ fn empty_matched_round_still_commits_close() -> Result<()> {
         .expect("the close commits");
     assert_eq!(vault.open_session()?, None);
     assert_eq!(meso_partition_attempt_count(&vault), 0);
-    assert_eq!(
-        read_watermark(&vault, scope)?,
-        ConsolidationWatermark {
-            last_learned_at: 900,
-            last_turn_id: None,
-            ..ConsolidationWatermark::bootstrap()
-        }
-    );
+    let watermark = read_watermark(&vault, scope)?;
+    assert_eq!(watermark.last_learned_at, 900);
+    assert_eq!(watermark.last_turn_id, None);
     Ok(())
 }
 

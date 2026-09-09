@@ -188,13 +188,16 @@ async fn discover_advertises_outbound_manifest_schema_on_demand() {
         outbound["schema_on_demand"],
         Value::from("/v1/core/outbound/capabilities")
     );
-    assert_eq!(
-        outbound["field_contract"]
-            .as_array()
-            .expect("field contract")
-            .len(),
-        oneiron::OUTBOUND_VERB_FIELD_CONTRACT.len()
-    );
+    let mut advertised_fields: Vec<&str> = outbound["field_contract"]
+        .as_array()
+        .expect("field contract")
+        .iter()
+        .map(|field| field.as_str().expect("field name"))
+        .collect();
+    let mut expected_fields = oneiron::OUTBOUND_VERB_FIELD_CONTRACT.to_vec();
+    advertised_fields.sort_unstable();
+    expected_fields.sort_unstable();
+    assert_eq!(advertised_fields, expected_fields);
     assert_eq!(
         outbound["unsupported_error_code"],
         Value::from("UNSUPPORTED_CAPABILITY")

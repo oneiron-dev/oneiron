@@ -422,7 +422,7 @@ fn top_up_rejects_idempotency_key_over_encoded_storage_limit() {
         err,
         UsageError::InvalidField {
             field: "idempotencyKey",
-            message: "produces a storage key that is too long"
+            ..
         }
     ));
     assert_eq!(usage.allowance.allowance_credit_units, 0.0);

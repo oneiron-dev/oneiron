@@ -334,15 +334,37 @@ fn inbound_echo_of_our_own_push_is_suppressed() {
     let store = adapter.tasks();
     assert_eq!(store.applies, 0);
     assert_eq!(store.snapshot(task_ref).revision, 1);
-    let link = store.stored_link(task_ref);
-    assert_eq!(link.issue_updated_at_ms, 6_000);
+
+    // A stale payload must not overwrite the TASK behind the link watermark.
+    let mut incoming = task_fields();
+    incoming.status = "done".to_owned();
+    let behind_link = adapter
+        .apply_issue_change(change("evt-behind-link", 5_000, incoming.clone()), 42)
+        .expect("behind link watermark");
+    assert_eq!(behind_link.status, LinearMirrorStatus::Noop);
+    assert_eq!(adapter.tasks().applies, 0);
+    assert_eq!(adapter.tasks().snapshot(task_ref).revision, 1);
+    assert_eq!(adapter.tasks().snapshot(task_ref).fields.status, "todo");
 
     // Preserve the independent store-watermark guard as well as the link
     // watermark exercised above.
-    let mut snapshot = store.snapshot(task_ref);
+    let mut snapshot = adapter.tasks().snapshot(task_ref);
     snapshot.last_pulled_updated_at_ms = Some(9_000);
-    let replay = change("evt-behind-store", 8_000, task_fields());
-    assert!(inbound_already_seen(&link, &snapshot, &replay, [0_u8; 32]));
+    adapter.tasks_mut().snapshots.insert(task_ref, snapshot);
+    let replay = change("evt-behind-store", 8_000, incoming);
+    let receipt = adapter
+        .apply_issue_change(replay, 43)
+        .expect("behind store watermark");
+    assert_eq!(receipt.status, LinearMirrorStatus::Noop);
+    let store = adapter.tasks();
+    assert_eq!(store.applies, 0);
+    assert_eq!(store.snapshot(task_ref).revision, 1);
+    for field in LINEAR_MIRRORED_FIELDS {
+        assert_eq!(
+            store.snapshot(task_ref).fields.field_value(field),
+            task_fields().field_value(field),
+        );
+    }
 }
 
 #[test]
@@ -637,20 +659,50 @@ fn a_blank_event_id_is_rejected_before_lookup_or_mutation() {
     incoming.status = "done".to_owned();
 
     let error = adapter
-        .apply_issue_change(change(" \t\n", 5_000, incoming), 40)
+        .apply_issue_change(change(" \t\n", 5_000, incoming.clone()), 40)
         .expect_err("blank event id");
 
-    match error {
-        LinearSyncError::Store(crate::error::Error::InvariantViolation(message)) => {
-            assert_eq!(message, ERR_BLANK_EVENT_ID);
-        }
-        other => panic!("unexpected error: {other:?}"),
-    }
+    assert!(matches!(
+        error,
+        LinearSyncError::Store(crate::error::Error::InvariantViolation(_))
+    ));
     let store = adapter.tasks();
     assert_eq!(store.issue_link_lookups.get(), 0);
     assert_eq!(store.applies, 0);
-    assert_eq!(store.snapshot(task_ref), before_snapshot);
-    assert_eq!(store.stored_link(task_ref), before_link);
+    let after_snapshot = store.snapshot(task_ref);
+    assert_eq!(after_snapshot.task_ref, before_snapshot.task_ref);
+    assert_eq!(after_snapshot.revision, before_snapshot.revision);
+    assert_eq!(
+        after_snapshot.issue.as_ref().map(|issue| &issue.issue_id),
+        before_snapshot.issue.as_ref().map(|issue| &issue.issue_id),
+    );
+    for field in LINEAR_MIRRORED_FIELDS {
+        assert_eq!(
+            after_snapshot.fields.field_value(field),
+            before_snapshot.fields.field_value(field),
+        );
+    }
+    let after_link = store.stored_link(task_ref);
+    for event_id in ["evt-create-1", " \t\n"] {
+        assert_eq!(
+            after_link.has_seen_event(event_id),
+            before_link.has_seen_event(event_id),
+        );
+    }
+
+    // The rejected event must leave neither a push barrier nor a watermark
+    // that suppresses a subsequent valid change.
+    let push = adapter.push_task(task_ref, 41).expect("unchanged push");
+    assert_eq!(push.status, LinearMirrorStatus::Noop);
+    let valid = adapter
+        .apply_issue_change(change("evt-valid", 4_000, incoming), 42)
+        .expect("valid change after rejection");
+    assert_eq!(valid.status, LinearMirrorStatus::Applied);
+    assert_eq!(adapter.tasks().snapshot(task_ref).fields.status, "done");
+    assert_eq!(adapter.tasks().applies, 1);
+    let (_, _, egress) = adapter.into_parts();
+    assert_eq!(egress.created, 1);
+    assert_eq!(egress.updated, 0);
 }
 
 #[test]
@@ -765,51 +817,44 @@ fn store_level_cas_rejects_a_stale_barrier_clobber() {
 #[test]
 fn operation_ids_separate_direction_revision_and_operation_kind() {
     let task_ref = task_id(0x1e);
-    let create = linear_operation_id(
-        LinearSyncDirection::TaskToIssue,
-        task_ref,
-        1,
-        None,
-        None,
-        None,
+    let mut first = adapter(
+        FakeStore::with_task(task_ref, task_fields()),
+        FakeSource::default(),
     );
-    let repeat = linear_operation_id(
-        LinearSyncDirection::TaskToIssue,
-        task_ref,
-        1,
-        None,
-        None,
-        None,
+    let create = first.push_task(task_ref, 10).expect("create");
+    let mut retry = adapter(
+        FakeStore::with_task(task_ref, task_fields()),
+        FakeSource::default(),
     );
-    let update = linear_operation_id(
-        LinearSyncDirection::TaskToIssue,
-        task_ref,
-        1,
-        Some("issue-1"),
-        None,
-        None,
-    );
-    let inbound = linear_operation_id(
-        LinearSyncDirection::IssueToTask,
-        task_ref,
-        1,
-        Some("issue-1"),
-        Some(5_000),
-        Some("evt-1"),
-    );
-    let next = linear_operation_id(
-        LinearSyncDirection::TaskToIssue,
-        task_ref,
-        2,
-        None,
-        None,
-        None,
-    );
+    let repeat = retry.push_task(task_ref, 11).expect("repeat create");
 
-    assert_eq!(create, repeat);
-    assert_ne!(create, update);
-    assert_ne!(update, inbound);
-    assert_ne!(create, next);
+    // Keep revision one to isolate create versus linked-update identity.
+    let update = first.push_task(task_ref, 12).expect("unchanged update");
+    let inbound = first
+        .apply_issue_change(change("evt-1", 5_000, task_fields()), 13)
+        .expect("inbound echo");
+
+    let mut next_store = FakeStore::with_task(task_ref, task_fields());
+    next_store.edit(task_ref, |_| {});
+    let mut next_adapter = adapter(next_store, FakeSource::default());
+    let next = next_adapter.push_task(task_ref, 14).expect("next create");
+
+    assert_eq!(create.status, LinearMirrorStatus::Linked);
+    assert_eq!(repeat.status, LinearMirrorStatus::Linked);
+    assert_eq!(update.status, LinearMirrorStatus::Noop);
+    assert_eq!(inbound.status, LinearMirrorStatus::Noop);
+    assert_eq!(next.status, LinearMirrorStatus::Linked);
+    assert_eq!(create.operation_id, repeat.operation_id);
+    assert_ne!(create.operation_id, update.operation_id);
+    assert_ne!(update.operation_id, inbound.operation_id);
+    assert_ne!(create.operation_id, next.operation_id);
+
+    let (_, _, egress) = first.into_parts();
+    assert_eq!(egress.operations, vec![create.operation_id]);
+    let (_, _, egress) = retry.into_parts();
+    assert_eq!(egress.operations, vec![repeat.operation_id]);
+    let (_, _, egress) = next_adapter.into_parts();
+    assert_eq!(egress.operations, vec![next.operation_id]);
 }
 
 /// The changed helper shape: the inbound key is `(issue_id,
@@ -820,14 +865,16 @@ fn operation_ids_separate_direction_revision_and_operation_kind() {
 fn inbound_operation_ids_bind_the_event_id_not_only_the_timestamp() {
     let task_ref = task_id(0x1e);
     let inbound = |event_id: &str, updated_at_ms: u64| {
-        linear_operation_id(
-            LinearSyncDirection::IssueToTask,
-            task_ref,
-            1,
-            Some("issue-1"),
-            Some(updated_at_ms),
-            Some(event_id),
-        )
+        let mut adapter = linked_adapter(task_ref, FakeSource::default());
+        let mut incoming = task_fields();
+        incoming.status = "done".to_owned();
+        let receipt = adapter
+            .apply_issue_change(change(event_id, updated_at_ms, incoming), 40)
+            .expect("inbound change");
+        assert_eq!(receipt.status, LinearMirrorStatus::Applied);
+        assert_eq!(adapter.tasks().applies, 1);
+        assert_eq!(adapter.tasks().snapshot(task_ref).fields.status, "done");
+        receipt.operation_id
     };
 
     let first = inbound("evt-a", 5_000);

@@ -164,12 +164,8 @@ fn from_edge_auth_rejects_identity_class_mismatch() {
     .expect_err("hosted connector claiming cloud-vault peer must be rejected");
     assert_eq!(
         err.kind(),
-        crate::error::ErrorKind::RelayAttestationClassMismatch
+        crate::error::ErrorKind::RelayAttestationClassMismatch,
     );
-    let message = format!("{err}");
-    assert!(message.contains(HOSTED_EDGE_IDENTITY));
-    assert!(message.contains("cloud_vault_peer"));
-    assert!(message.contains("local_vault_via_hosted_connector"));
 
     // The mirror: the cloud-vault peer may not present as a hosted connector
     // (which would force a redundant re-run on already-classified content).
@@ -181,7 +177,7 @@ fn from_edge_auth_rejects_identity_class_mismatch() {
     .expect_err("cloud-vault peer claiming hosted-connector class must be rejected");
     assert_eq!(
         err.kind(),
-        crate::error::ErrorKind::RelayAttestationClassMismatch
+        crate::error::ErrorKind::RelayAttestationClassMismatch,
     );
 }
 
@@ -272,14 +268,13 @@ fn attested_relay_domain_serializes_domain_and_identity() {
     // receipt naming only the domain could not be traced back to the edge that
     // presented it.
     let witness = &hosted_witness();
+    let serialized = serde_json::to_value(witness).expect("witness serializes");
     assert_eq!(
-        serde_json::to_value(witness).expect("witness serializes"),
-        serde_json::json!({
-            "domain": serde_json::to_value(RelayTrustDomain::LocalViaHostedConnector)
-                .expect("inner domain serializes"),
-            "service_identity": HOSTED_EDGE_IDENTITY,
-        })
+        serialized["domain"],
+        serde_json::to_value(RelayTrustDomain::LocalViaHostedConnector)
+            .expect("inner domain serializes"),
     );
+    assert_eq!(serialized["service_identity"], HOSTED_EDGE_IDENTITY);
 }
 
 #[test]

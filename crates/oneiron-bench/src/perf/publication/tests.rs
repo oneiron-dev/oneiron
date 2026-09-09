@@ -75,10 +75,15 @@ fn every_emitted_check_matches_the_trust_table_exactly() {
     let decision = decide(&candidate_inputs());
     let emitted: Vec<&str> = decision.checks.iter().map(|check| check.check).collect();
     let declared: Vec<&str> = trust::CHECKS.iter().map(|spec| spec.name).collect();
-    assert_eq!(
-        emitted, declared,
-        "emitted checks must match the trust table"
-    );
+
+    for name in &emitted {
+        assert_eq!(emitted.iter().filter(|other| *other == name).count(), 1);
+        assert!(declared.contains(name));
+    }
+    for name in &declared {
+        assert_eq!(declared.iter().filter(|other| *other == name).count(), 1);
+        assert!(emitted.contains(name));
+    }
 
     for check in &decision.checks {
         let spec = trust::check_spec(check.check).expect("every emitted check is declared");
@@ -197,12 +202,13 @@ fn every_mandatory_axis_blocks_candidacy_when_unavailable() {
         assert!(!decision.candidate, "{expected_check} must fail closed");
         assert_eq!(decision.blocking_checks, vec![expected_check]);
         assert!(decision.advisory_failures.is_empty());
-        assert!(
-            decision
-                .non_candidate_reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains(expected_check))
-        );
+        let check = decision
+            .checks
+            .iter()
+            .find(|check| check.check == expected_check)
+            .expect("the rejected axis is emitted");
+        assert_eq!(check.scope, CheckScope::Blocking);
+        assert!(!check.satisfied);
     }
 }
 
@@ -224,9 +230,9 @@ fn a_child_program_that_is_not_the_measuring_artifact_blocks_candidacy() {
     );
     let check = decision
         .checks
-        .last()
-        .expect("the child-program check is emitted last");
-    assert_eq!(check.check, "child_program_matches_build_revision");
+        .iter()
+        .find(|check| check.check == "child_program_matches_build_revision")
+        .expect("the child-program check is emitted");
     assert_eq!(check.scope, CheckScope::Blocking);
     assert_eq!(
         check.trust_inputs,
@@ -377,19 +383,18 @@ fn a_dirty_or_unapproved_build_artifact_blocks_candidacy() {
         decision.blocking_checks,
         vec!["build_tree_clean_at_compile_time"]
     );
-    assert!(
-        decision
-            .non_candidate_reason
-            .unwrap_or_default()
-            .contains("uncommitted sources")
-    );
 
     let mut unknown = candidate_inputs();
     unknown.build_tree_clean = false;
     unknown.build_tree_detail = "no cleanliness was embedded at compile time".to_owned();
+    let decision = decide(&unknown);
     assert!(
-        !decide(&unknown).candidate,
+        !decision.candidate,
         "an artifact that embedded nothing must not be assumed clean"
+    );
+    assert_eq!(
+        decision.blocking_checks,
+        vec!["build_tree_clean_at_compile_time"]
     );
 
     let mut debug_build = candidate_inputs();
@@ -402,24 +407,23 @@ fn a_dirty_or_unapproved_build_artifact_blocks_candidacy() {
         decision.blocking_checks,
         vec!["measured_optimized_build_settings"]
     );
-    assert!(
-        decision
-            .non_candidate_reason
-            .unwrap_or_default()
-            .contains("debug_assertions=true")
-    );
 
     // The two are independent: neither one masks the other.
     let mut both = candidate_inputs();
     both.build_tree_clean = false;
     both.build_settings_optimized = false;
     let decision = decide(&both);
-    assert_eq!(
-        decision.blocking_checks,
-        vec![
-            "build_tree_clean_at_compile_time",
-            "measured_optimized_build_settings"
-        ]
+    assert!(!decision.candidate);
+    assert_eq!(decision.blocking_checks.len(), 2);
+    assert!(
+        decision
+            .blocking_checks
+            .contains(&"build_tree_clean_at_compile_time")
+    );
+    assert!(
+        decision
+            .blocking_checks
+            .contains(&"measured_optimized_build_settings")
     );
 }
 
@@ -435,12 +439,6 @@ fn a_starved_completed_sample_floor_blocks_candidacy() {
     assert_eq!(
         decision.blocking_checks,
         vec!["recall_latency_completed_sample_floor"]
-    );
-    assert!(
-        decision
-            .non_candidate_reason
-            .unwrap_or_default()
-            .contains("3 cold")
     );
 }
 

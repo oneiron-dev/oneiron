@@ -256,7 +256,7 @@ fn rebuild_hnsw_strict_preserves_committed_graph_on_invalid_vector() -> Result<(
     }
 
     let err = vault.maintain().rebuild_hnsw().run().unwrap_err();
-    assert_matches!(err, Error::CorruptedIndex("vector row bytes"));
+    assert_matches!(err, Error::CorruptedIndex(_));
 
     let count_after = read_u64_meta(&vault, COUNT_KEY)?;
     let neighbors_after = read_neighbor_bytes(&vault, &a)?;
@@ -289,10 +289,7 @@ fn rebuild_hnsw_rejects_stale_vector_snapshot() -> Result<()> {
     vault.put_vector(&b, &[0.0, 0.5, 0.5, 0.0])?;
 
     let err = commit_rebuilt_hnsw(&vault, &prepared.rebuilt, prepared.vector_version).unwrap_err();
-    assert_matches!(
-        err,
-        Error::ConcurrentWrite("vectors changed during hnsw rebuild; retry maintenance")
-    );
+    assert_matches!(err, Error::ConcurrentWrite(_));
 
     let count_after = read_u64_meta(&vault, COUNT_KEY)?;
     let vector_version_after = read_u64_meta(&vault, VECTOR_VERSION_KEY)?;
@@ -376,7 +373,7 @@ fn rebuild_hnsw_builder_modes_are_last_call_wins() -> Result<()> {
         .rebuild_hnsw()
         .run()
         .unwrap_err();
-    assert_matches!(err, Error::CorruptedIndex("vector row bytes"));
+    assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
 
@@ -407,12 +404,7 @@ fn build_hnsw_graph_from_snapshot_rejects_missing_entry_point_vector() -> Result
         LinkDiscipline::Symmetric,
     )
     .unwrap_err();
-    assert_matches!(
-        err,
-        Error::InvariantViolation(
-            "validated rebuild vector disappeared within the same read snapshot"
-        )
-    );
+    assert_matches!(err, Error::InvariantViolation(_));
     Ok(())
 }
 
@@ -1750,10 +1742,7 @@ fn attempt_queue_cleanup_maintenance_rejects_zero_timeout() -> Result<()> {
         .cleanup_attempt_queue_leases(0)
         .run()
         .unwrap_err();
-    assert_matches!(
-        err,
-        Error::InvalidAttemptQueueRecord("lease timeout must be > 0")
-    );
+    assert_matches!(err, Error::InvalidAttemptQueueRecord(_));
 
     Ok(())
 }

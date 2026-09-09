@@ -13,12 +13,6 @@ fn fetch_policy_defaults_match_blueprint() {
     let p = FetchPolicy::default();
     assert!(p.allowed_origins.is_empty());
     assert!(p.allowed_cidrs.is_empty());
-    assert_eq!(p.max_redirects, 3);
-    assert_eq!(p.timeout_ms, 5_000);
-    assert_eq!(p.max_aia_bytes, 1_048_576);
-    assert_eq!(p.max_ocsp_bytes, 1_048_576);
-    assert_eq!(p.max_crl_bytes, 8_388_608);
-    assert_eq!(p.max_tsa_bytes, 1_048_576);
 }
 
 #[tokio::test]

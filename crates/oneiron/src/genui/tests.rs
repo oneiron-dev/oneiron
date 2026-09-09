@@ -363,8 +363,7 @@ fn forged_typed_action_mismatch_is_rejected_before_grant_mint() -> Result<()> {
 
     assert!(matches!(
         evaluate_ask_action(&card, &request),
-        Err(Error::InvalidConfig(message))
-            if message.contains("payload does not match declared typed action")
+        Err(Error::InvalidConfig(_))
     ));
 
     Ok(())
@@ -956,6 +955,26 @@ fn reserved_healer_slot_is_not_rendered_as_not_run() -> Result<()> {
 
 #[test]
 fn surfaced_failure_card_serialization_contains_no_inline_transcript() -> Result<()> {
+    fn assert_no_transcript_keys(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, value) in fields {
+                    assert!(
+                        !matches!(key.as_str(), "content" | "prompt" | "patch"),
+                        "forbidden transcript-bearing key: {key}",
+                    );
+                    assert_no_transcript_keys(value);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    assert_no_transcript_keys(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
     let (_dir, vault) = card_vault();
     let (failing, tree) = failed_run(&vault)?;
     let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
@@ -974,12 +993,16 @@ fn surfaced_failure_card_serialization_contains_no_inline_transcript() -> Result
         ),
     )?;
     let wire = serde_json::to_string(&card).expect("card serializes");
+    let parsed: serde_json::Value = serde_json::from_str(&wire).expect("card JSON");
 
     // The card REFERENCES the witnessed MESSAGE; it never copies its body.
-    assert!(wire.contains(&message.to_hex()));
+    assert_eq!(parsed["qa"]["thread_ref"], thread.to_hex());
+    let entries = parsed["qa"]["entries"].as_array().expect("Q&A entries");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["message_ref"], message.to_hex());
+    assert_eq!(entries[0]["actor_ref"], actor.to_hex());
     assert!(!wire.contains(QA_MESSAGE_BODY), "no inline transcript body");
-    assert!(!wire.contains("content"), "no transcript content field");
-    assert!(!wire.contains("prompt"), "no prompt copy");
-    assert!(!wire.contains("patch"), "no repair patch body");
+
+    assert_no_transcript_keys(&parsed);
     Ok(())
 }

@@ -62,14 +62,20 @@ fn smart_http_serve_command_argv_pins_door_hooks_path() {
         ServeCommand::http_backend(&repo, root.path(), hooks.path()).expect("build serve command");
 
     let argv = command.argv();
-    assert_eq!(argv[1], "-c", "the config pair leads the verb");
+    let backend = argv
+        .iter()
+        .position(|arg| arg == "http-backend")
+        .expect("serve invokes http-backend");
+    let mut args = argv[1..backend]
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    args.extend(["config", "--get", "core.hooksPath"]);
     assert_eq!(
-        argv[2],
-        format!("core.hooksPath={}", hooks.path().display()),
-        "every serve invocation pins the door-owned hooks path"
+        git(&repo, &args),
+        hooks.path().display().to_string(),
+        "Git resolves the backend configuration to the vetted hooks directory"
     );
-    assert_eq!(argv[3], "http-backend", "exactly one subprocess model");
-    assert_eq!(argv.len(), 4, "the argv is frozen");
 }
 
 #[test]

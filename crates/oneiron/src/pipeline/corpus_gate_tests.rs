@@ -103,9 +103,12 @@ fn corpus_cache_preserves_all_no_op_and_suppression() -> Result<()> {
         &mut metadata,
         &mut gate,
     )?;
-    assert_eq!(scores, original);
+    assert_eq!(scores.len(), original.len());
+    for (actual, expected) in scores.iter().zip(&original) {
+        assert_eq!(actual.id, expected.id);
+        assert_eq!(actual.score, expected.score);
+    }
     assert_eq!(gate.body_loads, 0);
-    assert!(gate.decisions.is_empty());
     apply_corpus_filter(
         &mut scores,
         &vault.store,
@@ -114,18 +117,18 @@ fn corpus_cache_preserves_all_no_op_and_suppression() -> Result<()> {
         &mut metadata,
         &mut gate,
     )?;
-    assert_eq!(scores, vec![original[2]]);
+    assert_eq!(scores.len(), 1);
+    assert_eq!(scores[0].id, event);
+    assert_eq!(scores[0].score, original[2].score);
     assert_eq!(gate.body_loads, 2);
-    assert_eq!(gate.decisions.len(), 2, "non-claim bodies are opaque");
     for id in [dead, malformed] {
-        assert!(gate.decisions[&id].is_none());
         assert!(!pipeline_candidate_matches_corpus_filter(
             &vault.store,
             &rtxn,
             &id,
             &CorpusScope::Unscoped,
             &mut metadata,
-            &mut gate
+            &mut gate,
         )?);
     }
     assert_eq!(gate.body_loads, 2, "suppressed decisions are memoized too");

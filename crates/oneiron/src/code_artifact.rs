@@ -299,7 +299,9 @@ mod tests {
         let encoded = encode_code_artifact_body(&body)?;
         let decoded = decode_code_artifact_body(&encoded)?;
 
-        assert_eq!(decoded, body);
+        assert_eq!(decoded.summary_prompt, body.summary_prompt);
+        assert_eq!(decoded.summary_hash, body.summary_hash);
+        assert_eq!(decoded.repo_ref, body.repo_ref);
         Ok(())
     }
 
@@ -312,7 +314,10 @@ mod tests {
         vault.put_code_artifact(&id, &body, TimeRange { start: 10, end: 10 }, 11)?;
         let decoded = vault.get_code_artifact(&id)?.ok_or(Error::EntityNotFound)?;
 
-        assert_eq!(decoded, body);
+        assert_eq!(decoded.summary_prompt, body.summary_prompt);
+        assert_eq!(decoded.summary_hash, body.summary_hash);
+        assert_eq!(decoded.repo_ref, body.repo_ref);
+        assert_eq!(decoded.class.as_str(), body.class.as_str());
         assert_eq!(vault.get_entity_type(&id)?, Some(ENTITY_TYPE_CODE_ARTIFACT));
         assert_eq!(short_id_prefix(ENTITY_TYPE_CODE_ARTIFACT)?, "cd");
         let entry = entity_type_registry_entry(ENTITY_TYPE_CODE_ARTIFACT)

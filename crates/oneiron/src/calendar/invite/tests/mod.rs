@@ -175,9 +175,11 @@ fn calendar_invite_payload_is_exact_five_field_contract() {
     };
     let wire = serde_json::to_value(&payload).expect("serialize");
     let object = wire.as_object().expect("object");
+    let mut keys = object.keys().map(String::as_str).collect::<Vec<_>>();
+    keys.sort_unstable();
     assert_eq!(
-        object.keys().map(String::as_str).collect::<Vec<_>>(),
-        vec!["method", "uid", "sequence", "ics_blob_ref", "recipient"]
+        keys,
+        vec!["ics_blob_ref", "method", "recipient", "sequence", "uid"],
     );
     assert_eq!(object["method"], serde_json::json!("REQUEST"));
 
@@ -485,13 +487,7 @@ fn calendar_invite_request_denies_without_consent_basis() {
 
     let refusal = admit_calendar_invite(&vault, actor_ref, &request(0, &blob_ref), NOW)
         .expect_err("a cold invite never attaches an .ics");
-    let CalendarError::InviteRefused { reason } = refusal else {
-        panic!("cold invite must be an invite refusal");
-    };
-    assert!(
-        reason.contains("cold invite"),
-        "unexpected reason: {reason}"
-    );
+    assert!(matches!(refusal, CalendarError::InviteRefused { .. }));
 
     // Nothing was minted behind the refusal: a cold invite leaves no UID.
     assert!(
@@ -593,19 +589,18 @@ fn calendar_invite_cancel_requires_existing_recipient_binding() {
     };
     let refusal = admit_calendar_invite(&vault, actor_ref, &cancel, NOW)
         .expect_err("cancel to an unbound recipient is a cold ping");
-    let CalendarError::InviteRefused { reason } = refusal else {
-        panic!("unbound cancel must be an invite refusal");
-    };
-    assert!(
-        reason.contains("already bound"),
-        "unexpected reason: {reason}"
-    );
+    assert!(matches!(refusal, CalendarError::InviteRefused { .. }));
 
     attendee(&vault, 0x59, event_ref, "stranger@example.test");
     // The binding alone is not enough for a stranger: consent still rules.
     prior_thread(&vault, 0x61, "stranger@example.test");
-    admit_calendar_invite(&vault, actor_ref, &cancel, NOW)
+    let admission = admit_calendar_invite(&vault, actor_ref, &cancel, NOW)
         .expect("a bound recipient may be cancelled");
+    assert_eq!(admission.event_ref(), event_ref);
+    assert!(matches!(
+        admission.state_change(),
+        CalendarInviteStateChange::BumpSequence { from: 0 },
+    ));
 }
 
 #[test]
@@ -622,13 +617,7 @@ fn calendar_invite_denies_non_primary_sender_domain() {
     );
     let refusal = admit_calendar_invite(&vault, actor_ref, &request(0, &blob_ref), NOW)
         .expect_err("an off-domain sender never carries a real invite");
-    let CalendarError::InviteRefused { reason } = refusal else {
-        panic!("off-domain sender must be an invite refusal");
-    };
-    assert!(
-        reason.contains("primary calendar domain"),
-        "unexpected reason: {reason}"
-    );
+    assert!(matches!(refusal, CalendarError::InviteRefused { .. }));
 }
 
 #[test]
@@ -639,15 +628,27 @@ fn calendar_invite_ignores_caller_hygiene_bools_and_rehydrates_from_vault() {
         admit_calendar_invite(&vault, actor_ref, &payload, NOW).expect("admits on real evidence");
 
     // There is no API by which a caller supplies hygiene: the only public
-    // input is the five-field payload, and the context it produces is a
-    // pure function of stored evidence. Removing the evidence flips the
-    // verdict even though the caller's bytes are byte-identical.
-    assert_eq!(
+    // input is the five-field payload. Changing stored sender evidence
+    // flips the verdict without changing that payload.
+    assert!(matches!(
         from_vault.hygiene().consent_basis(),
-        Some(&CalendarInviteConsentBasis::PriorThread)
+        Some(CalendarInviteConsentBasis::PriorThread),
+    ));
+    assert!(matches!(
+        from_vault.state_change(),
+        CalendarInviteStateChange::MintUid,
+    ));
+    identity(
+        &vault,
+        0x5A,
+        actor_ref,
+        CALENDAR_INVITE_CHANNEL,
+        "bulk@sequencer.test",
     );
-    assert_eq!(from_vault.hygiene().sender_domain(), Some("primary.test"));
-    assert_eq!(from_vault.hygiene().primary_domain(), Some("primary.test"));
+    assert!(matches!(
+        admit_calendar_invite(&vault, actor_ref, &payload, NOW),
+        Err(CalendarError::InviteRefused { .. }),
+    ));
 
     let (_dir2, bare) = open_calendar_vault();
     let bare_actor = actor(&bare);
@@ -660,8 +661,11 @@ fn calendar_invite_ignores_caller_hygiene_bools_and_rehydrates_from_vault() {
         &emit(0, CalendarInviteMethod::Request),
     );
     assert!(
-        admit_calendar_invite(&bare, bare_actor, &request(0, &bare_blob), NOW).is_err(),
-        "the same caller bytes must refuse when the vault carries no consent"
+        matches!(
+            admit_calendar_invite(&bare, bare_actor, &request(0, &bare_blob), NOW),
+            Err(CalendarError::InviteRefused { .. }),
+        ),
+        "the same caller bytes must refuse when the vault carries no consent",
     );
 }
 

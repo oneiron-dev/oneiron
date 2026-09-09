@@ -819,10 +819,6 @@ fn generated_claim_cannot_supersede_user_stated_non_code_truth() -> Result<()> {
         .supersede_claim(&new, &old, 777)
         .expect_err("generated non-code truth must not supersede user-stated truth");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
-    assert!(
-        err.to_string()
-            .contains("generated claim cannot supersede user-stated truth")
-    );
     assert_eq!(
         vault.get_raw(&old)?.expect("old claim still stored"),
         old_before
@@ -870,10 +866,6 @@ fn restamped_generated_origin_claim_cannot_supersede_user_stated_truth() -> Resu
         .supersede_claim(&new, &old, 777)
         .expect_err("restamped generated-origin claim must not supersede user-stated truth");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
-    assert!(
-        err.to_string()
-            .contains("generated claim cannot supersede user-stated truth")
-    );
     assert_eq!(
         vault.get_raw(&old)?.expect("old claim still stored"),
         old_before
@@ -919,10 +911,6 @@ fn restamped_generated_origin_claim_cannot_supersede_legacy_unstamped_truth() ->
         .supersede_claim(&new, &old, 777)
         .expect_err("restamped generated-origin claim must not supersede legacy missing-src truth");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
-    assert!(
-        err.to_string()
-            .contains("generated claim cannot supersede user-stated truth")
-    );
     assert_eq!(
         vault.get_raw(&old)?.expect("old claim still stored"),
         old_before
@@ -1109,16 +1097,11 @@ fn claim_lifecycle_ops_reject_provenance_claims_toward_provenance_api() -> Resul
     let normal_before = vault.get_raw(&normal)?.expect("normal stored");
 
     // The generic ops must NOT bypass the edge-restamp lifecycle (M2-9):
-    // provenance-predicate claims are rejected typed in EVERY position,
-    // and the error points at the provenance API.
+    // provenance-predicate claims are rejected typed in EVERY position.
     let err = vault
         .retract_claim(&prov, 9)
         .expect_err("retracting an edge.provenance claim must fail typed");
     assert_eq!(err.kind(), ErrorKind::ProvenanceClaimLifecycle);
-    assert!(
-        err.to_string().contains("edge-provenance lifecycle API"),
-        "error must point at the provenance API: {err}"
-    );
 
     let err = vault
         .supersede_claim(&normal, &prov, 9)

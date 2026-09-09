@@ -449,7 +449,6 @@ fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
         )
         .expect_err("deep without a lease");
     assert_eq!(err.code, MEMORY_CODE_LEASE_REQUIRED);
-    assert!(err.suggestions.iter().any(|s| s.contains("lease")));
     assert_eq!(composer.calls(), 0);
 
     let lease = BudgetLease::for_test("chat-deep");

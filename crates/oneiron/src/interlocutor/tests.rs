@@ -132,13 +132,18 @@ fn class_and_evidence_string_forms_are_pinned() {
     assert_eq!(InterlocutorClass::Owner.as_str(), "owner");
     assert_eq!(InterlocutorClass::KnownContact.as_str(), "known_contact");
     assert_eq!(InterlocutorClass::Unknown.as_str(), "unknown");
-    for class in [
-        InterlocutorClass::Owner,
-        InterlocutorClass::KnownContact,
-        InterlocutorClass::Unknown,
-    ] {
-        assert_eq!(InterlocutorClass::parse(class.as_str()), Some(class));
-    }
+    assert_eq!(
+        InterlocutorClass::parse("owner"),
+        Some(InterlocutorClass::Owner),
+    );
+    assert_eq!(
+        InterlocutorClass::parse("known_contact"),
+        Some(InterlocutorClass::KnownContact),
+    );
+    assert_eq!(
+        InterlocutorClass::parse("unknown"),
+        Some(InterlocutorClass::Unknown),
+    );
     assert_eq!(InterlocutorClass::parse("root"), None);
 
     assert_eq!(
@@ -150,9 +155,10 @@ fn class_and_evidence_string_forms_are_pinned() {
         "enrolled_voice_print"
     );
     assert_eq!(PresenceEvidence::FirstClaim.as_str(), "first_claim");
-    assert_eq!(PresenceEvidence::AuthenticatedSession.rank(), 3);
-    assert_eq!(PresenceEvidence::EnrolledVoicePrint.rank(), 2);
-    assert_eq!(PresenceEvidence::FirstClaim.rank(), 1);
+    assert!(
+        PresenceEvidence::AuthenticatedSession.rank() > PresenceEvidence::EnrolledVoicePrint.rank()
+    );
+    assert!(PresenceEvidence::EnrolledVoicePrint.rank() > PresenceEvidence::FirstClaim.rank());
 }
 
 #[test]
@@ -488,39 +494,36 @@ fn owner_entries_exist_only_via_session_constructors() {
 
 #[test]
 fn forged_owner_literals_are_filtered_from_set_constructors() {
-    // In-module (test) code can express an Owner-class literal; the set
-    // constructors must drop it so `supervised()` stays trustworthy.
-    let forged_owner = Interlocutor {
-        class: InterlocutorClass::Owner,
-        evidence: PresenceEvidence::FirstClaim,
-        label: "forged".to_owned(),
-        contact_ref: None,
-        first_touch: None,
-        relationship: None,
-        claimed_owner: true,
-        owner_print_matched: false,
-    };
+    // Even a session-minted Owner must be filtered when supplied as a participant.
+    let session = InterlocutorSet::owner_alone();
+    let supplied_owner = session.entries()[0].clone();
+    assert_eq!(supplied_owner.class(), InterlocutorClass::Owner);
 
-    let without_owner = InterlocutorSet::without_owner(vec![forged_owner.clone()]);
+    let without_owner = InterlocutorSet::without_owner(vec![supplied_owner.clone()]);
     assert!(without_owner.entries().is_empty());
     assert!(!without_owner.supervised());
 
     let with_owner = InterlocutorSet::with_session_owner(vec![
-        forged_owner,
+        supplied_owner,
         Interlocutor::unknown("guest", false),
     ]);
+    assert!(with_owner.supervised());
     assert_eq!(with_owner.entries().len(), 2);
-    assert!(
-        with_owner
-            .entries()
-            .iter()
-            .filter(|entry| entry.class() == InterlocutorClass::Owner)
-            .all(
-                |entry| entry.evidence() == PresenceEvidence::AuthenticatedSession
-                    && entry.label() == "owner"
-            ),
-        "the only surviving Owner entry is the constructor-minted one"
+    let mut owners = with_owner
+        .entries()
+        .iter()
+        .filter(|entry| entry.class() == InterlocutorClass::Owner);
+    assert_eq!(
+        owners.next().map(super::Interlocutor::evidence),
+        Some(PresenceEvidence::AuthenticatedSession),
     );
+    assert!(owners.next().is_none());
+    let mut non_owner = with_owner.non_owner();
+    assert_eq!(
+        non_owner.next().map(super::Interlocutor::class),
+        Some(InterlocutorClass::Unknown),
+    );
+    assert!(non_owner.next().is_none());
 }
 
 #[test]

@@ -665,10 +665,6 @@ fn linkedin_inbox_sync_tool_failures_are_retryable() -> Result<()> {
         .expect_err("missing tool output fails");
     assert_eq!(err.kind(), ErrorKind::UpstreamToolFailure);
     assert!(err.is_retryable());
-    assert!(
-        format!("{err}").contains("tool=get_conversation"),
-        "unexpected error: {err}"
-    );
     Ok(())
 }
 

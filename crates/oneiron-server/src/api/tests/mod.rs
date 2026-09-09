@@ -39,10 +39,6 @@ use support_mcp::*;
 
 pub(super) const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT: &str =
     include_str!("../../../tests/fixtures/v1_core_openapi_contract.snapshot.json");
-pub(super) const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/v1_core_openapi_contract.snapshot.json"
-);
 pub(super) const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT: &str =
     include_str!("../../../tests/fixtures/v1_core_success_contract.snapshot.json");
 pub(super) const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT_PATH: &str = concat!(
@@ -51,10 +47,6 @@ pub(super) const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT_PATH: &str = concat!(
 );
 pub(super) const V1_CORE_ERROR_CONTRACT_SNAPSHOT: &str =
     include_str!("../../../tests/fixtures/v1_core_error_contract.snapshot.json");
-pub(super) const V1_CORE_ERROR_CONTRACT_SNAPSHOT_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/v1_core_error_contract.snapshot.json"
-);
 pub(super) const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
     ("/v1/core/batch", "post"),
     ("/v1/core/query", "post"),

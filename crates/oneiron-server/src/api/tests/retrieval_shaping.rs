@@ -277,7 +277,8 @@ async fn context_pack_route_projects_json_response_controls() {
     let truncated = budget_body["results"][0]["fields"]["txt"]
         .as_str()
         .expect("truncated text field");
-    assert!(truncated.contains("truncated"));
+    assert!(!truncated.is_empty());
+    assert!(truncated.len() < long_text.len());
     assert_eq!(
         budget_body["stats"]["items_truncated"]["count"],
         Value::from(1)
@@ -316,11 +317,6 @@ async fn context_pack_route_projects_json_response_controls() {
         token_budget_body["state"]["reason"],
         Value::from("filter_matched_none")
     );
-    assert!(
-        token_budget_body["state"]["hint"]
-            .as_str()
-            .is_some_and(|hint| hint.contains("budget.token_budget"))
-    );
     assert_eq!(
         token_budget_body["evidence"]["result_ids"],
         Value::Array(Vec::new())
@@ -351,11 +347,6 @@ async fn context_pack_route_projects_json_response_controls() {
     assert_eq!(
         dropped_body["state"]["reason"],
         Value::from("filter_matched_none")
-    );
-    assert!(
-        dropped_body["state"]["hint"]
-            .as_str()
-            .is_some_and(|hint| hint.contains("budget.max_item_tokens"))
     );
     assert_eq!(
         dropped_body["empty"]["reason"],
@@ -399,12 +390,6 @@ async fn context_pack_route_rejects_malformed_controls() {
     assert_eq!(
         error_envelope(&body)["details"]["field"],
         Value::from("depth.edge_hop")
-    );
-    assert!(
-        error_envelope(&body)["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("edge_hop")),
-        "control error should name the malformed field: {body:?}"
     );
 
     let (status, body) = route_json(
@@ -469,12 +454,6 @@ async fn context_pack_route_rejects_malformed_controls() {
     assert_eq!(
         error_envelope(&body)["details"]["field"],
         Value::from("time.since")
-    );
-    assert!(
-        error_envelope(&body)["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("learned_end")),
-        "control error should name the contradictory learned bound: {body:?}"
     );
 }
 

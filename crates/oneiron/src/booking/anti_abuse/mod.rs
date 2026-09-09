@@ -83,8 +83,8 @@ mod booking_anti_abuse_tests;
 // the extracted sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
 use self::storage::{
-    QUARANTINE_CLAIM_PREDICATE, QUARANTINE_RATE_DOMAIN, QUARANTINE_RUN_ID_PREFIX, RATE_KEY_TAG,
-    ROW_ID_MAX_LEN, RULE_KEY_DOMAIN, hex_lower, notice_key, rate_counter_key, rule_row_key,
+    QUARANTINE_CLAIM_PREDICATE, QUARANTINE_RUN_ID_PREFIX, ROW_ID_MAX_LEN, RULE_KEY_DOMAIN,
+    hex_lower, notice_key, rule_row_key,
 };
 #[cfg(test)]
 use crate::Vault;

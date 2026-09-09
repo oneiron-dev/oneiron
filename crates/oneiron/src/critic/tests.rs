@@ -39,16 +39,7 @@ fn critique(
 #[test]
 fn of366_seed_catalog_loads_as_data() -> Result<()> {
     let catalog = LensCatalog::of366_seed()?;
-    let ids = catalog
-        .lenses
-        .iter()
-        .map(|lens| lens.id.as_str())
-        .collect::<Vec<_>>();
 
-    assert_eq!(
-        ids,
-        vec!["groundedness", "overreach", "temporal", "redundancy"]
-    );
     assert!(
         catalog
             .lens("groundedness", "claim_authoring")

@@ -66,7 +66,7 @@ pub use self::oracle::BookingSolver;
 // import header plus every solver-internal item. After the directory split the
 // seam re-imports both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::{civil_date::*, stages::*};
+use self::stages::*;
 #[cfg(test)]
 use crate::booking::config::{EventTypeConfig, MINUTES_PER_DAY, RoutingMode};
 #[cfg(test)]

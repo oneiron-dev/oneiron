@@ -465,8 +465,8 @@ fn a_live_session_source_turn_aborts_the_export_before_the_first_byte() -> Resul
     let err = export_reservoir(&vault, ReservoirScope::default(), &mut sink)
         .expect_err("a session-sourced candidate refuses the export");
     assert!(
-        matches!(err, Error::InvariantViolation(message) if message.contains("live off-record session turn")),
-        "the abort is typed and names the inertness violation, got {err:?}"
+        matches!(err, Error::InvariantViolation(_)),
+        "the abort is a typed invariant violation, got {err:?}",
     );
     assert_eq!(
         sink.bytes, 0,

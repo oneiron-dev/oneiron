@@ -16,11 +16,13 @@ fn observer_b_malformed_critical_marker_quarantines_without_prior_mutation() -> 
     let vault = Arc::new(vault);
     let claim = test_id(0xb4);
     let mut pending = put_critical_auto_claim(&vault, claim)?;
+    let binding = critical_write_confirm_binding(&pending)?;
     pending.reason_codes.push("gate.pending.extra".to_owned());
     vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &pending))?;
     let before = vault.get_raw(&claim)?.expect("claim row");
     let decisions_before = vault.store.gate_decisions(100)?;
-    let mut replacement = vault.get_claim(&claim)?.expect("attached claim");
+    let original = vault.get_claim(&claim)?.expect("attached claim");
+    let mut replacement = original.clone();
     replacement.value = Value::from("must not land");
     replacement.approval = ClaimApprovalStatus::Auto;
     let data = crate::claim::encode_claim_body(&replacement)?;
@@ -41,19 +43,32 @@ fn observer_b_malformed_critical_marker_quarantines_without_prior_mutation() -> 
     assert_eq!(vault.get_raw(&claim)?.expect("claim row"), before);
     assert_eq!(
         vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?,
-        Some(pending),
-        "the catch-and-commit path cannot close or rewrite pending/index state"
+        Some(pending.clone()),
+        "the catch-and-commit path cannot close or rewrite pending/index state",
     );
     assert_eq!(vault.store.gate_decisions(100)?, decisions_before);
-    assert!(!vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .critical_confirm_invalidation_exists_in_txn(wtxn, &claim)
-    })?);
     assert!(
         !quarantined_records(&vault)?.is_empty(),
-        "Observer B must have committed its quarantine record"
+        "Observer B must have committed its quarantine record",
     );
+
+    // Repair only the malformed attachment, retaining the original ceremony.
+    pending.reason_codes.pop();
+    vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &pending))?;
+    let original_data = crate::claim::encode_claim_body(&original)?;
+    vault
+        .batch()
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(6), 6, &original_data)
+        .commit()?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("replayed claim").approval,
+        ClaimApprovalStatus::Auto,
+    );
+    let confirmations = vault.pending_critical_write_confirms(100)?;
+    assert_eq!(confirmations.len(), 1);
+    assert_eq!(confirmations[0].claim_id, claim);
+    assert_eq!(confirmations[0].confirm_id, binding.confirm_id);
+    assert_eq!(confirmations[0].gate_decision_id, binding.gate_decision_id);
     Ok(())
 }
 
@@ -83,11 +98,6 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
             &replacement_data,
         )
         .commit()?;
-    assert!(vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .critical_confirm_invalidation_exists_in_txn(wtxn, &claim)
-    })?);
 
     vault
         .with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault.store, wtxn, &claim))?;
@@ -108,21 +118,24 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
             .get_claim(&claim)?
             .expect("forward replayed claim")
             .approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Proposed,
     );
     drop(vault);
     let reopened = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
-    assert!(reopened.with_write_txn(|wtxn| {
-        reopened
-            .store
-            .critical_confirm_invalidation_exists_in_txn(wtxn, &claim)
-    })?);
     assert_eq!(
         reopened
             .get_claim(&claim)?
             .expect("reopened claim")
             .approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Proposed,
+    );
+    forward_rematerialize(&reopened, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        reopened
+            .get_claim(&claim)?
+            .expect("replayed after reopen")
+            .approval,
+        ClaimApprovalStatus::Proposed,
     );
     Ok(())
 }
@@ -347,20 +360,20 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
             &replacement_data,
         )
         .commit()?;
-    assert!(vault.with_write_txn(|wtxn| {
+    assert_eq!(
         vault
-            .store
-            .critical_confirm_invalidation_exists_in_txn(wtxn, &claim)
-    })?);
+            .get_claim(&claim)?
+            .expect("invalidated claim")
+            .approval,
+        ClaimApprovalStatus::Proposed,
+    );
+    assert!(!has_pending_gate_consent(&vault, &claim)?);
 
     let fresh = put_critical_auto_claim(&vault, claim)?;
-    assert!(!vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .critical_confirm_invalidation_exists_in_txn(wtxn, &claim)
-    })?);
-    let fresh_data =
-        crate::claim::encode_claim_body(&vault.get_claim(&claim)?.expect("fresh claim"))?;
+    let fresh_binding = critical_write_confirm_binding(&fresh)?;
+    let fresh_body = vault.get_claim(&claim)?.expect("fresh claim");
+    assert_eq!(fresh_body.approval, ClaimApprovalStatus::Auto);
+    let fresh_data = crate::claim::encode_claim_body(&fresh_body)?;
     vault
         .batch()
         .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(3), 3, &fresh_data)
@@ -368,13 +381,16 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
     assert_eq!(
         vault.get_claim(&claim)?.expect("fresh replay").approval,
         ClaimApprovalStatus::Auto,
-        "an exact replay of the fresh attached body preserves its new ceremony"
     );
+    let confirmations = vault.pending_critical_write_confirms(100)?;
+    assert_eq!(confirmations.len(), 1);
+    assert_eq!(confirmations[0].claim_id, claim);
+    assert_eq!(confirmations[0].confirm_id, fresh_binding.confirm_id);
     assert_eq!(
-        vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?,
-        Some(fresh),
-        "exact replay converges without replacing the fresh attachment"
+        confirmations[0].gate_decision_id,
+        fresh_binding.gate_decision_id,
     );
+    assert!(has_pending_gate_consent(&vault, &claim)?);
     Ok(())
 }
 
@@ -392,21 +408,10 @@ fn critical_write_confirm_clear_settles_and_deletes_pending_row() -> Result<()> 
     vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (clear, test_time(2), 2)])?;
     assert_eq!(
         vault.settle_critical_write_confirm(binding.confirm_id)?,
-        CriticalWriteConfirmResolution::Cleared
+        CriticalWriteConfirmResolution::Cleared,
     );
-    assert!(
-        vault
-            .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
-            .is_none()
-    );
-    assert!(vault.with_write_txn(|wtxn| {
-        Ok::<_, Error>(
-            vault
-                .store
-                .critical_confirm_claim_id_in_txn(&*wtxn, &binding.confirm_id)?
-                .is_none(),
-        )
-    })?);
+    assert!(!has_pending_gate_consent(&vault, &claim)?);
+    assert!(vault.pending_critical_write_confirms(100)?.is_empty());
     Ok(())
 }
 
@@ -424,20 +429,13 @@ fn critical_write_confirm_decline_before_timeout_retracts_with_declined_receipt(
     vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (decline, test_time(2), 2)])?;
     assert_eq!(
         vault.settle_critical_write_confirm(binding.confirm_id)?,
-        CriticalWriteConfirmResolution::Retracted
+        CriticalWriteConfirmResolution::Retracted,
     );
     assert_eq!(
         stored_claim_body(&vault, &claim)?.lifecycle,
-        ClaimLifecycleStatus::Retracted
+        ClaimLifecycleStatus::Retracted,
     );
-    assert!(vault.with_write_txn(|wtxn| {
-        Ok::<_, Error>(
-            vault
-                .store
-                .critical_confirm_claim_id_in_txn(&*wtxn, &binding.confirm_id)?
-                .is_none(),
-        )
-    })?);
+    assert!(vault.pending_critical_write_confirms(100)?.is_empty());
     assert!(
         vault
             .store
@@ -879,40 +877,50 @@ fn critical_confirm_alias_orphan_mismatch_and_ordinary_replacement_are_removed()
         vault.settle_critical_write_confirm(orphan)?,
         CriticalWriteConfirmResolution::AlreadySettled,
     );
-    vault.with_write_txn(|wtxn| {
-        let ordinary = PendingGateConsentRecord {
-            version: 0,
-            claim_id: *claim.as_bytes(),
-            decision_id: GateDecisionId::from_bytes([0xca; 16]),
-            created_at: 1,
-            diff_handle: vec![0xca],
-            read_frontier_hash: [0xca; 32],
-            reason_codes: vec!["gate.pending.ordinary".to_owned()],
-            dreamer_run_id: None,
-        };
-        vault
-            .store
-            .put_pending_gate_consent_in_txn(wtxn, &ordinary)?;
-        assert!(
-            vault
-                .store
-                .critical_confirm_claim_id_in_txn(&*wtxn, &binding.confirm_id)?
-                .is_none()
+    assert_eq!(
+        vault.settle_critical_write_confirm(mismatched)?,
+        CriticalWriteConfirmResolution::AlreadySettled,
+    );
+    assert_eq!(
+        vault.settle_critical_write_confirm(orphan)?,
+        CriticalWriteConfirmResolution::AlreadySettled,
+    );
+    let live = vault.pending_critical_write_confirms(100)?;
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].claim_id, claim);
+    assert_eq!(live[0].confirm_id, binding.confirm_id);
+    assert_eq!(live[0].gate_decision_id, binding.gate_decision_id);
+    assert!(has_pending_gate_consent(&vault, &claim)?);
+
+    let ordinary = PendingGateConsentRecord {
+        version: 0,
+        claim_id: *claim.as_bytes(),
+        decision_id: GateDecisionId::from_bytes([0xca; 16]),
+        created_at: 1,
+        diff_handle: vec![0xca],
+        read_frontier_hash: [0xca; 32],
+        reason_codes: vec!["gate.pending.ordinary".to_owned()],
+        dreamer_run_id: None,
+    };
+    vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &ordinary))?;
+    for confirm_id in [binding.confirm_id, mismatched, orphan] {
+        assert_eq!(
+            vault.settle_critical_write_confirm(confirm_id)?,
+            CriticalWriteConfirmResolution::AlreadySettled,
         );
-        assert!(
-            vault
-                .store
-                .critical_confirm_claim_id_in_txn(&*wtxn, &mismatched)?
-                .is_none()
+        assert_eq!(
+            vault.settle_critical_write_confirm(confirm_id)?,
+            CriticalWriteConfirmResolution::AlreadySettled,
         );
-        assert!(
-            vault
-                .store
-                .critical_confirm_claim_id_in_txn(&*wtxn, &orphan)?
-                .is_none()
-        );
-        Ok(())
-    })?;
+    }
+    assert!(vault.pending_critical_write_confirms(100)?.is_empty());
+    assert!(has_pending_gate_consent(&vault, &claim)?);
+    let remaining = vault
+        .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+        .expect("ordinary consent remains");
+    assert_eq!(remaining.claim_id, ordinary.claim_id);
+    assert_eq!(remaining.decision_id, ordinary.decision_id);
+    assert_eq!(remaining.reason_codes, ordinary.reason_codes);
     Ok(())
 }
 

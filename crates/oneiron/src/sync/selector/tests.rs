@@ -887,16 +887,24 @@ fn selected_window_omits_other_facets_and_keeps_closed_edges() {
 
     let receiver = create_window_doc("receiver", &window_key);
     receiver.import(&update).unwrap();
-    let mut edge_count = 0;
-    map_for_each_value_bytes(&receiver.get_map("edges"), |_, value| {
+    let mut edge_keys = Vec::new();
+    map_for_each_value_bytes(&receiver.get_map("edges"), |key, value| {
         if value.is_some() {
-            edge_count += 1;
+            edge_keys.push(key.to_owned());
         }
     });
-    assert_eq!(
-        edge_count, 2,
-        "only edges whose endpoints survived the selector should replicate"
-    );
+    assert!(edge_keys.contains(&edge_key(claim_allowed, EdgeKind::FacetOf, facet_allowed)));
+    assert!(edge_keys.contains(&edge_key(claim_allowed, EdgeKind::Supports, person)));
+    for withheld in [claim_denied, facet_denied, denied_only_person] {
+        let source_prefix = format!("{}:", withheld.to_hex());
+        let target_suffix = format!(":{}", withheld.to_hex());
+        assert!(
+            edge_keys
+                .iter()
+                .all(|key| !key.starts_with(&source_prefix) && !key.ends_with(&target_suffix)),
+            "an edge incident to a withheld entity leaked"
+        );
+    }
 }
 
 #[test]
@@ -3115,12 +3123,19 @@ fn selector_treats_malformed_facet_of_value_as_denied_scope() {
     let facet_allowed = entity_id(0xA7);
     let facet_denied = entity_id(0xB7);
     let malformed_claim = entity_id(0x17);
+    let authorized_claim = entity_id(0x18);
+    let unstamped_claim = entity_id(0x19);
 
     insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
     insert_entity(&doc, facet_denied, ENTITY_TYPE_FACET, b"facet-b");
     insert_blob(&doc, malformed_claim, &claim_blob(None));
     insert_malformed_edge(&doc, malformed_claim, EdgeKind::FacetOf, facet_denied);
     insert_edge(&doc, facet_allowed, EdgeKind::Supports, malformed_claim);
+    insert_blob(&doc, authorized_claim, &claim_blob(None));
+    insert_blob(&doc, unstamped_claim, &claim_blob(None));
+    insert_edge(&doc, authorized_claim, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, authorized_claim, EdgeKind::Supports, malformed_claim);
+    insert_edge(&doc, authorized_claim, EdgeKind::Supports, unstamped_claim);
     doc.commit();
 
     let selector = SyncSelector::new(
@@ -3137,6 +3152,11 @@ fn selector_treats_malformed_facet_of_value_as_denied_scope() {
     let ids = import_ids(&update);
 
     assert!(ids.contains(&facet_allowed));
+    assert!(ids.contains(&authorized_claim));
+    assert!(
+        ids.contains(&unstamped_claim),
+        "an unstamped claim reachable from the authorized claim must travel"
+    );
     assert!(
         !ids.contains(&malformed_claim),
         "malformed FacetOf value must fail closed, not behave as absent"
@@ -3550,48 +3570,61 @@ fn assert_grant_scope_mismatch(err: &Error, label: &str) {
     );
 }
 
-/// Done-means 9: the wire→lattice decode. Empty facet/band vectors are the
-/// kind-tagged bottom, never "everything" (OF-453 L3, owner ruling
-/// R-20260807 §6); non-empty vectors keep `SyncSelector::new`'s normalized
-/// order; a named world becomes a singleton worlds set.
+/// Empty wire axes request nothing under a pact; named worlds retain their
+/// export boundary, and wire round trips preserve independently expected sets.
 #[test]
 fn selector_direction_scope_decodes_wire_semantics() {
     let member = entity_id(0x34);
     let grant = entity_id(0x35);
     let world = local_world_id(0x51);
+    let (_dir, vault, _) = test_vault_with_grant(member);
+    put_selector_test_federation_grant(
+        &vault,
+        &grant,
+        &FederationGrant::new(
+            test_selector_scope(),
+            member,
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        ),
+        1,
+    )
+    .unwrap();
+
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("source", &window_key);
+    let base_claim = entity_id(0x71);
+    let named_claim = entity_id(0x72);
+    let other_claim = entity_id(0x73);
+    insert_blob(&doc, base_claim, &claim_blob(None));
+    insert_blob(&doc, named_claim, &claim_blob(Some(world.entity_id())));
+    insert_blob(
+        &doc,
+        other_claim,
+        &claim_blob(Some(local_world_id(0x52).entity_id())),
+    );
+    doc.commit();
 
     let silent = SyncSelector::new(grant, member, SyncSelectorWorld::All, vec![], vec![]);
-    let converted = selector_direction_scope(&silent);
-    assert_eq!(converted.worlds, FederationScopeWorlds::All);
-    assert_eq!(
-        converted.facets,
-        FederationScopeFacets::Bottom,
-        "empty facets must decode as ⊥, never as all facets"
-    );
-    assert_eq!(
-        converted.bands,
-        FederationScopeBands::Bottom,
-        "empty bands must decode as ⊥, never as all bands"
-    );
-
-    for (name, world_axis, expected) in [
-        ("base", SyncSelectorWorld::Base, FederationScopeWorlds::Base),
-        (
-            "named world",
-            SyncSelectorWorld::World(world),
-            FederationScopeWorlds::Worlds(vec![world.entity_id()]),
-        ),
+    for (world_axis, include_named, include_other) in [
+        (SyncSelectorWorld::All, true, true),
+        (SyncSelectorWorld::Base, false, false),
+        (SyncSelectorWorld::World(world), true, false),
     ] {
         let selector = SyncSelector::new(grant, member, world_axis, vec![], vec![]);
-        assert_eq!(
-            selector_direction_scope(&selector).worlds,
-            expected,
-            "{name}: wrong worlds axis"
-        );
+        let selector = decode_sync_selector(&encode_sync_selector(&selector).unwrap()).unwrap();
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap()
+                .export(ExportMode::all_updates())
+                .unwrap();
+        let ids = import_ids(&update);
+        assert!(ids.contains(&base_claim));
+        assert_eq!(ids.contains(&named_claim), include_named);
+        assert_eq!(ids.contains(&other_claim), include_other);
     }
 
-    // Duplicated and out-of-order inputs arrive normalized by
-    // `SyncSelector::new`; the decode preserves that order verbatim.
+    // Independently pin the normalized wire sets, not a private lattice value.
     let filtered = SyncSelector::new(
         grant,
         member,
@@ -3599,15 +3632,80 @@ fn selector_direction_scope_decodes_wire_semantics() {
         vec![entity_id(0x62), entity_id(0x61), entity_id(0x62)],
         vec![SelectorRange::Core, SelectorRange::Semantic],
     );
-    let converted = selector_direction_scope(&filtered);
+    let decoded = decode_sync_selector(&encode_sync_selector(&filtered).unwrap()).unwrap();
+    assert_eq!(decoded.facets, vec![entity_id(0x61), entity_id(0x62)]);
     assert_eq!(
-        converted.facets,
-        FederationScopeFacets::Some(vec![entity_id(0x61), entity_id(0x62)])
+        decoded.bands,
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
-    assert_eq!(
-        converted.bands,
-        FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core])
-    );
+
+    // Test each empty axis independently: the other axis remains populated.
+    for scope in [
+        FederationDirectionScope {
+            worlds: FederationScopeWorlds::All,
+            facets: FederationScopeFacets::Bottom,
+            bands: FederationScopeBands::All,
+        },
+        FederationDirectionScope {
+            worlds: FederationScopeWorlds::All,
+            facets: FederationScopeFacets::All,
+            bands: FederationScopeBands::Bottom,
+        },
+    ] {
+        let (_scope_dir, scope_vault, _) = test_vault_with_grant(member);
+        put_selector_test_federation_grant(
+            &scope_vault,
+            &grant,
+            &FederationGrant::new(
+                test_selector_scope(),
+                member,
+                FederationGrantRole::Viewer,
+                FederationGrantPreset::ReadOnly,
+            ),
+            1,
+        )
+        .unwrap();
+        let empty_facets = matches!(&scope.facets, FederationScopeFacets::Bottom);
+        seed_scoped_pacts_for_grant(&scope_vault, grant, &[scope]);
+        authorize_sync_selector(&scope_vault, test_selector_scope(), &silent).unwrap();
+        let selector = SyncSelector::new(
+            grant,
+            member,
+            SyncSelectorWorld::All,
+            if empty_facets {
+                vec![]
+            } else {
+                vec![entity_id(0x61)]
+            },
+            if empty_facets {
+                vec![SelectorRange::Semantic, SelectorRange::Core]
+            } else {
+                vec![]
+            },
+        );
+        let scoped_doc = create_window_doc("scope-source", &window_key);
+        insert_entity(&scoped_doc, entity_id(0x61), ENTITY_TYPE_FACET, b"facet");
+        insert_blob(&scoped_doc, base_claim, &claim_blob(None));
+        insert_edge(&scoped_doc, base_claim, EdgeKind::FacetOf, entity_id(0x61));
+        scoped_doc.commit();
+        for request in [&silent, &selector] {
+            authorize_sync_selector(&scope_vault, test_selector_scope(), request).unwrap();
+            let update = filtered_window_doc(
+                &scope_vault,
+                &scoped_doc,
+                &window_key,
+                test_selector_scope(),
+                request,
+            )
+            .unwrap()
+            .export(ExportMode::all_updates())
+            .unwrap();
+            assert!(import_ids(&update).is_empty());
+        }
+        let err =
+            authorize_sync_selector(&scope_vault, test_selector_scope(), &filtered).unwrap_err();
+        assert_grant_scope_mismatch(&err, "non-empty request exceeds the bottom axis");
+    }
 }
 
 /// Done-means 1 and 2: a selector equal to the effective scope authorizes, and
@@ -3999,7 +4097,7 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
 
 /// Done-means 6: no re-federation widening. `SyncSelectorWorld::World` can only
 /// be built from a [`LocalWorldId`], which refuses the received-foreign range,
-/// and a local world decodes to exactly its own singleton.
+/// and exporting a local world includes base claims but no other world.
 #[test]
 fn foreign_world_ids_cannot_enter_a_selector_scope() {
     // Constructed directly rather than through `entity_id`: this fixture needs
@@ -4019,11 +4117,44 @@ fn foreign_world_ids_cannot_enter_a_selector_scope() {
         vec![],
         vec![],
     );
-    assert_eq!(
-        selector_direction_scope(&selector).worlds,
-        FederationScopeWorlds::Worlds(vec![local.entity_id()]),
-        "a named world decodes to its own singleton, never a widen"
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x34));
+    put_selector_test_federation_grant(
+        &vault,
+        &selector.grant_id,
+        &FederationGrant::new(
+            test_selector_scope(),
+            entity_id(0x34),
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        ),
+        1,
+    )
+    .unwrap();
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("source", &window_key);
+    let base_claim = entity_id(0x71);
+    let local_claim = entity_id(0x72);
+    let other_claim = entity_id(0x73);
+    let foreign_claim = entity_id(0x74);
+    insert_blob(&doc, base_claim, &claim_blob(None));
+    insert_blob(&doc, local_claim, &claim_blob(Some(local.entity_id())));
+    insert_blob(
+        &doc,
+        other_claim,
+        &claim_blob(Some(local_world_id(0x52).entity_id())),
     );
+    insert_blob(&doc, foreign_claim, &claim_blob(Some(foreign)));
+    doc.commit();
+
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+    assert!(ids.contains(&base_claim));
+    assert!(ids.contains(&local_claim));
+    assert!(!ids.contains(&other_claim));
+    assert!(!ids.contains(&foreign_claim));
 }
 
 /// Done-means 7: the activation gate still runs first. An unpacted grant keeps

@@ -649,9 +649,9 @@ fn proposal_claim_id_is_domain_separated_and_sentinel_safe() {
     }
 }
 
-/// Replay after approval is success with NO write. Identical immutables at the
-/// deterministic id are the at-least-once contract being honored; rewriting the
-/// row would downgrade an answered consent back to `Proposed`.
+/// Replay after approval preserves answered consent and immutable wake identity.
+/// Identical immutables at the deterministic id honor the at-least-once
+/// contract without downgrading the row back to `Proposed`.
 #[test]
 fn replay_after_approval_preserves_approved_status() {
     let (_dir, vault) = open_vault();
@@ -664,6 +664,7 @@ fn replay_after_approval_preserves_approved_status() {
         .expect("claim read")
         .expect("proposal");
     assert_eq!(approved.approval, ClaimApprovalStatus::Approved);
+    let before = approved_commitment_wake(&vault, &proposal).expect("approved token");
 
     let mut planner = FakePlanner::default();
     let replay = execute_wrapped(
@@ -688,7 +689,14 @@ fn replay_after_approval_preserves_approved_status() {
         ClaimApprovalStatus::Approved,
         "replay never downgrades an approved proposal"
     );
-    assert_eq!(after, approved, "replay wrote nothing at all");
+    let after = approved_commitment_wake(&vault, &proposal)
+        .expect("replayed proposal still authorizes an approved wake");
+    assert_eq!(after.proposal_claim_id(), before.proposal_claim_id());
+    assert_eq!(after.instance_id(), before.instance_id());
+    assert_eq!(after.phase(), before.phase());
+    assert_eq!(after.idempotency_key(), before.idempotency_key());
+    assert_eq!(after.bound_actor(), before.bound_actor());
+    assert_eq!(after.trigger_ref(), before.trigger_ref());
 }
 
 // ─── 5: the approved token and the outbound adapter ────────────────────────

@@ -110,10 +110,11 @@ fn standing_outbound_grant_lookup_uses_principal_index_before_type_scan() -> Res
     vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
     let policy = resolve(&vault)?;
 
+    // Persist an incomplete-index fixture: the grant and its principal association
+    // remain stored, but its type-index row is absent. Such a grant must remain
+    // usable by its owner.
     vault.with_write_txn(|wtxn| {
-        let mut type_key = Vec::with_capacity(ENTITY_ID_LEN + 1);
-        type_key.push(ENTITY_TYPE_OUTBOUND_GRANT);
-        type_key.extend_from_slice(grant_id.as_bytes());
+        let type_key = Store::encode_type_key(ENTITY_TYPE_OUTBOUND_GRANT, &grant_id);
         vault.store.type_index.delete(wtxn, &type_key)?;
         Ok(())
     })?;
@@ -554,13 +555,15 @@ fn counterparty_contact_records_are_visible_and_revocable_by_identity() -> Resul
 
     let revoked = vault.revoke_counterparty_contact(&intro_id, 20)?;
     assert_eq!(revoked.status, CounterpartyContactStatus::Revoked);
-    assert_eq!(revoked.revoked_at, Some(20));
-    assert_eq!(
-        vault
-            .get_counterparty_contact(&intro_id)?
-            .expect("revoked stored"),
-        revoked
-    );
+    assert!(revoked.revoked_at.is_some());
+
+    let stored = vault
+        .get_counterparty_contact(&intro_id)?
+        .expect("revoked stored");
+    assert_eq!(stored.identity_ref, identity);
+    assert_eq!(stored.counterparty, "kenji@example.com");
+    assert_eq!(stored.status, CounterpartyContactStatus::Revoked);
+    assert!(stored.revoked_at.is_some());
     Ok(())
 }
 
@@ -572,6 +575,9 @@ fn counterparty_contact_lookup_uses_dedicated_index_before_scan() -> Result<()> 
     let contact = CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?;
     vault.create_counterparty_contact(&contact_id, &contact)?;
 
+    // Persist an incomplete-index integrity fixture: the contact and its
+    // identity-counterparty association remain stored without a type-index row.
+    // Visibility and normalized assignment uniqueness must survive this state.
     vault.with_write_txn(|wtxn| {
         let type_key = Store::encode_type_key(ENTITY_TYPE_COUNTERPARTY_CONTACT, &contact_id);
         vault.store.type_index.delete(wtxn, &type_key)?;
@@ -580,7 +586,7 @@ fn counterparty_contact_lookup_uses_dedicated_index_before_scan() -> Result<()> 
 
     let found = vault
         .find_counterparty_contact(&identity, "kenji@example.com")?
-        .expect("lookup index finds contact without type-index scan row");
+        .expect("stored contact remains visible with an incomplete index");
     assert_eq!(found.0, contact_id);
     assert_eq!(found.1.counterparty, "kenji@example.com");
 
@@ -588,8 +594,11 @@ fn counterparty_contact_lookup_uses_dedicated_index_before_scan() -> Result<()> 
     let duplicate = CounterpartyContactRecord::inbound_first(identity, " kenji@example.com ", 20)?;
     let err = vault
         .create_counterparty_contact(&duplicate_id, &duplicate)
-        .expect_err("lookup index rejects duplicate counterparty assignment");
-    assert_eq!(err.kind(), ErrorKind::CounterpartyContactAlreadyExists);
+        .expect_err("incomplete index must not permit a duplicate counterparty assignment");
+    assert!(matches!(
+        err.kind(),
+        ErrorKind::CounterpartyContactAlreadyExists,
+    ));
     Ok(())
 }
 

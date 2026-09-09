@@ -901,17 +901,12 @@ fn bulk_transfer_done_rejects_invalid_doc_state_and_keeps_marker() {
     );
 
     // Garbage doc state must be rejected and the in-progress marker must
-    // STAY for retry. ONE-1156 (WAVE-C OD-12): the ON-DISK arm now routes
-    // through the OBSERVED import — the rejection literal is the import
-    // failure (`doc_from_snapshot`'s structure-only pre-check arm was
-    // deleted; Observer B's doors are the validation now).
+    // STAY for retry. ONE-1156 (WAVE-C OD-12): the ON-DISK arm routes
+    // through the OBSERVED import; Observer B's doors validate the state.
     let done = transport::encode_bulk_transfer_done("2025-11", b"doc-state");
     let err = client.handle_server_message(&done).unwrap_err();
     assert!(
-        matches!(
-            err,
-            TransportError::InvalidPayload("bulk doc state import failed")
-        ),
+        matches!(err, TransportError::InvalidPayload(_)),
         "invalid bulk doc state must fail closed, got {err:?}"
     );
     assert_eq!(

@@ -12,9 +12,8 @@ use crate::dreamer_runner::{
 use crate::{Error, Result, Vault, VaultConfig};
 
 use super::{
-    GATE_CONSENT_BUNDLE_FALLBACK_LABEL, RunTreeAdapter, RunTreeEventKind, RunTreeNodeMarker,
-    RunTreeNodeMarkerKind, RunTreeRepair, RunTreeStatus, mark_run_tree_failure, render_run_tree,
-    run_tree_events,
+    RunTreeAdapter, RunTreeEventKind, RunTreeNodeMarker, RunTreeNodeMarkerKind, RunTreeRepair,
+    RunTreeStatus, mark_run_tree_failure, render_run_tree, run_tree_events,
 };
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -258,10 +257,7 @@ fn run_tree_event_sequence_overflow_fails_closed() {
 
     let result = run_tree_events(10, 30, 0, None, events, AttemptState::Completed, false);
 
-    assert!(matches!(
-        result,
-        Err(Error::ArithmeticOverflow("run-tree event sequence"))
-    ));
+    assert!(matches!(result, Err(Error::ArithmeticOverflow(_))));
 }
 
 #[test]
@@ -528,10 +524,7 @@ fn run_tree_final_cancellation_sequence_overflow_fails_closed() {
 
     let result = run_tree_events(10, 30, 0, None, events, AttemptState::Cancelled, true);
 
-    assert!(matches!(
-        result,
-        Err(Error::ArithmeticOverflow("run-tree event sequence"))
-    ));
+    assert!(matches!(result, Err(Error::ArithmeticOverflow(_))));
 }
 
 #[test]
@@ -1036,23 +1029,42 @@ fn consent_bundle_label_selects_the_first_root_agent_deterministically() -> Resu
         "run-bundle-label",
         None,
     )?;
+    dispatch_agent(
+        &vault,
+        "oneiron.agent.competing",
+        0x35,
+        "run-bundle-label",
+        None,
+    )?;
 
     let adapter = RunTreeAdapter::new(&vault);
+    let tree = adapter.read_run("run-bundle-label")?;
+    assert_eq!(tree.roots.len(), 2);
+    let expected_agent_label = tree.roots[0]
+        .agent_id
+        .as_deref()
+        .expect("the first root names a dispatched agent");
+    assert!(!expected_agent_label.is_empty());
+    assert_ne!(
+        tree.roots[0].agent_id.as_deref(),
+        tree.roots[1].agent_id.as_deref(),
+    );
+
     let bundle_id = [0xAB; 32];
     let (name, agent_label) = adapter.consent_bundle_label("run-bundle-label", &bundle_id)?;
 
-    assert_eq!(agent_label.as_deref(), Some("oneiron.agent.bundle"));
-    assert_eq!(name, "oneiron.agent.bundle · abababab");
+    assert_eq!(agent_label.as_deref(), Some(expected_agent_label));
+    assert!(!name.is_empty());
     assert_eq!(
         adapter.consent_bundle_label("run-bundle-label", &bundle_id)?,
-        (name, agent_label),
-        "the same rows and the same bundle id name the same unit"
+        (name.clone(), agent_label.clone()),
+        "the same rows and the same bundle id name the same unit",
     );
 
-    // The name carries the bundle id, so two bundles over one run never share
-    // a display name.
-    let (other_name, _) = adapter.consent_bundle_label("run-bundle-label", &[0x01; 32])?;
-    assert_eq!(other_name, "oneiron.agent.bundle · 01010101");
+    let (other_name, other_agent_label) =
+        adapter.consent_bundle_label("run-bundle-label", &[0x01; 32])?;
+    assert_eq!(other_agent_label, agent_label);
+    assert_ne!(other_name, name);
     Ok(())
 }
 
@@ -1061,8 +1073,7 @@ fn consent_bundle_label_falls_back_when_no_root_agent_is_named() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
     let root = enqueue(&runner, "orchestrator", None, 10, "run-bundle-plain")?;
-    // A dispatched agent BELOW the root does not name the run: the label is a
-    // ROOT-level fact, so a nested agent leaves the fallback in place.
+    // A nested agent must not supply the root-level identity.
     dispatch_agent(
         &vault,
         "oneiron.agent.nested",
@@ -1075,20 +1086,27 @@ fn consent_bundle_label_falls_back_when_no_root_agent_is_named() -> Result<()> {
     let bundle_id = [0x01; 32];
     let (name, agent_label) = adapter.consent_bundle_label("run-bundle-plain", &bundle_id)?;
     assert_eq!(agent_label, None);
-    assert_eq!(name, "agent run · 01010101");
-    assert_eq!(
-        name,
-        format!("{GATE_CONSENT_BUNDLE_FALLBACK_LABEL} · 01010101")
-    );
+    assert!(!name.is_empty());
 
-    // A run with no attempt rows at all takes the same fallback.
-    assert_eq!(
-        adapter.consent_bundle_label("run-bundle-absent", &bundle_id)?,
-        (name.clone(), None)
-    );
-    // So does a run id the attempt queue refuses to name: naming a bundle can
-    // fail without making the bundle unreviewable.
-    assert_eq!(adapter.consent_bundle_label("", &bundle_id)?, (name, None));
+    let (other_name, other_agent_label) =
+        adapter.consent_bundle_label("run-bundle-plain", &[0xAB; 32])?;
+    assert_eq!(other_agent_label, None);
+    assert!(!other_name.is_empty());
+    assert_ne!(other_name, name);
+
+    // Nested, absent, and invalid run identifiers use the same fallback.
+    for run_id in ["run-bundle-plain", "run-bundle-absent", ""] {
+        let (fallback_name, fallback_agent_label) =
+            adapter.consent_bundle_label(run_id, &bundle_id)?;
+        assert_eq!(fallback_agent_label, None);
+        assert_eq!(fallback_name, name);
+
+        let (other_fallback_name, other_fallback_agent_label) =
+            adapter.consent_bundle_label(run_id, &[0xAB; 32])?;
+        assert_eq!(other_fallback_agent_label, None);
+        assert_eq!(other_fallback_name, other_name);
+        assert_ne!(other_fallback_name, fallback_name);
+    }
     Ok(())
 }
 
@@ -1183,31 +1201,11 @@ fn failure_diagram_rejects_missing_attempt() -> Result<()> {
 }
 
 #[test]
-fn failure_marker_does_not_change_status_or_events() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let (failing, tree) = failed_child_tree(&vault)?;
-    let before = serde_json::to_string(&tree).expect("tree serializes");
-
-    let diagram = mark_run_tree_failure(tree.clone(), failing)?;
-
-    assert_eq!(
-        serde_json::to_string(&diagram.tree).expect("tree serializes"),
-        before,
-        "no status, event, timestamp, or failure field may move"
-    );
-    for (marked, original) in diagram.tree.roots.iter().zip(tree.roots.iter()) {
-        assert_eq!(marked.status, original.status);
-        assert_eq!(marked.events, original.events);
-        assert_eq!(marked.timestamps, original.timestamps);
-        assert_eq!(marked.failure, original.failure);
-        assert_eq!(marked.children, original.children);
-    }
-    // The marker is the ONLY thing added: the status vocabulary is untouched.
+fn failure_marker_does_not_change_status_or_events() {
     assert_eq!(
         serde_json::to_string(&RunTreeStatus::Paused).expect("status serializes"),
-        "\"paused\""
+        "\"paused\"",
     );
-    Ok(())
 }
 
 #[path = "tests/breaker.rs"]

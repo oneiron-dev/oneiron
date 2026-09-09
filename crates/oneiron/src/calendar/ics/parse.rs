@@ -387,21 +387,8 @@ mod tests {
         let event = &feed.events[0];
         assert_eq!(event.uid, "uid-1@example.com");
         assert_eq!(event.sequence, 3);
-        assert_eq!(
-            event.starts_at_utc,
-            Some(
-                unix_seconds(&DateTimeFields {
-                    year: 2026,
-                    month: 8,
-                    day: 6,
-                    hour: 14,
-                    minute: 0,
-                    second: 0,
-                    utc: true,
-                })
-                .expect("in range")
-            )
-        );
+        // 2026-08-06 14:00:00 UTC, independently expressed as Unix seconds.
+        assert_eq!(event.starts_at_utc, Some(1_786_024_800));
         assert_eq!(
             event.ends_at_utc,
             event.starts_at_utc.map(|start| start + 3_600)

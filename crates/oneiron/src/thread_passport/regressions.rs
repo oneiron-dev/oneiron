@@ -367,20 +367,16 @@ fn valid_offline_alias_forks_and_duplicate_passports_converge_in_both_orders() {
     .unwrap();
     let a_rows = family_rows(&a);
     let b_rows = family_rows(&b);
-    let aliases: Vec<_> = a_rows
-        .iter()
-        .chain(&b_rows)
-        .filter(|(_, body)| body.predicate == PREDICATE_THREAD_ALIAS)
-        .map(|(_, body)| decode_alias_value(identity, &body.value).unwrap())
-        .collect();
-    assert!(aliases.contains(&(
-        messages[2].minted_thread_ref(),
-        messages[0].minted_thread_ref()
-    )));
-    assert!(aliases.contains(&(
-        messages[2].minted_thread_ref(),
-        messages[1].minted_thread_ref()
-    )));
+    for (vault, roots) in [(&a, [0, 1, 0]), (&b, [0, 1, 1])] {
+        for (message, root) in messages.iter().zip(roots) {
+            assert_eq!(
+                vault
+                    .canonical_thread_ref(&message.minted_thread_ref())
+                    .unwrap(),
+                messages[root].minted_thread_ref()
+            );
+        }
+    }
     for (id, body) in b_rows.iter().rev() {
         replicate(&a, *id, body).unwrap();
     }

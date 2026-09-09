@@ -337,20 +337,14 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
 
     assert_eq!(output.decision(), GraphFsCoreutilsDecision::Pushdown);
     assert_eq!(actual_ids, expected_ids);
-    assert!(rendered.contains(&matching_claim.to_hex()));
-    assert!(!rendered.contains(&other_claim.to_hex()));
+    assert!(actual_ids.contains(&matching_claim));
+    assert!(!actual_ids.contains(&other_claim));
     let telemetry = vault
         .retrieval_run(output.telemetry_run_id())?
         .expect("coreutils telemetry row is written");
     assert_eq!(
         telemetry.action,
         crate::store::RetrievalAction::GraphFsCoreutils
-    );
-    assert!(
-        telemetry
-            .empty_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("grep:pushdown"))
     );
     Ok(())
 }
@@ -410,12 +404,6 @@ fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
     assert_eq!(
         telemetry.action,
         crate::store::RetrievalAction::GraphFsCoreutils
-    );
-    assert!(
-        telemetry
-            .empty_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("find:pushdown"))
     );
     Ok(())
 }

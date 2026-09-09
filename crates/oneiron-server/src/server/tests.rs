@@ -1174,10 +1174,10 @@ async fn lease_root_and_mirror_atomic_on_mirror_failure() {
 /// writer and always stores BINARY lease records, so any non-binary
 /// entry in the `leases` map is local corruption that could hide a
 /// revoked-pubkey row from the registration floor. `register_lease` must
-/// refuse the WHOLE registration with `CorruptedIndex("non-binary root
-/// lease entry")` BEFORE any expiry flip / registration decision — never
-/// best-effort skip the entry. A filter-and-skip impl would return
-/// granted and write an `ls:`/active row → fails here.
+/// refuse the WHOLE registration with `CorruptedIndex(_)` BEFORE any
+/// expiry flip / registration decision — never best-effort skip the entry.
+/// A filter-and-skip impl would return granted and write an `ls:`/active
+/// row → fails here.
 #[tokio::test]
 async fn register_refuses_on_non_binary_lease_entry() {
     use ed25519_dalek::{Signer, SigningKey};
@@ -1207,12 +1207,7 @@ async fn register_refuses_on_non_binary_lease_entry() {
         .register_lease(client_id, &pubkey, &pop)
         .await
         .unwrap_err();
-    match err {
-        oneiron::Error::CorruptedIndex(msg) => {
-            assert_eq!(msg, "non-binary root lease entry");
-        }
-        other => panic!("expected CorruptedIndex, got {other:?}"),
-    }
+    assert!(matches!(err, oneiron::Error::CorruptedIndex(_)));
 
     // Fail-closed-hard: NO ls:/active row for the attempted registration,
     // and no existing lease altered (no row was written at all).
@@ -1227,7 +1222,7 @@ async fn register_refuses_on_non_binary_lease_entry() {
         deep_map_bytes(
             &server.root_doc,
             "leases",
-            &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_id)
+            &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_id),
         )
         .is_none(),
         "no leases-map entry for the refused registration"
@@ -1243,8 +1238,8 @@ async fn register_refuses_on_non_binary_lease_entry() {
 }
 
 /// B5: revoke distinguishes absent from corrupt. A non-binary root lease
-/// entry is local registry corruption and must fail closed with the same
-/// literal as registration, not masquerade as Ok(None).
+/// entry is local registry corruption and must fail closed with
+/// `CorruptedIndex(_)`, not masquerade as Ok(None).
 #[tokio::test]
 async fn revoke_refuses_on_non_binary_lease_entry() {
     let (_dir, vault) = test_vault();
@@ -1259,12 +1254,7 @@ async fn revoke_refuses_on_non_binary_lease_entry() {
     server.root_doc.commit();
 
     let err = server.revoke_lease(client_id).await.unwrap_err();
-    match err {
-        oneiron::Error::CorruptedIndex(msg) => {
-            assert_eq!(msg, "non-binary root lease entry");
-        }
-        other => panic!("expected CorruptedIndex, got {other:?}"),
-    }
+    assert!(matches!(err, oneiron::Error::CorruptedIndex(_)));
     assert!(
         matches!(
             server.root_doc.get_map(ROOT_LEASES_MAP).get(&key_hex),

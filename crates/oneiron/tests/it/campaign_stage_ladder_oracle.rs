@@ -858,6 +858,7 @@ fn no_show_routes_same_day_d3_then_snooze() {
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
     walk_to_call_booked(&vault);
+    let booked_claim = only_live_claim(&vault, person, PREDICATE_CRM_STAGE).0;
 
     record_outcome(&vault, EventOutcome::NoShow);
     let outcome_claim = only_live_claim(
@@ -877,21 +878,16 @@ fn no_show_routes_same_day_d3_then_snooze() {
         vec![
             NoShowRecoveryStep::SameDayReschedule,
             NoShowRecoveryStep::BumpAfter {
-                delay_secs: NO_SHOW_BUMP_AFTER_SECS,
+                delay_secs: 3 * 24 * 60 * 60,
             },
             NoShowRecoveryStep::Snooze,
         ],
         "the recovery ORDER is ratified, not a dial",
     );
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
-        stage_value(
-            CALL_BOOKED,
-            StageEvidenceClass::CalendarEvent,
-            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
-            BOOKING_AT,
-        ),
-        "a no-show never writes call_held",
+        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).0,
+        booked_claim,
+        "a no-show leaves the booked head live",
     );
 }
 

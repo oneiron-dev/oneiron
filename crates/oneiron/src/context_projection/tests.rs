@@ -130,9 +130,7 @@ fn one_1709_t3_child_scoped_memory_must_be_a_strict_parent_subset() {
         },
     )
     .expect_err("child must not request a domain absent from the parent projection");
-    assert!(
-        matches!(error, Error::InvalidAgentDispatchInput(message) if message == "child memory projection requests a domain the parent did not project")
-    );
+    assert!(matches!(error, Error::InvalidAgentDispatchInput(_)));
 
     let standalone = resolve_context_spec(
         &vault,

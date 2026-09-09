@@ -508,36 +508,26 @@ fn clean_prefix_entry_waits_when_unresolved_fork_key_is_cosigner() {
         &second,
         &owner,
     );
-    let fork_ceiling_hash = authority_entry_hash(&fork_ceiling).unwrap();
-    let fork_tier_hash = authority_entry_hash(&fork_tier).unwrap();
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let enroll_second_hash = authority_entry_hash(&enroll_second).unwrap();
     let clean_prefix_child_hash = authority_entry_hash(&clean_prefix_child).unwrap();
-    let by_hash = BTreeMap::from([
-        (authority_entry_hash(&genesis).unwrap(), genesis),
-        (authority_entry_hash(&enroll_second).unwrap(), enroll_second),
-        (fork_ceiling_hash, fork_ceiling),
-        (fork_tier_hash, fork_tier),
-        (clean_prefix_child_hash, clean_prefix_child.clone()),
-    ]);
-    let entry_ancestors = entry_ancestor_index(&by_hash);
-    let group_key = (owner_key, 2);
-    let storage = LocalFoldContext {
-        equivocation_groups: BTreeMap::from([(
-            group_key.clone(),
-            BTreeSet::from([fork_ceiling_hash, fork_tier_hash]),
-        )]),
-        unresolved_equivocation_groups: BTreeSet::from([group_key]),
-        ..LocalFoldContext::default()
-    };
-    let context = FoldContext {
-        entry_ancestors: Some(&entry_ancestors),
-        ..storage.context()
-    };
 
-    assert!(entry_waits_on_unresolved_equivocation(
-        &clean_prefix_child,
-        clean_prefix_child_hash,
-        context
-    ));
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        genesis,
+        enroll_second,
+        fork_ceiling,
+        fork_tier,
+        clean_prefix_child,
+    ]);
+
+    assert!(fold.valid_entries.contains(&genesis_hash));
+    assert!(fold.valid_entries.contains(&enroll_second_hash));
+    assert!(!fold.valid_entries.contains(&clean_prefix_child_hash));
+    assert!(fold.authority_forks.iter().any(|fork| {
+        fork.signer == owner_key
+            && fork.seq == 2
+            && matches!(fork.status, AuthorityForkStatus::Quarantined)
+    }));
 }
 
 #[test]
@@ -1154,8 +1144,8 @@ fn same_signer_recovery_fork_does_not_wait_on_higher_sequence_fork() {
         fold.authority_forks
             .iter()
             .map(|fork| (fork.signer.clone(), fork.seq))
-            .collect::<Vec<_>>(),
-        vec![(owner_key.clone(), 2), (owner_key, 3)]
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([(owner_key.clone(), 2), (owner_key, 3)]),
     );
     assert_eq!(fold.fork_alarms.len(), 2);
     assert_eq!(
@@ -1163,21 +1153,21 @@ fn same_signer_recovery_fork_does_not_wait_on_higher_sequence_fork() {
             .iter()
             .filter(|issue| matches!(issue, AuthorityFoldIssue::EquivocationDetected { .. }))
             .count(),
-        1
+        1,
     );
     assert_eq!(
         fold.issues
             .iter()
             .filter(|issue| matches!(issue, AuthorityFoldIssue::SignerNotInAncestry(_)))
             .count(),
-        2
+        2,
     );
     assert_eq!(
         fold.issues
             .iter()
             .filter(|issue| matches!(issue, AuthorityFoldIssue::InvalidAncestry(_)))
             .count(),
-        0
+        0,
     );
 }
 

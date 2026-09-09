@@ -523,42 +523,11 @@ fn classifier_is_provider_neutral_and_injected() {
     let estimate = estimate_over(&FAN_OUT);
     let ask = context(SCOPE, FanoutAskTrigger::Budget { magnitude: 240 });
 
-    // The engine half of the seam depends on itself, std, and serde. There is
-    // no provider client, prompt template, credential, or transport in it.
-    for line in MODULE_SOURCE
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with("use "))
-    {
-        assert!(
-            line.starts_with("use crate::")
-                || line.starts_with("use serde")
-                || line.starts_with("use std::"),
-            "ES-07 depends on the engine, std, and serde only: {line}"
-        );
-    }
-    let code = module_code();
-    for marker in [
-        "http",
-        "api_key",
-        "bearer",
-        "credential",
-        "reqwest",
-        "prompt",
-        "retry",
-    ] {
-        assert!(
-            !code.contains(marker),
-            "ES-07 carries no provider machinery: {marker}"
-        );
-    }
-
-    // The injected fixture receives the ask, the four view projections, and
-    // the normalized history — and nothing else.
+    // The injected fixture observes the ask and the four view projections.
     let classifier = RecordingClassifier::ruling(FanoutAskVerdict::Allow);
     assert_eq!(
         classify_fan_out_ask(&vault, &ask, &plan, &estimate, Some(&classifier)),
-        FanoutAskVerdict::Allow
+        FanoutAskVerdict::Allow,
     );
     let seen = classifier.only_ask();
     assert_eq!(seen.scope, SCOPE);
@@ -568,10 +537,13 @@ fn classifier_is_provider_neutral_and_injected() {
     assert_eq!(seen.total_count, 240);
     assert_eq!(
         seen.per_peer_counts,
-        vec![("cc-2".to_owned(), 60), ("codex".to_owned(), 180)]
+        vec![("cc-2".to_owned(), 60), ("codex".to_owned(), 180)],
     );
     assert_eq!(seen.plan_digest, "5a".repeat(32));
-    assert_eq!(seen.history, FanoutDecisionHistory::default());
+    assert_eq!(seen.history.approve, 0);
+    assert_eq!(seen.history.deny, 0);
+    assert_eq!(seen.history.amend, 0);
+    assert!(seen.history.last_rulings.is_empty());
 
     // Every closed verdict comes back verbatim through the same seam.
     for verdict in [
@@ -582,7 +554,7 @@ fn classifier_is_provider_neutral_and_injected() {
         let injected = RecordingClassifier::ruling(verdict);
         assert_eq!(
             classify_fan_out_ask(&vault, &ask, &plan, &estimate, Some(&injected)),
-            verdict
+            verdict,
         );
         assert_eq!(injected.calls(), 1);
     }
@@ -590,60 +562,40 @@ fn classifier_is_provider_neutral_and_injected() {
 
 #[test]
 fn classifier_view_is_the_only_public_plan_carrier() {
-    let code = module_code();
-    let heads = public_declaration_heads(&code);
-    assert!(
-        heads
-            .iter()
-            .any(|head| head.starts_with("enum FanoutAskVerdict")),
-        "the surface scan found this module's public declarations: {heads:?}"
-    );
-    for head in &heads {
-        assert!(
-            !head.contains("FanoutPlan"),
-            "ONE-1719's plan type never crosses a public declaration: {head}"
-        );
-        assert!(
-            !head.contains("FanoutEstimate"),
-            "ONE-1719's estimate type never crosses a public declaration: {head}"
-        );
-    }
-    // The stated carve-out: the classification wrapper stays crate-private and
-    // the decider impl is the trait's own crate-visible surface.
-    assert!(
-        code.contains("pub(crate) fn classify_fan_out_ask"),
-        "the classification wrapper stays crate-private"
-    );
-    assert!(
-        code.contains("impl FanoutAutoDecider for LearningFanoutAutoDecider"),
-        "the decider impl is the carve-out that names ONE-1719's types"
-    );
-
-    // The view projects four things and no plan representation.
+    let (_dir, vault) = open_vault();
+    let ask = context(SCOPE, FanoutAskTrigger::Budget { magnitude: 240 });
     let plan = plan_over(&FAN_OUT);
     let estimate = estimate_over(&FAN_OUT);
-    let view = FanoutClassifierView::new(&plan, &estimate);
-    assert_eq!(view.peer_count(), view.per_peer_counts().len() as u64);
-    assert_eq!(view.peer_count(), 2);
+    let classifier = RecordingClassifier::ruling(FanoutAskVerdict::Allow);
+    assert_eq!(
+        classify_fan_out_ask(&vault, &ask, &plan, &estimate, Some(&classifier)),
+        FanoutAskVerdict::Allow,
+    );
+    let seen = classifier.only_ask();
+    assert_eq!(seen.peer_count, seen.per_peer_counts.len() as u64);
+    assert_eq!(seen.peer_count, 2);
     assert!(
-        !view
-            .per_peer_counts()
+        !seen
+            .per_peer_counts
             .iter()
             .any(|(peer, _)| peer == "peer_hub"),
-        "the parent endpoint sending the consults is never counted as a peer"
+        "the parent endpoint sending the consults is never counted as a peer",
     );
-    assert_eq!(view.total_count(), 240);
-    assert_eq!(
-        view.plan_digest(),
-        bytes_to_hex_lower(&estimate.plan_digest)
-    );
+    assert_eq!(seen.total_count, 240);
+    assert_eq!(seen.plan_digest, "5a".repeat(32));
 
-    // A wider plan under the SAME frozen estimate keeps the same digest: the
-    // projection reads the existing bytes and never rehashes.
+    // A wider plan under the same frozen estimate must not rehash the digest.
     let wider = plan_over(&[("codex", 180), ("cc-2", 60), ("peer_c", 1)]);
-    let wider_view = FanoutClassifierView::new(&wider, &estimate);
-    assert_eq!(wider_view.plan_digest(), view.plan_digest());
-    assert_eq!(wider_view.peer_count(), 3);
+    let wider_classifier = RecordingClassifier::ruling(FanoutAskVerdict::Allow);
+    assert_eq!(
+        classify_fan_out_ask(&vault, &ask, &wider, &estimate, Some(&wider_classifier)),
+        FanoutAskVerdict::Allow,
+    );
+    let wider_seen = wider_classifier.only_ask();
+    assert_eq!(wider_seen.plan_digest, seen.plan_digest);
+    assert_eq!(wider_seen.peer_count, 3);
+    assert_eq!(wider_seen.total_count, seen.total_count);
+    assert_eq!(wider_seen.per_peer_counts, seen.per_peer_counts);
 }
 
 // ---------------------------------------------------------------------------

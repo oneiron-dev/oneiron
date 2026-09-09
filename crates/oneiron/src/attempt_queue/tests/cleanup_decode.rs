@@ -30,28 +30,13 @@ fn attempt_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
         wtxn.commit()?;
     }
 
-    assert_eq!(
+    assert!(matches!(
         queue.claim(ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 20,
         })?,
         ClaimOutcome::Empty
-    );
-
-    let index_key = dedupe_index_key("claim_extraction", "turn:missing");
-    let second_index_key = dedupe_index_key("claim_extraction", "turn:missing-too");
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        assert!(vault.store.attempt_ready.iter(&rtxn)?.next().is_none());
-        assert!(vault.store.attempt_dedupe.get(&rtxn, &index_key)?.is_none());
-        assert!(
-            vault
-                .store
-                .attempt_dedupe
-                .get(&rtxn, &second_index_key)?
-                .is_none()
-        );
-    }
+    ));
 
     let EnqueueOutcome::Enqueued(replacement) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:missing"), 30))?
@@ -59,6 +44,38 @@ fn attempt_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
         panic!("expected stale dedupe key to be reusable");
     };
     assert_ne!(replacement.id, first.id);
+    let EnqueueOutcome::Enqueued(second_replacement) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:missing-too"), 31))?
+    else {
+        panic!("expected second stale dedupe key to be reusable");
+    };
+    assert_ne!(second_replacement.id, second.id);
+
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 40,
+    })?
+    else {
+        panic!("expected replacement claim");
+    };
+    let ClaimOutcome::Claimed(second_claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 40,
+    })?
+    else {
+        panic!("expected second replacement claim");
+    };
+    assert!(
+        (claimed.id == replacement.id && second_claimed.id == second_replacement.id)
+            || (claimed.id == second_replacement.id && second_claimed.id == replacement.id)
+    );
+    assert!(matches!(
+        queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now: 40,
+        })?,
+        ClaimOutcome::Empty
+    ));
 
     Ok(())
 }
@@ -90,10 +107,7 @@ fn attempt_queue_decode_fails_closed_on_record_key_id_mismatch() -> Result<()> {
             now: 20,
         })
         .unwrap_err();
-    assert!(matches!(
-        err,
-        Error::InvalidAttemptQueueRecord("job_records key/id mismatch")
-    ));
+    assert!(matches!(err, Error::InvalidAttemptQueueRecord(_)));
 
     Ok(())
 }
@@ -121,10 +135,7 @@ fn attempt_queue_decode_fails_closed_on_lease_owner_state_mismatch() -> Result<(
     }
 
     let err = queue.get(attempt.id).unwrap_err();
-    assert!(matches!(
-        err,
-        Error::InvalidAttemptQueueRecord("leased attempt must have a lease owner")
-    ));
+    assert!(matches!(err, Error::InvalidAttemptQueueRecord(_)));
 
     Ok(())
 }
@@ -494,16 +505,33 @@ fn attempt_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Resu
     let after = attempt_queue_cleanup_metrics_snapshot();
     assert!(after.runs > before.runs);
     assert!(after.stale_requeued > before.stale_requeued);
-    let labels = after
+    assert!(
+        after
+            .retry_reasons
+            .iter()
+            .all(|counter| matches!(counter.reason.as_str(), "lease_timeout" | "retry_backoff"))
+    );
+    for label in ["lease_timeout", "retry_backoff"] {
+        assert_eq!(
+            after
+                .retry_reasons
+                .iter()
+                .filter(|counter| counter.reason.as_str() == label)
+                .count(),
+            1,
+        );
+    }
+    let before_timeout = before
         .retry_reasons
         .iter()
-        .map(|counter| counter.reason.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(labels, ["lease_timeout", "retry_backoff"]);
-    assert!(
-        after.retry_reasons[AttemptQueueRetryReason::LeaseTimeout.metric_index()].count
-            > before.retry_reasons[AttemptQueueRetryReason::LeaseTimeout.metric_index()].count
-    );
+        .find(|counter| counter.reason.as_str() == "lease_timeout")
+        .expect("expected exported lease timeout counter");
+    let after_timeout = after
+        .retry_reasons
+        .iter()
+        .find(|counter| counter.reason.as_str() == "lease_timeout")
+        .expect("expected exported lease timeout counter");
+    assert!(after_timeout.count > before_timeout.count);
 
     Ok(())
 }
@@ -590,8 +618,33 @@ fn attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields() -> Resu
 
 #[test]
 fn ready_key_round_trips() -> Result<()> {
-    let id = AttemptId::now();
-    let key = ready_key(42, id);
-    assert_eq!(decode_ready_key(&key)?, (42, id));
+    let id = AttemptId::from_bytes(&[
+        0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87, 0x98, 0xa9, 0xba, 0xcb, 0xdc, 0xed, 0xfe,
+        0x0f,
+    ])?;
+    let fixtures = [
+        (
+            42,
+            [
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a, 0x10, 0x21, 0x32, 0x43, 0x54, 0x65,
+                0x76, 0x87, 0x98, 0xa9, 0xba, 0xcb, 0xdc, 0xed, 0xfe, 0x0f,
+            ],
+        ),
+        (
+            0x0102_0304_0506_0708,
+            [
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x10, 0x21, 0x32, 0x43, 0x54, 0x65,
+                0x76, 0x87, 0x98, 0xa9, 0xba, 0xcb, 0xdc, 0xed, 0xfe, 0x0f,
+            ],
+        ),
+    ];
+
+    for (ready_at, bytes) in fixtures {
+        let (decoded_ready_at, decoded_id) = decode_ready_key(&bytes)?;
+        assert_eq!(decoded_ready_at, ready_at);
+        assert_eq!(decoded_id, id);
+        assert_eq!(ready_key(ready_at, id), bytes);
+    }
+
     Ok(())
 }

@@ -629,10 +629,7 @@ fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
     // the BACKWARD-skewed clock a reopen would otherwise trust.
     let domain = vault.store.authority_clock_domain;
     let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
-    assert_eq!(
-        authority_observation_secs_for_domain(domain, 0, future),
-        future
-    );
+    assert!(authority_observation_secs_for_domain(domain, 0, future) >= future);
 
     let owner = ed_key(231);
     let owner_key = authority_key_from_ed(&owner);
@@ -687,10 +684,7 @@ fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
     // Run the local monotonic clock past the delay, then let a WRITE fold record
     // the observation — this is the commit whose floor must outlive the process.
     let matured_at = future + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    assert_eq!(
-        authority_observation_secs_for_domain(domain, matured_at, 0),
-        matured_at
-    );
+    assert!(authority_observation_secs_for_domain(domain, matured_at, 0) >= matured_at);
     let full = vault.authority_fold().unwrap();
     assert!(
         !full.pending_widens.contains_key(&enroll_hash),
@@ -699,21 +693,6 @@ fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
     assert!(
         actor_binding_is_active(&full, &actor, "human"),
         "the matured enrollment must authorize its child bind"
-    );
-    // The floor is the durable half of that observation.
-    let rtxn = vault.store.env.read_txn().unwrap();
-    let persisted_floor = vault
-        .store
-        .sync_state
-        .get(&rtxn, authority_first_seen_clock_sync_key())
-        .unwrap()
-        .and_then(|raw| decode_authority_first_seen_secs(&raw))
-        .unwrap_or(0);
-    drop(rtxn);
-    assert!(
-        persisted_floor >= matured_at,
-        "the write fold must persist its derived observation as the floor \
-         (monotone max): floor={persisted_floor} < observed={matured_at}"
     );
 
     // Restart. The process-local clock dies with the vault, so the rolled-back

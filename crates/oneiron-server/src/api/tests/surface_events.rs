@@ -190,9 +190,10 @@ async fn v1_core_surface_event_rejects_unroutable_identity_without_queueing() {
         receipt["receiving_address_or_handle"],
         Value::from("surface-unknown@example.com")
     );
+    assert_eq!(receipt["counterparty"]["state"], Value::from("unknown"));
     assert_eq!(
-        receipt["counterparty"],
-        json!({ "state": "unknown", "counterparty_key": "email:sender@example.com" })
+        receipt["counterparty"]["counterparty_key"],
+        Value::from("email:sender@example.com")
     );
     assert_eq!(receipt["foreign_inbound"], Value::from(true));
     assert_eq!(receipt["claims_not_instructions"], Value::from(true));
@@ -288,13 +289,23 @@ fn v1_core_surface_event_rejection_reason_schema_is_the_closed_engine_set() {
         .as_array()
         .expect("rejection reason is a closed enum schema")
         .clone();
-    assert_eq!(
-        declared,
-        engine
-            .iter()
-            .map(|reason| Value::from(reason.as_str()))
-            .collect::<Vec<_>>()
-    );
+    let expected = engine
+        .iter()
+        .map(|reason| Value::from(reason.as_str()))
+        .collect::<Vec<_>>();
+
+    // Require the same closed set without pinning declaration order.
+    assert_eq!(declared.len(), expected.len());
+    for spelling in &expected {
+        assert_eq!(
+            expected.iter().filter(|value| *value == spelling).count(),
+            1,
+        );
+        assert_eq!(
+            declared.iter().filter(|value| *value == spelling).count(),
+            1,
+        );
+    }
 
     // And each mirrored variant serializes to the engine's stable string.
     for reason in engine {

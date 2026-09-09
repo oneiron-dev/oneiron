@@ -90,6 +90,7 @@ fn verdict(facts: &DispatchComplianceFacts) -> ComplianceVerdict {
 fn campaign_compliance_seed_rows_match_arch_0059() {
     let pack = pack();
     assert_eq!(pack.pack_id, CAMPAIGN_COMPLIANCE_PACK_ID);
+    validate_compliance_pack(&pack).expect("the shipped pack satisfies the activation schema");
     assert!(
         !pack.warning.trim().is_empty(),
         "the caveat ships with the pack"
@@ -100,7 +101,7 @@ fn campaign_compliance_seed_rows_match_arch_0059() {
             "{jurisdiction} has no seeded rows"
         );
     }
-    // The four headline consent-class rows carry their primary source.
+    // The four headline consent-class rows carry fresh primary sources.
     for jurisdiction in ["UK", "JP", "EU", "US"] {
         let row = pack
             .rows
@@ -115,15 +116,12 @@ fn campaign_compliance_seed_rows_match_arch_0059() {
         assert!(!row.source.citation.trim().is_empty());
         assert!(!row.source.url.trim().is_empty());
         assert!(!row.penalty_note.trim().is_empty());
-        assert_eq!(row.verified_at, SEED_VERIFIED_AT);
-        assert_eq!(row.version, 1);
+        assert!(!pack.is_stale(row, FRESH_NOW));
     }
-    // JP's publication exemption is bound to the three-fact check, and US
-    // seeds the source-hygiene refusal.
-    assert_eq!(
+    assert!(matches!(
         pack.exemption_evidence("JP"),
         Some(ComplianceExemptionEvidence::PublicationContext)
-    );
+    ));
     assert!(pack.rows.iter().any(|row| {
         row.jurisdiction == "US" && row.rule_kind == ComplianceRuleKind::SourceHygiene
     }));
@@ -566,10 +564,22 @@ fn campaign_compliance_evidence_refs_are_hydrated_and_class_validated() {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, SUBJECT_SEED);
     let other = put_person(&vault, OTHER_SUBJECT_SEED);
+    let dispatch = || {
+        let hydrated = hydrate(&vault, subject);
+        let mut dispatch = facts(Some("US"), "email");
+        dispatch.list_provenance = hydrated.list_provenance;
+        verdict(&dispatch)
+    };
 
     // 1. A reference that resolves to nothing is not evidence.
     put_evidence(&vault, subject, entity(PROVENANCE_SEED), "double_opt_in");
-    assert!(hydrate(&vault, subject).list_provenance.is_none());
+    assert!(matches!(
+        dispatch(),
+        ComplianceVerdict::Block {
+            reason: ComplianceBlockReason::UnknownListProvenance,
+            ..
+        }
+    ));
 
     // 2. A reference to an unrelated record is not evidence either.
     put_claim(
@@ -580,10 +590,15 @@ fn campaign_compliance_evidence_refs_are_hydrated_and_class_validated() {
         map(&[("published_by_recipient", Value::from(true))]),
     );
     put_evidence(&vault, subject, entity(WRONG_KIND_SEED), "double_opt_in");
-    assert!(hydrate(&vault, subject).list_provenance.is_none());
+    assert!(matches!(
+        dispatch(),
+        ComplianceVerdict::Block {
+            reason: ComplianceBlockReason::UnknownListProvenance,
+            ..
+        }
+    ));
 
-    // 3. A provenance record whose own class contradicts the claimed one
-    //    is rejected: the claim cannot name the class it likes.
+    // 3. The resolved record must confirm the claimed class.
     put_claim(
         &vault,
         WRONG_CLASS_SEED,
@@ -592,9 +607,15 @@ fn campaign_compliance_evidence_refs_are_hydrated_and_class_validated() {
         map(&[("class", Value::from("harvested"))]),
     );
     put_evidence(&vault, subject, entity(WRONG_CLASS_SEED), "double_opt_in");
-    assert!(hydrate(&vault, subject).list_provenance.is_none());
+    assert!(matches!(
+        dispatch(),
+        ComplianceVerdict::Block {
+            reason: ComplianceBlockReason::UnknownListProvenance,
+            ..
+        }
+    ));
 
-    // 4. A record bound to ANOTHER counterparty cannot authorize this one.
+    // 4. Another counterparty's record cannot authorize this send.
     put_claim(
         &vault,
         FOREIGN_SEED,
@@ -603,9 +624,15 @@ fn campaign_compliance_evidence_refs_are_hydrated_and_class_validated() {
         map(&[("class", Value::from("double_opt_in"))]),
     );
     put_evidence(&vault, subject, entity(FOREIGN_SEED), "double_opt_in");
-    assert!(hydrate(&vault, subject).list_provenance.is_none());
+    assert!(matches!(
+        dispatch(),
+        ComplianceVerdict::Block {
+            reason: ComplianceBlockReason::UnknownListProvenance,
+            ..
+        }
+    ));
 
-    // 5. The matching record on this subject hydrates.
+    // 5. Matching subject-bound evidence authorizes the applicable sends.
     put_claim(
         &vault,
         PROVENANCE_SEED,
@@ -614,15 +641,10 @@ fn campaign_compliance_evidence_refs_are_hydrated_and_class_validated() {
         map(&[("class", Value::from("double_opt_in"))]),
     );
     put_evidence(&vault, subject, entity(PROVENANCE_SEED), "double_opt_in");
-    let hydrated = hydrate(&vault, subject);
-    assert_eq!(
-        hydrated.list_provenance,
-        Some(HydratedListProvenance {
-            record_ref: entity(PROVENANCE_SEED),
-            claimed_class: "double_opt_in".to_owned(),
-        })
-    );
-    assert_eq!(hydrated.legal_form.as_deref(), Some("corporate"));
+    assert!(matches!(dispatch(), ComplianceVerdict::Allow));
+    let mut uk = facts(Some("UK"), "email");
+    uk.legal_form = hydrate(&vault, subject).legal_form;
+    assert!(matches!(verdict(&uk), ComplianceVerdict::Allow));
 }
 
 #[test]
@@ -637,9 +659,7 @@ fn campaign_compliance_disagreeing_evidence_heads_take_the_strict_path() {
         map(&[("class", Value::from("double_opt_in"))]),
     );
 
-    // Two live evidence heads that disagree: one carries the legal form
-    // and cites no provenance, the other cites the provenance and states
-    // no legal form. Both are ACTIVE and neither is newer.
+    // Both disagreeing heads are active and neither is newer.
     put_claim(
         &vault,
         EVIDENCE_SEED,
@@ -661,16 +681,28 @@ fn campaign_compliance_disagreeing_evidence_heads_take_the_strict_path() {
         )]),
     );
 
-    // Exactly one of these would have hydrated had the reader taken a head
-    // and run — and whichever it took, the surviving fact answers a wall
-    // the other head does not vouch for. Contested evidence is no
-    // evidence, so both walls take the strict path.
+    // Isolate each contested axis with otherwise sufficient dispatch facts.
     let contested = hydrate(&vault, subject);
-    assert_eq!(contested.legal_form, None);
-    assert_eq!(contested.list_provenance, None);
+    let mut uk = facts(Some("UK"), "email");
+    uk.legal_form = contested.legal_form;
+    assert!(matches!(
+        verdict(&uk),
+        ComplianceVerdict::Block {
+            reason: ComplianceBlockReason::UnknownLegalForm,
+            ..
+        }
+    ));
+    let mut us = facts(Some("US"), "email");
+    us.list_provenance = contested.list_provenance;
+    assert!(matches!(
+        verdict(&us),
+        ComplianceVerdict::Block {
+            reason: ComplianceBlockReason::UnknownListProvenance,
+            ..
+        }
+    ));
 
-    // An identical twin — a re-import, an offline-minted duplicate — is
-    // one truth restated, not a second one, and still hydrates.
+    // An identical reimport preserves authorization under the UK exemption.
     vault
         .retract_claim(&entity(SECOND_EVIDENCE_SEED), 2)
         .expect("retract the contradicting head");
@@ -681,10 +713,8 @@ fn campaign_compliance_disagreeing_evidence_heads_take_the_strict_path() {
         subject,
         map(&[("legal_form", Value::from("corporate"))]),
     );
-    assert_eq!(
-        hydrate(&vault, subject).legal_form.as_deref(),
-        Some("corporate")
-    );
+    uk.legal_form = hydrate(&vault, subject).legal_form;
+    assert!(matches!(verdict(&uk), ComplianceVerdict::Allow));
 }
 
 #[test]
@@ -692,11 +722,54 @@ fn campaign_compliance_message_elements_come_from_the_sending_identity() {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, SUBJECT_SEED);
     let identity = put_person(&vault, IDENTITY_SEED);
+    let check = |hydrated: DispatchComplianceFacts, allowed: bool| {
+        // Exercise each disclosure independently, with all other facts met.
+        for kind in [
+            ComplianceRuleKind::SenderId,
+            ComplianceRuleKind::PhysicalAddress,
+            ComplianceRuleKind::OptoutMechanism,
+            ComplianceRuleKind::ContentMarking,
+        ] {
+            let pack = pack();
+            let row = pack
+                .rows
+                .iter()
+                .find(|row| row.rule_kind == kind && row.channel == "email")
+                .expect("a seeded message-element requirement");
+            let mut dispatch = facts(Some(&row.jurisdiction), "email");
+            match kind {
+                ComplianceRuleKind::SenderId => {
+                    dispatch.sender_identity_present = hydrated.sender_identity_present;
+                }
+                ComplianceRuleKind::PhysicalAddress => {
+                    dispatch.physical_address_present = hydrated.physical_address_present;
+                }
+                ComplianceRuleKind::OptoutMechanism => {
+                    dispatch.optout_mechanism_present = hydrated.optout_mechanism_present;
+                }
+                ComplianceRuleKind::ContentMarking => {
+                    dispatch.commercial_marking_present = hydrated.commercial_marking_present;
+                }
+                _ => unreachable!(),
+            }
+            let outcome = evaluate_dispatch_compliance(&pack, &dispatch);
+            if allowed {
+                assert!(matches!(outcome, ComplianceVerdict::Allow));
+            } else {
+                assert!(matches!(
+                    outcome,
+                    ComplianceVerdict::Block {
+                        reason: ComplianceBlockReason::MissingRequiredMessageElement,
+                        rule_kind: Some(blocked_kind),
+                        ..
+                    } if blocked_kind == kind
+                ));
+            }
+        }
+    };
 
-    // With no configuration row, no element is established.
-    let bare = hydrate(&vault, subject);
-    assert!(!bare.sender_identity_present);
-    assert!(!bare.optout_mechanism_present);
+    // With no configuration row, no disclosure requirement is satisfied.
+    check(hydrate(&vault, subject), false);
 
     put_claim(
         &vault,
@@ -710,11 +783,7 @@ fn campaign_compliance_message_elements_come_from_the_sending_identity() {
             ("commercial_marking", Value::from(true)),
         ]),
     );
-    let configured = hydrate(&vault, subject);
-    assert!(configured.sender_identity_present);
-    assert!(configured.physical_address_present);
-    assert!(configured.optout_mechanism_present);
-    assert!(configured.commercial_marking_present);
+    check(hydrate(&vault, subject), true);
 
     // A send with no bound identity discloses nothing, whatever a row says.
     let rtxn = vault.store.env.read_txn().expect("read txn");
@@ -726,7 +795,7 @@ fn campaign_compliance_message_elements_come_from_the_sending_identity() {
         FRESH_NOW,
     )
     .expect("hydration");
-    assert!(!unbound.sender_identity_present);
+    check(unbound, false);
 }
 
 // -- amendment ---------------------------------------------------------

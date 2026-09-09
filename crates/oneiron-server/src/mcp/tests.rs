@@ -351,12 +351,14 @@ fn read_target_context_pack_errors_use_nested_field() {
     )
     .expect_err("invalid nested context-pack version should fail");
 
-    assert!(
-        error
-            .to_string()
-            .starts_with("oneiron.read.target.context_pack:"),
-        "{error}"
-    );
+    assert!(matches!(
+        error,
+        McpToolValidationError::Field {
+            tool: "oneiron.read",
+            field: "target.context_pack",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -374,10 +376,14 @@ fn read_target_short_ref_uses_hydrate_parser_shape() {
     )
     .expect_err("invalid short ref should fail before hydrate");
 
-    assert!(
-        error.to_string().contains("shortId:contentHashHex"),
-        "{error}"
-    );
+    assert!(matches!(
+        error,
+        McpToolValidationError::Field {
+            tool: "oneiron.read",
+            field: "target.short_ref",
+            ..
+        }
+    ));
 
     validate_mcp_tool_args(
         McpToolName::Read,
@@ -411,7 +417,13 @@ fn edit_rejects_legacy_remember_verb() {
     )
     .expect_err("legacy remember verb should fail");
 
-    assert!(error.to_string().contains("unknown variant"), "{error}");
+    assert!(matches!(
+        error,
+        McpToolValidationError::Decode {
+            tool: "oneiron.edit",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -433,12 +445,14 @@ fn propose_entity_rejects_impossible_occurrence_range() {
     )
     .expect_err("start greater than end should fail");
 
-    assert!(
-        error
-            .to_string()
-            .contains("occurred.start: must be less than or equal"),
-        "{error}"
-    );
+    assert!(matches!(
+        error,
+        McpToolValidationError::Field {
+            tool: "oneiron.edit",
+            field: "occurred.start",
+            ..
+        }
+    ));
 }
 
 fn assert_closed_object_schemas(value: &Value, path: &str) {
@@ -492,38 +506,8 @@ fn oneiron_calendar_schema_is_closed_and_op_specific() {
     );
 
     let schema = mcp_tool_schema(McpToolName::Calendar).input_schema;
-    let branches = schema["properties"]["operation"]["oneOf"]
-        .as_array()
-        .expect("operation branches");
-    let ops = branches
-        .iter()
-        .map(|branch| {
-            branch["properties"]["op"]["const"]
-                .as_str()
-                .expect("op const")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(ops, McpToolName::Calendar.operations());
 
-    let invite = branches.last().expect("invite branch");
-    assert_eq!(
-        invite["required"],
-        json!([
-            "op",
-            "method",
-            "uid",
-            "sequence",
-            "ics_blob_ref",
-            "recipient"
-        ]),
-        "the invite arm requires C7's exact typed payload, not an outbound draft"
-    );
-    assert_eq!(
-        invite["properties"]["method"]["enum"],
-        json!(["REQUEST", "CANCEL"])
-    );
-
-    // Every accepted op decodes; nothing outside the set does.
+    // Every accepted op decodes and is admitted by the schema.
     for operation in [
         json!({ "op": "read", "event_ref": RESULT_ID }),
         json!({ "op": "search", "text": "review", "limit": 5 }),
@@ -536,9 +520,21 @@ fn oneiron_calendar_schema_is_closed_and_op_specific() {
             "ics_blob_ref": "blob:one-1791",
             "recipient": "guest@example.test",
         }),
+        json!({
+            "op": "invite",
+            "method": "CANCEL",
+            "uid": "uid-1",
+            "sequence": 0,
+            "ics_blob_ref": "blob:one-1791",
+            "recipient": "guest@example.test",
+        }),
     ] {
-        validate_mcp_tool_args(McpToolName::Calendar, calendar_args(operation))
-            .expect("closed calendar op validates");
+        let args = calendar_args(operation);
+        assert!(
+            draft2020_12_accepts(&schema, &args),
+            "calendar schema must admit: {args}"
+        );
+        validate_mcp_tool_args(McpToolName::Calendar, args).expect("closed calendar op validates");
     }
 
     for rejected in [
@@ -570,15 +566,33 @@ fn oneiron_calendar_schema_is_closed_and_op_specific() {
             "ics_blob_ref": "blob:one-1791",
             "recipient": "guest@example.test",
         }),
-        // Malformed ref and range.
+        // Malformed ref.
         json!({ "op": "read", "event_ref": "not-an-entity-id" }),
-        json!({ "op": "freebusy", "range": { "start": 20, "end": 10 } }),
     ] {
+        let args = calendar_args(rejected);
         assert!(
-            validate_mcp_tool_args(McpToolName::Calendar, calendar_args(rejected.clone())).is_err(),
-            "calendar op must be rejected: {rejected}"
+            !draft2020_12_accepts(&schema, &args),
+            "calendar schema must reject: {args}"
+        );
+        assert!(
+            validate_mcp_tool_args(McpToolName::Calendar, args.clone()).is_err(),
+            "calendar op must be rejected: {args}"
         );
     }
+
+    // Cross-field range ordering is a runtime constraint, not a schema shape constraint.
+    let args = calendar_args(json!({
+        "op": "freebusy",
+        "range": { "start": 20, "end": 10 },
+    }));
+    assert!(
+        draft2020_12_accepts(&schema, &args),
+        "the reversed range still has a valid schema shape: {args}"
+    );
+    assert!(
+        validate_mcp_tool_args(McpToolName::Calendar, args.clone()).is_err(),
+        "calendar op must be rejected: {args}"
+    );
 }
 
 #[test]
@@ -1034,10 +1048,14 @@ fn attest_old_claim_id_is_validated_as_an_entity_ref() {
         }),
     )
     .expect_err("a malformed prior ref must be rejected at validation");
-    assert!(
-        error.to_string().starts_with("oneiron.edit.old_claim_id:"),
-        "{error}"
-    );
+    assert!(matches!(
+        error,
+        McpToolValidationError::Field {
+            tool,
+            field: "old_claim_id",
+            ..
+        } if tool == McpToolName::Edit.as_str()
+    ));
 }
 
 #[test]
@@ -1416,7 +1434,7 @@ fn result_metadata_states_scope_health_end_and_refuses_cache() {
     let metadata = McpResultMetadata::new(
         "req-1",
         McpSurfaceMode::Primary,
-        scope.clone(),
+        scope,
         McpRetrievalHealth::Degraded,
         McpPageBudget::resolve(
             Some(&McpPageRequest {
@@ -1441,11 +1459,8 @@ fn result_metadata_states_scope_health_end_and_refuses_cache() {
     assert_eq!(value["page"]["granted"], 4);
     assert_eq!(value["page"]["returned"], 2);
     assert_eq!(value["help"].as_array().map(Vec::len), Some(1));
-    assert_eq!(
-        value["effective_scope"],
-        mcp_effective_scope_value(&scope),
-        "the effective scope travels with the result",
-    );
+    assert_eq!(value["effective_scope"]["world_ref"], id(0xC001).to_hex());
+    assert!(value["effective_scope"]["facet_ref"].is_null());
     // A foreign TTL never widens ours.
     assert_eq!(value["ttlMs"], MCP_RESULT_TTL_MS);
     assert_eq!(value["cacheScope"], MCP_RESULT_CACHE_SCOPE);

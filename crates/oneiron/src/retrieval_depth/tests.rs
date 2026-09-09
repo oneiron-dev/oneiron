@@ -375,7 +375,15 @@ fn standard_is_reproducible_across_calls() -> TestResult {
 
     let first = scoped.search_with_effort(&text_request(query, Effort::Standard))?;
     let second = scoped.search_with_effort(&text_request(query, Effort::Standard))?;
-    assert_eq!(first, second, "a deterministic tier must not drift");
+    assert_eq!(ids_of(&first.hits), ids_of(&second.hits));
+    for (first_hit, second_hit) in first.hits.iter().zip(&second.hits) {
+        assert_eq!(first_hit.score, second_hit.score);
+    }
+    assert_eq!(first.queries_run, second.queries_run);
+    assert_eq!(first.signals_used, second.signals_used);
+    assert_eq!(first.candidates_scanned, second.candidates_scanned);
+    assert_eq!(first.backend_used, second.backend_used);
+    assert_eq!(first.tokens_used, second.tokens_used);
     Ok(())
 }
 
@@ -732,17 +740,29 @@ fn session_scope_only_ever_narrows() -> TestResult {
     assert!(wide.hits.len() >= 2, "need something to narrow");
 
     // The empty scope is a no-op: never a widening, and never a wipe.
-    let unchanged = narrow_to_session_scope(&scoped, wide.hits.clone(), &SessionScope::default())?;
-    assert_eq!(unchanged, wide.hits);
+    let empty = SessionScope::default();
+    let mut request = text_request("launch", Effort::Standard);
+    request.session_scope = Some(&empty);
+    let unchanged = scoped.search_with_effort(&request)?;
+    assert_eq!(ids_of(&unchanged.hits), ids_of(&wide.hits));
 
     let scope = SessionScope {
         document_short_ids: vec![short_ref_or_hex(&vault, &anchor)?],
         ..SessionScope::default()
     };
-    let narrowed = narrow_to_session_scope(&scoped, wide.hits.clone(), &scope)?;
-    assert_eq!(ids_of(&narrowed), vec![anchor]);
+    let mut request = text_request("launch", Effort::Standard);
+    request.session_scope = Some(&scope);
+    let narrowed = scoped.search_with_effort(&request)?;
+    assert_eq!(ids_of(&narrowed.hits), vec![anchor]);
     assert!(
-        narrowed.len() < wide.hits.len(),
+        narrowed
+            .hits
+            .iter()
+            .all(|hit| ids_of(&wide.hits).contains(&hit.id)),
+        "a session scope cannot add hits"
+    );
+    assert!(
+        narrowed.hits.len() < wide.hits.len(),
         "a document scope removes hits"
     );
 
@@ -752,13 +772,17 @@ fn session_scope_only_ever_narrows() -> TestResult {
         document_short_ids: vec!["no-such-short-id".to_owned()],
         ..SessionScope::default()
     };
-    assert!(narrow_to_session_scope(&scoped, wide.hits.clone(), &absent)?.is_empty());
+    let mut request = text_request("launch", Effort::Standard);
+    request.session_scope = Some(&absent);
+    assert!(scoped.search_with_effort(&request)?.hits.is_empty());
 
     let unknown_world = SessionScope {
         world_ref: Some(entity(0x51)),
         ..SessionScope::default()
     };
-    assert!(narrow_to_session_scope(&scoped, wide.hits, &unknown_world)?.is_empty());
+    let mut request = text_request("launch", Effort::Standard);
+    request.session_scope = Some(&unknown_world);
+    assert!(scoped.search_with_effort(&request)?.hits.is_empty());
     Ok(())
 }
 

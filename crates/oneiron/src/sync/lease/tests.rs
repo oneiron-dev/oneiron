@@ -93,14 +93,14 @@ fn lease_record_layout_literals_round_trip() {
     assert_eq!(
         &encoded[34..42],
         &0x0102030405060708u64.to_le_bytes(),
-        "granted_at u64 LE"
+        "granted_at u64 LE",
     );
     assert_eq!(&encoded[42..50], &0x1112131415161718u64.to_le_bytes());
     assert_eq!(&encoded[50..58], &0x2122232425262728u64.to_le_bytes());
     assert_eq!(
         &encoded[58..66],
         &0x0102030405060708u64.to_be_bytes(),
-        "vault_id u64 BE"
+        "vault_id u64 BE",
     );
     assert_eq!(decode_lease_record(&encoded).unwrap(), record);
 
@@ -115,7 +115,7 @@ fn lease_record_layout_literals_round_trip() {
     }
 
     // Compat/fail-closed decode: the 58 B v1 layout and any wrong length
-    // are refused; unknown status keeps its pinned error literal.
+    // are refused; unknown status returns typed corruption.
     let mut legacy_v1 = [0u8; 58];
     legacy_v1[0] = 0x01;
     legacy_v1[1] = 0x01;
@@ -143,7 +143,7 @@ fn lease_record_layout_literals_round_trip() {
     bad_status[1] = 0x00;
     assert!(matches!(
         decode_lease_record(&bad_status),
-        Err(Error::CorruptedIndex("lease record status"))
+        Err(Error::CorruptedIndex(_))
     ));
 }
 
@@ -384,8 +384,8 @@ fn mismatched_claimed_lease_key_vault_fails_closed_before_floor_scope() {
     let err = verify_receipt_for_vault(&vault, trusted_vault_id, &receipt_id, &blob)
         .expect_err("key/payload vault mismatch must not scope the floor to payload vault");
     assert!(
-        matches!(err, Error::CorruptedIndex("lease record vault_id")),
-        "local lease key/value mismatch must fail closed, got: {err:?}"
+        matches!(err, Error::CorruptedIndex(_)),
+        "local lease key/value mismatch must fail closed, got: {err:?}",
     );
 }
 

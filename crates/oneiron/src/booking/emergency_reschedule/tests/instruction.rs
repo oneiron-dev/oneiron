@@ -55,27 +55,26 @@ fn owner_instruction_row_is_lane_owned_and_content_keyed() {
     let (dir, vault) = open_test_vault_with(VaultConfig::default());
     let before = meta(&vault);
     let req = logged(&vault);
-    let key = instruction_key(
-        req.owner_ref,
-        req.affected_window,
-        &req.reason,
-        req.action_policy,
-        req.authority.recorded_at,
-    )
-    .unwrap();
-    assert!(key.starts_with(EMERGENCY_INSTRUCTION_META_PREFIX));
-    assert_eq!(key.len(), EMERGENCY_INSTRUCTION_META_PREFIX.len() + 64);
     let rows = meta(&vault);
     let added: Vec<_> = rows.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(added.len(), 1);
-    assert_eq!(added[0].0, key);
+    let key = &added[0].0;
+    assert!(key.starts_with(EMERGENCY_INSTRUCTION_META_PREFIX));
+    assert_eq!(key.len(), EMERGENCY_INSTRUCTION_META_PREFIX.len() + 64);
     let body: serde_json::Value = serde_json::from_slice(&added[0].1).unwrap();
-    assert_eq!(body.as_object().unwrap().len(), 3);
+    let fields = body.as_object().unwrap();
+    assert!(fields.contains_key("owner_ref"));
+    assert!(fields.contains_key("request_hash"));
+    assert!(fields["recorded_at"].is_u64());
+    let persisted: OwnerInstructionRecord = serde_json::from_slice(&added[0].1).unwrap();
+    assert_eq!(persisted.owner_ref, req.owner_ref);
+    assert_eq!(persisted.request_hash, req.authority.request_hash);
     assert_ne!(
         &key[EMERGENCY_INSTRUCTION_META_PREFIX.len()..],
         hex_lower(&req.authority.request_hash).as_bytes()
     );
-    assert_eq!(logged(&vault), req);
+    let repeated = logged(&vault);
+    verify_logged_owner_instruction(&vault, &repeated).unwrap();
     assert_eq!(meta(&vault), rows);
     let other = append_owner_instruction(
         &vault,
@@ -87,20 +86,29 @@ fn owner_instruction_row_is_lane_owned_and_content_keyed() {
     )
     .unwrap();
     assert_eq!(other.request_hash, req.authority.request_hash);
-    assert_ne!(
-        key,
-        instruction_key(
-            other.owner_ref,
-            req.affected_window,
-            &req.reason,
-            req.action_policy,
-            NOW
-        )
-        .unwrap()
+    let other_req = EmergencyRescheduleRequest {
+        owner_ref: id(0x61),
+        affected_window: req.affected_window,
+        reason: req.reason.clone(),
+        action_policy: req.action_policy,
+        authority: other,
+    };
+    let both_rows = meta(&vault);
+    let other_added: Vec<_> = both_rows.iter().filter(|row| !rows.contains(row)).collect();
+    assert_eq!(other_added.len(), 1);
+    assert!(
+        other_added[0]
+            .0
+            .starts_with(EMERGENCY_INSTRUCTION_META_PREFIX)
     );
+    assert_ne!(&other_added[0].0, key);
+    assert!(both_rows.contains(added[0]));
+    verify_logged_owner_instruction(&vault, &req).unwrap();
+    verify_logged_owner_instruction(&vault, &other_req).unwrap();
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     verify_logged_owner_instruction(&reopened, &req).unwrap();
+    verify_logged_owner_instruction(&reopened, &other_req).unwrap();
 }
 
 #[test]

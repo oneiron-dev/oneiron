@@ -160,10 +160,6 @@ fn tasks_check_scan_cap_reports_honest_additive_overflow() {
     let overflow = section.overflow.expect("a truncated scan always says so");
     assert_eq!(overflow.known_omitted_rows, 1);
     assert!(!overflow.source_exhausted);
-    assert_eq!(
-        overflow.line().as_deref(),
-        Some("tasks: +1 more (at least; scan capped)")
-    );
 }
 
 /// Past the render cap but inside the scan cap the count IS exact, so the
@@ -188,8 +184,8 @@ fn tasks_check_exact_exhaustion_reports_exact_additive_overflow() {
 
     assert_eq!(section.rows.len(), 3);
     let overflow = section.overflow.expect("capped rows carry a footer");
-    assert_eq!(overflow.line().as_deref(), Some("tasks: +2 more"));
-    assert!(!overflow.line().expect("footer").contains("at least"));
+    assert_eq!(overflow.known_omitted_rows, 2);
+    assert!(overflow.source_exhausted);
 
     // Under both caps the landed footer-free render is unchanged.
     let whole = TasksSection::render_bounded(

@@ -307,14 +307,21 @@ fn window_label_format_and_clamp() {
 
 #[test]
 fn leap_year_boundaries_keep_feb_29_in_february_window() {
-    assert!(!is_leap_year(2023), "ordinary year");
-    assert!(is_leap_year(2024), "divisible-by-4 leap year");
-    assert!(!is_leap_year(2100), "century year not divisible by 400");
-    assert!(is_leap_year(2000), "century year divisible by 400");
+    // 2023-02-28 23:59:59 UTC and 2023-03-01 00:00:00 UTC.
+    assert_eq!(window_label_from_timestamp(1_677_628_799), "2023-02");
+    assert_eq!(window_label_from_timestamp(1_677_628_800), "2023-03");
 
     // 2024-02-29 00:00:00 UTC and 2024-03-01 00:00:00 UTC.
     assert_eq!(window_label_from_timestamp(1_709_164_800), "2024-02");
     assert_eq!(window_label_from_timestamp(1_709_251_200), "2024-03");
+
+    // 2100-02-28 23:59:59 UTC and 2100-03-01 00:00:00 UTC.
+    assert_eq!(window_label_from_timestamp(4_107_542_399), "2100-02");
+    assert_eq!(window_label_from_timestamp(4_107_542_400), "2100-03");
+
+    // 2000-02-29 00:00:00 UTC and 2000-03-01 00:00:00 UTC.
+    assert_eq!(window_label_from_timestamp(951_782_400), "2000-02");
+    assert_eq!(window_label_from_timestamp(951_868_800), "2000-03");
 }
 
 #[test]

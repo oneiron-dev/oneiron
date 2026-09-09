@@ -391,16 +391,6 @@ fn note_tombstone_batch_top_level_txn() {
     TOMBSTONE_BATCH_TOP_LEVEL_TXNS.with(|count| count.set(count.get().saturating_add(1)));
 }
 
-#[cfg(test)]
-pub(crate) fn reset_tombstone_batch_top_level_txns() {
-    TOMBSTONE_BATCH_TOP_LEVEL_TXNS.with(|count| count.set(0));
-}
-
-#[cfg(test)]
-pub(crate) fn tombstone_batch_top_level_txns() -> u32 {
-    TOMBSTONE_BATCH_TOP_LEVEL_TXNS.with(Cell::get)
-}
-
 pub(super) fn quarantine_and_neutralize_protected_tombstone_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

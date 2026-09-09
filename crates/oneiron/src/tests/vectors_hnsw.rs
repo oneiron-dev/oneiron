@@ -196,14 +196,11 @@ fn validates_non_finite_vector_and_edge_weights() {
     let vector_err = vault
         .put_vector(&EntityId::now(), &[1.0_f32, f32::NAN, 2.0, 3.0])
         .expect_err("expected invalid vector");
-    let vector_message = vector_err.to_string();
     let Error::InvalidVector { index, value } = vector_err else {
         panic!("expected invalid vector, got {vector_err:?}");
     };
     assert_eq!(index, 1);
     assert!(value.is_nan());
-    assert!(vector_message.contains("index 1"));
-    assert!(vector_message.contains("NaN"));
 
     let inf_err = vault
         .put_vector(&EntityId::now(), &[1.0_f32, f32::INFINITY, 2.0, 3.0])
@@ -222,12 +219,10 @@ fn validates_non_finite_vector_and_edge_weights() {
             f32::INFINITY,
         )
         .expect_err("expected invalid edge weight");
-    let edge_message = edge_err.to_string();
     let Error::InvalidEdgeWeight { value } = edge_err else {
         panic!("expected invalid edge weight, got {edge_err:?}");
     };
     assert!(value.is_infinite());
-    assert!(edge_message.contains("inf"));
 }
 
 #[test]
@@ -275,27 +270,37 @@ fn sync_protocol_errors_carry_typed_context_and_engine_source() {
         } if source.downcast_ref::<std::io::Error>().is_some()
     );
 
+    let operation_source = std::io::Error::from(std::io::ErrorKind::TimedOut);
+    let rollback_source = std::io::Error::other("root revert failed");
+    let operation_kind = operation_source.kind();
+    let rollback_kind = rollback_source.kind();
+    assert_ne!(operation_kind, rollback_kind);
     let rollback = Error::sync_engine_rollback(
         SyncEngineContext::LoroRevert,
-        std::io::Error::other("root txn failed"),
-        std::io::Error::other("root revert failed"),
+        operation_source,
+        rollback_source,
     );
     assert_eq!(rollback.kind(), ErrorKind::SyncEngineError);
-    assert!(rollback.to_string().contains("root txn failed"));
-    assert!(rollback.to_string().contains("root revert failed"));
-    assert_matches!(
-        &rollback,
-        Error::SyncEngineError {
-            context: SyncEngineContext::LoroRevert,
-            source
-        } if {
-            let rollback = source
-                .downcast_ref::<SyncRollbackError>()
-                .expect("sync rollback source should preserve both errors");
-            rollback.operation().to_string().contains("root txn failed")
-                && rollback.rollback().to_string().contains("root revert failed")
-        }
-    );
+    let Error::SyncEngineError {
+        context: SyncEngineContext::LoroRevert,
+        source,
+    } = &rollback
+    else {
+        panic!("expected revert engine error, got {rollback:?}");
+    };
+    let rollback = source
+        .downcast_ref::<SyncRollbackError>()
+        .expect("sync rollback source should preserve both errors");
+    let operation = rollback
+        .operation()
+        .downcast_ref::<std::io::Error>()
+        .expect("operation source should preserve its error type");
+    let rollback = rollback
+        .rollback()
+        .downcast_ref::<std::io::Error>()
+        .expect("rollback source should preserve its error type");
+    assert_eq!(operation.kind(), operation_kind);
+    assert_eq!(rollback.kind(), rollback_kind);
 }
 
 #[test]

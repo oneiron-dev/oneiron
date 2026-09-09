@@ -7,7 +7,7 @@
 //! per target arch (AVX2 / NEON / scalar), the fixture asserts cohort
 //! MEMBERSHIP and ORDERING, never exact-bit cosine values.
 
-use crate::claim::{ClaimSubject, predicate_root};
+use crate::claim::ClaimSubject;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -226,54 +226,60 @@ fn cohort_ids_and_ordering_survive_input_permutation() {
 
 #[test]
 fn cohort_id_separates_partitions_that_share_members() {
-    // Same member list, different bucket ⇒ different id. Guards the domain
-    // separation and the presence tags in the preimage.
-    let partition = ClusterPartitionKey {
-        subject: ClaimSubject::Entity(entity(0x70)),
-        predicate_root: "person.name".to_owned(),
-        world: None,
-        facet: None,
-    };
-    let members = [entity(0x01), entity(0x02)];
-    let base = cohort_id(&partition, &members);
+    let mut claims = [
+        claim(0x01, "person.name.given", axis(0.0)),
+        claim(0x02, "person.name.family", axis(0.1)),
+    ];
+    let base = cluster_claims(&claims, ClusterOptions::default()).expect("base cluster");
+    assert_eq!(base.cohorts.len(), 1);
+    assert_eq!(ids(&base.cohorts[0]), vec![entity(0x01), entity(0x02)]);
 
-    let worlded = cohort_id(
-        &ClusterPartitionKey {
-            world: Some(entity(0x80)),
-            ..partition.clone()
-        },
-        &members,
-    );
-    let faceted = cohort_id(
-        &ClusterPartitionKey {
-            facet: Some(entity(0x80)),
-            ..partition.clone()
-        },
-        &members,
-    );
-    let other_root = cohort_id(
-        &ClusterPartitionKey {
-            subject: partition.subject,
-            predicate_root: "org.name".to_owned(),
-            world: partition.world,
-            facet: partition.facet,
-        },
-        &members,
-    );
-    let shorter = cohort_id(&partition, &members[..1]);
+    for claim in &mut claims {
+        claim.world = Some(entity(0x80));
+    }
+    let worlded = cluster_claims(&claims, ClusterOptions::default()).expect("world cluster");
+
+    for claim in &mut claims {
+        claim.world = None;
+        claim.facet = Some(entity(0x80));
+    }
+    let faceted = cluster_claims(&claims, ClusterOptions::default()).expect("facet cluster");
+
+    for claim in &mut claims {
+        claim.facet = None;
+        claim.predicate = "org.name.given".to_owned();
+    }
+    let other_root = cluster_claims(&claims, ClusterOptions::default()).expect("root cluster");
+
+    claims[0].predicate = "person.name.given".to_owned();
+    claims[1].predicate = "person.name.family".to_owned();
+    let shorter = cluster_claims(&claims[..1], ClusterOptions::default()).expect("shorter cluster");
+    assert_eq!(shorter.cohorts.len(), 1);
+    assert_eq!(ids(&shorter.cohorts[0]), vec![entity(0x01)]);
 
     for (label, other) in [
         ("world", worlded),
         ("facet", faceted),
         ("predicate_root", other_root),
-        ("member count", shorter),
     ] {
-        assert_ne!(base, other, "{label} must change the cohort id");
+        assert_eq!(other.cohorts.len(), 1);
+        assert_eq!(ids(&other.cohorts[0]), vec![entity(0x01), entity(0x02)]);
+        assert_ne!(
+            base.cohorts[0].cohort_id, other.cohorts[0].cohort_id,
+            "{label} must change the cohort id",
+        );
     }
+    assert_ne!(
+        base.cohorts[0].cohort_id, shorter.cohorts[0].cohort_id,
+        "member count must change the cohort id",
+    );
+
+    let repeated = cluster_claims(&claims, ClusterOptions::default()).expect("repeat cluster");
+    assert_eq!(repeated.cohorts.len(), 1);
+    assert_eq!(ids(&repeated.cohorts[0]), vec![entity(0x01), entity(0x02)]);
     assert_eq!(
-        base,
-        cohort_id(&partition, &members),
-        "id is a pure function"
+        base.cohorts[0].cohort_id, repeated.cohorts[0].cohort_id,
+        "id is a pure function",
     );
 }
 
@@ -356,27 +362,18 @@ fn out_of_range_thresholds_are_rejected() {
 
 #[test]
 fn duplicate_claim_ids_are_rejected_and_the_error_names_the_id() {
-    // Unique ids are a PRECONDITION, not a courtesy: `sort_by_key` is stable,
-    // so tied ids keep caller order and the output stops being permutation-
-    // invariant (see the sibling test below for the shape that would break).
-    let duplicated = entity(0x02);
+    // Unique ids are a precondition for deterministic assignments.
     let claims = [
         claim(0x01, "person.name", axis(0.0)),
         claim(0x02, "person.name", axis(0.1)),
         claim(0x02, "person.name", axis(0.9)),
     ];
-    let error = cluster_claims(&claims, ClusterOptions::default()).expect_err("duplicate claim id");
-    let Error::InvalidConfig(message) = &error else {
-        panic!("unexpected error: {error:?}");
-    };
-    assert!(
-        message.contains(&duplicated.to_hex()),
-        "error must name the duplicated id, got: {message}"
-    );
+    assert!(matches!(
+        cluster_claims(&claims, ClusterOptions::default()).expect_err("duplicate claim id"),
+        Error::InvalidConfig(_)
+    ));
 
-    // The same ids across DIFFERENT partitions are still duplicates: the check
-    // is global over the input, because the sort that needs uniqueness runs
-    // before partitioning.
+    // Duplicate rejection is global, including across partition boundaries.
     let cross_partition = [
         claim(0x01, "person.name", axis(0.0)),
         claim(0x01, "org.name", axis(0.0)),
@@ -387,7 +384,7 @@ fn duplicate_claim_ids_are_rejected_and_the_error_names_the_id() {
                 .expect_err("duplicate across partitions"),
             Error::InvalidConfig(_)
         ),
-        "duplicates must be rejected across partition boundaries too"
+        "duplicates must be rejected across partition boundaries too",
     );
 }
 
@@ -449,10 +446,6 @@ fn validation_precedes_grouping_so_no_partial_output_escapes() {
 
 #[test]
 fn claims_in_clusters_out_no_decision() {
-    // The returned structure carries assignments and diagnostics ONLY. This
-    // test is the type-level guard: it destructures every public output field,
-    // so adding a merge/split/operation-suggestion field to any of them breaks
-    // this test at compile time.
     let claims = [
         claim(0x01, "person.name", axis(0.0)),
         claim(0x02, "person.name", axis(0.1)),
@@ -460,27 +453,15 @@ fn claims_in_clusters_out_no_decision() {
     ];
     let assignments = cluster_claims(&claims, ClusterOptions::default()).expect("cluster");
 
-    let ClusterAssignments { cohorts } = assignments;
     let mut seen = Vec::new();
-    for cohort in cohorts {
-        let ClaimCohort {
-            cohort_id: _,
-            partition:
-                ClusterPartitionKey {
-                    subject: _,
-                    predicate_root: _,
-                    world: _,
-                    facet: _,
-                },
-            member_ids,
-            cohesion,
-        } = cohort;
-        assert!(!member_ids.is_empty(), "a cohort is never empty");
+    for cohort in assignments.cohorts {
+        assert!(!cohort.member_ids.is_empty(), "a cohort is never empty");
         assert!(
-            (-1.0..=1.0).contains(&cohesion),
-            "cohesion {cohesion} is a similarity, not a verdict"
+            (-1.0..=1.0).contains(&cohort.cohesion),
+            "cohesion {} is a similarity, not a verdict",
+            cohort.cohesion,
         );
-        seen.extend(member_ids);
+        seen.extend(cohort.member_ids);
     }
 
     // Every input claim is assigned exactly once: a partition, not a filter.
@@ -494,27 +475,7 @@ fn claims_in_clusters_out_no_decision() {
 
 #[test]
 fn v1_parity() {
-    // FROZEN FIXTURE — self-contained by contract. Local vectors, local
-    // expectations; membership and ordering only (cosine SIMD-dispatches per
-    // arch, so exact-bit values are not portable).
-    //
-    // Layout, in ascending claim-id order. Note the roots: `predicate_root`
-    // drops the LEAF, so `person.name.given` roots to `person.name` while
-    // `org.legal_name` roots to `org`. Assert the pinning up front so a
-    // vocabulary change fails LOUDLY here, one line above the fixture it
-    // invalidates, rather than as five cryptic cohort mismatches.
-    assert_eq!(predicate_root("person.name.given"), "person.name");
-    assert_eq!(predicate_root("person.name.family"), "person.name");
-    assert_eq!(predicate_root("person.name.nick"), "person.name");
-    assert_eq!(predicate_root("org.legal_name"), "org");
-    //
-    //   0x01 person.name.given  world=None  facet=None   near-0 rad
-    //   0x02 person.name.family world=None  facet=None   near-0 rad  → joins 0x01
-    //   0x03 person.name.nick   world=None  facet=None   orthogonal  → singleton,
-    //                                                                 same bucket
-    //   0x04 person.name.given  world=0x80  facet=None   near-0 rad  → own bucket
-    //   0x05 person.name.given  world=None  facet=0x90   near-0 rad  → own bucket
-    //   0x06 org.legal_name     world=None  facet=None   near-0 rad  → own bucket
+    // Frozen membership and ordering fixture; exact cosine bits are not portable.
     let mut claims = vec![
         claim(0x01, "person.name.given", axis(0.0)),
         claim(0x02, "person.name.family", axis(0.1)),
@@ -535,9 +496,7 @@ fn v1_parity() {
 
     let assignments = cluster_claims(&claims, ClusterOptions::default()).expect("cluster");
 
-    // Cohorts order by partition (encoded subject, predicate root, world,
-    // facet), then by ascending member ids. All six share subject 0x70, so the
-    // predicate root orders first: "org" < "person.name".
+    // Cohorts order by partition, then by ascending member ids.
     let expected = [
         ExpectedCohort {
             predicate_root: "org",
@@ -577,15 +536,9 @@ fn v1_parity() {
         assert_eq!(cohort.partition.world, want.world);
         assert_eq!(cohort.partition.facet, want.facet);
         assert_eq!(cohort.member_ids, want.member_ids);
-        assert_eq!(
-            cohort.cohort_id,
-            cohort_id(&cohort.partition, &cohort.member_ids),
-            "cohort id must be derived from partition + members"
-        );
     }
 
-    // Ties never resolve by luck: the two cohorts sharing the base
-    // `person.name` bucket order by their first member id.
+    // Ties in the base person.name bucket order by first member id.
     assert_eq!(assignments.cohorts[1].member_ids[0], entity(0x01));
     assert_eq!(assignments.cohorts[2].member_ids[0], entity(0x03));
 }

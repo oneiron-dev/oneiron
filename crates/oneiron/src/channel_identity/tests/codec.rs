@@ -223,9 +223,7 @@ fn unsupported_schema_versions_are_rejected() -> Result<()> {
             unsupported[0].1 = Value::from(version);
             assert!(matches!(
                 decode_channel_identity_body(&encode_entries(unsupported)),
-                Err(Error::InvalidChannelIdentityBody(
-                    "unsupported channel identity schema version"
-                ))
+                Err(Error::InvalidChannelIdentityBody(_))
             ));
         }
     }

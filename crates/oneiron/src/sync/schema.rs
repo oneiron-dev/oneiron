@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(vid, b"vault-abc", "vault_id mismatch");
 
         let sv = map_get_bytes(&meta, "schema_version").unwrap();
-        assert_eq!(sv, schema_version_bytes(), "schema_version mismatch");
+        assert_eq!(sv, [1, 0, 0, 0, 0, 0, 0, 0], "schema_version mismatch");
     }
 
     #[test]

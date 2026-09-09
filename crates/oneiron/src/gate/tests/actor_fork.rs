@@ -782,12 +782,9 @@ fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
     Ok(())
 }
 
-/// FIX-1 (gate chokepoint): both gate-input constructors take a typed consent
-/// context, and the PRODUCTION external-effect door composes it from
-/// host-observed facts inside its write transaction — no caller re-implements
-/// the ladder and no constructor hard-codes `consent: None` at a DEC-0006
-/// door. An ungranted irreversible send rides the ladder (pending); an effect
-/// covered by remembered state is consent-Auto and its other lanes rule.
+/// Manual external-effect input composition preserves typed consent reasons:
+/// an ungranted irreversible send stays pending, a covering grant yields
+/// consent-Auto, and explicit None contributes no consent reasons.
 #[test]
 fn external_effect_gate_input_composes_consent_context() -> Result<()> {
     // Ungranted: the composed context holds the irreversible send at Ask.
@@ -797,18 +794,22 @@ fn external_effect_gate_input_composes_consent_context() -> Result<()> {
     let effect = external_effect_gate_input("sender", "send", "line");
     let consent = external_effect_consent_context(&effect, None, &[])
         .expect("a send effect composes an honest consent context");
-    assert_eq!(
+    assert!(matches!(
         consent.decision,
         crate::consent::ConsentDecision::Ask,
-        "an irreversible send with no covering grant must ask"
-    );
+    ));
+    assert!(matches!(
+        consent.reason,
+        Some(ConsentPendingReason::IrreversibleEffect),
+    ));
+    let consent_reasons = consent_ladder_reasons(Some(&consent));
+    assert!(!consent_reasons.is_empty());
     let decision = policy.evaluate_gate(&effect.gate_input(None, Some(consent)));
+    assert!(matches!(decision.outcome(), GateOutcome::Pending));
     assert!(
-        gate_reason_strs(&decision)
+        consent_reasons
             .iter()
-            .any(|code| code.starts_with("gate.pending.consent.")),
-        "the typed consent context must reach the decision, got {:?}",
-        gate_reason_strs(&decision)
+            .all(|reason| decision.reason_codes().contains(reason)),
     );
 
     // Covered: a remembered grant auto-runs INSIDE its bound (invariant 1/3).
@@ -817,20 +818,23 @@ fn external_effect_gate_input_composes_consent_context() -> Result<()> {
         .expect("a bound mints a standing grant");
     let consent = external_effect_consent_context(&effect, None, &[covering])
         .expect("covered effect composes");
-    assert_eq!(
+    assert!(matches!(
         consent.decision,
         crate::consent::ConsentDecision::Auto,
-        "an effect inside its bound reuses the grant quietly"
+    ));
+    let decision = policy.evaluate_gate(&effect.gate_input(None, Some(consent)));
+    assert!(
+        consent_reasons
+            .iter()
+            .all(|reason| !decision.reason_codes().contains(reason)),
     );
 
-    // A constructor caller that does not compose consent keeps the explicit
-    // `None` arm — pre-DEC-0006 behaviour, never a hidden Auto.
+    // Explicit None must not acquire the ungranted send's consent reasons.
     let decision = policy.evaluate_gate(&effect.gate_input(None, None));
     assert!(
-        !gate_reason_strs(&decision)
+        consent_reasons
             .iter()
-            .any(|code| code.starts_with("gate.pending.consent.")),
-        "None consent contributes no consent reasons"
+            .all(|reason| !decision.reason_codes().contains(reason)),
     );
     Ok(())
 }

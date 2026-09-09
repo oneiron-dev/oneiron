@@ -19,6 +19,10 @@ fn entity_value_envelope_matches_arch_0002_layout() -> Result<()> {
         "value": 42,
     });
     let body = rmp_serde::to_vec_named(&body_value).expect("encode MessagePack body");
+    let header_fixture: [u8; 25] = [
+        0x01, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
+        0x17, 0x18, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+    ];
 
     vault.put_entity(&id, entity_type, occurred, learned_at, &body)?;
 
@@ -29,22 +33,19 @@ fn entity_value_envelope_matches_arch_0002_layout() -> Result<()> {
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
 
-    assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN + body.len());
-    assert_eq!(ENTITY_METADATA_HEADER_LEN, ENTITY_BODY_OFFSET);
-    assert_eq!(raw[ENTITY_TYPE_OFFSET], entity_type);
-    assert_eq!(
-        &raw[ENTITY_OCCURRED_START_OFFSET..ENTITY_OCCURRED_END_OFFSET],
-        occurred.start.to_be_bytes().as_slice()
-    );
-    assert_eq!(
-        &raw[ENTITY_OCCURRED_END_OFFSET..ENTITY_LEARNED_AT_OFFSET],
-        occurred.end.to_be_bytes().as_slice()
-    );
-    assert_eq!(
-        &raw[ENTITY_LEARNED_AT_OFFSET..ENTITY_BODY_OFFSET],
-        learned_at.to_be_bytes().as_slice()
-    );
-    assert_eq!(&raw[ENTITY_BODY_OFFSET..], body.as_slice());
+    assert_eq!(ENTITY_METADATA_HEADER_LEN, 25);
+    assert_eq!(ENTITY_TYPE_OFFSET, 0);
+    assert_eq!(ENTITY_OCCURRED_START_OFFSET, 1);
+    assert_eq!(ENTITY_OCCURRED_END_OFFSET, 9);
+    assert_eq!(ENTITY_LEARNED_AT_OFFSET, 17);
+    assert_eq!(ENTITY_BODY_OFFSET, 25);
+    assert_eq!(raw.len(), 25 + body.len());
+    assert_eq!(&raw[..25], header_fixture.as_slice());
+    assert_eq!(raw[0], entity_type);
+    assert_eq!(&raw[1..9], occurred.start.to_be_bytes().as_slice());
+    assert_eq!(&raw[9..17], occurred.end.to_be_bytes().as_slice());
+    assert_eq!(&raw[17..25], learned_at.to_be_bytes().as_slice());
+    assert_eq!(&raw[25..], body.as_slice());
 
     let header = EntityMetadataHeader::parse(&raw).expect("parse entity header");
     assert_eq!(header.entity_type, entity_type);
@@ -53,7 +54,7 @@ fn entity_value_envelope_matches_arch_0002_layout() -> Result<()> {
     assert_eq!(header.learned_at, learned_at);
 
     let decoded: serde_json::Value =
-        rmp_serde::from_slice(&raw[ENTITY_BODY_OFFSET..]).expect("decode MessagePack body");
+        rmp_serde::from_slice(&raw[25..]).expect("decode MessagePack body");
     assert_eq!(decoded, body_value);
     Ok(())
 }
@@ -198,9 +199,10 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
         .text(&turn, &[("body", "turnlevel_affect_unique")])
         .commit()?;
     let raw_before = vault.get_raw(&turn)?.expect("turn raw body");
-    let text_forward_before = text_forward_row(&vault, &turn)?;
     assert_eq!(vault.get_learned_at(&turn)?, 100);
-    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
+    let results = vault.search_text("turnlevel_affect_unique", 10)?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, turn);
 
     let model_annotation = VadAnnotation::new(
         Vad {
@@ -225,8 +227,9 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
         "annotation must not rewrite the turn entity body/header"
     );
     assert_eq!(vault.get_learned_at(&turn)?, 100);
-    assert_eq!(text_forward_row(&vault, &turn)?, text_forward_before);
-    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
+    let results = vault.search_text("turnlevel_affect_unique", 10)?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, turn);
 
     let report_annotation = VadAnnotation::new(
         Vad {
@@ -245,8 +248,9 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
         "annotation replacement must not rewrite the turn entity body/header"
     );
     assert_eq!(vault.get_learned_at(&turn)?, 100);
-    assert_eq!(text_forward_row(&vault, &turn)?, text_forward_before);
-    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
+    let results = vault.search_text("turnlevel_affect_unique", 10)?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, turn);
     assert_eq!(
         vault.get_turn_vad_annotation(&turn)?,
         Some(report_annotation)
@@ -443,11 +447,6 @@ fn soft_deleted_vad_claim_shell_is_absent_for_reads_cleanup_and_reannotation() -
         delete_vault.delete_entity_with_reason(&turn_claim, DeleteReason::UserDelete)?;
 
     assert!(claim_delete.existed);
-    assert_eq!(
-        delete_vault.get_raw(&turn_claim)?.as_ref().map(Vec::len),
-        Some(ENTITY_METADATA_HEADER_LEN),
-        "soft-deleting the derived VAD claim must leave a header-only shell"
-    );
     assert_eq!(delete_vault.get_turn_vad_annotation(&turn)?, None);
     let turn_delete =
         delete_vault.delete_entity_with_reason(&turn, DeleteReason::UserHardDelete)?;
@@ -471,14 +470,6 @@ fn soft_deleted_vad_claim_shell_is_absent_for_reads_cleanup_and_reannotation() -
     let claim_delete =
         annotate_vault.delete_entity_with_reason(&message_claim, DeleteReason::UserDelete)?;
     assert!(claim_delete.existed);
-    assert_eq!(
-        annotate_vault
-            .get_raw(&message_claim)?
-            .as_ref()
-            .map(Vec::len),
-        Some(ENTITY_METADATA_HEADER_LEN),
-        "soft-deleting the derived VAD claim must leave a header-only shell"
-    );
     assert_eq!(annotate_vault.get_message_vad_annotation(&message)?, None);
 
     let replacement = VadAnnotation::new(

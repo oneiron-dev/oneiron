@@ -277,7 +277,12 @@ async fn shutdown_between_passes_stops_the_loop() {
     let handle = supervisor.shutdown_handle();
     handle.shutdown();
     let report = supervisor.run().await;
-    assert_eq!(report, WakeSupervisorReport::default(), "no pass ran");
+    assert_eq!(report.passes_completed, 0);
+    assert_eq!(report.passes_failed, 0);
+    assert_eq!(report.passes_panicked, 0);
+    assert_eq!(report.attempts_completed, 0);
+    assert_eq!(report.attempts_parked, 0);
+    assert_eq!(report.attempts_landed, 0);
 }
 
 #[tokio::test]

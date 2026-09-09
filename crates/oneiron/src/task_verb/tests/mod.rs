@@ -32,7 +32,7 @@ use crate::consult_ladder::{
     ConsultLadderState, ConsultLineage, ConsultLineageRelation, ConsultPurpose,
     DREAMER_MAGISTRATE_ATTEMPT_TYPE, EntityDeltaArtifact, EntityDeltaShape, HumanVerdict,
     LadderTerminalDisposition, LadderTerminalState, LadderTransition, LadderTransitionError,
-    MagistrateCase, MagistrateOverturnRecord, MagistrateVerdict, StateAuthorship,
+    MagistrateCase, MagistrateOverturnRecord, MagistrateVerdict,
 };
 use crate::context_board::{
     TaskBoardStatus, TasksSection, ack_task_in_txn, cancel_task_in_txn, task_is_acked,
@@ -45,7 +45,7 @@ use crate::dreamer_runner::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::gate::{GateOutcome, PolicyApprovalCeiling};
+use crate::gate::GateOutcome;
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::habit::TaskRole;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, OutboundDraftInput};

@@ -3,7 +3,7 @@ use super::*;
 use crate::agent_def::{AgentDefinition, AgentScope, encode_agent_definition};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
-    claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
+    decode_claim_body,
 };
 use crate::connector_key::{
     ConnectorKeyStatus, EffectorBudgetChargeOutcome, EffectorBudgetOnExhaust,
@@ -23,9 +23,7 @@ use crate::pipeline::ScoredEntity;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
-use crate::run_tree::{
-    GATE_CONSENT_BUNDLE_FALLBACK_LABEL, GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundleAction,
-};
+use crate::run_tree::{GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundleAction};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;

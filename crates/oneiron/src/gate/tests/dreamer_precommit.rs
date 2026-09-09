@@ -384,11 +384,29 @@ fn live_entity_rows_fail_closed_on_unreadable_deletion_metadata() -> Result<()> 
         &format!("d:w:{}", crate::deletion::window_label_from_timestamp(1)),
         b"not a loro snapshot",
     )?;
-    assert!(
-        live_entity_row_in_txn(&vault.store, &wtxn, &zero_byte).is_err(),
-        "an undecodable published-tombstone window never resolves"
+    wtxn.commit()?;
+
+    let claim_id = test_id(0x65);
+    let body = precommit_body(
+        Value::from("The evidence entity records a completed observation."),
+        Some(precommit_evidence(vec![zero_byte])),
     );
-    wtxn.abort();
+    let err = attempt_precommit_write(&vault, &claim_id, &body)
+        .expect_err("unreadable deletion metadata must not support a Dreamer claim");
+    match err {
+        Error::GateWriteRejected { outcome, .. } => {
+            assert_eq!(outcome, "deny", "unverifiable evidence must deny");
+        }
+        other => panic!("expected GateWriteRejected, got {other:?}"),
+    }
+    assert!(
+        vault.get_raw(&claim_id)?.is_none(),
+        "a denied write must not persist a claim",
+    );
+    assert!(
+        !has_pending_gate_consent(&vault, &claim_id)?,
+        "a validity denial must not create pending consent",
+    );
     Ok(())
 }
 
@@ -455,15 +473,23 @@ fn runtime_record_predicates_exempt_from_evidence_floor() -> Result<()> {
 
 #[test]
 fn runtime_record_exemption_table_is_built_from_the_writers_constants() {
-    assert_eq!(
-        DREAMER_RUNTIME_RECORD_PREDICATES,
-        [
-            crate::dreamer_runner::DREAMER_MILESTONE_PREDICATE,
-            crate::llm::DREAMER_STEP_PREDICATE,
-            crate::llm::DREAMER_TRAP_PREDICATE,
-        ],
-        "the exemption table must stay composed from the writers' constants"
-    );
+    let expected = [
+        crate::dreamer_runner::DREAMER_MILESTONE_PREDICATE,
+        crate::llm::DREAMER_STEP_PREDICATE,
+        crate::llm::DREAMER_TRAP_PREDICATE,
+    ];
+    for predicate in expected {
+        assert!(
+            DREAMER_RUNTIME_RECORD_PREDICATES.contains(&predicate),
+            "runtime predicate {predicate} must be exempt",
+        );
+    }
+    for predicate in DREAMER_RUNTIME_RECORD_PREDICATES {
+        assert!(
+            expected.contains(&predicate),
+            "non-runtime predicate {predicate} must not be exempt",
+        );
+    }
 }
 
 #[test]

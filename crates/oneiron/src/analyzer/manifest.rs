@@ -379,7 +379,9 @@ mod tests {
             license: "MIT".into(),
             source: None,
         };
-        let json = serde_json::to_string(&asset).unwrap();
-        assert!(!json.contains("source"));
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&asset).unwrap()).unwrap();
+        let object = json.as_object().unwrap();
+        assert!(!object.contains_key("source"));
     }
 }

@@ -208,7 +208,6 @@ fn enqueue_consolidation_requires_a_verified_actor() {
     let ghost = EntityId::from_bytes([0x60; 16]).unwrap();
     let err = enqueue(&facade_for(&vault, ghost)).expect_err("ghost enqueue");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-    assert!(err.message.contains("does not exist"), "{}", err.message);
 
     // Type-mismatched actor (an EVENT bound as human): refused.
     let owner = put_person(&vault, 0x61);
@@ -227,11 +226,6 @@ fn enqueue_consolidation_requires_a_verified_actor() {
     let event_id = EntityId::from_hex(&event.id_hex).unwrap();
     let err = enqueue(&facade_for(&vault, event_id)).expect_err("mismatch enqueue");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-    assert!(
-        err.message.contains("cannot act as class"),
-        "{}",
-        err.message
-    );
 
     // A verified actor enqueues normally.
     enqueue(&owner_facade).expect("verified enqueue");

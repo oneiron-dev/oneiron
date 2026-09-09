@@ -69,7 +69,7 @@ fn companion_profile_access_grant_fails_closed_on_malformed_record() -> Result<(
         .companion_profile_access_grant(&principal, &person, &persona)
         .expect_err("malformed AccessGrant row must fail closed before any later allow");
     assert!(
-        matches!(err, Error::CorruptedIndex("access grant body")),
+        matches!(err, Error::CorruptedIndex(_)),
         "expected CorruptedIndex for malformed AccessGrant row, got {err:?}"
     );
     Ok(())

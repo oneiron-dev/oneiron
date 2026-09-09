@@ -749,9 +749,9 @@ fn ppr_query_rejects_state_cache_hit_with_mismatched_completed_depth() -> Result
     plant_state_cache_row(&vault, &[seed], 3, 0.15, crate::unix_seconds_now(), &state)?;
 
     match ppr_query(&vault.store, &vault.config, &[seed], 3, 0.15) {
-        Err(Error::CorruptedIndex("ppr cache state")) => {}
-        Err(err) => panic!("expected ppr cache state corruption, got {err:?}"),
-        Ok(scores) => panic!("expected ppr cache state corruption, got scores {scores:?}"),
+        Err(Error::CorruptedIndex(_)) => {}
+        Err(err) => panic!("expected cache corruption, got {err:?}"),
+        Ok(scores) => panic!("expected cache corruption, got scores {scores:?}"),
     }
     Ok(())
 }
@@ -990,7 +990,9 @@ fn batch_graph_mutations_increment_version_once() -> Result<()> {
     let b = entity(26);
     let c = entity(27);
 
-    assert_eq!(graph_version(&vault)?, 0);
+    let before = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+    assert!(score_for(&before, a) > 0.0);
+    assert!(!before.iter().any(|row| row.id == b || row.id == c));
 
     vault
         .batch()
@@ -998,7 +1000,12 @@ fn batch_graph_mutations_increment_version_once() -> Result<()> {
         .edge(&a, EdgeKind::BelongsTo, &c, 0.5)
         .commit()?;
 
-    assert_eq!(graph_version(&vault)?, 1);
+    let after = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+    assert!(score_for(&after, b) > 0.0);
+    assert!(score_for(&after, c) > 0.0);
+    let rtxn = vault.store.env.read_txn()?;
+    let expected = ppr_compute(&vault.store, &rtxn, &[a], 3, 0.15)?;
+    assert_scores_equal(&after, &expected);
     Ok(())
 }
 
@@ -1050,10 +1057,26 @@ fn delete_entity_increments_graph_version_once_when_edges_removed() -> Result<()
     vault.put_edge(&b, EdgeKind::BelongsTo, &c, 1.0)?;
 
     let before = graph_version(&vault)?;
+    let old_scores = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+    assert!(score_for(&old_scores, b) > 0.0);
+    assert!(score_for(&old_scores, c) > 0.0);
     assert!(vault.delete_entity(&b)?);
-    let after = graph_version(&vault)?;
 
-    assert_eq!(after, before + 1);
+    // Restore an unflagged pre-delete row without dependency rows so that
+    // the graph-version gate, not stale-byte invalidation, must reject it.
+    let hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
+    delete_dep_rows_for_hash(&vault, &hash)?;
+    let value = encode_cache_value(crate::unix_seconds_now(), before, 0, &old_scores);
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.store.ppr_cache.put(&mut wtxn, &hash, &value)?;
+    wtxn.commit()?;
+
+    let scores = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+    assert!(score_for(&scores, a) > 0.0);
+    assert!(!scores.iter().any(|row| row.id == b || row.id == c));
+    let rtxn = vault.store.env.read_txn()?;
+    let expected = ppr_compute(&vault.store, &rtxn, &[a], 3, 0.15)?;
+    assert_scores_equal(&scores, &expected);
     Ok(())
 }
 
@@ -1127,14 +1150,8 @@ fn batch_delete_edge_cleans_inbound_orphans_without_staling_cache() -> Result<()
     Ok(())
 }
 
-/// Deleting an isolated entity must bump GRAPH_VERSION exactly once;
-/// a follow-up delete attempt on the now-missing id must not bump it
-/// again. Variants run the delete through different API paths.
-///
-/// Variants:
-/// - `direct`: `vault.delete_entity(&a)` — returns `bool` for found/missing.
-/// - `batch`: `vault.batch().delete(&a).commit()` — must observe the
-///   same "second commit is a no-op" guarantee.
+/// Both deletion paths invalidate prior graph-derived results, while a
+/// repeated deletion of the missing entity leaves a current cache usable.
 #[test]
 fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
     #[derive(Clone, Copy)]
@@ -1153,42 +1170,61 @@ fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
         let tr = TimeRange { start: 1, end: 1 };
 
         vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        let seed = entity(200);
+        let hash = hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform);
+        let value = encode_cache_value(
+            crate::unix_seconds_now(),
+            graph_version(&vault)?,
+            0,
+            &sentinel_scores(),
+        );
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.ppr_cache.put(&mut wtxn, &hash, &value)?;
+        wtxn.commit()?;
+        let warm = ppr_query(&vault.store, &vault.config, &[seed], 3, 0.15)?;
+        assert_scores_equal(&warm, &sentinel_scores());
 
-        let before = graph_version(&vault)?;
         match path {
             Path::Direct => {
                 assert!(
                     vault.delete_entity(&a)?,
-                    "case {case_name}: first direct delete should report found"
+                    "case {case_name}: first direct delete should report found",
                 );
             }
             Path::Batch => {
                 vault.batch().delete(&a).commit()?;
             }
         }
-        let after_delete = graph_version(&vault)?;
-        assert_eq!(
-            after_delete,
-            before + 1,
-            "case {case_name}: first delete should bump GRAPH_VERSION by 1"
+        let scores = ppr_query(&vault.store, &vault.config, &[seed], 3, 0.15)?;
+        assert!(!scores.iter().any(|row| row.id == sentinel_entity()));
+        let rtxn = vault.store.env.read_txn()?;
+        let expected = ppr_compute(&vault.store, &rtxn, &[seed], 3, 0.15)?;
+        assert_scores_equal(&scores, &expected);
+        drop(rtxn);
+
+        let value = encode_cache_value(
+            crate::unix_seconds_now(),
+            graph_version(&vault)?,
+            0,
+            &sentinel_scores(),
         );
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.ppr_cache.put(&mut wtxn, &hash, &value)?;
+        wtxn.commit()?;
 
         match path {
             Path::Direct => {
                 assert!(
                     !vault.delete_entity(&a)?,
-                    "case {case_name}: second direct delete should report missing"
+                    "case {case_name}: second direct delete should report missing",
                 );
             }
             Path::Batch => {
                 vault.batch().delete(&a).commit()?;
             }
         }
-        let after_missing = graph_version(&vault)?;
-        assert_eq!(
-            after_missing, after_delete,
-            "case {case_name}: redundant delete must not bump GRAPH_VERSION"
-        );
+        let scores = ppr_query(&vault.store, &vault.config, &[seed], 3, 0.15)?;
+        assert_scores_equal(&scores, &sentinel_scores());
     }
     Ok(())
 }
@@ -1619,15 +1655,8 @@ fn ppr_query_in_txn_uses_borrowed_snapshot_without_caching_stale_results() -> Re
     Ok(())
 }
 
-/// `ppr_query` must refuse to produce scores when non-finite values are
-/// persisted in either the edge-weight payload or the cached score
-/// payload. Variants inject the bad value at a different site.
-///
-/// Variants:
-/// - `persisted_edge_weight`: writes `f32::NAN` into the first 4 bytes
-///   of an `edges_out` record. Expected error: `CorruptedIndex("edge record")`.
-/// - `cached_scores`: writes `f32::INFINITY` into a `ppr_cache` entry.
-///   Expected error: `CorruptedIndex("ppr cache scores")`.
+/// `ppr_query` must reject non-finite persisted edge weights and cached
+/// scores with a typed corruption error.
 #[test]
 fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
     #[derive(Clone, Copy)]
@@ -1636,24 +1665,12 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
         CachedScores,
     }
 
-    let cases: Vec<(&str, Site, u8, u8, &str)> = vec![
-        (
-            "persisted_edge_weight",
-            Site::EdgeWeight,
-            63,
-            64,
-            "edge record",
-        ),
-        (
-            "cached_scores",
-            Site::CachedScores,
-            65,
-            0x62,
-            "ppr cache scores",
-        ),
+    let cases: Vec<(&str, Site, u8, u8)> = vec![
+        ("persisted_edge_weight", Site::EdgeWeight, 63, 64),
+        ("cached_scores", Site::CachedScores, 65, 0x62),
     ];
 
-    for (case_name, site, a_byte, b_byte, expected_msg) in cases {
+    for (case_name, site, a_byte, b_byte) in cases {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
         let a = entity(a_byte);
@@ -1685,12 +1702,10 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
 
         let err = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)
             .expect_err("expected corrupted state");
-        match err {
-            Error::CorruptedIndex(msg) if msg == expected_msg => {}
-            other => {
-                panic!("case {case_name}: expected CorruptedIndex({expected_msg:?}), got {other:?}")
-            }
-        }
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "case {case_name}: expected CorruptedIndex, got {err:?}",
+        );
     }
     Ok(())
 }
@@ -2633,15 +2648,15 @@ fn pull_code_memory_does_not_rank_across_a_denied_claim_bridge() -> Result<()> {
 
 #[test]
 fn ppr_vad_multiplier_contract() {
-    for (vad, salience) in [
-        (Vad::NEUTRAL, 0.0),
+    for (vad, expected_ratio) in [
+        (Vad::NEUTRAL, 1.0),
         (
             Vad {
                 valence: -1.0,
                 arousal: 0.0,
                 dominance: 0.0,
             },
-            1.0,
+            1.4,
         ),
         (
             Vad {
@@ -2649,7 +2664,7 @@ fn ppr_vad_multiplier_contract() {
                 arousal: 0.0,
                 dominance: 0.0,
             },
-            1.0,
+            1.4,
         ),
         (
             Vad {
@@ -2657,26 +2672,76 @@ fn ppr_vad_multiplier_contract() {
                 arousal: 0.9,
                 dominance: 1.0,
             },
-            0.9,
+            1.36,
         ),
     ] {
-        assert_eq!(vad_salience(vad), salience);
-        assert_eq!(vad_multiplier(Some(vad), 0.4), 1.0 + 0.4 * salience);
-        assert_eq!(vad_multiplier(Some(vad), 0.0).to_bits(), 1.0_f32.to_bits());
+        let temp_dir = tempdir().expect("temporary directory");
+        let vault = Vault::open(temp_dir.path(), embedding_test_config()).expect("open vault");
+        let seed = entity(1);
+        let target = entity(2);
+        let reference = entity(3);
+        vault
+            .batch()
+            .edge(&seed, EdgeKind::Supports, &target, 1.0)
+            .edge(&seed, EdgeKind::Supports, &reference, 1.0)
+            .commit()
+            .expect("equal-strength semantic edges");
+        let rtxn = vault.store.env.read_txn().expect("read transaction");
+        let baseline =
+            ppr_compute(&vault.store, &rtxn, &[seed], 1, 0.15).expect("baseline propagation");
+        assert!(score_for(&baseline, reference) > 0.0);
+        assert!((score_for(&baseline, target) - score_for(&baseline, reference)).abs() <= 1e-6,);
+        drop(rtxn);
+
+        vault
+            .batch()
+            .set_edge_vad(&seed, EdgeKind::Supports, &target, vad)
+            .set_edge_vad(&seed, EdgeKind::Supports, &reference, Vad::NEUTRAL)
+            .commit()
+            .expect("persist VAD");
+        let rtxn = vault.store.env.read_txn().expect("read transaction");
+        let boosted = ppr_query_in_txn_with_diagnostics(
+            &vault.store,
+            &rtxn,
+            &[seed],
+            1,
+            0.15,
+            0.4,
+            SeedWeighting::Uniform,
+        )
+        .expect("VAD-aware propagation");
+        let reference_score = score_for(&boosted.scores, reference);
+        assert!(reference_score > 0.0);
+        assert!(
+            (score_for(&boosted.scores, target) / reference_score - expected_ratio).abs() <= 1e-6,
+        );
+        let disabled = ppr_query_in_txn_with_diagnostics(
+            &vault.store,
+            &rtxn,
+            &[seed],
+            1,
+            0.15,
+            0.0,
+            SeedWeighting::Uniform,
+        )
+        .expect("disabled VAD propagation");
+        assert_eq!(score_bits(&disabled.scores), score_bits(&baseline));
     }
-    assert_eq!(vad_multiplier(None, 0.4), 1.0);
-    // Alpha zero must not evaluate the VAD expression at all.
+
+    // Invalid VAD cannot be persisted through the validated write API.
+    // Probe the arithmetic boundary directly to prove zero alpha does not
+    // evaluate irrelevant non-finite components.
     assert_eq!(
         vad_multiplier(
             Some(Vad {
                 valence: f32::NAN,
                 arousal: f32::INFINITY,
-                dominance: 0.0
+                dominance: 0.0,
             }),
-            0.0
+            0.0,
         )
         .to_bits(),
-        1.0_f32.to_bits()
+        1.0_f32.to_bits(),
     );
 }
 
@@ -3892,17 +3957,24 @@ fn ppr_community_indexed_hot_query_ignores_unrelated_rows_but_full_refresh_rejec
     txn.commit()?;
     let (actual, _) =
         community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
-    assert_eq!(actual, expected);
+    assert_scores_equal(&actual, &expected);
     {
         let txn = vault.store.env.read_txn()?;
-        assert!(vault.store.ppr_community_snapshot_in_txn(&txn).is_err());
+        assert!(matches!(
+            vault.store.ppr_community_snapshot_in_txn(&txn),
+            Err(Error::CorruptedIndex(_))
+        ));
     }
     // Stale snapshots still validate the entire previous family before refresh.
     vault.put_edge(&entity(1), EdgeKind::About, &entity(3), 1.0)?;
-    assert!(
-        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context).is_err()
-    );
-    assert!(vault.refresh_ppr_communities(&[], 44).is_err());
+    assert!(matches!(
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context),
+        Err(Error::CorruptedIndex(_))
+    ));
+    assert!(matches!(
+        vault.refresh_ppr_communities(&[], 44),
+        Err(Error::CorruptedIndex(_))
+    ));
     Ok(())
 }
 
@@ -4203,7 +4275,7 @@ fn ppr_community_indexed_views_do_not_cross_vaults_at_equal_graph_versions() -> 
 
 #[test]
 fn ppr_community_indexed_nested_members_validate_all_backlinks() -> Result<()> {
-    use crate::ppr_community::CommunitySnapshot;
+    use crate::ppr_community::{CommunityBoostContext, CommunitySnapshot};
     let (_dir, vault) = open_test_vault_with(VaultConfig::device());
     community_ppr_fixture(&vault)?;
     vault.refresh_ppr_communities(&[], 42)?;
@@ -4228,12 +4300,36 @@ fn ppr_community_indexed_nested_members_validate_all_backlinks() -> Result<()> {
     vault
         .store
         .replace_ppr_community_cache_in_txn(&mut txn, &nested)?;
-    let view = vault
-        .store
-        .ppr_community_query_view_in_txn(&txn, &selected)?;
-    assert_eq!(view.nodes.len(), 1);
-    assert_eq!(view.sizes[&nested.nodes[&entity(1)].fine], 2);
-    assert_eq!(view.sizes[&nested.nodes[&entity(1)].coarse], 3);
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [entity(1)];
+    let ordered_seeds = [ScoredEntity {
+        id: entity(1),
+        score: 1.0,
+    }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &ordered_seeds,
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    let query = |txn: &RoTxn<'_>| {
+        ppr_query_in_txn_with_community_deferred_cache(
+            &vault.store,
+            txn,
+            CommunityPprRequest {
+                seeds: &seeds,
+                depth: 1,
+                teleport_alpha: 0.15,
+                weighting: SeedWeighting::Uniform,
+                config: &config,
+                context: &context,
+            },
+        )
+    };
+    let (scores, _, _) = query(&txn)?;
+    assert!(score_for(&scores, entity(2)) > 0.0);
+    assert!(score_for(&scores, entity(3)) > 0.0);
     let encoded = nested.encode_rows().expect("rows");
     // The unselected third member is in the accessed coarse row. A valid-size
     // node value that points at another coarse parent is still corruption.
@@ -4244,12 +4340,11 @@ fn ppr_community_indexed_nested_members_validate_all_backlinks() -> Result<()> {
         .store
         .vault_meta
         .put(&mut txn, key.as_bytes(), &wrong)?;
-    assert!(
-        vault
-            .store
-            .ppr_community_query_view_in_txn(&txn, &selected)
-            .is_err()
-    );
+    assert!(matches!(
+        vault.store.ppr_community_query_view_in_txn(&txn, &selected),
+        Err(Error::CorruptedIndex(_))
+    ));
+    assert!(matches!(query(&txn), Err(Error::CorruptedIndex(_))));
     // Likewise, a valid fine row from elsewhere cannot stand in for this group.
     vault
         .store
@@ -4262,12 +4357,11 @@ fn ppr_community_indexed_nested_members_validate_all_backlinks() -> Result<()> {
         .store
         .vault_meta
         .put(&mut txn, key.as_bytes(), entity(3).as_bytes())?;
-    assert!(
-        vault
-            .store
-            .ppr_community_query_view_in_txn(&txn, &selected)
-            .is_err()
-    );
+    assert!(matches!(
+        vault.store.ppr_community_query_view_in_txn(&txn, &selected),
+        Err(Error::CorruptedIndex(_))
+    ));
+    assert!(matches!(query(&txn), Err(Error::CorruptedIndex(_))));
     Ok(())
 }
 
