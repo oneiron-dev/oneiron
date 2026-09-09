@@ -580,7 +580,10 @@ fn relay_skip_verdict(
 }
 
 pub(super) fn malformed_relay_policy_error() -> Error {
-    Error::InvalidConfig("policy manifest is malformed for relay-boundary pass".to_owned())
+    Error::PolicyManifestInvalid {
+        field: "policy_manifest",
+        reason: "is malformed for relay-boundary pass",
+    }
 }
 
 impl EdgeServiceRegistry {

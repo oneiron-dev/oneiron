@@ -695,7 +695,7 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
             "{case}: the empty scrub linearized nothing, so the purge is this \
              delete's first irreversible act and MUST re-prove authority"
         ));
-        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "{case}");
+        assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{case}");
         assert!(
             err.message.contains("no active owner binding"),
             "{case}: the parked pre-gate error must survive, not degrade to a \

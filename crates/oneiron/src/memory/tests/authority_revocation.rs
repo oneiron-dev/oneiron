@@ -76,12 +76,7 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
             .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
             .expect_err("unbound delete"),
     ] {
-        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-        assert!(
-            err.message.contains("no active owner binding"),
-            "{}",
-            err.message
-        );
+        assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
     }
 
     // Retracting your OWN claim is not an owner power and needs no binding.
@@ -158,12 +153,7 @@ fn exact_class_binding_no_cross_class_satisfaction() {
     let err = facade_for(&vault, owner)
         .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("agent-class binding must not satisfy a human-class verb");
-    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-    assert!(
-        err.message.contains("no active owner binding"),
-        "{}",
-        err.message
-    );
+    assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
 }
 
 /// T11b: a RevokeActor watermark takes the owner's teeth away again.
@@ -232,12 +222,7 @@ fn revoked_binding_forbids_owner_verbs() {
     let err = facade
         .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("a revoked binding must lose its owner teeth");
-    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-    assert!(
-        err.message.contains("no active owner binding"),
-        "{}",
-        err.message
-    );
+    assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
 }
 
 /// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
@@ -300,12 +285,12 @@ fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
                 .expect_err("a revocation landing before the destructive commit must refuse")
         });
 
-        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "reason {reason:?}");
-        assert!(
-            err.message.contains("no active owner binding"),
-            "reason {reason:?}: the refusal must name the real cause, not a \
-             generic concurrency error: {}",
-            err.message
+        // Names the real cause: the authority log refused this actor. A
+        // concurrency refusal and a gate denial are both live alternatives
+        // on this path, and only the code separates them.
+        assert_eq!(
+            err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            "reason {reason:?}"
         );
         // Nothing torn: the subject survives intact.
         assert_eq!(
@@ -408,13 +393,10 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
         (err, staged_decision_id)
     });
 
-    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-    assert!(
-        err.message.contains("no active owner binding"),
-        "the parked pre-gate error must survive the publish boundary, not \
-         degrade to a generic concurrency code: {}",
-        err.message
-    );
+    // The parked pre-gate authority refusal must survive the publish boundary
+    // as itself — not degrade to a generic concurrency code, and not be
+    // confusable with the gate denial the same verb can also raise.
+    assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
 
     // Victim intact.
     assert_eq!(
@@ -571,13 +553,10 @@ fn revocation_racing_the_soft_delete_publish_refuses_and_publishes_nothing() {
         )
         .expect_err("a revocation landing before the publish commit must refuse");
 
-        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "{leg}");
-        assert!(
-            err.message.contains("no active owner binding"),
-            "{leg}: the parked pre-gate error must survive the publish boundary, \
-             not degrade to a generic concurrency code: {}",
-            err.message
-        );
+        // The CODE is the assertion: the parked pre-gate authority refusal
+        // must survive the publish boundary as itself, not degrade into the
+        // generic concurrency refusal or into the gate's own FORBIDDEN.
+        assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{leg}");
         // The shell scrub already committed — that is the pre-publication act
         // this arm is allowed to have done, and fix-5's re-fold gated it. What
         // must NOT exist is any published or replayable carrier.
@@ -805,7 +784,7 @@ fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
              delete's linearization point and MUST refuse"
         ));
 
-        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "{case}");
+        assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{case}");
         assert!(
             err.message.contains("no active owner binding"),
             "{case}: the parked pre-gate error must survive, not degrade to a \
@@ -888,7 +867,7 @@ fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing(
          published, so it MUST re-decide authority",
     );
 
-    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
     assert!(
         err.message.contains("no active owner binding"),
         "{}",

@@ -88,6 +88,19 @@ pub enum PackDriftResolution {
     Paused {
         /// Operator-visible reason.
         error: String,
+        /// The affected predicates the migration map had NO rewrite for.
+        ///
+        /// This is one of the two pause causes; the other — a migrated
+        /// definition the write door rejects — pauses with this list EMPTY, so
+        /// the field is what tells the two apart. The names are already
+        /// computed before `error` joins them into prose; carrying them as
+        /// data means an operator surface listing which predicates broke a
+        /// query never has to parse them back out of the sentence.
+        ///
+        /// In-memory only: the persisted
+        /// [`SavedQueryLifecycle::Paused`] keeps the same `error` string it
+        /// always did, so no stored bytes change.
+        unmapped_predicates: Vec<String>,
     },
 }
 
@@ -176,7 +189,7 @@ pub fn repair_pack_drift(
                 "{moved} has no rewrite for predicate(s) {}",
                 unmapped.join(", ")
             );
-            return pause_in_txn(vault, wtxn, record, kind, error, now);
+            return pause_in_txn(vault, wtxn, record, kind, error, unmapped, now);
         }
         if !proposals.is_empty() {
             let summary = format!("proposal: {}", proposals.join("; "));
@@ -195,7 +208,10 @@ pub fn repair_pack_drift(
         // being persisted as an active definition nobody could have authored.
         if let Err(error) = validate_definition(&migrated) {
             let error = format!("{moved} produced an invalid definition: {error}");
-            return pause_in_txn(vault, wtxn, record, kind, error, now);
+            // The OTHER pause cause: every predicate mapped, so the unmapped
+            // list is empty and that emptiness is how a caller tells this rung
+            // from the no-rewrite one.
+            return pause_in_txn(vault, wtxn, record, kind, error, Vec::new(), now);
         }
         record.definition = migrated;
         record.updated_at = now;
@@ -220,6 +236,7 @@ fn pause_in_txn(
     mut record: SavedQueryRecord,
     kind: u8,
     error: String,
+    unmapped_predicates: Vec<String>,
     now: u64,
 ) -> Result<PackDriftResolution> {
     record.definition.lifecycle = SavedQueryLifecycle::Paused {
@@ -227,7 +244,10 @@ fn pause_in_txn(
     };
     record.updated_at = now;
     store_record_in_txn(vault, wtxn, &record, kind)?;
-    Ok(PackDriftResolution::Paused { error })
+    Ok(PackDriftResolution::Paused {
+        error,
+        unmapped_predicates,
+    })
 }
 
 fn record_repair_in_txn(
