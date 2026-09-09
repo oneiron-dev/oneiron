@@ -30,8 +30,9 @@ mod store;
 mod types;
 
 pub use self::codec::{
-    decode_crm_stage_value, encode_campaign_member_value, encode_comm_bounce_value,
-    encode_crm_stage_value, encode_do_not_contact_value, normalize_campaign_pack_token,
+    decode_campaign_member_value, decode_crm_stage_value, encode_campaign_member_value,
+    encode_comm_bounce_value, encode_crm_stage_value, encode_do_not_contact_value,
+    normalize_campaign_pack_token,
 };
 pub use self::store::{do_not_contact_applies, resolve_crm_fit, supersede_crm_stage_in_txn};
 pub use self::types::{
@@ -45,8 +46,7 @@ pub use self::types::{
 };
 
 pub(crate) use self::codec::{
-    decode_campaign_member_value, decode_comm_jurisdiction_value,
-    validate_campaign_pack_claim_structure,
+    decode_comm_jurisdiction_value, validate_campaign_pack_claim_structure,
 };
 
 // These three decoders are named only by the sibling test module; the

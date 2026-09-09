@@ -32,8 +32,8 @@ use oneiron::calendar::outcome::{
 use oneiron::campaign::claims::{
     CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue,
     CrmStageValue, EvidenceBasis, PREDICATE_CAMPAIGN_MEMBER, PREDICATE_CRM_STAGE,
-    StageEvidenceClass, StageKey, claim_class_descriptors, decode_crm_stage_value,
-    encode_campaign_member_value, encode_crm_stage_value,
+    StageEvidenceClass, StageKey, claim_class_descriptors, decode_campaign_member_value,
+    decode_crm_stage_value, encode_campaign_member_value, encode_crm_stage_value,
 };
 use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CampaignEnrollmentAttemptPayload,
@@ -1210,14 +1210,15 @@ fn complaint_and_exit_reuse_campaign_member_state() {
     .unwrap();
     assert_eq!(result, StageProjectResult::Routed(StageRoute::Suppressed));
     let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
+    let member = decode_campaign_member_value(&body.value).unwrap();
     assert_eq!(
-        body.value,
-        encode_campaign_member_value(&CampaignMemberValue {
-            state: CampaignMemberState::Suppressed,
-            ..enrolled_member()
-        }),
+        member.state,
+        CampaignMemberState::Suppressed,
         "suppression reuses CA-01 membership state; no second primitive is minted",
     );
+    assert_eq!(member.campaign, enrolled_member().campaign);
+    assert_eq!(member.channels, enrolled_member().channels);
+    assert_eq!(member.derivation, enrolled_member().derivation);
 
     let exited = apply_coded_reply(
         &vault,
@@ -1230,15 +1231,16 @@ fn complaint_and_exit_reuse_campaign_member_state() {
     )
     .unwrap();
     assert_eq!(exited, StageProjectResult::Routed(StageRoute::Exited));
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
+    let exited_member = decode_campaign_member_value(
+        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
             .1
             .value,
-        encode_campaign_member_value(&CampaignMemberValue {
-            state: CampaignMemberState::Exited,
-            ..enrolled_member()
-        }),
-    );
+    )
+    .unwrap();
+    assert_eq!(exited_member.state, CampaignMemberState::Exited);
+    assert_eq!(exited_member.campaign, enrolled_member().campaign);
+    assert_eq!(exited_member.channels, enrolled_member().channels);
+    assert_eq!(exited_member.derivation, enrolled_member().derivation);
     assert!(
         live_claims(&vault, person, PREDICATE_CRM_STAGE).is_empty(),
         "neither route invents a pipeline head",

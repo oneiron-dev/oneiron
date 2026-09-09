@@ -171,8 +171,23 @@ fn encode_member_derivation(derivation: &CampaignMemberDerivation) -> Value {
     ])
 }
 
-/// Decodes a `campaign.member` value.
-pub(crate) fn decode_campaign_member_value(value: &Value) -> Result<CampaignMemberValue> {
+/// Decodes a `campaign.member` value into [`CampaignMemberValue`], the exact
+/// inverse of [`encode_campaign_member_value`].
+///
+/// The CA-owned read half of the codec, public for the same reason its encoder
+/// is: `CampaignMemberValue` is not serde-derived ([`EntityId`] has no serde
+/// impl), so a caller holding a `campaign.member` body from `Vault::get_claim`
+/// would otherwise re-spell this module's private key literals and the
+/// canonical-hex entity-reference rule to read the state, the channels, or the
+/// derivation watermark.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a value that is not a map, an unknown,
+/// missing or duplicated key, an unknown state kind or a state whose fields
+/// disagree with it, a channel or derivation of the wrong shape, and any
+/// entity reference that is not canonical hex.
+pub fn decode_campaign_member_value(value: &Value) -> Result<CampaignMemberValue> {
     let entries = value_map(value)?;
     validate_keys(
         entries,
