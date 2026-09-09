@@ -15,6 +15,11 @@ use std::path::{Path, PathBuf};
 const PACK_VERSION_SOURCE: &str = "../oneiron/src/memory/recall.rs";
 
 fn main() {
+    // `extension-module` leaves libpython unlinked on purpose: the importing
+    // interpreter provides those symbols at load time. macOS's linker refuses
+    // undefined symbols unless told to look them up dynamically; maturin passes
+    // that flag itself, plain `cargo build` does not. This emits it for both.
+    pyo3_build_config::add_extension_module_link_args();
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by cargo"),
     );
