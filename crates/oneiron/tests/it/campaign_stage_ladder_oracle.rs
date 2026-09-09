@@ -1326,17 +1326,18 @@ fn owner_attested_is_allowed_only_after_proposal_sent() {
     );
     let (id, body) = only_live_claim(&deposit_vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(id, deposit);
+    let stage = decode_crm_stage_value(&body.value).unwrap();
     assert_eq!(
-        body.value,
-        encode_crm_stage_value(&CrmStageValue {
-            campaign_ref: test_id(CAMPAIGN_SEED),
-            stage: key(DEPOSIT_PAID),
-            evidence_class: StageEvidenceClass::CounterpartyLedger,
-            evidence_refs: vec![test_id(LEDGER_SEED)],
-            basis: EvidenceBasis::OwnerAttested,
-            recorded_at: DEPOSIT_AT,
-        }),
+        (stage.stage, stage.basis, stage.campaign_ref),
+        (
+            key(DEPOSIT_PAID),
+            EvidenceBasis::OwnerAttested,
+            test_id(CAMPAIGN_SEED),
+        ),
     );
+    assert_eq!(stage.evidence_refs, vec![test_id(LEDGER_SEED)]);
+    assert_eq!(stage.evidence_class, StageEvidenceClass::CounterpartyLedger);
+    assert_eq!(stage.recorded_at, DEPOSIT_AT);
 }
 
 #[test]
