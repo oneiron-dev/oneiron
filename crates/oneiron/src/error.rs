@@ -388,6 +388,7 @@ pub enum ErrorKind {
     InvalidStructuralKindRegistration,
     InvalidAttemptQueueRecord,
     InvalidAttemptQueueTransition,
+    SurfaceEventCorrelationKindCollision,
     EntityTypeImmutable,
     InvalidTimeRange,
     EdgeNotFound,
@@ -1473,6 +1474,18 @@ pub enum Error {
     InvalidAttemptQueueTransition {
         action: &'static str,
         state: &'static str,
+    },
+    /// A public surface-event correlation id is already held by an attempt row
+    /// of another kind, so another subsystem owns that run. Typed rather than
+    /// generic: the admission and the status read both raise it, and neither
+    /// the submitter nor the operator can act on it without knowing which kind
+    /// holds the id.
+    #[error(
+        "surface event correlation id `{correlation_id}` is already held by attempt kind `{holding_kind}`"
+    )]
+    SurfaceEventCorrelationKindCollision {
+        correlation_id: String,
+        holding_kind: String,
     },
     /// The type byte of an existing entity record is immutable on re-put
     /// (M2 pinned decision D2). The short-id prefix is derived from the type
@@ -2560,6 +2573,9 @@ impl Error {
             }
             Self::InvalidAttemptQueueRecord(_) => ErrorKind::InvalidAttemptQueueRecord,
             Self::InvalidAttemptQueueTransition { .. } => ErrorKind::InvalidAttemptQueueTransition,
+            Self::SurfaceEventCorrelationKindCollision { .. } => {
+                ErrorKind::SurfaceEventCorrelationKindCollision
+            }
             Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
