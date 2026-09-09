@@ -966,16 +966,20 @@ fn call_held_cites_the_claim_the_outcome_was_read_from() {
 
     let (id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(id, advanced_ref);
+    let stage = decode_crm_stage_value(&body.value).unwrap();
     assert_eq!(
-        body.value,
-        stage_value(
-            CALL_HELD,
-            StageEvidenceClass::CalendarEventOutcome,
-            vec![held_claim],
-            OUTCOME_AT,
-        ),
+        stage.evidence_refs,
+        vec![held_claim],
         "the cited claim is the one the decided outcome was read from",
     );
+    assert_eq!(
+        stage.evidence_class,
+        StageEvidenceClass::CalendarEventOutcome
+    );
+    assert_eq!(stage.recorded_at, OUTCOME_AT);
+    assert_eq!(stage.stage, key(CALL_HELD));
+    assert_eq!(stage.basis, EvidenceBasis::Machine);
+    assert_eq!(stage.campaign_ref, test_id(CAMPAIGN_SEED));
 }
 
 #[test]
