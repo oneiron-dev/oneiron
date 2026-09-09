@@ -17,7 +17,7 @@ use super::registry::{
 
 /// One kind's move in the byte-space v3 persisted re-key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TypeByteRekey {
+pub(in crate::store) struct TypeByteRekey {
     pub kind: &'static str,
     pub old: u8,
     pub new: u8,
@@ -41,7 +41,7 @@ pub(crate) struct TypeByteRekey {
 ///
 /// IDENTITY_TOPOLOGY_EVENT (76) and SECRET_CUSTODY (77) are absent on purpose:
 /// they already sat at their canon bytes, so there is nothing to move.
-pub(crate) const TYPE_BYTE_REKEY_V3: &[TypeByteRekey] = &[
+pub(in crate::store) const TYPE_BYTE_REKEY_V3: &[TypeByteRekey] = &[
     TypeByteRekey {
         kind: "REDACTION_AUDIT",
         old: 120,
@@ -157,7 +157,7 @@ pub(crate) const TYPE_BYTE_REKEY_V3: &[TypeByteRekey] = &[
 /// What the byte-space v3 pass actually moved. Returned so the caller can log
 /// it and so tests can assert on real work rather than a silent no-op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct RekeyCounts {
+pub(in crate::store) struct RekeyCounts {
     pub entities: usize,
     pub type_index: usize,
     pub short_id_counters: usize,
@@ -201,7 +201,7 @@ fn rekey_corrupt(context: &'static str) -> Error {
 /// this inside the open-path transaction and stamps the new ABI only on `Ok`,
 /// so any abort rolls the whole transaction back and leaves the old bytes and
 /// the old stamp intact: the vault stays openable by the predecessor engine.
-pub(crate) fn rekey_type_bytes_v3_in_txn(
+pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
     dbs: &RawDatabases,
     txn: &mut RwTxn<'_>,
     map: &[TypeByteRekey],

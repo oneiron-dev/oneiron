@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::*;
 
-pub(crate) fn entry_waits_on_unresolved_equivocation(
+pub(in crate::authority) fn entry_waits_on_unresolved_equivocation(
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
     context: FoldContext<'_>,
@@ -111,7 +111,7 @@ pub(super) fn entry_waits_on_pending_parent_outside_group(
 /// it needs a representation in which an accepted revocation's effect outlives
 /// ancestry invalidation of the entries above it (a journal, or per-hash bypass
 /// state), which is a design surface rather than a change to this function.
-pub(crate) fn revocation_bypass_states(
+pub(in crate::authority) fn revocation_bypass_states(
     entry: &AuthorityLogEntry,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
@@ -281,7 +281,7 @@ fn entry_is_claimed_prefork_or_fork_candidate(
 /// the admitted peer consent roots — because those define what "folds" MEANS.
 /// A probe answering under different consent semantics than the fold it serves
 /// would quietly disagree with it about which fork candidates are chain-valid.
-pub(crate) fn entry_folds_on_available_ancestry(
+pub(in crate::authority) fn entry_folds_on_available_ancestry(
     target_hash: AuthorityEntryHash,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,

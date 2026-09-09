@@ -45,7 +45,7 @@ impl SyncClient {
 
     /// Re-bootstrap sync frames with explicit windows that must be requested
     /// even if they are outside the default current/previous window set.
-    pub(crate) fn generate_re_bootstrap_sync_for_windows<I>(
+    pub(in crate::sync) fn generate_re_bootstrap_sync_for_windows<I>(
         &mut self,
         extra_windows: I,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError>
@@ -83,7 +83,7 @@ impl SyncClient {
     ///
     /// Production connection code uses this path so an encoder failure aborts
     /// the connect attempt instead of silently skipping a window request.
-    pub(crate) fn try_generate_initial_sync(
+    pub(in crate::sync) fn try_generate_initial_sync(
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         // Phase 0: full-window hello — this client path still uses the

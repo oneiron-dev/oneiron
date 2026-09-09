@@ -254,7 +254,7 @@ impl Store {
     /// Full-keyspace per-claim discovery: the fallback path taken while the
     /// backfill flag is unset, and directly callable for parity checks.
     #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
-    pub(crate) fn scan_gate_decisions_for_claim_in_txn(
+    pub(in crate::store) fn scan_gate_decisions_for_claim_in_txn(
         &self,
         txn: &RoTxn<'_>,
         claim_id: &[u8; 16],
@@ -276,7 +276,7 @@ impl Store {
     /// is complete for this claim. Deliberately uncapped: a correctness scan
     /// takes no query-budget shortcut.
     #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
-    pub(crate) fn verify_claim_erasure_by_scan_in_txn(
+    pub(in crate::store) fn verify_claim_erasure_by_scan_in_txn(
         &self,
         txn: &RoTxn<'_>,
         claim_id: &[u8; 16],
@@ -326,7 +326,7 @@ impl Store {
 
     /// Reads the durable backfill-complete flag. A present row with any byte
     /// other than the pinned value is corruption, not a soft "incomplete".
-    pub(crate) fn gate_decision_claim_index_backfill_complete_in_txn(
+    pub(in crate::store) fn gate_decision_claim_index_backfill_complete_in_txn(
         &self,
         txn: &RoTxn<'_>,
     ) -> Result<bool> {

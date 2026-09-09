@@ -262,7 +262,7 @@ impl DelegatedCustodyProof<'_> {
 ///
 /// [`Error::InvalidChannelIdentityBody`], [`Error::SecretRefNotFound`],
 /// [`Error::SecretCustodyNotActive`], or [`Error::SecretBindingDenied`].
-pub(crate) fn verify_delegated_custody_in_txn<'txn>(
+pub(super) fn verify_delegated_custody_in_txn<'txn>(
     store: &Store,
     txn: &'txn heed::RoTxn<'_>,
     channel: &str,

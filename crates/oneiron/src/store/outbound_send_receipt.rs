@@ -27,7 +27,7 @@ const SEND_RECEIPT_AUDIT_KEY_PREFIX: &[u8] = b"send_receipt_attempt:v0:";
 /// Additive delivered-send idempotency index. This is intentionally separate
 /// from the attempt queue's lifecycle-scoped dedupe rows and from the
 /// ABI-pinned Gate ledger.
-pub(crate) const SEND_IDEMPOTENCY_INDEX_VERSION: u8 = 0;
+const SEND_IDEMPOTENCY_INDEX_VERSION: u8 = 0;
 
 const SEND_IDEMPOTENCY_KEY_PREFIX: &[u8] = b"send_idem:v0:";
 

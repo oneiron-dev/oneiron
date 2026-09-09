@@ -153,7 +153,7 @@ pub(in crate::store) fn valid_gate_system_notice_record(notice: &GateSystemNotic
 /// mirrors. `store::tests::gate_notice_plane_tokens_mirror_the_policy_plane_enum`
 /// pins the two spellings together, so a renamed variant fails a test instead of
 /// silently widening the ledger.
-pub(crate) const GATE_SYSTEM_NOTICE_PLANE_TOKENS: [&str; 2] = [
+pub(in crate::store) const GATE_SYSTEM_NOTICE_PLANE_TOKENS: [&str; 2] = [
     GATE_SYSTEM_NOTICE_PLANE_OWNER,
     GATE_SYSTEM_NOTICE_PLANE_HOSTED,
 ];

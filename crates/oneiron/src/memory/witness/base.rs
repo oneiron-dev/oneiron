@@ -78,7 +78,7 @@ impl Memory<'_> {
     /// "this turn does not exist yet" answer taken outside the transaction
     /// may be stale by the time the transaction runs. The seam exists so a
     /// test can move it deliberately; production callers pass a no-op.
-    pub(crate) fn witness_with_route_and_before_txn(
+    pub(in crate::memory) fn witness_with_route_and_before_txn(
         &self,
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,

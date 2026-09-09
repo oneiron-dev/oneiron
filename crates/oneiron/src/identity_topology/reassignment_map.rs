@@ -127,7 +127,7 @@ pub struct ReassignmentStats {
 /// facet target on a split, a head target on a facet, an out-of-range facet
 /// index, a head the op does not name), so resolution here is total.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ReassignmentContext<'a> {
+pub(super) enum ReassignmentContext<'a> {
     /// Split heads: a [`ReassignmentTarget::Head`] row resolves to itself.
     Heads(&'a [EntityId]),
     /// Minted masks: a [`ReassignmentTarget::Facet`] row resolves by index.
@@ -169,13 +169,13 @@ impl ReassignmentContext<'_> {
 /// This const lives with the family rather than in `store.rs` for the reason
 /// [`IDENTITY_TOPOLOGY_SEQ_KEY`](super::IDENTITY_TOPOLOGY_SEQ_KEY) does — the family that owns the keyspace
 /// owns its key shape, and `vault_meta` readers ignore unknown prefixes.
-pub(crate) const REASSIGNMENT_ORIGIN_META_PREFIX: &[u8] = b"reassign:v1:o:";
+pub(super) const REASSIGNMENT_ORIGIN_META_PREFIX: &[u8] = b"reassign:v1:o:";
 
 /// `vault_meta` key prefix of the same index INVERTED by destination:
 /// prefix ++ head(16) ++ event(16) ++ claim(16), value = the bare version
 /// byte. [`Vault::claims_assigned_to`](crate::Vault::claims_assigned_to) is a prefix scan over this half; the
 /// origin half alone would force a whole-table scan per query.
-pub(crate) const REASSIGNMENT_TARGET_META_PREFIX: &[u8] = b"reassign:v1:t:";
+pub(super) const REASSIGNMENT_TARGET_META_PREFIX: &[u8] = b"reassign:v1:t:";
 
 /// Only accepted assignment-row version byte.
 const REASSIGNMENT_ROW_VERSION: u8 = 1;
@@ -502,7 +502,7 @@ pub(super) fn clear_reassignment_rows_in_txn(
     clippy::too_many_arguments,
     reason = "one shared split/facet apply door over event + origin + map + targets, accumulating into the caller's effect batch"
 )]
-pub(crate) fn apply_reassignment_in_txn(
+pub(super) fn apply_reassignment_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     event: &EntityId,

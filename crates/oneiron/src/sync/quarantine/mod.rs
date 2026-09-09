@@ -61,40 +61,41 @@ pub use self::reassert_drain::{
 pub use self::remat_markers::{RematDrainReport, drain_remat_markers, pending_remat_windows};
 pub use self::retention_reports::{SyncQuarantineReport, quarantined_records, sync_doctor};
 
-pub(crate) use self::keys_classifier::{
-    crdt_key_metadata, payload_hash, reason_code_for, remote_rejection_reason,
+pub(in crate::sync) use self::keys_classifier::reason_code_for;
+pub(crate) use self::keys_classifier::{crdt_key_metadata, payload_hash, remote_rejection_reason};
+pub(crate) use self::reassert_drain::apply_replayed_tombstone_for_sync;
+pub(in crate::sync) use self::reassert_drain::{
+    apply_replayed_tombstone_for_sync_in_txn, drain_reassert_markers_for_window,
+    enqueue_tombstone_reassert_marker, enqueue_tombstone_reassert_marker_in_txn,
 };
-pub(crate) use self::reassert_drain::{
-    apply_replayed_tombstone_for_sync, apply_replayed_tombstone_for_sync_in_txn,
-    drain_reassert_markers_for_window, enqueue_tombstone_reassert_marker,
-    enqueue_tombstone_reassert_marker_in_txn,
-};
-pub(crate) use self::remat_markers::{
-    clear_remat_marker_in_txn, clear_replay_remat_marker_in_txn, pending_remat_entities,
-    set_remat_marker_in_txn, set_replay_remat_marker, set_replay_remat_marker_in_txn,
-    unproven_remat_marker_exists_in_txn,
+pub(crate) use self::remat_markers::pending_remat_entities;
+pub(in crate::sync) use self::remat_markers::{
+    clear_remat_marker_in_txn, clear_replay_remat_marker_in_txn, set_remat_marker_in_txn,
+    set_replay_remat_marker, set_replay_remat_marker_in_txn, unproven_remat_marker_exists_in_txn,
 };
 // QUARANTINE_PREFIX, QUARANTINE_BATCH_DROPS_KEY and reassert_marker_key keep
 // their definitions in the children but take no seam re-export: nothing
 // outside this module names those paths, and an unreferenced `pub(crate)`
 // re-export would trip `unused_imports` under the workspace `-D warnings`.
 pub(crate) use self::retention_reports::expire_stale_rows;
-pub(crate) use self::writes_batch::{
+pub(in crate::sync) use self::writes_batch::{
     TerminalRejectionBatch, quarantine_rejected_op, quarantine_rejected_op_in_txn, record_in_txn,
     remat_marker_entity_for_quarantine,
 };
 
 #[cfg(test)]
-pub(crate) use self::reassert_drain::{INJECT_PURGE_FAILURES, INJECT_PURGE_FAILURES_SKIP};
+pub(in crate::sync) use self::reassert_drain::{INJECT_PURGE_FAILURES, INJECT_PURGE_FAILURES_SKIP};
 // Test-only paths (named from `*_tests.rs` / `tests.rs` suites, never from
 // shipped code): same `gate/mod.rs` precedent — gate them `cfg(test)` so the
 // plain-lib build sees no unreferenced re-export.
 #[cfg(test)]
-pub(crate) use self::keys_classifier::{
-    LAST_QUARANTINE_SEQ_KEY, QUARANTINE_EVICTIONS_KEY, decode_quarantine_seq, encode_quarantine_key,
+use self::keys_classifier::decode_quarantine_seq;
+#[cfg(test)]
+pub(in crate::sync) use self::keys_classifier::{
+    LAST_QUARANTINE_SEQ_KEY, QUARANTINE_EVICTIONS_KEY, encode_quarantine_key,
 };
 #[cfg(test)]
-pub(crate) use self::remat_markers::{remat_marker_key, set_remat_marker};
+use self::remat_markers::{remat_marker_key, set_remat_marker};
 
 // The pre-existing `tests.rs` sibling resolves names through `use super::*`:
 // its own import header plus every quarantine-internal item the tests name

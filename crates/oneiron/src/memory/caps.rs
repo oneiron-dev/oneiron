@@ -123,7 +123,7 @@ pub fn check_dimensions(dimensions: usize) -> Result<(), MemoryError> {
 /// itself ([`MAX_BLOB_CONTENT_BYTES`]) stays public because it is the number
 /// both bindings document.
 #[allow(dead_code)]
-pub(crate) fn check_blob_bytes(len: usize) -> Result<(), MemoryError> {
+fn check_blob_bytes(len: usize) -> Result<(), MemoryError> {
     if len > MAX_BLOB_CONTENT_BYTES {
         return Err(MemoryError::bad_request_with(
             format!("blob content exceeds the {MAX_BLOB_CONTENT_BYTES}-byte ceiling"),
@@ -175,7 +175,7 @@ pub fn check_unix_seconds(label: &str, value: f64) -> Result<u64, MemoryError> {
 /// validator — which would also put `[0, 1]` behind the SDK rather than behind
 /// each binding — is a deliberate follow-on, not a silent change here.
 #[allow(dead_code)]
-pub(crate) fn check_unit_interval(label: &str, value: f64) -> Result<f32, MemoryError> {
+fn check_unit_interval(label: &str, value: f64) -> Result<f32, MemoryError> {
     if !value.is_finite() {
         return Err(MemoryError::bad_request_with(
             format!("{label} must be a finite number"),

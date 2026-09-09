@@ -106,7 +106,7 @@ pub fn admit_federated_window_update(
 /// Non-claim rows were admitted by identity/kind rules that do not depend on
 /// resolved policy, so they are left alone here.
 #[cfg(feature = "sync")]
-pub(crate) fn revalidate_admitted_federated_claims(
+pub(in crate::sync) fn revalidate_admitted_federated_claims(
     vault: &Vault,
     key: &WindowKey,
     admitted_update: &[u8],
