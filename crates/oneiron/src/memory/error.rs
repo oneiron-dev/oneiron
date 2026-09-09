@@ -277,6 +277,27 @@ impl From<Error> for MemoryError {
                     "Close the session first if the turn belongs on the record.",
                 ],
             ),
+            // Both are off-record ROOM STATE, not request shape: the caller's
+            // turn is well formed and the generic `_` arm's "fix the request
+            // shape and retry" is advice it cannot act on. They are the
+            // refresh-and-retry family (`INVALID_STATE`, already a 409
+            // server-side) with the remedy each one actually has.
+            ErrorKind::OffRecordOverlayLeaseClosed => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "The room flipped mode after this write route was minted; mint a fresh route and retry.",
+                    "A route is generation-stamped on purpose: a stale one refuses before staging anything.",
+                ],
+            ),
+            ErrorKind::OffRecordOverlayFull => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "This private room is full; witness a smaller turn, or enter the session with a larger byte budget.",
+                    "Promote the room's turns to the durable vault, or close it, to stop holding the bytes.",
+                ],
+            ),
             ErrorKind::ClaimAlreadyClosed
             | ErrorKind::ClaimSelfSupersession
             | ErrorKind::CompanionRecordAlreadyExists
