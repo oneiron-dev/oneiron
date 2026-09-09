@@ -298,7 +298,7 @@ pub(super) fn calendar_status_value(status: CalendarStatus, recorded_at: u64) ->
 /// # Errors
 ///
 /// [`crate::Error::InvalidClaimBody`] naming the defect.
-pub(crate) fn validate_lifecycle_claim(body: &ClaimBody) -> crate::Result<()> {
+pub(super) fn validate_lifecycle_claim(body: &ClaimBody) -> crate::Result<()> {
     let ClaimSubject::Entity(_) = body.subject else {
         return Err(crate::Error::InvalidClaimBody(
             "booking lifecycle claim subject must be an entity",

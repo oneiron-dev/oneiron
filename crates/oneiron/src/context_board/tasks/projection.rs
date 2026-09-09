@@ -140,7 +140,7 @@ pub(super) fn intent_cancel_pathology(
 /// `TaskRow::ladder_disposition`, so the table has exactly one caller and the
 /// shared `context_board` re-export chokepoint stays untouched.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LadderBoardProjection {
+pub(super) struct LadderBoardProjection {
     pub(crate) status: TaskBoardStatus,
     pub(crate) tokens: Vec<&'static str>,
 }
@@ -153,7 +153,7 @@ pub(crate) struct LadderBoardProjection {
 /// cause tokens; `Countered` reads as the rejection it is; `Escalated` is not
 /// terminal at all, so it stays on the queued lane and says so.
 #[must_use]
-pub(crate) fn ladder_board_projection(
+pub(super) fn ladder_board_projection(
     disposition: LadderTerminalDisposition,
 ) -> LadderBoardProjection {
     let (status, tokens) = match disposition {

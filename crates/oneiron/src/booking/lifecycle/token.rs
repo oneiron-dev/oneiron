@@ -79,7 +79,7 @@ pub enum HoldLeaseSpec {
 /// `pub(crate)` for the soft-confirm hook: ONE-1821's participant tokens are
 /// bearer credentials with the same opacity contract, and a second CSPRNG
 /// minter would be a second entropy story to audit.
-pub(crate) fn mint_raw_token() -> String {
+pub(in crate::booking) fn mint_raw_token() -> String {
     let mut raw = [0_u8; TOKEN_RAW_BYTES];
     OsRng.fill_bytes(&mut raw);
     hex_lower(&raw)
@@ -98,7 +98,7 @@ pub(crate) fn hex_lower(bytes: &[u8]) -> String {
 /// Domain-tagged BLAKE3. `pub(crate)` so ONE-1821's companion digests keep the
 /// same discipline instead of re-deriving it: a companion participant hash can
 /// never be replayed as a hold token digest, because the domain differs.
-pub(crate) fn digest_with(domain: &[u8], material: &[u8]) -> [u8; 32] {
+pub(in crate::booking) fn digest_with(domain: &[u8], material: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(domain);
     hasher.update(material);

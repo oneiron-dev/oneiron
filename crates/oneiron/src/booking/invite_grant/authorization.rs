@@ -167,7 +167,7 @@ pub(super) fn confirmed_booking_binding(
 
 /// The identity string one recorded booker contact carries, read from the
 /// stored PERSON row and nothing else.
-pub(crate) fn booker_identity(
+pub(in crate::booking) fn booker_identity(
     vault: &Vault,
     contact_ref: &EntityId,
 ) -> Result<Option<String>, BookingError> {

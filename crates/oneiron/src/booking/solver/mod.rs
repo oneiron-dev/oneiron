@@ -56,7 +56,7 @@ mod stages;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::counts::load_booking_counts;
+use self::counts::load_booking_counts;
 pub use self::counts::{BookingCountBucket, BookingCounts};
 pub use self::hold_source::{ActiveHoldSource, NoActiveHolds};
 pub use self::interval::slot_mask;

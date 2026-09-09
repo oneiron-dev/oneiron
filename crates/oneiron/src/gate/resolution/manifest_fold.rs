@@ -263,7 +263,7 @@ impl Vault {
 ///
 /// `lineage` comes from the write's envelope. A door without an envelope
 /// passes `None` and keeps its declared-source-only verdict.
-pub(crate) fn check_claim_source_trust(
+pub(in crate::gate) fn check_claim_source_trust(
     body: &ClaimBody,
     actor_ref: Option<&str>,
     policy: &PolicyManifestResolution,

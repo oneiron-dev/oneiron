@@ -27,7 +27,7 @@ pub(super) const GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED: &str =
     "gate.pending.critical_confirm_attached";
 pub const GATE_REASON_CRITICAL_CONFIRM_TIMEOUT: &str = "gate.pending.critical_confirm_timeout";
 pub const GATE_REASON_CRITICAL_CONFIRM_DECLINED: &str = "gate.retract.critical_confirm_declined";
-pub(crate) const GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE: &str =
+pub(super) const GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE: &str =
     "gate.retract.critical_confirm_replicated_overwrite";
 
 /// A private, single-use authority for a settlement status rewrite.
