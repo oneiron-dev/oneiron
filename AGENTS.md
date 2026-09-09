@@ -62,8 +62,10 @@ Linux is the reference host. On macOS:
 - `TMPDIR` must be a real path, e.g. `mkdir -p /private/tmp/oneiron-t && export
   TMPDIR=/private/tmp/oneiron-t`. The default `/var/folders/…` is a symlink and 10
   `secret_lease::tests` refuse it.
-- `oneiron-napi` cannot link its test binary on macOS: add `--exclude oneiron-napi` to
-  workspace nextest runs.
+- `oneiron-napi` links its test binary on macOS: its build script passes the linker
+  `-undefined dynamic_lookup` for every link of the crate, so `cargo test -p oneiron-napi` runs
+  there. On Linux it still does not link off a Node host (ONE-1997), so Linux workspace runs
+  and `scripts/verify.sh` keep `--exclude oneiron-napi`.
 - 7 `oneiron-bench` `eval::tests::*` cases fail on macOS with `VaultRootPreflight …
   UnsupportedPlatform` and pass on Linux. Known; ticket pending.
 - Full suite on an M4 Max (16 cores): ~8 min wall warm, ~9.5k tests across 41 binaries.
@@ -92,8 +94,8 @@ don't assume them: `just`, `tokei`, `cargo-modules`, `cargo-public-api`.
 ## Landmines
 
 - `oneiron-napi` cannot link its test binary on any host (the `napi_*` symbols come from a Node
-  host at load time; Linux fails the same way): every workspace nextest run carries
-  `--exclude oneiron-napi`, `scripts/verify.sh` included.
+  host at load time on Linux; macOS links it since the build script passes `-undefined
+  dynamic_lookup`): Linux workspace nextest runs carry `--exclude oneiron-napi`, `scripts/verify.sh` included.
 - Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
   if you find a reference to it, that reference is stale.
 - Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
@@ -137,7 +139,7 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
   no `RUSTFLAGS` (see *Self-hosted runners*). `checks` runs on every `pull_request` (its cargo
   steps only on a rust diff) and on `workflow_dispatch`; `test` runs the macOS recipe
-  (`--exclude oneiron-napi`, the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
+  (the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
   filtered out by name — ONE-1996 — then the featureless lib tests and doctests) on rust-diff
   `pull_request` or `push`; `test-linux` runs the `--profile full` suite with only the napi
   exclusion, plus the same two stages, on `push` to `main` and `workflow_dispatch`
