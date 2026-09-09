@@ -62,7 +62,9 @@ concurrency:
 # persistent CARGO_TARGET_DIR (~/ci/target), CARGO_INCREMENTAL=0 and a PATH
 # with ~/.cargo/bin; the toolchain is the host rustup resolving
 # rust-toolchain.toml. So: no rust-cache action, no toolchain action, and
-# never set CARGO_TARGET_DIR here. `clean: true` on every checkout because
+# never set CARGO_TARGET_DIR here. The cache only grows, so every cargo job
+# ends with scripts/ci/cap-target-cache.sh, which removes it past 20 GB and
+# lets the next job build cold. `clean: true` on every checkout because
 # `_work` persists between runs. Pinned CI-only tools live under
 # ~/ci/tools — a job installs one on first use and every later run reuses it.
 #
@@ -191,6 +193,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 scripts/advisory-policy/check.py
 
+      # The host's persistent CARGO_TARGET_DIR only ever grows (cargo never
+      # evicts stale artifacts). Past the cap the whole dir goes and the next
+      # job on this runner builds cold. Runs after a failure too; it cannot
+      # change the job's verdict.
+      - name: Cap the build cache
+        if: always()
+        run: scripts/ci/cap-target-cache.sh 20
   test:
     name: Test
     runs-on: [self-hosted, macos, arm64]
@@ -263,6 +272,10 @@ jobs:
       - name: Doctests
         run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
+      # Bound the host's persistent build cache (see ci.yml `checks`).
+      - name: Cap the build cache
+        if: always()
+        run: scripts/ci/cap-target-cache.sh 20
   test-linux:
     name: Test (Linux reference)
     runs-on: [self-hosted, linux, x64]

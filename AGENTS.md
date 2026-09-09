@@ -178,7 +178,10 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   workflow sets `RUSTFLAGS`: `-Dwarnings` there also reaches the vendored `crates/heed` path
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
-  flags let the runner caches share fingerprints with developer builds.
+  flags let the runner caches share fingerprints with developer builds. The cache only grows
+  (cargo never evicts stale artifacts), so every cargo job ends with
+  `scripts/ci/cap-target-cache.sh 20`: past 20 GB the dir is removed and the next job on that
+  runner builds cold; it never touches a path that is not `…/ci/target`.
 - Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
   `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
   (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
