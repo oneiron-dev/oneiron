@@ -60,8 +60,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/perf/cells.rs` | src | s | 17 crate-vis | — | ONE-1579 fail-closed reporting cells |
 | `src/perf/certificate.rs` | src | m | 18 crate-vis | — | ONE-1961 run certificate: the block an external verifier reads first |
 | `src/perf/certificate/tests.rs` | test | m | — | — | ONE-1961 regressions over the run certificate: the scope partition, the trust manifest, the statistics… |
-| `src/perf/child_process.rs` | src | m | 31 crate-vis | — | ONE-1579 ready-child plumbing: the TCP-accept readiness probe, the child programs the harness spawns, and… |
-| `src/perf/child_process/tests.rs` | test | s | — | — | ONE-1579 / ONE-1963 ready-child regressions: the readiness boundary, the bounded shutdown path, and the… |
+| `src/perf/child_process.rs` | src | m | 32 crate-vis | — | ONE-1579 ready-child plumbing: the TCP-accept readiness probe, the child programs the harness spawns, and… |
+| `src/perf/child_process/tests.rs` | test | m | — | — | ONE-1579 / ONE-1963 ready-child regressions: the readiness boundary, the bounded shutdown path, and the… |
 | `src/perf/cli.rs` | src | m | 2 crate-vis | — | ONE-1579 `perf` command surface: argument parsing, the bundled smoke, and the rendered report |
 | `src/perf/corpus.rs` | src | m | 10 crate-vis | — | ONE-1579 corpus: the seeded, deterministic documents, queries and vectors a run is measured against, and the… |
 | `src/perf/gated_writes.rs` | src | m | 2 crate-vis | — | ONE-1579 axis 5: gated-write throughput through the public claim door |
@@ -74,7 +74,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/perf/precision.rs` | src | m | 14 crate-vis | — | ONE-1579 precision axis: F32 / F16 / Int8Sq / `BinaryPrefixRescore` rows |
 | `src/perf/precision/tests.rs` | test | m | — | — | Regressions for the ONE-1579 precision axis |
 | `src/perf/provenance.rs` | src | m | 18 crate-vis | — | ONE-1579 run provenance: where, on what, and from which inputs a report was made |
-| `src/perf/provenance/tests.rs` | test | s | — | — | Regressions for ONE-1579 run provenance |
+| `src/perf/provenance/tests.rs` | test | m | — | — | Regressions for ONE-1579 run provenance |
 | `src/perf/publication.rs` | src | m | 5 crate-vis | — | ONE-1579 publication-CANDIDATE predicate |
 | `src/perf/publication/tests.rs` | test | m | — | — | ONE-1579 / ONE-1961 / ONE-1963 regressions over the candidacy predicate |
 | `src/perf/publication_state.rs` | src | m | 2 crate-vis | — | Fail-closed projection from measured ONE-1579 axes into publication checks |
