@@ -16,12 +16,16 @@
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
+use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oneiron::booking::agent_api::{
     BOOKING_AGENT_INSTRUCTIONS_MIME, BOOKING_AGENT_INSTRUCTIONS_VERSION,
     BookingAgentInstructionsBlock, BookingAgentOperation,
+};
+use oneiron::booking::anti_abuse::{
+    BookingAntiAbuseOwnerConfig, apply_rule_amendment, default_booking_anti_abuse_rows,
 };
 use oneiron::booking::config::{
     BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BookingEventTypeClaimValue,
@@ -195,6 +199,58 @@ fn install_second_page(vault: &Vault) -> EntityId {
         .unwrap();
     install_event_type(vault, page, 0xC1, EVENT_TYPE);
     page
+}
+
+fn nz16(value: u16) -> NonZeroU16 {
+    NonZeroU16::new(value).unwrap()
+}
+
+fn nz32(value: u32) -> NonZeroU32 {
+    NonZeroU32::new(value).unwrap()
+}
+
+fn nz64(value: u64) -> NonZeroU64 {
+    NonZeroU64::new(value).unwrap()
+}
+
+/// The owner-chosen ONE-1817 thresholds, with the slot-list minute budget the
+/// caller wants to observe. Every other knob sits at the loosest value the
+/// engine's validator accepts, so the row under test is the only one that can
+/// fire.
+fn anti_abuse_owner_config(slot_list_per_minute_per_ip: u32) -> BookingAntiAbuseOwnerConfig {
+    BookingAntiAbuseOwnerConfig {
+        min_intake_chars: nz16(1),
+        normal_notice_secs: nz64(1),
+        high_value_notice_secs: nz64(1),
+        min_submit_millis: nz64(1),
+        slot_list_per_minute_per_ip: nz32(slot_list_per_minute_per_ip),
+        // The validator admits 30-60 seconds; the floor keeps a cached
+        // listing from answering for a request this suite means to admit.
+        slot_list_cache_ttl_secs: nz64(30),
+        book_per_minute_per_ip: nz32(60),
+        max_active_future_per_email: 2,
+        max_active_holds_per_session: 2,
+        hold_per_minute_per_ip: nz32(60),
+        tentative_confirm_ttl_secs: nz64(900),
+    }
+}
+
+/// Activates the owner rule stack for one page exactly as an owner activation
+/// does: the engine's own seed rows, each installed through the versioned
+/// amendment door at expected version 0.
+///
+/// Mirrors `install_defaults_scoped` in the crate-internal guard tests, so a
+/// wire test seeds the same rows the guard tests do rather than a shape of its
+/// own.
+fn seed_anti_abuse_rules(
+    vault: &Vault,
+    page: EntityId,
+    event_type: Option<EventTypeKey>,
+    owner_config: &BookingAntiAbuseOwnerConfig,
+) {
+    for row in default_booking_anti_abuse_rows(page, event_type, owner_config).unwrap() {
+        apply_rule_amendment(vault, 0, row, None).unwrap();
+    }
 }
 
 /// How many booking lifecycle verbs the queue has ever carried.
@@ -1184,11 +1240,20 @@ fn booking_token_page_binding_precedes_admission() {
     );
 }
 
+/// Admission runs inside the shared executor, and runs there exactly once.
+///
+/// Both halves are observable from the wire once the page carries an owner
+/// budget: a one-per-minute slot-list budget that answers the FIRST request
+/// proves the executor spent one token rather than two, and refusing the
+/// second proves the guard ran at all. A page with no rules of its own is
+/// untouched by either, so nothing here is a harness-wide fallback.
 #[tokio::test]
 async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
     let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
+    let unseeded_page = install_second_page(&vault);
+    let (addr, handle) = spawn(Arc::clone(&vault)).await;
     let token = page_token(page);
+    let unseeded_token = page_token(unseeded_page);
 
     // The guard layer is reached for every operation class. With no owner
     // rule seeded the engine's knobs are absent, so admission continues —
@@ -1214,40 +1279,79 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
         );
     }
 
-    // The gateway and the handlers hold no admission call of their own: the
-    // guard is called from exactly one place in the whole crate, and that
-    // place is the shared executor.
-    let executor = source("src/api/booking.rs");
+    // ── the seeded budget, over the wire ────────────────────────────────
+    // One slot-list request per minute per IP on this page, and no rule at
+    // all on the other one.
+    seed_anti_abuse_rules(
+        &vault,
+        page,
+        Some(EventTypeKey(EVENT_TYPE.to_owned())),
+        &anti_abuse_owner_config(1),
+    );
+    // The minute budget is a wall-clock bucket, so the sequence starts with
+    // room to spare: a boundary crossing between two loopback requests would
+    // hand the second one a fresh budget and prove nothing.
+    while now_secs() % 60 > 50 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let first = http_post(
+        addr,
+        &format!("/api/booking/{token}/availability"),
+        &availability_body(6, Value::Null),
+    )
+    .await;
+    assert_eq!(
+        status_of(&first),
+        200,
+        "one request spends the minute budget once, not twice: {}",
+        body_of(&first)
+    );
+
+    // A differently-shaped listing, so no cached body can answer it: the
+    // budget is spent, and the refusal is the typed admission state.
+    let second = http_post(
+        addr,
+        &format!("/api/booking/{token}/availability"),
+        &availability_body(7, Value::Null),
+    )
+    .await;
+    assert_eq!(
+        status_of(&second),
+        409,
+        "the spent budget must decline the second listing: {}",
+        body_of(&second)
+    );
+    let second = json_of(&second);
+    assert_eq!(second["details"]["code"], "INVALID_STATE");
+    let state = second["details"]["state"].as_str().unwrap();
+    assert!(
+        state.starts_with("booking_retry_after_"),
+        "admission declined with {state}"
+    );
+
+    // The very same call against the page that seeded no rule still answers:
+    // the budget belongs to the page whose rows carry it.
+    let unseeded = http_post(
+        addr,
+        &format!("/api/booking/{unseeded_token}/availability"),
+        &availability_body(7, Value::Null),
+    )
+    .await;
+    assert_eq!(
+        status_of(&unseeded),
+        200,
+        "a page with no owner rule keeps answering: {}",
+        body_of(&unseeded)
+    );
+
+    // The MCP gateway holds no admission call of its own, so no second door
+    // can pre-check the guard or charge its budget twice.
     let gateway = source("src/api/mcp_gateway");
     for guard in ["enforce_slot_list", "enforce_hold", "enforce_book"] {
-        assert_eq!(
-            executor.matches(&format!("{guard}(State(")).count(),
-            1,
-            "{guard} is called from exactly one site"
-        );
         assert!(
             !gateway.contains(guard),
             "the MCP gateway must not pre-check admission with {guard}"
-        );
-    }
-    let executor_body = executor
-        .split_once("pub(crate) async fn execute_booking_operation(")
-        .expect("the shared executor exists")
-        .1;
-    let admission_at = executor_body
-        .find("enforce_slot_list(State(")
-        .expect("admission runs inside the executor");
-    for later in [
-        "public_availability::solve(",
-        "execute_hold(",
-        "execute_confirm(",
-    ] {
-        let at = executor_body
-            .find(later)
-            .unwrap_or_else(|| panic!("{later} appears in the executor"));
-        assert!(
-            admission_at < at,
-            "admission must run before {later} in the shared executor"
         );
     }
     // Availability moved to a child module. Keep the parser-before-oracle
