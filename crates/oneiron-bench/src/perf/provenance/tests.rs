@@ -13,12 +13,12 @@ const ALLOWLIST: &str = "# the first Tokyo node\n\
      , malformed-without-machine-id, /only-a-machine-id, host-only/";
 
 /// The hostname and machine id [`ALLOWLIST`] carries as its first entry.
-fn allowlisted_host() -> Option<String> {
-    Some("tokyo-1.oneiron.internal".to_owned())
+fn allowlisted_host() -> String {
+    "tokyo-1.oneiron.internal".to_owned()
 }
 
-fn allowlisted_machine() -> Option<String> {
-    Some("8f14e45fceea167a5a36dedd4bea2543".to_owned())
+fn allowlisted_machine() -> String {
+    "8f14e45fceea167a5a36dedd4bea2543".to_owned()
 }
 
 fn query_evidence() -> CorpusQueryEvidence {
@@ -95,8 +95,8 @@ fn node_identity_is_captured_and_designation_is_declared_not_assumed() {
     // and the report it renders says so in that field rather than merely
     // carrying it.
     let undeclared = NodeIdentity::resolve(
-        allowlisted_host(),
-        allowlisted_machine(),
+        Some(allowlisted_host()),
+        Some(allowlisted_machine()),
         None,
         None,
         Some(ALLOWLIST),
@@ -117,8 +117,8 @@ fn node_identity_is_captured_and_designation_is_declared_not_assumed() {
     // The mirror: the same observed identity, having declared the designated
     // node and its location, IS the designated node.
     let declared_designated = NodeIdentity::resolve(
-        allowlisted_host(),
-        allowlisted_machine(),
+        Some(allowlisted_host()),
+        Some(allowlisted_machine()),
         Some(DESIGNATED_FIRST_TOKYO_NODE.to_owned()),
         Some(DESIGNATED_NODE_LOCATION.to_owned()),
         Some(ALLOWLIST),
@@ -149,8 +149,8 @@ fn tokyo_designation_binds_to_an_allowlisted_observed_host_identity() {
     )));
     assert!(allowlist_entries(None).is_empty());
 
-    let host = allowlisted_host;
-    let machine = allowlisted_machine;
+    let host = || Some(allowlisted_host());
+    let machine = || Some(allowlisted_machine());
 
     let listed = NodeIdentity::resolve(host(), machine(), None, None, Some(ALLOWLIST));
     assert!(
