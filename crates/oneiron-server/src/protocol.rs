@@ -227,6 +227,9 @@ pub(crate) fn transport_err_msg(e: oneiron::sync::TransportError) -> &'static st
         oneiron::sync::TransportError::WebSocket(_) => "websocket error",
         oneiron::sync::TransportError::ConnectionClosed => "connection closed",
         oneiron::sync::TransportError::Storage(_) => "storage error",
+        // The outward text is unchanged: a denial reason is never handed to a
+        // peer, only the fact that the write did not land.
+        oneiron::sync::TransportError::AdmissionDenied(_) => "storage error",
     }
 }
 

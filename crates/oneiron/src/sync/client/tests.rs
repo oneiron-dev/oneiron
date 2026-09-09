@@ -7,6 +7,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
+use crate::error::{GateDenialOutcome, GateDenialReason};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
 use crate::sync::bridge::Materializer;
 use crate::sync::loro_support::export_snapshot;
@@ -861,12 +862,10 @@ fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
     let err = client
         .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Guest)
         .expect_err("guest selector response above local ceiling must be denied");
-    let TransportError::Storage(message) = err else {
-        panic!("expected auditable admission storage error, got {err:?}");
-    };
-    assert!(
-        message.contains("gate.pending.source_trust"),
-        "denial reason must remain auditable, got {message}"
+    assert_matches!(
+        err,
+        TransportError::AdmissionDenied(ref denial)
+            if denial.reason_codes() == [GateDenialReason::PendingSourceTrust]
     );
     assert!(
         client.window(key).is_none(),
@@ -952,12 +951,10 @@ fn federated_import_seam_denies_before_window_import_with_reason() {
     let err = client
         .import_federated_window_update(key, &update, FederationAdmissionRole::Guest)
         .expect_err("untrusted imported auto claim must be denied before import");
-    let TransportError::Storage(message) = err else {
-        panic!("expected auditable admission storage error, got {err:?}");
-    };
-    assert!(
-        message.contains("gate.pending.source_trust"),
-        "denial reason must remain auditable, got {message}"
+    assert_matches!(
+        err,
+        TransportError::AdmissionDenied(ref denial)
+            if denial.reason_codes() == [GateDenialReason::PendingSourceTrust]
     );
     assert!(
         client.window(key).is_none(),
@@ -983,12 +980,11 @@ fn federated_import_seam_denies_preapproved_untrusted_claim() {
     let err = client
         .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
         .expect_err("preapproved federated claim must still pass local source trust");
-    let TransportError::Storage(message) = err else {
-        panic!("expected auditable admission storage error, got {err:?}");
-    };
-    assert!(
-        message.contains("gate.pending.source_trust"),
-        "denial reason must remain auditable, got {message}"
+    assert_matches!(
+        err,
+        TransportError::AdmissionDenied(ref denial)
+            if denial.outcome() == GateDenialOutcome::Pending
+                && denial.reason_codes() == [GateDenialReason::PendingSourceTrust]
     );
     assert!(
         client.window(key).is_none(),
@@ -1023,12 +1019,11 @@ fn federated_import_seam_denial_preserves_open_durable_window() {
     let err = client
         .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
         .expect_err("untrusted imported auto claim must be denied");
-    let TransportError::Storage(message) = err else {
-        panic!("expected auditable admission storage error, got {err:?}");
-    };
-    assert!(
-        message.contains("gate.pending.source_trust"),
-        "denial reason must remain auditable, got {message}"
+    assert_matches!(
+        err,
+        TransportError::AdmissionDenied(ref denial)
+            if denial.outcome() == GateDenialOutcome::Pending
+                && denial.reason_codes() == [GateDenialReason::PendingSourceTrust]
     );
 
     assert_eq!(
