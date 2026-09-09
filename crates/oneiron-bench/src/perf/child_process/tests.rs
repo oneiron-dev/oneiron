@@ -187,38 +187,50 @@ fn child_commands_substitute_their_placeholders() {
 /// call ten opaque processes ten active vaults.
 #[test]
 fn an_environment_overridden_child_program_is_never_harness_owned() {
-    let pinned = std::env::var(CHILD_PROGRAM_ENV)
-        .ok()
-        .map(|raw| raw.trim().to_owned())
-        .filter(|raw| !raw.is_empty());
-    match resolve_child_program() {
-        Ok(resolved) => {
-            if let Some(pinned) = pinned {
-                assert!(
-                    !resolved.harness_owned,
-                    "an overridden child program is opaque, whatever it points at"
-                );
-                assert_eq!(
-                    resolved.path,
-                    PathBuf::from(pinned),
-                    "the override is spawned verbatim"
-                );
-            } else {
-                assert!(
-                    resolved.harness_owned,
-                    "the running oneiron-bench binary IS the harness-owned child"
-                );
-                assert_eq!(
-                    resolved.path,
-                    std::env::current_exe().expect("the test executable resolves")
-                );
-            }
-        }
-        Err(reason) => assert!(
-            reason.contains(CHILD_PROGRAM_ENV),
-            "an unresolvable child program must name the override: {reason}"
-        ),
-    }
+    let own_binary = Path::new("/opt/oneiron-bench");
+
+    let overridden = child_program_for(Some("/usr/bin/other-bench"), Some(own_binary))
+        .expect("an override resolves");
+    assert!(
+        !overridden.harness_owned,
+        "an overridden child program is opaque, whatever it points at"
+    );
+    assert_eq!(
+        overridden.path,
+        PathBuf::from("/usr/bin/other-bench"),
+        "the override is spawned verbatim"
+    );
+
+    let own = child_program_for(None, Some(own_binary)).expect("the own binary resolves");
+    assert!(
+        own.harness_owned,
+        "the running oneiron-bench binary IS the harness-owned child"
+    );
+    assert_eq!(own.path, own_binary);
+
+    // A blank override is no override at all, so the harness still owns its
+    // own binary rather than trying to spawn an empty path.
+    assert!(
+        child_program_for(Some("   "), Some(own_binary))
+            .expect("a blank override resolves")
+            .harness_owned
+    );
+
+    let Err(other_binary) = child_program_for(None, Some(Path::new("/opt/some-test-harness")))
+    else {
+        panic!("a binary that is not oneiron-bench is no ready child");
+    };
+    assert!(
+        other_binary.contains(CHILD_PROGRAM_ENV),
+        "an unresolvable child program must name the override: {other_binary}"
+    );
+    let Err(unresolvable) = child_program_for(None, None) else {
+        panic!("an unresolvable executable is no ready child");
+    };
+    assert!(
+        unresolvable.contains(CHILD_PROGRAM_ENV),
+        "an unresolvable child program must name the override: {unresolvable}"
+    );
 }
 
 /// ONE-1963: a FULL run refuses an operator-chosen ready child outright.

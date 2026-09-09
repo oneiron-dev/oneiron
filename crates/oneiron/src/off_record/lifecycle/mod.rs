@@ -76,6 +76,9 @@ pub use self::types::{
 };
 
 #[cfg(test)]
+mod tests_session_reads;
+
+#[cfg(test)]
 #[path = "../tests.rs"]
 mod tests;
 
