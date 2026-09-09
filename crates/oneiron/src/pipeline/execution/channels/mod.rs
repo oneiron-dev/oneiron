@@ -2,9 +2,11 @@
 
 mod admit;
 mod rerank;
+mod trace_assembly;
 
 use self::admit::{AdmitSignal, ChannelAccumulator};
 use self::rerank::{RerankApplied, RerankLadderInputs};
+use self::trace_assembly::TraceInputs;
 use super::super::blend::{
     AccessFactorApplication, RetrievalBlendConfig, RetrievalChannelIndexes,
     blended_retrieval_scores, boost_contiguity, filter_blended_scores_to_allowed_ids,
@@ -22,9 +24,7 @@ use super::super::filters::{
     pipeline_candidate_matches_filters_and_gate,
 };
 use super::super::trace::{
-    RetrievalTraceForkEvidence, record_ppr_cache_outcome, retrieval_trace_candidate_set,
-    retrieval_trace_fork_hash, retrieval_trace_fused_scores, retrieval_trace_stage_record,
-    retrieval_trace_top_scores,
+    record_ppr_cache_outcome, retrieval_trace_fused_scores, retrieval_trace_top_scores,
 };
 use super::super::types::{
     ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PPR_DAMPING, RelMode,
@@ -39,7 +39,7 @@ use crate::error::{Error, Result};
 use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
 use crate::retrieval_quality::PprCacheOutcome;
-use crate::store::{RetrievalSignal, RetrievalTrace, RetrievalTraceStage};
+use crate::store::RetrievalSignal;
 use std::collections::{HashMap, HashSet};
 
 impl PipelineBuilder<'_> {
@@ -976,81 +976,26 @@ impl PipelineBuilder<'_> {
             }
             let pending_vectors = pending_vectors_for_scores(&self.vault.store, &rtxn, &scores)?;
             let retrieval_trace = if capture_retrieval_trace {
-                let final_scores = retrieval_trace_top_scores(&scores, trace_candidate_limit);
-                let blended_scores = blended_trace_scores.unwrap_or_default();
-                let candidate_set = retrieval_trace_candidate_set(
-                    &acc.trace_ranked_lists,
-                    fused_trace_scores.as_deref().unwrap_or(&[]),
-                    &blended_scores,
-                    &final_scores,
-                );
-                let fork_hash = retrieval_trace_fork_hash(
-                    self,
+                Some(self.assemble_retrieval_trace(TraceInputs {
+                    scores: &scores,
+                    trace_channels: acc.trace_channels,
+                    trace_ranked_lists: &acc.trace_ranked_lists,
+                    signal_components: &acc.signal_components,
+                    fused_trace_scores,
+                    blended_trace_scores,
+                    reranked_trace_scores: reranked_trace_scores.as_deref(),
+                    rerank_merged_components: rerank_merged_components.as_ref(),
+                    blend_components: &blend_components,
+                    blend_access_factors: &blend_access_factors,
+                    community_trace_identity,
+                    world_authority: world_authority.as_ref(),
                     bm25_config,
                     blend_weights,
                     explicit_time_dependent_now,
                     occurred_range,
                     rerank_query,
-                    RetrievalTraceForkEvidence {
-                        candidate_set: &candidate_set,
-                        world_authority: world_authority.as_ref(),
-                    },
-                );
-                let fork_hash = if let Some(identity) = community_trace_identity {
-                    use sha2::{Digest, Sha256};
-                    let mut hash = Sha256::new();
-                    hash.update(b"oneiron.retrieval_trace.community.fork.v0");
-                    hash.update(fork_hash);
-                    hash.update(identity);
-                    hash.finalize().into()
-                } else {
-                    fork_hash
-                };
-                Some(RetrievalTrace {
-                    fork_hash,
-                    per_channel: acc.trace_channels,
-                    // The fused stage is the pre-blend RRF order, so it
-                    // carries no applied multiplier to attribute: an empty
-                    // map makes every one of its rows record `None`.
-                    fused: retrieval_trace_stage_record(
-                        RetrievalTraceStage::Fused,
-                        &fused_trace_scores.unwrap_or_default(),
-                        &acc.signal_components,
-                        &HashMap::new(),
-                        &HashMap::new(),
-                        trace_candidate_limit,
-                    ),
-                    blended: retrieval_trace_stage_record(
-                        RetrievalTraceStage::Blended,
-                        &blended_scores,
-                        &acc.signal_components,
-                        &blend_components,
-                        &blend_access_factors,
-                        trace_candidate_limit,
-                    ),
-                    // Rerank inactive: passthrough mirror of `final` (the
-                    // 1186-D5 reserved slot). Active: the post-rerank,
-                    // pre-budget/pre-truncate ordering with the rerank
-                    // components appended after the blend components.
-                    reranked: retrieval_trace_stage_record(
-                        RetrievalTraceStage::Reranked,
-                        reranked_trace_scores.as_deref().unwrap_or(&final_scores),
-                        &acc.signal_components,
-                        rerank_merged_components
-                            .as_ref()
-                            .unwrap_or(&blend_components),
-                        &blend_access_factors,
-                        trace_candidate_limit,
-                    ),
-                    final_stage: retrieval_trace_stage_record(
-                        RetrievalTraceStage::Final,
-                        &final_scores,
-                        &acc.signal_components,
-                        &blend_components,
-                        &blend_access_factors,
-                        trace_candidate_limit,
-                    ),
-                })
+                    trace_candidate_limit,
+                }))
             } else {
                 None
             };
