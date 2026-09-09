@@ -30,7 +30,8 @@ pub(crate) use self::edges::{
 };
 pub use self::entities::HydratedShortId;
 pub(crate) use self::entities::{
-    LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
+    LiveEntityRow, MAX_TYPE_QUERY_RESULTS, entity_id_from_type_index_key, live_entity_row_in_txn,
+    require_key_len,
 };
 
 /// Main vault API wrapping LMDB storage and configuration.

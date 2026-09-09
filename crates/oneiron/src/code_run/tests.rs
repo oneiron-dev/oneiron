@@ -2073,35 +2073,25 @@ fn off_record_session_speech_retry_converges_on_one_turn_and_one_message() -> Re
     dispatcher.dispatch(stamped("one bubble"))?;
     let message_id = executor_speech_message_id("run-session-idempotency", 3)?;
 
-    let snapshot = || -> Result<(usize, usize, Vec<EntityId>, Vec<u8>)> {
-        let view = session.read_view()?;
-        let rtxn = vault.store.env.read_txn()?;
-        let turns = view
-            .type_index
-            .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_TURN])?
-            .count();
-        let messages = view
-            .type_index
-            .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])?
-            .count();
-        let prefix = crate::vault::edge_kind_prefix(&message_id, crate::edge::EdgeKind::PartOf);
-        let mut parents = Vec::new();
-        for row in view.edges_out.prefix_iter(&rtxn, &prefix)? {
-            let (key, _) = row?;
-            let (_, _, target) = crate::edge::parse_strict_edge_record_key(&key)?;
-            parents.push(target);
-        }
-        let raw = view
-            .entities
-            .get(&rtxn, message_id.as_bytes())?
-            .expect("session MESSAGE exists")
-            .into_owned();
-        Ok((turns, messages, parents, raw))
+    let snapshot = || -> Result<(Vec<EntityId>, Vec<EntityId>, Vec<EntityId>, Vec<u8>)> {
+        Ok((
+            session.entities_by_type(crate::registry::ENTITY_TYPE_TURN)?,
+            session.entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?,
+            session.targets(&message_id, crate::edge::EdgeKind::PartOf)?,
+            session
+                .get_raw(&message_id)?
+                .expect("session MESSAGE exists"),
+        ))
     };
 
     let before = snapshot()?;
-    assert_eq!((before.0, before.1), (1, 1));
-    assert_eq!(before.2.len(), 1, "one MESSAGE has one TURN parent");
+    assert_eq!(before.0.len(), 1, "the room holds one TURN");
+    assert_eq!(before.1, vec![message_id], "the room holds one MESSAGE");
+    assert_eq!(
+        before.2,
+        vec![before.0[0]],
+        "one MESSAGE has one TURN parent"
+    );
     assert_eq!(
         vault
             .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
@@ -2161,22 +2151,16 @@ fn session_speech_preserves_typed_actor_ceiling_denial() -> Result<()> {
             ref reason_codes,
         } if reason_codes == &vec!["gate.pending.actor_ceiling"]
     ));
-    let view = session.read_view()?;
-    let rtxn = vault.store.env.read_txn()?;
-    assert_eq!(
-        view.type_index
-            .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])?
-            .count(),
-        0,
+    assert!(
+        session
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?
+            .is_empty()
     );
-    assert_eq!(
-        view.type_index
-            .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_TURN])?
-            .count(),
-        0,
+    assert!(
+        session
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+            .is_empty()
     );
-    drop(rtxn);
-    drop(view);
     drop(dispatcher);
     session.close()?;
     Ok(())

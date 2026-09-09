@@ -15,7 +15,7 @@ use crate::{hnsw, le_bytes_to_f32_vec, unix_seconds_now};
 use std::time::Instant;
 
 /// Cap for `entities_by_type` to prevent unbounded allocation on large indexes.
-const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
+pub(crate) const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
 
 /// Cap for `entities_in_learned_range` to prevent unbounded allocation on
 /// wide time-range queries. Distinct from `MAX_TYPE_QUERY_RESULTS` so the two
