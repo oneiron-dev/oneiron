@@ -125,15 +125,60 @@ fn record_round_trips_encode_decode() {
     assert_eq!(back.value_bytes, b"hunter2");
 }
 
+/// The metadata projection is the read most callers get, and it carries no
+/// value.
+///
+/// The type-level half of that claim is only observable from OUTSIDE the
+/// crate — in here `value_bytes` is `pub(crate)` and therefore visible — so it
+/// is asserted by the external-position trybuild target
+/// `tests/secret_custody_compilefail.rs`: naming `value_bytes` on a
+/// `SecretCustodyMetadata` is `E0609`, and struct-literalling a
+/// `SecretCustodyRecord` out of crate fails on the private `value_bytes` and
+/// `manifest_ref`.
+///
+/// What this test asserts is the serialized half: the supported public
+/// representation of the projection carries neither the bytes nor a
+/// value-shaped key.
 #[test]
 fn metadata_has_no_value_field_by_construction() {
     let rec = record("api-key", CustodyClass::CrossVault, b"hunter2", vec![]);
     let meta = rec.metadata();
     assert_eq!(meta.name, "api-key");
     assert_eq!(meta.class, CustodyClass::CrossVault);
-    // Compile-time: SecretCustodyMetadata simply has no value_bytes member.
-    // (The field list is the type-level proof; nothing to assert at runtime.)
-    let _ = &meta.bindings;
+    assert!(meta.bindings.is_empty());
+
+    // `SecretCustodyMetadata` derives `Serialize`, and `SecretCustodyRecord`
+    // deliberately does not: this JSON is what a caller can actually publish
+    // from a metadata read, so it is the thing that must be value-free.
+    let json = serde_json::to_string(&meta).expect("metadata serializes");
+    assert!(
+        !json.contains("hunter2"),
+        "the metadata read must never carry the value bytes, got: {json}"
+    );
+    assert!(
+        !json.contains("value"),
+        "the metadata read must carry no value-shaped key either, got: {json}"
+    );
+    let fields: serde_json::Value = serde_json::from_str(&json).expect("metadata is a JSON object");
+    let keys: Vec<&str> = fields
+        .as_object()
+        .expect("metadata serializes as an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "name",
+            "class",
+            "status",
+            "registered_at",
+            "rotated_at",
+            "rotation_generation",
+            "bindings"
+        ],
+        "the projection's field list is the type-level proof; pin it"
+    );
 }
 
 #[test]

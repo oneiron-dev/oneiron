@@ -1,0 +1,11 @@
+error[E0451]: fields `actor`, `principal_ref` and `decision_id` of struct `AuthenticatedOwner` are private
+  --> tests/consent_guard_compilefail/a_owner_stamp_struct_literal_private_fields.rs:10:9
+   |
+ 9 |     oneiron::consent::AuthenticatedOwner {
+   |     ------------------------------------ in this type
+10 |         actor: oneiron::EntityId::now(),
+   |         ^^^^^ private field
+11 |         principal_ref: String::new(),
+   |         ^^^^^^^^^^^^^ private field
+12 |         decision_id: oneiron::store::GateDecisionId::now(),
+   |         ^^^^^^^^^^^ private field

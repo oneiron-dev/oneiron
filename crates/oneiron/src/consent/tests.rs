@@ -643,31 +643,39 @@ fn consent_guard_proposes_never_grants() {
 
 /// The API-shape half of invariant 5. `create_standing_grant` takes an
 /// `&AuthenticatedOwner`, whose fields are private and whose only constructor
-/// is `Vault::authenticate_owner` — so the following does not compile, and the
-/// invariant is a type fact rather than a convention:
+/// is `Vault::authenticate_owner`, and no `From<ConsentProposal>` conversion
+/// exists to either `AuthenticatedOwner` or `ConsentGrant`.
 ///
-/// ```compile_fail
-/// use oneiron::consent::{AuthenticatedOwner, ConsentProposal};
-/// // `AuthenticatedOwner` has private fields: a guard cannot fabricate one
-/// // from its proposal, and there is no `From<ConsentProposal>` for it or for
-/// // `ConsentGrant`.
-/// fn launder(proposal: ConsentProposal) -> AuthenticatedOwner {
-///     AuthenticatedOwner {
-///         actor: proposal.effect_digest,
-///         principal_ref: String::new(),
-///         decision_id: todo!(),
-///     }
-/// }
-/// ```
+/// Those three facts are only observable from OUTSIDE the crate — in here,
+/// `pub(crate)` and private are the same thing — so they are asserted by the
+/// external-position trybuild target `tests/consent_guard_compilefail.rs`,
+/// whose three cases pin the `E0451` private-field diagnostic on the owner
+/// stamp and the two `E0277` missing-impl diagnostics on the conversions.
+///
+/// What this test adds in-crate is the other half of the claim: that a
+/// proposal carries no owner-stamp-shaped field at all, so there is nothing
+/// for a laundering conversion to be written FROM.
 #[test]
 fn consent_guard_api_has_no_proposal_to_grant_path() {
     // A `ConsentProposal` carries exactly three fields, none of which is an
-    // owner stamp: a digest, a suggested bound, and a confidence.
+    // owner stamp: a digest, a suggested bound, and a confidence. The
+    // destructuring is exhaustive and unaliased on purpose — adding an actor,
+    // a principal ref, or a decision id to the proposal breaks this line
+    // rather than silently handing guards a stamp-shaped field.
     let proposal = ConsentProposal {
         effect_digest: EffectDigest::from_bytes([7_u8; 32]),
         suggested_bound: action_bound("agent-a", "send", &["channel:email"]),
         confidence: 0.99,
     };
+    let ConsentProposal {
+        effect_digest,
+        suggested_bound,
+        confidence,
+    } = proposal.clone();
+    assert_eq!(effect_digest, proposal.effect_digest);
+    assert_eq!(suggested_bound, proposal.suggested_bound);
+    assert!((confidence - 0.99).abs() < f32::EPSILON);
+
     // Confidence is the only knob a guard may turn, and turning it changes
     // neither the bound the owner would stamp nor the op it names.
     let lowered = ConsentProposal {
