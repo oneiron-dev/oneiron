@@ -145,6 +145,57 @@ impl SandboxGuestRuntime {
             Self::PlainJsQuickJsComponent => PLAIN_JS_HOST_VERB_DTS,
         }
     }
+
+    /// The dotted host verbs this runtime's prompt-side `d.ts` ADVERTISES.
+    ///
+    /// Structural, not textual: `namespace` nesting supplies the prefix and
+    /// each `function name(` line contributes one dotted verb, so the set the
+    /// prompt teaches a model can be compared against the imports a boundary
+    /// actually links. The dangerous direction is the one only this makes
+    /// checkable: an advertised verb with no linked import teaches the model
+    /// to call a host effect that does not exist, and speech is the sharpest
+    /// case, since [`SandboxImportClass::Speech`] is deliberately kept apart
+    /// from [`SandboxImportClass::WriteTrap`] and carries its own gated
+    /// witness path.
+    #[must_use]
+    pub fn advertised_prompt_verbs(self) -> Vec<String> {
+        advertised_host_verbs(self.prompt_side_dts())
+    }
+}
+
+/// Extracts every dotted verb a prompt-side `d.ts` declares.
+///
+/// One pass over the lines: `declare namespace x {` / `namespace x {` pushes a
+/// prefix, a line that is exactly `}` pops it, and `function name(` emits the
+/// prefixed name. A multi-line parameter object closes on `}): ...`, never on
+/// a bare `}`, so it cannot pop a namespace it never opened.
+fn advertised_host_verbs(dts: &str) -> Vec<String> {
+    let mut namespaces: Vec<&str> = Vec::new();
+    let mut verbs = Vec::new();
+    for line in dts.lines() {
+        let line = line.trim();
+        if let Some(rest) = line
+            .strip_prefix("declare namespace ")
+            .or_else(|| line.strip_prefix("namespace "))
+        {
+            if let Some(name) = rest.split_whitespace().next() {
+                namespaces.push(name);
+            }
+        } else if let Some(rest) = line.strip_prefix("function ") {
+            let name = rest.split('(').next().unwrap_or_default().trim();
+            if !name.is_empty() {
+                let mut verb = namespaces.join(".");
+                if !verb.is_empty() {
+                    verb.push('.');
+                }
+                verb.push_str(name);
+                verbs.push(verb);
+            }
+        } else if line == "}" {
+            namespaces.pop();
+        }
+    }
+    verbs
 }
 
 /// Class of a host import linked into a guest program.
