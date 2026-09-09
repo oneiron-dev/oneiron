@@ -36,6 +36,8 @@ do not add new ones while it is pending.
 
 - Build/test: `cargo` (workspace). Lane-scoped test filters are used heavily; run the wide lane for
   anything touching storage, sync, or gates.
+- Where things live and how to run the gates: `AGENTS.md` (exact commands, CI hosts, module,
+  visibility and test style) and the generated code map `docs/CODEMAP.md` → `docs/codemap/<crate>.md`.
 - Skills / deeper agent guidance: `oneiron.skills.md`.
 - Architecture docs and decisions live in the separate docs repo (bespoke Astro pages, compiled to
   markdown mirrors); this repo's `docs/` folder holds the generated code map, operational runbooks
