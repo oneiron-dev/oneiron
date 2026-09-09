@@ -22,6 +22,17 @@ const PACKAGE_JSON: &str = "../../packages/oneiron/package.json";
 
 fn main() {
     napi_build::setup();
+    // `napi_build::setup` links the cdylib with the N-API symbols left
+    // undefined for the importing Node process. The crate's own test binary
+    // has no such host, and macOS's linker refuses undefined symbols unless
+    // told to look them up dynamically. This crate builds only the cdylib
+    // and its test binary, so the flag goes on every link of the crate:
+    // the cdylib already carries it from napi-build, the test binary now
+    // does too, and `cargo test -p oneiron-napi` links on macOS.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-arg=-undefined");
+        println!("cargo:rustc-link-arg=dynamic_lookup");
+    }
 
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by cargo"),

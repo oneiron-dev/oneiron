@@ -245,8 +245,9 @@ jobs:
           cargo nextest --version
       # The macOS recipe from AGENTS.md ("macOS test host"), full tier
       # (ONE-1144: process-per-test isolation, retries = 2, slow set in):
-      #   * `--exclude oneiron-napi` — the napi cdylib cannot link its test
-      #     binary anywhere (needs a Node host for the napi_* symbols);
+      #   * no `--exclude oneiron-napi` here: on macOS the napi build script
+      #     lets the test binary resolve the napi_* symbols at load time; the
+      #     Linux lane still excludes the crate (ONE-1997);
       #   * the filterset drops the 7 oneiron-bench eval::tests that fail on
       #     macOS with `VaultRootPreflight … UnsupportedPlatform` (ONE-1996)
       #     and pass on Linux. Exact names, not a prefix: the 13 sibling
@@ -263,7 +264,7 @@ jobs:
             | test(=eval::tests::eval_tune_opens_a_non_device_vault_through_the_explicit_config)
             | test(=eval::tests::eval_tune_persists_and_prints_the_bounded_weight_table_entry)
           ))'
-          cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast -E "$MACOS_SKIP"
+          cargo nextest run --workspace --all-features --profile full --no-fail-fast -E "$MACOS_SKIP"
       # The two stages scripts/verify.sh runs after nextest: the featureless
       # library build is a Wave-6 acceptance gate, and nextest does not run
       # doctests.
