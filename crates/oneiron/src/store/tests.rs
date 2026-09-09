@@ -1034,7 +1034,14 @@ fn context_pack_finalization_preserves_only_surfaced_trace_candidates() -> Resul
 
     vault
         .store
-        .finalize_context_pack_retrieval_run(run_id, 10, 1, 0, &[*kept.as_bytes()], None)?;
+        .finalize_context_pack_retrieval_run(RetrievalRunFinalize {
+            run_id,
+            elapsed_us: 10,
+            total_in_scope: 1,
+            claims_suppressed: 0,
+            surfaced_result_ids: &[*kept.as_bytes()],
+            empty_reason: None,
+        })?;
 
     let finalized = vault
         .retrieval_run(run_id)?
@@ -1118,7 +1125,14 @@ fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
 
     vault
         .store
-        .finalize_context_pack_retrieval_run(run_id, 10, 2, 0, &[*kept.as_bytes()], None)?;
+        .finalize_context_pack_retrieval_run(RetrievalRunFinalize {
+            run_id,
+            elapsed_us: 10,
+            total_in_scope: 2,
+            claims_suppressed: 0,
+            surfaced_result_ids: &[*kept.as_bytes()],
+            empty_reason: None,
+        })?;
 
     let finalized = vault.retrieval_run(run_id)?.expect("published run");
     assert_eq!(finalized.total_in_scope, 2);
