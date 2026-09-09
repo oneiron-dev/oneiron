@@ -121,9 +121,9 @@ pub use self::types::{
 };
 
 #[cfg(test)]
-pub(crate) use self::files::file_write_fault_hook;
+use self::files::file_write_fault_hook;
 #[cfg(test)]
-pub(crate) use self::storage::{receipt_fault_hook, registration_fault_hook};
+use self::storage::{receipt_fault_hook, registration_fault_hook};
 
 #[cfg(test)]
 mod tests;

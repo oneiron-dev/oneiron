@@ -32,7 +32,8 @@ pub use self::txn_builder::TxnBatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
-pub(crate) use self::base_apply::{apply_ops_with_origin, apply_session_bundle_claim_puts};
+use self::base_apply::apply_ops_with_origin;
+pub(crate) use self::base_apply::apply_session_bundle_claim_puts;
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::child_of_overlay::child_of_prefix;
 pub(crate) use self::claim_materialization::{ClaimMaterialization, apply_owner_bound_claim_puts};
@@ -52,14 +53,12 @@ pub(crate) use self::gate_staging::StagedClaimGateOutcome;
 use self::gate_staging::{stage_preflight_decision, staged_claim_gate_outcomes};
 pub(crate) use self::ops_pipeline::{
     BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
-    reject_overlay_member_base_write,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
 pub(crate) use self::put_apply::delete_entity_index_rows;
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{
-    ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader,
-    LONG_INTERVAL_THRESHOLD_SECS, SHORT_ID_COUNTER_LEN,
+    ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
 // Reached only from the crate-root white-box test module (`crate::tests`); the
 // re-exports keep the historical `crate::batch::` paths resolvable there.

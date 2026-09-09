@@ -44,7 +44,7 @@ pub const RESULT_SET_ATOM_KIND: &str = "result_set";
 /// text: a degraded selection surface would offer rows the host cannot resolve.
 pub const LENS_RESULT_SET_UNSUPPORTED: &str = "result_set requires lens atom catalog version 3";
 
-pub(crate) const MAX_LENS_TEXT_BYTES: usize = 16 * 1024;
+pub(in crate::lens) const MAX_LENS_TEXT_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LensText(String);

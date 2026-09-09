@@ -42,9 +42,9 @@ pub struct AgentsSection {
 /// Crate-visible: `context_board`'s public surface is the curated re-export
 /// list in its `mod.rs`, and the token's contract for outside readers is the
 /// rendered `"lead"` / `"worker"` string itself.
-pub(crate) const AGENT_ROLE_LEAD: &str = "lead";
+const AGENT_ROLE_LEAD: &str = "lead";
 /// Role token for a child with nothing under it.
-pub(crate) const AGENT_ROLE_WORKER: &str = "worker";
+const AGENT_ROLE_WORKER: &str = "worker";
 
 /// A child's structural place in its own spawn subtree, as a rendered TOKEN.
 ///
@@ -54,7 +54,7 @@ pub(crate) const AGENT_ROLE_WORKER: &str = "worker";
 /// working. Deliberately a token rather than a new enum: the AGENTS row
 /// vocabulary is rendered text, and this label rides it.
 #[must_use]
-pub(crate) fn agent_role_token(node: &RunTreeNode) -> &'static str {
+fn agent_role_token(node: &RunTreeNode) -> &'static str {
     if node
         .children
         .iter()

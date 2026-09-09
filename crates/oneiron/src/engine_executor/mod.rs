@@ -16,7 +16,7 @@ mod wire;
 
 pub use self::driver::EngineNativeExecutor;
 #[cfg(test)]
-pub(crate) use self::record::step_state_hash;
+use self::record::step_state_hash;
 pub use self::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME,
     ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig, EngineExecutorError,
@@ -26,7 +26,7 @@ pub use self::types::{
     guest_response_with_budget,
 };
 #[cfg(test)]
-pub(crate) use self::wire::{ExecutorWireRepairs, HealedExecutorReply, heal_executor_reply};
+use self::wire::{ExecutorWireRepairs, HealedExecutorReply, heal_executor_reply};
 
 #[cfg(test)]
 mod tests;

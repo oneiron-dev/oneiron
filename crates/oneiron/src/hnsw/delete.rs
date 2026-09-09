@@ -34,7 +34,7 @@ pub(crate) fn hnsw_deindex(
 /// per row read/write/delete and once per scanned row on the legacy path),
 /// so tests can pin that symmetric-graph deletes never iterate the full
 /// `hnsw_neighbors` DB (ONE-325 AC1).
-pub(crate) fn hnsw_deindex_probed(
+pub(super) fn hnsw_deindex_probed(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,

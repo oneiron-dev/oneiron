@@ -133,7 +133,7 @@ impl Memory<'_> {
     /// possibly deliberately stale) target snapshot, so the in-txn live-state
     /// re-read (P1-b) can be exercised without a mid-call injection point.
     #[cfg(test)]
-    pub(crate) fn tasks_cancel_with_injected_state_for_test(
+    pub(super) fn tasks_cancel_with_injected_state_for_test(
         &self,
         mode: TaskCancelMode,
         state: CancelTargetState,

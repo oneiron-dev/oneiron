@@ -178,7 +178,7 @@ pub(super) fn write_secret_file(
 }
 
 #[cfg(test)]
-pub(crate) mod file_write_fault_hook {
+pub(super) mod file_write_fault_hook {
     //! One-shot test-only fault injection after the T2 file opens, proving
     //! the guard is armed before a file write can fail.
 
@@ -189,12 +189,12 @@ pub(crate) mod file_write_fault_hook {
     }
 
     /// Arms a one-shot file-write failure on the current thread.
-    pub(crate) fn arm_file_write_failure() {
+    pub(in crate::secret_lease) fn arm_file_write_failure() {
         FILE_WRITE_FAILURE.with(|c| c.set(true));
     }
 
     /// Returns and clears the armed flag (one-shot).
-    pub(crate) fn take_file_write_failure() -> bool {
+    pub(super) fn take_file_write_failure() -> bool {
         FILE_WRITE_FAILURE.with(|c| c.replace(false))
     }
 }

@@ -31,7 +31,7 @@ use super::publication_types::{
 impl Vault {
     /// Exposes the real Prepared boundary to the sibling smart-HTTP crash test.
     #[cfg(test)]
-    pub(crate) fn prepare_origin_publication_for_test(
+    pub(in crate::origin) fn prepare_origin_publication_for_test(
         &self,
         git: &GitWire<'_>,
         request: &OriginPublicationRequest,

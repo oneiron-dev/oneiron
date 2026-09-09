@@ -225,7 +225,7 @@ impl SyncClient {
     /// into its `ls:` row in the SAME txn, so the replay doors' lease reads
     /// can never observe a root state without its registry rows. Malformed
     /// entries quarantine (x: row) and keep any previous good `ls:` row.
-    pub(crate) fn persist_root_state(&self) -> Result<()> {
+    pub(super) fn persist_root_state(&self) -> Result<()> {
         let frontiers_before = self.root_doc.state_frontiers();
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
@@ -257,7 +257,7 @@ impl SyncClient {
     /// Builds this device's TAG_LEASE_REQUEST frame (ONE-1140, OD-5/OD-6):
     /// Ed25519 proof of possession over
     /// `"oneiron/lease-pop/v1" || client_id:8 BE || pubkey:32`.
-    pub(crate) fn lease_request_frame(&self) -> Vec<u8> {
+    pub(super) fn lease_request_frame(&self) -> Vec<u8> {
         use ed25519_dalek::Signer;
         let pubkey = self.device_signing_key.verifying_key().to_bytes();
         let transcript = crate::sync::lease::lease_pop_transcript(self.client_id, &pubkey);
@@ -268,7 +268,7 @@ impl SyncClient {
 
 /// Loads the persisted root doc: `d:root` snapshot + pending `u:root:*`
 /// replay (ARCH-0023b startup step 1). Fresh doc when nothing is persisted.
-pub(crate) fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
+pub(super) fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
     let doc = match vault.store.sync_state.get(&rtxn, KEY_ROOT_DOC)? {
         Some(snapshot) => doc_from_snapshot(&snapshot)?,

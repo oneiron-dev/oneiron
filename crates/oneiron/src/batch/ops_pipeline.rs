@@ -101,7 +101,7 @@ impl BaseWriteOrigin<'_> {
 /// read [`check_decode_point_taint_guard`] makes about an op's REFERENCES,
 /// applied to the id the op materializes — so both halves of "this write must
 /// not touch a live room" answer with one predicate and one typed error.
-pub(crate) fn reject_overlay_member_base_write(
+pub(super) fn reject_overlay_member_base_write(
     store: &Store,
     id: &EntityId,
     origin: BaseWriteOrigin<'_>,

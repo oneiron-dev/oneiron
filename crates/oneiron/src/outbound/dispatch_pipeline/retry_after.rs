@@ -2,7 +2,7 @@
 use crate::outbound::dispatch_types::OutboundExecutionOutcome;
 /// Receipt field carrying the connector provider's own stated cool-down, in
 /// whole seconds from the dispatch instant.
-pub(crate) const PROVIDER_RETRY_AFTER_FIELD: &str = "provider_retry_after";
+pub(in crate::outbound) const PROVIDER_RETRY_AFTER_FIELD: &str = "provider_retry_after";
 /// The execution field a connector adapter surfaces its cool-down on. Named
 /// for the provider header it comes from, so an adapter reports what the
 /// provider said rather than a value this engine invented.

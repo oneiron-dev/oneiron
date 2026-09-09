@@ -320,7 +320,7 @@ fn validate_trigger_confidence(confidence: f32) -> Result<()> {
     }
     Ok(())
 }
-pub(crate) fn reject_duplicate(seen: &mut bool, error: &'static str) -> Result<()> {
+pub(super) fn reject_duplicate(seen: &mut bool, error: &'static str) -> Result<()> {
     if *seen {
         return Err(Error::InvalidClaimBody(error));
     }
@@ -337,7 +337,7 @@ pub(crate) fn decode_entity_ref(value: &Value, error: &'static str) -> Result<En
     }
     Ok(id)
 }
-pub(crate) fn decode_vad_delta(value: &Value) -> Result<VadDelta> {
+pub(super) fn decode_vad_delta(value: &Value) -> Result<VadDelta> {
     let Value::Map(entries) = value else {
         return Err(Error::InvalidClaimBody("vadDelta must be a map"));
     };
@@ -398,7 +398,7 @@ pub(crate) fn decode_vad_delta(value: &Value) -> Result<VadDelta> {
         dominance.ok_or(Error::InvalidClaimBody("missing vadDelta dominance"))?,
     )
 }
-pub(crate) fn finite_f32_in_range(
+fn finite_f32_in_range(
     value: &Value,
     min: f64,
     max: f64,
@@ -422,7 +422,7 @@ pub(crate) fn finite_f32_in_range(
     }
     Ok(parsed as f32)
 }
-pub(crate) fn vad_delta_value(delta: VadDelta) -> Value {
+pub(super) fn vad_delta_value(delta: VadDelta) -> Value {
     Value::Map(vec![
         (
             Value::from(AFFECT_TRIGGER_VAD_KEY_VALENCE),

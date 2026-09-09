@@ -51,7 +51,7 @@ pub(crate) struct HardEraseSweepRun {
 // crash window the h:-row-deletion-LAST ordering must survive. One-shot.
 #[cfg(test)]
 thread_local! {
-    pub(crate) static INJECT_CRASH_BEFORE_FINALIZE: std::cell::Cell<bool> =
+    pub(super) static INJECT_CRASH_BEFORE_FINALIZE: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
 
@@ -62,7 +62,7 @@ thread_local! {
 /// reproduce the race — the read phase would capture it.
 #[cfg(all(feature = "sync", test))]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum RaceInjection {
+pub(super) enum RaceInjection {
     #[default]
     None,
     /// Append a fresh, VALID higher-seq `u:w:` update row (Finding 1).
@@ -74,14 +74,14 @@ pub(crate) enum RaceInjection {
 
 #[cfg(all(feature = "sync", test))]
 thread_local! {
-    pub(crate) static INJECT_RACE_BEFORE_COMPACT_WRITE: std::cell::Cell<RaceInjection> =
+    pub(super) static INJECT_RACE_BEFORE_COMPACT_WRITE: std::cell::Cell<RaceInjection> =
         const { std::cell::Cell::new(RaceInjection::None) };
 }
 
 /// Benign, sentinel-free payload the race injection plants — distinctive so
 /// a test can prove the externally-written snapshot was NOT clobbered.
 #[cfg(all(feature = "sync", test))]
-pub(crate) const RACE_BENIGN_MARKER: &[u8] = b"SWEEP-RACE-BENIGN-MARKER-5b2e0a";
+pub(super) const RACE_BENIGN_MARKER: &[u8] = b"SWEEP-RACE-BENIGN-MARKER-5b2e0a";
 
 // Test-only carrier-race injection for the SECOND TOCTOU (sibling of
 // INJECT_CRASH_BEFORE_FINALIZE): when armed with a window label, fires ONCE
@@ -93,7 +93,7 @@ pub(crate) const RACE_BENIGN_MARKER: &[u8] = b"SWEEP-RACE-BENIGN-MARKER-5b2e0a";
 // Sync-only: building a valid update needs the Loro helpers.
 #[cfg(all(feature = "sync", test))]
 thread_local! {
-    pub(crate) static INJECT_UW_ROW_BEFORE_FINALIZE: std::cell::RefCell<Option<String>> =
+    pub(super) static INJECT_UW_ROW_BEFORE_FINALIZE: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
 }
 

@@ -61,7 +61,7 @@ pub(crate) fn campaign_compliance_gate(
 /// counterparty, and class-validated here. A reference that fails any of those
 /// yields `None`, so the evaluator sees "no evidence" rather than "an assertion
 /// that a record exists" — presence of a ref is never sufficient.
-pub(crate) fn hydrate_dispatch_compliance_facts(
+pub(super) fn hydrate_dispatch_compliance_facts(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,

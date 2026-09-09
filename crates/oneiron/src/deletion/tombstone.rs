@@ -178,7 +178,7 @@ impl DecodedTombstoneValue {
     /// unreachable behind the `is_hard()` guard and maps to the
     /// destructive default defensively.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) fn receipt_hard_reason(&self) -> DeleteReason {
+    pub(super) fn receipt_hard_reason(&self) -> DeleteReason {
         match self.reason {
             Some(TombstoneReason::GdprDelete) => DeleteReason::GdprDelete,
             Some(TombstoneReason::PolicyDelete) => DeleteReason::PolicyDelete,
@@ -200,7 +200,7 @@ impl DecodedTombstoneValue {
     /// destructive default reason (`user_hard_delete`) and the NIL
     /// request id — never a fabricated identifier.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) fn local_hard_delete_marker_value(&self) -> [u8; TOMBSTONE_VALUE_V2_LEN] {
+    pub(super) fn local_hard_delete_marker_value(&self) -> [u8; TOMBSTONE_VALUE_V2_LEN] {
         let mut out = [0_u8; TOMBSTONE_VALUE_V2_LEN];
         out[0] = match self.reason {
             Some(reason) => reason.wire_byte(),
@@ -432,14 +432,14 @@ impl DeleteReason {
         }
     }
 
-    pub(crate) const fn active_store_hard_purge_v1(self) -> bool {
+    pub(super) const fn active_store_hard_purge_v1(self) -> bool {
         match self {
             Self::UserDelete | Self::ArchivedByCleanup => false,
             Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
-    pub(crate) const fn queues_historical_sweep(self) -> bool {
+    pub(super) const fn queues_historical_sweep(self) -> bool {
         match self {
             Self::UserDelete | Self::ArchivedByCleanup => false,
             Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,

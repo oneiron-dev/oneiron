@@ -67,7 +67,7 @@ pub use self::taxonomy::{
     classify_amendment,
 };
 
-pub(crate) use self::evidence_judge::amendment_evidence_in_txn;
+pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;
 
 #[cfg(test)]
 mod tests;

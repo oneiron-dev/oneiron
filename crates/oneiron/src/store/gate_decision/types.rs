@@ -120,7 +120,7 @@ pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 /// Accepted DECODE version for an in-place-redacted row (ONE-1637/ONE-1638).
 /// [`GATE_DECISION_LEDGER_VERSION`] (0) remains the only APPEND version, so the
 /// ABI-pinned const above is unchanged and existing v0 bytes still round-trip.
-pub(crate) const GATE_DECISION_LEDGER_VERSION_REDACTED: u8 = 1;
+pub(in crate::store) const GATE_DECISION_LEDGER_VERSION_REDACTED: u8 = 1;
 
 pub(super) const PENDING_DELETION_GATE_DECISION_VERSION: u8 = 0;
 
@@ -137,7 +137,7 @@ pub(crate) const GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN: usize = 512;
 
 pub(crate) const GATE_SYSTEM_NOTICE_BODY_MAX_LEN: usize = 1024;
 
-pub(crate) const GATE_SYSTEM_NOTICE_PLANE_MAX_LEN: usize = 64;
+pub(super) const GATE_SYSTEM_NOTICE_PLANE_MAX_LEN: usize = 64;
 
 pub(crate) const GATE_SYSTEM_NOTICE_VERSION_MAX_LEN: usize = 64;
 

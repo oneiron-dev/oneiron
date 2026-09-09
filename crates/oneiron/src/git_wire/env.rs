@@ -83,7 +83,7 @@ impl GitWireProcessEnv {
     /// bounded-output paths can be exercised deterministically. No production
     /// build can reach this, so the boundary keeps exactly one executable.
     #[cfg(test)]
-    pub(crate) fn with_binary_for_test(mut self, binary: PathBuf) -> Self {
+    pub(super) fn with_binary_for_test(mut self, binary: PathBuf) -> Self {
         self.git_binary = binary;
         self
     }

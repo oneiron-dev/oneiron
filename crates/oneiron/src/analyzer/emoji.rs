@@ -57,7 +57,7 @@ fn is_regional_indicator(c: char) -> bool {
 /// NFKC pass, so the term is the grapheme cluster byte-for-byte — the same
 /// bytes on the index and query sides, which is what makes the round-trip
 /// (doc `🦀🔥` retrievable by query `🦀`) hold.
-pub(crate) fn emit_emoji_graphemes(
+pub(super) fn emit_emoji_graphemes(
     text: &str,
     offset_base: u32,
     position_base: u32,

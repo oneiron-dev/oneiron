@@ -59,7 +59,7 @@ impl DoorCredential {
     }
 
     /// Verbs the slip grants.
-    pub(crate) fn with_verbs<I, S>(mut self, verbs: I) -> Self
+    pub(super) fn with_verbs<I, S>(mut self, verbs: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -69,7 +69,7 @@ impl DoorCredential {
     }
 
     /// Records (repositories, secret names) the slip bounds.
-    pub(crate) fn with_records<I, S>(mut self, records: I) -> Self
+    pub(super) fn with_records<I, S>(mut self, records: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -79,7 +79,7 @@ impl DoorCredential {
     }
 
     /// Channels (door effectors) the slip bounds.
-    pub(crate) fn with_channels<I, S>(mut self, channels: I) -> Self
+    pub(super) fn with_channels<I, S>(mut self, channels: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -105,13 +105,13 @@ impl DoorCredential {
     /// The same join, one rank lower: it kills a live slip, and it leaves an
     /// already directly-revoked slip exactly as revoked as it was rather than
     /// rewriting the reason it died.
-    pub(crate) fn parent_revoked(mut self) -> Self {
+    pub(super) fn parent_revoked(mut self) -> Self {
         self.status = self.status.join(DoorCredentialStatus::ParentRevoked);
         self
     }
 
     /// Attaches the single-use caveat.
-    pub(crate) fn with_single_use_caveat(mut self) -> Self {
+    pub(super) fn with_single_use_caveat(mut self) -> Self {
         self.single_use = true;
         self
     }
@@ -128,7 +128,7 @@ impl DoorCredential {
     /// minimum — which makes repeated attenuation idempotent, monotone, and
     /// independent of caveat order, and leaves the tightest caveat in the
     /// chain standing however late the loosest one arrives.
-    pub(crate) fn attenuate_lease_ttl(mut self, secs: u64) -> Self {
+    pub(super) fn attenuate_lease_ttl(mut self, secs: u64) -> Self {
         self.ttl_cap = self.ttl_cap.meet_secs(secs);
         self
     }
@@ -144,7 +144,7 @@ impl DoorCredential {
     }
 
     /// Whether the single-use caveat is present.
-    pub(crate) fn is_single_use(&self) -> bool {
+    pub(super) fn is_single_use(&self) -> bool {
         self.single_use
     }
 

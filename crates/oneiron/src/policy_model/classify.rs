@@ -38,18 +38,18 @@ use super::verdict::{
 /// The owner's policy document and the answer shape it asked for. Both or
 /// neither: a document nobody declared a contract for is an answer the engine
 /// cannot read.
-pub(crate) struct OwnerPolicyDocument {
+struct OwnerPolicyDocument {
     pub(crate) text: String,
     pub(crate) contract: PolicyOutputContract,
 }
 
-pub(crate) struct PolicyModelContext {
+pub(super) struct PolicyModelContext {
     pub(crate) binding: PolicyContentBinding,
     pub(crate) owner_policy_enabled: bool,
     pub(crate) owner_policy_rows_dropped: bool,
     pub(crate) rubric_rows: Vec<PolicyRubricRow>,
     pub(crate) patterns: CompiledPatternRules,
-    pub(crate) document: Option<OwnerPolicyDocument>,
+    document: Option<OwnerPolicyDocument>,
 }
 
 impl PolicyModelContext {
@@ -114,7 +114,7 @@ impl Vault {
     /// [`Vault::owner_plane_pass`] keeps for the with-model pair. The receipt
     /// deliberately does not live here: a row written in the shared pass would
     /// give the enforce flow two for one decision.
-    pub(crate) fn owner_pattern_only_pass(
+    pub(super) fn owner_pattern_only_pass(
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
@@ -278,7 +278,7 @@ impl Vault {
     /// The owner plane's full pass, model included. Shared by the classify
     /// entry, the enforcement entry and the both-planes entry so the three can
     /// never drift.
-    pub(crate) async fn owner_plane_pass(
+    pub(super) async fn owner_plane_pass(
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
@@ -495,7 +495,7 @@ impl Vault {
         Ok(Some(context))
     }
 
-    pub(crate) fn policy_model_context(
+    pub(super) fn policy_model_context(
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
@@ -507,7 +507,7 @@ impl Vault {
 }
 
 /// What the owner plane concluded, plus whether its model got to speak.
-pub(crate) struct OwnerPlanePass {
+pub(super) struct OwnerPlanePass {
     pub(crate) verdict: PolicyClassifyVerdict,
     /// The plane wanted a model verdict and did not get one. Not a failure —
     /// the owner's plane is sovereign — but the caller is owed the fact.
@@ -650,14 +650,14 @@ fn owner_pattern_only_verdict(
 }
 
 /// Whether a pass with this acting role should call the model.
-pub(crate) fn wants_model(mode: RelayClassifierMode, acting: Option<PolicyPatternRole>) -> bool {
+pub(super) fn wants_model(mode: RelayClassifierMode, acting: Option<PolicyPatternRole>) -> bool {
     match mode {
         RelayClassifierMode::ClassifyAll => true,
         RelayClassifierMode::PatternGated => acting == Some(PolicyPatternRole::Escalate),
     }
 }
 
-pub(crate) fn pass_audit(evaluation: &PatternEvaluation<'_>) -> PolicyPassAudit {
+pub(super) fn pass_audit(evaluation: &PatternEvaluation<'_>) -> PolicyPassAudit {
     PolicyPassAudit {
         matched_pattern_ids: evaluation
             .matched_ids
@@ -669,7 +669,7 @@ pub(crate) fn pass_audit(evaluation: &PatternEvaluation<'_>) -> PolicyPassAudit 
     }
 }
 
-pub(crate) fn dropped_owner_policy_rows_error() -> Error {
+pub(super) fn dropped_owner_policy_rows_error() -> Error {
     Error::PolicyManifestInvalid {
         field: "owner_policy_rows",
         reason: "were dropped by manifest decode",

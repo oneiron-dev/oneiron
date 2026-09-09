@@ -391,7 +391,7 @@ pub(crate) fn search_text(
     search_text_with_recency(store, rtxn, analyzer, config, query, limit, None)
 }
 
-pub(crate) fn search_text_with_recency(
+pub(super) fn search_text_with_recency(
     store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,

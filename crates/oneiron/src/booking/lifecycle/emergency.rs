@@ -61,7 +61,7 @@ fn require_emergency_home(
     Ok(())
 }
 
-pub(crate) fn emergency_current_revision_in(
+pub(in crate::booking) fn emergency_current_revision_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event: EntityId,
@@ -102,7 +102,7 @@ pub(crate) fn emergency_current_revision_in(
     })
 }
 
-pub(crate) fn commit_emergency_item(
+pub(in crate::booking) fn commit_emergency_item(
     vault: &Vault,
     plan: &crate::booking::emergency_reschedule::EmergencyPlan,
     calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
@@ -391,7 +391,7 @@ fn emergency_pick_in(
     Ok((item, action.proposal_index))
 }
 
-pub(crate) fn read_emergency_pick(
+pub(in crate::booking) fn read_emergency_pick(
     vault: &Vault,
     token: &OpaqueLifecycleToken,
     input: &BookingLifecycleConsumerInput,
@@ -404,7 +404,7 @@ pub(crate) fn read_emergency_pick(
 /// Only this proposal-bound instruction transition may reopen the exact
 /// emergency-cancelled revision. Its REQUEST content checkpoint commits with
 /// the booking; CAL admission follows against that now-confirmed booking.
-pub(crate) fn pick_emergency_item(
+pub(in crate::booking) fn pick_emergency_item(
     vault: &Vault,
     token: &OpaqueLifecycleToken,
     calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
@@ -577,7 +577,7 @@ pub(crate) fn pick_emergency_item(
 /// CAL reads the committed confirmed booking to verify its existing invite
 /// grant. Commit its passport before dispatch, guarded by the same home writer
 /// and exact pick checkpoint. A refusal leaves the pick pending, not unbound.
-pub(crate) fn admit_emergency_pick(
+pub(in crate::booking) fn admit_emergency_pick(
     vault: &Vault,
     item: &crate::booking::emergency_reschedule::EmergencyItem,
     input: &BookingLifecycleConsumerInput,

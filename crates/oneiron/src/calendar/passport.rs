@@ -262,7 +262,7 @@ pub fn index_passport_uid(
 /// # Errors
 ///
 /// [`CalendarError::IcsIngest`] on store failures or a corrupt index row.
-pub(crate) fn event_ref_for_indexed_uid(
+pub(super) fn event_ref_for_indexed_uid(
     vault: &Vault,
     uid: &str,
 ) -> Result<Option<EntityId>, CalendarError> {

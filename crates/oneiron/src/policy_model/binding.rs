@@ -30,7 +30,7 @@ impl PolicyContentBinding {
 
 /// Binding for a vault-egress classify: content, the world it was scoped to,
 /// and the safeguard model that judged it.
-pub(crate) fn content_binding(
+pub(super) fn content_binding(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
     config: &PolicyModelConfig,
@@ -54,7 +54,7 @@ pub(crate) fn content_binding(
 /// Identity-free binding the relay recomputes locally to verify a vault-side
 /// receipt. It deliberately omits `world_ref` and the safeguard selector so a
 /// relay can key a lookup on content alone.
-pub(crate) fn relay_verify_content_binding(
+pub(super) fn relay_verify_content_binding(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
 ) -> Result<PolicyContentBinding> {
@@ -71,7 +71,7 @@ pub(crate) fn relay_verify_content_binding(
 /// Binding for a trust-domain SKIP. A skip never classified against policy
 /// state, so its frontier is zeroed — an honest "did not run" marker rather
 /// than a hash that would imply it did.
-pub(crate) fn relay_skip_content_binding(request: &PolicyClassifyRequest) -> PolicyContentBinding {
+pub(super) fn relay_skip_content_binding(request: &PolicyClassifyRequest) -> PolicyContentBinding {
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.policy_model.relay.skip.content.v1");
     hash_binding_str(&mut hasher, "subject", request.subject.as_str());

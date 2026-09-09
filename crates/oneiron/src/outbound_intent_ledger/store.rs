@@ -188,7 +188,7 @@ pub(crate) fn insert_pending_in_txn(
 }
 
 #[cfg(test)]
-pub(crate) fn transition_record(
+pub(super) fn transition_record(
     vault: &Vault,
     id: [u8; 32],
     next: IntentState,

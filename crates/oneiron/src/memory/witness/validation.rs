@@ -224,7 +224,7 @@ fn canonical_witness_message_order(body: &[u8]) -> MemoryResult<u32> {
 /// This local pass handles one call in linear time. When the target TURN
 /// already exists, the transactional witness paths add a second pass over its
 /// persisted `PartOf` children so an append cannot reuse a stored position.
-pub(crate) fn distinct_message_orders(messages: &[WitnessMessage]) -> MemoryResult<()> {
+pub(in crate::memory) fn distinct_message_orders(messages: &[WitnessMessage]) -> MemoryResult<()> {
     // The order domain is fixed and small enough for a 1,024-word bitset. This
     // keeps validation deterministic O(messages) even for a call spanning the
     // complete legal domain; rescanning each preceding prefix made that input

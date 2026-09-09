@@ -206,7 +206,7 @@ pub(super) fn outbound_scope_axes(
 // production consumer is the GOV belt's gate.rs work, which lands behind this
 // contract; until then the adapter's callers are its conformance tests.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn action_grant_from_policy_scoped_grant(
+pub(super) fn action_grant_from_policy_scoped_grant(
     grant: &PolicyScopedGrant,
 ) -> Result<ActionGrant> {
     let actor_ref = grant.actor_ref.as_deref().ok_or_else(|| {
