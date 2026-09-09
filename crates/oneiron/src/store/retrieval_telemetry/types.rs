@@ -361,6 +361,22 @@ pub struct RetrievalRunRecord {
     pub confidence_adjustment: Option<ConfidenceAdjustment>,
 }
 
+/// What a finished context-pack retrieval run publishes: the caller's scope
+/// count and the surfaced ids, atomically.
+///
+/// The four finalize seams — the `Store` door, its in-transaction session
+/// sibling, the shared staging body and the room-side wrapper — all carry
+/// exactly this payload, so threading it as one value keeps them from
+/// drifting a field apart.
+pub(crate) struct RetrievalRunFinalize<'a> {
+    pub(crate) run_id: RetrievalRunId,
+    pub(crate) elapsed_us: u64,
+    pub(crate) total_in_scope: usize,
+    pub(crate) claims_suppressed: usize,
+    pub(crate) surfaced_result_ids: &'a [[u8; 16]],
+    pub(crate) empty_reason: Option<String>,
+}
+
 impl RetrievalRunRecord {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(

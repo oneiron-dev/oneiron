@@ -9,7 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::RetrievalWithTelemetry;
 use crate::serialize::SerializeConfig;
-use crate::store::{RetrievalRunId, Store};
+use crate::store::{RetrievalRunFinalize, RetrievalRunId, Store};
 
 use super::super::empty_pack::{
     context_pack_empty_reason, projected_context_pack_empty_reason, refresh_projected_empty_context,
@@ -74,30 +74,11 @@ impl ContextPackTelemetry<'_> {
     /// whichever target registered the provisional.
     pub(in crate::context_pack) fn finalize(
         self,
-        run_id: RetrievalRunId,
-        elapsed_us: u64,
-        total_in_scope: usize,
-        claims_suppressed: usize,
-        surfaced_result_ids: &[[u8; 16]],
-        empty_reason: Option<String>,
+        finalize: RetrievalRunFinalize<'_>,
     ) -> Result<()> {
         match self {
-            Self::Base(store) => store.finalize_context_pack_retrieval_run(
-                run_id,
-                elapsed_us,
-                total_in_scope,
-                claims_suppressed,
-                surfaced_result_ids,
-                empty_reason,
-            ),
-            Self::Session(session) => session.finalize_run(
-                run_id,
-                elapsed_us,
-                total_in_scope,
-                claims_suppressed,
-                surfaced_result_ids,
-                empty_reason,
-            ),
+            Self::Base(store) => store.finalize_context_pack_retrieval_run(finalize),
+            Self::Session(session) => session.finalize_run(finalize),
         }
     }
 
@@ -212,14 +193,14 @@ impl UnfinalizedContextPack<'_> {
             .collect();
         let telemetry_run_id = self.telemetry_run_id.take();
         if let Some(run_id) = telemetry_run_id
-            && let Err(error) = self.telemetry.finalize(
+            && let Err(error) = self.telemetry.finalize(RetrievalRunFinalize {
                 run_id,
-                self.value.stats.query_time_us,
-                self.value.stats.candidates_considered,
-                self.value.stats.claims_suppressed,
-                &surfaced_result_ids,
-                context_pack_empty_reason(&self.value, &surfaced_result_ids),
-            )
+                elapsed_us: self.value.stats.query_time_us,
+                total_in_scope: self.value.stats.candidates_considered,
+                claims_suppressed: self.value.stats.claims_suppressed,
+                surfaced_result_ids: &surfaced_result_ids,
+                empty_reason: context_pack_empty_reason(&self.value, &surfaced_result_ids),
+            })
         {
             discard_failed_context_pack_telemetry(self.telemetry, Some(run_id));
             return Err(error);
