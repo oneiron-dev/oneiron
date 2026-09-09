@@ -388,6 +388,7 @@ pub enum ErrorKind {
     InvalidStructuralKindRegistration,
     InvalidAttemptQueueRecord,
     InvalidAttemptQueueTransition,
+    SurfaceEventCorrelationKindCollision,
     EntityTypeImmutable,
     InvalidTimeRange,
     EdgeNotFound,
@@ -482,6 +483,7 @@ pub enum ErrorKind {
     RelayAttestationClassMismatch,
     RelayAttestationEdgeServiceConflict,
     RelayHostedLegalPolicyInvalid,
+    PolicyManifestInvalid,
     CodeEmissionMissingDreamerRunId,
     CodeReviewContextRequired,
     CodeReviewUnsupportedOperation,
@@ -1473,6 +1475,18 @@ pub enum Error {
         action: &'static str,
         state: &'static str,
     },
+    /// A public surface-event correlation id is already held by an attempt row
+    /// of another kind, so another subsystem owns that run. Typed rather than
+    /// generic: the admission and the status read both raise it, and neither
+    /// the submitter nor the operator can act on it without knowing which kind
+    /// holds the id.
+    #[error(
+        "surface event correlation id `{correlation_id}` is already held by attempt kind `{holding_kind}`"
+    )]
+    SurfaceEventCorrelationKindCollision {
+        correlation_id: String,
+        holding_kind: String,
+    },
     /// The type byte of an existing entity record is immutable on re-put
     /// (M2 pinned decision D2). The short-id prefix is derived from the type
     /// byte at first insert, so re-typing would leave the record addressed
@@ -2192,6 +2206,17 @@ pub enum Error {
         field: &'static str,
         reason: &'static str,
     },
+    /// The vault's own policy manifest cannot be read as written, named by
+    /// the manifest key at fault. The owner plane's twin of
+    /// [`Self::RelayHostedLegalPolicyInvalid`]: a defect the substrate owner
+    /// fixes in the manifest, not a fault of the request that tripped it, so
+    /// the key and the reason stay `'static` and machine-readable rather than
+    /// formatted into prose.
+    #[error("policy manifest: {field} {reason}")]
+    PolicyManifestInvalid {
+        field: &'static str,
+        reason: &'static str,
+    },
     /// A code-memory anchor, locator, slot name, or pull argument failed its
     /// own bounded structural validation (ONE-1608). The anchor rule this
     /// most often reports is the load-bearing one: a durable note is keyed by
@@ -2548,6 +2573,9 @@ impl Error {
             }
             Self::InvalidAttemptQueueRecord(_) => ErrorKind::InvalidAttemptQueueRecord,
             Self::InvalidAttemptQueueTransition { .. } => ErrorKind::InvalidAttemptQueueTransition,
+            Self::SurfaceEventCorrelationKindCollision { .. } => {
+                ErrorKind::SurfaceEventCorrelationKindCollision
+            }
             Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
@@ -2675,6 +2703,7 @@ impl Error {
                 ErrorKind::RelayAttestationEdgeServiceConflict
             }
             Self::RelayHostedLegalPolicyInvalid { .. } => ErrorKind::RelayHostedLegalPolicyInvalid,
+            Self::PolicyManifestInvalid { .. } => ErrorKind::PolicyManifestInvalid,
             Self::CodeMemoryInvalidAnchor { .. } => ErrorKind::CodeMemoryInvalidAnchor,
             Self::CodeMemoryInvalidAnchorTransfer { .. } => {
                 ErrorKind::CodeMemoryInvalidAnchorTransfer

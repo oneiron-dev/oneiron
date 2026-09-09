@@ -30,8 +30,9 @@ mod store;
 mod types;
 
 pub use self::codec::{
-    encode_campaign_member_value, encode_comm_bounce_value, encode_crm_stage_value,
-    encode_do_not_contact_value, normalize_campaign_pack_token,
+    decode_campaign_member_value, decode_crm_stage_value, encode_campaign_member_value,
+    encode_comm_bounce_value, encode_crm_stage_value, encode_do_not_contact_value,
+    normalize_campaign_pack_token,
 };
 pub use self::store::{do_not_contact_applies, resolve_crm_fit, supersede_crm_stage_in_txn};
 pub use self::types::{
@@ -44,10 +45,8 @@ pub use self::types::{
     is_campaign_pack_claim_predicate,
 };
 
-pub(crate) use self::codec::{
-    decode_campaign_member_value, validate_campaign_pack_claim_structure,
-};
-pub(in crate::campaign) use self::codec::{decode_comm_jurisdiction_value, decode_crm_stage_value};
+pub(in crate::campaign) use self::codec::decode_comm_jurisdiction_value;
+pub(crate) use self::codec::validate_campaign_pack_claim_structure;
 
 // These three decoders are named only by the sibling test module; the
 // re-export exists in test builds so those paths keep resolving, and is

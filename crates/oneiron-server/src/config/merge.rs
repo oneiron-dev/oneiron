@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use oneiron::HostingPrivacyPosture;
+use oneiron::{HostingPrivacyPosture, SyncConfigField, SyncProtocolValidation};
 use serde::Deserialize;
 
 use super::lookup::{
@@ -167,15 +167,31 @@ pub fn resolve_serve_config_with_sources(
     Ok(resolved)
 }
 
+/// The engine's own config-validation refusal, wrapped for this crate's
+/// `anyhow` boundary so it survives as a downcastable `oneiron::Error`.
+fn invalid_sync_config(field: SyncConfigField) -> anyhow::Error {
+    oneiron::Error::sync_protocol(SyncProtocolValidation::InvalidConfig { field }).into()
+}
+
 fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
+    // The SAME three rules `SyncServerConfig::validate` enforces, returning the
+    // SAME typed error rather than a second, stringly copy of it: this door and
+    // that one must not drift when a field is added, and a caller reading the
+    // merge failure gets the field back as `SyncConfigField`, not as prose.
+    // Display text is unchanged — `Error::SyncProtocolError` renders
+    // "sync protocol error: <field> must be positive".
     if config.ephemeral_timeout_ms <= 0 {
-        anyhow::bail!("ephemeral_timeout_ms must be positive");
+        return Err(invalid_sync_config(SyncConfigField::EphemeralTimeoutMs));
     }
     if config.max_ephemeral_payload_bytes == 0 {
-        anyhow::bail!("max_ephemeral_payload_bytes must be positive");
+        return Err(invalid_sync_config(
+            SyncConfigField::MaxEphemeralPayloadBytes,
+        ));
     }
     if config.max_ephemeral_snapshot_bytes == 0 {
-        anyhow::bail!("max_ephemeral_snapshot_bytes must be positive");
+        return Err(invalid_sync_config(
+            SyncConfigField::MaxEphemeralSnapshotBytes,
+        ));
     }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing

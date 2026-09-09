@@ -74,7 +74,8 @@ pub use self::definition::{
     UpdateSavedQueryRequest, register_saved_query_kind,
 };
 pub use self::evaluator::{
-    EvaluationRequest, SavedQueryEvaluator, SavedQueryJudgeBinding, run_llm_judge,
+    EvaluationRequest, SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE, SAVED_QUERY_WHY_SCOPE_CLOSED,
+    SavedQueryEvaluator, SavedQueryJudgeBinding, run_llm_judge,
 };
 pub use self::evidence::{
     EVIDENCE_HASH_LEN, EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence,

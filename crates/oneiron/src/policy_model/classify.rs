@@ -550,10 +550,10 @@ fn policy_model_context_for_policy(
 /// plane that is switched on.
 fn owner_compiled_patterns(policy: &PolicyManifestResolution) -> Result<CompiledPatternRules> {
     if policy.owner_policy_patterns_dropped() {
-        return Err(Error::InvalidConfig(
-            "policy manifest owner_policy_patterns were dropped for policy model classify"
-                .to_owned(),
-        ));
+        return Err(Error::PolicyManifestInvalid {
+            field: "owner_policy_patterns",
+            reason: "were dropped by manifest decode",
+        });
     }
     let known_row_ref = |category: &str| policy.owner_policy_row_refs().contains(&category);
     let rules: Vec<PolicyPatternRule> = policy
@@ -581,11 +581,9 @@ fn owner_compiled_patterns(policy: &PolicyManifestResolution) -> Result<Compiled
                 .to_owned(),
         ));
     }
-    compile_pattern_rules(&rules, &known_row_ref).map_err(|defect| {
-        Error::InvalidConfig(format!(
-            "policy manifest owner pattern rule {} {}",
-            defect.field, defect.reason
-        ))
+    compile_pattern_rules(&rules, &known_row_ref).map_err(|defect| Error::PolicyManifestInvalid {
+        field: defect.field,
+        reason: defect.reason,
     })
 }
 
@@ -598,17 +596,16 @@ fn owner_policy_document(policy: &PolicyManifestResolution) -> Result<Option<Own
         policy.owner_policy_output_contract(),
     ) {
         (None, None) => Ok(None),
-        (Some(_), None) | (None, Some(_)) => Err(Error::InvalidConfig(
-            "policy manifest must carry an owner policy document and its output contract together"
-                .to_owned(),
-        )),
+        (Some(_), None) | (None, Some(_)) => Err(Error::PolicyManifestInvalid {
+            field: "owner_policy_output_contract",
+            reason: "must be declared with the owner policy document",
+        }),
         (Some(text), Some(contract)) => {
-            let contract = PolicyOutputContract::parse(contract).ok_or_else(|| {
-                Error::InvalidConfig(
-                    "policy manifest owner_policy_output_contract names a contract the engine does not have"
-                        .to_owned(),
-                )
-            })?;
+            let contract =
+                PolicyOutputContract::parse(contract).ok_or(Error::PolicyManifestInvalid {
+                    field: "owner_policy_output_contract",
+                    reason: "names a contract the engine does not have",
+                })?;
             Ok(Some(OwnerPolicyDocument {
                 text: text.to_owned(),
                 contract,
@@ -673,7 +670,8 @@ pub(super) fn pass_audit(evaluation: &PatternEvaluation<'_>) -> PolicyPassAudit 
 }
 
 pub(super) fn dropped_owner_policy_rows_error() -> Error {
-    Error::InvalidConfig(
-        "policy manifest owner_policy_rows were dropped for policy model classify".to_owned(),
-    )
+    Error::PolicyManifestInvalid {
+        field: "owner_policy_rows",
+        reason: "were dropped by manifest decode",
+    }
 }

@@ -1,5 +1,6 @@
 use super::*;
 use clap::Parser;
+use oneiron::{SyncConfigField, SyncProtocolValidation};
 
 #[derive(Parser)]
 struct TestCli {
@@ -66,32 +67,48 @@ fn lease_vault_id_merges_into_sync_server_config() {
 fn serve_config_rejects_non_positive_ephemeral_timeout() {
     let env = EnvConfig::from_pairs([("ONEIRON_EPHEMERAL_TIMEOUT_MS", "0")]).unwrap();
 
-    let error = resolve_serve_config_with_sources(&ServeArgs::default(), env, None)
-        .unwrap_err()
-        .to_string();
+    let error = resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap_err();
 
-    assert!(error.contains("ephemeral_timeout_ms must be positive"));
+    // The engine's typed refusal, not prose: the same `SyncConfigField` the
+    // sibling `SyncServerConfig::validate` returns for this exact rule.
+    assert!(matches!(
+        error.downcast_ref::<oneiron::Error>(),
+        Some(oneiron::Error::SyncProtocolError {
+            context: SyncProtocolValidation::InvalidConfig {
+                field: SyncConfigField::EphemeralTimeoutMs
+            }
+        })
+    ));
 }
 
 #[test]
 fn serve_config_rejects_zero_ephemeral_limits() {
-    for (key, message) in [
+    for (key, field) in [
         (
             "ONEIRON_MAX_EPHEMERAL_PAYLOAD_BYTES",
-            "max_ephemeral_payload_bytes must be positive",
+            SyncConfigField::MaxEphemeralPayloadBytes,
         ),
         (
             "ONEIRON_MAX_EPHEMERAL_SNAPSHOT_BYTES",
-            "max_ephemeral_snapshot_bytes must be positive",
+            SyncConfigField::MaxEphemeralSnapshotBytes,
         ),
     ] {
         let env = EnvConfig::from_pairs([(key, "0")]).unwrap();
 
-        let error = resolve_serve_config_with_sources(&ServeArgs::default(), env, None)
-            .unwrap_err()
-            .to_string();
+        let error =
+            resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap_err();
 
-        assert!(error.contains(message));
+        // Per-limit, against the enum the engine already ships — so the table
+        // pins WHICH field was refused, not an English sentence about it.
+        assert!(
+            matches!(
+                error.downcast_ref::<oneiron::Error>(),
+                Some(oneiron::Error::SyncProtocolError {
+                    context: SyncProtocolValidation::InvalidConfig { field: got }
+                }) if *got == field
+            ),
+            "{key}: {error}"
+        );
     }
 }
 

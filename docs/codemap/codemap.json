@@ -1123,7 +1123,7 @@
      "path": "src/attempt_queue/tests/support.rs",
      "purpose": "Shared fixtures, helpers, and telemetry captures for the attempt-queue tests",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -4306,8 +4306,8 @@
      "path": "src/campaign/claims/codec.rs",
      "purpose": "MessagePack codecs, write-door validator, and map/key/token toolkit",
      "surface": {
-      "crate-vis": 36,
-      "fn": 5
+      "crate-vis": 34,
+      "fn": 7
      }
     },
     {
@@ -6510,7 +6510,7 @@
      "surface": {
       "const": 3,
       "enum": 5,
-      "fn": 25,
+      "fn": 26,
       "struct": 2
      }
     },
@@ -6883,7 +6883,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/codebase/tests.rs",
@@ -15241,7 +15241,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MemoryError",
@@ -15250,7 +15250,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 8,
+      "const": 9,
       "crate-vis": 4,
       "fn": 1,
       "struct": 2,
@@ -15772,6 +15772,16 @@
      "purpose": "Retrieval-run registration door (register/finalize/discard, staged/published arms)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/tests_session_reads.rs",
+     "purpose": "Composed room reads: the session-scoped siblings of [`crate::Vault::entities_by_type`]…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -17838,7 +17848,7 @@
      "path": "src/policy_model/tests/support.rs",
      "purpose": "Shared fixtures, mock backends, and pass drivers for policy-model tests",
      "surface": {
-      "crate-vis": 84
+      "crate-vis": 87
      }
     },
     {
@@ -19043,6 +19053,7 @@
      "path": "src/saved_query/evaluator.rs",
      "purpose": "—",
      "surface": {
+      "const": 2,
       "crate-vis": 6,
       "fn": 3,
       "struct": 3
@@ -23041,7 +23052,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 17,
       "struct": 1
      }
@@ -23055,7 +23066,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 4,
       "struct": 1
      }
@@ -23918,6 +23929,38 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/consent_guard_compilefail.rs",
+     "purpose": "DEC-0006 invariant 5 (`the guard offers, never grants`): compile-fail proof that the guard→owner boundary is…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/consent_guard_compilefail/a_owner_stamp_struct_literal_private_fields.rs",
+     "purpose": "(a) A guard holding a `ConsentProposal` must not be able to struct-literal an `AuthenticatedOwner`: all…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/consent_guard_compilefail/b_no_proposal_to_owner_conversion.rs",
+     "purpose": "(b) There is no `From<ConsentProposal> for AuthenticatedOwner`: a proposal cannot be converted into the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/consent_guard_compilefail/c_no_proposal_to_grant_conversion.rs",
+     "purpose": "(c) There is no `From<ConsentProposal> for ConsentGrant` either: the guard cannot skip the owner entirely…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -24048,7 +24091,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it/campaign_stage_ladder_oracle.rs",
@@ -24505,6 +24548,30 @@
      "notable": [],
      "path": "tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs",
      "purpose": "(c) External-privacy proof ONLY: the hosted-edge domain type is private to the crate, so it cannot even be…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/secret_custody_compilefail.rs",
+     "purpose": "SECRET-01 S1 read-plane discipline: compile-fail proof from an external-crate position",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs",
+     "purpose": "(a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
+     "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
      "surface": {}
     },
     {
@@ -25282,7 +25349,7 @@
      "purpose": "ARCH-0032 NOTE primitive, cut to the single kind this ticket lands: `opinion/take` (registry record OF-330)"
     },
     "off_record": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25774,8 +25841,8 @@
    },
    "over_bar": 3,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1473,
-   "test_files": 526
+   "source_files": 1474,
+   "test_files": 533
   },
   "oneiron-bench": {
    "files": [
@@ -26258,11 +26325,11 @@
      "path": "src/perf/child_process.rs",
      "purpose": "ONE-1579 ready-child plumbing: the TCP-accept readiness probe, the child programs the harness spawns, and…",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/perf/child_process/tests.rs",
@@ -26386,7 +26453,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/perf/provenance/tests.rs",
@@ -29702,7 +29769,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/config/tests.rs",
@@ -30779,7 +30846,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it/booking_agent_api.rs",
@@ -30827,7 +30894,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/skills_pack.rs",

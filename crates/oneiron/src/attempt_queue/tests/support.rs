@@ -82,6 +82,27 @@ pub(super) fn enqueue(kind: &str, dedupe_key: Option<&str>, now: u64) -> Enqueue
     }
 }
 
+/// The v1 dedupe index key for `("claim_extraction", "same")`, frozen as a
+/// literal.
+///
+/// [`dedupe_index_key`] derives a key live LMDB rows are already stored under,
+/// so a test that compares its output against its own output cannot see the
+/// derivation move — it would keep passing while every live entry is orphaned.
+/// This vector was generated once from the derivation `encoding.rs` documents
+/// (BLAKE3 over [`DEDUPE_DOMAIN_V1`], then `kind` and the caller's key each
+/// behind its big-endian `u16` length) and pasted here, so the bytes on disk
+/// are pinned by something outside the code that writes them.
+pub(super) const DEDUPE_KEY_V1_CLAIM_EXTRACTION_SAME: [u8; DEDUPE_INDEX_KEY_LEN] = [
+    0xA4, 0x10, 0x52, 0xFC, 0x29, 0x81, 0x10, 0x3E, 0x31, 0x91, 0x7C, 0xBE, 0x39, 0x14, 0x0D, 0x1A,
+    0x1F, 0xA2, 0x1B, 0xDA, 0x7E, 0x00, 0x1A, 0x9F, 0x57, 0x62, 0xE7, 0xE3, 0x5B, 0xD8, 0xB4, 0xD6,
+];
+
+/// The pre-BLAKE3 key for the same pair: the raw
+/// `be16(kind.len()) || kind || dedupe_key` concatenation
+/// [`legacy_dedupe_index_key`] still derives, so enqueue can self-heal a row
+/// written before the hash existed. Frozen for the same reason.
+pub(super) const LEGACY_DEDUPE_KEY_CLAIM_EXTRACTION_SAME: &[u8] = b"\x00\x10claim_extractionsame";
+
 pub(super) fn assert_invalid_transition(err: Error, action: &'static str, state: &'static str) {
     assert!(matches!(
         err,
