@@ -29,9 +29,12 @@ pub(crate) use self::edges::{
     parse_edge_record,
 };
 pub use self::entities::HydratedShortId;
+/// The composed session census bounds itself exactly like [`Vault::entities_by_type`],
+/// and that census has only in-crate test callers today.
+#[cfg(test)]
+pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
-    LiveEntityRow, MAX_TYPE_QUERY_RESULTS, entity_id_from_type_index_key, live_entity_row_in_txn,
-    require_key_len,
+    LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
 };
 
 /// Main vault API wrapping LMDB storage and configuration.
