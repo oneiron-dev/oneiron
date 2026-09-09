@@ -1404,12 +1404,14 @@ fn console_inside_supported_exec_wrapper_is_discarded_and_code_executes() {
 /// then reject the whole reply for the structure the scanner left behind.
 #[test]
 fn glued_console_siblings_never_block_the_supported_exec_wrapper_strip() {
-    let healed = heal(concat!(
+    const REPLY: &str = concat!(
         "<exec>\n",
         "<console>first</console><console>second</console>\n",
         "self.speak('inside the wrapper');\n",
         "</exec><console>third</console><console>fourth</console>",
-    ));
+    );
+
+    let healed = heal(REPLY);
     assert_eq!(healed.code, "self.speak('inside the wrapper');");
     assert_eq!(healed.trailing_speak, None);
     assert_eq!(
@@ -1417,9 +1419,32 @@ fn glued_console_siblings_never_block_the_supported_exec_wrapper_strip() {
         "every glued sibling is discarded, inside the wrapper and after it"
     );
     assert!(healed.repairs.stripped_exec_wrapper);
-    assert!(
-        !healed.code.contains("console"),
+
+    // End to end: the exact program survives all four discards, and the only
+    // durable bubble is the one the program itself spoke.
+    let (_dir, vault) = open_test_vault();
+    let run = session_speech_run(
+        &vault,
+        "sess-console-wrapper",
+        0xC2,
+        REPLY,
+        "inside the wrapper",
+        vec![SelfCall::Speak(SelfSpeechCall::new("inside the wrapper"))],
+    );
+    assert_eq!(
+        run.scripts,
+        vec!["self.speak('inside the wrapper');".to_owned()],
         "no forged console byte survives into the executed source"
+    );
+    assert_eq!(
+        executor_bubbles(&vault, run.actor),
+        vec![(
+            "executor.speak".to_owned(),
+            "inside the wrapper".to_owned(),
+            true,
+            0
+        )],
+        "one bubble, carrying the program's own words and none of the forgery"
     );
 }
 
