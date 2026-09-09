@@ -2048,6 +2048,16 @@ fn canonical_speech_retry_refuses_a_divergent_same_id_body() -> Result<()> {
     Ok(())
 }
 
+/// One room's whole composed transcript, read through the session's own
+/// snapshot: what exists, how it is parented, and the winning body.
+#[derive(Debug, PartialEq)]
+struct RoomTranscript {
+    turns: Vec<EntityId>,
+    messages: Vec<EntityId>,
+    message_parents: Vec<EntityId>,
+    message_body: Vec<u8>,
+}
+
 /// The session storage arm uses the same host-derived TURN on every attempt.
 /// An exact off-record retry is a graph no-op; a divergent retry at that
 /// MESSAGE id is refused before the overlay or typed journal can gain another
@@ -2073,23 +2083,27 @@ fn off_record_session_speech_retry_converges_on_one_turn_and_one_message() -> Re
     dispatcher.dispatch(stamped("one bubble"))?;
     let message_id = executor_speech_message_id("run-session-idempotency", 3)?;
 
-    let snapshot = || -> Result<(Vec<EntityId>, Vec<EntityId>, Vec<EntityId>, Vec<u8>)> {
-        Ok((
-            session.entities_by_type(crate::registry::ENTITY_TYPE_TURN)?,
-            session.entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?,
-            session.targets(&message_id, crate::edge::EdgeKind::PartOf)?,
-            session
+    let transcript = || -> Result<RoomTranscript> {
+        Ok(RoomTranscript {
+            turns: session.entities_by_type(crate::registry::ENTITY_TYPE_TURN)?,
+            messages: session.entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?,
+            message_parents: session.targets(&message_id, crate::edge::EdgeKind::PartOf)?,
+            message_body: session
                 .get_raw(&message_id)?
                 .expect("session MESSAGE exists"),
-        ))
+        })
     };
 
-    let before = snapshot()?;
-    assert_eq!(before.0.len(), 1, "the room holds one TURN");
-    assert_eq!(before.1, vec![message_id], "the room holds one MESSAGE");
+    let before = transcript()?;
+    assert_eq!(before.turns.len(), 1, "the room holds one TURN");
     assert_eq!(
-        before.2,
-        vec![before.0[0]],
+        before.messages,
+        vec![message_id],
+        "the room holds one MESSAGE"
+    );
+    assert_eq!(
+        before.message_parents,
+        vec![before.turns[0]],
         "one MESSAGE has one TURN parent"
     );
     assert_eq!(
@@ -2109,7 +2123,7 @@ fn off_record_session_speech_retry_converges_on_one_turn_and_one_message() -> Re
     dispatcher
         .dispatch(stamped("divergent overwrite"))
         .expect_err("same-id divergent session retry must be refused");
-    let after = snapshot()?;
+    let after = transcript()?;
     assert_eq!(
         after, before,
         "refusal leaves the composed transcript unchanged"

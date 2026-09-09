@@ -167,6 +167,10 @@ impl OffRecordSession<'_> {
     /// Bounded exactly like the base read: a type index wider than
     /// `MAX_TYPE_QUERY_RESULTS` is `Err(IndexOverflow)`, never an unbounded
     /// allocation.
+    ///
+    /// Gated: every caller of the composed census today is an in-crate test or
+    /// test seam, and an ungated method with no production caller is dead code.
+    #[cfg(test)]
     pub(crate) fn entities_by_type(&self, entity_type: u8) -> Result<Vec<EntityId>> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
@@ -186,6 +190,7 @@ impl OffRecordSession<'_> {
     ///
     /// No target-type filter: a room's edges are the ones it staged, so the
     /// kind prefix is the whole question its callers ask.
+    #[cfg(test)]
     pub(crate) fn targets(
         &self,
         src: &EntityId,
@@ -206,6 +211,7 @@ impl OffRecordSession<'_> {
     /// The raw entity row for `id` as this room sees it — the composed
     /// sibling of [`Vault::get_raw`], sealed against custody rows for the same
     /// reason the base reader is.
+    #[cfg(test)]
     pub(crate) fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
