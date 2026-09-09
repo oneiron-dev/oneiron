@@ -373,8 +373,10 @@ fn advanced(result: StageProjectResult) -> EntityId {
 
 /// Walks the ladder to `call_booked`, the state every calendar-outcome test
 /// starts from: a coded reply earns `replied`, an ICS evidence hook earns
-/// `call_booked`. Neither step reads a calendar outcome.
-fn walk_to_call_booked(vault: &Vault) {
+/// `call_booked`. Neither step reads a calendar outcome. Returns the
+/// `call_booked` head, so a test whose law is "the head did not move" can name
+/// the exact claim that must still be live.
+fn walk_to_call_booked(vault: &Vault) -> EntityId {
     advanced(
         apply_coded_reply(
             vault,
@@ -398,7 +400,7 @@ fn walk_to_call_booked(vault: &Vault) {
             PromotionMode::Auto,
         )
         .unwrap(),
-    );
+    )
 }
 
 fn record_outcome(vault: &Vault, outcome: EventOutcome) {
@@ -835,7 +837,7 @@ fn silent_outcome_is_none_and_projects_unknown() {
 fn explicit_unknown_never_promotes() {
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
-    walk_to_call_booked(&vault);
+    let booked_ref = walk_to_call_booked(&vault);
 
     record_outcome(&vault, EventOutcome::Unknown);
     assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
@@ -845,14 +847,11 @@ fn explicit_unknown_never_promotes() {
     record_outcome(&vault, EventOutcome::CancelledPreStart);
     assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
 
+    let (head_id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
+    assert_eq!(head_id, booked_ref, "the head did not move");
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
-        stage_value(
-            CALL_BOOKED,
-            StageEvidenceClass::CalendarEvent,
-            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
-            BOOKING_AT,
-        ),
+        decode_crm_stage_value(&body.value).unwrap().stage,
+        key(CALL_BOOKED)
     );
 }
 
