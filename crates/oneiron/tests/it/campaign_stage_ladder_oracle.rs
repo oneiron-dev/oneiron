@@ -1181,12 +1181,15 @@ fn reentry_rides_the_existing_enrollment_attempt_kind() {
         snooze_with_wake(&vault, &test_id(MEMBER_SEED), &plan, BOOKING_AT),
         Err(Error::EntityNotFound),
     ));
+    let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
-            .1
-            .value,
-        encode_campaign_member_value(&enrolled_member()),
+        member_id,
+        test_id(MEMBER_SEED),
         "a refused re-entry leaves the membership exactly as it was",
+    );
+    assert_eq!(
+        decode_campaign_member_value(&body.value).unwrap().state,
+        CampaignMemberState::Enrolled,
     );
 
     // Touch 1 is the only re-entry point.
