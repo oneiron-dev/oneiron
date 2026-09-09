@@ -239,10 +239,18 @@ impl SyncClient {
 }
 
 pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportError {
+    // A door's policy denial is its own class: it needs owner approval, never a
+    // retry. Carry the door's typed taxonomy across the boundary rather than
+    // flattening it into the storage bucket a caller retries.
+    if let Some(denial) = e.gate_denial() {
+        return TransportError::AdmissionDenied(denial);
+    }
     match e {
         crate::error::Error::CrdtDecodeError { .. } => {
             TransportError::InvalidPayload("federated update import failed")
         }
+        // Reached only when a code is outside the typed taxonomy above, so the
+        // raw codes stay auditable instead of being dropped.
         crate::error::Error::GateWriteRejected {
             outcome,
             reason_codes,

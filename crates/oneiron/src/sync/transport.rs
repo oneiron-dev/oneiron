@@ -571,6 +571,12 @@ pub enum TransportError {
     /// Engine/storage failure surfaced at the transport boundary (LMDB
     /// write, window open/recovery). The wire payload itself was valid.
     Storage(String),
+    /// A Gate door refused the inbound bytes on policy grounds, carrying the
+    /// door's own typed taxonomy. Distinct from [`Self::Storage`] on purpose:
+    /// a denial needs owner approval and is never retried, while a storage
+    /// failure is retriable, and a caller must be able to tell them apart
+    /// without reading a message.
+    AdmissionDenied(crate::error::GateDenial),
 }
 
 impl std::fmt::Display for TransportError {
@@ -584,6 +590,20 @@ impl std::fmt::Display for TransportError {
             Self::WebSocket(msg) => write!(f, "websocket error: {msg}"),
             Self::ConnectionClosed => write!(f, "connection closed"),
             Self::Storage(msg) => write!(f, "storage error: {msg}"),
+            Self::AdmissionDenied(denial) => {
+                write!(
+                    f,
+                    "admission denied: outcome={}, reasons=",
+                    denial.outcome()
+                )?;
+                for (index, reason) in denial.reason_codes().iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, "{reason}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
