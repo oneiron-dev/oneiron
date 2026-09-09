@@ -84,9 +84,10 @@ fn public_card_and_ladder_emit_the_same_verified_blocked_reports() -> Result<()>
     input.blocked_reports = reports.clone();
     let outcome =
         FailureLadder::new(&vault).handle_attempt_failure(input, auto_policy(agent_ref))?;
-    let FailureLadderOutcome::Healer { case, surface, .. } = outcome else {
+    let FailureLadderOutcome::Healer(healer) = outcome else {
         panic!("expected a reserved healer and immediate surface");
     };
+    let HealerOutcome { case, surface, .. } = *healer;
 
     // Read the post-fail tree, but send the ORIGINAL unfiltered reports to the
     // public door so a caller cannot bypass the ladder's verification floor.

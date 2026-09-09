@@ -159,8 +159,7 @@ pub(crate) fn check_write_gate_against_vault(
         &vault.store,
         &mut wtxn,
         &id,
-        body,
-        Some(envelope),
+        crate::gate::ClaimGateWrite::plain(body, Some(envelope)),
         &policy,
         crate::gate::GateWriteMode {
             record_decision: true,

@@ -1,5 +1,6 @@
 //! Internal imported-edge admission. No permit is created by this door.
 
+use super::writes::EdgeProvenanceWrite;
 use super::*;
 use crate::WriteActor;
 use crate::claim::ClaimSource;
@@ -118,13 +119,15 @@ impl Vault {
             );
             self.write_edge_provenance_in_txn(
                 wtxn,
-                &import.claim_id,
-                subject,
-                &record,
-                import.actor.actor_class(),
-                import.learned_at,
-                None,
-                Some(import.evidence),
+                EdgeProvenanceWrite {
+                    claim_id: &import.claim_id,
+                    subject,
+                    body: &record,
+                    actor_class: import.actor.actor_class(),
+                    learned_at: import.learned_at,
+                    explicit_prior: None,
+                    imported_evidence: Some(import.evidence),
+                },
             )?;
             Ok(true)
         })

@@ -18,17 +18,33 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-#[allow(clippy::too_many_arguments)]
+/// The identity this run expects the memoized row to carry.
+///
+/// Every field is compared against the row before it is reused, so they
+/// travel together: a row that matches five of six is not a partial match,
+/// it is a refusal.
+pub(super) struct ExpectedRowIdentity<'a> {
+    pub(super) arm: ArmId,
+    pub(super) rep_index: u32,
+    pub(super) memo_key: &'a str,
+    pub(super) request_hash: &'a str,
+    pub(super) request_nonce: &'a str,
+    pub(super) pinned: Option<&'a PinnedAttestation>,
+}
+
 pub(super) fn validate_loaded_row(
     row: &SmokeRunRow,
     task: &BenchTask,
-    arm: ArmId,
-    rep_index: u32,
-    memo_key: &str,
-    request_hash: &str,
-    request_nonce: &str,
-    pinned: Option<&PinnedAttestation>,
+    expected: &ExpectedRowIdentity<'_>,
 ) -> Result<(), String> {
+    let &ExpectedRowIdentity {
+        arm,
+        rep_index,
+        memo_key,
+        request_hash,
+        request_nonce,
+        pinned,
+    } = expected;
     // Pinned identity is the FIRST check (ONE-1344): a row whose attestation is
     // not exactly this run's — an unpinned row read by a pinned run, a pinned
     // row read by an unpinned run, or a row pinned to another revision or pin
@@ -282,12 +298,14 @@ pub(super) fn run_or_load_eval_row(
         validate_loaded_row(
             &row,
             task,
-            arm,
-            rep_index,
-            &memo_key,
-            &request_hash,
-            &request_nonce,
-            pinned.as_ref(),
+            &ExpectedRowIdentity {
+                arm,
+                rep_index,
+                memo_key: &memo_key,
+                request_hash: &request_hash,
+                request_nonce: &request_nonce,
+                pinned: pinned.as_ref(),
+            },
         )?;
         return Ok(row);
     }

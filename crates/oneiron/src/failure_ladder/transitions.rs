@@ -144,7 +144,7 @@ pub(super) fn retry_once(
     })?;
     Ok(FailureLadderOutcome::Retried {
         source_attempt_id,
-        scheduled_attempt,
+        scheduled_attempt: Box::new(scheduled_attempt),
         consecutive_transients: ordinal,
     })
 }
