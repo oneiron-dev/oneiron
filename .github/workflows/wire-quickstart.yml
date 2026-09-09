@@ -206,3 +206,7 @@ jobs:
       # The only acceptance signal: every preceding stage must succeed.
       - name: Emit the acceptance marker
         run: echo "WIRE-QUICKSTART-OK"
+      # Bound the host's persistent build cache (see ci.yml `checks`).
+      - name: Cap the build cache
+        if: always()
+        run: scripts/ci/cap-target-cache.sh 20
