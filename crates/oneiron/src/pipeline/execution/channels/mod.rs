@@ -38,7 +38,7 @@ impl PipelineBuilder<'_> {
     // Requested operations, not the legacy signal list: time filters and
     // recency blending do not constitute a Temporal search. Empty inputs still
     // reach their channel operation and may complete with zero candidates.
-    #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn run_retrieval_txn_attempt(
         &self,
         occurred_range: Option<(u64, u64)>,
