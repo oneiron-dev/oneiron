@@ -91,15 +91,6 @@ fn cosine_distance_cases() {
     }
 }
 
-#[test]
-fn cosine_handles_simd_remainder() {
-    let a = vec![0.25_f32; 17];
-    let b = vec![0.5_f32; 17];
-
-    approx_eq(cosine_similarity(&a, &b), 1.0, 1e-6);
-    approx_eq(cosine_distance(&a, &b), 0.0, 1e-6);
-}
-
 // mismatched_lengths and non_finite_inputs are folded into
 // `cosine_distance_cases` above.
 

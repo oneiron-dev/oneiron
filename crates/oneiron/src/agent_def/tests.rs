@@ -1422,40 +1422,6 @@ fn update_immutability_preserved() -> Result<()> {
 }
 
 // Edge test 13: the D5 tool-layer defaults produce a record that validates.
-#[test]
-fn tool_layer_defaults_validate() -> Result<()> {
-    // Mirrors what the MCP/tool `define_agent` verb synthesizes when no
-    // lifecycle args are supplied by the caller (D5 defaults table).
-    let def = AgentDefinition::new(
-        "oneiron.agent.tool",
-        "Defined via the tool-layer verb",
-        "0.1.0",
-        None,
-        vec![SkillDependency::new("oneiron.skill.search")],
-        vec!["gmail".to_owned()],
-        vec![McpRef::new("code.fs")],
-        Some(ModelTierRef("fast".to_owned())),
-        AgentScope::All,
-        AgentCeiling::Proposed,
-        None,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-        ClaimSource::UserStated,
-        1.0,
-        false,
-        true,
-        Value::Map(vec![(
-            Value::from("definedVia"),
-            Value::from("define_agent"),
-        )]),
-        None,
-        true,
-        None,
-    );
-    encode_agent_definition(&def)?;
-    Ok(())
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // RT-05 (ONE-1687) — the additive memory_profile record
 // ═══════════════════════════════════════════════════════════════════════

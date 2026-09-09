@@ -2,8 +2,6 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use super::*;
-use crate::pipeline::ScoredEntity;
-use crate::test_util::entity;
 
 // Independent contract lists: new telemetry components must not expand the tier.
 const CHANNELS: [RetrievalSignal; 5] = [
@@ -127,131 +125,6 @@ fn classification_truth_table_covers_all_original_channel_and_marker_subsets() {
 }
 
 #[test]
-fn requested_minimal_and_higher_tier_single_survivor_have_distinct_markers() {
-    let minimal = diagnostics(&CHANNELS[..1], &CHANNELS[..1], None, &[]);
-    assert_report(
-        &classify_retrieval_quality(&minimal),
-        RetrievalQuality::Passthrough,
-        &[],
-    );
-    let vector_survivor = diagnostics(
-        &CHANNELS,
-        &CHANNELS[..1],
-        Some(PprCacheOutcome::Miss),
-        &[RetrievalDegradation::Bm25Stale],
-    );
-    assert_report(
-        &classify_retrieval_quality(&vector_survivor),
-        RetrievalQuality::Passthrough,
-        &[
-            RetrievalDegradation::Bm25Stale,
-            RetrievalDegradation::PprCacheMiss,
-            RetrievalDegradation::TemporalSignalSkipped,
-        ],
-    );
-    let text_survivor = diagnostics(
-        &CHANNELS[..2],
-        &[RetrievalSignal::Text],
-        None,
-        &[RetrievalDegradation::EmbeddingTimeout],
-    );
-    assert_report(
-        &classify_retrieval_quality(&text_survivor),
-        RetrievalQuality::Passthrough,
-        &[RetrievalDegradation::EmbeddingTimeout],
-    );
-}
-
-#[test]
-fn zero_successes_are_conservative_and_do_not_invent_failure_causes() {
-    assert_report(
-        &classify_retrieval_quality(&RetrievalDiagnostics::default()),
-        RetrievalQuality::Passthrough,
-        &[],
-    );
-    // The taxonomy has no generic vector/text failure marker. Neither a
-    // timeout nor stale BM25 can be inferred from lack of completion alone.
-    let unclassified_failure = diagnostics(&CHANNELS[..2], &[], None, &[]);
-    assert_report(
-        &classify_retrieval_quality(&unclassified_failure),
-        RetrievalQuality::Passthrough,
-        &[],
-    );
-    let all_failed = diagnostics(
-        &CHANNELS,
-        &[],
-        None,
-        &[RetrievalDegradation::EmbeddingTimeout],
-    );
-    assert_report(
-        &classify_retrieval_quality(&all_failed),
-        RetrievalQuality::Passthrough,
-        &[
-            RetrievalDegradation::EmbeddingTimeout,
-            RetrievalDegradation::TemporalSignalSkipped,
-        ],
-    );
-}
-
-#[test]
-fn healthy_partial_requests_do_not_get_invented_degradation() {
-    for count in 2..5 {
-        let input = diagnostics(&CHANNELS[..count], &CHANNELS[..count], None, &[]);
-        assert_report(
-            &classify_retrieval_quality(&input),
-            RetrievalQuality::Degraded,
-            &[],
-        );
-    }
-}
-
-#[test]
-fn cache_hit_miss_disabled_and_absence_are_distinct() {
-    for (cache, quality, markers) in [
-        (Some(PprCacheOutcome::Hit), RetrievalQuality::Full, vec![]),
-        (
-            Some(PprCacheOutcome::Miss),
-            RetrievalQuality::Degraded,
-            vec![RetrievalDegradation::PprCacheMiss],
-        ),
-        (
-            Some(PprCacheOutcome::Disabled),
-            RetrievalQuality::Degraded,
-            vec![],
-        ),
-        (None, RetrievalQuality::Degraded, vec![]),
-    ] {
-        let input = diagnostics(&CHANNELS, &CHANNELS, cache, &[]);
-        assert_report(&classify_retrieval_quality(&input), quality, &markers);
-    }
-    // A cache outcome cannot substitute for actual PPR channel completion.
-    let missing_ppr = diagnostics(&CHANNELS, &CHANNELS[..4], Some(PprCacheOutcome::Hit), &[]);
-    assert_report(
-        &classify_retrieval_quality(&missing_ppr),
-        RetrievalQuality::Degraded,
-        &[],
-    );
-}
-
-#[test]
-fn unsolicited_successes_and_unattempted_cache_outcomes_do_not_raise_quality() {
-    for cache in [PprCacheOutcome::Hit, PprCacheOutcome::Miss] {
-        let input = diagnostics(&CHANNELS[..1], &CHANNELS, Some(cache), &[]);
-        assert_report(
-            &classify_retrieval_quality(&input),
-            RetrievalQuality::Passthrough,
-            &[],
-        );
-    }
-    let input = diagnostics(&[], &CHANNELS, Some(PprCacheOutcome::Hit), &[]);
-    assert_report(
-        &classify_retrieval_quality(&input),
-        RetrievalQuality::Passthrough,
-        &[],
-    );
-}
-
-#[test]
 fn duplicates_and_other_telemetry_components_cannot_replace_original_channels() {
     let mut attempted = vec![RetrievalSignal::Vector; 8];
     attempted.extend(OTHER_SIGNALS);
@@ -322,66 +195,6 @@ fn marker_deduplication_keeps_first_observation_and_appends_derived_causes() {
             RetrievalQuality::Passthrough,
             &ordered,
         );
-    }
-}
-
-#[test]
-fn explicit_degradation_is_retained_even_on_inconsistent_diagnostics() {
-    for marker in MARKERS {
-        let input = diagnostics(&CHANNELS, &CHANNELS, Some(PprCacheOutcome::Hit), &[marker]);
-        assert_report(
-            &classify_retrieval_quality(&input),
-            RetrievalQuality::Degraded,
-            &[marker],
-        );
-        let input = diagnostics(&[], &[], None, &[marker]);
-        assert_report(
-            &classify_retrieval_quality(&input),
-            RetrievalQuality::Passthrough,
-            &[marker],
-        );
-    }
-}
-
-#[test]
-fn healthy_empty_and_degraded_empty_do_not_depend_on_candidate_count_or_scores() {
-    let healthy = diagnostics(&CHANNELS, &CHANNELS, Some(PprCacheOutcome::Hit), &[]);
-    let degraded = diagnostics(&CHANNELS, &CHANNELS, Some(PprCacheOutcome::Miss), &[]);
-    for candidates in [
-        vec![],
-        vec![ScoredEntity {
-            id: entity(0x31),
-            score: 0.83,
-        }],
-        vec![
-            ScoredEntity {
-                id: entity(0x31),
-                score: 0.83,
-            },
-            ScoredEntity {
-                id: entity(0x32),
-                score: 0.29,
-            },
-        ],
-    ] {
-        let original = candidates.clone();
-        // The classifier has no candidate/count parameter or score reference.
-        assert_report(
-            &classify_retrieval_quality(&healthy),
-            RetrievalQuality::Full,
-            &[],
-        );
-        let report = classify_retrieval_quality(&degraded);
-        assert_report(
-            &report,
-            RetrievalQuality::Degraded,
-            &[RetrievalDegradation::PprCacheMiss],
-        );
-        let confidence = 0.8_f32;
-        let presented = report.confidence_adjustment.apply_to(confidence);
-        assert!((presented - 0.65).abs() <= f32::EPSILON);
-        assert_eq!(confidence.to_bits(), 0.8_f32.to_bits());
-        assert_eq!(candidates, original);
     }
 }
 

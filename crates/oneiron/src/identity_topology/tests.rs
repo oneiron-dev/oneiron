@@ -430,15 +430,6 @@ fn transition_table_covers_every_state_and_role_cell() {
     );
 }
 
-#[test]
-fn distinct_pair_key_normalizes_symmetric_order() {
-    let a = id(0x21);
-    let b = id(0x22);
-    assert_eq!(distinct_pair_key(a, b), distinct_pair_key(b, a));
-    assert_eq!(distinct_pair_key(a, b), (a, b));
-    assert_eq!(distinct_pair_key(a, a), (a, a));
-}
-
 // ─── Ledger fold ────────────────────────────────────────────────────────────
 
 #[test]

@@ -20,8 +20,6 @@ use oneiron::{
     WriteActor,
 };
 #[cfg(all(unix, feature = "voice"))]
-use oneiron_llm_local::LocalLlmRuntime;
-#[cfg(all(unix, feature = "voice"))]
 use oneiron_server::managed::ManagedShutdown;
 #[cfg(all(unix, feature = "voice"))]
 use oneiron_server::voice_host::{VoiceHost, VoiceHostConfig, VoiceServeConnection};

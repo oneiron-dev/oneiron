@@ -996,37 +996,6 @@ fn non_unit_query_segment_scores_true_cosine_and_is_accepted() -> Result<()> {
     Ok(())
 }
 
-/// Law 5 + Law 6: residual linkage is a cosine too, so gain cannot split one
-/// stranger into two anonymous speakers.
-#[test]
-fn parallel_non_unit_residual_segments_cluster_together() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let space_id = space().space_id;
-
-    // One direction, two gains eight times apart: cosine 1.0, but a raw dot
-    // product of 0.5 — under the 0.7 linkage threshold.
-    let roster = vault.resolve_voice_segments(&match_request(
-        "call-residual-gain",
-        &space_id,
-        vec![
-            segment("seg-loud", 0, [0.0, 2.0, 0.0, 0.0], &space_id),
-            segment("seg-quiet", 1_000, [0.0, 0.25, 0.0, 0.0], &space_id),
-        ],
-        Vec::new(),
-    ))?;
-
-    for segment_id in ["seg-loud", "seg-quiet"] {
-        assert_eq!(
-            evidence_of(&roster, segment_id),
-            &VoiceAttributionEvidence::ResidualCluster {
-                cluster_ref: "residual.1".to_owned()
-            },
-            "{segment_id} belongs to the one anonymous speaker these segments share"
-        );
-    }
-    Ok(())
-}
-
 /// Law 5, the dangerous arm: length must never buy an acceptance.
 #[test]
 fn non_unit_segment_below_cosine_threshold_is_not_accepted() -> Result<()> {

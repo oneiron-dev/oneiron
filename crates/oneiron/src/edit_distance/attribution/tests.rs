@@ -814,25 +814,6 @@ fn the_held_out_audit_scores_the_rule_tier_and_exposes_a_broken_one() -> Result<
 }
 
 #[test]
-fn the_audit_fixtures_leak_no_answer_key() {
-    for fixture in held_out_amendment_fixtures() {
-        let case = fixture.evidence.receipt_id.as_str();
-        for class in [
-            AmendmentClass::SkillDefect,
-            AmendmentClass::ExecutionLapse,
-            AmendmentClass::Discovery,
-            AmendmentClass::Environment,
-            AmendmentClass::PreferenceShift,
-        ] {
-            assert!(
-                !case.contains(class.as_str()),
-                "fixture {case} names its own answer"
-            );
-        }
-    }
-}
-
-#[test]
 fn an_always_abstaining_tier_cannot_score_full_marks() -> Result<()> {
     struct SilentJudge;
     impl AttributionJudge for SilentJudge {

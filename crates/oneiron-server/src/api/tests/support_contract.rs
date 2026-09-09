@@ -191,29 +191,6 @@ pub(super) fn openapi_schema_shape(schema: &Value) -> Value {
     Value::Object(shape)
 }
 
-pub(super) fn collect_schema_refs(value: &Value, refs: &mut BTreeSet<String>) {
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                collect_schema_refs(item, refs);
-            }
-        }
-        Value::Object(object) => {
-            if let Some(name) = object
-                .get("$ref")
-                .and_then(Value::as_str)
-                .and_then(|reference| reference.strip_prefix("#/components/schemas/"))
-            {
-                refs.insert(name.to_owned());
-            }
-            for value in object.values() {
-                collect_schema_refs(value, refs);
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-    }
-}
-
 pub(super) fn retrieval_quality_schema_properties() -> Value {
     json!({
         "quality": {"type": ["string", "null"]},

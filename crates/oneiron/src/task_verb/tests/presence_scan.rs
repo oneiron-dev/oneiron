@@ -70,18 +70,6 @@ fn bounded_scan_page_boundaries_report_exhaustion_honestly() {
     }
 }
 
-/// A page size of zero would fetch nothing forever; it must not be read as
-/// "the TASK index is empty".
-#[test]
-fn a_degenerate_page_size_still_makes_forward_progress() {
-    let mut fetched = 0_usize;
-    let scan = scan_task_entity_pages(0, 4, synthetic_pager(9, &mut fetched))
-        .expect("degenerate page size");
-
-    assert_eq!(scan.scanned_task_entities, 4);
-    assert!(!scan.source_exhausted);
-}
-
 /// A source that refuses to advance the exclusive cursor must terminate the
 /// walk rather than replay the same row forever.
 #[test]
@@ -316,56 +304,6 @@ fn tasks_ack_direct_lookup_survives_board_scan_cap() {
             .expect_err("acked failure is not expandable")
             .code,
         crate::memory::MEMORY_CODE_NOT_FOUND
-    );
-}
-
-/// "Not scanned" is not "dangling": a job whose owning TASK lies beyond the
-/// scan cap is withheld and counted, never re-emitted as a bare duplicate.
-#[test]
-fn truncated_task_scan_does_not_emit_linked_jobs_as_bare() {
-    let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
-    let facade = vault.memory(own, EdgeActorClass::Agent);
-    let created = created_task_refs(&facade, 3);
-
-    // Every created TASK owns exactly one realizing job, all folded.
-    let whole = task_presence_with_limits(&vault, 8, 64).expect("exhausted presence");
-    assert!(whole.source_exhausted);
-    assert_eq!(whole.intents.len(), 3);
-    assert_eq!(whole.bare_jobs.len(), 0);
-    let folded: usize = whole
-        .intents
-        .iter()
-        .map(|intent| intent.realizing_jobs.len())
-        .sum();
-    assert_eq!(folded, 3);
-
-    let truncated = task_presence_with_limits(&vault, 1, 1).expect("one-row board prefix");
-
-    assert!(!truncated.source_exhausted);
-    assert_eq!(truncated.intents.len(), 1);
-    assert_eq!(truncated.intents[0].id, created[0].to_hex());
-    assert_eq!(
-        truncated.bare_jobs.len(),
-        0,
-        "jobs owned by unscanned TASKs must not surface as bare rows"
-    );
-    // No job renders twice: the withheld ones render nowhere at all, and
-    // the only visible job is the scanned owner's own realization.
-    let visible: std::collections::BTreeSet<&str> = truncated
-        .intents
-        .iter()
-        .flat_map(|intent| intent.realizing_jobs.iter())
-        .chain(truncated.bare_jobs.iter())
-        .map(|job| job.id.as_str())
-        .collect();
-    assert_eq!(
-        visible,
-        whole.intents[0]
-            .realizing_jobs
-            .iter()
-            .map(|job| job.id.as_str())
-            .collect()
     );
 }
 

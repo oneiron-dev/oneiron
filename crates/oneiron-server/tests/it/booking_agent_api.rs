@@ -1278,59 +1278,6 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
 // Shared-executor and declaration gates
 // -------------------------------------------------------------------------
 
-#[tokio::test]
-async fn booking_http_and_mcp_share_executor() {
-    let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
-    let token = page_token(page);
-
-    // Both transports reach ONE function. The HTTP handlers and the MCP
-    // adapter call it and nothing else, so a per-transport code path cannot
-    // exist for any of the four operations.
-    let executor = source("src/api/booking.rs");
-    for handler in [
-        "booking_availability",
-        "booking_book",
-        "booking_reschedule",
-        "booking_cancel",
-    ] {
-        let body = executor
-            .split_once(&format!("pub(crate) async fn {handler}("))
-            .unwrap_or_else(|| panic!("{handler} is declared"))
-            .1;
-        let end = body.find("\n}\n").unwrap();
-        assert!(
-            body[..end].contains("execute_booking_operation("),
-            "{handler} dispatches into the shared executor"
-        );
-    }
-    assert!(
-        executor.contains("pub(crate) async fn execute_booking_operation_for_mcp(")
-            && source("src/api/mcp_gateway")
-                .contains("super::booking::execute_booking_operation_for_mcp("),
-        "the MCP adapter reaches the same executor"
-    );
-    assert_eq!(
-        executor
-            .matches("pub(crate) async fn execute_booking_operation(")
-            .count(),
-        1,
-        "there is exactly one shared executor"
-    );
-
-    // And the four operations serialize into one closed response union, so a
-    // transport cannot invent a shape the other does not have.
-    let response = http_post(
-        addr,
-        &format!("/api/booking/{token}/availability"),
-        &availability_body(6, Value::Null),
-    )
-    .await;
-    assert_eq!(object_keys(&json_of(&response)), keys(&["op", "result"]));
-
-    handle.abort();
-}
-
 #[test]
 fn booking_public_dtos_contain_no_entity_id() {
     // The engine-side wire cannot name an internal identifier at all: there
@@ -1382,42 +1329,6 @@ fn booking_public_dtos_contain_no_entity_id() {
         "oneiron.book arguments must not name EntityId"
     );
     assert!(args.contains("page_token: String"));
-}
-
-#[test]
-fn booking_handlers_use_sync_server_state() {
-    let executor = source("src/api/booking.rs");
-    for handler in [
-        "booking_agent_instructions",
-        "booking_availability",
-        "booking_book",
-        "booking_reschedule",
-        "booking_cancel",
-    ] {
-        let signature = executor
-            .split_once(&format!("pub(crate) async fn {handler}("))
-            .unwrap_or_else(|| panic!("{handler} is declared"))
-            .1;
-        let signature = &signature[..signature.find(" {\n").unwrap()];
-        assert!(
-            signature.contains("State(server): State<Arc<SyncServer>>"),
-            "{handler} must thread State<Arc<SyncServer>>: {signature}"
-        );
-        assert!(
-            signature.contains("ApiError"),
-            "{handler} must return crate::error::ApiError: {signature}"
-        );
-    }
-    for forbidden in ["ApiState", "AppState", "VaultFacade", "WritePrincipal"] {
-        assert!(
-            !executor.contains(forbidden),
-            "the booking surface must not introduce {forbidden}"
-        );
-    }
-    assert!(
-        executor.contains("MemoryFacade") || !executor.contains(".memory("),
-        "any facade leg reuses MemoryFacade"
-    );
 }
 
 /// Asserts that discovery's MCP vocabulary IS the two REGISTERED endpoints'

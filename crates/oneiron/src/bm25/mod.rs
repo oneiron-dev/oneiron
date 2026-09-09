@@ -82,7 +82,7 @@ use self::diagnostics::BM25_DIAGNOSTIC_COUNTERS;
 pub(crate) use self::query::search_text_with_recency;
 #[cfg(test)]
 use self::query::{
-    FINAL_TOKEN_PREFIX_WEIGHT, MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS, MAX_FINAL_TOKEN_PREFIX_TERMS,
+    MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS, MAX_FINAL_TOKEN_PREFIX_TERMS,
     collect_final_token_prefix_terms,
 };
 #[cfg(test)]

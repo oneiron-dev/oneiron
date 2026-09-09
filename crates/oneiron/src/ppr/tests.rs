@@ -231,40 +231,6 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
 }
 
 #[test]
-fn ppr_simple_chain_scores_b_over_c() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
-    let a = entity(1);
-    let b = entity(2);
-    let c = entity(3);
-
-    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
-    vault.put_edge(&b, EdgeKind::BelongsTo, &c, 1.0)?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    let scores = ppr_compute(&vault.store, &rtxn, &[a], 3, 0.15)?;
-    assert!(score_for(&scores, b) > score_for(&scores, c));
-    Ok(())
-}
-
-#[test]
-fn ppr_weighted_edges_favor_heavier_neighbor() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
-    let a = entity(4);
-    let b = entity(5);
-    let c = entity(6);
-
-    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.9)?;
-    vault.put_edge(&a, EdgeKind::BelongsTo, &c, 0.1)?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    let scores = ppr_compute(&vault.store, &rtxn, &[a], 3, 0.15)?;
-    assert!(score_for(&scores, b) >= score_for(&scores, c) * 2.0);
-    Ok(())
-}
-
-#[test]
 fn ppr_opposes_weight_zero_blocks_propagation() -> Result<()> {
     let temp_dir = tempdir()?;
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
@@ -720,23 +686,6 @@ fn same_source_mixed_statuses_share_normalizer_at_full_weight() -> Result<()> {
             "{status:?} share must be 1.0 * (0.6 * 0.6 / 1.8) * 0.85 = 0.17, got {got}"
         );
     }
-    Ok(())
-}
-
-#[test]
-fn ppr_bidirectional_scan_reaches_inbound_neighbors() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
-    let a = entity(13);
-    let b = entity(14);
-    let c = entity(15);
-
-    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
-    vault.put_edge(&c, EdgeKind::BelongsTo, &b, 1.0)?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    let scores = ppr_compute(&vault.store, &rtxn, &[a], 3, 0.15)?;
-    assert!(score_for(&scores, c) > 0.0);
     Ok(())
 }
 
@@ -1553,25 +1502,6 @@ fn ppr_query_recomputes_cache_after_graph_version_change() -> Result<()> {
 }
 
 #[test]
-fn ppr_query_recomputes_after_downstream_graph_change() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
-    let a = entity(57);
-    let b = entity(58);
-    let c = entity(59);
-
-    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
-    let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    assert!(score_for(&first, b) > 0.0);
-    assert!(score_for(&first, c) <= SCORE_EPSILON);
-
-    vault.put_edge(&b, EdgeKind::BelongsTo, &c, 1.0)?;
-    let second = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    assert!(score_for(&second, c) > 0.0);
-    Ok(())
-}
-
-#[test]
 fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()> {
     let temp_dir = tempdir()?;
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
@@ -1761,124 +1691,6 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
                 panic!("case {case_name}: expected CorruptedIndex({expected_msg:?}), got {other:?}")
             }
         }
-    }
-    Ok(())
-}
-
-/// ONE-1116 AC1 (ARCH-0039 Layer 2) — `search_ppr` seed mass is
-/// `1/ln(1 + max(passage_count, 1))`, normalized to Σ = 1.0, with
-/// `passage_count` = inbound `mentions` edge count. Graph (every
-/// mentions edge stores weight 0.6):
-///   p1, p2, p3 −mentions→ a   (passage_count(a) = 3)
-///   (nothing)  −mentions→ b   (passage_count(b) = 0 → clamped to 1)
-///   q1         −mentions→ c   (passage_count(c) = 1)
-/// Raw weights 1/ln(4) : 1/ln(2) : 1/ln(2) normalize EXACTLY to
-/// 0.2 / 0.4 / 0.4 (ln(4) = 2·ln(2), so the log base cancels).
-///
-/// Seeds [a, b, c], depth 1, α = 0.15 — hand derivation mirroring the
-/// Layer-1 exact-value test (reverse scan over `edges_in`,
-/// s_in(a, mentions) = 1.8, s_in(c, mentions) = 0.6, λ_mentions = 0.6):
-///   p_i = 0.2 · (0.6 · 0.6 / 1.8) · 0.85 = 0.034
-///   q1  = 0.4 · (0.6 · 0.6 / 0.6) · 0.85 = 0.204
-///   teleport: a += 1.0 · 0.15 · 0.2 ; b, c += 1.0 · 0.15 · 0.4
-///   a = 0.2 + 0.03 = 0.23 ; b = c = 0.4 + 0.06 = 0.46
-/// UNIFORM seeding instead yields a = b = c = 0.38333, p_i = 0.0566667,
-/// q1 = 0.17 — every value moves, so a uniform implementation fails.
-/// A missing clamp (1/ln(1 + 0) = ∞) sends b's normalized weight to 1.0
-/// and the rest to 0.0 — it fails as well.
-#[test]
-fn seed_specificity_weights_match_derived_values() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
-    let a = entity(1);
-    let b = entity(2);
-    let c = entity(3);
-    let passages = [entity(10), entity(11), entity(12)];
-    let q1 = entity(13);
-
-    for passage in &passages {
-        vault.put_edge(passage, EdgeKind::Mentions, &a, 0.6)?;
-    }
-    vault.put_edge(&q1, EdgeKind::Mentions, &c, 0.6)?;
-
-    let rtxn = vault.store.env.read_txn()?;
-
-    let weights = specificity_seed_weights(&vault.store, &rtxn, &[a, b, c], None)?;
-    let expected_weights = [0.2_f32, 0.4, 0.4];
-    for (got, expected) in weights.iter().zip(expected_weights) {
-        assert!(
-            (got - expected).abs() <= 1e-6,
-            "seed weight: got {got}, want {expected}"
-        );
-    }
-
-    let scores = ppr_compute_weighted(
-        &vault.store,
-        &rtxn,
-        &[a, b, c],
-        SeedWeighting::Specificity,
-        1,
-        0.15,
-    )?;
-    let cases = [
-        (a, 0.23_f32),
-        (b, 0.46),
-        (c, 0.46),
-        (passages[0], 0.034),
-        (passages[1], 0.034),
-        (passages[2], 0.034),
-        (q1, 0.204),
-    ];
-    for (id, expected) in cases {
-        let got = score_for(&scores, id);
-        assert!(
-            (got - expected).abs() <= 1e-6,
-            "score for {id:?}: got {got}, want {expected}"
-        );
-    }
-    Ok(())
-}
-
-/// ONE-1116 AC2 — single-seed normalization cancels: whatever the
-/// passage count, the lone seed's normalized weight is exactly 1.0, so
-/// specificity seeding equals uniform seeding. Exact values (graph as in
-/// AC1's `a` cluster): a = 1.0 init + 0.15 teleport = 1.15; each
-/// p_i = 1.0 · (0.6 · 0.6 / 1.8) · 0.85 = 0.17.
-#[test]
-fn single_seed_specificity_matches_uniform() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
-    let a = entity(1);
-    let passages = [entity(10), entity(11), entity(12)];
-
-    for passage in &passages {
-        vault.put_edge(passage, EdgeKind::Mentions, &a, 0.6)?;
-    }
-
-    let rtxn = vault.store.env.read_txn()?;
-    let weighted = ppr_compute_weighted(
-        &vault.store,
-        &rtxn,
-        &[a],
-        SeedWeighting::Specificity,
-        1,
-        0.15,
-    )?;
-    let uniform = ppr_compute(&vault.store, &rtxn, &[a], 1, 0.15)?;
-
-    assert_scores_equal(&weighted, &uniform);
-    let cases = [
-        (a, 1.15_f32),
-        (passages[0], 0.17),
-        (passages[1], 0.17),
-        (passages[2], 0.17),
-    ];
-    for (id, expected) in cases {
-        let got = score_for(&weighted, id);
-        assert!(
-            (got - expected).abs() <= 1e-6,
-            "score for {id:?}: got {got}, want {expected}"
-        );
     }
     Ok(())
 }

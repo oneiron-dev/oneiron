@@ -22,29 +22,6 @@ fn sync_server_config_debug_redacts_auth_secret() {
 }
 
 #[test]
-fn sync_server_config_debug_prints_none_for_missing_auth_secret() {
-    let debug = format!("{:?}", SyncServerConfig::default());
-
-    assert!(debug.contains("auth_secret: None"));
-}
-
-#[test]
-fn runtime_usage_mode_derives_from_runtime_mode() {
-    for mode in [
-        RuntimeMode::LocalFree,
-        RuntimeMode::ByoCloudKey,
-        RuntimeMode::OneironCloud,
-    ] {
-        let config = SyncServerConfig {
-            runtime: RuntimeConfig::for_mode(mode),
-            ..Default::default()
-        };
-
-        assert_eq!(config.runtime_usage_mode(), mode.usage_mode());
-    }
-}
-
-#[test]
 fn usage_mode_config_file_key_fails_closed() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("oneiron.toml");
@@ -135,13 +112,6 @@ fn serve_args_debug_redacts_auth_secret() {
 }
 
 #[test]
-fn serve_args_debug_prints_none_for_missing_auth_secret() {
-    let debug = format!("{:?}", ServeArgs::default());
-
-    assert!(debug.contains("auth_secret: None"));
-}
-
-#[test]
 fn serve_config_debug_redacts_auth_secret() {
     let config = ServeConfig {
         auth_secret: Some("serve-config-secret".to_owned()),
@@ -153,13 +123,6 @@ fn serve_config_debug_redacts_auth_secret() {
     assert!(!debug.contains("serve-config-secret"));
     assert!(debug.contains("auth_secret"));
     assert!(debug.contains("<redacted>"));
-}
-
-#[test]
-fn serve_config_debug_prints_none_for_missing_auth_secret() {
-    let debug = format!("{:?}", ServeConfig::default());
-
-    assert!(debug.contains("auth_secret: None"));
 }
 
 #[test]

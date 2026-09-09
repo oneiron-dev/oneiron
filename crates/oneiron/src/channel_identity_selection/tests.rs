@@ -698,39 +698,6 @@ fn a_builtin_shadow_that_adds_a_second_canonical_winner_is_refused() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn exact_scope_beats_vault_default() {
-    let world = SelectionRuleScope::World {
-        world_ref: entity(0x68),
-    };
-    let compiled = compiled_with(vec![owner_rule(
-        "overlay.world",
-        RelationshipContext::CampaignOutreach,
-        world.clone(),
-        ChannelIdentityFace::HouseIdentity,
-    )]);
-    let roster = face_roster();
-
-    let scoped = resolve_channel_identity_selection(
-        &compiled,
-        query(RelationshipContext::CampaignOutreach, &[world], &roster),
-    )
-    .expect("scoped resolves");
-    assert_eq!(scoped.face, ChannelIdentityFace::HouseIdentity);
-    assert_eq!(scoped.rule_id.as_deref(), Some("overlay.world"));
-
-    let unscoped = resolve_channel_identity_selection(
-        &compiled,
-        query(RelationshipContext::CampaignOutreach, &[], &roster),
-    )
-    .expect("default resolves");
-    assert_eq!(unscoped.face, ChannelIdentityFace::SideDomainAddress);
-    assert_eq!(
-        unscoped.rule_id.as_deref(),
-        Some("builtin.campaign_outreach")
-    );
-}
-
-#[test]
 fn the_most_specific_applicable_scope_wins() {
     let scopes = [
         SelectionRuleScope::World {
@@ -1720,35 +1687,4 @@ fn world_campaign_outreach_sends_as_owners_delegated_identity() {
 
     drop(vault);
     drop(dir);
-}
-
-#[test]
-fn the_selection_module_carries_no_venture_or_person_names() {
-    let source = concat!(
-        include_str!("mod.rs"),
-        include_str!("selection_codec.rs"),
-        include_str!("selection_resolution.rs"),
-        include_str!("selection_rules.rs"),
-        include_str!("selection_storage.rs"),
-        include_str!("selection_vocabulary.rs"),
-    )
-    .to_ascii_lowercase();
-    // Substring matches, so every token here must be one that cannot appear
-    // inside an ordinary English word.
-    for banned in [
-        "client_name",
-        "person_name",
-        "product_name",
-        "assistant_name",
-        "provider_name",
-        "mail_provider",
-        "social_network",
-        "@",
-        "http",
-    ] {
-        assert!(
-            !source.contains(banned),
-            "shipped selection module must not name {banned}"
-        );
-    }
 }

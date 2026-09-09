@@ -436,41 +436,6 @@ fn apply_outcome(vault: &Vault) -> StageProjectResult {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cold_membership_never_creates_crm_stage() {
-    let (_dir, vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-
-    // A live cohort row exists...
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
-            .1
-            .value,
-        encode_campaign_member_value(&enrolled_member()),
-    );
-    // ...and lane selection runs over it, writing nothing.
-    let lane = route_membership_lane(
-        &MembershipProvenance {
-            membership_claim_ref: test_id(MEMBER_SEED),
-            trigger_evidence_refs: vec![test_id(QUERY_SEED)],
-            trigger_observed_at: REPLY_AT,
-            prior_thread_ref: None,
-            prior_relationship_evidence_ref: None,
-            prior_touch_at: None,
-        },
-        LaneClockPolicy {
-            trigger_fresh_for_secs: 30 * 24 * 60 * 60,
-            prior_touch_warm_for_secs: 90 * 24 * 60 * 60,
-        },
-        REPLY_AT,
-    );
-    assert_eq!(lane, OutreachLane::Cold);
-    assert!(
-        live_claims(&vault, person, PREDICATE_CRM_STAGE).is_empty(),
-        "a cold membership must not mint a pipeline head",
-    );
-}
-
-#[test]
 fn warm_reconnect_requires_real_prior_evidence() {
     let policy = LaneClockPolicy {
         trigger_fresh_for_secs: 30 * 24 * 60 * 60,

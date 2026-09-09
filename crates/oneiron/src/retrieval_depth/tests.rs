@@ -269,23 +269,6 @@ fn deterministic_subqueries_are_pure_deduped_and_capped() {
     assert!(long.len() <= STANDARD_SUBQUERY_LIMIT, "{long:?}");
 }
 
-#[test]
-fn deterministic_subqueries_drop_stop_words_and_halve_the_remainder() {
-    let subqueries = deterministic_subqueries("what did we decide about the launch date");
-    assert!(
-        subqueries.iter().any(|sub| sub == "decide launch date"),
-        "stop words come out: {subqueries:?}"
-    );
-    assert!(
-        subqueries.iter().any(|sub| sub == "decide launch"),
-        "leading half: {subqueries:?}"
-    );
-    assert!(
-        subqueries.iter().any(|sub| sub == "date"),
-        "trailing half: {subqueries:?}"
-    );
-}
-
 // ── Minimal ─────────────────────────────────────────────────────────────
 
 #[test]

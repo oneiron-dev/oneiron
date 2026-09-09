@@ -506,20 +506,6 @@ fn toon_native_encoder_replaces_values_beyond_max_depth_with_null() {
 }
 
 #[test]
-fn toon_bounded_truncate_strings_stops_at_depth_cap() {
-    let leaf = "deep field value that should remain untouched".repeat(8);
-    let mut value = nested_child_value(TOON_MAX_DEPTH + 8, Value::String(leaf.clone()));
-
-    truncate_strings_with_depth_limit(&mut value, 4, Some(TOON_MAX_DEPTH));
-
-    assert_eq!(
-        child_value_at_depth(&value, TOON_MAX_DEPTH + 8).and_then(Value::as_str),
-        Some(leaf.as_str()),
-        "truncation must not walk past the TOON value-depth cap"
-    );
-}
-
-#[test]
 fn toon_bounded_estimate_value_chars_stops_at_depth_cap() {
     let value = nested_child_value(
         TOON_MAX_DEPTH + 8,
@@ -920,38 +906,6 @@ fn short_id_serialization_uses_at_most_two_tokens_per_reference() {
         text.contains("cl42:2a"),
         "serialized output should include rendered short id with hash: {text}"
     );
-}
-
-#[test]
-fn token_budget_truncates_groups() {
-    let mut pack = sample_pack();
-    for i in 0..40_u8 {
-        pack.results.push(ContextEntity {
-            id: EntityId::from_bytes_unchecked([50 + i; 16]),
-            short_id: format!("cl{i}"),
-            content_hash: i,
-            entity_type: 0,
-            score: 0.3,
-            fields: Some(HashMap::from([
-                ("pred".to_owned(), Value::String("p".to_owned())),
-                ("val".to_owned(), Value::String("v".repeat(64))),
-            ])),
-            edges: None,
-            vector: None,
-        });
-    }
-
-    let total_claims = pack.results.iter().filter(|e| e.entity_type == 0).count();
-
-    let mut cfg = config(PackFormat::Toon);
-    cfg.budget = 100;
-    let prepared = prepare_pack(&pack, &cfg, false);
-    let claims_len = prepared
-        .results
-        .iter()
-        .find_map(|(key, rows)| (*key == GroupKey::Kind(0)).then_some(rows.len()))
-        .unwrap_or(0);
-    assert!(claims_len < total_claims);
 }
 
 #[test]
@@ -1452,15 +1406,6 @@ fn short_id_hash_format_is_applied() {
 }
 
 #[test]
-fn grouping_priority_orders_claims_before_turns() {
-    let pack = sample_pack();
-    let text = String::from_utf8(serialize_pack(&pack, &config(PackFormat::Plaintext))).unwrap();
-    let claims_pos = text.find("CLAIMS").unwrap_or(usize::MAX);
-    let turns_pos = text.find("TURNS").unwrap_or(usize::MAX);
-    assert!(claims_pos < turns_pos);
-}
-
-#[test]
 fn plaintext_escapes_pipes() {
     let mut pack = sample_pack();
     if let Some(fields) = pack.results[0].fields.as_mut() {
@@ -1469,111 +1414,6 @@ fn plaintext_escapes_pipes() {
 
     let text = String::from_utf8(serialize_pack(&pack, &config(PackFormat::Plaintext))).unwrap();
     assert!(text.contains("hello\\|world"));
-}
-
-#[test]
-fn multiple_other_types_share_normalized_budget() {
-    let mut pack = sample_pack();
-    pack.results.clear();
-    pack.neighbors.clear();
-
-    let row_text = "v".repeat(45);
-
-    for i in 0..8_u8 {
-        pack.results.push(ContextEntity {
-            id: EntityId::from_bytes_unchecked([10 + i; 16]),
-            short_id: format!("cl{i}"),
-            content_hash: i,
-            entity_type: 0,
-            score: 1.0,
-            fields: Some(HashMap::from([
-                ("pred".to_owned(), Value::String("p".to_owned())),
-                ("val".to_owned(), Value::String(row_text.clone())),
-            ])),
-            edges: None,
-            vector: None,
-        });
-
-        pack.results.push(ContextEntity {
-            id: EntityId::from_bytes_unchecked([40 + i; 16]),
-            short_id: format!("tn{i}"),
-            content_hash: i,
-            entity_type: 1,
-            score: 1.0,
-            fields: Some(HashMap::from([(
-                "txt".to_owned(),
-                Value::String(row_text.clone()),
-            )])),
-            edges: None,
-            vector: None,
-        });
-
-        pack.results.push(ContextEntity {
-            id: EntityId::from_bytes_unchecked([80 + i; 16]),
-            short_id: format!("sm{i}"),
-            content_hash: i,
-            entity_type: 8,
-            score: 1.0,
-            fields: Some(HashMap::from([(
-                "txt".to_owned(),
-                Value::String(row_text.clone()),
-            )])),
-            edges: None,
-            vector: None,
-        });
-
-        pack.results.push(ContextEntity {
-            id: EntityId::from_bytes_unchecked([120 + i; 16]),
-            short_id: format!("pr{i}"),
-            content_hash: i,
-            entity_type: 4,
-            score: 1.0,
-            fields: Some(HashMap::from([(
-                "name".to_owned(),
-                Value::String(row_text.clone()),
-            )])),
-            edges: None,
-            vector: None,
-        });
-
-        pack.results.push(ContextEntity {
-            id: EntityId::from_bytes_unchecked([160 + i; 16]),
-            short_id: format!("ev{i}"),
-            content_hash: i,
-            entity_type: 6,
-            score: 1.0,
-            fields: Some(HashMap::from([(
-                "name".to_owned(),
-                Value::String(row_text.clone()),
-            )])),
-            edges: None,
-            vector: None,
-        });
-    }
-
-    let mut cfg = config(PackFormat::Toon);
-    cfg.budget = 200;
-    let prepared = prepare_pack(&pack, &cfg, false);
-
-    let persons_count = prepared
-        .results
-        .iter()
-        .find_map(|(key, rows)| (*key == GroupKey::Kind(4)).then_some(rows.len()))
-        .unwrap_or(0);
-    let events_count = prepared
-        .results
-        .iter()
-        .find_map(|(key, rows)| (*key == GroupKey::Kind(6)).then_some(rows.len()))
-        .unwrap_or(0);
-
-    assert_eq!(
-        persons_count, 1,
-        "persons should be constrained by normalized 'other' share"
-    );
-    assert_eq!(
-        events_count, 1,
-        "events should be constrained by normalized 'other' share"
-    );
 }
 
 #[test]

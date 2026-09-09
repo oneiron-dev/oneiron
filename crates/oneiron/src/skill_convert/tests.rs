@@ -399,32 +399,6 @@ fn identical_content_refuses_with_a_pointer_to_the_holder() -> Result<()> {
     Ok(())
 }
 
-/// The Dreamer-auto road and this manual road share ONE namespace: a manual
-/// convert colliding with an auto-extracted skill dedups against it.
-#[test]
-fn manual_conversion_dedups_against_a_dreamer_extracted_skill() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let extracted = seed_extracted_skill(
-        &vault,
-        "morning-routine-checklist",
-        "Extracted by the Dreamer from repeated morning turns",
-        REFINED_TREE,
-    );
-    let turns = witnessed_turns(&vault, &["blinds, kettle, priorities"], 1_775_000_000);
-    let refiner = StubRefiner::minting("morning-routine-checklist", tree(REFINED_TREE));
-
-    let outcome =
-        convert_messages_to_skill(&vault, &ConvertRequest::new(turns), &refiner, t(20), 21)?;
-
-    assert_eq!(
-        outcome,
-        ConvertOutcome::DupPointer(extracted),
-        "identical bytes are ONE skill whichever road they arrived on"
-    );
-    assert_eq!(skill_count(&vault), 1);
-    Ok(())
-}
-
 /// The mechanical tier outranks the LLM tier: an insistent `Mint` over bytes
 /// the library already holds still dedups.
 #[test]

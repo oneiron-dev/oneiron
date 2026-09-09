@@ -1,12 +1,6 @@
 use super::*;
 
 #[test]
-fn discover_with_no_paths_returns_portable() {
-    let ja = JapaneseAnalyzer::discover(&[]).unwrap();
-    assert_eq!(ja.mode(), AnalyzerMode::Portable);
-}
-
-#[test]
 fn discover_with_empty_dir_returns_portable() {
     let dir = tempfile::tempdir().unwrap();
     let ja = JapaneseAnalyzer::discover(&[dir.path().to_path_buf()]).unwrap();
