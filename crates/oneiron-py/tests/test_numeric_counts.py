@@ -106,6 +106,10 @@ def test_limits_accept_valid_integer_controls(embedded_memory, limit) -> None:
 
 
 def test_omitted_counts_preserve_defaults(embedded_memory) -> None:
+    # The first recall after a write misses the PPR cache and reports that in
+    # `retrieval_meta` (quality, degradation, confidence adjustment); every
+    # later read is served warm. Warm once so both compared reads are alike.
+    embedded_memory.recall("window seat")
     assert embedded_memory.recall("window seat") == embedded_memory.recall("window seat", limit=10)
     assert embedded_memory.receipts() == embedded_memory.receipts(100)
 
