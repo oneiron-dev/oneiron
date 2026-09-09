@@ -186,7 +186,7 @@ impl Vault {
     /// The bound is a parameter so the refusal is reachable in a test without
     /// building the million rows the production ceiling asks for. Production
     /// has exactly one caller and it passes [`DEDUPE_SCAN_CEILING`].
-    pub(crate) fn find_claim_for_subject_within<T>(
+    pub(super) fn find_claim_for_subject_within<T>(
         &self,
         rtxn: &heed::RoTxn<'_>,
         subject: &EntityId,
@@ -314,7 +314,7 @@ impl Vault {
 /// carries decide what a facet-scoped grant authorizes. Reading base here
 /// while every other edge scan in that read reads the union would evaluate a
 /// session's grants against a graph the session cannot see.
-pub(crate) fn facet_refs_in_db(
+pub(super) fn facet_refs_in_db(
     db: &crate::overlay_db::OverlayDb,
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,

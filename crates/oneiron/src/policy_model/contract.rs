@@ -96,12 +96,12 @@ pub struct PolicyModelAnswer {
 /// Longest rationale the engine carries into a receipt. Anything past this is
 /// truncated on a character boundary rather than refused: an over-long
 /// rationale is a verbose model, not an unusable answer.
-pub(crate) const POLICY_RATIONALE_MAX_LEN: usize = 1024;
+const POLICY_RATIONALE_MAX_LEN: usize = 1024;
 
 /// Longest confidence token the engine carries. The presets take a STRING
 /// because policy documents phrase confidence in words (`high`, `medium`), not
 /// in a calibrated float the engine would have to pretend to trust.
-pub(crate) const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
+const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
 
 /// Largest model answer the engine will DESERIALIZE, in bytes.
 ///
@@ -124,7 +124,7 @@ pub(crate) const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
 /// is a broken one.
 ///
 /// [`POLICY_PATTERN_ID_MAX_LEN`]: super::pattern::POLICY_PATTERN_ID_MAX_LEN
-pub(crate) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_IDS_PARSE_MAX
+pub(super) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_IDS_PARSE_MAX
     * (super::pattern::POLICY_PATTERN_ID_MAX_LEN + 4)
     + POLICY_RATIONALE_MAX_LEN
     + POLICY_CONFIDENCE_MAX_LEN
@@ -146,7 +146,7 @@ pub(crate) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_
 /// is a case every plane already knows how to handle.
 ///
 /// [`POLICY_PATTERN_RULES_MAX`]: super::pattern::POLICY_PATTERN_RULES_MAX
-pub(crate) const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize =
+pub(super) const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize =
     super::pattern::POLICY_PATTERN_RULES_MAX * 10;
 
 #[derive(Debug, Deserialize)]
@@ -174,7 +174,7 @@ struct RationaleWire {
 /// engine terms: the rationale and the confidence word by length, the rule-id
 /// array by count. Downstream this text becomes ledger rows, and the ledger
 /// must not be floodable by an answer.
-pub(crate) fn parse_model_answer(
+pub(super) fn parse_model_answer(
     contract: PolicyOutputContract,
     text: &str,
 ) -> Result<PolicyModelAnswer> {

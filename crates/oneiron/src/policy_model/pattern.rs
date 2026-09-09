@@ -138,7 +138,7 @@ impl PolicyPatternRule {
 /// Why a set of pattern rules was refused. Field and reason are `'static` so a
 /// caller can lift them into its own plane-shaped error without allocating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PatternRuleDefect {
+pub(super) struct PatternRuleDefect {
     pub(crate) field: &'static str,
     pub(crate) reason: &'static str,
 }
@@ -146,12 +146,12 @@ pub(crate) struct PatternRuleDefect {
 /// A compiled, validated rule set. Compilation happens once, where the rules
 /// are registered — never on the hot path, and never on content.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct CompiledPatternRules {
+pub(super) struct CompiledPatternRules {
     rules: Vec<CompiledPatternRule>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CompiledPatternRule {
+pub(super) struct CompiledPatternRule {
     id: String,
     category: String,
     role: PolicyPatternRole,
@@ -171,7 +171,7 @@ impl CompiledPatternRule {
 /// What matching produced: every id that fired, and the one rule whose role
 /// acts.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct PatternEvaluation<'a> {
+pub(super) struct PatternEvaluation<'a> {
     /// Every matched rule id, in rule order. Ids only — the pattern text is
     /// never recorded.
     pub(crate) matched_ids: Vec<&'a str>,
@@ -181,7 +181,7 @@ pub(crate) struct PatternEvaluation<'a> {
 
 impl PatternEvaluation<'_> {
     /// The role that governs this pass, or `None` when nothing matched.
-    pub(crate) fn acting_role(&self) -> Option<PolicyPatternRole> {
+    pub(super) fn acting_role(&self) -> Option<PolicyPatternRole> {
         self.acting.map(CompiledPatternRule::role)
     }
 }
@@ -194,7 +194,7 @@ impl CompiledPatternRules {
     /// longer resolves to a row on this pass — an owner row scoped out of this
     /// world, say — is still MATCHED and still receipted, but it cannot be the
     /// rule that acts, because the row it would act through is not in play.
-    pub(crate) fn evaluate_where<'a>(
+    pub(super) fn evaluate_where<'a>(
         &'a self,
         content: &str,
         acts: &dyn Fn(&CompiledPatternRule) -> bool,
@@ -225,7 +225,7 @@ impl CompiledPatternRules {
 /// `category_ok` is the plane's own vocabulary check — the engine has no
 /// opinion about which labels are meaningful, only that a rule names one its
 /// plane actually publishes.
-pub(crate) fn compile_pattern_rules(
+pub(super) fn compile_pattern_rules(
     rules: &[PolicyPatternRule],
     category_ok: &dyn Fn(&str) -> bool,
 ) -> Result<CompiledPatternRules, PatternRuleDefect> {

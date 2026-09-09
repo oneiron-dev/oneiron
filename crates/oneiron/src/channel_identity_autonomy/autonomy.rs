@@ -459,11 +459,7 @@ impl Vault {
         })
     }
 
-    pub(crate) fn require_autonomy_bound(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        bound: &GrantBound,
-    ) -> Result<()> {
+    fn require_autonomy_bound(&self, txn: &heed::RoTxn<'_>, bound: &GrantBound) -> Result<()> {
         if !self
             .active_standing_consent_grants_in_txn(txn)?
             .iter()

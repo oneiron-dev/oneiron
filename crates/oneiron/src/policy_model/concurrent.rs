@@ -20,7 +20,7 @@ use std::task::Poll;
 
 /// Drives `left` and `right` concurrently within one task and returns both
 /// outputs. Each child is polled until it completes and then left alone.
-pub(crate) async fn join2<L, R>(left: L, right: R) -> (L::Output, R::Output)
+pub(super) async fn join2<L, R>(left: L, right: R) -> (L::Output, R::Output)
 where
     L: Future,
     R: Future,

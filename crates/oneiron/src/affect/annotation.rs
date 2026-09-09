@@ -14,7 +14,7 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::Store;
 const VAD_ANNOTATION_META_KEY_PREFIX: &[u8] = b"vad_ann:";
 const VAD_ANNOTATION_META_KEY_LEN: usize = VAD_ANNOTATION_META_KEY_PREFIX.len() + 1 + ENTITY_ID_LEN;
-pub(crate) const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
+pub(super) const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
 const VAD_ANNOTATION_CLAIM_ID_DOMAIN: &[u8] = b"oneiron:vad-annotation-claim:v1";
 const VAD_KEY_VALENCE: &str = "valence";
 const VAD_KEY_AROUSAL: &str = "arousal";
@@ -44,7 +44,7 @@ pub(crate) fn vad_annotation_claim_id(entity_type: u8, id: &EntityId) -> Result<
     EntityId::from_bytes(bytes)
         .map_err(|_| Error::InvariantViolation("VAD annotation claim id derivation failed"))
 }
-pub(crate) fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
+fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
     Value::Map(vec![
         (
             Value::from(VAD_KEY_VALENCE),
@@ -68,7 +68,7 @@ pub(crate) fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
         ),
     ])
 }
-pub(crate) fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotation) -> ClaimBody {
+pub(super) fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotation) -> ClaimBody {
     let mut body = ClaimBody::new(
         VAD_ANNOTATION_CLAIM_PREDICATE,
         ClaimSubject::Entity(*id),
@@ -85,7 +85,7 @@ pub(crate) fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotatio
     body.valid_to = Some(annotation.annotated_at);
     body
 }
-pub(crate) fn decode_vad_annotation_claim_body_if_present(raw: &[u8]) -> Result<Option<ClaimBody>> {
+pub(super) fn decode_vad_annotation_claim_body_if_present(raw: &[u8]) -> Result<Option<ClaimBody>> {
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     if body.is_empty() {
         return Ok(None);
@@ -113,7 +113,7 @@ fn vad_annotation_f32(value: &Value) -> Result<f32> {
         _ => Err(Error::CorruptedIndex("VAD annotation claim")),
     }
 }
-pub(crate) fn vad_annotation_from_value(value: &Value) -> Result<VadAnnotation> {
+pub(super) fn vad_annotation_from_value(value: &Value) -> Result<VadAnnotation> {
     let Value::Map(entries) = value else {
         return Err(Error::CorruptedIndex("VAD annotation claim"));
     };

@@ -189,7 +189,7 @@ impl PolicyClassifyPrompt {
 }
 
 /// Builds the request for a plane: its document, the candidate, its rows.
-pub(crate) fn render_classify_prompt(
+pub(super) fn render_classify_prompt(
     request: &PolicyClassifyRequest,
     policy_document: &str,
     rubric_rows: Vec<PolicyRubricRow>,
@@ -205,13 +205,13 @@ pub(crate) fn render_classify_prompt(
 
 /// Which plane's vocabulary an answer is read against. There is no third arm,
 /// and no arm that means "either" — an answer belongs to exactly one plane.
-pub(crate) enum AnswerPlane<'a> {
+pub(super) enum AnswerPlane<'a> {
     Owner,
     Hosted(&'a HostedLegalPolicy),
 }
 
 /// A model answer resolved to a decision and the row it is attributed to.
-pub(crate) struct ResolvedAnswer {
+pub(super) struct ResolvedAnswer {
     pub(crate) decision: PolicyClassifyDecision,
     pub(crate) category: PolicyVerdictCategory,
     /// The answer, with `rule_ids` already deduped and cut down to the rules
@@ -241,7 +241,7 @@ pub(crate) struct ResolvedAnswer {
 /// the engine had checked it. Duplicates collapse. What that leaves is bounded
 /// by the plane's own row count, which is the bound that used to be a fixed
 /// number pulled out of the air.
-pub(crate) fn resolve_policy_model_response(
+pub(super) fn resolve_policy_model_response(
     response: &LlmResponse,
     prompt: &PolicyClassifyPrompt,
     plane: &AnswerPlane<'_>,

@@ -54,7 +54,7 @@ pub(super) fn disclosure_tier_a_meta_key(id: &EntityId) -> Vec<u8> {
     key
 }
 
-pub(crate) fn disclosure_tier_a_marked_in(
+pub(super) fn disclosure_tier_a_marked_in(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,

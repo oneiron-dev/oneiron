@@ -176,7 +176,7 @@
      "path": "src/affect/annotation.rs",
      "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10
      }
     },
     {
@@ -219,7 +219,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 18,
       "struct": 3
@@ -232,7 +232,7 @@
      "path": "src/affect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "mod": 1,
       "re-export": 3
      }
@@ -248,7 +248,7 @@
      "purpose": "Affect trigger claim codec: encoders, strict and lenient decoders, and shared scalar validators",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 15,
       "struct": 2
      }
@@ -3631,7 +3631,7 @@
      "path": "src/calendar/claims/mod.rs",
      "purpose": "The `calendar.*` claim family (CAL-00)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 3
      }
     },
@@ -4317,7 +4317,7 @@
      "path": "src/campaign/claims/mod.rs",
      "purpose": "The CRM pack's claim families (CA-01)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 3
      }
     },
@@ -5060,7 +5060,7 @@
      "path": "src/channel_identity_autonomy/autonomy.rs",
      "purpose": "Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -5102,7 +5102,6 @@
      "path": "src/channel_identity_autonomy/mod.rs",
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation",
      "surface": {
-      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -5593,7 +5592,7 @@
      "purpose": "The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled…",
      "surface": {
       "const": 1,
-      "crate-vis": 29,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 1,
       "struct": 3
@@ -5670,7 +5669,7 @@
      "purpose": "Predicate vocabulary and the D17 grammar gate: namespace constants, the crate-owned well-known predicate…",
      "surface": {
       "const": 13,
-      "crate-vis": 7,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2
      }
@@ -7268,7 +7267,7 @@
      "path": "src/commitment_wake/wake_fire.rs",
      "purpose": "Atomic fire-once door from the due index to the Dreamer queue",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 1
      }
@@ -7912,7 +7911,7 @@
      "path": "src/consent/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
      }
     },
     {
@@ -9402,7 +9401,7 @@
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 3
      }
     },
@@ -11340,7 +11339,6 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 2,
       "re-export": 2
      }
     },
@@ -12855,7 +12853,7 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 10
      }
     },
@@ -13172,7 +13170,7 @@
      "path": "src/hnsw/mod.rs",
      "purpose": "HNSW graph index over the persisted neighbor graph",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 11
      }
     },
     {
@@ -17513,7 +17511,7 @@
      "path": "src/policy_model/classify.rs",
      "purpose": "Vault-egress classification, which is the owner plane and nothing else",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 8,
       "fn": 8
      }
     },
@@ -17537,7 +17535,7 @@
      "path": "src/policy_model/contract.rs",
      "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader that turns…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -17556,7 +17554,7 @@
      "path": "src/policy_model/enforce.rs",
      "purpose": "Acting on a verdict",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -17579,7 +17577,7 @@
      "path": "src/policy_model/notice.rs",
      "purpose": "The one notice a policy verdict emits — and the one audit row it files",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 16
      }
     },
     {
@@ -17613,7 +17611,7 @@
      "purpose": "The two policy planes, the documents they enforce, and the rows they contribute",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 3,
       "struct": 3
@@ -23030,7 +23028,7 @@
      "path": "src/vault/edges.rs",
      "purpose": "Vault edge writes, adjacency queries and graph traversal",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 13
      }
     },
