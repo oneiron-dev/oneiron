@@ -28,10 +28,9 @@ mod reverse;
 pub mod test_hooks;
 mod tombstones;
 
-pub(crate) use self::egress::{
-    export_history_free_window_snapshot, export_scrubbed_window_snapshot,
-    window_packing_excludes_entity,
-};
+pub(crate) use self::egress::export_history_free_window_snapshot;
+pub(in crate::sync) use self::egress::export_scrubbed_window_snapshot;
+use self::egress::window_packing_excludes_entity;
 pub use self::egress::{
     export_window_updates_since, history_free_window_required, replay_pending_mirrors,
     require_history_free_window,
@@ -280,7 +279,7 @@ pub(crate) fn write_window_svf_in_txn(
 /// `u:w:{key}:` family is a typed error and nothing is deleted — the
 /// prune must not be able to touch `q:`/`d:`/`h:`/`dt:` rows or another
 /// window's updates.
-pub(crate) fn prune_subsumed_window_updates_in_txn(
+fn prune_subsumed_window_updates_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &WindowKey,

@@ -77,7 +77,7 @@ pub use self::scope::{RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHin
 pub use self::version::{serving_model_version, set_serving_model};
 pub use self::write::record_judged_amendment;
 
-pub(crate) use self::write::folded_model_version_in_txn;
+pub(in crate::edit_distance) use self::write::folded_model_version_in_txn;
 
 #[cfg(test)]
 mod tests;

@@ -68,12 +68,12 @@ fn run_lmdb_open_hook(slot: &LmdbOpenHookSlot, path: &Path) {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn arm_before_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
+pub(super) fn arm_before_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
     arm_lmdb_open_hook(&BEFORE_LMDB_OPEN, path, hook);
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn run_before_lmdb_open(path: &Path) {
+pub(super) fn run_before_lmdb_open(path: &Path) {
     run_lmdb_open_hook(&BEFORE_LMDB_OPEN, path);
 }
 
@@ -81,7 +81,7 @@ pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send
     arm_lmdb_open_hook(&AFTER_LMDB_OPEN, path, hook);
 }
 
-pub(crate) fn run_after_lmdb_open(path: &Path) {
+pub(super) fn run_after_lmdb_open(path: &Path) {
     run_lmdb_open_hook(&AFTER_LMDB_OPEN, path);
 }
 
@@ -89,7 +89,7 @@ pub(crate) fn fail_initial_seed_commit_for(path: PathBuf) {
     FAIL_INITIAL_SEED_COMMIT.with(|armed| *armed.borrow_mut() = Some(path));
 }
 
-pub(crate) fn take_fail_initial_seed_commit_for(path: &Path) -> bool {
+pub(super) fn take_fail_initial_seed_commit_for(path: &Path) -> bool {
     FAIL_INITIAL_SEED_COMMIT.with(|armed| {
         let mut armed = armed.borrow_mut();
         if armed.as_ref().is_some_and(|armed_path| armed_path == path) {
@@ -107,7 +107,7 @@ pub(crate) fn fail_next_retrieval_run_write_for(path: PathBuf) {
     });
 }
 
-pub(crate) fn take_fail_next_retrieval_run_write(path: &Path) -> bool {
+pub(super) fn take_fail_next_retrieval_run_write(path: &Path) -> bool {
     FAIL_NEXT_RETRIEVAL_RUN_WRITE.with(|armed| {
         let mut armed = armed.borrow_mut();
         if armed.as_ref().is_some_and(|armed_path| armed_path == path) {

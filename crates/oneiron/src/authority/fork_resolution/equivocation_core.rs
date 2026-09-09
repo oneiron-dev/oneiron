@@ -15,7 +15,7 @@ use super::restore_rank::{compare_fork_rank, equivocation_rank_state};
     clippy::large_enum_variant,
     reason = "transient per-group resolution value; one instance lives on the stack at a time"
 )]
-pub(crate) enum EquivocationResolution {
+pub(in crate::authority) enum EquivocationResolution {
     Resolved {
         winner: Option<(AuthorityEntryHash, Box<FoldState>)>,
         fork: Option<AuthorityFork>,
@@ -29,13 +29,13 @@ pub(crate) enum EquivocationResolution {
     clippy::large_enum_variant,
     reason = "transient per-entry fold value; one instance lives on the stack at a time"
 )]
-pub(crate) enum EntryFold {
+pub(in crate::authority) enum EntryFold {
     Ready(FoldState),
     Waiting,
     Invalid(AuthorityFoldIssue),
 }
 
-pub(crate) fn resolve_equivocation_group(
+pub(in crate::authority) fn resolve_equivocation_group(
     group_key: &(AuthorityKey, u64),
     group: &BTreeSet<AuthorityEntryHash>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -150,7 +150,7 @@ pub(crate) fn resolve_equivocation_group(
     }
 }
 
-pub(crate) fn reconcile_reported_authority_forks(
+pub(in crate::authority) fn reconcile_reported_authority_forks(
     reported: &mut BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     authority_fork_vault_ids: &BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
     resolved_vault_ids: &mut BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
@@ -213,7 +213,7 @@ pub(crate) fn reconcile_reported_authority_forks(
     }
 }
 
-pub(crate) fn build_fork_alarms(forks: &[AuthorityFork]) -> Vec<AuthorityForkAlarm> {
+pub(in crate::authority) fn build_fork_alarms(forks: &[AuthorityFork]) -> Vec<AuthorityForkAlarm> {
     forks
         .iter()
         .map(|fork| AuthorityForkAlarm {

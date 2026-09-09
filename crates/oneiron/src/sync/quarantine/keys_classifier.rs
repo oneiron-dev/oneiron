@@ -10,20 +10,20 @@ use crate::error::{Error, ErrorKind, Result};
 /// Distinct from `q:` (sync replay), `e:` (embed jobs), `h:` (ARCH-0038
 /// hard-erase sweeps) and `m:` (metadata counters) — precedent: the `h:`
 /// reservation in contracts.ts `hardEraseSweepQueue.distinctFrom`.
-pub(crate) const QUARANTINE_PREFIX: &[u8] = b"x:";
+pub(super) const QUARANTINE_PREFIX: &[u8] = b"x:";
 
 /// Metadata key storing the last allocated quarantine sequence number
 /// (u64 LE, the existing `m:` counter pattern).
-pub(crate) const LAST_QUARANTINE_SEQ_KEY: &[u8] = b"m:last_quarantine_seq";
+pub(in crate::sync) const LAST_QUARANTINE_SEQ_KEY: &[u8] = b"m:last_quarantine_seq";
 
 /// Metadata key storing the cumulative quarantine eviction counter (u64 LE).
 /// An eviction is itself doctor-visible through this counter.
-pub(crate) const QUARANTINE_EVICTIONS_KEY: &[u8] = b"m:quarantine_evictions";
+pub(in crate::sync) const QUARANTINE_EVICTIONS_KEY: &[u8] = b"m:quarantine_evictions";
 
 /// Metadata key storing the cumulative count of rejected rows accounted by
 /// COUNT ONLY — rows past [`MAX_QUARANTINE_ROWS_PER_PASS`] in a single
 /// terminal batch, which get no `x:` row of their own (u64 LE).
-pub(crate) const QUARANTINE_BATCH_DROPS_KEY: &[u8] = b"m:quarantine_batch_drops";
+pub(super) const QUARANTINE_BATCH_DROPS_KEY: &[u8] = b"m:quarantine_batch_drops";
 
 /// Retention cap: maximum number of persisted quarantine rows.
 pub const MAX_QUARANTINE_ROWS: usize = 4096;
@@ -118,7 +118,7 @@ pub(crate) fn crdt_key_metadata(key: &str) -> (u64, u32) {
 
 /// Typed error name for a quarantine record (`ErrorKind` debug name).
 #[must_use]
-pub(crate) fn reason_code_for(error: &Error) -> String {
+pub(in crate::sync) fn reason_code_for(error: &Error) -> String {
     format!("{:?}", error.kind())
 }
 
@@ -288,7 +288,7 @@ fn is_remote_secret_scan_rejection(error: &Error) -> bool {
 // ─── Key encoding ────────────────────────────────────────────────────────────
 
 /// Encodes a quarantine key: `x:{seq:8BE}` (10 bytes).
-pub(crate) fn encode_quarantine_key(seq: u64) -> [u8; 10] {
+pub(in crate::sync) fn encode_quarantine_key(seq: u64) -> [u8; 10] {
     let mut key = [0u8; 10];
     key[0..2].copy_from_slice(QUARANTINE_PREFIX);
     key[2..10].copy_from_slice(&seq.to_be_bytes());
@@ -296,7 +296,7 @@ pub(crate) fn encode_quarantine_key(seq: u64) -> [u8; 10] {
 }
 
 /// Decodes the sequence number from a quarantine key.
-pub(crate) fn decode_quarantine_seq(key: &[u8]) -> Option<u64> {
+pub(super) fn decode_quarantine_seq(key: &[u8]) -> Option<u64> {
     let seq = key.strip_prefix(QUARANTINE_PREFIX)?;
     Some(u64::from_be_bytes(seq.try_into().ok()?))
 }

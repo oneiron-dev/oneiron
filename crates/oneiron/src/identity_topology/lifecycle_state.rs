@@ -126,8 +126,7 @@ pub fn merge_lifecycle_states(
 /// standing. That direction is the safe one — a stale-SET marker costs one
 /// fold that returns the empty set, while a stale-CLEAR marker would hide a
 /// live shell. Correctness never depends on it, only cost.
-pub(crate) const IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY: &[u8] =
-    b"m:identity_topology_zero_head_seen";
+const IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY: &[u8] = b"m:identity_topology_zero_head_seen";
 
 /// Records that a zero-head split exists, arming the witness fold.
 pub(crate) fn note_zero_head_split_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
@@ -146,7 +145,7 @@ pub(crate) fn note_zero_head_split_in_txn(store: &Store, wtxn: &mut heed::RwTxn<
 
 /// [`zero_head_split_shells_for_store_in_txn`] behind the marker: skips the
 /// fold outright on a vault that has never recorded a zero-head split.
-pub(crate) fn zero_head_split_shells_if_any_for_store_in_txn(
+fn zero_head_split_shells_if_any_for_store_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<BTreeSet<EntityId>> {

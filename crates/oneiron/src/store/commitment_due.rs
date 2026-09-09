@@ -45,10 +45,10 @@ use super::*;
 /// silent read.
 pub(crate) const COMMITMENT_DUE_INDEX_VERSION: u8 = 1;
 
-pub(crate) const COMMITMENT_DUE_KEY_PREFIX: &[u8] = b"commitment_due:v1:";
-pub(crate) const COMMITMENT_DUE_REVERSE_PREFIX: &[u8] = b"commitment_due_rev:v1:";
-pub(crate) const COMMITMENT_DUE_SERIES_PROJECT_PREFIX: &[u8] = b"commitment_series_project:v1:";
-pub(crate) const COMMITMENT_DUE_SERIES_INSTANCE_PREFIX: &[u8] = b"commitment_series_instance:v1:";
+const COMMITMENT_DUE_KEY_PREFIX: &[u8] = b"commitment_due:v1:";
+const COMMITMENT_DUE_REVERSE_PREFIX: &[u8] = b"commitment_due_rev:v1:";
+const COMMITMENT_DUE_SERIES_PROJECT_PREFIX: &[u8] = b"commitment_series_project:v1:";
+const COMMITMENT_DUE_SERIES_INSTANCE_PREFIX: &[u8] = b"commitment_series_instance:v1:";
 
 /// `at(8) ‖ phase(1) ‖ series(16) ‖ instance_or_zero(16)`.
 const PRIMARY_KEY_BODY_LEN: usize = 8 + 1 + 16 + 16;
@@ -265,7 +265,7 @@ impl Store {
 
     /// The row for one instance in one phase, resolved through the reverse key.
     /// A reverse key whose primary row is gone is corruption, not absence.
-    pub(crate) fn commitment_due_row_for_in_txn(
+    fn commitment_due_row_for_in_txn(
         &self,
         txn: &RoTxn<'_>,
         instance_ref: &EntityId,
@@ -288,7 +288,7 @@ impl Store {
     }
 
     /// The pending Project row for a series, if it still has one.
-    pub(crate) fn commitment_due_series_project_in_txn(
+    fn commitment_due_series_project_in_txn(
         &self,
         txn: &RoTxn<'_>,
         series_ref: &EntityId,

@@ -24,7 +24,7 @@ use crate::store::Store;
 /// short_id_prefix, zone, pack)`.
 pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_PREFIX: &[u8] = b"kind_reg:";
 
-pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_LEN: usize = 10;
+const STRUCTURAL_KIND_REGISTRY_KEY_LEN: usize = 10;
 
 const _: () =
     assert!(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len() + 1 == STRUCTURAL_KIND_REGISTRY_KEY_LEN);

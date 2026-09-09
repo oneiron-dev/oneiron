@@ -64,7 +64,7 @@ pub(crate) fn scrub_window_updates_in_txn(
 /// Window-granular by design: Loro update bytes are opaque, so per-entity
 /// filtering is impossible; over-drop is healed by full-resync, leak is not
 /// healable.
-pub(crate) fn scrub_receiver_outbox_on_remote_hard_delete_in_txn(
+pub(in crate::sync) fn scrub_receiver_outbox_on_remote_hard_delete_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,

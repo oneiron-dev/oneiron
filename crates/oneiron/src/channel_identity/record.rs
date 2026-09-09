@@ -127,7 +127,7 @@ impl ChannelIdentity {
     ///
     /// [`Error::InvalidChannelIdentityBody`] when the proof does not cover the
     /// triple, or when the row fails the record's bounds checks.
-    pub(crate) fn requested_delegated(
+    pub(super) fn requested_delegated(
         channel: impl AsRef<str>,
         address_or_handle: impl AsRef<str>,
         binding: ChannelIdentityBinding,
