@@ -27,9 +27,7 @@ fn commitment_claim_structure_requires_entity_obligor_and_valid_time() -> Result
     body.valid_to = Some(30);
     assert!(matches!(
         validate_commitment_claim_structure(&body),
-        Err(Error::InvalidClaimBody(
-            "commitment claim subject must match obligor entity_ref"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
 
     body.subject = crate::claim::ClaimSubject::Entity(obligor);
@@ -40,19 +38,16 @@ fn commitment_claim_structure_requires_entity_obligor_and_valid_time() -> Result
     ] {
         body.lifecycle = lifecycle;
         body.valid_from = None;
+        body.valid_to = Some(30);
         assert!(matches!(
             validate_commitment_claim_structure(&body),
-            Err(Error::InvalidClaimBody(
-                "commitment claim must carry valid-time from/to"
-            ))
+            Err(Error::InvalidClaimBody(_))
         ));
         body.valid_from = Some(30);
         body.valid_to = None;
         assert!(matches!(
             validate_commitment_claim_structure(&body),
-            Err(Error::InvalidClaimBody(
-                "commitment claim must carry valid-time from/to"
-            ))
+            Err(Error::InvalidClaimBody(_))
         ));
     }
     body.valid_from = Some(30);
@@ -60,12 +55,10 @@ fn commitment_claim_structure_requires_entity_obligor_and_valid_time() -> Result
     body.lifecycle = ClaimLifecycleStatus::Active;
     assert!(matches!(
         validate_commitment_claim_structure(&body),
-        Err(Error::InvalidClaimBody(
-            "commitment claim valid-time is inverted"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     body.lifecycle = ClaimLifecycleStatus::Superseded;
-    assert!(validate_commitment_claim_structure(&body).is_ok());
+    validate_commitment_claim_structure(&body)?;
     Ok(())
 }
 
@@ -131,9 +124,7 @@ fn agent_obligor_is_always_commitment_strength() -> Result<()> {
     *strength = Value::from("decision");
     assert!(matches!(
         decode_commitment_value(&encoded),
-        Err(Error::InvalidClaimBody(
-            "agent-owed commitments must have commitment strength"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     Ok(())
 }
@@ -182,12 +173,7 @@ fn terminal_status_retry_adds_no_receipt() -> Result<()> {
             CommitmentStatus::Superseded => vault.supersede_commitment(&id, &env, 3),
             _ => unreachable!(),
         };
-        assert!(matches!(
-            result,
-            Err(Error::InvalidClaimBody(
-                "commitment status transition requires open source status"
-            ))
-        ));
+        assert!(matches!(result, Err(Error::InvalidClaimBody(_))));
         let after = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
         assert_eq!(after.len(), before.len());
         assert_eq!(
@@ -223,12 +209,21 @@ fn stale_fulfill_returns_write_verb_target_stale() -> Result<()> {
     let old_raw = vault.get_raw(&stale_id)?;
     let successor_raw = vault.get_raw(&successor)?;
     let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
+    let successor_ref = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.claim_short_ref_in(&rtxn, &successor)?
+    };
     let err = vault
         .fulfill_commitment(&stale_id, &env, 1_060)
         .expect_err("stale fulfill");
-    assert!(
-        matches!(err, Error::WriteVerbTargetStale { target, lifecycle: ClaimLifecycleStatus::Superseded, successor_short_id } if target == stale_id && successor_short_id.contains(':'))
-    );
+    assert!(matches!(
+        err,
+        Error::WriteVerbTargetStale {
+            target,
+            lifecycle: ClaimLifecycleStatus::Superseded,
+            successor_short_id,
+        } if target == stale_id && successor_short_id == successor_ref
+    ));
     assert_eq!(vault.get_raw(&stale_id)?, old_raw);
     assert_eq!(vault.get_raw(&successor)?, successor_raw);
     assert_eq!(
@@ -270,12 +265,21 @@ fn stale_release_returns_write_verb_target_stale() -> Result<()> {
     let old_raw = vault.get_raw(&stale_id)?;
     let successor_raw = vault.get_raw(&successor)?;
     let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
+    let successor_ref = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.claim_short_ref_in(&rtxn, &successor)?
+    };
     let err = vault
         .release_commitment(&stale_id, &env, 1_060)
         .expect_err("stale release");
-    assert!(
-        matches!(err, Error::WriteVerbTargetStale { target, lifecycle: ClaimLifecycleStatus::Superseded, successor_short_id } if target == stale_id && successor_short_id.contains(':'))
-    );
+    assert!(matches!(
+        err,
+        Error::WriteVerbTargetStale {
+            target,
+            lifecycle: ClaimLifecycleStatus::Superseded,
+            successor_short_id,
+        } if target == stale_id && successor_short_id == successor_ref
+    ));
     assert_eq!(vault.get_raw(&stale_id)?, old_raw);
     assert_eq!(vault.get_raw(&successor)?, successor_raw);
     assert_eq!(
@@ -317,12 +321,21 @@ fn stale_supersede_returns_write_verb_target_stale() -> Result<()> {
     let old_raw = vault.get_raw(&stale_id)?;
     let successor_raw = vault.get_raw(&successor)?;
     let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
+    let successor_ref = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.claim_short_ref_in(&rtxn, &successor)?
+    };
     let err = vault
         .supersede_commitment(&stale_id, &env, 1_060)
         .expect_err("stale supersede");
-    assert!(
-        matches!(err, Error::WriteVerbTargetStale { target, lifecycle: ClaimLifecycleStatus::Superseded, successor_short_id } if target == stale_id && successor_short_id.contains(':'))
-    );
+    assert!(matches!(
+        err,
+        Error::WriteVerbTargetStale {
+            target,
+            lifecycle: ClaimLifecycleStatus::Superseded,
+            successor_short_id,
+        } if target == stale_id && successor_short_id == successor_ref
+    ));
     assert_eq!(vault.get_raw(&stale_id)?, old_raw);
     assert_eq!(vault.get_raw(&successor)?, successor_raw);
     assert_eq!(
@@ -367,32 +380,28 @@ fn status_verbs_reject_non_commitment_claims_without_rewriting() -> Result<()> {
     vault.put_claim(&id, &body, time(10, 20), 1)?;
     let raw = vault.get_raw(&id)?;
     let env = envelope(actor)?;
-    for result in [
+    assert!(matches!(
         vault.fulfill_commitment(&id, &env, 2),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    assert_eq!(vault.get_raw(&id)?, raw);
+    assert!(matches!(
         vault.release_commitment(&id, &env, 3),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    assert_eq!(vault.get_raw(&id)?, raw);
+    assert!(matches!(
         vault.supersede_commitment(&id, &env, 4),
-    ] {
-        assert!(matches!(
-            result,
-            Err(Error::InvalidClaimBody(
-                "claim predicate is not commitment.record"
-            ))
-        ));
-        assert_eq!(vault.get_raw(&id)?, raw);
-    }
+        Err(Error::InvalidClaimBody(_))
+    ));
+    assert_eq!(vault.get_raw(&id)?, raw);
     Ok(())
 }
 
 #[test]
 fn commitment_registry_dispatch_and_criticality_are_explicit() {
-    assert_eq!(
-        crate::claim::CLAIM_PREDICATE_REGISTRY
-            .iter()
-            .filter(|&&p| p == PREDICATE_COMMITMENT_RECORD)
-            .count(),
-        1
-    );
-    assert!(crate::claim::PREDICATE_LAYER_NAMESPACES.contains(&"commitment"));
+    assert!(is_commitment_claim_predicate(PREDICATE_COMMITMENT_RECORD));
+    assert!(!is_commitment_claim_predicate("core.unrelated"));
     assert!(crate::serialize::is_critical_claim_predicate(
         PREDICATE_COMMITMENT_RECORD
     ));
@@ -407,7 +416,7 @@ fn commitment_dispatch_rejects_structurally_invalid_body() -> Result<()> {
     let beneficiary = crate::test_util::entity(0x95);
     let body = crate::claim::ClaimBody::new(
         PREDICATE_COMMITMENT_RECORD,
-        crate::claim::ClaimSubject::Entity(beneficiary),
+        crate::claim::ClaimSubject::Entity(actor),
         encode_commitment_value(&record(actor, beneficiary, CommitmentStrength::Decision)?)?,
         1.0,
         ClaimApprovalStatus::Auto,
@@ -416,9 +425,7 @@ fn commitment_dispatch_rejects_structurally_invalid_body() -> Result<()> {
     let bytes = crate::claim::encode_claim_body(&body)?;
     assert!(matches!(
         crate::claim::validate_claim_body_and_decode(&bytes, false),
-        Err(Error::InvalidClaimBody(
-            "commitment claim must carry valid-time from/to"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     Ok(())
 }

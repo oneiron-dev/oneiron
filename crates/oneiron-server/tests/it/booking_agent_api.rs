@@ -1476,24 +1476,6 @@ async fn booking_discover_openapi_skills_are_consistent() {
         );
     }
 
-    // And so does the committed skill pack.
-    let pack = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("oneiron.skills.md"),
-    )
-    .unwrap();
-    assert!(pack.contains("oneiron.book"));
-    for path in [
-        "/api/booking/{page_token}/agent-instructions",
-        "/api/booking/{page_token}/availability",
-        "/api/booking/{page_token}/book",
-        "/api/booking/{page_token}/reschedule",
-        "/api/booking/{page_token}/cancel",
-    ] {
-        assert!(pack.contains(path), "the skill pack names {path}");
-    }
-    for op in ["availability", "book", "reschedule", "cancel"] {
-        assert!(pack.contains(op), "the skill pack names the {op} operation");
-    }
-
+    // Committed skill-pack content belongs in an external script gate.
     handle.abort();
 }

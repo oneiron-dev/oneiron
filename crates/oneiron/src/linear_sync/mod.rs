@@ -92,8 +92,6 @@ mod tests;
 // every linear-sync-internal item the tests name bare. After the directory split
 // the seam re-imports both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::{engine::*, model::*};
-#[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use std::collections::BTreeMap;

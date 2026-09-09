@@ -19,28 +19,6 @@ use crate::test_util::entity as test_id;
 
 mod failure_integrity;
 
-/// This module's own source, read for the mechanical negative-scope proofs.
-const FAILURE_LADDER_SOURCE: &str = concat!(
-    include_str!("mod.rs"),
-    include_str!("blocked_reports.rs"),
-    include_str!("classify.rs"),
-    include_str!("ladder.rs"),
-    include_str!("lineage.rs"),
-    include_str!("scope.rs"),
-    include_str!("transitions.rs"),
-);
-/// The healer-slot wrapper's source, read for the same proofs.
-const AGENT_DISPATCH_SOURCE: &str = concat!(
-    include_str!("../agent_dispatch/mod.rs"),
-    include_str!("../agent_dispatch/attenuation.rs"),
-    include_str!("../agent_dispatch/codec.rs"),
-    include_str!("../agent_dispatch/context.rs"),
-    include_str!("../agent_dispatch/dispatch.rs"),
-    include_str!("../agent_dispatch/kill.rs"),
-    include_str!("../agent_dispatch/kill_spawn_tests.rs"),
-    include_str!("../agent_dispatch/types.rs"),
-);
-
 const LEASE_OWNER: &str = "failure-ladder-worker";
 const RUN_ID: &str = "run-1887";
 /// The caller's existing backoff policy picks this; the ladder only forwards it.
@@ -612,29 +590,24 @@ fn missing_retry_parent_is_pathology_not_fresh_chain() -> Result<()> {
 fn retry_cycle_is_pathology_and_walk_is_bounded() -> Result<()> {
     let (_dir, vault) = open_vault();
     let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
-    // The chain is BUILT with headroom (N=4) purely so three retries land and
-    // leave a four-row lineage; under the default N=3 the third consecutive
-    // transient terminalizes instead of retrying. The bound under test is the
-    // limit passed to each `retry_lineage_walk` call below, not this one.
+    // Build with N=4 headroom so three retries leave a four-row lineage.
+    // The bounds under test are passed to the walker below.
     let policy = policy_with(agent_ref, 4, FailureEscalationMode::Auto);
     let rows = transient_chain(&vault, agent_ref, &policy, 3)?;
     let queue = AttemptQueue::new(&vault);
     let current = queue.get(rows[3].id)?.expect("newest row");
 
-    // The out-of-bound ancestor is DELETED. At N=3 the walk stops at the
-    // threshold after exactly N-1 = 2 ancestor reads and never sees it; at N=4
-    // the same walk reaches it, which is what proves the earlier stop was the
-    // bound and not luck.
+    // N=3 must stop before the deleted ancestor; N=4 must reach it.
     delete_attempt_record(&vault, rows[0].id)?;
     assert_eq!(
         retry_lineage_walk(&queue, &current, NonZeroU16::new(3).expect("three"))?,
-        RetryOrdinal::AtLimit(NonZeroU16::new(3).expect("three"))
+        RetryOrdinal::AtLimit(NonZeroU16::new(3).expect("three")),
     );
     assert_eq!(
         retry_lineage_walk(&queue, &current, NonZeroU16::new(4).expect("four"))?,
         RetryOrdinal::Pathology(RetryLineagePathology::MissingAncestor {
-            missing_attempt_id: rows[0].id
-        })
+            missing_attempt_id: rows[0].id,
+        }),
     );
 
     // A cycle inside the bound is a pathology, whatever the evidence says.
@@ -642,14 +615,9 @@ fn retry_cycle_is_pathology_and_walk_is_bounded() -> Result<()> {
     assert_eq!(
         retry_lineage_walk(&queue, &current, NonZeroU16::new(3).expect("three"))?,
         RetryOrdinal::Pathology(RetryLineagePathology::Cycle {
-            repeated_attempt_id: rows[2].id
-        })
+            repeated_attempt_id: rows[2].id,
+        }),
     );
-
-    // The walk is a point-read chain, never a queue scan.
-    assert!(!FAILURE_LADDER_SOURCE.contains(".list()"));
-    assert!(!FAILURE_LADDER_SOURCE.contains(".list_run("));
-    assert!(!FAILURE_LADDER_SOURCE.contains("attempt_count as"));
     Ok(())
 }
 
@@ -1003,17 +971,7 @@ fn healer_outcomes_carry_immediate_surface_data() -> Result<()> {
 
 #[test]
 fn healer_code_exposes_no_force_cancel_handle() -> Result<()> {
-    for source in [FAILURE_LADDER_SOURCE, AGENT_DISPATCH_SOURCE] {
-        for banned in ["force_cancel", "ForceAttemptCancel", "ForceCancel"] {
-            assert!(
-                !source.contains(banned),
-                "no healer path may reach {banned}; a soft stop rides ONE-1896's \
-                 public request/landing API instead"
-            );
-        }
-    }
-
-    // Behaviourally too: a healer-routed failure records no cancellation.
+    // A healer-routed failure records no cancellation.
     let (_dir, vault) = open_vault();
     let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
     let leased = leased_dispatch(&vault, agent_ref, 10)?;

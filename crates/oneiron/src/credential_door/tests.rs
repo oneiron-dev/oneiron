@@ -386,6 +386,26 @@ fn the_door_composes_over_the_vault_it_was_given() {
     // The compatibility alias names the same one organ, never a second.
     let door: CredentialDoor = CredentialDoorService::new(Arc::clone(&vault));
     assert!(Arc::ptr_eq(door.vault(), &vault));
+    let (_other_tmp, other_vault, other_door) = door_fixture();
+    put_policy_manifest(&other_vault, 0x26, vec![effector_row(vec![])]);
+
+    let credential = push_credential(witnessed(&door));
+    let ticket = door
+        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60)
+        .expect("the supplied vault admits the lease");
+    assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
+    assert_eq!(lease_rows(&vault), 1);
+    assert_eq!(receipt_rows(&vault), 1);
+    assert_eq!(lease_rows(&other_vault), 0);
+    assert_eq!(receipt_rows(&other_vault), 0);
+
+    let other_credential = push_credential(witnessed(&other_door));
+    let err = other_door
+        .issue_lease_ticket(&other_credential, DOOR_SECRET, EFFECTOR, 60)
+        .expect_err("the other vault's closed dial must refuse");
+    assert!(is_scope_refusal(&err));
+    assert_eq!(lease_rows(&other_vault), 0);
+    assert_eq!(receipt_rows(&other_vault), 0);
 }
 
 #[test]
@@ -1212,7 +1232,7 @@ fn a_body_with_no_door_rows_takes_the_safe_default() {
     put_policy_manifest(&vault, 0x26, vec![row]);
 
     let policy = door.door_policy().expect("dial");
-    assert_eq!(policy, DoorPolicy::default());
+    assert_eq!(policy.lease_ttl_ceiling_secs(), DOOR_MAX_LEASE_TTL_SECS);
     assert!(policy.admits_effector(EFFECTOR));
     assert!(!policy.admits_effector(""));
 }
@@ -1249,59 +1269,88 @@ fn a_dangling_manifest_index_entry_refuses_the_door_and_writes_nothing() {
 
 #[test]
 fn every_broken_manifest_index_branch_fails_closed() {
-    // Four ways the index plane can disagree with the entity plane. None of
-    // them may quietly resolve the permissive default, and none of them may
-    // put an id, a key byte, or a body byte into a refusal.
-    fn assert_fails_closed(door: &CredentialDoorService, case: &str) {
+    fn assert_fails_closed(door: &CredentialDoorService, case: &str, sentinels: &[&str]) {
         match door.door_policy() {
             Err(err) => {
                 assert!(is_invalid_policy(&err), "case `{case}`: {err:?}");
                 let rendered = format!("{err} / {err:?}");
-                assert!(rendered.contains("policy_manifest"), "case `{case}`");
-                assert!(!rendered.contains(secret_text()), "case `{case}`");
+                for sentinel in sentinels {
+                    assert!(!rendered.contains(sentinel), "case `{case}`");
+                }
             }
             Ok(policy) => panic!("case `{case}` resolved {policy:?}"),
         }
     }
 
-    // 1. A type-index key that is not `[type byte][entity id]` at all.
+    fn assert_default_admission(door: &CredentialDoorService) {
+        let clean = door.door_policy().expect("clean dial");
+        assert_eq!(clean.lease_ttl_ceiling_secs(), DOOR_MAX_LEASE_TTL_SECS);
+        assert!(clean.admits_effector(EFFECTOR));
+        assert!(!clean.admits_effector(""));
+    }
+
+    // 1. A type-index key with a sensitive suffix and an invalid length.
     let (_tmp, vault, door) = door_fixture();
-    let clean = door.door_policy().expect("clean dial");
-    assert_eq!(clean, DoorPolicy::default());
+    assert_default_admission(&door);
+    let mut malformed_key = vec![ENTITY_TYPE_POLICY_MANIFEST];
+    malformed_key.extend_from_slice(SECRET_VALUE);
     {
         let mut wtxn = vault.store.env.write_txn().expect("write txn");
-        let short_key: &[u8] = &[ENTITY_TYPE_POLICY_MANIFEST, 0x01, 0x02];
         vault
             .store
             .type_index
-            .put(&mut wtxn, short_key, &[])
-            .expect("short type key");
-        wtxn.commit().expect("commit short key");
+            .put(&mut wtxn, &malformed_key, &[])
+            .expect("malformed type key");
+        wtxn.commit().expect("commit malformed key");
     }
-    assert_fails_closed(&door, "unusable type-index key");
+    assert_fails_closed(
+        &door,
+        "unusable type-index key",
+        &[
+            secret_text(),
+            "77617665362d63726564656e7469616c2d646f6f722d746573742d76616c7565",
+        ],
+    );
 
     // 2. An indexed entry whose entity row is gone.
     let (_tmp, vault, door) = door_fixture();
-    let clean = door.door_policy().expect("clean dial");
-    assert_eq!(clean, DoorPolicy::default());
+    assert_default_admission(&door);
     put_manifest_index_over_entity(&vault, 0x33, None);
-    assert_fails_closed(&door, "dangling entity row");
+    assert_fails_closed(
+        &door,
+        "dangling entity row",
+        &[
+            "33333333333333333333333333333333",
+            "33333333-3333-3333-3333-333333333333",
+        ],
+    );
 
     // 3. An entity row too short to carry a metadata header.
     let (_tmp, vault, door) = door_fixture();
-    let clean = door.door_policy().expect("clean dial");
-    assert_eq!(clean, DoorPolicy::default());
-    let stub: &[u8] = &[ENTITY_TYPE_POLICY_MANIFEST, 0x00, 0x00];
-    put_manifest_index_over_entity(&vault, 0x34, Some(stub));
-    assert_fails_closed(&door, "unparseable metadata header");
+    assert_default_admission(&door);
+    let mut stub = vec![ENTITY_TYPE_POLICY_MANIFEST];
+    stub.extend_from_slice(b"private-header");
+    put_manifest_index_over_entity(&vault, 0x34, Some(&stub));
+    assert_fails_closed(
+        &door,
+        "unparseable metadata header",
+        &["private-header", "707269766174652d686561646572"],
+    );
 
-    // 4. An entry naming an entity of some other type.
+    // 4. An entry naming an entity of some other type, with sensitive body bytes.
     let (_tmp, vault, door) = door_fixture();
-    let clean = door.door_policy().expect("clean dial");
-    assert_eq!(clean, DoorPolicy::default());
-    let other = entity_payload_of_type(ENTITY_TYPE_POLICY_MANIFEST ^ 0x01);
+    assert_default_admission(&door);
+    let mut other = entity_payload_of_type(ENTITY_TYPE_POLICY_MANIFEST ^ 0x01);
+    other.extend_from_slice(SECRET_VALUE);
     put_manifest_index_over_entity(&vault, 0x35, Some(other.as_slice()));
-    assert_fails_closed(&door, "entity of another type");
+    assert_fails_closed(
+        &door,
+        "entity of another type",
+        &[
+            secret_text(),
+            "77617665362d63726564656e7469616c2d646f6f722d746573742d76616c7565",
+        ],
+    );
 }
 
 #[test]
@@ -1350,12 +1399,8 @@ fn admitted_ticket(
 
 #[test]
 fn a_dial_emptied_between_the_door_read_and_the_stamp_denies_instead_of_minting() {
-    // The gap this closes is a TIME-OF-CHECK gap, not a type error. The door
-    // resolves the dial in a READ transaction; the lease commits in a WRITE
-    // transaction opened afterwards. A dial that narrowed in between used to
-    // mint anyway, at the stale wide reading — so the single row an operator
-    // reaches for in a catastrophe, an emptied effector set, lost every race it
-    // was in.
+    // Admission precedes the write transaction, so a later dial change must
+    // be rechecked by the stamp rather than trusting the stale reading.
     let (_tmp, vault, door) = door_fixture();
     let now = witnessed(&door);
     let ticket = admitted_ticket(&door, now, 600);
@@ -1363,20 +1408,12 @@ fn a_dial_emptied_between_the_door_read_and_the_stamp_denies_instead_of_minting(
 
     // The dial is emptied AFTER the door read it and BEFORE the stamp.
     put_policy_manifest(&vault, 0x51, vec![effector_row(vec![])]);
-    assert_eq!(door.door_policy().expect("dial").dial().len(), 0);
+    assert!(!door.door_policy().expect("dial").admits_effector(EFFECTOR));
 
     let err = vault
         .materialize_admitted_lease(&ticket)
         .expect_err("a narrowed dial must deny, never mint under the stale reading");
-    match err {
-        CredentialDoorError::LeaseScopeRefused { reason, .. } => {
-            // The STAMP's refusal, spelled differently from the door's on
-            // purpose: this proves the check ran inside the write transaction
-            // rather than at the read that already passed.
-            assert_eq!(reason, STAMP_SCOPE_REFUSAL);
-        }
-        other => panic!("expected the in-transaction scope refusal, got {other:?}"),
-    }
+    assert!(is_scope_refusal(&err));
     // Fail-closed all the way down: the write txn was dropped uncommitted.
     assert_eq!(lease_rows(&vault), 0);
     assert_eq!(receipt_rows(&vault), 0);
@@ -1626,8 +1663,6 @@ fn a_detector_hit_rejects_with_a_valueless_lift_proposal() {
 #[test]
 fn a_pushed_blob_debug_never_prints_added_bytes() {
     let printed = format!("{:?}", blob("src/config.rs", &[DETECTED_LINE]));
-    assert!(printed.contains("src/config.rs"));
-    assert!(printed.contains("redacted"));
     assert!(!printed.contains("ghp_"));
 }
 

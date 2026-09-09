@@ -391,53 +391,6 @@ fn meter_snapshot(guard: &BudgetGuard) -> MeterSnapshot {
     }
 }
 
-/// The deterministic admit/settle/abort/read/ladder sequence any single-pool
-/// meter must reproduce exactly, policy-aware-empty included.
-fn single_pool_transcript(guard: &BudgetGuard) -> Vec<String> {
-    let mut log = Vec::new();
-    let first = guard.admit().expect("first admission");
-    log.push(format!("first: {first:?}"));
-    let second = guard.admit().expect("second admission");
-    log.push(format!("second: {second:?}"));
-    log.push(format!(
-        "settle_first: {:?}",
-        guard.settle_absolute(&first.lease, 50)
-    ));
-    log.push(format!("abort_second: {:?}", guard.abort(&second.lease)));
-    let third = guard.admit().expect("third admission");
-    log.push(format!("third: {third:?}"));
-    log.push(format!(
-        "settle_third: {:?}",
-        guard.settle_absolute(&third.lease, 96)
-    ));
-    log.push(format!("over_cap_denial: {:?}", guard.admit()));
-    log.push(format!("read: {:?}", guard.read()));
-    log
-}
-
-/// The exact local-continuation flow pinned by
-/// `continue_on_local_requires_explicit_unmetered_lease_after_exhaustion`.
-fn local_continuation_transcript(guard: &BudgetGuard) -> Vec<String> {
-    let mut log = Vec::new();
-    log.push(format!("early_local: {:?}", guard.admit_local()));
-    let metered = guard.admit().expect("metered lease reaches cap");
-    log.push(format!("metered: {metered:?}"));
-    log.push(format!("exhausted: {:?}", guard.admit()));
-    let local = guard.admit_local().expect("explicit local continuation");
-    log.push(format!("local: {local:?}"));
-    log.push(format!(
-        "settle_local: {:?}",
-        guard.settle_absolute(&local.lease, 99)
-    ));
-    log.push(format!(
-        "settle_metered: {:?}",
-        guard.settle_absolute(&metered.lease, 10)
-    ));
-    log.push(format!("after_metered: {:?}", guard.admit()));
-    log.push(format!("read: {:?}", guard.read()));
-    log
-}
-
 #[test]
 fn budget_policy_empty_table_is_exact_single_pool_regression() {
     for policy in [
@@ -453,11 +406,94 @@ fn budget_policy_empty_table_is_exact_single_pool_regression() {
             policy_test_actor(0x40),
             &BudgetPolicyTable::default(),
         );
-        assert_eq!(
-            single_pool_transcript(&legacy),
-            single_pool_transcript(&policy_aware),
-            "empty table must reproduce lease ids, reads, ladders, and denials exactly"
-        );
+        let mut identities = Vec::new();
+        for guard in [&legacy, &policy_aware] {
+            let first = guard.admit().expect("first admission");
+            assert_eq!(first.read.used_units, 0);
+            assert_eq!(first.read.reserved_units, 40);
+            assert!(first.ladder_events.is_empty());
+
+            let second = guard.admit().expect("second admission");
+            assert_eq!(second.read.used_units, 0);
+            assert_eq!(second.read.reserved_units, 80);
+            assert_eq!(second.ladder_events.len(), 2);
+            for (event, threshold) in second
+                .ladder_events
+                .iter()
+                .zip([BudgetThreshold::Silent50, BudgetThreshold::Plan80])
+            {
+                assert_eq!(event.threshold, threshold);
+                assert_eq!(event.row_index, None);
+                match threshold {
+                    BudgetThreshold::Silent50 => assert!(event.steering.is_none()),
+                    BudgetThreshold::Plan80 => {
+                        let signal = event.steering.as_ref().expect("plan steering");
+                        assert_eq!(signal.threshold, BudgetThreshold::Plan80);
+                        assert!(matches!(
+                            signal.channel,
+                            BudgetSignalDeliveryChannel::SteeringQueueNextTurn
+                        ));
+                        assert_eq!(signal.template_id, BUDGET_PLAN_PROMPT_TEMPLATE_ID);
+                    }
+                    BudgetThreshold::Land95 => unreachable!(),
+                }
+            }
+
+            let settled = guard
+                .settle_absolute(&first.lease, 50)
+                .expect("settle first");
+            assert_eq!(settled.read.used_units, 50);
+            assert_eq!(settled.read.reserved_units, 40);
+            assert!(settled.ladder_events.is_empty());
+            let aborted = guard.abort(&second.lease).expect("abort second");
+            assert_eq!(aborted.read.used_units, 50);
+            assert_eq!(aborted.read.reserved_units, 0);
+            assert!(aborted.ladder_events.is_empty());
+
+            let third = guard.admit().expect("third admission");
+            assert_eq!(third.read.used_units, 50);
+            assert_eq!(third.read.reserved_units, 40);
+            assert!(third.ladder_events.is_empty());
+            let settled = guard
+                .settle_absolute(&third.lease, 96)
+                .expect("settle third");
+            assert_eq!(settled.read.used_units, 96);
+            assert_eq!(settled.read.reserved_units, 0);
+            assert_eq!(settled.ladder_events.len(), 1);
+            let event = &settled.ladder_events[0];
+            assert_eq!(event.threshold, BudgetThreshold::Land95);
+            assert_eq!(event.row_index, None);
+            let signal = event.steering.as_ref().expect("land steering");
+            assert_eq!(signal.threshold, BudgetThreshold::Land95);
+            assert!(matches!(
+                signal.channel,
+                BudgetSignalDeliveryChannel::SteeringQueueNextTurn
+            ));
+            assert_eq!(signal.template_id, BUDGET_LAND_PROMPT_TEMPLATE_ID);
+
+            assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
+            let read = guard.read();
+            assert_eq!(read.attempt_id, "job");
+            assert_eq!(read.limit_units, 100);
+            assert_eq!(read.cap_units, policy.admission_cap(100));
+            assert_eq!(read.used_units, 96);
+            assert_eq!(read.reserved_units, 0);
+            assert_eq!(read.remaining_units, read.cap_units - 96);
+            assert_eq!(read.on_budget_exhausted, policy);
+            assert_eq!(
+                read.fired_thresholds,
+                vec![
+                    BudgetThreshold::Silent50,
+                    BudgetThreshold::Plan80,
+                    BudgetThreshold::Land95,
+                ],
+            );
+            assert_ne!(first.lease.id, second.lease.id);
+            assert_ne!(second.lease.id, third.lease.id);
+            assert_ne!(first.lease.id, third.lease.id);
+            identities.push([first.lease.id, second.lease.id, third.lease.id]);
+        }
+        assert_eq!(identities[0], identities[1]);
     }
 }
 
@@ -478,18 +514,13 @@ fn budget_policy_floor_is_reserved_for_matching_purpose() {
         &table,
     );
 
-    // Seven non-matching calls exhaust the shared slice; the floor is untouched.
     for _ in 0..7 {
         guard.admit().expect("shared-slice admission");
     }
     assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
-    let after_shared = meter_snapshot(&guard);
-    assert_eq!(after_shared.rows, vec![(0, 0, 0, 0)]);
-    assert_eq!(after_shared.shared_reserved_units, 70);
-    assert_eq!(after_shared.reserved_units, 70);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 70);
 
-    // Consolidation still admits three floor-backed reserves; the fourth is
-    // denied even though the floor is the only slice it can draw.
     for _ in 0..3 {
         guard
             .admit_for_request(&request_for(
@@ -501,20 +532,16 @@ fn budget_policy_floor_is_reserved_for_matching_purpose() {
     assert!(matches!(
         guard.admit_for_request(&request_for(
             CallPurpose::Consolidation,
-            ModelLocality::ThirdParty
+            ModelLocality::ThirdParty,
         )),
         Err(BudgetDenied::Exhausted)
     ));
-    let after_floor = meter_snapshot(&guard);
-    assert_eq!(after_floor.rows, vec![(0, 30, 0, 30)]);
-    assert_eq!(after_floor.shared_reserved_units, 70);
-    assert_eq!(after_floor.reserved_units, 100);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 100);
 }
 
 #[test]
 fn budget_policy_actor_floor_uses_engine_stamped_actor() {
-    // One actor-floor row; two guards share the table but bind different
-    // engine-stamped actors.
     let table = BudgetPolicyTable::from_rows(vec![actor_row(0x50, Some(30), None)]);
     let matching = BudgetGuard::with_policy_table(
         "job",
@@ -533,17 +560,13 @@ fn budget_policy_actor_floor_uses_engine_stamped_actor() {
         &table,
     );
 
-    // The non-matching guard cannot touch the actor floor: it exhausts the
-    // shared slice after seven admissions and is denied.
     for _ in 0..7 {
         other.admit().expect("other-actor shared admission");
     }
     assert!(matches!(other.admit(), Err(BudgetDenied::Exhausted)));
-    let other_snapshot = meter_snapshot(&other);
-    assert_eq!(other_snapshot.rows, vec![(0, 0, 0, 0)]);
-    assert_eq!(other_snapshot.shared_reserved_units, 70);
+    assert_eq!(other.read().used_units, 0);
+    assert_eq!(other.read().reserved_units, 70);
 
-    // Request payloads and provider options cannot impersonate the actor.
     let mut spoofed = request_for(CallPurpose::Voice, ModelLocality::ThirdParty);
     let owner_ref = EntityId::from_bytes([0x50; 16])
         .expect("owner actor id")
@@ -558,17 +581,18 @@ fn budget_policy_actor_floor_uses_engine_stamped_actor() {
         other.admit_for_request(&spoofed),
         Err(BudgetDenied::Exhausted)
     ));
-    assert_eq!(meter_snapshot(&other), other_snapshot);
+    assert_eq!(other.read().used_units, 0);
+    assert_eq!(other.read().reserved_units, 70);
+    assert_eq!(other.read().remaining_units, 30);
+    assert!(matches!(other.admit(), Err(BudgetDenied::Exhausted)));
 
-    // The matching actor draws the floor first (three reserves), then the
-    // shared slice (seven), and is denied only at the global total.
     for _ in 0..10 {
         matching.admit().expect("matching-actor admission");
     }
     assert!(matches!(matching.admit(), Err(BudgetDenied::Exhausted)));
-    let matching_snapshot = meter_snapshot(&matching);
-    assert_eq!(matching_snapshot.rows, vec![(0, 100, 0, 30)]);
-    assert_eq!(matching_snapshot.shared_reserved_units, 70);
+    assert_eq!(matching.read().used_units, 0);
+    assert_eq!(matching.read().reserved_units, 100);
+    assert_eq!(matching.read().remaining_units, 0);
 }
 
 #[test]
@@ -594,20 +618,23 @@ fn budget_policy_cap_denies_matching_row_only() {
             ))
             .expect("extraction admission under cap");
     }
-    let before_denial = (guard.read(), meter_snapshot(&guard));
-
-    // The cap denial is final and mutates nothing.
+    let before_denial = guard.read();
     assert!(matches!(
         guard.admit_for_request(&request_for(
             CallPurpose::Extraction,
-            ModelLocality::ThirdParty
+            ModelLocality::ThirdParty,
         )),
         Err(BudgetDenied::Exhausted)
     ));
-    assert_eq!((guard.read(), meter_snapshot(&guard)), before_denial);
+    let after_denial = guard.read();
+    assert_eq!(after_denial.used_units, before_denial.used_units);
+    assert_eq!(after_denial.reserved_units, before_denial.reserved_units);
+    assert_eq!(after_denial.remaining_units, before_denial.remaining_units);
+    assert_eq!(
+        after_denial.fired_thresholds,
+        before_denial.fired_thresholds
+    );
 
-    // A non-matching call still uses shared capacity; an unrelated row still
-    // admits its own matching call.
     guard
         .admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::ThirdParty))
         .expect("non-matching shared admission");
@@ -617,9 +644,29 @@ fn budget_policy_cap_denies_matching_row_only() {
             ModelLocality::ThirdParty,
         ))
         .expect("unrelated-row admission");
-    let after = meter_snapshot(&guard);
-    assert_eq!(after.rows, vec![(0, 30, 0, 0), (0, 10, 0, 0)]);
-    assert_eq!(after.shared_reserved_units, 50);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 50);
+
+    for _ in 0..4 {
+        guard
+            .admit_for_request(&request_for(
+                CallPurpose::Consolidation,
+                ModelLocality::ThirdParty,
+            ))
+            .expect("remaining consolidation capacity");
+    }
+    assert!(matches!(
+        guard.admit_for_request(&request_for(
+            CallPurpose::Consolidation,
+            ModelLocality::ThirdParty,
+        )),
+        Err(BudgetDenied::Exhausted)
+    ));
+    assert_eq!(guard.read().reserved_units, 90);
+    guard
+        .admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::ThirdParty))
+        .expect("remaining shared capacity");
+    assert_eq!(guard.read().reserved_units, 100);
 }
 
 #[test]
@@ -637,7 +684,6 @@ fn budget_policy_purpose_and_actor_caps_are_conjunctive() {
         &table,
     );
 
-    // One request matches both rows and is charged to both.
     for _ in 0..2 {
         guard
             .admit_for_request(&request_for(
@@ -646,22 +692,28 @@ fn budget_policy_purpose_and_actor_caps_are_conjunctive() {
             ))
             .expect("double-matched admission");
     }
-    let before_denial = (guard.read(), meter_snapshot(&guard));
+    let before_denial = guard.read();
+    assert_eq!(before_denial.used_units, 0);
+    assert_eq!(before_denial.reserved_units, 20);
 
-    // The smaller actor cap denies even though the purpose cap and the global
-    // pool both have room; the denial leaves every meter untouched.
     assert!(matches!(
         guard.admit_for_request(&request_for(
             CallPurpose::Consolidation,
-            ModelLocality::ThirdParty
+            ModelLocality::ThirdParty,
         )),
         Err(BudgetDenied::Exhausted)
     ));
-    let (read_after, snapshot_after) = (guard.read(), meter_snapshot(&guard));
+    let read_after = guard.read();
     assert!(read_after.remaining_units > 0);
-    assert_eq!(snapshot_after.rows, vec![(0, 20, 0, 0), (0, 20, 0, 0)]);
-    assert_eq!(snapshot_after.shared_reserved_units, 20);
-    assert_eq!((read_after, snapshot_after), before_denial);
+    assert_eq!(read_after.used_units, before_denial.used_units);
+    assert_eq!(read_after.reserved_units, before_denial.reserved_units);
+    assert_eq!(read_after.remaining_units, before_denial.remaining_units);
+    assert_eq!(read_after.fired_thresholds, before_denial.fired_thresholds);
+    assert!(matches!(
+        guard.admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::ThirdParty)),
+        Err(BudgetDenied::Exhausted)
+    ));
+    assert_eq!(guard.read().reserved_units, 20);
 }
 
 #[test]
@@ -680,92 +732,108 @@ fn budget_policy_multi_floor_match_allocates_in_manifest_order() {
         &table,
     );
 
-    // A consolidation request matches rows 0 and 1: the purpose floor first.
     let first = guard
         .admit_for_request(&request_for(
             CallPurpose::Consolidation,
             ModelLocality::ThirdParty,
         ))
         .expect("first consolidation admission");
-    {
-        let state = guard.state.lock().expect("lease inspection");
-        let record = state.leases.get(first.lease.id()).expect("lease record");
-        assert_eq!(
-            record.floor_allocations,
-            vec![FloorAllocation {
-                row_index: 0,
-                units: 15,
-            }]
-        );
-        assert_eq!(record.shared_reserved_units, 0);
-    }
+    assert_eq!(first.read.reserved_units, 15);
+    // Generic admissions match only the actor: its 30 plus shared 10 remain.
+    assert!(matches!(
+        guard.admit_reserve(41),
+        Err(BudgetDenied::Exhausted)
+    ));
+    let probe = guard.admit_reserve(40).expect("actor floor untouched");
+    assert_eq!(probe.read.reserved_units, 55);
+    let refunded = guard.abort(&probe.lease).expect("refund first probe");
+    assert_eq!(refunded.read.reserved_units, 15);
+    assert_eq!(refunded.read.used_units, 0);
 
-    // The second request drains the purpose floor's last 5, then draws 10
-    // from the actor floor — matched floor headroom in resolved order.
     let second = guard
         .admit_for_request(&request_for(
             CallPurpose::Consolidation,
             ModelLocality::ThirdParty,
         ))
         .expect("second consolidation admission");
-    {
-        let state = guard.state.lock().expect("lease inspection");
-        let record = state.leases.get(second.lease.id()).expect("lease record");
-        assert_eq!(
-            record.floor_allocations,
-            vec![
-                FloorAllocation {
-                    row_index: 0,
-                    units: 5,
-                },
-                FloorAllocation {
-                    row_index: 1,
-                    units: 10,
-                },
-            ]
-        );
-        assert_eq!(record.shared_reserved_units, 0);
-    }
+    assert_eq!(second.read.reserved_units, 30);
+    assert!(matches!(
+        guard.admit_reserve(31),
+        Err(BudgetDenied::Exhausted)
+    ));
+    let probe = guard
+        .admit_reserve(30)
+        .expect("remaining actor and shared capacity");
+    assert_eq!(probe.read.reserved_units, 60);
+    assert_eq!(
+        guard
+            .abort(&probe.lease)
+            .expect("refund second probe")
+            .read
+            .reserved_units,
+        30,
+    );
 
-    // The third fits the actor floor; the fourth spills 10 into shared.
     guard
         .admit_for_request(&request_for(
             CallPurpose::Consolidation,
             ModelLocality::ThirdParty,
         ))
         .expect("third consolidation admission");
+    assert!(matches!(
+        guard.admit_reserve(16),
+        Err(BudgetDenied::Exhausted)
+    ));
+    let probe = guard
+        .admit_reserve(15)
+        .expect("last actor and shared capacity");
+    assert_eq!(probe.read.reserved_units, 60);
+    assert_eq!(
+        guard
+            .abort(&probe.lease)
+            .expect("refund third probe")
+            .read
+            .reserved_units,
+        45,
+    );
     let fourth = guard
         .admit_for_request(&request_for(
             CallPurpose::Consolidation,
             ModelLocality::ThirdParty,
         ))
         .expect("fourth consolidation admission");
-    {
-        let state = guard.state.lock().expect("lease inspection");
-        let record = state.leases.get(fourth.lease.id()).expect("lease record");
-        assert_eq!(
-            record.floor_allocations,
-            vec![FloorAllocation {
-                row_index: 1,
-                units: 5,
-            }]
-        );
-        assert_eq!(record.shared_reserved_units, 10);
-    }
+    assert_eq!(fourth.read.reserved_units, 60);
+    assert!(matches!(
+        guard.admit_reserve(1),
+        Err(BudgetDenied::Exhausted)
+    ));
 
-    // A voice request also matches the actor row (actor rows are
-    // purpose-independent) but the actor floor is exhausted, so it draws only
-    // its own purpose floor; every unmatched floor stays untouched.
     guard
         .admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::ThirdParty))
         .expect("voice admission");
-    let snapshot = meter_snapshot(&guard);
-    assert_eq!(
-        snapshot.rows,
-        vec![(0, 60, 0, 20), (0, 75, 0, 30), (0, 15, 0, 15)]
-    );
-    assert_eq!(snapshot.shared_reserved_units, 10);
-    assert_eq!(snapshot.reserved_units, 75);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 75);
+    guard
+        .admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::ThirdParty))
+        .expect("remaining full voice reserve");
+    assert!(matches!(
+        guard.admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::ThirdParty)),
+        Err(BudgetDenied::Exhausted)
+    ));
+
+    let settled = guard
+        .settle_usage(&fourth.lease, 0)
+        .expect("unused fourth reserve is refunded");
+    assert_eq!(settled.read.used_units, 0);
+    assert_eq!(settled.read.reserved_units, 75);
+    assert!(matches!(
+        guard.admit_reserve(16),
+        Err(BudgetDenied::Exhausted)
+    ));
+    let probe = guard
+        .admit_reserve(15)
+        .expect("refunded actor and shared capacity");
+    assert_eq!(probe.read.reserved_units, 90);
 }
 
 #[test]
@@ -933,7 +1001,6 @@ fn budget_policy_abort_refunds_row_floor_and_shared_reservations() {
         &table,
     );
 
-    // Three reserves consume the floor exactly; snapshot the steady state.
     let mut floor_leases = Vec::new();
     for _ in 0..3 {
         floor_leases.push(
@@ -945,11 +1012,9 @@ fn budget_policy_abort_refunds_row_floor_and_shared_reservations() {
                 .expect("floor-backed admission"),
         );
     }
-    let floor_only = meter_snapshot(&guard);
-    assert_eq!(floor_only.rows, vec![(0, 30, 0, 30)]);
-    assert_eq!(floor_only.shared_reserved_units, 0);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 30);
 
-    // Two more reserves spill into the shared slice.
     let shared_one = guard
         .admit_for_request(&request_for(
             CallPurpose::Consolidation,
@@ -962,41 +1027,59 @@ fn budget_policy_abort_refunds_row_floor_and_shared_reservations() {
             ModelLocality::ThirdParty,
         ))
         .expect("second shared admission");
-    let spilled = meter_snapshot(&guard);
-    assert_eq!(spilled.rows, vec![(0, 50, 0, 30)]);
-    assert_eq!(spilled.shared_reserved_units, 20);
-    assert_eq!(spilled.reserved_units, 50);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 50);
 
-    // Aborting the shared reserves refunds global, row, floor, and shared
-    // reservations exactly back to the floor-only steady state (aborted
-    // leases stay recorded as Aborted, so only open leases compare).
-    guard.abort(&shared_one.lease).expect("abort shared one");
-    guard.abort(&shared_two.lease).expect("abort shared two");
-    let refunded_shared = meter_snapshot(&guard);
-    assert_eq!(refunded_shared.rows, floor_only.rows);
-    assert_eq!(refunded_shared.reserved_units, floor_only.reserved_units);
-    assert_eq!(refunded_shared.used_units, floor_only.used_units);
-    assert_eq!(
-        refunded_shared.shared_reserved_units,
-        floor_only.shared_reserved_units
-    );
-    assert_eq!(
-        refunded_shared.shared_used_units,
-        floor_only.shared_used_units
-    );
-    assert_eq!(refunded_shared.open_leases, floor_only.open_leases);
+    let refunded = guard.abort(&shared_one.lease).expect("abort shared one");
+    assert_eq!(refunded.read.reserved_units, 40);
+    assert_eq!(refunded.read.used_units, 0);
+    let refunded = guard.abort(&shared_two.lease).expect("abort shared two");
+    assert_eq!(refunded.read.reserved_units, 30);
+    assert_eq!(refunded.read.used_units, 0);
+    assert_eq!(refunded.read.remaining_units, 70);
 
-    // Aborting a floor reserve refunds its floor allocation.
+    // All seven nonmatching reserves must be available again.
+    let mut shared_probes = Vec::new();
+    for _ in 0..7 {
+        shared_probes.push(guard.admit().expect("refunded shared capacity"));
+    }
+    assert_eq!(guard.read().reserved_units, 100);
+    assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
+    for probe in shared_probes {
+        guard.abort(&probe.lease).expect("restore shared probe");
+    }
+    assert_eq!(guard.read().reserved_units, 30);
+
     guard
         .abort(&floor_leases[0].lease)
         .expect("abort floor lease");
-    let refunded = meter_snapshot(&guard);
-    assert_eq!(refunded.rows, vec![(0, 20, 0, 20)]);
-    assert_eq!(refunded.reserved_units, 20);
-    assert_eq!(refunded.shared_reserved_units, 0);
+    assert_eq!(guard.read().reserved_units, 20);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().remaining_units, 80);
     assert!(matches!(
         guard.settle_absolute(&shared_one.lease, 10),
         Err(BudgetDenied::LeaseInvalid)
+    ));
+
+    for _ in 0..7 {
+        guard.admit().expect("shared capacity remains separate");
+    }
+    assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
+    assert_eq!(guard.read().reserved_units, 90);
+    let replacement = guard
+        .admit_for_request(&request_for(
+            CallPurpose::Consolidation,
+            ModelLocality::ThirdParty,
+        ))
+        .expect("refunded floor capacity");
+    assert_eq!(replacement.read.used_units, 0);
+    assert_eq!(replacement.read.reserved_units, 100);
+    assert!(matches!(
+        guard.admit_for_request(&request_for(
+            CallPurpose::Consolidation,
+            ModelLocality::ThirdParty,
+        )),
+        Err(BudgetDenied::Exhausted)
     ));
 }
 
@@ -1026,37 +1109,38 @@ fn budget_policy_settlement_overshoot_is_recorded_not_killed() {
         ))
         .expect("second extraction admission");
 
-    // Settling above the reserve and the row cap succeeds; the overshoot is
-    // recorded in the row tally and the later matching admission is denied.
     let settled = guard
         .settle_absolute(&first.lease, 30)
         .expect("overshoot settlement is recorded, not killed");
     assert_eq!(settled.read.used_units, 30);
-    let after_overshoot = meter_snapshot(&guard);
-    assert_eq!(after_overshoot.rows, vec![(30, 10, 0, 0)]);
-    assert_eq!(after_overshoot.shared_used_units, 30);
-
+    assert_eq!(settled.read.reserved_units, 10);
     assert!(matches!(
         guard.admit_for_request(&request_for(
             CallPurpose::Extraction,
-            ModelLocality::ThirdParty
+            ModelLocality::ThirdParty,
         )),
         Err(BudgetDenied::Exhausted)
     ));
 
-    // The second lease settles normally above the already-exceeded cap.
-    guard
+    // Absolute usage retains the global watermark, not the sum of reports.
+    let settled = guard
         .settle_absolute(&second.lease, 25)
         .expect("second settlement succeeds");
-    let after_second = meter_snapshot(&guard);
-    assert_eq!(after_second.rows, vec![(55, 0, 0, 0)]);
+    assert_eq!(settled.read.used_units, 30);
+    assert_eq!(settled.read.reserved_units, 0);
+    assert_eq!(guard.read().used_units, 30);
+    assert_eq!(guard.read().reserved_units, 0);
+    assert!(matches!(
+        guard.admit_for_request(&request_for(
+            CallPurpose::Extraction,
+            ModelLocality::ThirdParty,
+        )),
+        Err(BudgetDenied::Exhausted)
+    ));
 }
 
 #[test]
 fn budget_policy_continue_on_local_and_admit_local_are_unchanged() {
-    // The explicit zero-unit local lease, its settlement, and the no-event
-    // behavior are byte-identical between the legacy constructor and a
-    // policy-aware guard holding an empty table.
     for attempt in ["legacy", "policy"] {
         let guard = if attempt == "legacy" {
             BudgetGuard::with_reserve_units("job", 10, 10, BudgetExhaustionPolicy::ContinueOnLocal)
@@ -1070,23 +1154,43 @@ fn budget_policy_continue_on_local_and_admit_local_are_unchanged() {
                 &BudgetPolicyTable::default(),
             )
         };
-        let transcript = local_continuation_transcript(&guard);
-        assert_eq!(
-            transcript,
-            local_continuation_transcript(&BudgetGuard::with_reserve_units(
-                "job",
-                10,
-                10,
-                BudgetExhaustionPolicy::ContinueOnLocal
-            )),
-            "{attempt} constructor must reproduce the local-continuation flow exactly"
-        );
+        assert!(matches!(
+            guard.admit_local(),
+            Err(BudgetDenied::AdmissionDenied)
+        ));
+        let metered = guard.admit().expect("metered lease reaches cap");
+        assert!(metered.lease.id().starts_with("job:metered:"));
+        assert_eq!(metered.read.used_units, 0);
+        assert_eq!(metered.read.reserved_units, 10);
+        assert_eq!(metered.read.remaining_units, 0);
+        assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
+
+        let local = guard.admit_local().expect("explicit local continuation");
+        assert!(local.lease.id().starts_with("job:local:"));
+        assert_ne!(local.lease.id(), metered.lease.id());
+        assert!(local.ladder_events.is_empty());
+        assert_eq!(local.read.used_units, 0);
+        assert_eq!(local.read.reserved_units, 10);
+        let settled = guard
+            .settle_absolute(&local.lease, 99)
+            .expect("local settlement is unmetered");
+        assert!(settled.ladder_events.is_empty());
+        assert_eq!(settled.read.used_units, 0);
+        assert_eq!(settled.read.reserved_units, 10);
+        assert_eq!(settled.read.remaining_units, 0);
+        let settled = guard
+            .settle_absolute(&metered.lease, 10)
+            .expect("metered settlement");
+        assert!(settled.ladder_events.is_empty());
+        assert_eq!(settled.read.used_units, 10);
+        assert_eq!(settled.read.reserved_units, 0);
+        assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
+        assert_eq!(guard.read().used_units, 10);
+        assert_eq!(guard.read().reserved_units, 0);
+        assert_eq!(guard.read().remaining_units, 0);
     }
 
-    // Floor-gap fixture: T = 100, a consolidation floor of 30, and the shared
-    // 70 exhausted. An OnDevice Voice request gets the zero-unit local lease
-    // without row tallies or row events; admit_local succeeds under the same
-    // policy-aware capacity predicate.
+    // Exhaust the shared slice while leaving the consolidation floor intact.
     let table = BudgetPolicyTable::from_rows(vec![purpose_row(
         CallPurpose::Consolidation,
         Some(30),
@@ -1103,37 +1207,33 @@ fn budget_policy_continue_on_local_and_admit_local_are_unchanged() {
     for _ in 0..7 {
         gap.admit().expect("shared-slice admission");
     }
-    let before_local = (gap.read(), meter_snapshot(&gap));
-
     let local = gap
         .admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::OnDevice))
         .expect("policy-blocked OnDevice request gets the local lease");
     assert_eq!(local.lease.id(), "job:local:8");
     assert!(local.ladder_events.is_empty());
+    assert_eq!(local.read.used_units, 0);
     assert_eq!(local.read.reserved_units, 70);
-    assert_eq!(gap.read(), before_local.0);
-    let after_local = meter_snapshot(&gap);
-    assert_eq!(after_local.rows, before_local.1.rows);
-    assert_eq!(after_local.reserved_units, before_local.1.reserved_units);
-    assert_eq!(
-        after_local.shared_reserved_units,
-        before_local.1.shared_reserved_units
-    );
-    assert_eq!(after_local.open_leases, before_local.1.open_leases + 1);
+    assert_eq!(local.read.remaining_units, 30);
 
-    let local = gap
+    let second_local = gap
         .admit_local()
         .expect("admit_local uses the same capacity predicate");
-    assert_eq!(local.lease.id(), "job:local:9");
-    assert!(local.ladder_events.is_empty());
-    let after_second_local = meter_snapshot(&gap);
-    assert_eq!(after_second_local.rows, before_local.1.rows);
-    assert_eq!(
-        after_second_local.open_leases,
-        before_local.1.open_leases + 2
-    );
+    assert_eq!(second_local.lease.id(), "job:local:9");
+    assert_ne!(local.lease.id(), second_local.lease.id());
+    assert!(second_local.ladder_events.is_empty());
+    assert_eq!(second_local.read.used_units, 0);
+    assert_eq!(second_local.read.reserved_units, 70);
+    for lease in [&local.lease, &second_local.lease] {
+        let settled = gap
+            .settle_absolute(lease, 99)
+            .expect("floor-gap local settlement is unmetered");
+        assert!(settled.ladder_events.is_empty());
+        assert_eq!(settled.read.used_units, 0);
+        assert_eq!(settled.read.reserved_units, 70);
+        assert_eq!(settled.read.remaining_units, 30);
+    }
 
-    // A request that fits the untouched floor still admits metered.
     let metered = gap
         .admit_for_request(&request_for(
             CallPurpose::Consolidation,
@@ -1141,15 +1241,24 @@ fn budget_policy_continue_on_local_and_admit_local_are_unchanged() {
         ))
         .expect("floor headroom admits a metered lease");
     assert!(metered.lease.id().starts_with("job:metered:"));
-
-    // A Remote request with no floor access is denied outright.
+    assert_eq!(metered.read.reserved_units, 80);
     assert!(matches!(
         gap.admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::ThirdParty)),
         Err(BudgetDenied::Exhausted)
     ));
+    // Both remaining floor draws must still be paid admissions.
+    for reserved in [90, 100] {
+        let admission = gap
+            .admit_for_request(&request_for(
+                CallPurpose::Consolidation,
+                ModelLocality::OnDevice,
+            ))
+            .expect("local calls left the entire floor available");
+        assert!(admission.lease.id().starts_with("job:metered:"));
+        assert_eq!(admission.read.used_units, 0);
+        assert_eq!(admission.read.reserved_units, reserved);
+    }
 
-    // A matching cap: 0 row keeps the cap denial final on the purpose axis:
-    // the capacity local-continuation branch never fires for it.
     let capped_purpose = BudgetGuard::with_policy_table(
         "job",
         100,
@@ -1164,27 +1273,28 @@ fn budget_policy_continue_on_local_and_admit_local_are_unchanged() {
     for _ in 0..7 {
         capped_purpose.admit().expect("shared-slice admission");
     }
-    let before_cap = (capped_purpose.read(), meter_snapshot(&capped_purpose));
     assert!(matches!(
         capped_purpose.admit_for_request(&request_for(CallPurpose::Voice, ModelLocality::OnDevice)),
         Err(BudgetDenied::Exhausted)
     ));
-    assert_eq!(
-        (capped_purpose.read(), meter_snapshot(&capped_purpose)),
-        before_cap,
-        "cap denial issues no local lease and mutates nothing"
-    );
-    // A capacity-blocked non-matching request still gets the local lease.
-    capped_purpose
+    assert_eq!(capped_purpose.read().used_units, 0);
+    assert_eq!(capped_purpose.read().reserved_units, 70);
+    assert_eq!(capped_purpose.read().remaining_units, 30);
+    let local = capped_purpose
         .admit_for_request(&request_for(
             CallPurpose::Extraction,
             ModelLocality::OnDevice,
         ))
         .expect("capacity block still yields the local lease");
+    assert_eq!(local.lease.id(), "job:local:8");
+    assert!(local.ladder_events.is_empty());
+    let settled = capped_purpose
+        .settle_absolute(&local.lease, 99)
+        .expect("non-matching local lease remains unmetered");
+    assert!(settled.ladder_events.is_empty());
+    assert_eq!(settled.read.used_units, 0);
+    assert_eq!(settled.read.reserved_units, 70);
 
-    // A matching actor cap: 0 row keeps the denial final on BOTH paths:
-    // admit_for_request never issues a local lease, and admit_local never
-    // falls back either — the actor cap matches the purpose-less call too.
     let capped_actor = BudgetGuard::with_policy_table(
         "job",
         100,
@@ -1208,7 +1318,10 @@ fn budget_policy_continue_on_local_and_admit_local_are_unchanged() {
         capped_actor.admit_local(),
         Err(BudgetDenied::AdmissionDenied)
     ));
-    assert_eq!(meter_snapshot(&capped_actor).total_leases, 0);
+    assert_eq!(capped_actor.read().used_units, 0);
+    assert_eq!(capped_actor.read().reserved_units, 0);
+    assert_eq!(capped_actor.read().remaining_units, 100);
+    assert!(capped_actor.read().fired_thresholds.is_empty());
 }
 
 #[test]
@@ -1364,9 +1477,6 @@ fn budget_policy_generic_admit_respects_actor_rows() {
         ])
     };
 
-    // On the actor-bound guard, generic admit() matches the actor row: it
-    // draws the matched actor floor and the matched actor cap binds. The
-    // purpose cap never matches (a purpose cap of 5 would deny immediately).
     let bound = BudgetGuard::with_policy_table(
         "job",
         100,
@@ -1377,15 +1487,18 @@ fn budget_policy_generic_admit_respects_actor_rows() {
     );
     bound.admit().expect("first generic admission draws floor");
     bound.admit().expect("second generic admission draws floor");
-    let bound_snapshot = meter_snapshot(&bound);
-    assert_eq!(bound_snapshot.rows, vec![(0, 0, 0, 0), (0, 20, 0, 20)]);
-    assert_eq!(bound_snapshot.shared_reserved_units, 0);
+    assert_eq!(bound.read().used_units, 0);
+    assert_eq!(bound.read().reserved_units, 20);
+    assert_eq!(bound.read().remaining_units, 80);
     assert!(matches!(bound.admit(), Err(BudgetDenied::Exhausted)));
-    assert_eq!(meter_snapshot(&bound), bound_snapshot);
+    assert!(matches!(
+        bound.admit_reserve(10),
+        Err(BudgetDenied::Exhausted)
+    ));
+    assert_eq!(bound.read().used_units, 0);
+    assert_eq!(bound.read().reserved_units, 20);
+    assert_eq!(bound.read().remaining_units, 80);
 
-    // A guard bound to a different actor is shared-only for the same generic
-    // call: the actor floor is never drawn, the purpose row still never
-    // matches, and the shared slice is bounded by T - sum(floors) = 80.
     let unbound = BudgetGuard::with_policy_table(
         "job",
         100,
@@ -1403,16 +1516,40 @@ fn budget_policy_generic_admit_respects_actor_rows() {
         unbound.admit_reserve(10),
         Err(BudgetDenied::Exhausted)
     ));
-    let unbound_snapshot = meter_snapshot(&unbound);
-    assert_eq!(unbound_snapshot.rows, vec![(0, 0, 0, 0), (0, 0, 0, 0)]);
-    assert_eq!(unbound_snapshot.shared_reserved_units, 80);
-    assert_eq!(unbound_snapshot.reserved_units, 80);
+    assert!(matches!(unbound.admit(), Err(BudgetDenied::Exhausted)));
+    assert_eq!(unbound.read().used_units, 0);
+    assert_eq!(unbound.read().reserved_units, 80);
+    assert_eq!(unbound.read().remaining_units, 20);
+
+    // With no shared slice, success proves that generic calls can draw the
+    // bound actor's floor rather than merely reserving shared capacity.
+    let floor_only = BudgetGuard::with_policy_table(
+        "job",
+        20,
+        10,
+        BudgetExhaustionPolicy::Suspend,
+        policy_test_actor(0x50),
+        &table(),
+    );
+    let first = floor_only.admit().expect("generic admit draws actor floor");
+    assert_eq!(first.read.used_units, 0);
+    assert_eq!(first.read.reserved_units, 10);
+    let second = floor_only
+        .admit_reserve(10)
+        .expect("explicit reserve draws remaining actor floor");
+    assert_eq!(second.read.used_units, 0);
+    assert_eq!(second.read.reserved_units, 20);
+    assert_eq!(second.read.remaining_units, 0);
+    assert!(matches!(floor_only.admit(), Err(BudgetDenied::Exhausted)));
+    assert!(matches!(
+        floor_only.admit_reserve(10),
+        Err(BudgetDenied::Exhausted)
+    ));
 }
 
 #[test]
 fn budget_policy_oversubscribed_floors_saturate_without_panic() {
-    // Three floor-60 rows against T = 100 oversubscribe the total; the shared
-    // slice saturates to zero and horizons saturate to zero (100% depleted).
+    // Three floor-60 rows against T = 100 leave no shared capacity.
     let table = BudgetPolicyTable::from_rows(vec![
         purpose_row(CallPurpose::Extraction, Some(60), None),
         purpose_row(CallPurpose::Consolidation, Some(60), None),
@@ -1427,7 +1564,6 @@ fn budget_policy_oversubscribed_floors_saturate_without_panic() {
         &table,
     );
 
-    // A non-matching call is denied immediately: shared slice is zero.
     assert!(matches!(
         guard.admit_for_request(&request_for(
             CallPurpose::AnswerGen,
@@ -1436,8 +1572,6 @@ fn budget_policy_oversubscribed_floors_saturate_without_panic() {
         Err(BudgetDenied::Exhausted)
     ));
 
-    // First-come floor draws saturate the zero horizons: every row reports
-    // 50/80/95 with its own index on the first ladder evaluation.
     let first = guard
         .admit_for_request(&request_for(
             CallPurpose::Extraction,
@@ -1461,9 +1595,6 @@ fn budget_policy_oversubscribed_floors_saturate_without_panic() {
     }
     assert_eq!(events, expected);
 
-    // Floor draws are first-come and bounded by the global total: extraction
-    // fills its floor, consolidation draws four more, and admission stops at
-    // T = 100 even though unmatched floor headroom remains.
     for _ in 0..5 {
         guard
             .admit_for_request(&request_for(
@@ -1472,6 +1603,16 @@ fn budget_policy_oversubscribed_floors_saturate_without_panic() {
             ))
             .expect("extraction floor draw");
     }
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 60);
+    // Extraction cannot borrow another floor even with global headroom.
+    assert!(matches!(
+        guard.admit_for_request(&request_for(
+            CallPurpose::Extraction,
+            ModelLocality::ThirdParty
+        )),
+        Err(BudgetDenied::Exhausted)
+    ));
     for _ in 0..4 {
         guard
             .admit_for_request(&request_for(
@@ -1492,22 +1633,13 @@ fn budget_policy_oversubscribed_floors_saturate_without_panic() {
         Err(BudgetDenied::Exhausted)
     ));
 
-    let snapshot = meter_snapshot(&guard);
+    let read = guard.read();
+    assert_eq!(read.used_units, 0);
+    assert_eq!(read.reserved_units, 100);
+    assert_eq!(read.remaining_units, 0);
+    assert_eq!(read.depleted_percent(), 100);
     assert_eq!(
-        snapshot.rows,
-        vec![(0, 60, 0, 60), (0, 40, 0, 40), (0, 0, 0, 0)]
-    );
-    assert_eq!(snapshot.reserved_units, 100);
-    assert_eq!(snapshot.shared_reserved_units, 0);
-    {
-        let state = guard.state.lock().expect("saturation inspection");
-        assert_eq!(state.shared_slice_units(), 0);
-        assert_eq!(state.shared_admission_ceiling(), 0);
-    }
-    // The global ladder still uses T: committed reached exactly 100% of T and
-    // never above, so all three global thresholds fired with row_index = None.
-    assert_eq!(
-        guard.read().fired_thresholds,
+        read.fired_thresholds,
         vec![
             BudgetThreshold::Silent50,
             BudgetThreshold::Plan80,

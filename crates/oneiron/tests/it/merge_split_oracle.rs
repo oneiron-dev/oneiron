@@ -1201,113 +1201,64 @@ fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
     assert_eq!(scope_a, scope_a_again);
 }
 
-/// The MS-06 ramp guard: a streak of untouched approvals raises its confidence
-/// and, at the streak floor, surfaces ONE graduation offer for the scope. It is
-/// a [`oneiron::consent::ConsentGuard`], so the type system already forbids it
-/// from granting anything (DEC-0006 invariant 5).
-struct RampGuard {
-    bound: oneiron::consent::GrantBound,
-    untouched_streak: usize,
-}
-
-impl oneiron::consent::ConsentGuard for RampGuard {
-    fn propose(&self, facts: &oneiron::consent::EffectFacts) -> oneiron::consent::ConsentProposal {
-        oneiron::consent::ConsentProposal {
-            effect_digest: oneiron::consent::ComposedEffect::new(facts.clone()).digest(),
-            // Confidence rises with the streak; authority does not.
-            #[allow(clippy::cast_precision_loss)]
-            confidence: (self.untouched_streak as f32 / 12.0).min(1.0),
-            suggested_bound: self.bound.clone(),
-        }
-    }
-}
-
-/// r7/§7 + DEC-0006 invariant 5: a streak of approved-untouched receipts
-/// produces a graduation OFFER (a proposed create_standing_grant) — the
-/// system offers, it NEVER auto-grants; the grant lands only on the tap.
-///
-/// ARMED by ONE-1606. `count_standing_grants` reads the real consent
-/// registry; the offer half stays on the ONE-1748 ramp seam, so this test
-/// drives the streak through the ramp and the ACCEPTANCE through the real
-/// owner-only `create_standing_grant` door. The counts are unchanged: twelve
-/// untouched approvals create ONE proposal and ZERO grants until the
-/// authenticated owner accepts, which creates exactly one.
+/// r7/§7 + DEC-0006 invariant 5: production approval receipts create an
+/// offer, never standing authority, until the authenticated owner accepts.
 #[test]
 fn ms06_streak_offers_standing_grant_never_auto_grants() {
-    use oneiron::consent::{
-        ActionClass, ActionEnvelope, ActorBound, ConsentGuard, ConsentProposal, EffectFacts,
-        GrantBound,
-    };
     use oneiron::store::GateDecisionId;
-
-    const STREAK_FLOOR: usize = 12;
 
     let (_dir, vault) = open_vault();
     let owner_id = put_person(&vault, 0x25);
     let owner = vault
         .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner");
+    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
 
-    let scope_bound = GrantBound::action(
-        ActorBound::new("agent-a").expect("actor"),
-        ActionClass::new("send_email").expect("class"),
-        ActionEnvelope::new(["client_followup".to_owned()]).expect("envelope"),
-    )
-    .expect("bound");
-    let facts = EffectFacts::new("send_email").expect("facts");
-
-    let mut graduation_offers: Vec<ConsentProposal> = Vec::new();
-    for approvals in 1..=STREAK_FLOOR {
-        let guard = RampGuard {
-            bound: scope_bound.clone(),
-            untouched_streak: approvals,
-        };
-        // The offer surfaces once, at the floor — and it is only ever an offer.
-        if approvals >= STREAK_FLOOR && graduation_offers.is_empty() {
-            graduation_offers.push(guard.propose(&facts));
-        }
+    assert_eq!(seam::count_graduation_offers(&vault), 0);
+    assert_eq!(seam::count_standing_grants(&vault), 0);
+    for _ in 0..oneiron::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR {
+        seam::record_outcome_receipt(&vault, &scope, ProposalOutcome::ApprovedUntouched);
         assert_eq!(
             seam::count_standing_grants(&vault),
             0,
-            "no number of untouched approvals may create a grant — the system \
-             offers, it NEVER auto-grants"
+            "approval receipts must not create standing authority",
         );
     }
-    assert_eq!(graduation_offers.len(), 1, "one offer for one scope");
-    assert_eq!(
-        seam::count_standing_grants(&vault),
-        0,
-        "twelve untouched approvals create one proposal and zero grants"
-    );
+    assert_eq!(seam::count_graduation_offers(&vault), 1);
+    assert_eq!(seam::count_standing_grants(&vault), 0);
 
-    // The owner taps the surfaced offer. Only this act creates authority, and
-    // it creates exactly one grant.
-    let offer = graduation_offers.pop().expect("the graduation offer");
-    vault
-        .create_standing_grant(&owner, offer.suggested_bound)
-        .expect("owner accepts the graduation offer");
+    seam::accept_graduation_offer(&vault, &owner, &scope);
     assert_eq!(
         seam::count_standing_grants(&vault),
         1,
-        "the owner tap creates exactly one grant"
+        "the owner tap creates exactly one grant",
     );
 }
 
-/// r7/§7: an auto scope accumulating amendments may be SELF-DEMOTED by the
-/// agent — said out loud and receipted, never a silent capability
-/// reduction.
+/// r7/§7: explicit self-demotion after amended outcomes is receipted,
+/// even when the scope already requires proposals.
 #[test]
 fn ms06_self_demotion_is_receipted_never_silent() {
     let (_dir, vault) = open_vault();
     let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    assert!(matches!(
+        vault
+            .ramp_scope_state(&scope)
+            .expect("initial ramp posture"),
+        oneiron::consent_graduation::RampState::Propose,
+    ));
     for _ in 0..3 {
         seam::record_outcome_receipt(&vault, &scope, ProposalOutcome::ApprovedAmended);
     }
     assert_eq!(seam::count_demotion_receipts(&vault), 0);
     seam::demote_scope_to_propose(&vault, &scope);
     assert_eq!(seam::count_demotion_receipts(&vault), 1);
-    // The demotion actually moved the scope's consent posture.
-    assert_eq!(seam::scope_state(&vault, &scope), "proposed");
+    assert!(matches!(
+        vault
+            .ramp_scope_state(&scope)
+            .expect("demoted ramp posture"),
+        oneiron::consent_graduation::RampState::Propose,
+    ));
 }
 
 /// r7/§7 companion to the above, added by ONE-1748 (additive, no assert
@@ -1335,28 +1286,42 @@ fn ms06_demotion_from_graduated_revokes_the_standing_grant() {
 
     seam::accept_graduation_offer(&vault, &owner, &scope);
     assert_eq!(seam::count_standing_grants(&vault), 1);
-    assert_eq!(seam::scope_state(&vault, &scope), "auto");
+    assert!(matches!(
+        vault
+            .ramp_scope_state(&scope)
+            .expect("graduated ramp posture"),
+        oneiron::consent_graduation::RampState::Graduated,
+    ));
 
     seam::demote_scope_to_propose(&vault, &scope);
-    assert_eq!(seam::scope_state(&vault, &scope), "proposed");
+    assert!(matches!(
+        vault
+            .ramp_scope_state(&scope)
+            .expect("demoted ramp posture"),
+        oneiron::consent_graduation::RampState::Propose,
+    ));
     assert_eq!(
         seam::count_standing_grants(&vault),
         0,
-        "a demotion that leaves the grant standing is a silent non-demotion"
+        "a demotion that leaves the grant standing is a silent non-demotion",
     );
     assert_eq!(seam::count_demotion_receipts(&vault), 1);
 }
 
-/// [NEG] r7: merge/split are AUTO day one — they are never placed on the
-/// propose→auto ramp. The ramp is only the exit path for scopes that
-/// honestly start at propose (external effects, cross-person, tinkerer
-/// dials). A ramp-everything implementation must fail here.
+/// [NEG] r7: merge/split apply immediately even with ramp outcome history
+/// and no standing authority; neither operation queues a ramp proposal.
 #[test]
 fn ms06_merge_split_never_gated_by_ramp() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
     let loser = put_person(&vault, 0x22);
-    // MS-01 ground truth: the merge applies immediately, auto by default.
+    let merge_scope = seam::ramp_scope(&vault, "merge", "PERSON", "agent-a");
+    let split_scope = seam::ramp_scope(&vault, "split", "PERSON", "agent-a");
+    for scope in [&merge_scope, &split_scope] {
+        seam::record_outcome_receipt(&vault, scope, ProposalOutcome::ApprovedAmended);
+    }
+    assert_eq!(seam::count_standing_grants(&vault), 0);
+
     real_merge(&vault, vec![loser], survivor, 200);
     assert!(
         vault
@@ -1364,9 +1329,18 @@ fn ms06_merge_split_never_gated_by_ramp() {
             .expect("loser state")
             .is_redirect_shell()
     );
+    assert_eq!(seam::resolve_entity(&vault, &loser), vec![survivor]);
+    assert_eq!(seam::count_ramp_proposals_for(&vault, "merge"), 0);
+    assert_eq!(seam::count_ramp_proposals_for(&vault, "split"), 0);
 
-    assert!(!seam::scope_is_on_ramp(&vault, "merge"));
-    assert!(!seam::scope_is_on_ramp(&vault, "split"));
+    let original = put_person(&vault, 0x23);
+    let head_a = put_person(&vault, 0x24);
+    let head_b = put_person(&vault, 0x26);
+    real_split(&vault, original, vec![head_a, head_b], 300);
+    let resolved = seam::resolve_entity(&vault, &original);
+    assert_eq!(resolved.len(), 2);
+    assert!(resolved.contains(&head_a));
+    assert!(resolved.contains(&head_b));
     assert_eq!(seam::count_ramp_proposals_for(&vault, "merge"), 0);
     assert_eq!(seam::count_ramp_proposals_for(&vault, "split"), 0);
 }

@@ -943,10 +943,32 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
         );
         assert_eq!(seen[0].lineage.as_ref(), Some(envelope.lineage()));
         let request = crate::llm::auto_check_llm_request(CHECKER_REF, &seen[0].borrowed(), "");
-        let crate::llm::ContentPart::Text { text } = &request.messages[1].content[0] else {
-            panic!("checker request must carry candidate text");
-        };
-        assert!(text.contains("\nsource: observed\nlineage: observed, tool_output\n"));
+        let text_parts: Vec<_> = request
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                crate::llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        let host_text = text_parts.join(" ");
+        let tokens: Vec<_> = host_text
+            .split_whitespace()
+            .map(|token| token.trim_matches(|c: char| c == ':' || c == ','))
+            .collect();
+        assert!(
+            tokens.windows(2).any(|pair| pair == ["source", "observed"]),
+            "the host request must identify the declared source as Observed"
+        );
+        assert!(
+            tokens.windows(3).any(|fields| {
+                fields[0] == "lineage"
+                    && fields[1..].contains(&"observed")
+                    && fields[1..].contains(&"tool_output")
+            }),
+            "the host request must disclose both historical source classes"
+        );
         assert_eq!(seen[0].actor_class, "agent");
         assert_eq!(seen[0].predicate, "profile.name");
         assert_eq!(seen[0].value_preview, "Ada Lovelace");

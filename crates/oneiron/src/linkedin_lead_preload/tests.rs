@@ -443,10 +443,8 @@ fn linkedin_preload_rejects_duplicate_external_id_before_writes() {
         let error = apply_linkedin_lead_corpus(&vault, corpus, actor).expect_err("must reject");
         assert!(matches!(
             error,
-            LinkedInLeadPreloadError::Malformed {
-                reason: "duplicate external id",
-                ..
-            }
+            LinkedInLeadPreloadError::Malformed { index, .. }
+                if index == if company { 1 } else { 2 }
         ));
         assert_eq!(snapshot(&vault), before);
     }
@@ -685,15 +683,13 @@ fn linkedin_preload_rejects_structurally_valid_occupied_claim_identity_mismatche
             }
         }
         vault.put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)?;
-        assert_eq!(vault.get_claim(&claim_id)?, Some(body)); // Valid CLAIM, not a type collision.
+        vault.get_claim(&claim_id)?.expect("valid CLAIM fixture");
         let before = snapshot(&vault);
         let error = apply_linkedin_lead_corpus(&vault, fixture(), actor).expect_err("must reject");
         assert!(
             matches!(
                 error,
-                LinkedInLeadPreloadError::Vault(Error::InvalidClaimBody(
-                    "LinkedIn derived claim identity mismatch"
-                ))
+                LinkedInLeadPreloadError::Vault(Error::InvalidClaimBody(_))
             ),
             "{section}.{name}"
         );

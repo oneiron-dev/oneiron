@@ -210,6 +210,7 @@ fn quorum_revoke_resolves_authority_fork() {
         &second,
         &third,
     );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
     let entries = vec![
         revoke.clone(),
         fork_ceiling.clone(),
@@ -243,13 +244,7 @@ fn quorum_revoke_resolves_authority_fork() {
                 .get(&owner_key)
                 .is_some_and(|device| device.revoked)
         );
-        assert!(
-            fold.valid_entries
-                .contains(&authority_entry_hash(&entries[0]).unwrap())
-                || fold
-                    .valid_entries
-                    .contains(&authority_entry_hash(&entries[5]).unwrap())
-        );
+        assert!(fold.valid_entries.contains(&revoke_hash));
     }
 }
 

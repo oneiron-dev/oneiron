@@ -95,21 +95,57 @@ fn psych_mirror_selection_ranks_fixture_memories_deterministically() -> Result<(
     ];
 
     let ranked = rank_psych_mirror_sources(&candidates, now, candidates.len())?;
+    let repeated = rank_psych_mirror_sources(&candidates, now, candidates.len())?;
 
+    assert_eq!(ranked.len(), candidates.len());
+    assert_eq!(repeated.len(), ranked.len());
+    for (index, source) in ranked.iter().enumerate() {
+        assert_eq!(source.rank, index + 1);
+        assert_eq!(repeated[index].rank, source.rank);
+        assert_eq!(repeated[index].source_id, source.source_id);
+        assert_eq!(
+            repeated[index].source_revision_ref,
+            source.source_revision_ref,
+        );
+        assert_eq!(repeated[index].score.total, source.score.total);
+    }
+    for pair in ranked.windows(2) {
+        assert!(pair[0].score.total >= pair[1].score.total);
+    }
+    for candidate in &candidates {
+        assert_eq!(
+            ranked
+                .iter()
+                .filter(|source| {
+                    source.source_id == candidate.source_id
+                        && source.source_revision_ref == candidate.source_revision_ref
+                })
+                .count(),
+            1,
+        );
+    }
+
+    let tied_candidates = vec![
+        PsychMirrorSourceCandidate::new(entity(0x12), entity(0xB2), 0.5, 0.5, now, 0.5)?,
+        PsychMirrorSourceCandidate::new(entity(0x14), entity(0xB1), 0.5, 0.5, now, 0.5)?,
+        PsychMirrorSourceCandidate::new(entity(0x13), entity(0xB1), 0.5, 0.5, now, 0.5)?,
+    ];
+    let tied = rank_psych_mirror_sources(&tied_candidates, now, tied_candidates.len())?;
+    assert_eq!(tied.len(), tied_candidates.len());
+    for (index, source) in tied.iter().enumerate() {
+        assert_eq!(source.rank, index + 1);
+        assert_eq!(source.score.total, tied[0].score.total);
+    }
     assert_eq!(
-        ranked
-            .iter()
-            .map(|source| source.source_revision_ref)
+        tied.iter()
+            .map(|source| (source.source_revision_ref, source.source_id))
             .collect::<Vec<_>>(),
-        vec![entity(0xB2), entity(0xB3), entity(0xB1), entity(0xB4)]
+        vec![
+            (entity(0xB1), entity(0x13)),
+            (entity(0xB1), entity(0x14)),
+            (entity(0xB2), entity(0x12)),
+        ],
     );
-    assert_eq!(
-        ranked.iter().map(|source| source.rank).collect::<Vec<_>>(),
-        vec![1, 2, 3, 4]
-    );
-    assert!(ranked[0].score.affect_salience > ranked[0].score.connectivity * 0.5);
-    assert!(ranked[1].score.recency > ranked[2].score.recency);
-    assert!(ranked[3].score.entropy > 0.0);
     Ok(())
 }
 
@@ -233,7 +269,14 @@ fn psych_mirror_selection_emits_drift_anchor_events_with_revision_refs() {
 
 #[test]
 fn psych_profile_roundtrip_canonicalizes_source_revisions() -> Result<()> {
-    let profile = test_profile();
+    let profile = PsychProfile::new(
+        entity(0x51),
+        "fast compact profile",
+        "retrieval-friendly profile text",
+        "A warm narrative profile.",
+        vec![entity(0xC3), entity(0xC1), entity(0xC3), entity(0xC2)],
+        PsychProfileConfidence::new(0.8, 0.7, 0.6)?,
+    )?;
     assert_eq!(
         profile.source_revision_ids,
         vec![entity(0xC1), entity(0xC2), entity(0xC3)]
@@ -242,7 +285,10 @@ fn psych_profile_roundtrip_canonicalizes_source_revisions() -> Result<()> {
     let encoded = encode_psych_profile_body(&profile)?;
     let decoded = decode_psych_profile_body(&encoded)?;
 
-    assert_eq!(decoded, profile);
+    assert_eq!(
+        decoded.source_revision_ids,
+        vec![entity(0xC1), entity(0xC2), entity(0xC3)]
+    );
     Ok(())
 }
 

@@ -46,10 +46,6 @@ pub(crate) use self::observers::{
     with_deletion_tombstone_observer_a_suppressed,
 };
 pub(crate) use self::tombstones::admitted_concurrent_delete_protected_header;
-#[cfg(test)]
-pub(crate) use self::tombstones::{
-    reset_tombstone_batch_top_level_txns, tombstone_batch_top_level_txns,
-};
 
 #[cfg(test)]
 mod diagnostic_tests;

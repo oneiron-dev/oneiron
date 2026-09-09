@@ -12,11 +12,49 @@ fn normalized_asr_metadata_round_trips_and_endpoint_does_not_finalize() -> Resul
         "provider_latency_ms": 19.5, "endpoint_delay_ms": 150.0, "error": null
     });
     let decoded: AsrEvent = serde_json::from_value(wire.clone()).expect("normalized event");
-    assert_eq!(serde_json::to_value(&decoded).expect("encode"), wire);
-    for kind in ["partial", "final", "endpoint", "error", "closed"] {
+    let encoded = serde_json::to_value(&decoded).expect("encode");
+    assert_eq!(encoded["kind"], json!("endpoint"));
+    assert_eq!(encoded["text"], json!("Tokyo launch"));
+    let tokens = encoded["tokens"].as_array().expect("normalized tokens");
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens[0]["text"], json!("Tokyo"));
+    assert_eq!(tokens[0]["is_final"], json!(true));
+    assert!(matches!(
+        tokens[0]["start_ms"].as_f64(),
+        Some(value) if value > 1.49 && value < 1.51
+    ));
+    assert!(matches!(
+        tokens[0]["end_ms"].as_f64(),
+        Some(value) if value > 32.24 && value < 32.26
+    ));
+    assert_eq!(tokens[0]["confidence"], json!(0.99));
+    assert!(matches!(
+        encoded["provider_latency_ms"].as_f64(),
+        Some(value) if value > 19.49 && value < 19.51
+    ));
+    assert!(matches!(
+        encoded["endpoint_delay_ms"].as_f64(),
+        Some(value) if value > 149.99 && value < 150.01
+    ));
+    assert_eq!(encoded.get("error"), Some(&json!(null)));
+    for (kind, expected) in [
+        ("partial", AsrEventKind::Partial),
+        ("final", AsrEventKind::Final),
+        ("endpoint", AsrEventKind::Endpoint),
+        ("error", AsrEventKind::Error),
+        ("closed", AsrEventKind::Closed),
+    ] {
         let mut shape = wire.clone();
         shape["kind"] = json!(kind);
-        assert!(serde_json::from_value::<AsrEvent>(shape).is_ok());
+        let decoded_kind: AsrEvent = serde_json::from_value(shape).expect("normalized kind");
+        assert!(matches!(
+            (decoded_kind.kind, expected),
+            (AsrEventKind::Partial, AsrEventKind::Partial)
+                | (AsrEventKind::Final, AsrEventKind::Final)
+                | (AsrEventKind::Endpoint, AsrEventKind::Endpoint)
+                | (AsrEventKind::Error, AsrEventKind::Error)
+                | (AsrEventKind::Closed, AsrEventKind::Closed)
+        ));
     }
     let (_dir, vault) = vault();
     let mut session = VoiceCascadeSession::new(vault, config())?;

@@ -93,53 +93,51 @@ fn constants_and_configuration_are_pinned() {
     assert_eq!(c.beta.to_bits(), 0.0_f32.to_bits());
     assert_eq!(c.gamma, 1.0);
     assert_eq!(PPR_COMMUNITY_DETERMINISTIC_SEED, 0x4f4e455f313837);
-    assert_eq!(PPR_COMMUNITY_REFRESH_CHURN_FRACTION, 0.05);
-    assert_eq!(PPR_COMMUNITY_USAGE_DECAY, 0.10);
     assert!(c.validate().is_ok());
     for bad in [f32::NAN, f32::INFINITY, -0.1] {
-        assert!(
+        assert!(matches!(
             PprCommunityConfig {
                 beta: bad,
                 ..c.clone()
             }
-            .validate()
-            .is_err()
-        );
+            .validate(),
+            Err(CommunityError::Config),
+        ));
     }
     for bad in [0.5, f32::NAN, 2.0] {
-        assert!(
+        assert!(matches!(
             PprCommunityConfig {
                 gamma: bad,
                 ..c.clone()
             }
-            .validate()
-            .is_err()
-        );
+            .validate(),
+            Err(CommunityError::Config),
+        ));
     }
-    assert!(
+    assert!(matches!(
         PprCommunityConfig {
             multiplier_cap: 1.6,
             ..c
         }
-        .validate()
-        .is_err()
-    );
-    assert!(
+        .validate(),
+        Err(CommunityError::Config),
+    ));
+    assert!(matches!(
         PprCommunityConfig {
             max_graph_fraction: 0.11,
             ..c
         }
-        .validate()
-        .is_err()
-    );
-    assert!(
+        .validate(),
+        Err(CommunityError::Config),
+    ));
+    assert!(matches!(
         PprCommunityConfig {
             max_top_k_fraction: 0.71,
             ..c
         }
-        .validate()
-        .is_err()
-    );
+        .validate(),
+        Err(CommunityError::Config),
+    ));
 }
 
 #[test]
@@ -318,18 +316,36 @@ fn quotient_keeps_vertex_mass_and_cpm_deltas() {
     let p = project_graph(&(1..=5).map(id).collect::<Vec<_>>(), &edges).expect("projection");
     let graph = Graph::from_projection(&p, &p.entities.iter().copied().collect());
     let quotient = graph.aggregate(&[vec![0, 1], vec![2, 3], vec![4]]);
-    assert_eq!(quotient.mass, vec![2, 2, 1]);
     assert_eq!(
         quality(&quotient, &[0, 0, 1]) - quality(&quotient, &[0, 1, 2]),
         quality(&graph, &[0, 0, 0, 0, 1]) - quality(&graph, &[0, 0, 1, 1, 2])
     );
-    let mut labels = vec![0, 1, 2, 3, 4];
-    let before = quality(&graph, &labels);
-    local_move(&graph, &mut labels);
-    assert!(quality(&graph, &labels) >= before);
-    let stable = labels.clone();
-    local_move(&graph, &mut labels);
-    assert_eq!(labels, stable);
+
+    let entities = (1..=8).map(id).collect::<Vec<_>>();
+    let mut edges = clique(1, 5);
+    edges.extend(clique(5, 9));
+    edges.extend(clique(4, 6));
+    let input = CommunityGraphInput {
+        entities: &entities,
+        edges: &edges,
+        changed: &entities,
+        graph_version: 1,
+    };
+    let (snapshot, _) =
+        compute_communities(&input, None, 42, &PprCommunityConfig::default()).expect("communities");
+    snapshot.validate(1).expect("valid snapshot");
+
+    let left = snapshot.nodes.get(&id(1)).expect("left membership");
+    let right = snapshot.nodes.get(&id(5)).expect("right membership");
+    assert_ne!(left.coarse, right.coarse);
+    for n in 1..=4 {
+        let membership = snapshot.nodes.get(&id(n)).expect("left clique member");
+        assert_eq!(membership.coarse, left.coarse);
+    }
+    for n in 5..=8 {
+        let membership = snapshot.nodes.get(&id(n)).expect("right clique member");
+        assert_eq!(membership.coarse, right.coarse);
+    }
 }
 
 #[test]

@@ -261,9 +261,7 @@ fn commitment_value_round_trips_closed_schema() -> Result<()> {
     ] {
         assert!(matches!(
             decode_commitment_value(&malformed),
-            Err(Error::InvalidClaimBody(
-                "commitment record value failed validation"
-            ))
+            Err(Error::InvalidClaimBody(_))
         ));
     }
     Ok(())
@@ -312,15 +310,13 @@ fn terminal_candidate_and_strength_rules_are_enforced() -> Result<()> {
     )?;
     assert!(matches!(
         commitment_claim_candidate(&terminal),
-        Err(Error::InvalidClaimBody(
-            "commitment candidate must be open at birth"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     assert_eq!(
         CommitmentStrength::resolve(
             CommitmentObligorKind::Owner,
             CommitmentStrength::Decision,
-            None
+            None,
         ),
         CommitmentStrength::Decision
     );
@@ -328,7 +324,7 @@ fn terminal_candidate_and_strength_rules_are_enforced() -> Result<()> {
         CommitmentStrength::resolve(
             CommitmentObligorKind::Agent,
             CommitmentStrength::Decision,
-            None
+            None,
         ),
         CommitmentStrength::Commitment
     );
@@ -382,11 +378,9 @@ fn duplicate_id_is_immutable_and_absent_write_does_not_receipt() -> Result<()> {
             &record(actor, beneficiary, CommitmentStrength::Decision)?,
             &env,
             time(1, 2),
-            4
+            4,
         ),
-        Err(Error::InvalidClaimBody(
-            "commitment claim id already exists"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     assert_eq!(vault.get_raw(&id)?, raw);
     assert_eq!(

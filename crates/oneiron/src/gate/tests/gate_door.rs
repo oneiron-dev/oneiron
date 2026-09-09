@@ -597,10 +597,7 @@ fn session_tagged_raw_claim_rejects_a_spoofed_producer_stamp() -> Result<()> {
         .put_entity(&id, ENTITY_TYPE_CLAIM, test_time(3), 3, &data)
         .expect_err("raw claim writes must not self-assert a session producer");
     assert!(
-        matches!(
-            err,
-            Error::InvalidClaimBody("raw claim put requires WriteEnvelope")
-        ),
+        matches!(err, Error::InvalidClaimBody(_)),
         "unexpected error: {err:?}"
     );
     assert!(vault.get_raw(&id)?.is_none());

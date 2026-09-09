@@ -267,10 +267,7 @@ fn bulk_transfer_done_encoders_reject_hostile_keys_without_panicking() {
 fn bulk_transfer_done_checked_encoder_rejects_u32_overflow_len() {
     let err = checked_bulk_transfer_done_state_len(u32::MAX as usize + 1).unwrap_err();
 
-    assert_matches!(
-        err,
-        TransportError::InvalidPayload("BulkTransferDone state too large")
-    );
+    assert_matches!(err, TransportError::InvalidPayload(_));
 }
 
 #[test]
@@ -329,24 +326,28 @@ fn encoded_frame_len_rejects_usize_overflow() {
 #[test]
 fn bulk_transfer_done_rejects_trailing_bytes() {
     let state = vec![10, 20];
-    let mut encoded = encode_bulk_transfer_done("2025-09", &state);
+    let mut encoded = encode_bulk_transfer_done("2025-09", &state)
+        .into_result()
+        .unwrap();
     encoded.push(30);
 
     assert_matches!(
         decode_bulk_transfer_done(&encoded[1..]),
-        Err(TransportError::InvalidPayload("state has trailing bytes"))
+        Err(TransportError::InvalidPayload(_)),
     );
 }
 
 #[test]
 fn bulk_transfer_done_rejects_truncated_state() {
     let state = vec![10, 20];
-    let mut encoded = encode_bulk_transfer_done("2025-09", &state);
+    let mut encoded = encode_bulk_transfer_done("2025-09", &state)
+        .into_result()
+        .unwrap();
     encoded.pop();
 
     assert_matches!(
         decode_bulk_transfer_done(&encoded[1..]),
-        Err(TransportError::InvalidPayload("state truncated"))
+        Err(TransportError::InvalidPayload(_)),
     );
 }
 

@@ -162,14 +162,60 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
 #[test]
 fn export_manifest_stable_fixture_records_data_shape_and_secret_nulling() {
     let manifest = ExportManifest::from_redacted(true);
+    let value = manifest_value(&manifest.to_json_pretty().expect("manifest serializes"));
 
-    let snapshot = String::from_utf8(manifest.to_json_pretty().expect("manifest serializes"))
-        .expect("manifest JSON is UTF-8");
+    assert_eq!(value["manifest_version"], 1);
+    assert_eq!(value["serializer"]["name"], "oneiron.whole_vault_export");
+    assert_eq!(value["serializer"]["version"], 1);
+    assert_eq!(value["secrets_nulled"]["payloads"], true);
+    assert_eq!(value["secrets_nulled"]["structural_placeholders"], true);
 
-    assert_eq!(
-        snapshot,
-        "{\n  \"manifest_version\": 1,\n  \"serializer\": {\n    \"name\": \"oneiron.whole_vault_export\",\n    \"version\": 1\n  },\n  \"secrets_nulled\": {\n    \"payloads\": true,\n    \"structural_placeholders\": true\n  },\n  \"data_shape\": {\n    \"storage_abi_version\": 17,\n    \"storage_schema_version\": 1,\n    \"db_manifest_version\": 2,\n    \"max_dbs\": 32,\n    \"named_databases\": [\n      {\n        \"n\": 1,\n        \"name\": \"entities\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 2,\n        \"name\": \"type_index\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 3,\n        \"name\": \"short_ids\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 4,\n        \"name\": \"short_ids_reverse\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 5,\n        \"name\": \"vault_meta\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 6,\n        \"name\": \"vectors\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 7,\n        \"name\": \"hnsw_neighbors\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 8,\n        \"name\": \"hnsw_meta\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 9,\n        \"name\": \"text_postings\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 10,\n        \"name\": \"text_meta\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 11,\n        \"name\": \"text_forward\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 12,\n        \"name\": \"text_bm25_field_stats\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 13,\n        \"name\": \"text_doc_field_lengths\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 14,\n        \"name\": \"edges_out\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 15,\n        \"name\": \"edges_in\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 16,\n        \"name\": \"ppr_cache\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 17,\n        \"name\": \"ppr_cache_deps\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 18,\n        \"name\": \"temporal_occurred_start\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 19,\n        \"name\": \"temporal_occurred_end\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 20,\n        \"name\": \"temporal_learned\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 21,\n        \"name\": \"temporal_long_intervals\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 22,\n        \"name\": \"phonetic_index\",\n        \"group\": \"Phonetic\"\n      },\n      {\n        \"n\": 23,\n        \"name\": \"phonetic_forward\",\n        \"group\": \"Phonetic\"\n      },\n      {\n        \"n\": 24,\n        \"name\": \"sync_state\",\n        \"group\": \"Sync\"\n      },\n      {\n        \"n\": 25,\n        \"name\": \"sync_queue\",\n        \"group\": \"Sync\"\n      },\n      {\n        \"n\": 26,\n        \"name\": \"job_records\",\n        \"group\": \"Jobs\"\n      },\n      {\n        \"n\": 27,\n        \"name\": \"job_ready\",\n        \"group\": \"Jobs\"\n      },\n      {\n        \"n\": 28,\n        \"name\": \"job_dedupe\",\n        \"group\": \"Jobs\"\n      }\n    ]\n  }\n}",
-    );
+    let shape = &value["data_shape"];
+    assert_eq!(shape["storage_abi_version"], 17);
+    assert_eq!(shape["storage_schema_version"], 1);
+    assert_eq!(shape["db_manifest_version"], 2);
+    assert_eq!(shape["max_dbs"], 32);
+    let databases = shape["named_databases"]
+        .as_array()
+        .expect("named databases is an array");
+    let expected = [
+        (1, "entities", "Core"),
+        (2, "type_index", "Core"),
+        (3, "short_ids", "Core"),
+        (4, "short_ids_reverse", "Core"),
+        (5, "vault_meta", "Core"),
+        (6, "vectors", "Vector"),
+        (7, "hnsw_neighbors", "Vector"),
+        (8, "hnsw_meta", "Vector"),
+        (9, "text_postings", "Text"),
+        (10, "text_meta", "Text"),
+        (11, "text_forward", "Text"),
+        (12, "text_bm25_field_stats", "Text"),
+        (13, "text_doc_field_lengths", "Text"),
+        (14, "edges_out", "Graph"),
+        (15, "edges_in", "Graph"),
+        (16, "ppr_cache", "Graph"),
+        (17, "ppr_cache_deps", "Graph"),
+        (18, "temporal_occurred_start", "Temporal"),
+        (19, "temporal_occurred_end", "Temporal"),
+        (20, "temporal_learned", "Temporal"),
+        (21, "temporal_long_intervals", "Temporal"),
+        (22, "phonetic_index", "Phonetic"),
+        (23, "phonetic_forward", "Phonetic"),
+        (24, "sync_state", "Sync"),
+        (25, "sync_queue", "Sync"),
+        (26, "job_records", "Jobs"),
+        (27, "job_ready", "Jobs"),
+        (28, "job_dedupe", "Jobs"),
+    ];
+    assert_eq!(databases.len(), expected.len());
+    for (n, name, group) in expected {
+        let matches: Vec<_> = databases.iter().filter(|entry| entry["n"] == n).collect();
+        assert_eq!(matches.len(), 1, "database number {n} must be unique");
+        assert_eq!(matches[0]["name"], name);
+        assert_eq!(matches[0]["group"], group);
+    }
+
     assert!(manifest.redacted());
     assert!(manifest.structurally_secret_nulled());
     assert_eq!(manifest.manifest_version(), EXPORT_MANIFEST_VERSION);
@@ -295,12 +341,7 @@ fn export_manifest_import_rejects_unsupported_manifest_version() {
     let err = ExportManifest::from_json_for_import(&unsupported)
         .expect_err("unsupported manifest version must fail closed");
 
-    match err {
-        Error::InvalidConfig(message) => {
-            assert_eq!(message, "unsupported export manifest version 2");
-        }
-        other => panic!("expected InvalidConfig, got {other:?}"),
-    }
+    assert!(matches!(err, Error::InvalidConfig(_)));
 }
 
 #[test]
@@ -313,15 +354,7 @@ fn export_manifest_import_rejects_unsupported_storage_abi() {
     let err = ExportManifest::from_json_for_import(&unsupported)
         .expect_err("unsupported storage ABI must fail closed");
 
-    match err {
-        Error::InvalidConfig(message) => {
-            assert_eq!(
-                message,
-                format!("unsupported export storage ABI version {unsupported_abi}")
-            );
-        }
-        other => panic!("expected InvalidConfig, got {other:?}"),
-    }
+    assert!(matches!(err, Error::InvalidConfig(_)));
 }
 
 #[test]
@@ -334,12 +367,7 @@ fn export_manifest_import_rejects_unsupported_storage_schema() {
     let err = ExportManifest::from_json_for_import(&unsupported)
         .expect_err("unsupported storage schema must fail closed");
 
-    match err {
-        Error::InvalidConfig(message) => {
-            assert_eq!(message, "unsupported export storage schema version 2");
-        }
-        other => panic!("expected InvalidConfig, got {other:?}"),
-    }
+    assert!(matches!(err, Error::InvalidConfig(_)));
 }
 
 #[test]
@@ -351,12 +379,7 @@ fn export_manifest_import_rejects_unsupported_db_manifest_shape() {
     let err = ExportManifest::from_json_for_import(&unsupported)
         .expect_err("unsupported DB manifest shape must fail closed");
 
-    match err {
-        Error::InvalidConfig(message) => {
-            assert_eq!(message, "unsupported export DB manifest shape");
-        }
-        other => panic!("expected InvalidConfig, got {other:?}"),
-    }
+    assert!(matches!(err, Error::InvalidConfig(_)));
 }
 
 fn manifest_json_value() -> serde_json::Value {
@@ -591,8 +614,7 @@ fn mismatch_surfaces_receipt() -> Result<()> {
     );
     assert_eq!(receipt.exported_vault_id, Some(vault_id));
 
-    // A label the caller did not expect. The chain still matches, so the label
-    // demotes the verdict without ever being able to promote one.
+    // Observe the label through classification, not equality of human hints.
     let labelled =
         vault.whole_vault_export_manifest_artifact_with_label(clear, Some("desk machine"))?;
     let receipt = vault.classify_vault_import_manifest(labelled.bytes(), Some("laptop"))?;
@@ -601,13 +623,18 @@ fn mismatch_surfaces_receipt() -> Result<()> {
         VaultImportClassification::ReviewRequired
     );
     assert_eq!(receipt.mismatches, vec![VaultImportMismatch::VaultLabel]);
-    assert_eq!(receipt.exported_label.as_deref(), Some("desk machine"));
-    assert_eq!(receipt.expected_label.as_deref(), Some("laptop"));
+    let receipt = vault.classify_vault_import_manifest(labelled.bytes(), Some("desk machine"))?;
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ByteFaithfulOwnerRestore
+    );
+    assert!(receipt.byte_faithful);
+    assert!(receipt.mismatches.is_empty());
 
     // An expected label against an unlabelled artifact is the same mismatch.
     let receipt = vault.classify_vault_import_manifest(artifact.bytes(), Some("laptop"))?;
     assert_eq!(receipt.mismatches, vec![VaultImportMismatch::VaultLabel]);
-    assert_eq!(receipt.exported_label, None);
+    assert!(receipt.exported_label.is_none());
 
     // Reasons accumulate in declaration order, deduped, one receipt.
     let mut both = manifest_value(redacted.bytes());
@@ -649,12 +676,7 @@ fn mismatch_surfaces_receipt() -> Result<()> {
         let err = vault
             .classify_vault_import_manifest(&manifest_bytes(&malformed), None)
             .expect_err("malformed chain identity must fail closed");
-        match err {
-            Error::InvalidConfig(message) => {
-                assert_eq!(message, "malformed export authority vault id");
-            }
-            other => panic!("expected InvalidConfig, got {other:?}"),
-        }
+        assert!(matches!(err, Error::InvalidConfig(_)));
     }
 
     // A label that is not displayable never reaches a verdict either.

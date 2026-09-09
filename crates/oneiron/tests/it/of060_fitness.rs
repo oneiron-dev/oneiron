@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use oneiron::{
@@ -137,19 +137,26 @@ fn of060_f1_external_mount_keeps_production_controls_scanned() {
     let mounted = PathBuf::from("src/fixture_probe.rs");
     let test_mount = "#[cfg(test)]\n#[path = \"fixture_probe.rs\"]\nmod tests;";
     let production = "fn seed() { vault.put_replicated(); }";
-    let classify = |source: &str| {
-        cfg_test_external_files(
-            root,
-            &[
-                (parent.clone(), source.to_owned()),
-                (mounted.clone(), production.to_owned()),
-            ],
-        )
+    let rejected_calls = |sources: &[(PathBuf, String)]| {
+        let test_only = cfg_test_external_files(root, sources);
+        let mut violations = 0;
+        for (path, source) in sources {
+            let rel = normalized(relative_path(root, path));
+            if test_only_by_path(&rel) || test_only.contains(path) {
+                continue;
+            }
+            let source = production_source(source);
+            for pattern in [".put_replicated", "::put_replicated"] {
+                if !rel.starts_with("crates/oneiron/src/sync/") {
+                    violations += find_substring_hits(&source, pattern).len();
+                }
+            }
+        }
+        violations
     };
     assert!(!test_only_by_path(&normalized(&mounted)));
-    // A visibility does not change the mount; a mount inside an inline module
-    // resolves under the parent's stem plus the module chain (Rust reference,
-    // "The path attribute"), so those targets differ from the top-level one.
+    // A visibility does not change the mount; inline modules resolve their
+    // targets under the parent's stem and module chain.
     for (source, target) in [
         (test_mount, "src/fixture_probe.rs"),
         (
@@ -170,21 +177,28 @@ fn of060_f1_external_mount_keeps_production_controls_scanned() {
         ),
     ] {
         assert_eq!(
-            classify(source),
-            BTreeSet::from([PathBuf::from(target)]),
-            "must exclude the test mount: {source}"
+            rejected_calls(&[
+                (parent.clone(), source.to_owned()),
+                (PathBuf::from(target), production.to_owned()),
+            ]),
+            0,
+            "test-only calls must be exempt: {source}",
         );
     }
-    // The shared scanner's own mount: `mod source_scan;` inside the inline
-    // `#[cfg(test)] pub(crate) mod test_util { .. }` of a mod-rs root.
-    let root_mount = cfg_test_external_files(
-        root,
-        &[(
-            PathBuf::from("src/lib.rs"),
-            "#[cfg(test)]\npub(crate) mod test_util {\n    mod source_scan;\n}".to_owned(),
-        )],
+    // The shared scanner's own mount in a mod-rs root.
+    assert_eq!(
+        rejected_calls(&[
+            (
+                PathBuf::from("src/lib.rs"),
+                "#[cfg(test)]\npub(crate) mod test_util {\n    mod source_scan;\n}".to_owned(),
+            ),
+            (
+                PathBuf::from("src/test_util/source_scan.rs"),
+                production.to_owned(),
+            ),
+        ]),
+        0,
     );
-    assert!(root_mount.contains(Path::new("src/test_util/source_scan.rs")));
     for source in [
         "",
         r#"#[path = "fixture_probe.rs"] mod fixture;"#,
@@ -200,25 +214,37 @@ fn of060_f1_external_mount_keeps_production_controls_scanned() {
         r#"fn body() { #[cfg(test)] #[path = "fixture_probe.rs"] mod tests; }"#,
         r##"#[cfg(test)] #[path = r#"fixture_probe.rs"#] mod tests;"##,
     ] {
-        assert!(
-            classify(source).is_empty(),
-            "must scan production: {source}"
-        );
         assert_eq!(
-            find_substring_hits(&production_source(production), ".put_replicated").len(),
-            1
+            rejected_calls(&[
+                (parent.clone(), source.to_owned()),
+                (mounted.clone(), production.to_owned()),
+            ]),
+            1,
+            "production calls must be rejected: {source}",
         );
     }
     for production_mount in [
         r#"#[path = "fixture_probe.rs"] mod live;"#,
         "mod fixture_probe;",
     ] {
-        assert!(classify(&format!("{test_mount}\n{production_mount}")).is_empty());
+        assert_eq!(
+            rejected_calls(&[
+                (parent.clone(), format!("{test_mount}\n{production_mount}")),
+                (mounted.clone(), production.to_owned()),
+            ]),
+            1,
+            "a shared mount must not exempt a production call",
+        );
         let another_parent = [
             (parent.clone(), test_mount.to_owned()),
             (PathBuf::from("src/live.rs"), production_mount.to_owned()),
+            (mounted.clone(), production.to_owned()),
         ];
-        assert!(cfg_test_external_files(root, &another_parent).is_empty());
+        assert_eq!(
+            rejected_calls(&another_parent),
+            1,
+            "a production mount in another parent must prevent exemption",
+        );
     }
 }
 
@@ -449,36 +475,33 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
     let first_party = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
     assert_eq!(first_party.wit_world(), SANDBOX_WIT_WORLD_NAME);
 
-    let write_imports = first_party
+    let mut write_imports = BTreeMap::new();
+    for import in first_party
         .linked_imports()
         .iter()
         .filter(|import| import.class() == SandboxImportClass::WriteTrap)
-        .map(|import| import.name())
-        .collect::<Vec<_>>();
+    {
+        assert!(
+            write_imports
+                .insert(
+                    import.name(),
+                    import.write_trap_effect().expect("named write trap"),
+                )
+                .is_none(),
+            "write-import names must be unique",
+        );
+    }
     assert_eq!(
         write_imports,
-        vec![
-            "self.memory.put_claim",
-            "self.memory.supersede_claim",
-            "self.memory.put_edge",
-        ],
-        "OF-060 P3: code-mode WIT writes must stay on named memory verbs only"
-    );
-
-    let write_effects = first_party
-        .linked_imports()
-        .iter()
-        .filter(|import| import.class() == SandboxImportClass::WriteTrap)
-        .map(|import| import.write_trap_effect().expect("named write trap"))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        write_effects,
-        vec![
-            SelfEffect::MemoryPutClaim,
-            SelfEffect::MemorySupersedeClaim,
-            SelfEffect::MemoryPutEdge,
-        ],
-        "OF-060 P3: every linked code-mode write import must resolve to a named effect"
+        BTreeMap::from([
+            ("self.memory.put_claim", SelfEffect::MemoryPutClaim),
+            (
+                "self.memory.supersede_claim",
+                SelfEffect::MemorySupersedeClaim,
+            ),
+            ("self.memory.put_edge", SelfEffect::MemoryPutEdge),
+        ]),
+        "OF-060 P3: write imports must map exactly to the authorized memory effects",
     );
 
     for tier in [
@@ -488,6 +511,13 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
     ] {
         let contract = SandboxBoundaryContract::for_tier(tier);
         for import in contract.linked_imports() {
+            assert!(
+                !matches!(
+                    import.write_trap_effect(),
+                    Some(SelfEffect::MemoryWriteFixture),
+                ),
+                "OF-060 P3: {tier:?} must not expose the fixture write effect",
+            );
             for forbidden in [
                 "batch",
                 "bulk",

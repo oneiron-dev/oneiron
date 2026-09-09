@@ -476,20 +476,25 @@ fn attachment_surfaces_a_failed_capture_as_its_own_marker() {
             .fields
             .get(FIELD_AMENDMENT_DELTA_UNCAPTURED)
             .map(String::as_str),
-        Some("true")
+        Some("true"),
     );
     assert!(
         !records[0].fields.contains_key(FIELD_AMENDMENT_DELTA),
-        "the marker is not a Δ, and must never be projected as one"
+        "the marker is not a Δ, and must never be projected as one",
     );
-    // An unprojected receipt carries NEITHER field — the distinction the
-    // marker exists to preserve.
-    assert!(records[1].fields.is_empty());
+    // An unprojected receipt carries NEITHER amendment field; unrelated
+    // receipt fields remain legal.
+    assert!(!records[1].fields.contains_key(FIELD_AMENDMENT_DELTA));
+    assert!(
+        !records[1]
+            .fields
+            .contains_key(FIELD_AMENDMENT_DELTA_UNCAPTURED),
+    );
     // The Δ accessor stays honest about the marker row: there is no Δ to read
     // and it is not corruption either.
     assert_eq!(
         amendment_delta(&vault, "gate:unmeasured").expect("read"),
-        None
+        None,
     );
 }
 

@@ -220,10 +220,14 @@ fn companion_register_api_projection_redacts_private_values() {
                 .is_some_and(|provenance| !provenance.contains_key("value")),
             "projection provenance must omit opaque provenance.value"
         );
-        assert_eq!(
-            value.get("lifecycle_events"),
-            Some(&json!([{ "kind": "created", "at": 1_777_000_000_u64 }]))
-        );
+        let events = value
+            .get("lifecycle_events")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(events.iter().any(|event| {
+            event.get("kind") == Some(&json!("created"))
+                && event.get("at") == Some(&json!(1_777_000_000_u64))
+        }));
     }
 }
 

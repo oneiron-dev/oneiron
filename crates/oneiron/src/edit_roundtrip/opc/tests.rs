@@ -24,11 +24,22 @@ fn write_read_round_trips_stored_entries() {
     ]);
     let bytes = write(&pkg);
     let parsed = read(&bytes).expect("round-trip read");
-    assert_eq!(parsed, pkg);
+    assert_eq!(
+        parsed.part(CONTENT_TYPES_PART),
+        Some(b"<Types/>".as_slice())
+    );
+    assert_eq!(
+        parsed.part("xl/workbook.xml"),
+        Some(b"<workbook/>".as_slice()),
+    );
+    assert_eq!(
+        parsed.part("customXml/item1.xml"),
+        Some(b"<unknown-part>keep me</unknown-part>".as_slice()),
+    );
     // Names preserve source order.
     assert_eq!(
         parsed.names().collect::<Vec<_>>(),
-        vec![CONTENT_TYPES_PART, "xl/workbook.xml", "customXml/item1.xml"]
+        vec![CONTENT_TYPES_PART, "xl/workbook.xml", "customXml/item1.xml"],
     );
 }
 

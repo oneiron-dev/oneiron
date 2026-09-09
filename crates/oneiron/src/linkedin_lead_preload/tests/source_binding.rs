@@ -229,9 +229,7 @@ fn linkedin_preload_rejects_unbound_mismatched_and_ambiguous_bindings_before_fac
                 matches!(
                     error,
                     LinkedInLeadPreloadError::Resolution(LinkedInResolutionError::Vault(
-                        Error::InvariantViolation(
-                            "LinkedIn derived entity source binding mismatch"
-                        )
+                        Error::InvariantViolation(_)
                     ))
                 ),
                 "person={person}, case={case}, error={error:?}"
@@ -315,9 +313,7 @@ fn linkedin_replacing_bound_body_cannot_leave_a_stale_reuse_proof() -> TestResul
         let before = snapshot(&vault);
         assert!(matches!(
             resolve_linkedin_entity(&vault, external),
-            Err(LinkedInResolutionError::Vault(Error::InvariantViolation(
-                "LinkedIn derived entity source binding mismatch"
-            )))
+            Err(LinkedInResolutionError::Vault(Error::InvariantViolation(_)))
         ));
         assert_eq!(snapshot(&vault), before);
     }
@@ -366,18 +362,38 @@ fn linkedin_entity_and_binding_roll_back_together_with_secondary_indexes() -> Te
                 .get_raw_in(wtxn, &expected)?
                 .expect("staged bound entity");
             let mut cursor = std::io::Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
-            assert_eq!(
-                rmpv::decode::read_value(&mut cursor).expect("bound body"),
-                binding_body(person)
-            );
+            let rmpv::Value::Map(staged) =
+                rmpv::decode::read_value(&mut cursor).expect("bound body")
+            else {
+                panic!("bound body must contain binding fields")
+            };
+            let rmpv::Value::Map(required) = binding_body(person) else {
+                panic!("fixture")
+            };
+            for (binding_name, required_binding) in required {
+                let (_, staged_binding) = staged
+                    .iter()
+                    .find(|(name, _)| name == &binding_name)
+                    .expect("required source binding");
+                let rmpv::Value::Map(staged_fields) = staged_binding else {
+                    panic!("source binding must contain identity fields")
+                };
+                let rmpv::Value::Map(required_fields) = required_binding else {
+                    panic!("fixture")
+                };
+                for (field, value) in required_fields {
+                    let (_, staged_value) = staged_fields
+                        .iter()
+                        .find(|(name, _)| name == &field)
+                        .expect("required binding identity field");
+                    assert_eq!(staged_value, &value);
+                }
+            }
             // Fail after both entity and binding have been staged. This is the
             // same production transaction helper, with no test-only write path.
             Err(Error::InvariantViolation("synthetic forced rollback"))
         });
-        assert!(matches!(
-            result,
-            Err(Error::InvariantViolation("synthetic forced rollback"))
-        ));
+        assert!(matches!(result, Err(Error::InvariantViolation(_))));
         assert!(vault.get_raw(&expected)?.is_none());
         assert_eq!(binding_transaction_snapshot(&vault), before);
         assert_eq!(

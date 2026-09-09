@@ -69,14 +69,18 @@ fn ess_omits_default_hash_algorithm_and_binds_full_cert() {
     let cert = cert_der();
     let (issuer, serial) = issuer_and_serial(&cert).expect("i/s");
     let attr = attr_signing_cert_v2(&cert, &issuer, &serial);
-    // The SHA-256 AlgorithmIdentifier OID must NOT appear inside: DER
-    // omits DEFAULT-valued fields.
-    let sha256_oid = oid_tlv(&OID_SHA256);
-    assert!(
-        !attr
-            .windows(sha256_oid.len())
-            .any(|w| w == sha256_oid.as_slice()),
-        "DEFAULT hashAlgorithm must be omitted"
+    let (_, value) = parse_attribute(&attr).expect("attribute");
+    assert_eq!(value.tag, 0x30);
+    let mut signing_cert = DerReader::new(value.content);
+    let certs = signing_cert.expect(0x30).expect("certs sequence");
+    let mut certs_reader = DerReader::new(certs.content);
+    let ess = certs_reader.expect(0x30).expect("ESSCertIDv2");
+    let mut ess_reader = DerReader::new(ess.content);
+    // With the DEFAULT hashAlgorithm omitted, certHash is the first field.
+    assert_eq!(
+        ess_reader.read().expect("certHash").tag,
+        0x04,
+        "DEFAULT hashAlgorithm must be omitted",
     );
     check_ess_binding(&attr, &cert, &issuer, &serial).expect("binding");
     // One flipped cert byte must break the full-certificate digest.
@@ -201,17 +205,30 @@ fn certificates_set_of_is_der_sorted_on_assembly() {
         chain_ders: &chain,
     };
     let der = build_signed_data(&material, &tlv(0xA0, &[]), &[1u8; 64], &[]);
-    let low_pos = der
-        .windows(low.len())
-        .position(|w| w == low.as_slice())
-        .expect("chain cert present");
-    let high_pos = der
-        .windows(high.len())
-        .position(|w| w == high.as_slice())
-        .expect("signer cert present");
+    let mut reader = DerReader::new(&der);
+    let content_info = reader.expect(0x30).expect("ContentInfo");
+    let mut reader = DerReader::new(content_info.content);
+    reader.expect(0x06).expect("contentType");
+    let content = reader.expect(0xA0).expect("content");
+    let mut reader = DerReader::new(content.content);
+    let signed_data = reader.expect(0x30).expect("SignedData");
+    let mut reader = DerReader::new(signed_data.content);
+    reader.expect(0x02).expect("version");
+    reader.expect(0x31).expect("digestAlgorithms");
+    reader.expect(0x30).expect("encapContentInfo");
+    let certificates = reader.expect(0xA0).expect("certificates");
+    let mut reader = DerReader::new(certificates.content);
+    let first = reader.read().expect("first certificate");
+    let second = reader.read().expect("second certificate");
+    assert!(reader.is_done());
     assert!(
-        low_pos < high_pos,
-        "certificates SET OF members must be in ascending DER order"
+        (first.full == low.as_slice() && second.full == high.as_slice())
+            || (first.full == high.as_slice() && second.full == low.as_slice()),
+        "both certificate members must be preserved",
+    );
+    assert!(
+        first.full < second.full,
+        "certificates SET OF members must be in ascending DER order",
     );
 }
 

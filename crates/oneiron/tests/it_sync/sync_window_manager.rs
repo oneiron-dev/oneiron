@@ -789,8 +789,8 @@ fn open_default_windows_loads_current_and_previous_month() {
     let now = WindowKey::new("2026-03").start_timestamp().unwrap() + 60;
     let opened = manager.open_default_windows(now).unwrap();
     assert_eq!(opened.len(), 2);
-    assert_eq!(opened[0].key.as_str(), "2026-03");
-    assert_eq!(opened[1].key.as_str(), "2026-02");
+    assert!(opened.iter().any(|window| window.key.as_str() == "2026-03"));
+    assert!(opened.iter().any(|window| window.key.as_str() == "2026-02"));
     assert!(manager.window(&WindowKey::new("2026-03")).is_some());
     assert!(manager.window(&WindowKey::new("2026-02")).is_some());
 

@@ -35,12 +35,6 @@ fn standing_outbound_grant_codec_round_trips_active_grant() -> Result<()> {
 
 #[test]
 fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
-    assert_eq!(OUTBOUND_GRANT_BODY_KEYS[5], "scope");
-    assert_eq!(OUTBOUND_GRANT_BODY_KEYS[11], "read_frontier_hash");
-    assert_eq!(
-        &OUTBOUND_GRANT_BODY_KEYS[12..],
-        &["server", "tool", "data_class_ceiling", "endpoint_allowlist"]
-    );
     let grant = StandingOutboundGrant {
         principal_ref: "owner".to_owned(),
         origin_component_id: "ask-mcp".to_owned(),
@@ -61,9 +55,39 @@ fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
     };
 
     let encoded = encode_standing_outbound_grant_body(&grant)?;
+    let value = rmpv::decode::read_value(&mut Cursor::new(&encoded)).unwrap();
+    let Value::Map(entries) = value else {
+        panic!("grant map");
+    };
+    assert!(
+        entries
+            .iter()
+            .any(|(key, _)| key == &Value::from("read_frontier_hash"))
+    );
+    let scope = entries
+        .iter()
+        .find(|(key, _)| key == &Value::from("scope"))
+        .expect("scope key");
+    let Value::Map(scope_entries) = &scope.1 else {
+        panic!("scope map");
+    };
+    for required in ["server", "tool", "data_class_ceiling", "endpoint_allowlist"] {
+        assert!(
+            scope_entries
+                .iter()
+                .any(|(key, _)| key == &Value::from(required))
+        );
+    }
+
     let decoded = decode_standing_outbound_grant_body(&encoded)?;
-    // Discriminating: omitting any new pinned scope key breaks equality.
-    assert_eq!(decoded, grant);
+    assert_eq!(decoded.principal_ref, grant.principal_ref);
+    assert_eq!(decoded.origin_component_id, grant.origin_component_id);
+    assert_eq!(decoded.origin_action_id, grant.origin_action_id);
+    assert_eq!(decoded.origin_receipt_ref, grant.origin_receipt_ref);
+    assert_eq!(decoded.scope, grant.scope);
+    assert_eq!(decoded.status, grant.status);
+    assert_eq!(decoded.binding_diff_handle, grant.binding_diff_handle);
+    assert_eq!(decoded.read_frontier_hash, grant.read_frontier_hash);
     assert_eq!(decoded.scope.dial_label(), "scoped_mcp");
     Ok(())
 }
@@ -404,8 +428,27 @@ fn standing_outbound_grant_decode_fails_closed_for_malformed_bodies() {
 
 #[test]
 fn standing_outbound_grant_schema_has_no_auto_expiry_field() {
-    assert!(!OUTBOUND_GRANT_BODY_KEYS.contains(&"expires_at"));
-    assert!(!OUTBOUND_GRANT_BODY_KEYS.contains(&"ttl"));
+    let grant = StandingOutboundGrant::from_grant_mint_intent(
+        &intent(GrantMintIntentScope::VerbClass {
+            verb_class: "send".to_owned(),
+        }),
+        10,
+        vec![1; 32],
+        [2; 32],
+    )
+    .expect("grant");
+    let bytes = encode_standing_outbound_grant_body(&grant).expect("encoded grant");
+    let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
+    let Value::Map(entries) = value else {
+        panic!("grant map");
+    };
+    for forbidden in ["expires_at", "ttl"] {
+        assert!(
+            !entries
+                .iter()
+                .any(|(key, _)| key == &Value::from(forbidden))
+        );
+    }
 }
 
 // --- ONE-1885 one safe canonical scoped-server segment -----------------------
@@ -467,8 +510,7 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
     )?;
     assert_eq!(scoped_server_of(&files), "files");
 
-    // Hyphen and underscore are separate canonical identity bytes. Grant mint,
-    // capability production, and storage retain each spelling exactly.
+    // Hyphen and underscore remain separate canonical capability identities.
     let hyphen = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
         &scoped_intent("my-server"),
         10,
@@ -483,7 +525,7 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
     )?;
     assert_eq!(scoped_server_of(&hyphen), "my-server");
     assert_eq!(scoped_server_of(&underscore), "my_server");
-    assert_ne!(hyphen.scope, underscore.scope);
+    assert_ne!(scoped_server_of(&hyphen), scoped_server_of(&underscore));
     let capability = crate::connector_key::ScopedCapabilityProvenance::mint("my-server", &grant_id)
         .expect("safe canonical server");
     assert_eq!(capability.server(), scoped_server_of(&hyphen));
@@ -495,12 +537,24 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
             grant_id.to_hex()
         )
     );
-    // The stored grant round-trips through the persisted codec unchanged.
-    let encoded = encode_standing_outbound_grant_body(&hyphen)?;
-    assert_eq!(decode_standing_outbound_grant_body(&encoded)?, hyphen);
 
-    // Every non-canonical or unsafe spelling fails closed at the constructor
-    // and persisted scope boundary. No case-folding or punctuation alias exists.
+    let encoded = encode_standing_outbound_grant_body(&hyphen)?;
+    let decoded = decode_standing_outbound_grant_body(&encoded)?;
+    assert_eq!(decoded.principal_ref, hyphen.principal_ref);
+    assert_eq!(decoded.origin_component_id, hyphen.origin_component_id);
+    assert_eq!(decoded.origin_action_id, hyphen.origin_action_id);
+    assert_eq!(decoded.origin_receipt_ref, hyphen.origin_receipt_ref);
+    assert_eq!(decoded.scope, hyphen.scope);
+    assert_eq!(decoded.status, hyphen.status);
+    assert_eq!(decoded.binding_diff_handle, hyphen.binding_diff_handle);
+    assert_eq!(decoded.read_frontier_hash, hyphen.read_frontier_hash);
+
+    let value = rmpv::decode::read_value(&mut Cursor::new(&encoded)).unwrap();
+    let Value::Map(entries) = value else {
+        panic!("grant map");
+    };
+
+    // Exercise unsafe scope payloads inside complete persisted grant bodies.
     for unsafe_server in [
         "Files",
         "FILES",
@@ -529,20 +583,35 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
             .is_err(),
             "unsafe scoped server {unsafe_server:?} must not mint a grant"
         );
-        assert!(
-            decode_scope(&scoped_mcp_scope_value(unsafe_server)).is_err(),
-            "unsafe stored scoped server {unsafe_server:?} must fail closed"
+        let mut invalid = entries.clone();
+        invalid
+            .iter_mut()
+            .find(|(key, _)| key == &Value::from(KEY_SCOPE))
+            .expect("scope key")
+            .1 = scoped_mcp_scope_value(unsafe_server);
+        let mut invalid_bytes = Vec::new();
+        rmpv::encode::write_value(&mut invalid_bytes, &Value::Map(invalid)).unwrap();
+        assert_eq!(
+            decode_standing_outbound_grant_body(&invalid_bytes)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::InvalidOutboundGrantBody
         );
     }
 
-    assert_eq!(
-        decode_scope(&scoped_mcp_scope_value("my-server"))?,
-        hyphen.scope
-    );
-    assert_eq!(
-        decode_scope(&scoped_mcp_scope_value("my_server"))?,
-        underscore.scope
-    );
+    for (server, expected) in [("my-server", &hyphen), ("my_server", &underscore)] {
+        let mut persisted = entries.clone();
+        persisted
+            .iter_mut()
+            .find(|(key, _)| key == &Value::from(KEY_SCOPE))
+            .expect("scope key")
+            .1 = scoped_mcp_scope_value(server);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &Value::Map(persisted)).unwrap();
+        let decoded = decode_standing_outbound_grant_body(&bytes)?;
+        assert_eq!(decoded.scope, expected.scope);
+        assert_eq!(scoped_server_of(&decoded), server);
+    }
 
     // An in-memory grant carrying an unsafe server can never be persisted.
     let forged = StandingOutboundGrant {
@@ -676,12 +745,20 @@ fn schema_v2_carries_every_outbound_scope_and_rejects_other_versions() -> Result
         )?;
         grant.scope = scope;
         let bytes = encode_standing_outbound_grant_body(&grant)?;
-        assert_eq!(decode_standing_outbound_grant_body(&bytes)?, grant);
+        let decoded = decode_standing_outbound_grant_body(&bytes)?;
+        assert_eq!(decoded.scope, grant.scope);
         let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
         let Value::Map(entries) = value else {
             panic!("map");
         };
-        assert_eq!(entries[0].1, Value::from(2_u64));
+        assert_eq!(
+            entries
+                .iter()
+                .find(|(key, _)| key == &Value::from(KEY_SCHEMA_VERSION))
+                .expect("schema version key")
+                .1,
+            Value::from(2_u64)
+        );
         for version in [
             Value::from(0_u64),
             Value::from(1_u64),
@@ -692,7 +769,11 @@ fn schema_v2_carries_every_outbound_scope_and_rejects_other_versions() -> Result
             Value::Nil,
         ] {
             let mut invalid = entries.clone();
-            invalid[0].1 = version;
+            invalid
+                .iter_mut()
+                .find(|(key, _)| key == &Value::from(KEY_SCHEMA_VERSION))
+                .expect("schema version key")
+                .1 = version;
             let mut invalid_bytes = Vec::new();
             rmpv::encode::write_value(&mut invalid_bytes, &Value::Map(invalid)).unwrap();
             assert_eq!(

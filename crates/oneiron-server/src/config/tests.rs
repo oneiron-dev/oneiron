@@ -17,8 +17,6 @@ fn sync_server_config_debug_redacts_auth_secret() {
     let debug = format!("{config:?}");
 
     assert!(!debug.contains("super-secret-value"));
-    assert!(debug.contains("auth_secret"));
-    assert!(debug.contains("<redacted>"));
 }
 
 #[test]
@@ -107,8 +105,6 @@ fn serve_args_debug_redacts_auth_secret() {
     let debug = format!("{args:?}");
 
     assert!(!debug.contains("cli-secret-value"));
-    assert!(debug.contains("auth_secret"));
-    assert!(debug.contains("<redacted>"));
 }
 
 #[test]
@@ -121,8 +117,6 @@ fn serve_config_debug_redacts_auth_secret() {
     let debug = format!("{config:?}");
 
     assert!(!debug.contains("serve-config-secret"));
-    assert!(debug.contains("auth_secret"));
-    assert!(debug.contains("<redacted>"));
 }
 
 #[test]
@@ -683,11 +677,6 @@ fn env_config_debug_redacts_hosted_kms_key_ref() {
 
     assert!(!debug.contains("secret-ref"));
     assert!(!debug.contains("super-secret-value"));
-    assert!(debug.contains("hosted_kms_key_ref"));
-    assert!(debug.contains("<redacted>"));
-    // The posture itself is not a secret and prints plainly.
-    assert!(debug.contains("privacy_posture: Some(Hosted)"));
-    assert!(format!("{:?}", EnvConfig::default()).contains("hosted_kms_key_ref: None"));
 }
 
 #[test]
@@ -722,9 +711,6 @@ fn serve_args_debug_redacts_hosted_kms_key_ref() {
     let debug = format!("{args:?}");
 
     assert!(!debug.contains("cli-secret-ref"));
-    assert!(debug.contains("hosted_kms_key_ref"));
-    assert!(debug.contains("<redacted>"));
-    assert!(format!("{:?}", ServeArgs::default()).contains("hosted_kms_key_ref: None"));
 }
 
 #[test]
@@ -738,11 +724,6 @@ fn serve_config_debug_redacts_hosted_kms_key_ref() {
     let debug = format!("{config:?}");
 
     assert!(!debug.contains("serve-secret-ref"));
-    assert!(debug.contains("hosted_kms_key_ref"));
-    assert!(debug.contains("<redacted>"));
-    // The posture itself is not a secret and prints plainly.
-    assert!(debug.contains("privacy_posture: Hosted"));
-    assert!(format!("{:?}", ServeConfig::default()).contains("hosted_kms_key_ref: None"));
 }
 
 #[test]

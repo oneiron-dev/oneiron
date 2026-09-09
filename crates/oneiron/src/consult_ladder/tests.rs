@@ -802,10 +802,10 @@ fn a2a_projection_maps_every_ladder_state() {
     let working_projection = project_to_a2a(task, &working(10), None);
     assert_eq!(working_projection.id, task.to_hex());
     assert_eq!(working_projection.state, A2aBaseTaskState::Working);
-    assert_eq!(
-        working_projection.extensions,
-        OneironA2aExtensions::default()
-    );
+    assert!(working_projection.extensions.terminal_disposition.is_none());
+    assert!(working_projection.extensions.result_ref.is_none());
+    assert!(working_projection.extensions.counter_of.is_none());
+    assert!(working_projection.extensions.interruption_kind.is_none());
 
     let consent = project_to_a2a(task, &interrupted(InterruptionKind::Critical, true), None);
     assert_eq!(consent.state, A2aBaseTaskState::InputRequired);

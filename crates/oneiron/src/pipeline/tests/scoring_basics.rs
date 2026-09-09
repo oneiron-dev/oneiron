@@ -15,40 +15,42 @@ fn default_recency_half_life_is_28_days() {
 
 #[test]
 fn recency_half_life_table_is_contract_pinned() {
-    assert_eq!(
-        RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE,
-        &[
-            (ENTITY_TYPE_CLAIM, 28.0),
-            (ENTITY_TYPE_TURN, 28.0),
-            (crate::registry::ENTITY_TYPE_SESSION, 28.0),
-            (crate::registry::ENTITY_TYPE_MESSAGE, 28.0),
-            (crate::registry::ENTITY_TYPE_PERSON, 365.0),
-            (crate::registry::ENTITY_TYPE_RELATIONSHIP, 180.0),
-            (ENTITY_TYPE_EVENT, 30.0),
-            (crate::registry::ENTITY_TYPE_SKILL, 90.0),
-            (ENTITY_TYPE_SUMMARY, 90.0),
-            (crate::registry::ENTITY_TYPE_PLACE, 180.0),
-            (crate::registry::ENTITY_TYPE_ASSET_TEXT, 90.0),
-            (crate::registry::ENTITY_TYPE_CONVERSATION, 30.0),
-            (crate::registry::ENTITY_TYPE_ORG, 180.0),
-            (ENTITY_TYPE_FACET, 180.0),
-            (crate::registry::ENTITY_TYPE_WORLD, 180.0),
-            (crate::registry::ENTITY_TYPE_ASSET, 90.0),
-            (crate::registry::ENTITY_TYPE_NOTIFICATION, 7.0),
-            (crate::registry::ENTITY_TYPE_TASK_LIST, 30.0),
-            (crate::registry::ENTITY_TYPE_TASK, 30.0),
-            (crate::registry::ENTITY_TYPE_MACHINE, 180.0),
-            (crate::registry::ENTITY_TYPE_CODE_ARTIFACT, 90.0),
-            (crate::registry::ENTITY_TYPE_REDACTION_AUDIT, 365.0),
-            (crate::registry::ENTITY_TYPE_MODEL, 180.0),
-            (crate::registry::ENTITY_TYPE_POLICY_MANIFEST, 365.0),
-            (crate::registry::ENTITY_TYPE_FEDERATION_GRANT, 365.0),
-            (crate::registry::ENTITY_TYPE_ACCESS_GRANT, 365.0),
-            (crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT, 365.0),
-            (crate::registry::ENTITY_TYPE_OUTBOUND_GRANT, 365.0),
-            (crate::registry::ENTITY_TYPE_PSYCH_PROFILE, 365.0),
-        ]
-    );
+    for (entity_type, expected_days) in [
+        (ENTITY_TYPE_CLAIM, 28.0),
+        (ENTITY_TYPE_TURN, 28.0),
+        (crate::registry::ENTITY_TYPE_SESSION, 28.0),
+        (crate::registry::ENTITY_TYPE_MESSAGE, 28.0),
+        (crate::registry::ENTITY_TYPE_PERSON, 365.0),
+        (crate::registry::ENTITY_TYPE_RELATIONSHIP, 180.0),
+        (ENTITY_TYPE_EVENT, 30.0),
+        (crate::registry::ENTITY_TYPE_SKILL, 90.0),
+        (ENTITY_TYPE_SUMMARY, 90.0),
+        (crate::registry::ENTITY_TYPE_PLACE, 180.0),
+        (crate::registry::ENTITY_TYPE_ASSET_TEXT, 90.0),
+        (crate::registry::ENTITY_TYPE_CONVERSATION, 30.0),
+        (crate::registry::ENTITY_TYPE_ORG, 180.0),
+        (ENTITY_TYPE_FACET, 180.0),
+        (crate::registry::ENTITY_TYPE_WORLD, 180.0),
+        (crate::registry::ENTITY_TYPE_ASSET, 90.0),
+        (crate::registry::ENTITY_TYPE_NOTIFICATION, 7.0),
+        (crate::registry::ENTITY_TYPE_TASK_LIST, 30.0),
+        (crate::registry::ENTITY_TYPE_TASK, 30.0),
+        (crate::registry::ENTITY_TYPE_MACHINE, 180.0),
+        (crate::registry::ENTITY_TYPE_CODE_ARTIFACT, 90.0),
+        (crate::registry::ENTITY_TYPE_REDACTION_AUDIT, 365.0),
+        (crate::registry::ENTITY_TYPE_MODEL, 180.0),
+        (crate::registry::ENTITY_TYPE_POLICY_MANIFEST, 365.0),
+        (crate::registry::ENTITY_TYPE_FEDERATION_GRANT, 365.0),
+        (crate::registry::ENTITY_TYPE_ACCESS_GRANT, 365.0),
+        (crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT, 365.0),
+        (crate::registry::ENTITY_TYPE_OUTBOUND_GRANT, 365.0),
+        (crate::registry::ENTITY_TYPE_PSYCH_PROFILE, 365.0),
+    ] {
+        assert_eq!(
+            retrieval_recency_half_life_days_for_type(entity_type),
+            expected_days,
+        );
+    }
     assert!(
         retrieval_recency_half_life_days_for_type(crate::registry::ENTITY_TYPE_PERSON)
             > DEFAULT_RECENCY_HALF_LIFE_DAYS
@@ -159,11 +161,32 @@ fn threshold_boundary() {
 
 #[test]
 fn single_channel_noop() {
+    let (_dir, vault) = open_test_vault();
     let ghost = entity_id(0x94);
-    let vector = vec![scored(ghost, 0.6)];
-    let ghosts = cosine_ghost_set(std::slice::from_ref(&vector), Some(0), None);
+    put_vector(&vault, ghost, [0.6, 0.8, 0.0, 0.0]).expect("put vector fixture");
 
-    assert!(ghosts.is_empty());
+    let baseline = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .run_for_pack()
+        .expect("run vector-only baseline");
+    let boosted = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .boost_gravity()
+        .run_for_pack()
+        .expect("run vector-only gravity query");
+
+    let baseline_scores = to_score_map(&baseline.scores);
+    let boosted_scores = to_score_map(&boosted.scores);
+
+    assert!(baseline_scores[&ghost] > 0.0);
+    assert!(approx_eq(
+        boosted_scores[&ghost],
+        baseline_scores[&ghost],
+        1e-7,
+    ));
+    assert_eq!(boosted.cosine_ghosts_dampened, 0);
 }
 
 #[test]

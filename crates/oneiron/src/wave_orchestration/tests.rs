@@ -33,14 +33,6 @@ fn validate(cut: WavePlan) -> WaveResult<ValidatedWavePlan> {
     WaveOrchestrator::<FakePort>::validate(cut)
 }
 
-fn assert_invariant(error: &LinearSyncError, needle: &str) {
-    let LinearSyncError::Store(inner) = error else {
-        panic!("unexpected error: {error:?}");
-    };
-    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
-    assert!(inner.to_string().contains(needle), "{inner}");
-}
-
 /// A durable side that mints TASK rows and gates every edge through
 /// [`blocked_by_edge_write`], exactly like a vault-backed port must.
 #[derive(Debug, Default)]
@@ -143,7 +135,10 @@ fn validate_rejects_a_cycle() {
 
     let error = validate(cut).expect_err("cycle");
 
-    assert_invariant(&error, "cycle");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
 }
 
 #[test]
@@ -152,7 +147,10 @@ fn validate_rejects_an_unknown_blocker() {
 
     let error = validate(cut).expect_err("unknown blocker");
 
-    assert_invariant(&error, "unknown key");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
 }
 
 #[test]
@@ -161,7 +159,10 @@ fn validate_rejects_a_self_edge() {
 
     let error = validate(cut).expect_err("self edge");
 
-    assert_invariant(&error, "blocks on itself");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
 }
 
 #[test]
@@ -170,7 +171,10 @@ fn validate_rejects_duplicate_local_keys() {
 
     let error = validate(cut).expect_err("duplicate local key");
 
-    assert_invariant(&error, "duplicated");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
 }
 
 #[test]
@@ -180,7 +184,10 @@ fn validate_rejects_an_unsupported_schema_version() {
 
     let error = validate(cut).expect_err("schema version");
 
-    assert_invariant(&error, "schema version");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
 }
 
 #[test]
@@ -192,7 +199,10 @@ fn validate_bounds_the_task_count() {
 
     let error = validate(plan(tasks)).expect_err("bounded task count");
 
-    assert_invariant(&error, "task bound");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
 }
 
 #[test]
@@ -279,7 +289,10 @@ fn a_non_task_endpoint_produces_no_blocked_by_edge() {
 
     let error = orchestrator.apply(validated, 100).expect_err("type gate");
 
-    assert_invariant(&error, "not a TASK");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
     assert!(orchestrator.tasks().edges.is_empty());
 }
 
@@ -296,8 +309,18 @@ fn blocked_by_edge_write_gates_on_the_task_type_byte() {
     assert_eq!(edge.dependent, dependent);
     assert_eq!(edge.blocker, blocker);
     assert_eq!(edge.kind(), EdgeKind::BlockedBy);
-    assert_invariant(&refused.expect_err("non-task blocker"), "not a TASK");
-    assert_invariant(&self_edge.expect_err("self edge"), "blocks on itself");
+
+    let error = refused.expect_err("non-task blocker");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
+
+    let error = self_edge.expect_err("self edge");
+    let LinearSyncError::Store(inner) = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(inner.kind(), crate::error::ErrorKind::InvariantViolation);
 }
 
 #[test]

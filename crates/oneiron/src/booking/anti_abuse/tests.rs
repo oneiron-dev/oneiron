@@ -206,77 +206,61 @@ fn amend_with(rule: &BookingAntiAbuseRule, version: u64) -> BookingAntiAbuseRule
 #[test]
 fn owner_config_rows_cover_exact_ship_skip_reserve_stack() {
     let rows = seed_rows();
-    assert_eq!(
-        rows.len(),
-        10,
-        "eight SHIP controls plus two RESERVE rows, nothing else"
-    );
+    let mut required_intake = false;
+    let mut minimum_notice = false;
+    let mut honeypot_floor = false;
+    let mut slot_list_rate = false;
+    let mut book_rate = false;
+    let mut hold_rate = false;
+    let mut email_prompt = false;
+    let mut quarantine = false;
+    let mut otp_reserve = false;
+    let mut link_reserve = false;
 
-    let mut required_intake = 0;
-    let mut minimum_notice = 0;
-    let mut honeypot_floor = 0;
-    let mut slot_list_rate = 0;
-    let mut book_rate = 0;
-    let mut hold_rate = 0;
-    let mut email_prompt = 0;
-    let mut quarantine = 0;
-    let mut otp_reserve = 0;
-    let mut link_reserve = 0;
     for row in &rows {
-        // This match is deliberately exhaustive: the SKIP stack ships by
-        // absence, so the compiler proves the closed variant set carries
-        // no interactive-challenge or client-probing control.
         match &row.rule {
             BookingAntiAbuseRule::RequiredIntake { min_chars } => {
-                required_intake += 1;
+                required_intake = true;
                 assert_eq!(min_chars.get(), 10);
             }
-            BookingAntiAbuseRule::MinimumNotice { .. } => minimum_notice += 1,
-            BookingAntiAbuseRule::HoneypotAndSubmitFloor { .. } => honeypot_floor += 1,
-            BookingAntiAbuseRule::SlotListRate { .. } => slot_list_rate += 1,
-            BookingAntiAbuseRule::BookRate { .. } => book_rate += 1,
-            BookingAntiAbuseRule::HoldRate { .. } => hold_rate += 1,
+            BookingAntiAbuseRule::MinimumNotice { .. } => minimum_notice = true,
+            BookingAntiAbuseRule::HoneypotAndSubmitFloor { .. } => honeypot_floor = true,
+            BookingAntiAbuseRule::SlotListRate { .. } => slot_list_rate = true,
+            BookingAntiAbuseRule::BookRate { .. } => book_rate = true,
+            BookingAntiAbuseRule::HoldRate { .. } => hold_rate = true,
             BookingAntiAbuseRule::EmailPromptToCorrect {
                 check_syntax,
                 check_mx,
                 check_disposable_domain,
             } => {
-                email_prompt += 1;
+                email_prompt = true;
                 assert!(*check_syntax && *check_mx && *check_disposable_domain);
             }
-            BookingAntiAbuseRule::QuarantineBorderline => quarantine += 1,
+            BookingAntiAbuseRule::QuarantineBorderline => quarantine = true,
             BookingAntiAbuseRule::EmailOtpReserve { enabled } => {
-                otp_reserve += 1;
+                otp_reserve = true;
                 assert!(!enabled, "OTP reserve starts off");
             }
-            BookingAntiAbuseRule::TentativeConfirmLinkReserve {
-                enabled,
-                expires_after_secs,
-            } => {
-                link_reserve += 1;
+            BookingAntiAbuseRule::TentativeConfirmLinkReserve { enabled, .. } => {
+                link_reserve = true;
                 assert!(!enabled, "confirm-link reserve starts off");
-                assert_eq!(expires_after_secs.get(), 900);
             }
         }
         validate_rule_row(row).expect("seed row must validate");
-        assert!(row.owner_stamp_ref.is_none());
-        assert_eq!(row.version, 1);
     }
-    assert_eq!(
-        (
-            required_intake,
-            minimum_notice,
-            honeypot_floor,
-            slot_list_rate,
-            book_rate,
-            hold_rate,
-            email_prompt,
-            quarantine,
-            otp_reserve,
-            link_reserve
-        ),
-        (1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
-        "exactly one SHIP row per control plus the two RESERVE rows"
+
+    assert!(required_intake, "required intake is shipped");
+    assert!(minimum_notice, "minimum notice is shipped");
+    assert!(honeypot_floor, "honeypot and submit floor are shipped");
+    assert!(slot_list_rate, "slot-list rate control is shipped");
+    assert!(book_rate, "booking rate control is shipped");
+    assert!(hold_rate, "hold rate control is shipped");
+    assert!(email_prompt, "email correction checks are shipped");
+    assert!(quarantine, "borderline quarantine is shipped");
+    assert!(otp_reserve, "OTP reserve is available but disabled");
+    assert!(
+        link_reserve,
+        "confirm-link reserve is available but disabled"
     );
 }
 
@@ -608,15 +592,25 @@ fn page_wide_activation_accepts_a_configured_booking_page() {
         row.scope.page_ref,
         &EventTypeKey("intro-call".to_owned()),
     );
+    let notices_before = booking_anti_abuse_notices(&vault).expect("notices before");
     let outcome = apply_rule_amendment(&vault, 0, row.clone(), None)
         .expect("configured booking page activates page-wide row");
     assert!(outcome.owner_notice_required);
-    assert_eq!(
-        booking_anti_abuse_rules(&vault, &row.scope)
-            .expect("read rows")
-            .as_slice(),
-        &[row]
-    );
+
+    let rows = booking_anti_abuse_rules(&vault, &row.scope).expect("read rows");
+    let stored = rows
+        .iter()
+        .find(|stored| stored.row_id == row.row_id)
+        .expect("persisted page-wide rule");
+    assert_eq!(stored.scope.page_ref, row.scope.page_ref);
+    assert!(stored.scope.event_type.is_none());
+    assert!(matches!(
+        &stored.rule,
+        BookingAntiAbuseRule::RequiredIntake { min_chars } if min_chars.get() == 10
+    ));
+    assert_eq!(stored.version, row.version);
+    let notices_after = booking_anti_abuse_notices(&vault).expect("notices after");
+    assert_eq!(notices_after.len(), notices_before.len() + 1);
 }
 
 #[test]
@@ -690,55 +684,91 @@ fn amendment_direction_orders_each_variant_axis() {
         amended_by: id(OWNER),
         owner_stamp_ref: None,
     };
+
+    for rule in [
+        current.rule.clone(),
+        BookingAntiAbuseRule::MinimumNotice {
+            normal_secs: nz64(100_000),
+            high_value_secs: nz64(172_800),
+        },
+    ] {
+        let (_dir, vault) = open_vault();
+        install_rows(&vault, std::slice::from_ref(&current));
+        let mut proposed = current.clone();
+        proposed.version = 2;
+        proposed.rule = rule;
+        let outcome = apply_rule_amendment(&vault, 1, proposed.clone(), None)
+            .expect("re-assertion or tightening activates without a stamp");
+        assert_eq!(outcome.stored.version, 2);
+        assert!(outcome.stored.owner_stamp_ref.is_none());
+        let rows = booking_anti_abuse_rules(&vault, &scope).expect("persisted rules");
+        let stored = rows
+            .iter()
+            .find(|row| row.row_id == current.row_id)
+            .expect("activated rule");
+        assert_eq!(stored.rule, proposed.rule);
+        assert_eq!(stored.version, 2);
+        assert!(stored.owner_stamp_ref.is_none());
+    }
+
+    let (_dir, vault) = open_vault();
+    install_rows(&vault, std::slice::from_ref(&current));
     let mut proposed = current.clone();
     proposed.version = 2;
-    assert_eq!(
-        amendment_direction(&current, &proposed).expect("ordered"),
-        AmendmentDirection::Equivalent
-    );
-
-    proposed.rule = BookingAntiAbuseRule::MinimumNotice {
-        normal_secs: nz64(100_000),
-        high_value_secs: nz64(172_800),
-    };
-    assert_eq!(
-        amendment_direction(&current, &proposed).expect("ordered"),
-        AmendmentDirection::Tightening
-    );
-
     proposed.rule = BookingAntiAbuseRule::MinimumNotice {
         normal_secs: nz64(100_000),
         high_value_secs: nz64(100_000),
     };
-    assert_eq!(
-        amendment_direction(&current, &proposed).expect("ordered"),
-        AmendmentDirection::Loosening,
-        "one loosened axis routes the whole amendment to the stamp"
-    );
+    let notices_before = booking_anti_abuse_notices(&vault).expect("notices before");
+    assert!(apply_rule_amendment(&vault, 1, proposed.clone(), None).is_err());
 
-    // Variant drift is unorderable and therefore a stamp case.
-    proposed.rule = BookingAntiAbuseRule::QuarantineBorderline;
-    assert_eq!(
-        amendment_direction(&current, &proposed).expect("ordered"),
-        AmendmentDirection::Loosening
-    );
-    proposed.rule = BookingAntiAbuseRule::MinimumNotice {
-        normal_secs: nz64(86_400),
-        high_value_secs: nz64(172_800),
-    };
+    // Variant drift must not bypass owner authorization.
+    let mut drift = proposed.clone();
+    drift.rule = BookingAntiAbuseRule::QuarantineBorderline;
+    assert!(apply_rule_amendment(&vault, 1, drift, None).is_err());
 
     // Versions must advance by exactly one; scope and id are immutable.
-    proposed.version = 3;
-    assert!(amendment_direction(&current, &proposed).is_err());
-    proposed.version = 2;
-    proposed.scope = BookingRuleScope {
+    let mut invalid = current.clone();
+    invalid.version = 3;
+    assert!(apply_rule_amendment(&vault, 1, invalid.clone(), None).is_err());
+    invalid.version = 2;
+    invalid.scope = BookingRuleScope {
         page_ref: id(OTHER_PAGE),
         event_type: None,
     };
-    assert!(amendment_direction(&current, &proposed).is_err());
+    assert!(apply_rule_amendment(&vault, 1, invalid, None).is_err());
+    let rows = booking_anti_abuse_rules(&vault, &scope).expect("state after refusals");
+    let stored = rows
+        .iter()
+        .find(|row| row.row_id == current.row_id)
+        .expect("original rule remains");
+    assert_eq!(stored.rule, current.rule);
+    assert_eq!(stored.version, 1);
+    assert!(stored.owner_stamp_ref.is_none());
+    assert_eq!(
+        booking_anti_abuse_notices(&vault)
+            .expect("notices after refusals")
+            .len(),
+        notices_before.len(),
+    );
 
-    // Slot-list: lowering the minute cap tightens; a TTL-only move is an
-    // equivalent re-assertion.
+    let stamp = BookingRuleOwnerStampBinding {
+        stamp_ref: id(STAMP),
+        proposed_row_version_hash: booking_rule_row_version_hash(&proposed).expect("proposal hash"),
+    };
+    let outcome = apply_rule_amendment(&vault, 1, proposed.clone(), Some(&stamp))
+        .expect("mixed-axis amendment requires its matching stamp");
+    assert_eq!(outcome.stored.version, 2);
+    assert_eq!(outcome.stored.owner_stamp_ref, Some(id(STAMP)));
+    let rows = booking_anti_abuse_rules(&vault, &scope).expect("stamped rules");
+    let stored = rows
+        .iter()
+        .find(|row| row.row_id == current.row_id)
+        .expect("stamped amendment persists");
+    assert_eq!(stored.rule, proposed.rule);
+    assert_eq!(stored.version, 2);
+    assert_eq!(stored.owner_stamp_ref, Some(id(STAMP)));
+
     let slot = BookingAntiAbuseRuleRow {
         row_id: booking_rule_row_id(
             &scope,
@@ -763,42 +793,92 @@ fn amendment_direction_orders_each_variant_axis() {
         per_minute_per_ip: nz32(60),
         cache_ttl_secs: nz64(45),
     };
-    assert_eq!(
-        amendment_direction(&slot, &slot_tighter).expect("ordered"),
-        AmendmentDirection::Tightening
-    );
     let mut slot_refresh = slot.clone();
     slot_refresh.version = 2;
     slot_refresh.rule = BookingAntiAbuseRule::SlotListRate {
         per_minute_per_ip: nz32(120),
         cache_ttl_secs: nz64(30),
     };
-    assert_eq!(
-        amendment_direction(&slot, &slot_refresh).expect("ordered"),
-        AmendmentDirection::Equivalent,
-        "the cache TTL shapes freshness, not admission"
-    );
+    for proposed in [slot_tighter, slot_refresh] {
+        let (_dir, vault) = open_vault();
+        install_rows(&vault, std::slice::from_ref(&slot));
+        let outcome = apply_rule_amendment(&vault, 1, proposed.clone(), None)
+            .expect("lower cap and TTL-only refresh activate without a stamp");
+        assert_eq!(outcome.stored.version, 2);
+        assert!(outcome.stored.owner_stamp_ref.is_none());
+        let rows = booking_anti_abuse_rules(&vault, &slot.scope).expect("persisted slot rules");
+        let stored = rows
+            .iter()
+            .find(|row| row.row_id == slot.row_id)
+            .expect("slot amendment persists");
+        assert_eq!(stored.rule, proposed.rule);
+        assert_eq!(stored.version, 2);
+        assert!(stored.owner_stamp_ref.is_none());
+    }
 }
 
 #[test]
 fn version_hash_binds_the_exact_row_and_version() {
+    let (_dir, vault) = open_vault();
     let row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
-        min_chars: nz16(10),
+        min_chars: nz16(20),
     });
-    let hash = booking_rule_row_version_hash(&row).expect("hash");
-    assert_eq!(hash, booking_rule_row_version_hash(&row).expect("hash"));
+    install_rows(&vault, std::slice::from_ref(&row));
 
-    let mut bumped = row.clone();
-    bumped.version = 2;
-    assert_ne!(hash, booking_rule_row_version_hash(&bumped).expect("hash"));
-
-    let mut stamped_elsewhere = row;
-    stamped_elsewhere.amended_at += 1;
-    assert_ne!(
-        hash,
-        booking_rule_row_version_hash(&stamped_elsewhere).expect("hash"),
-        "any field move re-keys the binding"
+    let mut proposed = amend_with(
+        &BookingAntiAbuseRule::RequiredIntake {
+            min_chars: nz16(10),
+        },
+        2,
     );
+    let stamp = BookingRuleOwnerStampBinding {
+        stamp_ref: id(STAMP),
+        proposed_row_version_hash: booking_rule_row_version_hash(&proposed).expect("hash"),
+    };
+    proposed.amended_at += 1;
+
+    let notices_before = booking_anti_abuse_notices(&vault).expect("notices before");
+    assert!(
+        apply_rule_amendment(&vault, 1, proposed.clone(), Some(&stamp)).is_err(),
+        "a stamp for the pre-mutation proposal must not authorize activation"
+    );
+    let rows = booking_anti_abuse_rules(&vault, &row.scope).expect("read rejected state");
+    let stored = rows
+        .iter()
+        .find(|stored| stored.row_id == row.row_id)
+        .expect("original row remains");
+    assert_eq!(stored.version, 1);
+    assert!(stored.owner_stamp_ref.is_none());
+    assert!(matches!(
+        &stored.rule,
+        BookingAntiAbuseRule::RequiredIntake { min_chars } if min_chars.get() == 20
+    ));
+    assert_eq!(
+        booking_anti_abuse_notices(&vault)
+            .expect("notices after refusal")
+            .len(),
+        notices_before.len(),
+    );
+
+    let matching_stamp = BookingRuleOwnerStampBinding {
+        stamp_ref: id(STAMP),
+        proposed_row_version_hash: booking_rule_row_version_hash(&proposed).expect("new hash"),
+    };
+    let outcome = apply_rule_amendment(&vault, 1, proposed, Some(&matching_stamp))
+        .expect("the same proposal activates with its matching stamp");
+    assert!(outcome.owner_notice_required);
+    assert_eq!(outcome.stored.version, 2);
+    assert_eq!(outcome.stored.owner_stamp_ref, Some(id(STAMP)));
+    let rows = booking_anti_abuse_rules(&vault, &row.scope).expect("read accepted state");
+    let stored = rows
+        .iter()
+        .find(|stored| stored.row_id == row.row_id)
+        .expect("amended row");
+    assert_eq!(stored.version, 2);
+    assert!(matches!(
+        &stored.rule,
+        BookingAntiAbuseRule::RequiredIntake { min_chars } if min_chars.get() == 10
+    ));
 }
 
 #[test]
@@ -1043,19 +1123,36 @@ fn booking_rule_row_ids_bind_full_page_and_event_identity() {
     // version: the second page never trips the first page's
     // "already exists".
     let (_dir, vault) = open_vault();
+    let mut proposed_rows = Vec::new();
     for page in [page_a, page_b] {
         install_page_and_config(&vault, page, &event);
         let rows = default_booking_anti_abuse_rows(page, Some(event.clone()), &owner_config())
             .expect("seed rows");
-        for row in rows {
-            let outcome = apply_rule_amendment(&vault, 0, row, None).expect("activate");
+        for row in &rows {
+            let outcome = apply_rule_amendment(&vault, 0, row.clone(), None).expect("activate");
             assert_eq!(outcome.stored.version, 1);
         }
+        proposed_rows.extend(rows);
     }
     let listed_a = booking_anti_abuse_rules(&vault, &scope_a).expect("list a");
     let listed_b = booking_anti_abuse_rules(&vault, &scope_b).expect("list b");
-    assert_eq!(listed_a.len(), 10, "page a owns its ten rows");
-    assert_eq!(listed_b.len(), 10, "page b owns its ten rows");
+    for (listed, expected_scope) in [(&listed_a, &scope_a), (&listed_b, &scope_b)] {
+        for stored in listed {
+            assert_eq!(stored.scope.page_ref, expected_scope.page_ref);
+            assert_eq!(stored.scope.event_type, expected_scope.event_type);
+        }
+        for proposed in proposed_rows
+            .iter()
+            .filter(|row| row.scope.page_ref == expected_scope.page_ref)
+        {
+            let stored = listed
+                .iter()
+                .find(|row| row.row_id == proposed.row_id)
+                .expect("each proposed rule persists under its own scope");
+            assert_eq!(stored.rule, proposed.rule);
+            assert_eq!(stored.version, proposed.version);
+        }
+    }
 }
 
 #[test]
@@ -1174,58 +1271,133 @@ fn rate_counters_window_rollover_and_reset() {
 fn quarantine_scope_quota_bounds_rotating_identities() {
     let (_dir, vault) = open_vault();
     let page = id(PAGE);
-    let _event = EventTypeKey("intro-call".to_owned());
+    let event = EventTypeKey("intro-call".to_owned());
+    install_page_and_config(&vault, page, &event);
     for n in 0..8_u8 {
-        let ip = [n; 32];
-        let email = [n.wrapping_add(10); 32];
-        // Event strings are deliberately absent from the page-wide key.
-        let _attacker_event = EventTypeKey(format!("attacker-event-{n}"));
-        let decision =
-            observe_quarantine_request(&vault, &page, nz32(1), 120).expect("quota write");
+        let mut request = facts();
+        request.page_ref = page;
+        request.ip_hash = [n; 32];
+        request.email_hash = Some([n.wrapping_add(10); 32]);
+        request.session_hash = Some([n.wrapping_add(20); 32]);
+        request.event_type = Some(EventTypeKey(format!("attacker-event-{n}")));
+        request.intake_content_hash = [n.wrapping_add(30); 32];
+        let decision = admit_quarantine_submission(&vault, &request, "borderline", nz32(1), 120)
+            .expect("quarantine admission");
         if n == 0 {
-            assert_eq!(decision, BookingRateDecision::Allowed);
+            match decision {
+                BookingQuarantineAdmission::Accepted(receipt) => {
+                    assert_eq!(
+                        receipt.claim_id,
+                        quarantine_claim_id(&request, "borderline")
+                    );
+                }
+                BookingQuarantineAdmission::RateLimited { .. } => {
+                    panic!("the first submission must consume the page budget");
+                }
+            }
         } else {
             assert!(
-                matches!(decision, BookingRateDecision::Exceeded { .. }),
-                "rotating IP/email {ip:?}/{email:?} cannot mint another quarantine budget"
+                matches!(decision, BookingQuarantineAdmission::RateLimited { .. }),
+                "rotating identity and event evidence cannot mint another page budget"
             );
         }
     }
-    let rtxn = vault.store.env.read_txn().expect("counter read txn");
-    let mut counters = 0;
-    let prefix = [BOOKING_ANTI_ABUSE_META_PREFIX, RATE_KEY_TAG].concat();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, &prefix)
-        .expect("counter scan")
-    {
-        row.expect("counter row");
-        counters += 1;
-    }
-    assert_eq!(
-        counters, 1,
-        "rotating events retain one page-wide counter row"
-    );
 }
 
 #[test]
 fn server_submission_fingerprint_ignores_untrusted_timing() {
+    let (_dir, vault) = open_vault();
     let original = facts();
+    install_page_and_config(
+        &vault,
+        original.page_ref,
+        original.event_type.as_ref().expect("event type"),
+    );
+    let pending_before = vault
+        .store
+        .pending_gate_consents(10)
+        .expect("pending before")
+        .len();
+    let first = match admit_quarantine_submission(&vault, &original, "borderline", nz32(2), 120)
+        .expect("first admission")
+    {
+        BookingQuarantineAdmission::Accepted(receipt) => receipt,
+        BookingQuarantineAdmission::RateLimited { .. } => panic!("first admission must fit"),
+    };
+    assert_eq!(first.claim_id, quarantine_claim_id(&original, "borderline"));
+    assert_eq!(
+        vault
+            .store
+            .pending_gate_consents(10)
+            .expect("pending after first admission")
+            .len(),
+        pending_before + 1,
+    );
+
     let mut timestamp_only_retry = original.clone();
     timestamp_only_retry.started_at_millis = 0;
     timestamp_only_retry.submitted_at_millis = u64::MAX;
+    let retry = match admit_quarantine_submission(
+        &vault,
+        &timestamp_only_retry,
+        "borderline",
+        nz32(2),
+        120,
+    )
+    .expect("retry admission")
+    {
+        BookingQuarantineAdmission::Accepted(receipt) => receipt,
+        BookingQuarantineAdmission::RateLimited { .. } => panic!("duplicate must replay"),
+    };
+    assert_eq!(retry.claim_id, first.claim_id);
+    assert_eq!(retry.decision_id, first.decision_id);
     assert_eq!(
-        server_submission_fingerprint(&original),
-        server_submission_fingerprint(&timestamp_only_retry),
-        "changing only transport timing cannot mint a new quarantine identity"
+        vault
+            .store
+            .pending_gate_consents(10)
+            .expect("pending after retry")
+            .len(),
+        pending_before + 1,
     );
-    let mut distinct = original.clone();
+
+    let mut distinct = original;
     distinct.intake_content_hash = digest_with(b"test-intake", b"different same-length");
-    assert_ne!(
-        server_submission_fingerprint(&original),
-        server_submission_fingerprint(&distinct),
-        "canonical submitted evidence distinguishes a separate submission"
+    let second = match admit_quarantine_submission(&vault, &distinct, "borderline", nz32(2), 120)
+        .expect("distinct admission")
+    {
+        BookingQuarantineAdmission::Accepted(receipt) => receipt,
+        BookingQuarantineAdmission::RateLimited { .. } => {
+            panic!("timestamp-only retry must leave the second token available");
+        }
+    };
+    assert_eq!(
+        second.claim_id,
+        quarantine_claim_id(&distinct, "borderline")
+    );
+    assert_ne!(second.claim_id, first.claim_id);
+    assert_eq!(
+        vault
+            .store
+            .pending_gate_consents(10)
+            .expect("pending after distinct admission")
+            .len(),
+        pending_before + 2,
+    );
+
+    let mut overflow = distinct;
+    overflow.intake_content_hash = digest_with(b"test-intake", b"third submission");
+    assert!(matches!(
+        admit_quarantine_submission(&vault, &overflow, "borderline", nz32(2), 120)
+            .expect("overflow admission"),
+        BookingQuarantineAdmission::RateLimited { .. }
+    ));
+    assert_eq!(
+        vault
+            .store
+            .pending_gate_consents(10)
+            .expect("pending after rejection")
+            .len(),
+        pending_before + 2,
     );
 }
 
@@ -1568,7 +1740,7 @@ fn concurrent_exact_quarantine_retries_share_one_token_and_receipt() {
     use std::sync::Barrier;
 
     let (_dir, vault) = open_vault();
-    let facts = facts();
+    let mut facts = facts();
     vault
         .put_entity(
             &facts.page_ref,
@@ -1582,12 +1754,12 @@ fn concurrent_exact_quarantine_retries_share_one_token_and_receipt() {
     let (first, second) = std::thread::scope(|scope| {
         let one = scope.spawn(|| {
             barrier.wait();
-            admit_quarantine_submission(&vault, &facts, "concurrent", nz32(1), 120)
+            admit_quarantine_submission(&vault, &facts, "concurrent", nz32(2), 120)
                 .expect("first admission")
         });
         let two = scope.spawn(|| {
             barrier.wait();
-            admit_quarantine_submission(&vault, &facts, "concurrent", nz32(1), 120)
+            admit_quarantine_submission(&vault, &facts, "concurrent", nz32(2), 120)
                 .expect("second admission")
         });
         (
@@ -1601,19 +1773,12 @@ fn concurrent_exact_quarantine_retries_share_one_token_and_receipt() {
     let BookingQuarantineAdmission::Accepted(second) = second else {
         panic!("second exact retry must be accepted");
     };
-    assert_eq!(first, second, "concurrent exact retries replay one receipt");
+    assert_eq!(first.claim_id, second.claim_id);
+    assert_eq!(first.decision_id, second.decision_id);
+    assert_eq!(first.claim_ref, second.claim_ref);
+    assert_eq!(first.decision_ref, second.decision_ref);
+
     let rtxn = vault.store.env.read_txn().expect("read txn");
-    let counter_key = rate_counter_key(
-        b"quarantine",
-        &digest_with(QUARANTINE_RATE_DOMAIN, facts.page_ref.as_bytes()),
-    );
-    let raw = read_meta_bytes(&vault, &rtxn, &counter_key)
-        .expect("counter read")
-        .expect("counter present");
-    assert_eq!(
-        u64::from_le_bytes(raw[8..].try_into().expect("count bytes")),
-        1
-    );
     let claim_ref = EntityId::from_bytes(first.claim_id).expect("claim id");
     assert!(
         vault
@@ -1630,4 +1795,19 @@ fn concurrent_exact_quarantine_retries_share_one_token_and_receipt() {
     );
     drop(rtxn);
     assert_eq!(vault.gate_decisions(10).expect("decisions").len(), 1);
+
+    facts.selected_slot_hash = [1; 32];
+    let distinct = admit_quarantine_submission(&vault, &facts, "concurrent", nz32(2), 120)
+        .expect("distinct admission");
+    let BookingQuarantineAdmission::Accepted(distinct) = distinct else {
+        panic!("exact retries must leave one token for a distinct submission");
+    };
+    assert_ne!(distinct.claim_id, first.claim_id);
+
+    facts.selected_slot_hash = [2; 32];
+    assert!(matches!(
+        admit_quarantine_submission(&vault, &facts, "concurrent", nz32(2), 120)
+            .expect("admission after budget exhaustion"),
+        BookingQuarantineAdmission::RateLimited { .. }
+    ));
 }

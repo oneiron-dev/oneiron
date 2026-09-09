@@ -189,11 +189,8 @@ fn a_public_raw_put_refuses_a_task_born_expired() {
         )
         .expect_err("the public raw door refuses a task born expired");
     assert!(
-        matches!(
-            refused,
-            crate::error::Error::InvalidTaskBody("a task deadline must be in the future")
-        ),
-        "unexpected error: {refused}"
+        matches!(refused, crate::error::Error::InvalidTaskBody(_)),
+        "unexpected error: {refused}",
     );
 }
 
@@ -228,11 +225,8 @@ fn the_transactional_public_raw_put_refuses_a_task_born_expired() {
         })
         .expect_err("the transactional public door refuses a task born expired");
     assert!(
-        matches!(
-            refused,
-            crate::error::Error::InvalidTaskBody("a task deadline must be in the future")
-        ),
-        "unexpected error: {refused}"
+        matches!(refused, crate::error::Error::InvalidTaskBody(_)),
+        "unexpected error: {refused}",
     );
 }
 

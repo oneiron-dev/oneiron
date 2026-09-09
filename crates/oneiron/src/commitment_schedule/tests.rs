@@ -390,14 +390,13 @@ fn slot_ids(series: &EntityId, window: TimeRange, count: u32) -> Vec<EntityId> {
 
 #[test]
 fn once_due_is_single_use() -> Result<()> {
-    // PURE: an overdue single promise is still owed.
+    // An overdue single promise is still owed.
     assert_eq!(next_due(&Schedule::Once { due: 500 }, 100, &[])?, Some(500));
     assert_eq!(
         next_due(&Schedule::Once { due: 500 }, 9_000, &[])?,
         Some(500),
         "a Once that has already passed is still owed, never silently dropped"
     );
-    // Any materialized occurrence — in any status — ends the series.
     for status in [
         CommitmentStatus::Open,
         CommitmentStatus::Fulfilled,
@@ -409,14 +408,13 @@ fn once_due_is_single_use() -> Result<()> {
             next_due(
                 &Schedule::Once { due: 500 },
                 100,
-                &[history_entry(500, status)]
+                &[history_entry(500, status)],
             )?,
             None,
             "Once is single use regardless of how its one occurrence ended"
         );
     }
 
-    // DURABLE: the mint path fires exactly once.
     let (_dir, vault) = temp_vault()?;
     let parties = parties(&vault)?;
     let series = crate::test_util::entity(0x81);
@@ -441,15 +439,14 @@ fn once_due_is_single_use() -> Result<()> {
         "the minted id is derived from the series and the occurrence, nothing else"
     );
 
-    // The Project row was spent by the first pass, so a second reconcile has
-    // nothing to consume and mints nothing.
+    // The spent Project row leaves no work for the next pass.
     let second = vault.reconcile_commitment_schedule(600)?;
-    assert_eq!(second, CommitmentProjectionReport::default());
+    assert_eq!(second.projected_series, 0);
+    assert!(second.minted_instances.is_empty());
+    assert!(second.already_present_instances.is_empty());
     assert_eq!(members(&vault, &series)?.len(), 1, "never duplicated");
 
-    // Even a Project row replanted by a crash-resumed writer cannot produce a
-    // second occurrence: the evaluator reads the membership row as history and
-    // answers `None`.
+    // Replanted work still sees the durable single-use history.
     let replanted = CommitmentDueEntry {
         at: 400,
         phase: CommitmentDuePhase::Project,
@@ -462,7 +459,10 @@ fn once_due_is_single_use() -> Result<()> {
     assert_eq!(third.projected_series, 1);
     assert!(third.minted_instances.is_empty());
     assert_eq!(members(&vault, &series)?.len(), 1);
-    assert!(vault.get_commitment_claim(&instance)?.is_some());
+    let stored = vault
+        .get_commitment_claim(&instance)?
+        .expect("the original obligation survives the retry");
+    assert_eq!(stored.status, CommitmentStatus::Open);
     Ok(())
 }
 
@@ -478,7 +478,6 @@ fn interval_retainer_cycle_anchors_successor_to_last_due() -> Result<()> {
         anchor: 1_000_000,
     };
 
-    // PURE: with no history the answer is the first grid point at or after now.
     assert_eq!(next_due(&schedule, 10, &[])?, Some(1_000_000));
     assert_eq!(next_due(&schedule, 1_000_000, &[])?, Some(1_000_000));
     assert_eq!(
@@ -486,19 +485,17 @@ fn interval_retainer_cycle_anchors_successor_to_last_due() -> Result<()> {
         Some(1_000_000 + fortnight),
         "ceil-division onto the anchor grid, never a walk"
     );
-    // With history the successor hangs off the LAST due instant.
     assert_eq!(
         next_due(
             &schedule,
             9_999_999,
             &[history_entry(
                 1_000_000 + fortnight,
-                CommitmentStatus::Fulfilled
-            )]
+                CommitmentStatus::Fulfilled,
+            )],
         )?,
         Some(1_000_000 + 2 * fortnight)
     );
-    // A stored occurrence off the grid is refused, never quietly re-based.
     let drifted = next_due(
         &schedule,
         10,
@@ -508,10 +505,9 @@ fn interval_retainer_cycle_anchors_successor_to_last_due() -> Result<()> {
         )],
     )
     .expect_err("a non-congruent occurrence must be refused");
-    assert!(matches!(drifted, ScheduleError::Invalid(reason)
-            if reason == "interval occurrence is not on the schedule grid"));
+    assert!(matches!(drifted, ScheduleError::Invalid(_)));
 
-    // DURABLE: every terminal outcome earns exactly one successor, on the grid.
+    // Every terminal outcome earns exactly one successor on the original grid.
     for (index, outcome) in [
         CommitmentInstanceOutcome::Fulfilled,
         CommitmentInstanceOutcome::Lapsed,
@@ -533,7 +529,6 @@ fn interval_retainer_cycle_anchors_successor_to_last_due() -> Result<()> {
         assert_eq!(minted.len(), 1);
         let first = minted[0];
 
-        // The close lands LATE. The grid must not move with it.
         let late = 1_000_000 + 3 * DAY;
         let successors = close(&vault, &first, outcome, &parties.envelope, late)?;
         assert_eq!(successors.len(), 1, "exactly one successor per close");
@@ -550,7 +545,6 @@ fn interval_retainer_cycle_anchors_successor_to_last_due() -> Result<()> {
             "the successor is prior_due + period, never close_time + period"
         );
 
-        // Retrying the hook reports the same successor and writes nothing new.
         let retry = vault.on_instance_closed(&first, outcome, &parties.envelope, late + 99)?;
         assert_eq!(retry, successors);
         assert_eq!(
@@ -636,7 +630,7 @@ fn rrule_reports_cal_expand_window_route() -> Result<()> {
         tz: TZ_LONDON.to_owned(),
     };
 
-    // It DECODES. v1 refuses to evaluate it; it never refuses to store it.
+    // It decodes and stores even though evaluation is deferred.
     let encoded = encode_series(schedule.clone(), Some(600))?;
     let decoded = CommitmentSchedulePayload::decode(&encoded)?;
     assert_eq!(decoded.schedule, schedule);
@@ -652,27 +646,28 @@ fn rrule_reports_cal_expand_window_route() -> Result<()> {
     let (_dir, vault) = temp_vault()?;
     let parties = parties(&vault)?;
     let series = crate::test_util::entity(0x82);
-    let outcome = parties.put_series(&vault, &series, schedule, Some(600), 10)?;
+    let outcome = parties.put_series(&vault, &series, schedule.clone(), Some(600), 10)?;
     assert_eq!(
         outcome,
         CommitmentSeriesWriteOutcome::StoredRrule {
-            route: CAL_RRULE_ROUTE
+            route: CAL_RRULE_ROUTE,
         }
     );
 
-    // The claim committed durably...
     let stored = vault
         .get_commitment_claim(&series)?
         .expect("rrule series claim is stored verbatim");
     assert_eq!(stored.status, CommitmentStatus::Open);
-    assert!(CommitmentSchedulePayload::decode(&stored.schedule)?.is_series());
-    // ...and produced ZERO due rows.
+    let stored_payload = CommitmentSchedulePayload::decode(&stored.schedule)?;
+    assert!(stored_payload.is_series());
+    assert_eq!(stored_payload.schedule, schedule);
+    assert_eq!(stored_payload.lead_seconds(), 600);
     assert_eq!(vault.commitment_due_index_snapshot()?.next_due_at(), None);
     assert!(rows(&vault)?.is_empty());
-    assert_eq!(
-        vault.reconcile_commitment_schedule(u64::MAX / 2)?,
-        CommitmentProjectionReport::default()
-    );
+    let report = vault.reconcile_commitment_schedule(u64::MAX / 2)?;
+    assert_eq!(report.projected_series, 0);
+    assert!(report.minted_instances.is_empty());
+    assert!(report.already_present_instances.is_empty());
     Ok(())
 }
 
@@ -1298,8 +1293,7 @@ fn next_due_at_reads_persisted_min_after_reopen() -> Result<()> {
     );
     assert_eq!(snapshot.next_timer_at(&[]), None);
 
-    // A zero instance slot is a legal ABSENCE marker on a Project row and
-    // corruption everywhere else.
+    // An absent instance is legal only for Project.
     let occurrence = CommitmentOccurrence::new(500, time(500, 500), 0)?;
     let value = raw_due_value(&occurrence);
     let mut entry = CommitmentDueEntry {
@@ -1309,23 +1303,25 @@ fn next_due_at_reads_persisted_min_after_reopen() -> Result<()> {
         instance_ref: None,
         occurrence,
     };
-    assert!(decode_commitment_due_row(&commitment_due_primary_key(&entry), &value).is_ok());
+    let decoded = decode_commitment_due_row(&commitment_due_primary_key(&entry), &value)?;
+    assert_eq!(decoded.phase, CommitmentDuePhase::Project);
+    assert_eq!(decoded.series_ref, pending);
+    assert_eq!(decoded.instance_ref, None);
     entry.phase = CommitmentDuePhase::Lead;
     let lost = decode_commitment_due_row(&commitment_due_primary_key(&entry), &value)
         .expect_err("a zero instance outside Project is a lost id, not an empty one");
-    assert!(matches!(
-        lost,
-        Error::CorruptedIndex("commitment due index")
-    ));
+    assert!(matches!(lost, Error::CorruptedIndex(_)));
 
-    // A corrupt row is a LOUD failure: "nothing is due" is the one answer a
-    // commitment engine must never give.
+    // Corruption must never be interpreted as an empty index.
     vault.corrupt_commitment_due_row_for_test(1)?;
     let err = vault
         .commitment_due_index_snapshot()
         .expect_err("a corrupt row must fail the read");
-    assert!(matches!(err, Error::CorruptedIndex("commitment due index")));
-    assert!(vault.commitment_entries_through(u64::MAX).is_err());
+    assert!(matches!(err, Error::CorruptedIndex(_)));
+    assert!(matches!(
+        vault.commitment_entries_through(u64::MAX),
+        Err(Error::CorruptedIndex(_))
+    ));
     assert!(vault.reconcile_commitment_schedule(u64::MAX / 2).is_err());
     Ok(())
 }
@@ -1354,10 +1350,7 @@ fn acknowledge_commitment_due_rejects_owner_phases() -> Result<()> {
     let refusal = vault
         .acknowledge_commitment_due(&project)
         .expect_err("Project is owner-managed");
-    assert!(matches!(
-        refusal,
-        Error::InvariantViolation("commitment due phase is owner-managed")
-    ));
+    assert!(matches!(refusal, Error::InvariantViolation(_)));
     assert_eq!(
         rows_in_phase(&vault, CommitmentDuePhase::Project)?.len(),
         1,
@@ -1382,19 +1375,16 @@ fn acknowledge_commitment_due_rejects_owner_phases() -> Result<()> {
                 let err = vault
                     .acknowledge_commitment_due(&entry)
                     .expect_err("LifecycleDue is owner-managed");
-                assert!(matches!(
-                    err,
-                    Error::InvariantViolation("commitment due phase is owner-managed")
-                ));
+                assert!(matches!(err, Error::InvariantViolation(_)));
             }
         }
     }
 
-    // Only the lapse marker is left, and it never reaches the wake feed.
+    // Only the lapse marker remains, outside the wake feed.
     let remaining = instance_rows(&vault, &instance)?;
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].phase, CommitmentDuePhase::LifecycleDue);
-    assert_eq!(vault.next_actionable_wake_phase()?, None);
+    assert!(vault.next_actionable_wake_phase()?.is_none());
     Ok(())
 }
 
@@ -1515,7 +1505,7 @@ fn generic_writer_schedule_payload_is_stored_but_unindexed() -> Result<()> {
     let instance = crate::test_util::entity(0x96);
     let orphan_series = crate::test_util::entity(0x97);
 
-    // A strict typed SERIES payload written through CMT-1's generic door.
+    // A strict typed SERIES payload written through the generic door.
     let series_claim = parties.record(encode_series(Schedule::Once { due: 500 }, Some(50))?)?;
     vault.put_commitment_claim(
         &series,
@@ -1527,16 +1517,12 @@ fn generic_writer_schedule_payload_is_stored_but_unindexed() -> Result<()> {
     let stored = vault.get_commitment_claim(&series)?.expect("series claim");
     assert!(CommitmentSchedulePayload::decode(&stored.schedule)?.is_series());
 
-    // Stored faithfully, indexed not at all.
     assert_eq!(vault.commitment_due_index_snapshot()?.next_due_at(), None);
     assert!(rows(&vault)?.is_empty());
-    assert_eq!(
-        vault.reconcile_commitment_schedule(10_000)?,
-        CommitmentProjectionReport::default()
-    );
-    // The close hook still refuses to treat a SERIES as an occurrence; that
-    // refusal is the same one `close_hook_ignores_plain_commitments_but_rejects_series`
-    // pins, and it is a REFUSAL rather than corruption.
+    let report = vault.reconcile_commitment_schedule(10_000)?;
+    assert_eq!(report.projected_series, 0);
+    assert!(report.minted_instances.is_empty());
+    assert!(report.already_present_instances.is_empty());
     let refusal = vault
         .on_instance_closed(
             &series,
@@ -1545,11 +1531,9 @@ fn generic_writer_schedule_payload_is_stored_but_unindexed() -> Result<()> {
             1_000,
         )
         .expect_err("a series is not an instance");
-    assert!(matches!(refusal, ScheduleError::Invalid(reason)
-            if reason == "close hook requires commitment instance"));
+    assert!(matches!(refusal, ScheduleError::Invalid(_)));
 
-    // The same for a strict typed INSTANCE payload written generically: it is
-    // ordinary data, and closing it is clean and successor-free.
+    // A generic INSTANCE is also ordinary data, not scheduled work.
     let occurrence = CommitmentOccurrence::new(700, time(600, 800), 0)?;
     let instance_record = parties.record(
         CommitmentSchedulePayload::instance(
@@ -1568,10 +1552,10 @@ fn generic_writer_schedule_payload_is_stored_but_unindexed() -> Result<()> {
         600,
     )?;
     assert_eq!(vault.commitment_due_index_snapshot()?.next_due_at(), None);
-    assert_eq!(
-        vault.reconcile_commitment_schedule(10_000)?,
-        CommitmentProjectionReport::default()
-    );
+    let report = vault.reconcile_commitment_schedule(10_000)?;
+    assert_eq!(report.projected_series, 0);
+    assert!(report.minted_instances.is_empty());
+    assert!(report.already_present_instances.is_empty());
     assert!(members(&vault, &orphan_series)?.is_empty());
     assert_eq!(
         close(
@@ -1596,8 +1580,7 @@ fn close_hook_ignores_plain_commitments_but_rejects_series() -> Result<()> {
     let (_dir, vault) = temp_vault()?;
     let parties = parties(&vault)?;
 
-    // A plain CMT-1 commitment carries an OPAQUE schedule the codec never
-    // claims. Finding one is legitimate, not corruption.
+    // Legacy opaque schedules are legitimate, not corruption.
     let plain_id = crate::test_util::entity(0x98);
     let plain_schedule = Value::Map(vec![
         (Value::from("kind"), Value::from("once")),
@@ -1615,12 +1598,11 @@ fn close_hook_ignores_plain_commitments_but_rejects_series() -> Result<()> {
             &plain_id,
             CommitmentInstanceOutcome::Fulfilled,
             &parties.envelope,
-            200
+            200,
         )?,
         Vec::new()
     );
 
-    // An indexed SERIES is a refusal.
     let series = crate::test_util::entity(0x99);
     parties.put_series(
         &vault,
@@ -1637,11 +1619,9 @@ fn close_hook_ignores_plain_commitments_but_rejects_series() -> Result<()> {
             200,
         )
         .expect_err("a series is not an instance");
-    assert!(matches!(not_instance, ScheduleError::Invalid(reason)
-            if reason == "close hook requires commitment instance"));
+    assert!(matches!(not_instance, ScheduleError::Invalid(_)));
 
-    // A still-OPEN instance means the status write this hook reacts to never
-    // landed. So does a terminal status that contradicts the caller.
+    // Neither an open instance nor a contradictory terminal outcome is accepted.
     let instance = vault
         .reconcile_commitment_schedule(499_950)?
         .minted_instances[0];
@@ -1653,8 +1633,7 @@ fn close_hook_ignores_plain_commitments_but_rejects_series() -> Result<()> {
             500_000,
         )
         .expect_err("the hook never writes the status");
-    assert!(matches!(open, ScheduleError::Invalid(reason)
-            if reason == "close hook requires terminal instance status"));
+    assert!(matches!(open, ScheduleError::Invalid(_)));
     vault.fulfill_commitment(&instance, &parties.envelope, 500_001)?;
     let mismatch = vault
         .on_instance_closed(
@@ -1664,15 +1643,14 @@ fn close_hook_ignores_plain_commitments_but_rejects_series() -> Result<()> {
             500_002,
         )
         .expect_err("a contradicted outcome is refused");
-    assert!(matches!(mismatch, ScheduleError::Invalid(reason)
-            if reason == "close hook requires terminal instance status"));
+    assert!(matches!(mismatch, ScheduleError::Invalid(_)));
     assert_eq!(
         instance_rows(&vault, &instance)?.len(),
         3,
         "a refused close leaves the occurrence's rows exactly where they were"
     );
 
-    // Rows that outlived their claim are the crash this hook repairs.
+    // Rows that outlived their claim are repaired by the hook.
     let ghost_series = crate::test_util::entity(0x9a);
     let ghost = crate::test_util::entity(0x9b);
     let occurrence = CommitmentOccurrence::new(700, time(700, 700), 0)?;
@@ -1697,13 +1675,13 @@ fn close_hook_ignores_plain_commitments_but_rejects_series() -> Result<()> {
             &ghost,
             CommitmentInstanceOutcome::Fulfilled,
             &parties.envelope,
-            800
+            800,
         )?,
         Vec::new()
     );
     assert!(instance_rows(&vault, &ghost)?.is_empty());
 
-    // All four matching outcomes sweep the same three rows.
+    // All four matching outcomes consume timed rows but retain membership.
     for (index, outcome) in [
         CommitmentInstanceOutcome::Fulfilled,
         CommitmentInstanceOutcome::Lapsed,

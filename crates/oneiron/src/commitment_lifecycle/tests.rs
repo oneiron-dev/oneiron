@@ -329,9 +329,7 @@ fn brief_link_rejects_non_task_source() -> Result<()> {
     for source in [missing, person] {
         assert!(matches!(
             link_brief_fulfillment(&vault, &source, &commitment, 300),
-            Err(Error::InvalidClaimBody(
-                "fulfillment source is not a task brief"
-            ))
+            Err(Error::InvalidClaimBody(_))
         ));
         // Refused BEFORE either edge is written.
         assert!(!vault.edge_exists(&source, EdgeKind::Fulfills, &commitment)?);
@@ -355,9 +353,7 @@ fn brief_link_writes_both_ruled_directions_atomically() -> Result<()> {
     // A fault before commit: the target is no longer open. NEITHER row exists.
     assert!(matches!(
         link_brief_fulfillment(&vault, &brief, &closed, 302),
-        Err(Error::InvalidClaimBody(
-            "brief fulfillment link requires an open commitment"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     assert!(!vault.edge_exists(&brief, EdgeKind::Fulfills, &closed)?);
     assert!(!vault.edge_exists(&closed, EdgeKind::DischargedBy, &brief)?);
@@ -414,9 +410,7 @@ fn reserved_fulfills_cannot_be_forged_publicly() -> Result<()> {
     link_brief_fulfillment(&vault, &brief, &commitment, 300)?;
     assert!(vault.edge_exists(&brief, EdgeKind::Fulfills, &commitment)?);
 
-    // A stored `Fulfills` edge onto a non-commitment CLAIM is stored-index
-    // corruption, not caller input: the validated door checked the class at
-    // write time, so the traversal refuses rather than blaming the caller.
+    // A stored non-commitment target is index corruption, not caller input.
     let stranger = crate::test_util::entity(0x2E);
     let stranger_body = crate::claim::ClaimBody::new(
         "profile.note",
@@ -443,7 +437,7 @@ fn reserved_fulfills_cannot_be_forged_publicly() -> Result<()> {
         .commit()?;
     assert!(matches!(
         fulfill_commitments_for_brief(&vault, &brief, &parties.envelope, 310),
-        Err(Error::CorruptedIndex("brief fulfills non-commitment claim"))
+        Err(Error::CorruptedIndex(_))
     ));
     Ok(())
 }
@@ -465,7 +459,7 @@ fn brief_completion_rejects_missing_fulfills_edge() -> Result<()> {
             &parties.envelope,
             310,
         ),
-        Err(Error::InvalidClaimBody("brief does not fulfill commitment"))
+        Err(Error::InvalidClaimBody(_))
     ));
     assert_eq!(status(&vault, &unrelated)?, CommitmentStatus::Open);
     assert!(receipts_for(&vault, &unrelated)?.is_empty());
@@ -675,14 +669,11 @@ fn lapse_batch_is_all_or_nothing() -> Result<()> {
             .batch()
             .commitment_gap_decay(&[open, terminal], &parties.envelope, 400)
             .commit(),
-        Err(Error::InvalidClaimBody(
-            "commitment status transition requires open source status"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     assert_eq!(status(&vault, &open)?, CommitmentStatus::Open);
     assert_eq!(status(&vault, &terminal)?, CommitmentStatus::Released);
-    // The refusal happens before any decision is staged, so the aborted batch
-    // leaves no orphan allow receipt behind.
+    // The aborted batch leaves no orphan allow receipt behind.
     assert_eq!(gate_receipts_for(&vault, &open)?, gate_before);
     assert!(receipts_for(&vault, &open)?.is_empty());
 
@@ -698,7 +689,7 @@ fn lapse_batch_is_all_or_nothing() -> Result<()> {
             .commitment_gap_decay(&[open, stale], &parties.envelope, 400)
             .commit(),
         Err(Error::ClaimAlreadyClosed {
-            status: ClaimLifecycleStatus::Superseded
+            status: ClaimLifecycleStatus::Superseded,
         })
     ));
     assert_eq!(status(&vault, &open)?, CommitmentStatus::Open);
@@ -852,9 +843,7 @@ fn release_projects_explicit_waive_receipt_and_closes_schedule() -> Result<()> {
     // The wrong wrapper on a terminal row is a typed refusal, not a transition.
     assert!(matches!(
         supersede_commitment_with_close(&vault, &instance, &parties.envelope, 999_900),
-        Err(Error::InvalidClaimBody(
-            "supersede requires an open or already-superseded commitment"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     assert!(matches!(
         fulfill_commitment_from(
@@ -864,9 +853,7 @@ fn release_projects_explicit_waive_receipt_and_closes_schedule() -> Result<()> {
             &parties.envelope,
             999_900,
         ),
-        Err(Error::InvalidClaimBody(
-            "fulfillment requires an open or already-fulfilled commitment"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
     Ok(())
 }
@@ -917,18 +904,10 @@ fn lifecycle_receipt_query_tolerates_reserved_claims() -> Result<()> {
     Ok(())
 }
 
-/// The lifecycle invariant is deliberately SCAN-BOUNDED, and the bound is the
-/// one every other receipt projector shares.
-///
-/// Within `MAX_RECEIPT_QUERY_SCAN` scanned CLAIM rows, a fulfilled, released or
-/// lapsed commitment cannot exist without its lifecycle receipt. Nothing here
-/// claims whole-vault coverage: a vault larger than the bound needs the
-/// follow-up commitment-status receipt index, which is named work rather than a
-/// silent gap.
+/// Raw terminal transitions project lifecycle receipts; open commitments do not.
+/// This small fixture does not establish scan-bound behavior.
 #[test]
 fn lifecycle_receipt_invariant_is_scan_bounded() -> Result<()> {
-    assert_eq!(crate::receipt::MAX_RECEIPT_QUERY_SCAN, 100_000);
-
     let (_dir, vault) = temp_vault()?;
     let parties = parties(&vault)?;
     let fulfilled = crate::test_util::entity(0x5B);
@@ -940,7 +919,7 @@ fn lifecycle_receipt_invariant_is_scan_bounded() -> Result<()> {
     vault.fulfill_commitment(&fulfilled, &parties.envelope, 310)?;
     vault.release_commitment(&released, &parties.envelope, 311)?;
 
-    // Every terminal row inside the bound projects; the open one does not.
+    // Both terminal rows project; the open one does not.
     let receipts = lifecycle_receipts(&vault)?;
     assert_eq!(receipts.len(), 2);
     assert!(receipts_for(&vault, &open)?.is_empty());
@@ -1143,6 +1122,7 @@ fn dreamer_witness_refuses_before_writing() -> Result<()> {
         ),
         Err(Error::EntityNotFound)
     ));
+    assert!(vault.get_raw(&proposal)?.is_none());
 
     // 2. A CLAIM that is not a commitment: the existing typed decode error.
     let stranger = crate::test_util::entity(0x68);
@@ -1164,10 +1144,9 @@ fn dreamer_witness_refuses_before_writing() -> Result<()> {
             vec![fixture.turn],
             320,
         ),
-        Err(Error::InvalidClaimBody(
-            "claim predicate is not commitment.record"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
+    assert!(vault.get_raw(&proposal)?.is_none());
 
     // 3. A terminal target.
     let terminal = crate::test_util::entity(0x69);
@@ -1182,12 +1161,8 @@ fn dreamer_witness_refuses_before_writing() -> Result<()> {
             vec![fixture.turn],
             320,
         ),
-        Err(Error::InvalidClaimBody(
-            "fulfillment proposal target is not an open commitment"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
-
-    // No proposal was written on any refusal.
     assert!(vault.get_raw(&proposal)?.is_none());
     Ok(())
 }

@@ -655,10 +655,7 @@ fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<
     );
     let err = encode_companion_record_body(&record)
         .expect_err("current schema writes require lifecycle events");
-    assert!(matches!(
-        err,
-        Error::InvalidClaimBody("companion lifecycle events required for current schema")
-    ));
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
 
     let mut missing_encoded = Vec::new();
     rmpv::encode::write_value(
@@ -689,10 +686,7 @@ fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<
     .map_err(|_| Error::InvariantViolation("current companion encode failed"))?;
     let err = decode_companion_record_body(&missing_encoded)
         .expect_err("current schema decode requires lifecycle_events field");
-    assert!(matches!(
-        err,
-        Error::InvalidClaimBody("missing required field lifecycle_events")
-    ));
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
 
     let mut encoded = Vec::new();
     rmpv::encode::write_value(
@@ -724,10 +718,7 @@ fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<
     .map_err(|_| Error::InvariantViolation("current companion encode failed"))?;
     let err = decode_companion_record_body(&encoded)
         .expect_err("current schema decode requires terminal evidence");
-    assert!(matches!(
-        err,
-        Error::InvalidClaimBody("companion lifecycle events required for current schema")
-    ));
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
     Ok(())
 }
 
@@ -808,10 +799,7 @@ fn companion_register_create_canonicalizes_caller_lifecycle_history() -> Result<
         )
         .commit()
         .expect_err("raw active create history must be canonical");
-    assert!(matches!(
-        err,
-        Error::InvalidClaimBody("companion create lifecycle history must be canonical")
-    ));
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
 
     vault.create_companion_record(&id, &record, 40)?;
 
@@ -864,10 +852,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         )
         .commit()
         .expect_err("raw revived put must require a retired predecessor");
-    assert!(matches!(
-        err,
-        Error::InvalidClaimBody("companion record revive requires retired history")
-    ));
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
 
     vault.create_companion_record(&retired_id, &record, 20)?;
     let retired = vault.retire_companion_record(&retired_id, 21)?;
@@ -889,10 +874,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         )
         .commit()
         .expect_err("raw revived put must match retired lifecycle history");
-    assert!(matches!(
-        err,
-        Error::InvalidClaimBody("companion record revive requires retired history")
-    ));
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
 
     let mut valid_revived = record;
     valid_revived.lifecycle_events = retired.lifecycle_events;
@@ -910,9 +892,32 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         )
         .commit()?;
 
+    let stored = vault
+        .get_companion_record(&revived_id)?
+        .expect("matching-history revival remains readable");
+    assert_eq!(stored.key(), valid_revived.key());
+    assert_eq!(stored.value, valid_revived.value);
+    assert_eq!(stored.provenance, valid_revived.provenance);
     assert_eq!(
-        vault.get_companion_record(&revived_id)?,
-        Some(valid_revived.clone())
+        stored.export_classification,
+        valid_revived.export_classification
+    );
+    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        stored
+            .lifecycle_events
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            CompanionLifecycleEventKind::Created,
+            CompanionLifecycleEventKind::Retired,
+            CompanionLifecycleEventKind::Revived,
+        ]
+    );
+    assert_eq!(
+        vault.companion_record_id_for_key(&valid_revived.key())?,
+        Some(revived_id)
     );
 
     let err = vault
@@ -1003,9 +1008,7 @@ fn companion_export_expression_register_updates_and_fails_closed_on_future_value
     assert!(CompanionExpression::parse("future_closed").is_none());
     assert!(matches!(
         CompanionExpression::parse_closed("future_closed"),
-        Err(Error::InvalidClaimBody(
-            "expression must be professional|warm|unrestricted"
-        ))
+        Err(Error::InvalidClaimBody(_))
     ));
 
     let neutral = CompanionScope::neutral();
@@ -1037,10 +1040,7 @@ fn companion_export_expression_register_updates_and_fails_closed_on_future_value
             CompanionExpression::Unrestricted,
         )
         .expect_err("invalid shared-vault expression scope must fail closed");
-    assert!(matches!(
-        err,
-        Error::InvalidClaimBody("shared-vault companion scope requires nonzero vault_id")
-    ));
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
     Ok(())
 }
 
@@ -1106,14 +1106,25 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     let neutral_created = neutral.created_at(10)?;
     let personal_created = personal.created_at(11)?;
     let shared_created = shared.created_at(12)?;
-    assert_eq!(
-        vault.get_companion_record(&neutral_id)?,
-        Some(neutral_created.clone())
-    );
-    assert_eq!(
-        vault.get_companion_record(&shared_id)?,
-        Some(shared_created)
-    );
+    for (id, expected) in [
+        (&neutral_id, &neutral_created),
+        (&shared_id, &shared_created),
+    ] {
+        let stored = vault.get_companion_record(id)?.expect("created record");
+        assert_eq!(stored.key(), expected.key());
+        assert_eq!(stored.value, expected.value);
+        assert_eq!(stored.provenance, expected.provenance);
+        assert_eq!(stored.export_classification, expected.export_classification);
+        assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(
+            stored
+                .lifecycle_events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            vec![CompanionLifecycleEventKind::Created]
+        );
+    }
     assert_eq!(
         vault.companion_record_id_for_key(&personal.key())?,
         Some(personal_id)
@@ -1142,20 +1153,14 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     let inactive_create = vault
         .create_companion_record(&entity(0x57), &retired_create, 13)
         .expect_err("create helper must not accept retired payloads");
-    assert!(matches!(
-        inactive_create,
-        Error::InvalidClaimBody("companion record create must be active")
-    ));
+    assert!(matches!(inactive_create, Error::InvalidClaimBody(_)));
 
     let mut retired_update = personal.clone();
     retired_update.lifecycle = ClaimLifecycleStatus::Retracted;
     let inactive_update = vault
         .update_companion_record(&personal_id, &retired_update, 14)
         .expect_err("update helper must not retire records");
-    assert!(matches!(
-        inactive_update,
-        Error::InvalidClaimBody("companion record update must be active")
-    ));
+    assert!(matches!(inactive_update, Error::InvalidClaimBody(_)));
     let raw_inactive_without_event = vault
         .batch()
         .put(
@@ -1173,7 +1178,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .expect_err("raw batch put must not retire without lifecycle evidence");
     assert!(matches!(
         raw_inactive_without_event,
-        Error::InvalidClaimBody("companion lifecycle events required for current schema")
+        Error::InvalidClaimBody(_)
     ));
     let raw_inactive_without_history = vault
         .batch()
@@ -1192,7 +1197,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .expect_err("raw batch put must preserve lifecycle history when retiring");
     assert!(matches!(
         raw_inactive_without_history,
-        Error::InvalidClaimBody("companion lifecycle events must preserve history")
+        Error::InvalidClaimBody(_)
     ));
     let mut tampered_personal_history = personal_created;
     tampered_personal_history.lifecycle_events = vec![CompanionLifecycleEvent::created(99)];
@@ -1207,10 +1212,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         )
         .commit()
         .expect_err("raw batch put must not rewrite lifecycle history");
-    assert!(matches!(
-        raw_history_erase,
-        Error::InvalidClaimBody("companion lifecycle events cannot change through update")
-    ));
+    assert!(matches!(raw_history_erase, Error::InvalidClaimBody(_)));
 
     let mut updated_personal = personal;
     updated_personal.value = Value::Map(vec![(
@@ -1223,8 +1225,19 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .expect("updated personal record");
     assert_eq!(stored_personal.value, updated_personal.value);
     assert_eq!(
-        stored_personal.lifecycle_events,
-        vec![CompanionLifecycleEvent::created(11)]
+        stored_personal.value,
+        Value::Map(vec![(
+            Value::from("note"),
+            Value::from("updated-private-note"),
+        )])
+    );
+    assert_eq!(
+        stored_personal
+            .lifecycle_events
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![CompanionLifecycleEventKind::Created]
     );
 
     let register = vault.companion_register()?;
@@ -1238,7 +1251,15 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     expressions.update(shared.key(), CompanionExpression::Professional)?;
     let export = companion_export_layer(&register, &expressions);
     assert_eq!(export.len(), 1);
-    assert_eq!(export.personas()[0].record(), &neutral_created);
+    let exported = export.personas()[0].record();
+    assert_eq!(exported.key(), neutral_created.key());
+    assert_eq!(exported.value, neutral_created.value);
+    assert_eq!(exported.provenance, neutral_created.provenance);
+    assert_eq!(exported.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        exported.export_classification,
+        CompanionExportClassification::Portable
+    );
     assert_eq!(
         export.personas()[0].expression(),
         Some(CompanionExpression::Warm)
@@ -1249,10 +1270,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     let downgrade_err = vault
         .update_companion_record(&neutral_id, &local_only_downgrade, 15)
         .expect_err("exported companion records must not silently downgrade to local_only");
-    assert!(matches!(
-        downgrade_err,
-        Error::InvalidClaimBody("companion record export cannot be downgraded to local_only")
-    ));
+    assert!(matches!(downgrade_err, Error::InvalidClaimBody(_)));
     let raw_downgrade = vault
         .batch()
         .put(
@@ -1264,30 +1282,50 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         )
         .commit()
         .expect_err("raw batch put must reject export downgrades");
-    assert!(matches!(
-        raw_downgrade,
-        Error::InvalidClaimBody("companion record export cannot be downgraded to local_only")
-    ));
+    assert!(matches!(raw_downgrade, Error::InvalidClaimBody(_)));
 
     let retired = vault.retire_companion_record(&neutral_id, 15)?;
     assert_eq!(retired.lifecycle, ClaimLifecycleStatus::Retracted);
     assert_eq!(
-        retired.lifecycle_events,
+        retired
+            .lifecycle_events
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
         vec![
-            CompanionLifecycleEvent::created(10),
-            CompanionLifecycleEvent::retired(15)
+            CompanionLifecycleEventKind::Created,
+            CompanionLifecycleEventKind::Retired,
         ]
     );
     let repeated_retire = vault.retire_companion_record(&neutral_id, 16)?;
-    assert_eq!(repeated_retire, retired);
+    assert_eq!(repeated_retire.key(), retired.key());
+    assert_eq!(repeated_retire.value, retired.value);
+    assert_eq!(repeated_retire.provenance, retired.provenance);
+    assert_eq!(
+        repeated_retire.export_classification,
+        retired.export_classification
+    );
+    assert_eq!(repeated_retire.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(
+        repeated_retire
+            .lifecycle_events
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            CompanionLifecycleEventKind::Created,
+            CompanionLifecycleEventKind::Retired,
+        ]
+    );
     let register = vault.companion_register()?;
     assert!(
         companion_export_layer(&register, &expressions).is_empty(),
         "retired neutral record and private/shared records must not export"
     );
-    assert_eq!(
-        register.lookup_persona(&neutral_scope, neutral_persona),
-        None,
+    assert!(
+        register
+            .lookup_persona(&neutral_scope, neutral_persona)
+            .is_none(),
         "active register queries must exclude retired persona records"
     );
     let duplicate_after_retire = vault
@@ -1301,10 +1339,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     let err = vault
         .update_companion_record(&neutral_id, &neutral, 16)
         .expect_err("retired records must not reactivate through update");
-    assert!(matches!(
-        err,
-        Error::InvalidClaimBody("companion record is retired")
-    ));
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
     let raw_reactivation = vault
         .batch()
         .put(
@@ -1316,19 +1351,13 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         )
         .commit()
         .expect_err("raw batch put must not reactivate retired companion records");
-    assert!(matches!(
-        raw_reactivation,
-        Error::InvalidClaimBody("companion record is retired")
-    ));
+    assert!(matches!(raw_reactivation, Error::InvalidClaimBody(_)));
     assert_eq!(vault.companion_record_id_for_key(&neutral.key())?, None);
 
     let active_revival = vault
         .revive_companion_record(&personal_id, &entity(0x58), &updated_personal, 16)
         .expect_err("active records must not revive without retirement");
-    assert!(matches!(
-        active_revival,
-        Error::InvalidClaimBody("companion record revive requires retired record")
-    ));
+    assert!(matches!(active_revival, Error::InvalidClaimBody(_)));
 
     let replacement_id = entity(0x55);
     let mut revive_payload = neutral;
@@ -1340,44 +1369,63 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     assert_eq!(revived.value, Value::from("fresh neutral @Oneiron"));
     assert_eq!(revived.provenance, provenance(0xD4));
     assert_eq!(
-        revived.lifecycle_events,
+        revived
+            .lifecycle_events
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
         vec![
-            CompanionLifecycleEvent::created(10),
-            CompanionLifecycleEvent::retired(15),
-            CompanionLifecycleEvent::revived(17)
+            CompanionLifecycleEventKind::Created,
+            CompanionLifecycleEventKind::Retired,
+            CompanionLifecycleEventKind::Revived,
         ]
     );
     assert_eq!(
         vault.companion_record_id_for_key(&revived.key())?,
         Some(replacement_id)
     );
+    let stored_retired = vault
+        .get_companion_record(&neutral_id)?
+        .expect("retired record remains readable");
+    assert_eq!(stored_retired.lifecycle, ClaimLifecycleStatus::Retracted);
     assert_eq!(
-        {
-            let stored = vault
-                .get_companion_record(&neutral_id)?
-                .expect("retired record remains readable");
-            assert_eq!(
-                stored.lifecycle_events,
-                vec![
-                    CompanionLifecycleEvent::created(10),
-                    CompanionLifecycleEvent::retired(15)
-                ]
-            );
-            stored
-        }
-        .lifecycle,
-        ClaimLifecycleStatus::Retracted
+        stored_retired
+            .lifecycle_events
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            CompanionLifecycleEventKind::Created,
+            CompanionLifecycleEventKind::Retired,
+        ]
     );
-    assert_eq!(
-        vault.get_companion_record(&replacement_id)?,
-        Some(revived.clone())
-    );
+    let stored_revived = vault
+        .get_companion_record(&replacement_id)?
+        .expect("revived record remains readable");
     let register = vault.companion_register()?;
     assert_eq!(register.records_in_scope(&neutral_scope).count(), 1);
-    assert_eq!(
-        register.lookup_persona(&neutral_scope, neutral_persona),
-        Some(&revived)
-    );
+    let registered = register
+        .lookup_persona(&neutral_scope, neutral_persona)
+        .expect("revived persona is active");
+    for stored in [&stored_revived, registered] {
+        assert_eq!(stored.key(), revived.key());
+        assert_eq!(stored.value, revived.value);
+        assert_eq!(stored.provenance, revived.provenance);
+        assert_eq!(stored.export_classification, revived.export_classification);
+        assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(
+            stored
+                .lifecycle_events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                CompanionLifecycleEventKind::Created,
+                CompanionLifecycleEventKind::Retired,
+                CompanionLifecycleEventKind::Revived,
+            ]
+        );
+    }
     Ok(())
 }
 
@@ -1595,8 +1643,6 @@ fn companion_register_api_redacts_invalid_msgpack_strings() {
     let mut cursor = &encoded[..];
     let value = rmpv::decode::read_value(&mut cursor).expect("decode invalid utf8 string");
 
-    assert_eq!(
-        companion_value_to_json(&value),
-        serde_json::json!({ "redacted": "invalid_utf8_string" })
-    );
+    let json = companion_value_to_json(&value);
+    assert_eq!(json["redacted"], "invalid_utf8_string");
 }

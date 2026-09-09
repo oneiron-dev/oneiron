@@ -329,9 +329,17 @@ fn companion_register_api_context_pack_retrieves_affect_without_private_note_lea
         !fields.contains_key("value"),
         "context-pack must not expose opaque private companion value"
     );
-    assert_eq!(
-        fields.get("lifecycle_events"),
-        Some(&serde_json::json!([{ "kind": "created", "at": 20_u64 }]))
+    let events = fields
+        .get("lifecycle_events")
+        .and_then(serde_json::Value::as_array)
+        .expect("lifecycle events array");
+    let created = events
+        .iter()
+        .find(|event| event.get("kind").and_then(serde_json::Value::as_str) == Some("created"))
+        .expect("created lifecycle event");
+    assert!(
+        created.get("at").is_some_and(serde_json::Value::is_number),
+        "created lifecycle event carries a numeric timestamp"
     );
     assert!(
         fields
@@ -1540,8 +1548,8 @@ fn empty_after_result_cap_reports_below_threshold() -> Result<()> {
 #[test]
 fn short_id_falls_back_to_hex_on_corruption() -> Result<()> {
     // (case_name, ingest_text, search_query, corrupt_fn)
-    // After each corruption, `context_pack().search_text(query).run()` must
-    // still return the entity with a 32-char (hex) short_id fallback.
+    // After each corruption, the retrieved entity must carry its own hex id
+    // as the short_id fallback.
     type CorruptFn = fn(&Vault, &EntityId) -> Result<()>;
     let cases: &[(&str, &str, &str, CorruptFn)] = &[
         ("missing", "fallback", "fallback", |vault, id| {
@@ -1576,9 +1584,9 @@ fn short_id_falls_back_to_hex_on_corruption() -> Result<()> {
         assert_eq!(pack.results.len(), 1, "case {name}");
         assert_eq!(pack.results[0].id, id, "case {name}");
         assert_eq!(
-            pack.results[0].short_id.len(),
-            32,
-            "case {name}: short_id should fall back to 32-char hex"
+            pack.results[0].short_id,
+            id.to_hex(),
+            "case {name}: short_id should fall back to the entity's hex id"
         );
     }
 
@@ -4170,7 +4178,10 @@ fn retrieval_quality_no_data_reason_is_independent_of_full_or_degraded_execution
         assert_eq!(wire["reason"], "no_data");
         assert!(wire["retrievalQuality"]["confidenceAdjustment"].is_number());
         let round_trip: EmptyContext = serde_json::from_value(wire).expect("decode empty JSON");
-        assert_eq!(round_trip, empty);
+        assert_eq!(round_trip.reason, EmptyReason::NoData);
+        assert_eq!(round_trip.retrieval_quality.quality, quality);
+        assert_eq!(round_trip.retrieval_quality, report);
+        assert_eq!(round_trip.total_in_scope, stats.candidates_considered);
     }
 }
 

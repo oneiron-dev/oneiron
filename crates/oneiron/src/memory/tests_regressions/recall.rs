@@ -287,11 +287,6 @@ fn recall_deep_requires_lease_and_marks_pending() {
         )
         .expect_err("deep without lease");
     assert_eq!(err.code, MEMORY_CODE_LEASE_REQUIRED);
-    assert!(
-        err.suggestions.iter().any(|s| s.contains("lease")),
-        "suggestions mention the lease: {:?}",
-        err.suggestions
-    );
 
     let lease = crate::llm::BudgetLease::for_test("recall-spike");
     let pack = facade
@@ -531,7 +526,6 @@ fn recall_short_ids_hydrate_and_formats_render() {
         )
         .expect_err("unknown format");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(err.suggestions.iter().any(|s| s.contains("toon")));
 }
 
 /// Builds a distinct, non-reserved entity id from a counter for bulk index

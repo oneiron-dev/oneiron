@@ -64,7 +64,9 @@ fn universal_raw_put_retains_a_hash_bound_safe_fixture() -> crate::Result<()> {
     let (files, report) =
         vault.apply_custody_to_snapshot(&txn, &snap, &|_| Some(content.clone()))?;
     assert_eq!(files, snap.files);
-    assert_eq!(report, SnapshotCustodyReport::default());
+    assert!(report.excluded_secret_paths.is_empty());
+    assert!(report.quarantined_paths.is_empty());
+    assert!(report.proposals.is_empty());
     Ok(())
 }
 

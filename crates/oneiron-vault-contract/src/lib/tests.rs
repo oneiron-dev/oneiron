@@ -454,19 +454,22 @@ fn shed_blocker_wire_preserves_unknown_kinds() {
     ] {
         let response: CtlResponse = serde_json::from_str(wire).unwrap();
         response.validate().unwrap();
-        assert_eq!(serde_json::to_string(&response).unwrap(), wire);
-        let CtlResponse::Slim {
-            slim: decoded_slim,
-            status: ShedStatus::Refused,
-            blocker: Some(blocker),
-            ..
-        } = response
-        else {
-            panic!("unknown blocker must remain displayable");
-        };
-        assert_eq!(decoded_slim, slim);
-        assert_eq!(blocker.kind, "future_blocker");
-        assert_eq!(blocker.detail, "wait for \"adapter\"");
+        let serialized = serde_json::to_string(&response).unwrap();
+        let serialized_response: CtlResponse = serde_json::from_str(&serialized).unwrap();
+        for response in [response, serialized_response] {
+            let CtlResponse::Slim {
+                slim: decoded_slim,
+                status: ShedStatus::Refused,
+                blocker: Some(blocker),
+                ..
+            } = response
+            else {
+                panic!("unknown blocker must remain displayable");
+            };
+            assert_eq!(decoded_slim, slim);
+            assert_eq!(blocker.kind, "future_blocker");
+            assert_eq!(blocker.detail, "wait for \"adapter\"");
+        }
     }
 }
 
@@ -491,8 +494,16 @@ fn credentials_reject_short_and_long() {
 #[test]
 fn token_debug_redacted() {
     let t = TokenHex::new("deadbeef".into());
-    assert_eq!(format!("{t:?}"), "TokenHex(<redacted>)");
+    let debug = format!("{t:?}");
     assert_eq!(t.expose(), "deadbeef");
+
+    for secret in ["deadbeef", "0123456789abcdef", "fedcba9876543210"] {
+        let token = TokenHex::new(secret.into());
+        let token_debug = format!("{token:?}");
+        assert_eq!(token.expose(), secret);
+        assert_eq!(token_debug, debug);
+        assert!(!debug.contains(secret));
+    }
 }
 
 #[test]

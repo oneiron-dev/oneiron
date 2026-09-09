@@ -342,6 +342,16 @@ fn blind_judging_context_omits_strategy_and_round_metadata() -> Result<()> {
         1,
     )?;
     let fork = author_fork("author-seed-blind", &[&left, &right])?;
+    let expected_payloads = [
+        (
+            left.judge_claim.claim.clone(),
+            left.judge_claim.evidence_refs.clone(),
+        ),
+        (
+            right.judge_claim.claim.clone(),
+            right.judge_claim.evidence_refs.clone(),
+        ),
+    ];
 
     let result = run_dreamer_claim_tournament(
         &vault,
@@ -365,12 +375,28 @@ fn blind_judging_context_omits_strategy_and_round_metadata() -> Result<()> {
         )?,
     )?;
 
-    for context in result.blind_contexts {
-        let debug = format!("{context:?}");
-        assert!(!debug.contains("strategy-secret"));
-        assert!(!debug.contains("round"));
-        assert!(!debug.contains("candidate-alpha"));
-        assert!(!debug.contains("candidate-beta"));
+    assert_eq!(result.blind_contexts.len(), expected_payloads.len());
+    for (index, context) in result.blind_contexts.iter().enumerate() {
+        // Exhaustive destructuring restricts the public payload to blind fields.
+        let DreamerTournamentBlindJudgeContext {
+            blind_index,
+            claim,
+            evidence_refs,
+        } = context;
+        assert_eq!(*blind_index, index);
+        assert!(
+            expected_payloads
+                .iter()
+                .any(|(text, refs)| { claim == text && evidence_refs == refs })
+        );
+    }
+    for (text, refs) in &expected_payloads {
+        assert!(
+            result
+                .blind_contexts
+                .iter()
+                .any(|context| { &context.claim == text && &context.evidence_refs == refs })
+        );
     }
     Ok(())
 }

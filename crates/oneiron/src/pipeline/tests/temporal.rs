@@ -34,9 +34,9 @@ fn long_interval_scan_counts_only_spanners_toward_cap() -> Result<()> {
             &vault,
             id,
             1,
-            anchor + i as u64,
+            anchor + window + i as u64,
             anchor + long_span + i as u64,
-            anchor,
+            anchor.saturating_sub((30 + i as u64) * window),
         )?;
     }
 
@@ -50,40 +50,16 @@ fn long_interval_scan_counts_only_spanners_toward_cap() -> Result<()> {
         anchor,
     )?;
 
-    let rtxn = vault.store.env.read_txn()?;
-    let config = TemporalSearchConfig {
-        anchor_start: anchor,
-        anchor_end: anchor,
-        learned_start: None,
-        learned_end: None,
-        sigma_secs: window,
-        anchor_mode: TemporalAnchorMode::Occurred,
-        adaptive: true,
-        limit: 1,
-    };
-    let mut metadata_cache = EntityMetadataCache::default();
-    let scoring = TemporalScoringContext {
-        sigma: window,
-        now: crate::unix_seconds_now(),
-        anchor_mid: anchor,
-        learned_anchor: (anchor, anchor),
-        learned_anchor_mid: anchor,
-    };
-    let mut candidates = HashSet::new();
-    collect_temporal_candidates(
-        &vault.store,
-        &rtxn,
-        &config,
-        TemporalCandidateCollectionContext {
-            radius: window,
-            per_scan_cap: PER_SCAN_CAP_FACTOR,
-        },
-        &mut metadata_cache,
-        &scoring,
-        &mut candidates,
-    )?;
+    let results = PipelineBuilder::new(&vault)
+        .search_temporal_with_sigma(anchor, anchor, window, TemporalAnchorMode::Occurred, 1)
+        .temporal_adaptive(false)
+        .with_temporal_now(anchor)
+        .limit(1)
+        .run_with_telemetry()?;
+    let scores = to_score_map(&results.value);
 
-    assert!(candidates.contains(&spanner));
+    assert_eq!(scores.len(), 1);
+    assert!(scores.contains_key(&spanner));
     Ok(())
 }
 
@@ -126,64 +102,42 @@ fn long_interval_scan_does_not_spend_cap_on_preexisting_ids() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
     let anchor = crate::unix_seconds_now();
-    let span = LONG_INTERVAL_THRESHOLD_SECS + 86_400;
+    let window = 86_400;
+    let span = LONG_INTERVAL_THRESHOLD_SECS + window;
     let best = entity_id(224);
-    let mut preexisting = HashSet::new();
 
     for i in 0..5_u8 {
         let id = entity_id(220 + i);
         let learned_at = if id == best {
             anchor
         } else {
-            anchor.saturating_sub((30 + u64::from(i)) * 86_400)
+            anchor.saturating_sub((30 + u64::from(i)) * window)
+        };
+        let start = if id == best {
+            anchor.saturating_sub(span + 10)
+        } else {
+            anchor.saturating_sub(window)
         };
         put_entity(
             &vault,
             id,
             1,
-            anchor.saturating_sub(span + 10),
+            start,
             anchor.saturating_add(span + u64::from(i)),
             learned_at,
         )?;
-        if id != best {
-            preexisting.insert(id);
-        }
     }
 
-    let rtxn = vault.store.env.read_txn()?;
-    let config = TemporalSearchConfig {
-        anchor_start: anchor,
-        anchor_end: anchor,
-        learned_start: None,
-        learned_end: None,
-        sigma_secs: 86_400,
-        anchor_mode: TemporalAnchorMode::Occurred,
-        adaptive: false,
-        limit: 1,
-    };
-    let scoring = TemporalScoringContext {
-        sigma: 86_400,
-        now: anchor,
-        anchor_mid: anchor,
-        learned_anchor: (anchor, anchor),
-        learned_anchor_mid: anchor,
-    };
-    let mut metadata_cache = EntityMetadataCache::default();
+    let results = PipelineBuilder::new(&vault)
+        .search_temporal_with_sigma(anchor, anchor, window, TemporalAnchorMode::Occurred, 1)
+        .temporal_adaptive(false)
+        .with_temporal_now(anchor)
+        .limit(1)
+        .run_with_telemetry()?;
+    let scores = to_score_map(&results.value);
 
-    collect_temporal_candidates(
-        &vault.store,
-        &rtxn,
-        &config,
-        TemporalCandidateCollectionContext {
-            radius: 86_400,
-            per_scan_cap: PER_SCAN_CAP_FACTOR,
-        },
-        &mut metadata_cache,
-        &scoring,
-        &mut preexisting,
-    )?;
-
-    assert!(preexisting.contains(&best));
+    assert_eq!(scores.len(), 1);
+    assert!(scores.contains_key(&best));
     Ok(())
 }
 
@@ -191,31 +145,27 @@ fn long_interval_scan_does_not_spend_cap_on_preexisting_ids() -> Result<()> {
 fn backward_seek_preserves_lowest_ids_with_same_timestamp() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let timestamp = 99;
+    let limit = 4;
 
-    for byte in [40_u8, 41, 42, 43, 44] {
-        let id = entity_id(byte);
+    for i in 0..=limit * PER_SCAN_CAP_FACTOR {
+        let id = entity_id(40 + i as u8);
         put_entity(&vault, id, 1, timestamp, timestamp, timestamp)?;
     }
 
-    let rtxn = vault.store.env.read_txn()?;
-    let mut out = HashSet::new();
-    collect_index_candidates(
-        &vault.store.temporal_occurred_start,
-        &rtxn,
-        TemporalIndexCollectionContext {
-            window_start: 0,
-            window_end: timestamp,
-            anchor_mid: 100,
-            cap: 4,
-        },
-        &mut out,
-    )?;
+    let results = PipelineBuilder::new(&vault)
+        .search_temporal_with_sigma(100, 100, 100, TemporalAnchorMode::Occurred, limit)
+        .temporal_adaptive(false)
+        .with_temporal_now(100)
+        .limit(limit)
+        .run_with_telemetry()?;
+    let scores = to_score_map(&results.value);
 
-    assert!(out.contains(&entity_id(40)));
-    assert!(out.contains(&entity_id(41)));
-    assert!(out.contains(&entity_id(42)));
-    assert!(out.contains(&entity_id(43)));
-    assert!(!out.contains(&entity_id(44)));
+    assert_eq!(scores.len(), limit);
+    assert!(scores.contains_key(&entity_id(40)));
+    assert!(scores.contains_key(&entity_id(41)));
+    assert!(scores.contains_key(&entity_id(42)));
+    assert!(scores.contains_key(&entity_id(43)));
+    assert!(!scores.contains_key(&entity_id(44)));
     Ok(())
 }
 

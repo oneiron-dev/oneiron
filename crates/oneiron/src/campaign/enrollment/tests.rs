@@ -394,32 +394,39 @@ fn enrollment_attempt_payload_is_three_refs_and_nothing_else() -> Result<()> {
         program_step_ref: entity(0x83),
     };
     let encoded = encode_enrollment_attempt_payload(&payload)?;
-    assert_eq!(decode_enrollment_attempt_payload(&encoded)?, payload);
+    let decoded = decode_enrollment_attempt_payload(&encoded)?;
+    assert_eq!(decoded.membership_event_ref, payload.membership_event_ref);
+    assert_eq!(decoded.campaign_program_ref, payload.campaign_program_ref);
+    assert_eq!(decoded.program_step_ref, payload.program_step_ref);
 
-    let wire: serde_json::Value = serde_json::from_slice(&encoded).expect("payload is json");
-    let keys: Vec<&str> = wire
+    let mut wire: serde_json::Value = serde_json::from_slice(&encoded).expect("payload is json");
+    let mut keys: Vec<&str> = wire
         .as_object()
         .expect("payload is an object")
         .keys()
         .map(String::as_str)
         .collect();
+    keys.sort_unstable();
     assert_eq!(
         keys,
         vec![
-            "schema_version",
-            "membership_event_ref",
             "campaign_program_ref",
-            "program_step_ref"
+            "membership_event_ref",
+            "program_step_ref",
+            "schema_version",
         ],
         "no cause, epoch, evidence hash, timestamp, enrolled flag, or \
          outbound request may ride the queue"
     );
 
     // A payload that smuggles a cause is rejected outright, not ignored.
+    wire.as_object_mut().expect("payload is an object").insert(
+        "cause".to_owned(),
+        serde_json::Value::String("data_change".to_owned()),
+    );
+    let extra_cause = serde_json::to_vec(&wire).expect("payload is json");
     assert!(matches!(
-        decode_enrollment_attempt_payload(
-            br#"{"schema_version":1,"membership_event_ref":"00","campaign_program_ref":"00","program_step_ref":"00","cause":"data_change"}"#
-        ),
+        decode_enrollment_attempt_payload(&extra_cause),
         Err(Error::CorruptedIndex(_))
     ));
     Ok(())

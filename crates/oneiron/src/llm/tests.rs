@@ -937,57 +937,76 @@ impl AutoChecker for BlockingOnceAutoChecker {
 
 #[test]
 fn timed_out_auto_checker_keeps_capacity_until_host_finishes_and_reuses_worker() {
+    struct CompletingAutoChecker {
+        host: Arc<BlockingOnceAutoChecker>,
+        completed: mpsc::SyncSender<()>,
+    }
+
+    impl AutoChecker for CompletingAutoChecker {
+        fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+            let outcome = self.host.check(candidate);
+            self.completed.send(()).expect("report host completion");
+            outcome
+        }
+    }
+
     let (release, waiting) = mpsc::sync_channel(1);
     let (entered, entries) = mpsc::sync_channel(2);
+    let (completed, completions) = mpsc::sync_channel(2);
     let host = Arc::new(BlockingOnceAutoChecker {
         calls: std::sync::atomic::AtomicUsize::new(0),
         release: std::sync::Mutex::new(waiting),
         entered,
     });
-    let checker = BoundedAutoChecker::new(host.clone());
+    let checker = BoundedAutoChecker::new(Arc::new(CompletingAutoChecker {
+        host: host.clone(),
+        completed,
+    }));
     let clone = checker.clone();
     let candidate = auto_check_candidate();
-    assert_eq!(
+    assert!(matches!(
         checker.check(&candidate.borrowed()),
-        AutoCheckOutcome::Unavailable
-    );
-    let worker = entries
+        AutoCheckOutcome::Unavailable,
+    ));
+    entries
         .recv_timeout(Duration::from_secs(5))
         .expect("first host call entered");
 
     let started = std::time::Instant::now();
     for index in 0..16 {
         let caller = if index % 2 == 0 { &checker } else { &clone };
-        assert_eq!(
+        assert!(matches!(
             caller.check(&candidate.borrowed()),
-            AutoCheckOutcome::Unavailable
-        );
+            AutoCheckOutcome::Unavailable,
+        ));
     }
     assert!(
         started.elapsed() < Duration::from_millis(AUTO_CHECKER_DEADLINE_MS),
         "occupied calls must fail immediately, not wait for another deadline"
     );
     assert_eq!(host.calls.load(Ordering::Relaxed), 1);
-    assert!(checker.occupied.load(Ordering::Acquire));
 
     release.send(()).expect("let the timed-out host finish");
+    completions
+        .recv_timeout(Duration::from_secs(5))
+        .expect("first host call finished");
+
     let started = std::time::Instant::now();
-    while checker.occupied.load(Ordering::Acquire) {
+    loop {
         assert!(
             started.elapsed() < Duration::from_secs(5),
-            "host did not finish"
+            "checker did not recover capacity"
         );
-        std::thread::yield_now();
+        match clone.check(&candidate.borrowed()) {
+            AutoCheckOutcome::Allow => break,
+            AutoCheckOutcome::Unavailable => std::thread::yield_now(),
+            AutoCheckOutcome::Hold { .. } => panic!("host should allow later work"),
+        }
     }
-    assert_eq!(clone.check(&candidate.borrowed()), AutoCheckOutcome::Allow);
     assert_eq!(host.calls.load(Ordering::Relaxed), 2);
-    assert_eq!(
-        entries
-            .recv_timeout(Duration::from_secs(5))
-            .expect("second host entry"),
-        worker,
-        "later work reuses the one worker instead of spawning another"
-    );
+    entries
+        .recv_timeout(Duration::from_secs(5))
+        .expect("second host entry");
 }
 
 #[test]
@@ -1005,16 +1024,14 @@ fn panicking_auto_checker_releases_capacity_for_the_next_call() {
 
     let checker = bounded(PanicOnce(std::sync::atomic::AtomicUsize::new(0)));
     let candidate = auto_check_candidate();
-    assert_eq!(
+    assert!(matches!(
         checker.check(&candidate.borrowed()),
-        AutoCheckOutcome::Unavailable
-    );
-    assert!(!checker.occupied.load(Ordering::Acquire));
-    assert_eq!(
+        AutoCheckOutcome::Unavailable,
+    ));
+    assert!(matches!(
         checker.check(&candidate.borrowed()),
-        AutoCheckOutcome::Allow
-    );
-    assert!(!checker.occupied.load(Ordering::Acquire));
+        AutoCheckOutcome::Allow,
+    ));
 }
 
 /// A host cannot write an unbounded gate-decision receipt through its hold

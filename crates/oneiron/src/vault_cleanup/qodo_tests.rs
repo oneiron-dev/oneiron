@@ -538,7 +538,7 @@ fn retry_of_auto_or_empty_run_never_produces_another_decision() {
 
 #[test]
 fn failed_scan_keeps_the_cursor_and_has_no_durable_run_result() {
-    let (_dir, vault) = open();
+    let (dir, vault) = open();
     let mut people = Vec::new();
     for _ in 0..3 {
         let id = EntityId::now();
@@ -571,12 +571,23 @@ fn failed_scan_keeps_the_cursor_and_has_no_durable_run_result() {
     assert_eq!(cleanup_proposals(&vault).expect("proposals").len(), 1);
     vault
         .with_write_txn(|txn| {
-            assert!(run_record::read_in_txn(&vault, txn, &attempt)?.is_none());
             vault.store.entities.put(txn, summary.as_bytes(), &raw)?;
             Ok(())
         })
         .expect("repair summary fixture");
+    drop(vault);
+    let vault = Vault::open(dir.path(), test_config()).expect("regression fixture");
     let retried = scan::run_with_limit(&vault, &attempt, 1).expect("retry scan");
+    assert_eq!(retried.candidates.len(), 2);
     assert_eq!(retried.candidates[0].entity, people[1]);
     assert_eq!(retried.candidates[1].entity, summary);
+    let proposal_id = retried.proposal.expect("retry proposal");
+    let proposal = cleanup_proposal(&vault, &proposal_id)
+        .expect("read retry proposal")
+        .expect("open retry proposal");
+    assert_eq!(proposal.attempt, attempt);
+    assert_eq!(proposal.candidates.len(), 2);
+    assert_eq!(proposal.candidates[0].entity, people[1]);
+    assert_eq!(proposal.candidates[1].entity, summary);
+    assert_eq!(cleanup_proposals(&vault).expect("proposals").len(), 2);
 }

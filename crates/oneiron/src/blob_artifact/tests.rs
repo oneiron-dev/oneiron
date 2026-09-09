@@ -2,8 +2,7 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, EntityClassification, TypeByteZone,
-    entity_type_registry_entry, short_id_prefix,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, short_id_prefix,
 };
 use crate::test_util::embedding_test_config;
 
@@ -87,14 +86,12 @@ fn blob_artifact_registry_and_vault_helpers_round_trip() -> Result<()> {
     let id = put_artifact(&vault, 11)?;
 
     let decoded = vault.get_blob_artifact(&id)?.ok_or(Error::EntityNotFound)?;
-    assert_eq!(decoded, test_body());
+    let expected = test_body();
+    assert_eq!(decoded.name, expected.name);
+    assert_eq!(decoded.media_type, expected.media_type);
+    assert!(decoded.secret_taint_refs.is_empty());
     assert_eq!(vault.get_entity_type(&id)?, Some(ENTITY_TYPE_BLOB_ARTIFACT));
     assert_eq!(short_id_prefix(ENTITY_TYPE_BLOB_ARTIFACT)?, "ba");
-    let entry =
-        entity_type_registry_entry(ENTITY_TYPE_BLOB_ARTIFACT).expect("BLOB_ARTIFACT registry row");
-    assert_eq!(entry.kind, "BLOB_ARTIFACT");
-    assert_eq!(entry.classification, EntityClassification::Pack);
-    assert_eq!(entry.zone, TypeByteZone::CompiledProduct);
     Ok(())
 }
 

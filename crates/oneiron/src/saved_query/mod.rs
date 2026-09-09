@@ -117,8 +117,8 @@ use self::storage::{
 };
 #[cfg(test)]
 use self::support::{
-    EVALUATOR_VERSION, MICROS_PER_UNIT, canonical_json_bytes, cosine_similarity_micros, hex_lower,
-    rmpv_to_json, vector_pair_fingerprint,
+    EVALUATOR_VERSION, MICROS_PER_UNIT, cosine_similarity_micros, hex_lower, rmpv_to_json,
+    vector_pair_fingerprint,
 };
 
 // Referenced only by an intra-doc link in this module's header; gated so the

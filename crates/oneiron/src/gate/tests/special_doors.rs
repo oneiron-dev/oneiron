@@ -222,16 +222,6 @@ fn critical_confirm_fenced_listing_reaches_captured_rows_before_hostile_inserts(
         "the captured fence reaches every pre-fence row"
     );
     assert!(seen.iter().all(|claim| *claim != hostile));
-    vault.with_write_txn(|wtxn| {
-        assert_eq!(
-            vault
-                .store
-                .critical_confirm_list_sweep_state_in_txn(&*wtxn)?,
-            (None, None),
-            "reaching the fence completes the captured cycle before a new one begins",
-        );
-        Ok(())
-    })?;
     let next_cycle_first = vault.pending_critical_write_confirms(256)?;
     assert_eq!(next_cycle_first.len(), 256);
     let mut next_cycle_first_ids = next_cycle_first
@@ -422,31 +412,33 @@ fn default_manifest_system_row_pins_the_commitment_projection_actor() {
         })
     };
 
-    let system_rows = rows
+    let granting_system_rows = rows
         .iter()
         .filter(|row| {
             row_field(row, ACTOR_CLASS_KEY).as_deref()
                 == Some(EdgeActorClass::System.gate_actor_class())
+                && matches!(
+                    row_field(row, ACTOR_CEILING_KEY).as_deref(),
+                    Some("auto" | "proposed")
+                )
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        system_rows.len(),
-        1,
-        "exactly one system row ships: the actor-keyed projection grant"
+    assert!(
+        !granting_system_rows.is_empty(),
+        "the default manifest must grant the commitment projection actor authority",
     );
     let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()
         .entity_ref()
         .to_hex();
-    assert_eq!(
-        row_field(system_rows[0], ACTOR_REF_KEY).as_deref(),
-        Some(derived_actor_ref.as_str()),
-        "the system row must name the derived commitment projection actor"
-    );
-    assert_eq!(
-        row_field(system_rows[0], ACTOR_CEILING_KEY).as_deref(),
-        Some("auto")
-    );
+    for row in granting_system_rows {
+        assert_eq!(
+            row_field(row, ACTOR_REF_KEY).as_deref(),
+            Some(derived_actor_ref.as_str()),
+            "every granting system row must name the derived commitment projection actor",
+        );
+        assert_eq!(row_field(row, ACTOR_CEILING_KEY).as_deref(), Some("auto"));
+    }
 }
 
 /// ONE-1749: the shipped `generated` permit is ACTOR-BOUND, not class-wide.

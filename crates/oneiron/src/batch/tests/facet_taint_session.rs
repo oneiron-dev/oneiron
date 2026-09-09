@@ -565,13 +565,12 @@ fn taint_guard_releases_after_session_close() -> Result<()> {
         .off_record_session_vault()
         .enter("sess-taint-release", OffRecordBackendClass::Local)?;
     stage_live_overlay_entity(&session, &overlay_id)?;
-    assert!(
-        vault
-            .batch()
-            .edge(&source, EdgeKind::Mentions, &overlay_id, 1.0)
-            .commit()
-            .is_err()
-    );
+    let refused = vault
+        .batch()
+        .edge(&source, EdgeKind::Mentions, &overlay_id, 1.0)
+        .commit()
+        .expect_err("a live overlay member must refuse an ordinary base edge write");
+    assert_matches!(refused.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     session.close()?;
 
     vault

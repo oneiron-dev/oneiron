@@ -128,20 +128,6 @@ fn final_word_token(term: &str) -> Token {
     )
 }
 
-fn put_raw_posting_terms(vault: &Vault, terms: &[String]) -> Result<()> {
-    let postings = terms
-        .iter()
-        .enumerate()
-        .map(|(idx, term)| {
-            (
-                term.clone(),
-                test_entity_id(u16::try_from(idx).expect("test id fits in u16")),
-            )
-        })
-        .collect::<Vec<_>>();
-    put_raw_posting_terms_with_ids(vault, &postings)
-}
-
 fn put_raw_posting_terms_with_ids(vault: &Vault, postings: &[(String, EntityId)]) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut fields = BTreeMap::new();
@@ -313,7 +299,7 @@ fn malformed_non_empty_lexical_hint_claim_posting_fails_closed() -> Result<()> {
     let err = vault
         .search_text("malformedhintprobe", 10)
         .expect_err("malformed non-empty lexical hint rows must not be hidden");
-    assert_matches!(err, Error::CorruptedIndex("lexical query hint claim"));
+    assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
 
@@ -464,42 +450,17 @@ fn final_token_prefix_matches_only_last_query_token() -> Result<()> {
 fn final_token_prefix_ignores_derived_stem_prefixes() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
-    put_raw_posting_terms(
-        &vault,
-        &[
-            "runner".to_owned(),
-            "runningly".to_owned(),
-            "runt".to_owned(),
-        ],
-    )?;
+    let runner = test_entity_id(0);
+    let runningly = test_entity_id(1);
+    let runt = test_entity_id(2);
+    put_text_doc(&vault, &runner, "runner")?;
+    put_text_doc(&vault, &runningly, "runningly")?;
+    put_text_doc(&vault, &runt, "runt")?;
 
-    let rtxn = vault.store.env.read_txn()?;
-    let mut terms = BTreeMap::new();
-    let mut exact_posting_matches_scope = |_id: &EntityId| Ok(true);
-    collect_final_token_prefix_terms(
-        &vault.store,
-        &rtxn,
-        "running".len(),
-        &Bm25Config::default(),
-        &[
-            final_word_token("running"),
-            Token::new(
-                "run",
-                0,
-                "running".len() as u32,
-                0,
-                AnalyzerChannel::Stem,
-                TokenKind::Word,
-            ),
-        ],
-        &mut terms,
-        &mut exact_posting_matches_scope,
-    )?;
-
-    assert_eq!(
-        terms.keys().cloned().collect::<Vec<_>>(),
-        vec!["runningly".to_owned()]
-    );
+    let results = vault.search_text("running", 10)?;
+    assert!(contains_id(&results, &runningly));
+    assert!(!contains_id(&results, &runner));
+    assert!(!contains_id(&results, &runt));
     Ok(())
 }
 
@@ -510,27 +471,20 @@ fn final_token_prefix_expansion_is_capped_in_deterministic_order() -> Result<()>
     let indexed_terms = (0..MAX_FINAL_TOKEN_PREFIX_TERMS + 2)
         .map(cap_prefix_term)
         .collect::<Vec<_>>();
-    put_raw_posting_terms(&vault, &indexed_terms)?;
+    for (index, term) in indexed_terms.iter().enumerate() {
+        let id = test_entity_id(u16::try_from(index).expect("test id fits in u16"));
+        put_text_doc(&vault, &id, term)?;
+    }
 
-    let rtxn = vault.store.env.read_txn()?;
-    let mut terms = BTreeMap::new();
-    let mut exact_posting_matches_scope = |_id: &EntityId| Ok(true);
-    collect_final_token_prefix_terms(
-        &vault.store,
-        &rtxn,
-        "capbound".len(),
-        &Bm25Config::default(),
-        &[final_word_token("capbound")],
-        &mut terms,
-        &mut exact_posting_matches_scope,
-    )?;
-
-    let collected = terms.keys().cloned().collect::<Vec<_>>();
-    let expected = (0..MAX_FINAL_TOKEN_PREFIX_TERMS)
-        .map(cap_prefix_term)
-        .collect::<Vec<_>>();
-    assert_eq!(collected, expected);
-    assert!(!terms.contains_key(&cap_prefix_term(MAX_FINAL_TOKEN_PREFIX_TERMS)));
+    let results = vault.search_text("capbound", indexed_terms.len())?;
+    assert_eq!(results.len(), MAX_FINAL_TOKEN_PREFIX_TERMS);
+    for index in 0..indexed_terms.len() {
+        let id = test_entity_id(u16::try_from(index).expect("test id fits in u16"));
+        assert_eq!(
+            contains_id(&results, &id),
+            index < MAX_FINAL_TOKEN_PREFIX_TERMS,
+        );
+    }
     Ok(())
 }
 
@@ -1635,21 +1589,40 @@ fn deindex_fails_closed_on_all_corruption_variants() -> Result<()> {
 #[test]
 fn bm25_diagnostics_snapshot_has_stable_privacy_preserving_labels() {
     let snapshot = bm25_diagnostics_snapshot();
-    let labels = snapshot
-        .counters
-        .iter()
-        .map(|counter| counter.kind.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        labels,
-        [
+    for (kind, label) in [
+        (
+            Bm25DiagnosticKind::MalformedPostingAlignment,
             "malformed_posting_alignment",
+        ),
+        (
+            Bm25DiagnosticKind::MissingScoredDocumentMetadata,
             "missing_scored_document_metadata",
+        ),
+        (
+            Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow,
             "deindex_self_healed_missing_posting_row",
+        ),
+        (
+            Bm25DiagnosticKind::DeindexSelfHealedMissingPostingEntity,
             "deindex_self_healed_missing_posting_entity",
-        ]
-    );
-    for counter in snapshot.counters {
+        ),
+    ] {
+        assert_eq!(kind.as_str(), label);
+        assert!(
+            snapshot
+                .counters
+                .iter()
+                .any(|counter| counter.kind.as_str() == label),
+        );
+    }
+    for counter in &snapshot.counters {
+        let label = counter.kind.as_str();
+        assert!(!label.is_empty());
+        assert!(
+            label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        );
         assert_eq!(snapshot.count(counter.kind), counter.count);
     }
 }
@@ -1907,9 +1880,15 @@ fn posting_decode_rejects_concatenated_entries() -> Result<()> {
 
 #[test]
 fn decode_rejects_empty_rows() {
-    assert!(decode_posting_entry(&[]).is_err());
-    assert!(decode_forward(&[]).is_err());
-    assert!(decode_field_lengths(&[]).is_err());
+    assert!(matches!(
+        decode_posting_entry(&[]),
+        Err(Error::CorruptedIndex(_)),
+    ));
+    assert!(matches!(decode_forward(&[]), Err(Error::CorruptedIndex(_)),));
+    assert!(matches!(
+        decode_field_lengths(&[]),
+        Err(Error::CorruptedIndex(_)),
+    ));
 }
 
 #[test]

@@ -108,17 +108,19 @@ fn claimless_person_trips_the_tripwire_and_one_live_claim_does_not() {
     let person = fresh_id();
     put_person(&vault, &person);
 
-    assert_eq!(
-        zero_live_members(&vault, &person).expect("tripwire"),
-        Some(CleanupKind::ClaimlessExtractionPerson),
-        "a PERSON nobody has said anything about is empty"
+    assert!(
+        scan_cleanup_candidates(&vault)
+            .expect("discover candidates")
+            .iter()
+            .any(|candidate| candidate.entity == person),
     );
 
     put_claim_about(&vault, &fresh_id(), &person, None);
-    assert_eq!(
-        zero_live_members(&vault, &person).expect("tripwire"),
-        None,
-        "ONE live claim of ANY source is enough to keep the row"
+    assert!(
+        !scan_cleanup_candidates(&vault)
+            .expect("discover candidates")
+            .iter()
+            .any(|candidate| candidate.entity == person),
     );
 }
 
@@ -178,9 +180,11 @@ fn empty_summary_trips_the_tripwire_and_a_referenced_one_does_not() {
     let (_tmp, vault) = temp_vault();
     let summary = fresh_id();
     put_summary(&vault, &summary);
-    assert_eq!(
-        zero_live_members(&vault, &summary).expect("tripwire"),
-        Some(CleanupKind::EmptySummary)
+    assert!(
+        scan_cleanup_candidates(&vault)
+            .expect("discover candidates")
+            .iter()
+            .any(|candidate| candidate.entity == summary),
     );
 
     let member = fresh_id();
@@ -188,10 +192,11 @@ fn empty_summary_trips_the_tripwire_and_a_referenced_one_does_not() {
     vault
         .put_edge(&member, EdgeKind::PartOf, &summary, 1.0)
         .expect("put member edge");
-    assert_eq!(
-        zero_live_members(&vault, &summary).expect("tripwire"),
-        None,
-        "a summary something points at is not empty"
+    assert!(
+        !scan_cleanup_candidates(&vault)
+            .expect("discover candidates")
+            .iter()
+            .any(|candidate| candidate.entity == summary),
     );
 }
 

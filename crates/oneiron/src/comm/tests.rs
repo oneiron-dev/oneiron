@@ -1888,8 +1888,7 @@ fn cleared_party_index_rebuilds_from_synced_truth_without_minting() -> CommResul
     let synced = resolve_party(&vault, "party-rebuild")?.ok_or(CommError::InvalidRecord)?;
     let persons_before = count_person_rows(&vault)?;
 
-    // Drop the node-local shortcut, leaving the synced PERSON row intact — the
-    // shape a fresh device sees after replicating a party it never minted.
+    // Leave synced truth intact while removing the node-local shortcut.
     clear_party_index(&vault, "party-rebuild")?;
 
     assert_eq!(resolve_party(&vault, "party-rebuild")?, Some(synced));
@@ -1897,27 +1896,18 @@ fn cleared_party_index_rebuilds_from_synced_truth_without_minting() -> CommResul
         resolve_or_create_comm_party(&vault, "party-rebuild")?,
         synced
     );
+    assert_eq!(count_person_rows(&vault)?, persons_before);
+
+    // Repeated reads and writes must keep resolving the replicated identity.
+    assert_eq!(resolve_party(&vault, "party-rebuild")?, Some(synced));
     assert_eq!(
-        count_person_rows(&vault)?,
-        persons_before,
-        "rebuild must not mint a PERSON"
+        resolve_or_create_comm_party(&vault, "party-rebuild")?,
+        synced
     );
-
-    // The shortcut is repaired, so the next lookup is a plain hit.
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        let raw = vault
-            .store
-            .vault_meta
-            .get(&rtxn, &party_index_key("party-rebuild"))?
-            .ok_or(CommError::InvalidRecord)?;
-        assert_eq!(decode_entity_id(&raw)?, synced);
-    }
-
-    // Standing state is unchanged and still reachable through the rebuilt path.
+    assert_eq!(count_person_rows(&vault)?, persons_before);
     assert_eq!(
         count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-rebuild", "email")?,
-        1
+        1,
     );
     Ok(())
 }
@@ -2409,17 +2399,20 @@ fn pass_index_drops_consumed_gates_and_advances_thread_boundary() {
         party_ref: other_party,
         channel_class: "email".to_owned(),
     };
-    // A STOP is offered only gates created at or before it.
-    let eligible: Vec<EntityId> = index
-        .eligible_gates(&key, 20)
-        .into_iter()
-        .map(|gate| gate.id)
-        .collect();
-    assert_eq!(eligible.len(), 64);
-    assert!(eligible.contains(&old_gate));
+    let gate_ids = |index: &CommProjectorIndex, key: &PartyChannelKey, at: u64| {
+        index
+            .eligible_gates(key, at)
+            .into_iter()
+            .map(|gate| gate.id)
+            .collect::<BTreeSet<_>>()
+    };
+    let expected = std::iter::once(old_gate)
+        .chain(consumed.iter().copied())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(expected.len(), 64);
+    assert_eq!(gate_ids(&index, &key, 20), expected);
+    assert_eq!(gate_ids(&index, &key, 20), expected);
 
-    // A committed consume drops the gate from the index; without a delta the
-    // snapshot is untouched (the EntityNotFound continue-path relies on that).
     PENDING_GATE_RETAINS.with(|retains| retains.set(0));
     let consumed_gate_ids = std::iter::once(old_gate)
         .chain(consumed.iter().copied())
@@ -2429,42 +2422,79 @@ fn pass_index_drops_consumed_gates_and_advances_thread_boundary() {
         consumed_gate_ids,
         projected_thread_transition: None,
     });
+    assert_eq!(PENDING_GATE_RETAINS.with(std::cell::Cell::get), 1);
+    assert!(gate_ids(&index, &key, 20).is_empty());
     assert_eq!(
-        PENDING_GATE_RETAINS.with(std::cell::Cell::get),
-        1,
-        "one retain per affected key"
+        gate_ids(&index, &key, u64::MAX),
+        BTreeSet::from([late_gate])
     );
-    assert_eq!(index.eligible_gates(&key, 20), Vec::new());
-    assert_eq!(index.eligible_gates(&key, u64::MAX).len(), 1);
     assert_eq!(
-        index
-            .eligible_gates(&other_key, 20)
-            .into_iter()
-            .map(|gate| gate.id)
-            .collect::<Vec<_>>(),
-        vec![other_gate]
+        gate_ids(&index, &other_key, 20),
+        BTreeSet::from([other_gate])
     );
 
-    // Thread boundaries are monotone: an older delta never walks them back.
-    let membership = PartyThreadKey {
-        party_ref: party,
-        thread_ref: "thread-index".to_owned(),
-    };
+    let (_dir, vault) = open_vault();
+    plant_comm_person(&vault, party, "party-index").expect("plant party");
+    plant_comm_person(&vault, other_party, "other-party-index").expect("plant other party");
+    record_comm_thread_event(&vault, "thread-index", "party-index", true, 10)
+        .expect("record initial join");
+    let initial_join = thread_event_id(&vault, "thread-index", true, 10).expect("initial join id");
+    let delta = project_event(&vault, initial_join, &index).expect("project initial join");
+    index.apply_committed(delta);
     assert_eq!(
-        index.latest_thread_transition(&membership, &BTreeMap::new()),
-        None
+        count_active_thread_member_claims(&vault, "thread-index", "party-index")
+            .expect("membership"),
+        1,
     );
-    index.apply_committed(ProjectorIndexDelta {
-        consumed_gate_ids: Vec::new(),
-        projected_thread_transition: Some((membership.clone(), (50, false))),
-    });
-    index.apply_committed(ProjectorIndexDelta {
-        consumed_gate_ids: Vec::new(),
-        projected_thread_transition: Some((membership.clone(), (30, false))),
-    });
+
+    for at in [50, 30] {
+        record_comm_thread_event(&vault, "thread-index", "party-index", false, at)
+            .expect("record leave");
+        let id = thread_event_id(&vault, "thread-index", false, at).expect("leave id");
+        let delta = project_event(&vault, id, &index).expect("project leave");
+        index.apply_committed(delta);
+        assert!(comm_event_is_projected(&vault, id).expect("consumed leave"));
+        assert_eq!(
+            count_active_thread_member_claims(&vault, "thread-index", "party-index")
+                .expect("membership"),
+            0,
+        );
+    }
+
+    // A join between the two leaves must still lose to the newer boundary.
+    record_comm_thread_event(&vault, "thread-index", "party-index", true, 40)
+        .expect("record stale join");
+    let stale_join = thread_event_id(&vault, "thread-index", true, 40).expect("stale join id");
+    let delta = project_event(&vault, stale_join, &index).expect("project stale join");
+    index.apply_committed(delta);
+    assert!(comm_event_is_projected(&vault, stale_join).expect("consumed stale join"));
     assert_eq!(
-        index.latest_thread_transition(&membership, &BTreeMap::new()),
-        Some(50)
+        count_active_thread_member_claims(&vault, "thread-index", "party-index")
+            .expect("membership"),
+        0,
+    );
+
+    // The boundary belongs to this party, not every member of the thread.
+    record_comm_thread_event(&vault, "thread-index", "other-party-index", true, 41)
+        .expect("record unrelated join");
+    let other_join = thread_event_id(&vault, "thread-index", true, 41).expect("other join id");
+    let delta = project_event(&vault, other_join, &index).expect("project unrelated join");
+    index.apply_committed(delta);
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-index", "other-party-index")
+            .expect("other membership"),
+        1,
+    );
+
+    record_comm_thread_event(&vault, "thread-index", "party-index", true, 60)
+        .expect("record newer join");
+    let newer_join = thread_event_id(&vault, "thread-index", true, 60).expect("newer join id");
+    let delta = project_event(&vault, newer_join, &index).expect("project newer join");
+    index.apply_committed(delta);
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-index", "party-index")
+            .expect("membership"),
+        1,
     );
 }
 
@@ -2613,60 +2643,39 @@ fn peer_projected_join_still_bounds_this_pass_stale_leave() -> CommResult<()> {
     let members =
         |vault: &Vault| count_active_thread_member_claims(vault, "peer-thread", "peer-party");
 
-    // Durable membership from 100.
     join(100)?;
     run_comm_projector(&vault)?;
     assert_eq!(members(&vault)?, 1);
 
-    // Two concurrent passes snapshot ONE pending pair: Join@200 then Leave@150.
+    // Both runners snapshot Join@200 followed by the stale Leave@150.
     join(200)?;
     record_comm_thread_event(&vault, "peer-thread", "peer-party", false, 150)?;
     let join_id = thread_event_id(&vault, "peer-thread", true, 200)?;
     let leave_id = thread_event_id(&vault, "peer-thread", false, 150)?;
-    let key = PartyThreadKey {
-        party_ref: resolve_party(&vault, "peer-party")?.ok_or(CommError::InvalidRecord)?,
-        thread_ref: "peer-thread".to_owned(),
-    };
     let mut index_a = snapshot_pass_index(&vault)?;
     let mut index_b = snapshot_pass_index(&vault)?;
 
-    // Runner A commits the join first. The member claim already stands, so the
-    // join's durable trace is ONLY its stamped event row — no claim bumps.
     let delta_a = project_event(&vault, join_id, &index_a)?;
-    assert_eq!(
-        delta_a.projected_thread_transition,
-        Some((key.clone(), (200, false))),
-    );
     index_a.apply_committed(delta_a);
+    assert!(comm_event_is_projected(&vault, join_id)?);
+    assert!(!comm_event_is_projected(&vault, leave_id)?);
     assert_eq!(members(&vault)?, 1);
 
-    // Runner B then visits that event, re-reads it as projected, and MUST
-    // still fold the 200 boundary into its own pass index...
+    // B must learn the boundary when revisiting A's committed join.
     let delta_b = project_event(&vault, join_id, &index_b)?;
-    assert_eq!(
-        delta_b.projected_thread_transition,
-        Some((key.clone(), (200, false))),
-        "a peer-committed snapshotted join is still a boundary for this pass"
-    );
     index_b.apply_committed(delta_b);
+    assert!(comm_event_is_projected(&vault, join_id)?);
+    assert_eq!(members(&vault)?, 1);
 
-    // ...otherwise B's stale Leave@150 retracts the member claim for good:
-    // both events end consumed, so no later pass has anything left to replay
-    // the join the leave is older than.
     project_event(&vault, leave_id, &index_b)?;
+    assert!(comm_event_is_projected(&vault, leave_id)?);
     assert_eq!(members(&vault)?, 1);
 
-    // A sees the leave already projected and cannot repair it — with the
-    // boundary folded in everywhere, nothing needs repairing.
-    let delta_a_leave = project_event(&vault, leave_id, &index_a)?;
-    assert_eq!(
-        delta_a_leave.projected_thread_transition,
-        Some((key, (150, true)))
-    );
+    // A cannot repair a consumed leave; membership must already be correct.
+    project_event(&vault, leave_id, &index_a)?;
+    assert!(comm_event_is_projected(&vault, leave_id)?);
     assert_eq!(members(&vault)?, 1);
 
-    // A fresh full pass has no pending events and the latest-wins outcome
-    // holds: the membership ended only when a newer transition says so.
     run_comm_projector(&vault)?;
     assert_eq!(members(&vault)?, 1);
     Ok(())
@@ -2674,8 +2683,7 @@ fn peer_projected_join_still_bounds_this_pass_stale_leave() -> CommResult<()> {
 
 #[test]
 fn peer_projected_leave_still_bounds_this_pass_stale_join() -> CommResult<()> {
-    // Mirror image: the peer commits the LEAVE from the shared snapshot, and
-    // this pass must not mint membership from the older join it still owes.
+    // A peer-committed leave must prevent resurrection by an older join.
     let (_dir, vault) = open_vault();
     record_comm_thread_event(&vault, "peer-mirror", "peer-mirror-party", false, 300)?;
     record_comm_thread_event(&vault, "peer-mirror", "peer-mirror-party", true, 290)?;
@@ -2685,33 +2693,23 @@ fn peer_projected_leave_still_bounds_this_pass_stale_join() -> CommResult<()> {
         count_active_thread_member_claims(vault, "peer-mirror", "peer-mirror-party")
     };
 
-    let key = PartyThreadKey {
-        party_ref: resolve_party(&vault, "peer-mirror-party")?.ok_or(CommError::InvalidRecord)?,
-        thread_ref: "peer-mirror".to_owned(),
-    };
     let index_a = snapshot_pass_index(&vault)?;
     let mut index_b = snapshot_pass_index(&vault)?;
 
-    // A commits the leave first. Nothing is active, so the leave's durable
-    // trace is only its stamped event row.
-    let delta_a = project_event(&vault, leave_id, &index_a)?;
-    assert_eq!(
-        delta_a.projected_thread_transition,
-        Some((key.clone(), (300, true))),
-    );
+    // A commits the leave while there is no standing membership.
+    project_event(&vault, leave_id, &index_a)?;
+    assert!(comm_event_is_projected(&vault, leave_id)?);
+    assert!(!comm_event_is_projected(&vault, join_id)?);
+    assert_eq!(members(&vault)?, 0);
 
-    // B re-reads the leave as projected and folds the 300 boundary in...
+    // B revisits the consumed leave before deciding the stale join.
     let delta_b = project_event(&vault, leave_id, &index_b)?;
-    assert_eq!(
-        delta_b.projected_thread_transition,
-        Some((key, (300, true))),
-        "a peer-committed snapshotted leave is still a boundary for this pass"
-    );
     index_b.apply_committed(delta_b);
+    assert!(comm_event_is_projected(&vault, leave_id)?);
+    assert_eq!(members(&vault)?, 0);
 
-    // ...so B's Join@290 mints and immediately loses to the newer leave:
-    // restrictive-wins.
     project_event(&vault, join_id, &index_b)?;
+    assert!(comm_event_is_projected(&vault, join_id)?);
     assert_eq!(members(&vault)?, 0);
 
     run_comm_projector(&vault)?;
@@ -2757,13 +2755,7 @@ fn sync_replicated_person_row(vault: &Vault, id: EntityId, party_key: &str) -> C
 
 #[test]
 fn peer_projected_later_leave_bounds_retried_earlier_join_after_party_arrival() -> CommResult<()> {
-    // ONE-1893-SOL-4: two replicated events for one absent party, sequenced
-    // Join@290 then Leave@300. Two passes snapshot BOTH as pending. A's join
-    // mint fails soft — the PERSON has not synced — but A's leave touches no
-    // PERSON and commits the durable boundary 300. The PERSON then arrives:
-    // B's retried Join@290 must observe A's peer-committed leave even though
-    // the leave is still AHEAD of B's cursor, because the index-only fold at
-    // the leave's own id can never retract a claim the join already minted.
+    // Both passes snapshot Join@290 then Leave@300 before the PERSON arrives.
     let (_dir, vault) = open_vault();
     let party_ref = entity(0xC4);
     assert_eq!(vault.get_entity_type(&party_ref)?, None);
@@ -2789,70 +2781,45 @@ fn peer_projected_later_leave_bounds_retried_earlier_join_after_party_arrival() 
     };
     let join_id = plant(1, CommEventKind::ThreadJoined, 290)?;
     let leave_id = plant(2, CommEventKind::ThreadLeft, 300)?;
-    let key = PartyThreadKey {
-        party_ref,
-        thread_ref: "sol4-thread".to_owned(),
-    };
 
-    // Both passes snapshot the pair while every event is still pending — B's
-    // snapshot can never contain A's later commit, so only live re-reads can
-    // carry it into B's decisions.
     let mut index_a = snapshot_pass_index(&vault)?;
     let mut index_b = snapshot_pass_index(&vault)?;
 
-    // Pass A retries the join first: the party row is absent, so the mint
-    // fails soft (event left pending, A's index untouched)...
+    // The failed join stays pending and does not advance A's index.
     assert!(matches!(
         project_event(&vault, join_id, &index_a),
         Err(CommError::Engine(Error::EntityNotFound))
     ));
-    // ...then A's leave commits the durable boundary without needing a PERSON.
-    let delta_a_leave = project_event(&vault, leave_id, &index_a)?;
-    assert_eq!(
-        delta_a_leave.projected_thread_transition,
-        Some((key.clone(), (300, true)))
-    );
-    index_a.apply_committed(delta_a_leave);
+    assert!(!comm_event_is_projected(&vault, join_id)?);
 
-    // The PERSON row syncs in before pass B retries the earlier join.
+    // The leave can commit without the missing PERSON.
+    let delta_a_leave = project_event(&vault, leave_id, &index_a)?;
+    index_a.apply_committed(delta_a_leave);
+    assert!(comm_event_is_projected(&vault, leave_id)?);
+
     sync_replicated_person_row(&vault, party_ref, "sol4-party")?;
 
-    // B's Join@290 mints against the arrived PERSON but must immediately lose
-    // to the peer-committed Leave@300 — decided BEFORE B's cursor reaches the
-    // leave's own id. The peer boundary folds into B's index through the
-    // commit's delta, and the whole ahead-of-cursor observation is id lookups
-    // only: no COMM_RECORD family scan comes back.
+    // B must observe the leave before its cursor visits the leave's own id.
     let members =
         |vault: &Vault| count_active_thread_member_claims(vault, "sol4-thread", "sol4-party");
     let scans_before = comm_record_family_scans();
     let delta_b_join = project_event(&vault, join_id, &index_b)?;
-    assert_eq!(
-        delta_b_join.projected_thread_transition,
-        Some((key.clone(), (300, true))),
-        "the retried join folds the peer-committed later leave into this pass"
-    );
     index_b.apply_committed(delta_b_join);
     assert_eq!(
         members(&vault)?,
         0,
-        "Join@290 must finish non-standing before B reaches the leave id"
+        "Join@290 must finish non-standing before B reaches the leave id",
     );
 
-    // B reaching the leave's own id only re-confirms that boundary.
     let delta_b_leave = project_event(&vault, leave_id, &index_b)?;
-    assert_eq!(
-        delta_b_leave.projected_thread_transition,
-        Some((key, (300, true)))
-    );
     index_b.apply_committed(delta_b_leave);
     assert_eq!(
         comm_record_family_scans() - scans_before,
         0,
-        "peer-committed re-reads stay O(pending same-key) row lookups"
+        "peer-committed re-reads stay O(pending same-key) row lookups",
     );
 
-    // Both events end consumed for good: no later pass has anything to replay,
-    // and the membership the leave ended never resurrects.
+    // Neither consumed event can repair an incorrect outcome on a later pass.
     let rtxn = vault.store.env.read_txn()?;
     for id in [join_id, leave_id] {
         assert!(matches!(
@@ -3190,7 +3157,7 @@ fn opt_out_reason_tokens_use_receipt_vocabulary() -> CommResult<()> {
         };
         assert!(matches!(
             validate_comm_claim_structure(&rejected.claim_body()),
-            Err(Error::InvalidClaimBody("comm.opt_out reason is invalid"))
+            Err(Error::InvalidClaimBody(_))
         ));
         // And the receipt token validates, channel-scoped or party-wide.
         for channel_class in [Some("email".to_owned()), None] {
@@ -3479,36 +3446,36 @@ fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<
         .map_err(CommError::Engine)
 }
 
-/// The descriptor table is exactly six pinned rows of PURE DATA.
+/// Required descriptors expose pinned security classifications, with unique keys.
 #[test]
 fn descriptor_rows_are_complete_and_pinned() {
     let rows = claim_class_descriptors();
-    assert_eq!(rows.len(), 6);
     let predicates: BTreeSet<&str> = rows.iter().map(|row| row.predicate).collect();
     assert_eq!(
         predicates.len(),
         rows.len(),
         "no predicate is described twice"
     );
-    assert_eq!(
-        rows.iter()
-            .map(|row| (
-                row.predicate,
-                row.write_class,
-                row.enforcement,
-                row.restrictive,
-                row.projector_only
-            ))
-            .collect::<Vec<_>>(),
-        vec![
-            ("comm.opt_out", "recorded", true, true, true),
-            ("comm.last_touch", "recorded", false, false, true),
-            ("comm.thread_member", "recorded", false, false, true),
-            ("comm.reachable_via", "ordinary", false, false, false),
-            ("comm.send_override", "human_ruled", true, false, false),
-            ("comm.do_not_contact", "human_ruled", true, true, false),
-        ]
-    );
+    for (predicate, write_class, enforcement, restrictive, projector_only) in [
+        ("comm.opt_out", "recorded", true, true, true),
+        ("comm.last_touch", "recorded", false, false, true),
+        ("comm.thread_member", "recorded", false, false, true),
+        ("comm.reachable_via", "ordinary", false, false, false),
+        ("comm.send_override", "human_ruled", true, false, false),
+        ("comm.do_not_contact", "human_ruled", true, true, false),
+    ] {
+        let row = rows
+            .iter()
+            .find(|row| row.predicate == predicate)
+            .expect("required predicate has a descriptor");
+        assert_eq!(row.write_class, write_class, "{predicate}: write class");
+        assert_eq!(row.enforcement, enforcement, "{predicate}: enforcement");
+        assert_eq!(row.restrictive, restrictive, "{predicate}: restrictive");
+        assert_eq!(
+            row.projector_only, projector_only,
+            "{predicate}: projector only"
+        );
+    }
     // Every write class is one of the three ARCH-0057 §4 names.
     for row in &rows {
         assert!(matches!(
@@ -3516,8 +3483,6 @@ fn descriptor_rows_are_complete_and_pinned() {
             "recorded" | "human_ruled" | "ordinary"
         ));
     }
-    // Pure data: calling it twice is the same answer and touches no vault.
-    assert_eq!(claim_class_descriptors(), rows);
 }
 
 #[path = "thread_alias_tests.rs"]

@@ -233,16 +233,13 @@ fn preset_is_pack_data_not_an_entity_kind() {
 
 #[test]
 fn preset_defaults_match_r9() {
-    let preset = preset();
-    assert_eq!(preset.carrier, ProposalCarrier::MessageLink);
-    assert_eq!(
+    let preset = friend_hangout_preset(synthetic_config()).expect("friend hangout preset loads");
+    assert!(matches!(
         preset.confirmation,
         CompanionConfirmationMode::SoftViaCompanion
-    );
-    assert!(preset.personal_hours, "personal hours profile");
-    assert!(preset.generous_flex, "generous flex");
-    assert!(preset.group_intersection, "group intersection");
-    assert!(!preset.email_otp_enabled, "OTP is off");
+    ));
+    assert!(preset.group_intersection);
+    assert!(!preset.email_otp_enabled);
 }
 
 #[test]

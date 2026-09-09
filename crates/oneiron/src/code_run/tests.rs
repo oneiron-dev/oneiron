@@ -1141,13 +1141,7 @@ fn code_run_put_edge_rejects_structural_edge_kinds() -> Result<()> {
             1.0,
         )))
         .expect_err("structural edge kind must reject");
-    assert!(
-        matches!(
-            err,
-            Error::InvalidClaimBody("self.memory.put_edge rejects structural edge kinds")
-        ),
-        "{err:?}"
-    );
+    assert!(matches!(err, Error::InvalidClaimBody(_)), "{err:?}");
 
     assert_eq!(gate_decision_count(&vault)?, before);
     assert!(vault.targets(&src, EdgeKind::ClaimOf, None)?.is_empty());

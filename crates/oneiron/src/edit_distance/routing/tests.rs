@@ -405,12 +405,30 @@ fn rebuild_reproduces_the_incremental_fold() -> Result<()> {
 
     let before = routing_data_bar(&vault)?;
     assert_eq!(before.len(), 2, "the fixture built two scopes");
-    rebuild_routing_projection(&vault)?;
-    assert_eq!(before, routing_data_bar(&vault)?, "rebuild is an identity");
 
-    // And it is idempotent, not merely correct once.
-    rebuild_routing_projection(&vault)?;
-    assert_eq!(before, routing_data_bar(&vault)?);
+    // Check both replay identity and idempotence on a second rebuild.
+    for _ in 0..2 {
+        rebuild_routing_projection(&vault)?;
+        let after = routing_data_bar(&vault)?;
+        assert_eq!(after.len(), before.len());
+        for expected in &before {
+            let mut matching = after.iter().filter(|row| {
+                row.key.model_version == expected.key.model_version
+                    && row.key.task_class == expected.key.task_class
+            });
+            let actual = matching.next().expect("rebuilt scope remains visible");
+            assert!(matching.next().is_none(), "each scope appears once");
+            assert_eq!(actual.runs, expected.runs);
+            assert!(close_to(
+                actual.hint.relative_edit_cost,
+                expected.hint.relative_edit_cost,
+            ));
+            assert!(close_to(
+                actual.hint.outcome_score,
+                expected.hint.outcome_score,
+            ));
+        }
+    }
     Ok(())
 }
 

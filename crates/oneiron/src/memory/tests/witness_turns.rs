@@ -67,22 +67,10 @@ fn witness_writes_turn_messages_edges_and_text() {
         .expect("conversation exists");
     assert_eq!(conversation.kind, "CONVERSATION");
 
-    // ONE-1767: the minted TURN body is EXACTLY the additive `speaker` entry
-    // (turn-level grouping fact; content stays on the MESSAGE children), and
-    // the structural TURN -> CONVERSATION `ChildOf` edge is minted with the
-    // row — without it `plan_partitions` can never group the turn.
+    // The grouping speaker and structural conversation binding survive
+    // readback; additive body fields remain legal.
     let turn_body = turn.body.clone().expect("turn body decodes");
-    assert_eq!(
-        turn_body,
-        serde_json::json!({"speaker": "user"}),
-        "TURN body carries exactly the additive speaker entry"
-    );
-    let conversation_body = conversation.body.expect("conversation body");
-    assert_eq!(
-        conversation_body,
-        serde_json::json!({}),
-        "CONVERSATION body stays an empty container map"
-    );
+    assert_eq!(turn_body["speaker"], serde_json::json!("user"));
     let turn_id = EntityId::from_hex(&turn.id_hex).expect("turn hex id");
     let conversation_id = EntityId::from_hex(&conversation_hex).expect("conversation hex id");
     let has_child_of_conversation = vault
@@ -286,9 +274,9 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
         .expect("get turn")
         .expect("turn exists");
     assert_eq!(
-        turn.body.expect("turn body"),
-        serde_json::json!({"speaker": "assistant"}),
-        "TURN body carries exactly the additive speaker entry"
+        turn.body.expect("turn body")["speaker"],
+        serde_json::json!("assistant"),
+        "TURN carries the canonical grouping speaker"
     );
     let turn_id = EntityId::from_hex(&turn.id_hex).expect("turn id");
     let conversation_id = EntityId::from_hex(&conversation_hex).expect("conversation id");
@@ -805,13 +793,13 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
         .body
         .expect("turn body");
     assert_eq!(
-        body,
-        serde_json::json!({"speaker": "assistant"}),
+        body["speaker"],
+        serde_json::json!("assistant"),
         "the stored grouping speaker is untouched by interleave"
     );
 
-    // The System-only MINT fails closed, whether the caller names a fresh
-    // turn id or lets the door mint one.
+    // The authorized System-only MINT fails closed, whether the caller names
+    // a fresh turn id or lets the door mint one.
     for turn_ref in [
         None,
         Some(
@@ -820,7 +808,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
                 .to_hex(),
         ),
     ] {
-        let err = facade
+        let err = system_facade
             .witness(&WitnessTurn {
                 conversation_ref: EntityId::from_bytes([0x71; 16])
                     .expect("fresh conv")

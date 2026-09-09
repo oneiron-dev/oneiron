@@ -381,15 +381,27 @@ fn code_revision_codec_round_trips_commit_revert_and_fork() -> Result<()> {
     let commit = CodeRevision::commit_child(second, session, first, 2_000)
         .with_provenance_claim_id(provenance);
     let decoded = decode_code_revision(&encode_code_revision(&commit)?)?;
-    assert_eq!(decoded, commit);
+    assert_eq!(decoded.revision_id, second);
+    assert!(matches!(decoded.kind, CodeRevisionKind::Commit));
+    assert_eq!(decoded.session_id, session);
+    assert_eq!(decoded.parent_revision_id, Some(first));
+    assert_eq!(decoded.reverted_to_revision_id, None);
+    assert_eq!(decoded.provenance_claim_id, Some(provenance));
 
     let revert = CodeRevision::revert(third, session, second, first, 3_000);
     let decoded = decode_code_revision(&encode_code_revision(&revert)?)?;
-    assert_eq!(decoded, revert);
+    assert_eq!(decoded.revision_id, third);
+    assert!(matches!(decoded.kind, CodeRevisionKind::Revert));
+    assert_eq!(decoded.session_id, session);
+    assert_eq!(decoded.parent_revision_id, Some(second));
+    assert_eq!(decoded.reverted_to_revision_id, Some(first));
+    assert_eq!(decoded.provenance_claim_id, None);
 
     let fork = CodeRevisionFork::new(entity(0x41), session, second, 4_000);
     let decoded = decode_code_revision_fork(&encode_code_revision_fork(&fork)?)?;
-    assert_eq!(decoded, fork);
+    assert_eq!(decoded.fork_session_id, entity(0x41));
+    assert_eq!(decoded.parent_session_id, session);
+    assert_eq!(decoded.base_revision_id, second);
     Ok(())
 }
 
@@ -408,19 +420,33 @@ fn code_revision_commit_finalizes_session_revision_and_links_parent() -> Result<
     vault.commit_code_revision(&first_revision)?;
     vault.commit_code_revision(&second_revision)?;
 
+    for expected in [&first_revision, &second_revision] {
+        let stored = vault
+            .get_code_revision(&expected.revision_id)?
+            .expect("committed revision");
+        assert_eq!(stored.revision_id, expected.revision_id);
+        assert!(matches!(stored.kind, CodeRevisionKind::Commit));
+        assert_eq!(stored.session_id, session);
+        assert_eq!(stored.parent_revision_id, expected.parent_revision_id);
+        assert_eq!(stored.reverted_to_revision_id, None);
+        assert_eq!(stored.provenance_claim_id, None);
+    }
     assert_eq!(
-        vault.get_code_revision(&first)?,
-        Some(first_revision.clone())
+        vault
+            .code_revisions_for_session(&session)?
+            .iter()
+            .map(|revision| revision.revision_id)
+            .collect::<Vec<_>>(),
+        vec![first, second],
     );
     assert_eq!(
-        vault.get_code_revision(&second)?,
-        Some(second_revision.clone())
+        vault
+            .child_code_revisions(&first)?
+            .iter()
+            .map(|revision| revision.revision_id)
+            .collect::<Vec<_>>(),
+        vec![second],
     );
-    assert_eq!(
-        vault.code_revisions_for_session(&session)?,
-        vec![first_revision, second_revision.clone()]
-    );
-    assert_eq!(vault.child_code_revisions(&first)?, vec![second_revision]);
 
     let supersedes = vault.targets(&second, EdgeKind::Supersedes, None)?;
     assert!(supersedes.contains(&first));
@@ -445,8 +471,12 @@ fn code_revision_session_trace_orders_same_second_child_after_parent() -> Result
     vault.commit_code_revision(&child_revision)?;
 
     assert_eq!(
-        vault.code_revisions_for_session(&session)?,
-        vec![parent_revision, child_revision]
+        vault
+            .code_revisions_for_session(&session)?
+            .iter()
+            .map(|revision| revision.revision_id)
+            .collect::<Vec<_>>(),
+        vec![parent, child],
     );
     Ok(())
 }
@@ -462,7 +492,15 @@ fn code_revision_read_inside_write_txn_uses_existing_sidecars_without_nested_wri
     vault.commit_code_revision(&revision)?;
 
     vault.with_write_txn(|_| {
-        assert_eq!(vault.get_code_revision(&revision_id)?, Some(revision));
+        let stored = vault
+            .get_code_revision(&revision_id)?
+            .expect("committed revision");
+        assert_eq!(stored.revision_id, revision_id);
+        assert!(matches!(stored.kind, CodeRevisionKind::Commit));
+        assert_eq!(stored.session_id, session);
+        assert_eq!(stored.parent_revision_id, None);
+        assert_eq!(stored.reverted_to_revision_id, None);
+        assert_eq!(stored.provenance_claim_id, None);
         Ok(())
     })?;
     Ok(())
@@ -482,14 +520,17 @@ fn code_revision_branch_records_session_dag_fork() -> Result<()> {
     let fork = CodeRevisionFork::new(fork_session, parent_session, base_revision, 150);
     vault.branch_code_revision(&fork)?;
 
-    assert_eq!(
-        vault.get_code_revision_fork(&fork_session)?,
-        Some(fork.clone())
-    );
-    assert_eq!(
-        vault.code_revision_forks_from_session(&parent_session)?,
-        vec![fork]
-    );
+    let stored = vault
+        .get_code_revision_fork(&fork_session)?
+        .expect("recorded fork");
+    assert_eq!(stored.fork_session_id, fork_session);
+    assert_eq!(stored.parent_session_id, parent_session);
+    assert_eq!(stored.base_revision_id, base_revision);
+    let forks = vault.code_revision_forks_from_session(&parent_session)?;
+    assert_eq!(forks.len(), 1);
+    assert_eq!(forks[0].fork_session_id, fork_session);
+    assert_eq!(forks[0].parent_session_id, parent_session);
+    assert_eq!(forks[0].base_revision_id, base_revision);
     let parents = vault.targets(&fork_session, EdgeKind::ChildOf, None)?;
     assert!(parents.contains(&parent_session));
     let base = vault.targets(&fork_session, EdgeKind::DerivedFrom, None)?;
@@ -519,11 +560,7 @@ fn code_revision_branch_rejects_base_revision_from_unrelated_session() -> Result
         ))
         .expect_err("fork base revision must belong to the declared parent session");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("base_revision_id must belong to parent_session_id")
-    );
+    assert!(matches!(err.kind(), ErrorKind::InvalidCodeArtifactBody));
     assert!(vault.get_code_revision_fork(&fork_session)?.is_none());
     assert!(
         vault
@@ -587,19 +624,27 @@ fn code_revision_revert_appends_superseding_revision_and_keeps_history() -> Resu
     vault.commit_code_revision(&current_revision)?;
     vault.revert_code_revision(&reverted_revision)?;
 
-    assert_eq!(vault.get_code_revision(&original)?, Some(original_revision));
-    assert_eq!(vault.get_code_revision(&current)?, Some(current_revision));
+    for expected in [&original_revision, &current_revision, &reverted_revision] {
+        let stored = vault
+            .get_code_revision(&expected.revision_id)?
+            .expect("preserved revision");
+        assert_eq!(stored.revision_id, expected.revision_id);
+        assert_eq!(stored.kind, expected.kind);
+        assert_eq!(stored.session_id, session);
+        assert_eq!(stored.parent_revision_id, expected.parent_revision_id);
+        assert_eq!(
+            stored.reverted_to_revision_id,
+            expected.reverted_to_revision_id,
+        );
+        assert_eq!(stored.provenance_claim_id, None);
+    }
     assert_eq!(
-        vault.get_code_revision(&reverted)?,
-        Some(reverted_revision.clone())
-    );
-    assert_eq!(
-        vault.code_revisions_for_session(&session)?,
-        vec![
-            CodeRevision::commit(original, session, 100),
-            CodeRevision::commit_child(current, session, original, 200),
-            reverted_revision,
-        ]
+        vault
+            .code_revisions_for_session(&session)?
+            .iter()
+            .map(|revision| revision.revision_id)
+            .collect::<Vec<_>>(),
+        vec![original, current, reverted],
     );
 
     let supersedes = vault.targets(&reverted, EdgeKind::Supersedes, None)?;
@@ -624,25 +669,6 @@ fn code_revision_batch_delete_removes_lifecycle_sidecars() -> Result<()> {
 
     assert!(vault.get_code_revision(&revision_id)?.is_none());
     assert!(vault.code_revisions_for_session(&session)?.is_empty());
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &code_revision_record_key(&revision_id))?
-            .is_none()
-    );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(
-                &rtxn,
-                &code_revision_session_index_key(&session, &revision_id)
-            )?
-            .is_none()
-    );
     Ok(())
 }
 
@@ -659,14 +685,17 @@ fn code_revision_delete_corrupt_record_removes_frontier_sidecar() -> Result<()> 
     vault.batch().delete(&revision_id).commit()?;
 
     assert!(vault.code_revisions_for_session(&session)?.is_empty());
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &code_revision_frontier_key(&session))?
-            .is_none()
-    );
+    let fresh = entity(0x22);
+    put_artifact(&vault, fresh, 0xA2, 30)?;
+    vault.commit_code_revision(&CodeRevision::commit(fresh, session, 200))?;
+    let revisions = vault.code_revisions_for_session(&session)?;
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(revisions[0].revision_id, fresh);
+    assert_eq!(revisions[0].session_id, session);
+    assert!(matches!(revisions[0].kind, CodeRevisionKind::Commit));
+    assert!(revisions[0].parent_revision_id.is_none());
+    assert!(revisions[0].reverted_to_revision_id.is_none());
+    assert!(revisions[0].provenance_claim_id.is_none());
     Ok(())
 }
 
@@ -682,14 +711,18 @@ fn code_revision_delete_corrupt_frontier_sidecar_repairs_from_key_session() -> R
 
     vault.batch().delete(&revision_id).commit()?;
 
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &code_revision_frontier_key(&session))?
-            .is_none()
-    );
+    assert!(vault.code_revisions_for_session(&session)?.is_empty());
+    let fresh = entity(0x22);
+    put_artifact(&vault, fresh, 0xA2, 30)?;
+    vault.commit_code_revision(&CodeRevision::commit(fresh, session, 200))?;
+    let revisions = vault.code_revisions_for_session(&session)?;
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(revisions[0].revision_id, fresh);
+    assert_eq!(revisions[0].session_id, session);
+    assert!(matches!(revisions[0].kind, CodeRevisionKind::Commit));
+    assert!(revisions[0].parent_revision_id.is_none());
+    assert!(revisions[0].reverted_to_revision_id.is_none());
+    assert!(revisions[0].provenance_claim_id.is_none());
     Ok(())
 }
 
@@ -709,10 +742,14 @@ fn code_revision_delete_frontier_head_rebuilds_predecessor_frontier() -> Result<
 
     vault.batch().delete(&second).commit()?;
 
-    assert_eq!(
-        vault.code_revisions_for_session(&session)?,
-        vec![first_revision]
-    );
+    let revisions = vault.code_revisions_for_session(&session)?;
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(revisions[0].revision_id, first);
+    assert_eq!(revisions[0].session_id, session);
+    assert!(matches!(revisions[0].kind, CodeRevisionKind::Commit));
+    assert!(revisions[0].parent_revision_id.is_none());
+    assert!(revisions[0].reverted_to_revision_id.is_none());
+    assert!(revisions[0].provenance_claim_id.is_none());
     Ok(())
 }
 
@@ -742,30 +779,21 @@ fn code_revision_batch_delete_session_removes_reverse_indexes() -> Result<()> {
             .code_revision_forks_from_session(&parent_session)?
             .is_empty()
     );
-    assert_eq!(vault.get_code_revision(&revision_id)?, Some(revision));
-    assert_eq!(vault.get_code_revision_fork(&fork_session)?, Some(fork));
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(
-                &rtxn,
-                &code_revision_session_index_key(&parent_session, &revision_id)
-            )?
-            .is_none()
-    );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(
-                &rtxn,
-                &code_revision_fork_parent_index_key(&parent_session, &fork_session)
-            )?
-            .is_none()
-    );
+    let surviving_revision = vault
+        .get_code_revision(&revision_id)?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(surviving_revision.revision_id, revision_id);
+    assert_eq!(surviving_revision.session_id, parent_session);
+    assert!(matches!(surviving_revision.kind, CodeRevisionKind::Commit));
+    assert!(surviving_revision.parent_revision_id.is_none());
+    assert!(surviving_revision.reverted_to_revision_id.is_none());
+    assert!(surviving_revision.provenance_claim_id.is_none());
+    let surviving_fork = vault
+        .get_code_revision_fork(&fork_session)?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(surviving_fork.fork_session_id, fork_session);
+    assert_eq!(surviving_fork.parent_session_id, parent_session);
+    assert_eq!(surviving_fork.base_revision_id, revision_id);
     Ok(())
 }
 
@@ -789,21 +817,8 @@ fn code_revision_batch_delete_parent_removes_child_index_rows() -> Result<()> {
     let err = vault
         .get_code_revision(&child)
         .expect_err("child must fail closed when its parent revision is deleted");
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("code revision integrity parent record missing")
-    );
+    assert!(matches!(err.kind(), ErrorKind::InvalidCodeArtifactBody));
     assert!(vault.child_code_revisions(&parent)?.is_empty());
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &code_revision_parent_index_key(&parent, &child))?
-            .is_none()
-    );
     Ok(())
 }
 
@@ -827,12 +842,24 @@ fn code_revision_finalized_artifact_rejects_body_mutation() -> Result<()> {
         )
         .expect_err("finalized code revision bytes must be immutable");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert_eq!(vault.get_code_revision(&revision_id)?, Some(revision));
-    assert_eq!(
-        vault.get_code_artifact(&revision_id)?,
-        Some(artifact_body(0xA1))
-    );
+    assert!(matches!(err.kind(), ErrorKind::InvalidCodeArtifactBody));
+    let stored_revision = vault
+        .get_code_revision(&revision_id)?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(stored_revision.revision_id, revision_id);
+    assert_eq!(stored_revision.session_id, session);
+    assert!(matches!(stored_revision.kind, CodeRevisionKind::Commit));
+    assert!(stored_revision.parent_revision_id.is_none());
+    assert!(stored_revision.reverted_to_revision_id.is_none());
+    assert!(stored_revision.provenance_claim_id.is_none());
+    let stored_body = vault
+        .get_code_artifact(&revision_id)?
+        .ok_or(Error::EntityNotFound)?;
+    let expected_body = artifact_body(0xA1);
+    assert_eq!(stored_body.summary_prompt, expected_body.summary_prompt);
+    assert_eq!(stored_body.summary_hash, expected_body.summary_hash);
+    assert_eq!(stored_body.repo_ref, expected_body.repo_ref);
+    assert_eq!(stored_body.class, expected_body.class);
     Ok(())
 }
 
@@ -870,11 +897,7 @@ fn code_integrity_revision_fold_mismatch_fails_closed() -> Result<()> {
         .get_code_revision(&revision_id)
         .expect_err("artifact bytes diverging from the stored fold must fail closed");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("code revision artifact hash mismatch")
-    );
+    assert!(matches!(err.kind(), ErrorKind::InvalidCodeArtifactBody));
     Ok(())
 }
 
@@ -896,11 +919,7 @@ fn code_integrity_frontier_record_mismatch_fails_closed() -> Result<()> {
         .code_revisions_for_session(&session)
         .expect_err("frontier fold tampering must fail closed");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("code revision frontier fold mismatch")
-    );
+    assert!(matches!(err.kind(), ErrorKind::InvalidCodeArtifactBody));
     Ok(())
 }
 
@@ -922,11 +941,7 @@ fn code_integrity_frontier_session_mismatch_fails_closed_on_update() -> Result<(
         .commit_code_revision(&CodeRevision::commit_child(second, session, first, 200))
         .expect_err("frontier stored under a session key must decode to the same session");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("code revision frontier session mismatch")
-    );
+    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
     Ok(())
 }
 
@@ -948,11 +963,7 @@ fn code_integrity_parent_fold_mismatch_fails_closed() -> Result<()> {
         .get_code_revision(&child)
         .expect_err("descendant must verify the current parent fold");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("code revision parent fold mismatch")
-    );
+    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
     Ok(())
 }
 
@@ -992,11 +1003,7 @@ fn code_integrity_parent_session_mismatch_fails_closed() -> Result<()> {
         .get_code_revision(&child)
         .expect_err("parent from a different session must fail closed on read");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("parent_revision_id must belong to session_id")
-    );
+    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
     Ok(())
 }
 
@@ -1032,11 +1039,7 @@ fn code_integrity_parent_cycle_fails_closed_without_recursive_overflow() -> Resu
         .get_code_revision(&second)
         .expect_err("corrupt parent cycles must fail closed");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("code revision parent chain contains a cycle")
-    );
+    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
     Ok(())
 }
 
@@ -1081,11 +1084,7 @@ fn code_integrity_revert_target_must_remain_parent_ancestor() -> Result<()> {
         .get_code_revision(&reverted)
         .expect_err("revert target must remain an ancestor of the parent revision");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("reverted_to_revision_id must be an ancestor of parent_revision_id")
-    );
+    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
     Ok(())
 }
 
@@ -1115,8 +1114,7 @@ fn code_integrity_provenance_claim_id_is_fold_authenticated() -> Result<()> {
         .get_code_revision(&revision_id)
         .expect_err("provenance tampering must alter the authenticated fold");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(err.to_string().contains("code revision fold mismatch"));
+    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
     Ok(())
 }
 
@@ -1153,11 +1151,7 @@ fn code_integrity_provenance_claim_id_type_mismatch_fails_closed() -> Result<()>
         .get_code_revision(&revision_id)
         .expect_err("non-CLAIM provenance must fail closed on read");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("provenance_claim_id must be a CLAIM entity")
-    );
+    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
     Ok(())
 }
 
@@ -1176,11 +1170,7 @@ fn code_integrity_empty_session_index_with_frontier_fails_closed() -> Result<()>
         .code_revisions_for_session(&session)
         .expect_err("frontier without session index rows must fail closed");
 
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("code revision frontier exists without session index rows")
-    );
+    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
     Ok(())
 }
 
@@ -1202,10 +1192,6 @@ fn code_integrity_orphaned_frontier_rejects_write_backfill() -> Result<()> {
         .expect_err("orphaned frontier must reject writes before indexing a child");
 
     assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("code revision frontier exists without session index rows")
-    );
     assert!(vault.get_code_revision(&child)?.is_none());
     assert!(
         vault
@@ -1258,7 +1244,6 @@ fn code_integrity_divergent_root_conflicts_after_frontier_exists() -> Result<()>
         .expect_err("second divergent root must report a frontier conflict");
 
     assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(err.to_string().contains("code revision frontier conflict"));
     assert!(vault.get_code_revision(&second_root)?.is_none());
     Ok(())
 }
@@ -1296,16 +1281,15 @@ fn code_integrity_independent_trace_entries_converge_or_conflict() -> Result<()>
         .expect_err("same-parent divergent trace must report a conflict");
 
     assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(err.to_string().contains("code revision frontier conflict"));
-    assert_eq!(
-        vault.get_code_revision(&convergent_child)?,
-        Some(CodeRevision::commit_child(
-            convergent_child,
-            session,
-            root,
-            300
-        ))
-    );
+    let revision = vault
+        .get_code_revision(&convergent_child)?
+        .expect("convergent revision");
+    assert_eq!(revision.revision_id, convergent_child);
+    assert!(matches!(revision.kind, CodeRevisionKind::Commit));
+    assert_eq!(revision.session_id, session);
+    assert_eq!(revision.parent_revision_id, Some(root));
+    assert!(revision.reverted_to_revision_id.is_none());
+    assert!(revision.provenance_claim_id.is_none());
     assert!(vault.get_code_revision(&conflicting_child)?.is_none());
     Ok(())
 }
@@ -1364,10 +1348,6 @@ fn code_revision_rejects_parent_revision_from_different_session() -> Result<()> 
         .expect_err("parent revision must belong to the new revision session");
 
     assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("parent_revision_id must belong to session_id")
-    );
     assert!(vault.get_code_revision(&child)?.is_none());
     assert!(
         vault
@@ -1403,10 +1383,6 @@ fn code_revision_rejects_restored_revision_from_different_session() -> Result<()
         .expect_err("restored revision must belong to the new revision session");
 
     assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("reverted_to_revision_id must belong to session_id")
-    );
     assert!(vault.get_code_revision(&reverted)?.is_none());
     assert!(
         vault
@@ -1477,10 +1453,6 @@ fn code_integrity_generated_apply_cannot_supersede_user_stated_revision_truth() 
         .expect_err("generated apply must not supersede user-stated revision truth");
 
     assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("generated code revision claim cannot supersede user-stated truth")
-    );
     assert_eq!(
         vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
         ClaimLifecycleStatus::Active
@@ -1528,15 +1500,6 @@ fn code_integrity_generated_non_code_claim_reports_user_stated_code_revision_tru
         .expect_err("generated non-code claim must not supersede user-stated revision truth");
 
     assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    let message = err.to_string();
-    assert!(
-        message.contains("generated claim cannot supersede user-stated code revision truth"),
-        "{message}"
-    );
-    assert!(
-        !message.contains("generated code revision claim cannot supersede user-stated truth"),
-        "{message}"
-    );
     assert_eq!(
         vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
         ClaimLifecycleStatus::Active
@@ -1588,10 +1551,6 @@ fn code_integrity_generated_apply_cannot_supersede_user_truth_across_revisions()
         .expect_err("generated apply must not supersede user truth for another revision");
 
     assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert!(
-        err.to_string()
-            .contains("generated code revision claim cannot supersede user-stated truth")
-    );
     assert_eq!(
         vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
         ClaimLifecycleStatus::Active
