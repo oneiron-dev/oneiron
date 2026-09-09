@@ -44,7 +44,7 @@ use crate::receipt::{ReceiptKind, ReceiptRecord};
 const FANOUT_PLAN_DIGEST_DOMAIN: &[u8] = b"oneiron.fanout.plan.v1\0";
 
 /// Fan-out size that still proceeds silently. A knob with a default, not a cap.
-pub(crate) const DEFAULT_FANOUT_APPROVAL_THRESHOLD: u32 = 25;
+const DEFAULT_FANOUT_APPROVAL_THRESHOLD: u32 = 25;
 
 /// Surface component a fan-out pause is rendered as.
 const FANOUT_SURFACE_COMPONENT: &str = "fanout_approve";
@@ -130,7 +130,7 @@ pub(crate) struct FanoutEstimate {
 /// handshake telemetry. Absence of a snapshot is absence of evidence, never an
 /// implicit per-peer cap.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct PeerRateSnapshot {
+struct PeerRateSnapshot {
     pub(crate) peer_ref: String,
     pub(crate) window_secs: u64,
     pub(crate) observed_count: u32,
@@ -141,7 +141,7 @@ pub(crate) struct PeerRateSnapshot {
 /// and carries the evidence a human needs to rule on it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum FanoutPathology {
+enum FanoutPathology {
     ConsultCycle {
         peer_path: Vec<String>,
     },
@@ -188,7 +188,7 @@ pub(crate) trait FanoutAutoDecider {
 /// The receiptable choices a surfaced fan-out pause offers.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum FanoutApprovalChoice {
+enum FanoutApprovalChoice {
     ApproveOnce,
     ApproveAndRememberBriefVerb,
     KeepPaused,
@@ -216,7 +216,7 @@ impl FanoutApprovalChoice {
 
 /// One offered choice, bound to the action id the surface will echo back.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FanoutApprovalAction {
+struct FanoutApprovalAction {
     pub(crate) choice: FanoutApprovalChoice,
     pub(crate) action_id: String,
 }
@@ -225,7 +225,7 @@ pub(crate) struct FanoutApprovalAction {
 /// `plan_digest`) so an approval for one estimate can never release a changed
 /// plan.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FanoutApprovalRow {
+struct FanoutApprovalRow {
     pub(crate) row_ref: String,
     pub(crate) component_id: String,
     pub(crate) plan_ref: String,
@@ -241,7 +241,7 @@ pub(crate) struct FanoutApprovalRow {
 
 /// Durable home for pause rows and choice receipts. This module owns neither:
 /// it requires the sink so a pause cannot succeed without a durable ref.
-pub(crate) trait FanoutSurfaceSink {
+trait FanoutSurfaceSink {
     /// Persists one pause row and returns its durable ref.
     ///
     /// # Errors
@@ -262,7 +262,7 @@ pub(crate) trait FanoutSurfaceSink {
 /// The admission answer. Both arms carry the metering, because metering is
 /// free and unconditional.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum FanoutAdmission {
+enum FanoutAdmission {
     Proceed {
         estimate: FanoutEstimate,
     },
@@ -277,7 +277,7 @@ pub(crate) enum FanoutAdmission {
 /// the choice was recorded under, and — for a remembered approval — the grant
 /// intent the caller may persist as a standing outbound grant.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct FanoutResume {
+struct FanoutResume {
     pub(crate) plan_digest: [u8; 32],
     pub(crate) choice_receipt_ref: String,
     pub(crate) grant_mint_intent: Option<GrantMintIntent>,
@@ -285,14 +285,14 @@ pub(crate) struct FanoutResume {
 
 /// Typed failure surface for resuming a surfaced fan-out pause.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum FanoutApprovalError {
+enum FanoutApprovalError {
     #[error(transparent)]
     Engine(#[from] Error),
     #[error("fanout plan digest changed after approval was surfaced")]
     StalePlanDigest,
 }
 
-pub(crate) type FanoutApprovalResult<T> = std::result::Result<T, FanoutApprovalError>;
+type FanoutApprovalResult<T> = std::result::Result<T, FanoutApprovalError>;
 
 /// The frozen digest of one plan.
 ///
@@ -307,7 +307,7 @@ pub(crate) type FanoutApprovalResult<T> = std::result::Result<T, FanoutApprovalE
 /// Blank or non-canonical refs, zero counts, and count overflow — validated
 /// before any byte is hashed, so a malformed plan never produces a digest to
 /// approve.
-pub(crate) fn fanout_plan_digest(plan: &FanoutPlan) -> Result<[u8; 32]> {
+fn fanout_plan_digest(plan: &FanoutPlan) -> Result<[u8; 32]> {
     Ok(plan_digest_of(&canonicalize(plan)?))
 }
 
@@ -317,7 +317,7 @@ pub(crate) fn fanout_plan_digest(plan: &FanoutPlan) -> Result<[u8; 32]> {
 /// # Errors
 ///
 /// The same malformed-plan cases as [`fanout_plan_digest`].
-pub(crate) fn fanout_estimate(plan: &FanoutPlan) -> Result<FanoutEstimate> {
+fn fanout_estimate(plan: &FanoutPlan) -> Result<FanoutEstimate> {
     Ok(estimate_of(&canonicalize(plan)?))
 }
 
@@ -335,7 +335,7 @@ pub(crate) fn fanout_estimate(plan: &FanoutPlan) -> Result<FanoutEstimate> {
 /// Malformed plan data (blank refs, zero counts, overflow), malformed rate
 /// telemetry, or a surface sink that cannot durably record the pause. None of
 /// those are ever treated as an approved or silently skipped fan-out.
-pub(crate) fn admit_fanout_plan(
+fn admit_fanout_plan(
     plan: &FanoutPlan,
     threshold: Option<u32>,
     peer_rates: &[PeerRateSnapshot],
@@ -383,7 +383,7 @@ pub(crate) fn admit_fanout_plan(
 /// [`FanoutApprovalError::StalePlanDigest`] when the plan changed under the
 /// approval, and [`FanoutApprovalError::Engine`] for malformed input, an
 /// action the row never offered, or a sink that cannot record the choice.
-pub(crate) fn approve_and_resume_fanout(
+fn approve_and_resume_fanout(
     current_plan: &FanoutPlan,
     row: &FanoutApprovalRow,
     choice: FanoutApprovalChoice,

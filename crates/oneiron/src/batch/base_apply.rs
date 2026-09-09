@@ -61,7 +61,7 @@ pub(crate) fn apply_session_bundle_claim_puts(
     clippy::too_many_arguments,
     reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
 )]
-pub(crate) fn apply_ops_with_origin(
+pub(super) fn apply_ops_with_origin(
     store: &Store,
     config: &crate::config::VaultConfig,
     analyzer: &crate::analyzer::MultilingualAnalyzer,

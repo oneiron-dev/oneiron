@@ -7,7 +7,7 @@ impl PolicyManifestResolution {
     /// overrides, and two-or-more distinct valid overrides. A malformed dial
     /// never disables accounting and never yields a zero threshold.
     #[must_use]
-    pub(crate) fn actor_burst_breaker_thresholds(&self) -> GateBreakerThresholds {
+    pub(in crate::gate) fn actor_burst_breaker_thresholds(&self) -> GateBreakerThresholds {
         self.actor_burst_breaker.unwrap_or_default()
     }
 

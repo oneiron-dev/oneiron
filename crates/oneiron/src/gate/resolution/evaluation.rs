@@ -68,7 +68,7 @@ impl PolicyManifestResolution {
     /// writer's ordinary transcript rows or authorize its elevated `system`
     /// authorship. Multiple exact rows still combine by the ordinary
     /// most-restrictive rule.
-    pub(crate) fn actor_bound_ceiling(
+    pub(in crate::gate) fn actor_bound_ceiling(
         &self,
         actor_class: &str,
         actor_ref: &str,
@@ -159,7 +159,7 @@ impl PolicyManifestResolution {
     /// source cannot vouch for the rest. Doors without an envelope keep using
     /// [`Self::evaluate_gate`], which passes no lineage.
     #[must_use]
-    pub(crate) fn evaluate_gate_with_lineage(
+    pub(in crate::gate) fn evaluate_gate_with_lineage(
         &self,
         input: &GateEvaluatorInput,
         lineage: Option<&SourceLineage>,
@@ -315,7 +315,7 @@ impl PolicyManifestResolution {
     // The declared-only form's one production caller is the federated
     // admission path, which exists only under `sync`.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) fn source_trust_allows_auto(
+    pub(in crate::gate) fn source_trust_allows_auto(
         &self,
         source: Option<ClaimSource>,
         sensitivity: Option<u8>,
@@ -326,7 +326,7 @@ impl PolicyManifestResolution {
 
     /// Use the same per-member rule for gate decisions and final Auto checks.
     /// A restricted lineage member never borrows the declared source's row.
-    pub(crate) fn source_trust_allows_auto_with_lineage(
+    fn source_trust_allows_auto_with_lineage(
         &self,
         source: Option<ClaimSource>,
         sensitivity: Option<u8>,

@@ -76,7 +76,7 @@ impl ApplyOpsGateMode {
     /// Not a general gate bypass: the map is crate-private, `BatchBuilder`
     /// builds it only from decisions IT staged in THIS transaction, and the
     /// door that consumes it enforces rather than re-evaluates.
-    pub(crate) fn with_staged_claim_gate(
+    pub(super) fn with_staged_claim_gate(
         mut self,
         staged_claim_gate: HashMap<crate::store::GateDecisionId, StagedClaimGateOutcome>,
     ) -> Self {

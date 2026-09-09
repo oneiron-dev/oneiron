@@ -40,8 +40,8 @@ pub use self::types::{
     BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,
 };
 
-pub(crate) use self::authorization::booker_identity;
-pub(crate) use self::dispatch::{
+pub(super) use self::authorization::booker_identity;
+pub(super) use self::dispatch::{
     NoConfirmInviteSink, dispatch_confirm_booking_invite, sending_address,
 };
 

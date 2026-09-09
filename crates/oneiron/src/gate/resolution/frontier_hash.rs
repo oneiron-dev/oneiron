@@ -231,7 +231,7 @@ fn hash_opt_value(hasher: &mut Sha256, value: Option<&Value>) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn hash_opt_str(hasher: &mut Sha256, value: Option<&str>) {
+pub(in crate::gate) fn hash_opt_str(hasher: &mut Sha256, value: Option<&str>) {
     let Some(value) = value else {
         hash_bool(hasher, false);
         return;
@@ -258,7 +258,7 @@ pub(crate) fn hash_bytes(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(bytes);
 }
 
-pub(crate) fn hash_bool(hasher: &mut Sha256, value: bool) {
+pub(in crate::gate) fn hash_bool(hasher: &mut Sha256, value: bool) {
     hasher.update([u8::from(value)]);
 }
 
