@@ -73,7 +73,7 @@ impl CommunityPprDiversity {
 }
 /// Uniform-only score adapter: keep the complete PPR channel for fusion.
 #[cfg(test)]
-pub(crate) fn ppr_expand_in_txn_with_community_deferred_cache(
+pub(super) fn ppr_expand_in_txn_with_community_deferred_cache(
     store: &Store,
     txn: &RoTxn<'_>,
     request: CommunityPprRequest<'_>,

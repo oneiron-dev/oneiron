@@ -89,7 +89,7 @@ struct PprCacheReadContext<'a, 'txn, D: ManifestDbs> {
 /// pre-Layer-2 path); Layer-2 tests go through
 /// [`ppr_query_in_txn_with_vad_deferred_cache`] or the pipeline.
 #[cfg(test)]
-pub(crate) fn ppr_query(
+pub(super) fn ppr_query(
     store: &Store,
     config: &VaultConfig,
     seeds: &[EntityId],
@@ -119,7 +119,7 @@ pub(crate) fn ppr_query(
     Ok(result.scores)
 }
 #[cfg(test)]
-pub(crate) fn ppr_query_in_txn(
+pub(super) fn ppr_query_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],

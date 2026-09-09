@@ -362,7 +362,7 @@ impl From<DbManifestEntry> for ExportDbManifestEntry {
 }
 
 /// Pure manifest construction for internal fixtures/import tooling.
-pub(crate) fn whole_vault_export_manifest_artifact(
+pub(super) fn whole_vault_export_manifest_artifact(
     secrets_nulled: ExportSecretsNulledManifest,
 ) -> Result<ExportManifestArtifact> {
     ExportManifestArtifact::from_manifest(&ExportManifest::from_secrets_nulled(secrets_nulled))

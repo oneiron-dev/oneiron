@@ -30,7 +30,7 @@ impl PolicyApprovalCeiling {
     /// Gate-side conversion from the persisted AGENT_DEF descriptor mirror.
     /// Lives here so the dependency direction stays `gate.rs` → `agent_def.rs`
     /// and `PolicyApprovalCeiling` stays `pub(crate)`.
-    pub(crate) fn from_agent_ceiling(ceiling: AgentCeiling) -> Self {
+    pub(super) fn from_agent_ceiling(ceiling: AgentCeiling) -> Self {
         match ceiling {
             AgentCeiling::Auto => Self::Auto,
             AgentCeiling::Proposed => Self::Proposed,
@@ -48,7 +48,7 @@ impl PolicyApprovalCeiling {
 
 #[must_use]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn foreign_agent_effective_ceiling(
+pub(super) fn foreign_agent_effective_ceiling(
     confirmed_scope: PolicyApprovalCeiling,
     introducer_ceiling: PolicyApprovalCeiling,
 ) -> PolicyApprovalCeiling {
@@ -84,7 +84,7 @@ impl PolicyCriticality {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PolicySensitivity {
+pub(super) enum PolicySensitivity {
     Normal,
     Sensitive,
 }
@@ -196,7 +196,7 @@ pub(crate) struct DelegationFoldCache {
     pub(super) revoked: BTreeSet<String>,
 }
 impl DelegationFoldCache {
-    pub(crate) fn effective_ceiling(&self, grant_ref: &str) -> Option<PolicyApprovalCeiling> {
+    pub(super) fn effective_ceiling(&self, grant_ref: &str) -> Option<PolicyApprovalCeiling> {
         self.by_grant_ref
             .get(grant_ref)
             .and_then(|x| x.effective_ceiling)
@@ -212,7 +212,7 @@ pub(super) struct ActorCeiling {
 
 #[must_use]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn foreign_agent_ceiling_after_widen_request(
+pub(super) fn foreign_agent_ceiling_after_widen_request(
     current_ceiling: PolicyApprovalCeiling,
     requested_ceiling: PolicyApprovalCeiling,
     normal_gate_decision: &GateDecision,

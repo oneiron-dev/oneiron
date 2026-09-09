@@ -274,7 +274,7 @@ pub(super) fn encode_trap_claim_value(claim: &EncodedTrapClaim) -> Value {
     ])
 }
 
-pub(crate) struct DecodedTrapClaim {
+pub(super) struct DecodedTrapClaim {
     pub(crate) kind: DreamerTrapKind,
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
@@ -284,7 +284,7 @@ pub(crate) struct DecodedTrapClaim {
 
 /// Fail-closed `dreamer.trap` claim value decode: pinned keys only, no
 /// duplicates, schema-version checked, every field mandatory.
-pub(crate) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim> {
+pub(super) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim> {
     let entries = expect_map(value, "dreamer trap value must be a MessagePack map")?;
     let mut schema_version = None;
     let mut trap_kind = None;

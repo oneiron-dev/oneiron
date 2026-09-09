@@ -21,18 +21,18 @@ pub use self::types::{
     RecordedOutboundOutcome, classify_outbound_tool,
 };
 
-pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
 #[cfg(test)]
-pub(crate) use self::dispatch::{execute_outbound_call, recover_outbound_intents};
+pub(crate) use self::dispatch::execute_outbound_call;
+#[cfg(test)]
+use self::dispatch::recover_outbound_intents;
+pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
 pub(crate) use self::store::{
     abandon_record, begin_definite_non_delivery_retry, complete_record, force_sync,
     hash_frozen_payload, insert_pending_in_txn, read_intent_for_attempt_in_txn,
     read_intent_record_in_txn, record_definite_non_delivery,
 };
 #[cfg(test)]
-pub(crate) use self::store::{
-    read_intent_record, replace_intent_record_for_test, transition_record,
-};
+pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};
 #[cfg(test)]
 pub(crate) use self::types::OutboundSender;
 

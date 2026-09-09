@@ -251,9 +251,7 @@ pub(crate) fn append_instruction_in_txn(
     put_meta(vault, wtxn, &key, &encoded)
 }
 
-pub(crate) fn request_instruction_key(
-    request: &EmergencyRescheduleRequest,
-) -> Result<Vec<u8>, BookingError> {
+fn request_instruction_key(request: &EmergencyRescheduleRequest) -> Result<Vec<u8>, BookingError> {
     instruction_key(
         request.owner_ref,
         request.affected_window,
@@ -263,7 +261,7 @@ pub(crate) fn request_instruction_key(
     )
 }
 
-pub(crate) fn verify_instruction_in_txn(
+fn verify_instruction_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     request: &EmergencyRescheduleRequest,
@@ -308,7 +306,7 @@ fn refused(reason: &str) -> BookingError {
     BookingError::InvalidConfig(reason.to_owned())
 }
 
-pub(crate) fn calendar_failure(error: crate::calendar::CalendarError) -> BookingError {
+pub(super) fn calendar_failure(error: crate::calendar::CalendarError) -> BookingError {
     match error {
         crate::calendar::CalendarError::InviteRefused { reason } => {
             BookingError::InvalidConfig(reason)
