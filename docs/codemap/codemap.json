@@ -19770,7 +19770,7 @@
       "WorldLayer"
      ],
      "path": "src/settings.rs",
-     "purpose": "Persisted customization settings and Eiri-visible change events",
+     "purpose": "Persisted customization settings and client-visible change events",
      "surface": {
       "const": 3,
       "enum": 2,
@@ -25366,7 +25366,7 @@
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "Persisted customization settings and Eiri-visible change events"
+     "purpose": "Persisted customization settings and client-visible change events"
     },
     "share": {
      "files": 3,
@@ -28531,6 +28531,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/companion_assembly.rs",
+     "purpose": "Companion scope-resolution authorization for context-pack assembly",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -28538,16 +28548,6 @@
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
       "crate-vis": 14
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/context_pack/eiri_assembly.rs",
-     "purpose": "Companion scope-resolution authorization for context-pack assembly",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
