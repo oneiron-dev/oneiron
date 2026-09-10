@@ -1191,6 +1191,95 @@ fn honeypot_signal_requires_an_activated_honeypot_floor_row() {
 }
 
 #[test]
+fn amend_scope_keeps_the_write_bucket_and_drops_every_book_time_form_rule() {
+    // A cancel or a reschedule presents an action token, so it names no
+    // event type. Page-wide rows are therefore the ones that reach it, and
+    // they carry the whole ratified stack.
+    let rows = default_booking_anti_abuse_rows(id(PAGE), None, &owner_config())
+        .expect("page-wide rows validate");
+
+    // The token carries no form: no honeypot input, no submit clock, no
+    // intake box, no address to correct.
+    let mut amendment = facts();
+    amendment.event_type = None;
+    amendment.session_hash = None;
+    amendment.email_hash = None;
+    amendment.intake_chars = 0;
+    amendment.started_at_millis = 0;
+    amendment.submitted_at_millis = 9_000_000;
+
+    assert!(
+        matches!(
+            evaluate_booking_book_request(&rows, &amendment),
+            BookingAbuseVerdict::PromptCorrection {
+                field: "intake",
+                ..
+            }
+        ),
+        "the required-intake row still refuses an empty confirmation"
+    );
+    assert_eq!(
+        evaluate_booking_amend_request(&rows, &amendment),
+        BookingAbuseVerdict::Allow,
+        "an amendment has no intake box, so the intake row cannot refuse it"
+    );
+
+    // The honeypot and submit-floor family is form evidence too.
+    let mut tripped = amendment.clone();
+    tripped.honeypot_nonempty = true;
+    assert_eq!(
+        evaluate_booking_book_request(&rows, &tripped),
+        BookingAbuseVerdict::SilentHttp200Reject
+    );
+    assert_eq!(
+        evaluate_booking_amend_request(&rows, &tripped),
+        BookingAbuseVerdict::Allow,
+        "an amendment has no honeypot field, so the signal is noise"
+    );
+    let mut too_fast = amendment.clone();
+    too_fast.started_at_millis = 9_000_000;
+    assert_eq!(
+        evaluate_booking_book_request(&rows, &too_fast),
+        BookingAbuseVerdict::SilentHttp200Reject
+    );
+    assert_eq!(
+        evaluate_booking_amend_request(&rows, &too_fast),
+        BookingAbuseVerdict::Allow,
+        "an amendment has no submit clock, so the floor cannot fire"
+    );
+
+    // Contact evidence and the quarantine route need an address; an
+    // amendment supplies none, and supplying one changes nothing.
+    let mut with_bad_email = amendment.clone();
+    // A satisfied intake so the contact branch, not the intake row, decides.
+    with_bad_email.intake_chars = 40;
+    with_bad_email.email_hash = Some(booking_email_hash("not-an-address"));
+    with_bad_email.email = Some(EmailValidationEvidence {
+        syntax_valid: false,
+        mx_present: Some(false),
+        disposable_domain: true,
+    });
+    assert_eq!(
+        evaluate_booking_book_request(&rows, &with_bad_email),
+        BookingAbuseVerdict::Quarantine {
+            reason: "booking contact evidence failed several independent checks".to_owned(),
+        }
+    );
+    assert_eq!(
+        evaluate_booking_amend_request(&rows, &with_bad_email),
+        BookingAbuseVerdict::Allow,
+        "an amendment submits no address, so no contact rule applies"
+    );
+
+    // What survives is the write bucket: the adapter reads the same
+    // per-minute cap for an amendment as it does for a confirmation.
+    assert_eq!(
+        book_rate_knobs(&rows, &amendment.page_ref, &amendment.event_type),
+        Some((nz32(10), 1))
+    );
+}
+
+#[test]
 fn slot_list_cache_window_is_bound_and_lazy_expiring() {
     let (_dir, vault) = open_vault();
     let page = id(PAGE);
