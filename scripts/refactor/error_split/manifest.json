@@ -1,18 +1,18 @@
 {
  "schema": 1,
- "base_rev": "a4f3db2741b298017a127b3df04e97eb65f8d54c",
+ "base_rev": "9f857477ae778589ef58b0634b5fdbb261cf522c",
  "source": "crates/oneiron/src/error.rs",
  "totals": {
   "variants": 224,
   "error_kind_variants": 219,
   "per_domain": {
    "root": 21,
-   "store": 13,
+   "store": 12,
    "record": 28,
    "registry": 16,
    "gate": 16,
    "artifact": 24,
-   "code": 31,
+   "code": 32,
    "claim": 19,
    "sync": 16,
    "offrecord": 12,
@@ -8072,9 +8072,9 @@
   },
   {
    "name": "VaultRead",
-   "domain": "store",
-   "enum": "StoreError",
-   "file": "crates/oneiron/src/error/store.rs",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
    "shape": "tuple",
    "payload": [
     "#[from] crate::code_run::vault_read::VaultReadError"
@@ -8098,7 +8098,7 @@
    "dead": false,
    "reachable_via": "constructed only through `#[from] VaultReadError` (thiserror generates the From impl); `?` on a VaultReadError is the only caller",
    "dead_verdict": null,
-   "note": "design pins VaultReadError under StoreError; the type itself lives in code_run/vault_read/"
+   "note": "orchestrator ruling 2026-09-11: VaultReadError lives in code_run/vault_read/, so the wrapper sits with the other code_run variants, not under StoreError as the design pinned it"
   }
  ],
  "moving_items": [
@@ -8225,8 +8225,8 @@
    "item": "VaultReadError",
    "kind": "enum",
    "from": "crates/oneiron/src/code_run/vault_read/error.rs",
-   "to_domain": "store",
-   "note": "NOT in error.rs; only the VaultRead wrapper variant relocates"
+   "to_domain": "code",
+   "note": "NOT in error.rs; stays put, only the VaultRead wrapper variant relocates"
   }
  ],
  "from_impls": [
