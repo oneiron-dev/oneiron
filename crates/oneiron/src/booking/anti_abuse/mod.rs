@@ -48,9 +48,10 @@ pub use self::amendment::{
 };
 pub use self::evaluation::{
     BookingAbuseVerdict, BookingRequestFacts, EmailValidationEvidence, book_rate_knobs,
-    booking_email_hash, booking_ip_hash, booking_session_hash, evaluate_booking_book_request,
-    evaluate_booking_hold_request, evaluate_booking_request, evaluate_booking_slot_list_request,
-    hold_rate_knobs, quarantine_claim_id, server_submission_fingerprint, slot_list_rate_knobs,
+    booking_email_hash, booking_ip_hash, booking_session_hash, evaluate_booking_amend_request,
+    evaluate_booking_book_request, evaluate_booking_hold_request, evaluate_booking_request,
+    evaluate_booking_slot_list_request, hold_rate_knobs, quarantine_claim_id,
+    server_submission_fingerprint, slot_list_rate_knobs,
 };
 pub use self::quarantine::{
     BookingQuarantineAdmission, BookingQuarantineReceipt, admit_quarantine_submission,

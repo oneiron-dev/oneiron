@@ -8,8 +8,8 @@ use oneiron::booking::anti_abuse::{
 
 use super::tests_support::tests::*;
 use super::{
-    BookingHttpDisposition, cached_slot_list_body, enforce_book, enforce_hold, enforce_slot_list,
-    remember_slot_list_body,
+    BookingHttpDisposition, cached_slot_list_body, enforce_amend, enforce_book, enforce_hold,
+    enforce_slot_list, remember_slot_list_body,
 };
 
 #[cfg(test)]
@@ -240,6 +240,66 @@ pub(crate) mod tests {
             .await
             .expect("bob under cap");
         assert_eq!(bob_open, BookingHttpDisposition::Continue);
+    }
+
+    #[tokio::test]
+    async fn amend_guard_skips_book_time_rules_and_still_spends_the_write_bucket() {
+        let (_dir, server) = test_server();
+        // Page-wide rows are the ones that reach an amendment: a cancel or a
+        // reschedule presents an action token and names no event type.
+        install_defaults_scoped(&server, None);
+
+        // The exact facts the HTTP admission boundary builds for a token
+        // amendment: no event type, no session, no email, no intake.
+        let mut amendment = facts();
+        amendment.event_type = None;
+        amendment.session_hash = None;
+        amendment.email_hash = None;
+        amendment.intake_chars = 0;
+
+        // The very same facts on the confirmation path are refused by the
+        // page-wide required-intake row, so the guard is the only difference.
+        let refused = enforce_book(State(server.clone()), amendment.clone())
+            .await
+            .expect("book guard answers");
+        let BookingHttpDisposition::PromptCorrection { body } = refused else {
+            panic!("an empty confirmation is still refused: {refused:?}");
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("correction json");
+        assert_eq!(parsed["field"], "intake");
+
+        // Ten amendments pass; the eleventh limits. The write bucket is the
+        // one control an amendment keeps, and the refused confirmation above
+        // spent none of it.
+        for _ in 0..10 {
+            assert_eq!(
+                enforce_amend(State(server.clone()), amendment.clone())
+                    .await
+                    .expect("amend guard"),
+                BookingHttpDisposition::Continue
+            );
+        }
+        let limited = enforce_amend(State(server.clone()), amendment)
+            .await
+            .expect("amend budget");
+        assert!(
+            matches!(limited, BookingHttpDisposition::RetryAfter { .. }),
+            "an amendment is a write and keeps a bounded per-minute bucket: {limited:?}"
+        );
+
+        // The bucket is per IP: another address amends freely.
+        let mut elsewhere = facts();
+        elsewhere.event_type = None;
+        elsewhere.session_hash = None;
+        elsewhere.email_hash = None;
+        elsewhere.intake_chars = 0;
+        elsewhere.ip_hash = booking_ip_hash("203.0.113.201");
+        assert_eq!(
+            enforce_amend(State(server.clone()), elsewhere)
+                .await
+                .expect("fresh ip"),
+            BookingHttpDisposition::Continue
+        );
     }
 
     #[tokio::test]
