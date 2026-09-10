@@ -132,17 +132,23 @@ Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, lab
 contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
 - `ci.yml` — `pull_request` (non-draft) + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
-  repo variable pauses every job (wave affordance); drafts do not run. Docs-only diffs
-  (Markdown, `docs/**`) do not trigger it, except `docs/ops/**` and `oneiron.skills.md`, which
-  contract tests `include_str!`. Jobs: `changes` (path detector) / `checks` (fmt, workspace +
-  featureless clippy, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
+  repo variable pauses every job (wave affordance); drafts do not run. No `paths` filter
+  (2026-09-11): every non-draft PR and every `main` push starts a run, because the `main` ruleset
+  requires the `Checks` and `Test` contexts and a filtered trigger starts no run at all, so a
+  docs-only PR reported neither and was blocked forever (#921 needed `--admin`). The `changes` job
+  still detects a rust diff; it now gates STEPS, not the run. Jobs: `changes` (path detector) /
+  `checks` (fmt, workspace + featureless clippy, typos, `cargo-deny` policy — one job, one runner
+  slot) / `test` (macOS) /
   `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
-  no `RUSTFLAGS` (see *Self-hosted runners*). `checks` runs on every `pull_request` (its cargo
-  steps only on a rust diff) and on `workflow_dispatch`; `test` runs the macOS recipe
+  no `RUSTFLAGS` (see *Self-hosted runners*). `checks` and `test` both run on every non-draft
+  `pull_request`, on every `push` to `main` and on `workflow_dispatch`, so both required contexts
+  always report; each gates its cargo steps on a rust diff (always on dispatch and tags, fail-open
+  if the detector broke), so a docs-only run is a checkout plus the always-on typos and `cargo-deny`
+  policy steps. `test` runs the macOS recipe
   (the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
-  filtered out by name — ONE-1996 — then the featureless lib tests and doctests) on rust-diff
-  `pull_request` or `push`; `test-linux` runs the `--profile full` suite with only the napi
-  exclusion, plus the same two stages, on `push` to `main` and `workflow_dispatch`
+  filtered out by name — ONE-1996 — then the featureless lib tests and doctests); on `push` that
+  job keeps the rust-diff gate at job level; `test-linux` runs the `--profile full` suite with
+  only the napi exclusion, plus the same two stages, on `push` to `main` and `workflow_dispatch`
   only — never on PRs, Arch is the Wave host; `package` waits for a `v*` tag push that no
   trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy and
   tests pre-merge; `scripts/verify.sh` on the branch stays the local gate.
