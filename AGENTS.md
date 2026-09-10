@@ -231,13 +231,19 @@ gets its own file under the owning module directory:
 
 Never create `utils.rs` or `helpers.rs` — name a file for what it does.
 
-`scripts/ratchet/check.sh` ratchets three counters over non-test code — files at or over 800
-lines, `#[allow(` attributes, and `println!`/`eprintln!`/`dbg!` calls (baseline 3 / 98 / 91,
-`scripts/ratchet/baseline.json`) — and `scripts/ratchet/root-surface-check.sh` pins the crate
-root at exactly the 702 names in `scripts/ratchet/root-surface.txt`. A change may lower a
+`scripts/ratchet/check.sh` ratchets four counters over non-test code — files at or over 800
+lines, `#[allow(` attributes, `println!`/`eprintln!`/`dbg!` calls, and process-global mutable
+statics (baseline 3 / 98 / 91 / 45, `scripts/ratchet/baseline.json`) — and
+`scripts/ratchet/root-surface-check.sh` pins the crate root at exactly the 702 names in
+`scripts/ratchet/root-surface.txt`. A change may lower a
 counter; raising one, or moving the pin, is a reviewed decision stated in the PR, never a
 silent bump. Reason-carrying `#[allow(…)]` is the only legal form and it never hides a warning
 that a private item became dead — delete the item instead.
+
+Engine state belongs to a vault or to a thread, never to the process: a new `static` holding a
+`Mutex`, `RwLock`, `Atomic`, `OnceLock`/`OnceCell`, `LazyLock`/`Lazy` or `Cell`/`RefCell` is a
+stated decision in the PR, and a `thread_local!` or a field on the owning object is the default.
+`scripts/ratchet/process_globals.py --list` names every one it counts.
 
 ## Module style
 
