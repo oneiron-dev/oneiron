@@ -1,5 +1,6 @@
 use super::fixture::*;
 use super::*;
+use std::num::NonZeroU16;
 
 #[tokio::test]
 async fn public_booking_route_accepts_only_canonical_pack_verbs() {
@@ -120,6 +121,94 @@ async fn public_booking_route_runs_shared_anti_abuse_once() {
         return;
     }
     panic!("could not observe one admission within a single rate window");
+}
+
+#[tokio::test]
+async fn a_page_wide_required_intake_refuses_a_confirm_but_never_an_amendment() {
+    let fixture = Fixture::new();
+    let slots = fixture.slots().await;
+    assert!(slots.len() > 4);
+
+    // One ordinary booking, made before the owner arms the intake control,
+    // so the visitor holds genuine reschedule and cancel tokens.
+    let held = fixture
+        .dispatch("booking.hold", hold(selected(&slots[0]), "amendable", None))
+        .await
+        .expect("hold");
+    let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = held else {
+        panic!("held")
+    };
+    let confirmed = fixture
+        .dispatch("booking.confirm", confirm(hold_token, "amendable"))
+        .await
+        .expect("confirm");
+    let BookingOperationResponse::Book(BookingBookResult::Confirmed {
+        reschedule_token,
+        cancel_token,
+    }) = confirmed
+    else {
+        panic!("confirmed")
+    };
+
+    // The owner now requires open-text intake page-wide, which is how a
+    // page-scoped row reaches every event type.
+    let scope = BookingRuleScope {
+        page_ref: fixture.page,
+        event_type: None,
+    };
+    let rule = BookingAntiAbuseRule::RequiredIntake {
+        min_chars: NonZeroU16::new(10).expect("positive"),
+    };
+    apply_rule_amendment(
+        &fixture.server.vault,
+        0,
+        BookingAntiAbuseRuleRow {
+            row_id: booking_rule_row_id(&scope, &rule),
+            scope,
+            rule,
+            version: 1,
+            amended_at: 0,
+            amended_by: fixture.page,
+            owner_stamp_ref: None,
+        },
+        None,
+    )
+    .expect("required intake row");
+
+    // Booking time is where the control belongs: an empty intake is refused.
+    let second = fixture
+        .dispatch(
+            "booking.hold",
+            hold(selected(&slots[1]), "empty-intake", None),
+        )
+        .await
+        .expect("second hold");
+    let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = second else {
+        panic!("held")
+    };
+    assert_eq!(
+        fixture
+            .dispatch("booking.confirm", confirm(hold_token, "empty-intake"))
+            .await
+            .expect_err("an empty intake is refused at booking time"),
+        StatusCode::BAD_REQUEST
+    );
+
+    // Amendment time is not: the visitor already answered the question, and
+    // a token carries no form to answer it again with. Both directions.
+    let moved = fixture
+        .dispatch(
+            "booking.reschedule",
+            reschedule(reschedule_token, selected(&slots[3]), "amend-move"),
+        )
+        .await
+        .expect("a required-intake row must not refuse a reschedule");
+    assert!(matches!(moved, BookingOperationResponse::Reschedule { .. }));
+    let cancelled = fixture
+        .dispatch("booking.cancel", cancel(cancel_token, "amend-cancel"))
+        .await
+        .expect("a required-intake row must not refuse a cancel");
+    assert!(matches!(cancelled, BookingOperationResponse::Cancel { .. }));
 }
 
 #[tokio::test]

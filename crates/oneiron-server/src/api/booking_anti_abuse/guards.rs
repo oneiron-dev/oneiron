@@ -1,4 +1,4 @@
-//! Slot-list/hold/book anti-abuse enforcement guards.
+//! Slot-list/hold/book/amend anti-abuse enforcement guards.
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -8,10 +8,10 @@ use oneiron::Vault;
 use oneiron::booking::anti_abuse::{
     BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingQuarantineAdmission, BookingRateDecision,
     BookingRequestFacts, admit_quarantine_submission, applicable_booking_anti_abuse_rules,
-    book_rate_knobs, evaluate_booking_book_request, evaluate_booking_hold_request,
-    evaluate_booking_slot_list_request, hold_rate_knobs, observe_book_request,
-    observe_hold_request, observe_slot_list_request, server_submission_fingerprint,
-    slot_list_rate_knobs,
+    book_rate_knobs, evaluate_booking_amend_request, evaluate_booking_book_request,
+    evaluate_booking_hold_request, evaluate_booking_slot_list_request, hold_rate_knobs,
+    observe_book_request, observe_hold_request, observe_slot_list_request,
+    server_submission_fingerprint, slot_list_rate_knobs,
 };
 
 use super::support::{correction_body, engine_error, log_rate_block, now_secs};
@@ -81,6 +81,35 @@ pub(super) fn disposition_from_verdict(
             Err(ApiError::internal_server_error(
                 "quarantine requires book admission",
             ))
+        }
+    }
+}
+
+/// Spends one token from the book minute bucket and translates the outcome.
+///
+/// Confirmation and amendment share this bucket: both are writes on the same
+/// page, so a caller cannot mint fresh budget by switching between the two.
+fn spend_book_bucket(
+    vault: &Vault,
+    endpoint: &'static str,
+    key: &BookingRateKey,
+    per_minute_per_ip: NonZeroU32,
+) -> std::result::Result<BookingHttpDisposition, ApiError> {
+    match observe_book_request(
+        vault,
+        &key.ip_hash,
+        key.email_hash.as_ref(),
+        per_minute_per_ip,
+        now_secs()?,
+    )
+    .map_err(engine_error)?
+    {
+        BookingRateDecision::Allowed => Ok(BookingHttpDisposition::Continue),
+        BookingRateDecision::Exceeded { retry_after_secs } => {
+            log_rate_block(endpoint, &key.ip_hash, retry_after_secs);
+            Ok(BookingHttpDisposition::RetryAfter {
+                seconds: retry_after_secs,
+            })
         }
     }
 }
@@ -227,21 +256,36 @@ pub(crate) async fn enforce_book(
         }
     }
     // A non-quarantine request consumes its identity confirmation bucket.
-    match observe_book_request(
-        vault,
-        &key.ip_hash,
-        key.email_hash.as_ref(),
-        per_minute_per_ip,
-        now_secs()?,
-    )
-    .map_err(engine_error)?
-    {
-        BookingRateDecision::Allowed => Ok(BookingHttpDisposition::Continue),
-        BookingRateDecision::Exceeded { retry_after_secs } => {
-            log_rate_block("book", &facts.ip_hash, retry_after_secs);
-            Ok(BookingHttpDisposition::RetryAfter {
-                seconds: retry_after_secs,
-            })
-        }
+    spend_book_bucket(vault, "book", &key, per_minute_per_ip)
+}
+
+/// Amend guard for cancel and reschedule. An amendment presents an action
+/// token, never a form, so the book-time controls have no evidence to read
+/// and cannot refuse it; ARCH-0062 keeps it on "the same solver rules". What
+/// survives is the write bucket, spent on whatever identity the facts carry —
+/// for a token amendment the admission boundary supplies no email, so that is
+/// the IP hash alone.
+///
+/// # Errors
+///
+/// [`ApiError`] internal-server on engine or storage failure.
+pub(crate) async fn enforce_amend(
+    State(server): State<Arc<SyncServer>>,
+    facts: BookingRequestFacts,
+) -> std::result::Result<BookingHttpDisposition, ApiError> {
+    let vault = &server.vault;
+    let rows = load_rows(vault, &facts)?;
+    let verdict = evaluate_booking_amend_request(&rows, &facts);
+    if let Some(disposition) = disposition_from_verdict("amend", &facts, verdict)? {
+        return Ok(disposition);
     }
+    let Some((per_minute_per_ip, _)) = book_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
+    else {
+        return Ok(BookingHttpDisposition::Continue);
+    };
+    let key = BookingRateKey {
+        ip_hash: facts.ip_hash,
+        email_hash: facts.email_hash,
+    };
+    spend_book_bucket(vault, "amend", &key, per_minute_per_ip)
 }
