@@ -1,12 +1,14 @@
 name: CI
 
-# Triggers (2026-09-08, HYG-06): non-draft pull requests, pushes to main,
-# and manual dispatch. Docs-only diffs (Markdown, docs/**) never start a
-# run — except docs/ops/** and the root skills pack, which contract tests
-# include_str! (ops_docs.rs, skills_pack.rs; the pack is also compiled into
-# oneiron-server), so they are re-included below. `paths` with negation is
-# used instead of `paths-ignore` because `paths-ignore` cannot carve those
-# two back in.
+# Triggers (2026-09-11): every non-draft pull request, every push to main,
+# and manual dispatch. There is no `paths` filter on purpose. The repository
+# ruleset on main requires the `Checks` and `Test` contexts, and a filtered
+# trigger starts no run at all, so a docs-only PR reported neither context and
+# could never merge (PR #921 had to be merged with --admin). The `changes` job
+# still detects a rust-relevant diff, but it now decides which STEPS run, not
+# whether the run happens. Both required contexts therefore always report, and
+# a docs-only run costs one checkout per job plus the cheap always-on steps
+# (typos, the cargo-deny policy).
 #
 # Wave affordance: setting the repository variable CI_PAUSED=true skips
 # every job (each job's `if:` checks it). A wave that lands many commits
@@ -16,20 +18,8 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - '**'
-      - '!**/*.md'
-      - '!docs/**'
-      - 'docs/ops/**'
-      - 'oneiron.skills.md'
   push:
     branches: [main]
-    paths:
-      - '**'
-      - '!**/*.md'
-      - '!docs/**'
-      - 'docs/ops/**'
-      - 'oneiron.skills.md'
 
 env:
   CARGO_TERM_COLOR: always
@@ -68,21 +58,26 @@ concurrency:
 # `_work` persists between runs. Pinned CI-only tools live under
 # ~/ci/tools — a job installs one on first use and every later run reuses it.
 #
-# Gate layout: `changes` detects rust-relevant diffs; `checks` (fmt, clippy
-# workspace + featureless, typos, cargo-deny policy) runs on every non-draft
-# PR, on every push to main, and on dispatch — the cargo steps only when the
-# diff is rust-relevant (deny is the dispatch-era gate, ONE-335). Main pushes
+# Gate layout: `changes` detects rust-relevant diffs and gates STEPS, never
+# jobs. `checks` (fmt, clippy workspace + featureless, typos, cargo-deny
+# policy) and `test` (the macOS recipe) both run on every non-draft PR, on
+# every push to main and on dispatch, which is what makes the two required
+# contexts always report. Inside each, the cargo steps run only when the diff
+# is rust-relevant — always on dispatch and on tags, and fail-open if the
+# detector broke (deny is the dispatch-era gate, ONE-335). A docs-only run is
+# therefore a checkout, a toolchain print and the always-on policy steps, and
+# it goes green on real work rather than on an absent report. Main pushes
 # were added 2026-09-09: PR CI validates the merge result against main AS IT
 # WAS, so a merge burst can land a state no `checks` run ever saw, and a
 # direct push to main saw none at all. The runners are ours, so the honest
 # fix is to re-run the gate on the commit that actually became main rather
 # than to reason about when it is safe to skip. It also gives the advisory
 # policy a second, regular route: a newly published RUSTSEC advisory no
-# longer waits for someone to open a PR. `test` runs the macOS recipe on
-# rust-diff PRs, on main pushes and on dispatch (fail-open on push if the detector
-# breaks; tag pushes always run); `test-linux` runs the unfiltered suite on
-# the Linux reference host for main pushes and dispatch only; `package`
-# (publish-integrity) runs on release tags only.
+# longer waits for someone to open a PR. On a main push `test` keeps its
+# rust-diff gate at the job level (fail-open if the detector breaks; tag pushes
+# always run); `test-linux` runs the unfiltered suite on the Linux reference
+# host for main pushes and dispatch only; `package` (publish-integrity) runs
+# on release tags only.
 #
 # Every job's `if:` starts with the pause/draft guard from the header,
 #   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
@@ -132,10 +127,12 @@ jobs:
     needs: changes
     # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
     # PR takes one runner slot and one checkout for all of them. Runs on every
-    # non-draft PR, on every push to main and on dispatch; the cargo steps
-    # below gate themselves on a
+    # non-draft PR, on every push to main and on dispatch — unconditionally,
+    # because `Checks` is a required context and a job that never starts never
+    # reports. The cargo steps below gate themselves on a
     # rust-relevant diff (always on dispatch: a manual run is the full gate;
-    # fail-open if the detector broke), typos and deny always. Inside
+    # fail-open if the detector broke), typos and deny always, so a docs-only
+    # PR reports success on the two policy steps it really ran. Inside
     # always(): dispatch is the deny gate's unconditional route (ONE-335,
     # pinned by scripts/advisory-policy/test_policy.py), so a broken
     # `changes` job must not skip it; the pause/draft guard still applies.
@@ -205,8 +202,12 @@ jobs:
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 90
     needs: changes
-    # Dispatch: always (a manual run is the full gate). PRs: rust diffs only.
-    # Main pushes: rust diffs too (the changes job
+    # PRs: EVERY non-draft one, because `Test` is a required context and a
+    # job that never starts never reports it. The rust-diff gate moved down to
+    # the heavy steps below, so a docs-only PR pays one checkout and a
+    # toolchain print and goes green.
+    # Dispatch: always (a manual run is the full gate).
+    # Main pushes: rust diffs (the changes job
     # runs the same filter on push), but fail OPEN — if the detector job
     # didn't succeed, run anyway so a filter hiccup can't skip the record
     # of truth. Tag pushes always run (release validation — the filter has
@@ -218,7 +219,7 @@ jobs:
       && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
       && (
         github.event_name == 'workflow_dispatch'
-        || (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
+        || github.event_name == 'pull_request'
         || (github.event_name == 'push' && (
           startsWith(github.ref, 'refs/tags/')
           || needs.changes.outputs.rust == 'true'
@@ -236,6 +237,7 @@ jobs:
       # nextest is part of the host contract; if a host lacks it, install the
       # pinned copy under ~/ci/tools once and reuse it on every later run.
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/ci/tools/bin:$PATH"
@@ -254,6 +256,7 @@ jobs:
       #     eval_outcome_ingest_* / eval_tune_* tests pass here and stay in.
       # The bench carve-out runs unfiltered on the Linux reference lane below.
       - name: Workspace tests (nextest, full tier, macOS recipe)
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
           MACOS_SKIP='not (package(oneiron-bench) & (
               test(=eval::tests::eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault)
@@ -269,8 +272,10 @@ jobs:
       # library build is a Wave-6 acceptance gate, and nextest does not run
       # doctests.
       - name: Featureless oneiron library tests
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test -p oneiron --lib --no-default-features
       - name: Doctests
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
       # Bound the host's persistent build cache (see ci.yml `checks`).

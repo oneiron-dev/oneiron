@@ -1,7 +1,8 @@
 name: Ratchet
 
 # MAIN ONLY, deliberately. The ratchet counts whole-repo metrics (files over
-# 800 lines, `#[allow(...)]` attributes, print macros), and a stacked wave
+# 800 lines, `#[allow(...)]` attributes, print macros, process-global mutable
+# statics), and a stacked wave
 # moves those counts around inside itself: a split PR can add a file the next
 # PR deletes, so a middle commit can sit transiently above baseline for a
 # state that never lands on main. A per-PR trigger would fail those commits
@@ -40,9 +41,12 @@ jobs:
           clean: true
       # check.sh treats a missing `rg` as RATCHET-ERROR; name the host gap
       # before the scan runs rather than discovering it as a hard failure
-      # with nothing measured.
+      # with nothing measured. python3 is the same kind of dependency since
+      # the process_global_statics metric got its own stdlib-only scanner.
       - name: Host tools
-        run: rg --version
+        run: |
+          rg --version
+          python3 --version
       - name: Check ratchet baselines
         run: scripts/ratchet/check.sh
       # The committed code map (docs/CODEMAP.md, docs/codemap/) is generated;
