@@ -79,7 +79,6 @@ ASSIGNMENT = {
         "InvalidRankProfile",
         "AnalyzerAssetMissing",
         "AnalyzerError",
-        "VaultRead",
     ],
     # --- registry: entity kinds, type bytes, edge kinds, the ChildOf tree ----
     "registry": [
@@ -232,6 +231,7 @@ ASSIGNMENT = {
         "GitHttpServeFailed",
         "ReceivePackDoorRejected",
         "ReceivePackLandingRefused",
+        "VaultRead",
     ],
     # --- sync: the 11 cfg(sync) variants + receipts + identity topology ------
     "sync": [
@@ -319,7 +319,7 @@ NOTES = {
     "KillSwitchDisabled": ("offrecord", "doc: 'Off-record entry is disabled by the vault-level kill-switch'"),
     "HostedMediaHashMatchKnownMatch": ("code", "constructed in codebase/; hosted-media provider on the code ingest path"),
     "InvalidLfsObject": ("artifact", "design pins 'code/blob/lfs artifacts' to ArtifactError even though origin/ constructs it"),
-    "VaultRead": ("store", "design pins VaultReadError under StoreError; the type itself lives in code_run/vault_read/"),
+    "VaultRead": ("code", "orchestrator ruling 2026-09-11: VaultReadError lives in code_run/vault_read/, so the wrapper sits with the other code_run variants, not under StoreError as the design pinned it"),
     "ContextPackValidation": ("record", "cross-record assembly anomaly; constructed in context_pack/"),
     "WorkspaceMailboxAutonomyNotReady": ("record", "ONE-1829 onboarding-journal state on a record surface"),
     "InvalidClaimBody": ("root", "claim-named but in the 21-variant bag: 854 lines across 72 modules"),
@@ -345,7 +345,7 @@ MOVING_ITEMS = [
     ("Error::sync_engine_rollback", "method", "error.rs", "sync", "cfg(sync) constructor"),
     ("VaultRootEntry", "enum", "error.rs", "store", "error.rs:807-828"),
     ("VaultRootProblem", "enum", "error.rs", "store", "error.rs:830-901"),
-    ("VaultReadError", "enum", "code_run/vault_read/error.rs", "store", "NOT in error.rs; only the VaultRead wrapper variant relocates"),
+    ("VaultReadError", "enum", "code_run/vault_read/error.rs", "code", "NOT in error.rs; stays put, only the VaultRead wrapper variant relocates"),
 ]
 
 # Manual `From<X> for Error` impls and where they land.
