@@ -228,7 +228,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/agent_api.rs` | src | m | 9 struct · 7 enum · 6 fn · 3 const · 2 crate-vis | BookingAgentEndpoint, BookingAgentInstructionsBlock, BookingAgentInstructionsDefect, BookingAgentOperation, BookingAvailabilityInput, BookingBookInput, BookingBookResult, BookingCancelInput +8 | ONE-1819 [BK-08] the agent-readable booking wire |
 | `src/booking/agent_front.rs` | src | m | 5 struct · 2 enum · 1 fn · 2 const | ConstraintAgentCapability, ConstraintContinuation, ConstraintDeflect, ConstraintFrontCopy, ConstraintFrontOutcome, ConstraintSlotReply, ConstraintTurnRequest | ONE-1816 [BK-05] the agent front |
 | `src/booking/anti_abuse/amendment.rs` | src | m | 6 fn | — | — |
-| `src/booking/anti_abuse/evaluation.rs` | src | m | 2 struct · 1 enum · 12 fn · 1 crate-vis | BookingAbuseVerdict, BookingRequestFacts, EmailValidationEvidence | — |
+| `src/booking/anti_abuse/evaluation.rs` | src | m | 2 struct · 1 enum · 13 fn · 1 crate-vis | BookingAbuseVerdict, BookingRequestFacts, EmailValidationEvidence | — |
 | `src/booking/anti_abuse/mod.rs` | src | s | 6 re-export | — | ONE-1817 [BK-06] booking anti-abuse rule rows |
 | `src/booking/anti_abuse/quarantine.rs` | src | s | 1 struct · 1 enum · 2 fn | BookingQuarantineAdmission, BookingQuarantineReceipt | — |
 | `src/booking/anti_abuse/rate.rs` | src | s | 1 enum · 6 fn · 1 crate-vis | BookingRateDecision | — |
