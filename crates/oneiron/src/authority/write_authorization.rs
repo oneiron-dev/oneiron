@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::write_envelope::WriteActor;
 
 use super::{AuthorityFold, actor_binding_is_active};
+use crate::error::ClaimError;
 
 impl Vault {
     /// Resolve the asserted class and current binding in the mutation snapshot.
@@ -41,9 +42,9 @@ impl Vault {
                 writer.actor_class().gate_actor_class(),
             )
         {
-            return Err(Error::ActorLacksClaimAuthority {
+            return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
                 reason: "writer has no active authority binding",
-            });
+            }));
         }
         Ok(fold)
     }
@@ -57,9 +58,9 @@ impl Vault {
     ) -> Result<()> {
         self.verify_write_actor_in_txn(txn, writer)?;
         if writer.actor_class() != EdgeActorClass::Human {
-            return Err(Error::ActorLacksClaimAuthority {
+            return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
                 reason: "an owner write requires a human actor",
-            });
+            }));
         }
         Ok(())
     }

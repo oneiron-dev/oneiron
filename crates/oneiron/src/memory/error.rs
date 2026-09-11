@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError};
+use crate::error::{ClaimError, Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError};
 
 /// Stable facade error codes, mirroring the `oneiron-server`
 /// `ApiErrorDetails` code vocabulary (S8).
@@ -183,9 +183,9 @@ impl From<Error> for MemoryError {
         // stale target is an INVALID_STATE refusal like the rest of the
         // refresh-and-retry family, but this one names exactly what to
         // refresh TO.
-        if let Error::WriteVerbTargetStale {
+        if let Error::Claim(ClaimError::WriteVerbTargetStale {
             successor_short_id, ..
-        } = err
+        }) = err
         {
             return Self {
                 successor_short_id: Some(successor_short_id),

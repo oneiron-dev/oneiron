@@ -16,6 +16,7 @@ use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
 };
 use crate::entity_id::EntityId;
+use crate::error::ClaimError;
 use crate::error::SyncError;
 use crate::sync::loro_support::{
     map_delete, map_for_each_bytes, map_get_bytes, tombstone_map_contains_id,
@@ -135,7 +136,7 @@ fn validate_replicated_identity_topology_record_before_mutation(
             )) => Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event participant is not merge-eligible structural state",
             )),
-            Error::ActorClassMismatch { .. } => {
+            Error::Claim(ClaimError::ActorClassMismatch { .. }) => {
                 Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                     "identity topology event actor class does not match the available actor",
                 ))

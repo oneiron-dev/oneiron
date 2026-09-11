@@ -16,8 +16,8 @@ use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::{EdgeKind, validate_edge_weight};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::ClaimError;
+use crate::error::{Error, RegistryError, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
@@ -39,7 +39,7 @@ impl Vault {
     ///
     /// * no entity under `id` → [`Error::EntityNotFound`];
     /// * entity is not type 0 → [`Error::InvalidClaimBody`];
-    /// * any reserved predicate → [`Error::ProvenanceClaimLifecycle`]. Edge
+    /// * any reserved predicate → [`ClaimError::ProvenanceClaimLifecycle`](crate::error::ClaimError::ProvenanceClaimLifecycle). Edge
     ///   provenance drives derived hot flags and skill claims are owned by the
     ///   skill-hub doors; generic lifecycle operations never delegate either
     ///   class of reserved record.
@@ -58,9 +58,9 @@ impl Vault {
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         if is_reserved_predicate(&body.predicate) {
-            return Err(Error::ProvenanceClaimLifecycle {
+            return Err(Error::Claim(ClaimError::ProvenanceClaimLifecycle {
                 predicate: body.predicate,
-            });
+            }));
         }
         Ok((body, header))
     }
@@ -84,9 +84,9 @@ impl Vault {
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         if is_edge_reserved_predicate(&body.predicate) {
-            return Err(Error::ProvenanceClaimLifecycle {
+            return Err(Error::Claim(ClaimError::ProvenanceClaimLifecycle {
                 predicate: body.predicate,
-            });
+            }));
         }
         if !is_engine_owned_reserved_predicate(&body.predicate) {
             return Err(Error::InvalidClaimBody(
@@ -98,13 +98,13 @@ impl Vault {
 
     /// Gates a lifecycle transition on the claim still being open: any
     /// non-`active` `life` status is closed history and rejects with
-    /// [`Error::ClaimAlreadyClosed`] (ARCH-0003: superseded carries history,
+    /// [`ClaimError::ClaimAlreadyClosed`](crate::error::ClaimError::ClaimAlreadyClosed) (ARCH-0003: superseded carries history,
     /// retracted is a deliberate withdrawal — never edited again).
     pub(super) fn require_active_claim(body: &ClaimBody) -> Result<()> {
         if body.lifecycle != ClaimLifecycleStatus::Active {
-            return Err(Error::ClaimAlreadyClosed {
+            return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
                 status: body.lifecycle,
-            });
+            }));
         }
         Ok(())
     }
@@ -117,7 +117,7 @@ impl Vault {
     /// generation counter, ETag, or revision integer to compare, and this
     /// guard adds none. A target whose `life` has moved off `active` is a
     /// decision made against a replaced view, so it fails with
-    /// [`Error::WriteVerbTargetStale`] carrying the terminal head's public
+    /// [`ClaimError::WriteVerbTargetStale`](crate::error::ClaimError::WriteVerbTargetStale) carrying the terminal head's public
     /// `short_id:content_hash` ref (see
     /// `Self::successor_chain_head_short_ref_in`). The caller reads that ref
     /// and issues a NEW decision: the engine never retargets the verb, never
@@ -147,11 +147,11 @@ impl Vault {
         if body.lifecycle == ClaimLifecycleStatus::Active {
             return Ok((body, header));
         }
-        Err(Error::WriteVerbTargetStale {
+        Err(Error::Claim(ClaimError::WriteVerbTargetStale {
             target: *target,
             lifecycle: body.lifecycle,
             successor_short_id: self.successor_chain_head_short_ref_in(rtxn, target)?,
-        })
+        }))
     }
 
     /// [`Self::require_named_claim_target_active_in`] on its own read
@@ -368,13 +368,13 @@ impl Vault {
     /// "all non-current states are still stored — claims are never silently
     /// deleted" (ARCH-0003). Fail-closed, nothing written on any rejection:
     ///
-    /// * `new_id == old_id` → [`Error::ClaimSelfSupersession`];
+    /// * `new_id == old_id` → [`ClaimError::ClaimSelfSupersession`](crate::error::ClaimError::ClaimSelfSupersession);
     /// * either id missing → [`Error::EntityNotFound`]; either entity not
     ///   type 0 → [`Error::InvalidClaimBody`];
     /// * either claim carrying a reserved predicate →
-    ///   [`Error::ProvenanceClaimLifecycle`] (its crate-private owner door
+    ///   [`ClaimError::ProvenanceClaimLifecycle`](crate::error::ClaimError::ProvenanceClaimLifecycle) (its crate-private owner door
     ///   owns that lifecycle; see `Vault::claim_for_lifecycle_in`);
-    /// * either claim's `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]
+    /// * either claim's `life` ≠ `active` → [`ClaimError::ClaimAlreadyClosed`](crate::error::ClaimError::ClaimAlreadyClosed)
     ///   (closed claims neither supersede nor get superseded again).
     ///
     /// Deciding WHICH claims conflict (conflictSet), consent routing, and
@@ -404,7 +404,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         if new_id == old_id {
-            return Err(Error::ClaimSelfSupersession);
+            return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
 
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
@@ -466,7 +466,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         if new_id == old_id {
-            return Err(Error::ClaimSelfSupersession);
+            return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
 
         let (new_body, _new_header) = self.reserved_claim_for_lifecycle_in(&*wtxn, new_id)?;
@@ -655,9 +655,9 @@ impl Vault {
     ///
     /// Fail-closed, nothing written on any rejection: missing id →
     /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
-    /// any reserved predicate → [`Error::ProvenanceClaimLifecycle`]; an
+    /// any reserved predicate → [`ClaimError::ProvenanceClaimLifecycle`](crate::error::ClaimError::ProvenanceClaimLifecycle); an
     /// expression preference → [`Error::InvalidClaimBody`];
-    /// `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]. There is no public
+    /// `life` ≠ `active` → [`ClaimError::ClaimAlreadyClosed`](crate::error::ClaimError::ClaimAlreadyClosed). There is no public
     /// retract door for reserved predicates: skill-hub lifecycle is owned by
     /// a crate-private door, while edge provenance owns its retraction
     /// mechanics. `companion.expression.*` joins that family for the same

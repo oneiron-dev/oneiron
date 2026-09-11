@@ -9,6 +9,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::error::ClaimError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, parse_edge_record};
@@ -45,11 +46,11 @@ impl Vault {
             }
             None => closed_cohort_head_short_ref_in(self, txn, &claim.subject, target)?,
         };
-        Err(Error::WriteVerbTargetStale {
+        Err(Error::Claim(ClaimError::WriteVerbTargetStale {
             target: *target,
             lifecycle: claim.wrapper.lifecycle,
             successor_short_id: head,
-        })
+        }))
     }
 
     /// [`Self::require_named_provenance_target_active_in`] on its own read
@@ -63,7 +64,7 @@ impl Vault {
 
     /// Loads one `edge.provenance` Claim for a lifecycle operation, with the
     /// typed gate chain: missing → [`Error::EntityNotFound`]; not a type-0
-    /// Claim or wrong predicate → [`Error::NotAProvenanceClaim`]; malformed
+    /// Claim or wrong predicate → [`ClaimError::NotAProvenanceClaim`](crate::error::ClaimError::NotAProvenanceClaim); malformed
     /// stored body / record / persisted class → typed decode errors.
     pub(super) fn load_provenance_claim_in_txn(
         &self,
@@ -78,13 +79,15 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(Error::NotAProvenanceClaim("entity is not a type-0 CLAIM"));
+            return Err(Error::Claim(ClaimError::NotAProvenanceClaim(
+                "entity is not a type-0 CLAIM",
+            )));
         }
         let wrapper = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
-            return Err(Error::NotAProvenanceClaim(
+            return Err(Error::Claim(ClaimError::NotAProvenanceClaim(
                 "claim predicate is not edge.provenance",
-            ));
+            )));
         }
         let ClaimSubject::Edge {
             source,
@@ -92,9 +95,9 @@ impl Vault {
             target,
         } = wrapper.subject
         else {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "edge.provenance claim subject is not a 33-byte EdgeRef",
-            ));
+            )));
         };
         let record = decode_edge_provenance_body(&wrapper.value)?;
         let actor_class = resolve_persisted_actor_class(&record, wrapper.evidence.as_ref())?;

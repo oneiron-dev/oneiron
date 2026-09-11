@@ -1,6 +1,7 @@
 //! Shared fixtures, oracles and low-level read helpers for the vault tests.
 
 use super::*;
+use crate::error::ClaimError;
 
 /// Stamps `sensitivity: public` (band 0) on a claim body.
 ///
@@ -1418,7 +1419,7 @@ pub(super) fn lifecycle_fixture() -> Result<LifecycleFixture> {
 }
 
 /// Asserts one rejected plain-put attempt pinned the ONE-1113 contract: the
-/// typed [`Error::EdgeIsProvenanced`] variant carrying the subject kind
+/// typed [`ClaimError::EdgeIsProvenanced`](crate::error::ClaimError::EdgeIsProvenanced) variant carrying the subject kind
 /// byte, with a message that ROUTES the caller to the provenance path and
 /// the operational setters ("reject-and-route" — a bare reject without the
 /// route is half the ruling).
@@ -1428,7 +1429,7 @@ pub(super) fn assert_edge_is_provenanced_reject(
     context: &str,
 ) {
     match err {
-        Error::EdgeIsProvenanced { kind } => {
+        Error::Claim(ClaimError::EdgeIsProvenanced { kind }) => {
             assert_eq!(*kind, expected_kind as u8, "{context}: kind byte");
         }
         other => panic!("{context}: expected EdgeIsProvenanced, got {other:?}"),

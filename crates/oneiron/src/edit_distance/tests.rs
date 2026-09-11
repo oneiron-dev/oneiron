@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::config::VaultConfig;
+use crate::error::ClaimError;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 
@@ -63,7 +64,10 @@ fn registration_resolves_and_is_reserved_from_public_writes() {
     let err = vault
         .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
         .expect_err("public claim door must reject the reserved predicate");
-    assert!(matches!(err, Error::ReservedPredicate { .. }), "{err:?}");
+    assert!(
+        matches!(err, Error::Claim(ClaimError::ReservedPredicate { .. })),
+        "{err:?}"
+    );
 }
 
 /// Re-registration supersedes: exactly one row stays ACTIVE, and the OLD row

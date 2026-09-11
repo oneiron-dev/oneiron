@@ -1607,6 +1607,7 @@ use crate::authority::{
     federation_scope_digest, fold_authority_log_with_peer_consent_roots,
     sign_federation_pact_gesture,
 };
+use crate::error::ClaimError;
 use crate::error::RegistryError;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
@@ -2517,7 +2518,7 @@ fn coreference_write_doors_reject_unattributed_and_wrong_principal_actors() {
             coreference_time(),
             1,
         ),
-        Err(Error::ActorClassMismatch { .. })
+        Err(Error::Claim(ClaimError::ActorClassMismatch { .. }))
     ));
     assert!(
         !vault.edge_exists(&local, EdgeKind::SameAs, &other).unwrap(),
@@ -2560,7 +2561,7 @@ fn coreference_write_doors_reject_unattributed_and_wrong_principal_actors() {
             coreference_time(),
             1,
         ),
-        Err(Error::ActorClassMismatch { .. })
+        Err(Error::Claim(ClaimError::ActorClassMismatch { .. }))
     ));
     assert!(
         !coreference_shared_for_pact(&vault, local, other, &pact(0x63)).unwrap(),

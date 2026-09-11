@@ -3,7 +3,7 @@
 use crate::claim::{ClaimSubject, EDGE_REF_LEN as CLAIM_EDGE_REF_LEN};
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 
 /// The pinned predicate for edge-provenance Claims (contracts.ts
 /// `edgeProvenanceClaim.predicate`). Lives in the reserved `edge.*`
@@ -108,15 +108,17 @@ impl EdgeRef {
 
     /// Decodes a 33-byte EdgeRef, rejecting wrong lengths, unregistered kind
     /// bytes, and reserved entity-id byte patterns with
-    /// [`Error::InvalidProvenanceBody`].
+    /// [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody).
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != EDGE_REF_LEN {
-            return Err(Error::InvalidProvenanceBody("EdgeRef must be 33 bytes"));
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "EdgeRef must be 33 bytes",
+            )));
         }
         let source = entity_id_from(&bytes[..ENTITY_ID_LEN], "EdgeRef source id")?;
-        let kind = EdgeKind::try_from_u8(bytes[ENTITY_ID_LEN]).ok_or(
-            Error::InvalidProvenanceBody("EdgeRef kind byte is not a registered EdgeKind"),
-        )?;
+        let kind = EdgeKind::try_from_u8(bytes[ENTITY_ID_LEN]).ok_or(Error::Claim(
+            ClaimError::InvalidProvenanceBody("EdgeRef kind byte is not a registered EdgeKind"),
+        ))?;
         let target = entity_id_from(&bytes[ENTITY_ID_LEN + 1..], "EdgeRef target id")?;
         Ok(Self {
             source,
@@ -139,8 +141,8 @@ impl From<EdgeRef> for ClaimSubject {
 fn entity_id_from(bytes: &[u8], context: &'static str) -> Result<EntityId> {
     let arr: [u8; ENTITY_ID_LEN] = bytes
         .try_into()
-        .map_err(|_| Error::InvalidProvenanceBody(context))?;
-    EntityId::from_bytes(arr).map_err(|_| Error::InvalidProvenanceBody(context))
+        .map_err(|_| Error::Claim(ClaimError::InvalidProvenanceBody(context)))?;
+    EntityId::from_bytes(arr).map_err(|_| Error::Claim(ClaimError::InvalidProvenanceBody(context)))
 }
 
 /// Authoritative supersession status of an `edge.provenance` Claim

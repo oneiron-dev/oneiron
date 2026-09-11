@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 
 use super::codec_tests::{envelope, record, schedule, seed_entities, temp_vault, time};
+use crate::error::ClaimError;
 
 #[test]
 fn commitment_claim_structure_requires_entity_obligor_and_valid_time() -> Result<()> {
@@ -218,11 +219,11 @@ fn stale_fulfill_returns_write_verb_target_stale() -> Result<()> {
         .expect_err("stale fulfill");
     assert!(matches!(
         err,
-        Error::WriteVerbTargetStale {
+        Error::Claim(ClaimError::WriteVerbTargetStale {
             target,
             lifecycle: ClaimLifecycleStatus::Superseded,
             successor_short_id,
-        } if target == stale_id && successor_short_id == successor_ref
+        }) if target == stale_id && successor_short_id == successor_ref
     ));
     assert_eq!(vault.get_raw(&stale_id)?, old_raw);
     assert_eq!(vault.get_raw(&successor)?, successor_raw);
@@ -274,11 +275,11 @@ fn stale_release_returns_write_verb_target_stale() -> Result<()> {
         .expect_err("stale release");
     assert!(matches!(
         err,
-        Error::WriteVerbTargetStale {
+        Error::Claim(ClaimError::WriteVerbTargetStale {
             target,
             lifecycle: ClaimLifecycleStatus::Superseded,
             successor_short_id,
-        } if target == stale_id && successor_short_id == successor_ref
+        }) if target == stale_id && successor_short_id == successor_ref
     ));
     assert_eq!(vault.get_raw(&stale_id)?, old_raw);
     assert_eq!(vault.get_raw(&successor)?, successor_raw);
@@ -330,11 +331,11 @@ fn stale_supersede_returns_write_verb_target_stale() -> Result<()> {
         .expect_err("stale supersede");
     assert!(matches!(
         err,
-        Error::WriteVerbTargetStale {
+        Error::Claim(ClaimError::WriteVerbTargetStale {
             target,
             lifecycle: ClaimLifecycleStatus::Superseded,
             successor_short_id,
-        } if target == stale_id && successor_short_id == successor_ref
+        }) if target == stale_id && successor_short_id == successor_ref
     ));
     assert_eq!(vault.get_raw(&stale_id)?, old_raw);
     assert_eq!(vault.get_raw(&successor)?, successor_raw);

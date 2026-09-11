@@ -3,6 +3,7 @@ mod lifecycle;
 use super::*;
 use crate::WriteActor;
 use crate::claim::validate_claim_body_and_decode;
+use crate::error::ClaimError;
 use crate::test_util::entity;
 
 fn imported_claim() -> StoredProvenanceClaim {
@@ -106,7 +107,7 @@ fn imported_serialization_does_not_relax_ambiguous_actor_rejection() -> Result<(
         ambiguous.evidence = Some(evidence);
         assert!(matches!(
             validate_claim_body_and_decode(&encode_claim_body(&ambiguous)?, true),
-            Err(Error::InvalidProvenanceBody(_))
+            Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
         ));
     }
     let mut missing = claim.wrapper;
@@ -115,7 +116,7 @@ fn imported_serialization_does_not_relax_ambiguous_actor_rejection() -> Result<(
     missing.value = encode_edge_provenance_value(&record);
     assert!(matches!(
         validate_claim_body_and_decode(&encode_claim_body(&missing)?, true),
-        Err(Error::InvalidProvenanceBody(_))
+        Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
     ));
     Ok(())
 }
@@ -147,7 +148,7 @@ fn imported_scope_cannot_supply_or_override_canonical_actor() -> Result<()> {
     claim.wrapper.value = encode_edge_provenance_value(&claim.record);
     assert!(matches!(
         validate_claim_body_and_decode(&encode_claim_body(&claim.wrapper)?, true),
-        Err(Error::InvalidProvenanceBody(_))
+        Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
     ));
     Ok(())
 }

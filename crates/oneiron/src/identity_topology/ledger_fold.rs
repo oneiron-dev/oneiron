@@ -20,6 +20,7 @@ use super::store_entity_helpers::{
     identity_topology_events_for_store_in_txn, validate_identity_op_participants_for_store_in_txn,
 };
 use super::transition_table::{IdentityTopologyRejection, ProposalOutcome, evaluate_transition};
+use crate::error::ClaimError;
 
 /// One ledger action: apply an op, or undo a previously applied event.
 #[derive(Debug, Clone, PartialEq)]
@@ -211,7 +212,7 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
         let actor_complete =
             match identity_topology_actor_complete_for_store_in_txn(store, rtxn, &record) {
                 Ok(complete) => complete,
-                Err(Error::ActorClassMismatch { .. }) => false,
+                Err(Error::Claim(ClaimError::ActorClassMismatch { .. })) => false,
                 Err(err) => return Err(err),
             };
         if references_complete && actor_complete {
@@ -252,7 +253,7 @@ impl Vault {
                 Some(record) => {
                     match self.validate_replicated_identity_topology_actor_in_txn(rtxn, &record) {
                         Ok(complete) => complete,
-                        Err(Error::ActorClassMismatch { .. }) => false,
+                        Err(Error::Claim(ClaimError::ActorClassMismatch { .. })) => false,
                         Err(err) => return Err(err),
                     }
                 }

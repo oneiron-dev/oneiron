@@ -6,8 +6,8 @@ mod timestamp_guards;
 use super::*;
 use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, claim_demotion_rung};
 use crate::edge::EdgeKind;
-use crate::error::GateError;
-use crate::error::RegistryError;
+use crate::error::ClaimError;
+use crate::error::{GateError, RegistryError};
 use crate::gate::gate_metric_emission_count_for_test;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG};
 
@@ -268,10 +268,10 @@ fn failed_actor_retraction_emits_no_metrics(retype: bool) -> Result<()> {
     if retype {
         assert!(matches!(
             error,
-            Error::ActorClassMismatch {
+            Error::Claim(ClaimError::ActorClassMismatch {
                 actor_entity_type: ENTITY_TYPE_ORG,
                 actor_class: 0,
-            }
+            })
         ));
     } else {
         assert!(matches!(error, Error::EntityNotFound));

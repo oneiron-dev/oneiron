@@ -2934,7 +2934,10 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
         .put_claim(&one1891::fixture_id(0xe2), &body, one1891::at(200), 200)
         .expect_err("actor.* is reserved");
     assert!(
-        matches!(&error, oneiron::Error::ReservedPredicate { .. }),
+        matches!(
+            &error,
+            oneiron::Error::Claim(oneiron::error::ClaimError::ReservedPredicate { .. })
+        ),
         "expected a reserved-predicate refusal, got {error}"
     );
 }

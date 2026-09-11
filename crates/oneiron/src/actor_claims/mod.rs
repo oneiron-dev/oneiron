@@ -40,7 +40,7 @@
 //! AND connectors; the ledger is about whoever acted. `actor.*` joins `edge.*`
 //! and `skill.*` as an engine-reserved namespace: these are STATES with
 //! meaning-by-projection (doc-13 r1/r3), so a public `put_claim` of one is
-//! rejected with [`Error::ReservedPredicate`] and every write goes through an
+//! rejected with [`ClaimError::ReservedPredicate`](crate::error::ClaimError::ReservedPredicate) and every write goes through an
 //! engine door. That reservation also closes the hole
 //! [`crate::provider_confidence`] documented on its own `actor.confidence_prior`
 //! head — a policy-authorized generic write could plant a trust-bearing prior

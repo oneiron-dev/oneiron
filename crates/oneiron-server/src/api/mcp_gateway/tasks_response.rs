@@ -7,9 +7,7 @@ use super::{
 };
 use crate::api::parse_entity_id_param;
 use crate::api::unix_seconds_now;
-use crate::error::ApiError;
-use crate::error::ApiErrorDetails;
-use crate::error::ErrorCode;
+use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
 use crate::mcp::McpActorClass;
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpPageSnapshot;
@@ -361,9 +359,10 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
     // ONE-1936: a stale write-verb target gets its own stable kind, not the
     // generic engine_error bucket, and carries the current head as data. The
     // caller re-gets that ref and decides again; nothing was written.
-    if let oneiron::Error::WriteVerbTargetStale {
-        successor_short_id, ..
-    } = &error
+    if let oneiron::Error::Claim(oneiron::error::ClaimError::WriteVerbTargetStale {
+        successor_short_id,
+        ..
+    }) = &error
     {
         return McpGatewayError::new(-32020, "write_verb_target_stale", error.to_string())
             .with_successor_short_id(successor_short_id.clone());

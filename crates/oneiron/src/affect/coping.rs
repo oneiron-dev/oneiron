@@ -12,6 +12,7 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimLifecycleStatus, ClaimSource, claim_consolidatable, encode_claim_body};
 use crate::edge::EdgeKind;
+use crate::error::ClaimError;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
@@ -481,9 +482,9 @@ impl Vault {
             return Err(Error::InvalidClaimBody("claim is not a coping.outcome"));
         }
         if prior_body.lifecycle != ClaimLifecycleStatus::Active {
-            return Err(Error::ClaimAlreadyClosed {
+            return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
                 status: prior_body.lifecycle,
-            });
+            }));
         }
         if !claim_consolidatable(&prior_body) {
             return Err(Error::InvalidClaimBody("claim is not consolidatable"));

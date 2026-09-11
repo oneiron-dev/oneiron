@@ -31,6 +31,7 @@ use super::support::{now_secs, utf8_trimmed};
 use super::trailer::commit_message_with_provenance_trailer;
 use super::types::{RepoConflictClaim, RepoConflictResolutionClaim};
 use super::worktree::apply_prepared_commit_file;
+use crate::error::ClaimError;
 
 impl Vault {
     /// Lists active typed repo conflict claims attached to a branch subject.
@@ -268,9 +269,9 @@ pub(super) fn finish_repo_conflict_resolution(
         ));
     }
     if open.lifecycle != ClaimLifecycleStatus::Active {
-        return Err(Error::ClaimAlreadyClosed {
+        return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
             status: open.lifecycle,
-        });
+        }));
     }
     let open = require_active_repo_conflict_claim(
         vault,
@@ -434,7 +435,7 @@ fn supersede_repo_conflict_claim(
     now: u64,
 ) -> Result<()> {
     if new_id == old_id {
-        return Err(Error::ClaimSelfSupersession);
+        return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
     }
     let mut wtxn = vault.store.env.write_txn()?;
     let new_raw = vault
@@ -473,9 +474,9 @@ fn supersede_repo_conflict_claim(
         ));
     }
     if old_body.lifecycle != ClaimLifecycleStatus::Active {
-        return Err(Error::ClaimAlreadyClosed {
+        return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
             status: old_body.lifecycle,
-        });
+        }));
     }
     old_body.lifecycle = ClaimLifecycleStatus::Superseded;
     old_body.valid_to = Some(now);
