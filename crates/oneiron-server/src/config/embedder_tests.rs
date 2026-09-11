@@ -126,11 +126,10 @@ fn bf16_weights_on_a_cpu_device_are_refused() {
 /// refused here rather than in the middle of a forward pass.
 #[test]
 fn an_input_cap_above_the_models_context_window_is_refused_with_both_numbers() {
-    let error = resolve(
-        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmax_input_tokens = 40000\n",
-    )
-    .expect_err("a cap above the context window is refused")
-    .to_string();
+    let error =
+        resolve("dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmax_input_tokens = 40000\n")
+            .expect_err("a cap above the context window is refused")
+            .to_string();
     assert!(error.contains("40000"), "{error}");
     assert!(error.contains("32768"), "{error}");
     resolve("dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmax_input_tokens = 32768\n")

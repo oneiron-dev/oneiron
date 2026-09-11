@@ -438,12 +438,8 @@ fn a_models_root_with_nowhere_to_write_is_refused_by_name() {
         assert!(message.contains(named), "{named} is not named: {message}");
     }
     assert!(
-        model_manager::resolve_models_root(
-            Some(std::path::Path::new("/models")),
-            None,
-            None,
-        )
-        .is_ok(),
+        model_manager::resolve_models_root(Some(std::path::Path::new("/models")), None, None)
+            .is_ok(),
         "a configured root needs no environment at all"
     );
 }
@@ -804,8 +800,8 @@ mod with_model {
     #[test]
     #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
     fn the_committed_subset_matches_the_reference_runtime() {
-        let embedder =
-            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager()).expect("model loads");
+        let embedder = LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager())
+            .expect("model loads");
         let chunks = reference_chunks();
         let reference = reference_vectors();
         assert_eq!(chunks.len(), reference.len());
@@ -827,8 +823,8 @@ mod with_model {
     #[test]
     #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
     fn a_batched_input_embeds_exactly_as_it_does_alone() {
-        let embedder =
-            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager()).expect("model loads");
+        let embedder = LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager())
+            .expect("model loads");
         let texts: Vec<String> = reference_chunks().into_iter().take(8).collect();
         let batched = embedder.embed_texts(&texts).expect("batched");
         for (index, text) in texts.iter().enumerate() {
@@ -924,8 +920,8 @@ mod with_model {
             .collect();
 
         let load_started = std::time::Instant::now();
-        let embedder =
-            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager()).expect("model loads");
+        let embedder = LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager())
+            .expect("model loads");
         let load_ms = load_started.elapsed().as_millis();
 
         let embed_started = std::time::Instant::now();
