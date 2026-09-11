@@ -17,6 +17,7 @@ use crate::codebase::RepoRef;
 use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::error::CodeError;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire};
 use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
@@ -168,9 +169,9 @@ pub(super) fn receive_pack_field<'a>(body: &'a ClaimBody, key: &str) -> Result<&
 }
 
 pub(super) fn receive_pack_provenance_refused(reason: &str) -> Error {
-    Error::ReceivePackLandingRefused {
+    Error::Code(CodeError::ReceivePackLandingRefused {
         reason: format!("receive-pack provenance: {reason}"),
-    }
+    })
 }
 
 fn receive_pack_updates_value(updates: &[RefUpdate]) -> Value {

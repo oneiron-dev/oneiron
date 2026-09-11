@@ -9,6 +9,7 @@ use crate::{Error, Result};
 
 use super::backend::backend_error;
 use super::handle::MicroVmHandle;
+use crate::error::CodeError;
 
 /// Guest ABI key naming the scheme of an egress destination.
 pub const SANDBOX_EGRESS_ABI_KEY_SCHEME: &str = "scheme";
@@ -248,8 +249,8 @@ impl CredentialEgressProxy {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmBackendError`] when the proxy is not armed,
-    /// [`Error::MicroVmCredentialDestinationDenied`] when the handle is not
+    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when the proxy is not armed,
+    /// [`CodeError::MicroVmCredentialDestinationDenied`](crate::error::CodeError::MicroVmCredentialDestinationDenied) when the handle is not
     /// bound to the destination, or the resolver's own refusal.
     pub fn inject(
         &self,
@@ -264,11 +265,11 @@ impl CredentialEgressProxy {
             ));
         }
         if !self.allowlist.permits(credential, destination) {
-            return Err(Error::MicroVmCredentialDestinationDenied {
+            return Err(Error::Code(CodeError::MicroVmCredentialDestinationDenied {
                 credential: credential.as_str().to_owned(),
                 scheme: destination.scheme().to_owned(),
                 host: destination.host_suffix().to_owned(),
-            });
+            }));
         }
 
         let mut material = self.resolver.resolve_for(credential, destination)?;

@@ -89,19 +89,19 @@ pub fn transfer_code_memory_anchor(
     transfer: &AnchorTransfer,
 ) -> Result<AnchorTransferReceipt> {
     if transfer.from_symbol_id == transfer.to_symbol_id {
-        return Err(Error::CodeMemoryInvalidAnchorTransfer {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchorTransfer {
             from: transfer.from_symbol_id,
             to: transfer.to_symbol_id,
             reason: "transfer endpoints must be distinct symbols",
-        });
+        }));
     }
     for symbol in [&transfer.from_symbol_id, &transfer.to_symbol_id] {
         if entity_type_in_txn(store, txn, symbol)? != Some(ENTITY_TYPE_CODE_SYMBOL) {
-            return Err(Error::CodeMemoryInvalidAnchorTransfer {
+            return Err(Error::Code(CodeError::CodeMemoryInvalidAnchorTransfer {
                 from: transfer.from_symbol_id,
                 to: transfer.to_symbol_id,
                 reason: "both transfer endpoints must be live CODE_SYMBOL entities",
-            });
+            }));
         }
     }
     transfer.from_locator.validate()?;
@@ -118,11 +118,11 @@ pub fn transfer_code_memory_anchor(
     // value), so it must be transferable too. The refusal is reserved for a
     // source that carries NOTHING on either family.
     if moved_attachments == 0 && source_contracts.is_empty() {
-        return Err(Error::CodeMemoryInvalidAnchorTransfer {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchorTransfer {
             from: transfer.from_symbol_id,
             to: transfer.to_symbol_id,
             reason: "source symbol carries no slot value or always-on contract to transfer",
-        });
+        }));
     }
 
     // Step 4 — plan every destination write, enforcing both bounds before a
@@ -224,10 +224,10 @@ fn plan_transferred_contracts(
             continue;
         }
         if keys.len() > CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
-            return Err(Error::CodeMemoryLimitExceeded {
+            return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
                 kind: "always-on contracts per symbol",
                 limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS,
-            });
+            }));
         }
         planned.push(moved);
     }
@@ -287,23 +287,24 @@ fn authorize_blocks_write(
     txn: &RoTxn<'_>,
     context: BlocksWriteContext<'_>,
 ) -> Result<()> {
-    let actor_type = entity_type_in_txn(store, txn, &context.actor.entity_ref())?.ok_or(
-        Error::CodeMemoryBlocksActorDenied("write actor entity does not resolve"),
-    )?;
+    let actor_type =
+        entity_type_in_txn(store, txn, &context.actor.entity_ref())?.ok_or(Error::Code(
+            CodeError::CodeMemoryBlocksActorDenied("write actor entity does not resolve"),
+        ))?;
     validate_actor_class(actor_type, context.actor.actor_class()).map_err(|_| {
-        Error::CodeMemoryBlocksActorDenied(
+        Error::Code(CodeError::CodeMemoryBlocksActorDenied(
             "asserted actor class is not bound to the actor entity type",
-        )
+        ))
     })?;
     if context.actor.actor_class() == EdgeActorClass::System {
-        return Err(Error::CodeMemoryBlocksActorDenied(
+        return Err(Error::Code(CodeError::CodeMemoryBlocksActorDenied(
             "readiness dependencies are a Human/Agent judgement",
-        ));
+        )));
     }
     if context.source.requires_explicit_auto_permit() {
-        return Err(Error::CodeMemoryBlocksSourceUntrusted {
+        return Err(Error::Code(CodeError::CodeMemoryBlocksSourceUntrusted {
             source_kind: context.source.as_str(),
-        });
+        }));
     }
     Ok(())
 }
@@ -370,17 +371,17 @@ pub(crate) fn insert_blocks_edge(
 ) -> Result<()> {
     authorize_blocks_write(&vault.store, txn, context)?;
     if from == to {
-        return Err(Error::CodeMemoryBlocksCycle { from, to });
+        return Err(Error::Code(CodeError::CodeMemoryBlocksCycle { from, to }));
     }
     for endpoint in [&from, &to] {
         if entity_type_in_txn(&vault.store, txn, endpoint)? != Some(ENTITY_TYPE_CODE_SYMBOL) {
-            return Err(Error::CodeMemoryInvalidAnchor {
+            return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
                 reason: "readiness edge endpoints must be live CODE_SYMBOL entities",
-            });
+            }));
         }
     }
     if blocks_path_exists(vault, txn, to, from)? {
-        return Err(Error::CodeMemoryBlocksCycle { from, to });
+        return Err(Error::Code(CodeError::CodeMemoryBlocksCycle { from, to }));
     }
 
     let weight = EdgeKind::Blocks

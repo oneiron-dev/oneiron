@@ -14,6 +14,7 @@ use rmpv::Value;
 use super::git::{git_output_optional, run_git, validate_commit_message, validate_git_object_hash};
 use super::support::utf8_trimmed;
 use super::types::{RepoCommitProvenance, RepoMutationOperation, RepoMutationRequest};
+use crate::error::CodeError;
 
 pub const REPO_PROVENANCE_TRAILER_KEY: &str = "Oneiron-Claim";
 pub const REPO_PROVENANCE_NOTES_REF: &str = "refs/notes/oneiron-provenance";
@@ -47,9 +48,9 @@ pub(super) fn validate_repo_provenance_request(
         | RepoMutationOperation::ResolveConflictFile { .. } => {
             require_repo_provenance_claim(vault, &claim_id)
         }
-        _ => Err(Error::InvalidRepoMutationRecord(
+        _ => Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "provenance claim id only applies to commit-producing repo mutations",
-        )),
+        ))),
     }
 }
 
@@ -57,9 +58,9 @@ fn require_repo_provenance_claim(vault: &Vault, claim_id: &EntityId) -> Result<(
     let raw = vault.get_raw(claim_id)?.ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CLAIM {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "provenance claim id must reference a CLAIM entity",
-        ));
+        )));
     }
     let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     validate_repo_provenance_claim_body(&body)?;
@@ -68,14 +69,14 @@ fn require_repo_provenance_claim(vault: &Vault, claim_id: &EntityId) -> Result<(
 
 fn validate_repo_provenance_claim_body(body: &ClaimBody) -> Result<()> {
     if body.predicate != REPO_PROVENANCE_PREDICATE {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo provenance claim must use the repo.provenance predicate",
-        ));
+        )));
     }
     if body.lifecycle != ClaimLifecycleStatus::Active {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo provenance claim must be active",
-        ));
+        )));
     }
     let entries = msgpack_map_entries(
         &body.value,
@@ -90,9 +91,9 @@ fn validate_repo_provenance_claim_body(body: &ClaimBody) -> Result<()> {
     }
     let receipt = require_msgpack_map(entries, "diff_lineage_receipt")?;
     if receipt.is_empty() {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo provenance diff_lineage_receipt must be a non-empty map",
-        ));
+        )));
     }
     Ok(())
 }
@@ -103,7 +104,7 @@ fn msgpack_map_entries<'a>(
 ) -> Result<&'a [(Value, Value)]> {
     match value {
         Value::Map(entries) => Ok(entries),
-        _ => Err(Error::InvalidRepoMutationRecord(context)),
+        _ => Err(Error::Code(CodeError::InvalidRepoMutationRecord(context))),
     }
 }
 
@@ -118,14 +119,14 @@ fn require_msgpack_map<'a>(
 fn require_nonblank_msgpack_string(entries: &[(Value, Value)], key: &str) -> Result<()> {
     let value = require_unique_msgpack_key(entries, key)?;
     let Some(value) = value.as_str() else {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo provenance field must be a string",
-        ));
+        )));
     };
     if value.trim().is_empty() {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo provenance field must be non-empty",
-        ));
+        )));
     }
     Ok(())
 }
@@ -134,14 +135,14 @@ fn require_unique_msgpack_key<'a>(entries: &'a [(Value, Value)], key: &str) -> R
     let mut found = None;
     for (candidate, value) in entries {
         if candidate.as_str() == Some(key) && found.replace(value).is_some() {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo provenance claim value must not duplicate required keys",
-            ));
+            )));
         }
     }
-    found.ok_or(Error::InvalidRepoMutationRecord(
+    found.ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
         "repo provenance claim value is missing a required key",
-    ))
+    )))
 }
 
 fn final_trailer_block(message: &str) -> Option<Vec<&str>> {
@@ -190,19 +191,19 @@ pub fn parse_repo_provenance_trailer(message: &str) -> Result<Option<EntityId>> 
         };
         let claim_id = raw_claim_id.trim();
         if claim_id.is_empty() || claim_id.bytes().any(|byte| byte.is_ascii_whitespace()) {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo provenance trailer claim id must be one token",
-            ));
+            )));
         }
         let claim_id = EntityId::from_hex(claim_id).map_err(|_| {
-            Error::InvalidRepoMutationRecord(
+            Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo provenance trailer claim id must be a 32-hex entity id",
-            )
+            ))
         })?;
         if found.replace(claim_id).is_some() {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "commit message must not contain multiple repo provenance trailers",
-            ));
+            )));
         }
     }
     Ok(found)
@@ -261,9 +262,9 @@ pub fn repo_commit_for_provenance_claim(
             continue;
         };
         if found.replace(commit_sha).is_some() {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo provenance claim id maps to multiple commits",
-            ));
+            )));
         }
     }
     Ok(found)
@@ -284,12 +285,16 @@ fn repo_commit_for_provenance_claim_record(
         .iter()
         .position(|byte| *byte == REPO_PROVENANCE_GIT_LOG_FIELD_SEPARATOR)
     else {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "git log provenance record missing commit separator",
-        ));
+        )));
     };
     let commit_sha = std::str::from_utf8(&record[..separator])
-        .map_err(|_| Error::InvalidRepoMutationRecord("git log commit sha must be UTF-8"))?
+        .map_err(|_| {
+            Error::Code(CodeError::InvalidRepoMutationRecord(
+                "git log commit sha must be UTF-8",
+            ))
+        })?
         .trim();
     validate_git_object_hash(commit_sha, "git log commit sha must be a 40-hex commit")?;
     let message = String::from_utf8_lossy(&record[separator + 1..]);
@@ -344,8 +349,11 @@ pub fn repo_provenance_git_note(repo_root: &Path, commit_sha: &str) -> Result<Op
     else {
         return Ok(None);
     };
-    let note = String::from_utf8(note)
-        .map_err(|_| Error::InvalidRepoMutationRecord("git notes payload must be UTF-8"))?;
+    let note = String::from_utf8(note).map_err(|_| {
+        Error::Code(CodeError::InvalidRepoMutationRecord(
+            "git notes payload must be UTF-8",
+        ))
+    })?;
     Ok(Some(note.trim_end_matches(['\r', '\n']).to_owned()))
 }
 
@@ -357,24 +365,29 @@ pub fn repo_commit_provenance_from_git_note(
     let Some(note) = repo_provenance_git_note(repo_root, &commit_sha)? else {
         return Ok(None);
     };
-    let payload: RepoProvenanceGitNotePayload = serde_json::from_str(&note)
-        .map_err(|_| Error::InvalidRepoMutationRecord("git notes provenance payload invalid"))?;
+    let payload: RepoProvenanceGitNotePayload = serde_json::from_str(&note).map_err(|_| {
+        Error::Code(CodeError::InvalidRepoMutationRecord(
+            "git notes provenance payload invalid",
+        ))
+    })?;
     if payload.trailer != REPO_PROVENANCE_TRAILER_KEY {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "git notes provenance trailer key mismatch",
-        ));
+        )));
     }
     validate_git_object_hash(
         &payload.commit,
         "git notes provenance commit must be a 40-hex commit",
     )?;
     if payload.commit.to_ascii_lowercase() != commit_sha {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "git notes provenance commit mismatch",
-        ));
+        )));
     }
     let claim_id = EntityId::from_hex(&payload.claim_id).map_err(|_| {
-        Error::InvalidRepoMutationRecord("git notes provenance claim id must be 32-hex")
+        Error::Code(CodeError::InvalidRepoMutationRecord(
+            "git notes provenance claim id must be 32-hex",
+        ))
     })?;
     Ok(Some(RepoCommitProvenance {
         commit_sha,
@@ -391,9 +404,9 @@ pub(super) fn commit_message_with_provenance_trailer(
         return Ok(message.to_owned());
     };
     if parse_repo_provenance_trailer(message)?.is_some() {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "commit message must not predefine the repo provenance trailer",
-        ));
+        )));
     }
     let message = message.trim_end_matches(['\r', '\n']);
     let separator = if has_final_trailer_block(message) {

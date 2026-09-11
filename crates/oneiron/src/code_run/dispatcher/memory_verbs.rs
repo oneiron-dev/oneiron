@@ -14,7 +14,7 @@ use crate::{ClaimSubject, EdgeKind};
 
 use super::HostSelfDispatcher;
 use super::envelope::edge_operation_gate_id;
-use crate::error::OffRecordError;
+use crate::error::{CodeError, OffRecordError};
 
 /// Maximum results a first-party `self.memory.search` call can request.
 pub const SELF_MEMORY_SEARCH_MAX_RESULTS: usize = 16;
@@ -175,7 +175,7 @@ impl HostSelfDispatcher<'_> {
             admission.as_ref().map(|admission| admission.lane),
             Some(consent::ConsentLane::Review)
         ) {
-            return Err(Error::CodeReviewUnsupportedOperation);
+            return Err(Error::Code(CodeError::CodeReviewUnsupportedOperation));
         }
         let envelope = self.write_envelope(SelfEffect::MemorySupersedeClaim, admission.as_ref())?;
         let claim_gate_body = self.operation_gate_body(
@@ -246,7 +246,7 @@ impl HostSelfDispatcher<'_> {
             admission.as_ref().map(|admission| admission.lane),
             Some(consent::ConsentLane::Review)
         ) {
-            return Err(Error::CodeReviewUnsupportedOperation);
+            return Err(Error::Code(CodeError::CodeReviewUnsupportedOperation));
         }
         let envelope = self.write_envelope(SelfEffect::MemoryPutEdge, admission.as_ref())?;
         let gate_body = self.operation_gate_body(

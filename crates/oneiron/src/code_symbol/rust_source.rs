@@ -15,6 +15,7 @@ use super::types::{
     CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
 };
 use super::validate::{compare_chunks, validate_manifest_path, validate_text};
+use crate::error::CodeError;
 
 pub(super) const TREE_SITTER_RUST_SOURCE_KIND: &str = "rust";
 
@@ -28,9 +29,11 @@ pub fn derive_code_symbol_graph_from_sources<'a>(
 
     let mut parser = tree_sitter::Parser::new();
     let language = tree_sitter_rust::LANGUAGE.into();
-    parser
-        .set_language(&language)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("tree-sitter Rust language rejected"))?;
+    parser.set_language(&language).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "tree-sitter Rust language rejected",
+        ))
+    })?;
 
     let mut chunks = Vec::new();
     let mut extracted = Vec::<ExtractedCodeSymbol>::new();
@@ -41,11 +44,9 @@ pub fn derive_code_symbol_graph_from_sources<'a>(
         if !is_tree_sitter_rust_source(source.path) {
             continue;
         }
-        let tree = parser
-            .parse(source.text, None)
-            .ok_or(Error::InvalidCodeSymbolManifestBody(
-                "tree-sitter Rust parse failed",
-            ))?;
+        let tree = parser.parse(source.text, None).ok_or(Error::Code(
+            CodeError::InvalidCodeSymbolManifestBody("tree-sitter Rust parse failed"),
+        ))?;
         let mut source_symbol_indexes = Vec::new();
         collect_rust_definitions(
             tree.root_node(),
@@ -63,9 +64,9 @@ pub fn derive_code_symbol_graph_from_sources<'a>(
     }
 
     if extracted.len() > CODE_SYMBOL_MANIFEST_MAX_SYMBOLS {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "tree-sitter symbol extraction exceeded manifest symbol cap",
-        ));
+        )));
     }
 
     let mut symbols_by_name = HashMap::<String, Vec<usize>>::new();
@@ -172,14 +173,16 @@ pub(super) fn is_tree_sitter_rust_source(path: &str) -> bool {
 fn parse_rust_source(source: &str) -> Result<tree_sitter::Tree> {
     let mut parser = tree_sitter::Parser::new();
     let language = tree_sitter_rust::LANGUAGE.into();
-    parser
-        .set_language(&language)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("tree-sitter Rust language rejected"))?;
+    parser.set_language(&language).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "tree-sitter Rust language rejected",
+        ))
+    })?;
     parser
         .parse(source, None)
-        .ok_or(Error::InvalidCodeSymbolManifestBody(
+        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "tree-sitter Rust parse failed",
-        ))
+        )))
 }
 
 pub(super) fn derive_rust_code_chunks_from_text_diff(
@@ -336,7 +339,9 @@ fn collect_rust_definitions(
         let definition = rust_definition_chunk(path, source, node)?;
         let chunk = definition.chunk;
         let chunk_index = u32::try_from(chunks.len()).map_err(|_| {
-            Error::InvalidCodeSymbolManifestBody("tree-sitter chunk index exceeds u32")
+            Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                "tree-sitter chunk index exceeds u32",
+            ))
         })?;
         let fingerprint =
             derive_symbol_fingerprint(path, &name, kind, std::slice::from_ref(&chunk))?;
@@ -420,19 +425,19 @@ fn rust_definition_chunk<'a>(
     node: tree_sitter::Node<'_>,
 ) -> Result<RustDefinitionChunk<'a>> {
     let start_byte = rust_doc_context_start_byte(node, source);
-    let text =
-        source
-            .get(start_byte..node.end_byte())
-            .ok_or(Error::InvalidCodeSymbolManifestBody(
-                "tree-sitter definition byte range is invalid",
-            ))?;
+    let text = source.get(start_byte..node.end_byte()).ok_or(Error::Code(
+        CodeError::InvalidCodeSymbolManifestBody("tree-sitter definition byte range is invalid"),
+    ))?;
     let start_line = source[..start_byte]
         .bytes()
         .filter(|byte| *byte == b'\n')
         .count()
         + 1;
-    let start_line = u32::try_from(start_line)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("line number exceeds u32"))?;
+    let start_line = u32::try_from(start_line).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "line number exceeds u32",
+        ))
+    })?;
     let end_line = tree_sitter_line_number(node.end_position().row)?;
     Ok(RustDefinitionChunk {
         chunk: CodeChunk::from_text(path, start_line, end_line, text)?,
@@ -492,8 +497,12 @@ fn rust_definition_line_range(source: &str, node: tree_sitter::Node<'_>) -> Resu
         .bytes()
         .filter(|byte| *byte == b'\n')
         .count();
-    let end_line = usize::try_from(tree_sitter_line_number(node.end_position().row)?)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("line number exceeds usize"))?;
+    let end_line =
+        usize::try_from(tree_sitter_line_number(node.end_position().row)?).map_err(|_| {
+            Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                "line number exceeds usize",
+            ))
+        })?;
     Ok(start_line..end_line)
 }
 
@@ -567,13 +576,16 @@ fn collect_identifier_refs_in_range(
         return Ok(());
     }
     if node.child_count() == 0 && is_reference_identifier_kind(node.kind()) {
-        let bytes = source
-            .get(range)
-            .ok_or(Error::InvalidCodeSymbolManifestBody(
-                "tree-sitter identifier byte range is invalid",
-            ))?;
+        let bytes =
+            source
+                .get(range)
+                .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                    "tree-sitter identifier byte range is invalid",
+                )))?;
         let text = std::str::from_utf8(bytes).map_err(|_| {
-            Error::InvalidCodeSymbolManifestBody("tree-sitter identifier is not UTF-8")
+            Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                "tree-sitter identifier is not UTF-8",
+            ))
         })?;
         if !text.is_empty() {
             refs.push(text.to_owned());
@@ -634,14 +646,17 @@ fn add_same_file_contiguity_edges(
 }
 
 fn tree_sitter_line_number(row: usize) -> Result<u32> {
-    u32::try_from(row + 1)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("tree-sitter row exceeds u32"))
+    u32::try_from(row + 1).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "tree-sitter row exceeds u32",
+        ))
+    })
 }
 
 fn node_text<'a>(node: tree_sitter::Node<'_>, source: &'a str) -> Result<&'a str> {
     source
         .get(node.byte_range())
-        .ok_or(Error::InvalidCodeSymbolManifestBody(
+        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "tree-sitter node byte range is invalid",
-        ))
+        )))
 }

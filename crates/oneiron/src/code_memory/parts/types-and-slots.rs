@@ -12,7 +12,7 @@ use crate::claim::{ClaimSource, ScopedRead};
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CodebaseForkHash};
 use crate::edge::{EdgeActorClass, EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::ppr::{self, PprNodeVisibility, SeedWeighting, ppr_query_scoped_in_txn};
 use crate::provenance::validate_actor_class;
@@ -146,9 +146,9 @@ impl CodeMemoryRevision {
                         .bytes()
                         .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
                 {
-                    return Err(Error::CodeMemoryInvalidAnchor {
+                    return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
                         reason: "locator commit must be non-empty lowercase hexadecimal",
-                    });
+                    }));
                 }
                 Ok(())
             }
@@ -350,10 +350,10 @@ impl CodeMemorySlot {
             }
             None => {
                 if self.values.len() >= CODE_MEMORY_MAX_VALUES_PER_SLOT {
-                    return Err(Error::CodeMemoryLimitExceeded {
+                    return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
                         kind: "slot values",
                         limit: CODE_MEMORY_MAX_VALUES_PER_SLOT,
-                    });
+                    }));
                 }
                 self.values.push(value);
                 SlotInsertOutcome::Inserted
@@ -372,9 +372,9 @@ impl CodeMemorySlot {
     /// There is no overwrite branch and no last-write-wins fallback.
     pub fn merge_union(&self, other: &Self) -> Result<Self> {
         if self.name != other.name {
-            return Err(Error::CodeMemoryInvalidAnchor {
+            return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
                 reason: "slot union requires the same slot name on both sides",
-            });
+            }));
         }
 
         let mut survivors: BTreeMap<ActorScopedContentKey, CodeMemorySlotValue> = BTreeMap::new();
@@ -393,10 +393,10 @@ impl CodeMemorySlot {
         }
 
         if survivors.len() > CODE_MEMORY_MAX_VALUES_PER_SLOT {
-            return Err(Error::CodeMemoryLimitExceeded {
+            return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
                 kind: "slot values",
                 limit: CODE_MEMORY_MAX_VALUES_PER_SLOT,
-            });
+            }));
         }
 
         let mut merged = Self {
@@ -482,4 +482,3 @@ pub fn attach_code_memory(
     )?;
     Ok(outcome)
 }
-

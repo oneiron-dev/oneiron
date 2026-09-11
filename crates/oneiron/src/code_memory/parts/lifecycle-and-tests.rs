@@ -157,6 +157,7 @@ mod tests {
 
     use super::*;
     use crate::config::VaultConfig;
+    use crate::error::CodeError;
     use crate::registry::ENTITY_TYPE_PERSON;
     use crate::store::GRAPH_VERSION_KEY;
 
@@ -395,10 +396,10 @@ mod tests {
             .expect_err("the 257th distinct value must be refused");
         assert!(matches!(
             error,
-            Error::CodeMemoryLimitExceeded {
+            Error::Code(CodeError::CodeMemoryLimitExceeded {
                 kind: "slot values",
                 limit: CODE_MEMORY_MAX_VALUES_PER_SLOT
-            }
+            })
         ));
         assert_eq!(encode_slot(&slot), before);
     }

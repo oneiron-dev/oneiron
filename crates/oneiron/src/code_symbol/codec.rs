@@ -17,6 +17,7 @@ use super::validate::{
     normalize_commit_hash, validate_chunk, validate_code_symbol_manifest, validate_manifest_path,
     validate_symbol_shape, validate_text,
 };
+use crate::error::CodeError;
 
 pub const CODE_SYMBOL_MANIFEST_BODY_KEYS: [&str; 4] =
     ["repo_ref", "commit_hash", "chunks", "symbols"];
@@ -162,21 +163,24 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
 
 pub fn decode_code_symbol_manifest(bytes: &[u8]) -> Result<CodeSymbolManifest> {
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("manifest is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "manifest is not valid MessagePack",
+        ))
+    })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "trailing bytes after manifest map",
-        ));
+        )));
     }
     decode_code_symbol_manifest_value(&value)
 }
 
 pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSymbolManifest> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "manifest must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut repo_ref: Option<RepoRef> = None;
@@ -191,40 +195,45 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "manifest key is not in the pinned CODE_SYMBOL_MANIFEST_BODY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "duplicate manifest key",
-            ));
+            )));
         }
         seen[index] = true;
         match CODE_SYMBOL_MANIFEST_BODY_KEYS[index] {
             KEY_REPO_REF => {
-                let text = value.as_str().ok_or(Error::InvalidCodeSymbolManifestBody(
-                    "repo_ref must be a UTF-8 string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                            "repo_ref must be a UTF-8 string",
+                        )))?;
                 repo_ref = Some(RepoRef::parse(text).map_err(|_| {
-                    Error::InvalidCodeSymbolManifestBody("repo_ref must be a valid v1 repo_ref")
+                    Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                        "repo_ref must be a valid v1 repo_ref",
+                    ))
                 })?);
             }
             KEY_COMMIT_HASH => {
                 commit_hash = Some(match value {
                     Value::Nil => None,
                     _ => Some(normalize_commit_hash(value.as_str().ok_or(
-                        Error::InvalidCodeSymbolManifestBody(
+                        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                             "commit_hash must be null or a UTF-8 string",
-                        ),
+                        )),
                     )?)?),
                 });
             }
             KEY_CHUNKS => {
                 let Value::Array(values) = value else {
-                    return Err(Error::InvalidCodeSymbolManifestBody(
+                    return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                         "chunks must be a MessagePack array",
-                    ));
+                    )));
                 };
                 chunks = Some(
                     values
@@ -235,9 +244,9 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
             }
             KEY_SYMBOLS => {
                 let Value::Array(values) = value else {
-                    return Err(Error::InvalidCodeSymbolManifestBody(
+                    return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                         "symbols must be a MessagePack array",
-                    ));
+                    )));
                 };
                 symbols = Some(
                     values
@@ -251,18 +260,18 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
     }
 
     let manifest = CodeSymbolManifest {
-        repo_ref: repo_ref.ok_or(Error::InvalidCodeSymbolManifestBody(
+        repo_ref: repo_ref.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required manifest key repo_ref",
-        ))?,
-        commit_hash: commit_hash.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        commit_hash: commit_hash.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required manifest key commit_hash",
-        ))?,
-        chunks: chunks.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        chunks: chunks.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required manifest key chunks",
-        ))?,
-        symbols: symbols.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        symbols: symbols.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required manifest key symbols",
-        ))?,
+        )))?,
     };
     validate_code_symbol_manifest(&manifest)?;
     Ok(manifest)
@@ -270,9 +279,9 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
 
 pub(super) fn decode_code_chunk(value: &Value) -> Result<CodeChunk> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "chunk must be a MessagePack map",
-        ));
+        )));
     };
     let mut path: Option<String> = None;
     let mut start_line: Option<u32> = None;
@@ -286,19 +295,24 @@ pub(super) fn decode_code_chunk(value: &Value) -> Result<CodeChunk> {
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "chunk key is not in the pinned CODE_SYMBOL_CHUNK_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodeSymbolManifestBody("duplicate chunk key"));
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                "duplicate chunk key",
+            )));
         }
         seen[index] = true;
         match CODE_SYMBOL_CHUNK_KEYS[index] {
             KEY_PATH => {
-                let text = value.as_str().ok_or(Error::InvalidCodeSymbolManifestBody(
-                    "chunk path must be a UTF-8 string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                            "chunk path must be a UTF-8 string",
+                        )))?;
                 validate_manifest_path(text)?;
                 path = Some(text.to_owned());
             }
@@ -310,18 +324,18 @@ pub(super) fn decode_code_chunk(value: &Value) -> Result<CodeChunk> {
     }
 
     let chunk = CodeChunk {
-        path: path.ok_or(Error::InvalidCodeSymbolManifestBody(
+        path: path.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required chunk key path",
-        ))?,
-        start_line: start_line.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        start_line: start_line.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required chunk key start_line",
-        ))?,
-        end_line: end_line.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        end_line: end_line.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required chunk key end_line",
-        ))?,
-        content_hash: content_hash.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        content_hash: content_hash.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required chunk key content_hash",
-        ))?,
+        )))?,
     };
     validate_chunk(&chunk)?;
     Ok(chunk)
@@ -329,9 +343,9 @@ pub(super) fn decode_code_chunk(value: &Value) -> Result<CodeChunk> {
 
 pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRevision> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol revision must be a MessagePack map",
-        ));
+        )));
     };
     let mut path: Option<String> = None;
     let mut name: Option<String> = None;
@@ -348,35 +362,44 @@ pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRev
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "symbol revision key is not in the pinned CODE_SYMBOL_REVISION_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "duplicate symbol revision key",
-            ));
+            )));
         }
         seen[index] = true;
         match CODE_SYMBOL_REVISION_KEYS[index] {
             KEY_PATH => {
-                let text = value.as_str().ok_or(Error::InvalidCodeSymbolManifestBody(
-                    "symbol path must be a UTF-8 string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                            "symbol path must be a UTF-8 string",
+                        )))?;
                 validate_manifest_path(text)?;
                 path = Some(text.to_owned());
             }
             KEY_NAME => {
-                let text = value.as_str().ok_or(Error::InvalidCodeSymbolManifestBody(
-                    "symbol name must be a UTF-8 string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                            "symbol name must be a UTF-8 string",
+                        )))?;
                 validate_text(text, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
                 name = Some(text.to_owned());
             }
             KEY_KIND => {
-                let text = value.as_str().ok_or(Error::InvalidCodeSymbolManifestBody(
-                    "symbol kind must be a UTF-8 string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                            "symbol kind must be a UTF-8 string",
+                        )))?;
                 validate_text(text, CODE_SYMBOL_KIND_MAX_BYTES, "symbol kind")?;
                 kind = Some(text.to_owned());
             }
@@ -392,8 +415,10 @@ pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRev
                 source_session = Some(match value {
                     Value::Nil => None,
                     _ => {
-                        let text = value.as_str().ok_or(Error::InvalidCodeSymbolManifestBody(
-                            "source_session must be null or a UTF-8 string",
+                        let text = value.as_str().ok_or(Error::Code(
+                            CodeError::InvalidCodeSymbolManifestBody(
+                                "source_session must be null or a UTF-8 string",
+                            ),
                         ))?;
                         validate_text(
                             text,
@@ -409,26 +434,32 @@ pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRev
     }
 
     let symbol = CodeSymbolRevision {
-        path: path.ok_or(Error::InvalidCodeSymbolManifestBody(
+        path: path.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required symbol revision key path",
-        ))?,
-        name: name.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        name: name.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required symbol revision key name",
-        ))?,
-        kind: kind.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        kind: kind.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required symbol revision key kind",
-        ))?,
-        fingerprint: fingerprint.ok_or(Error::InvalidCodeSymbolManifestBody(
+        )))?,
+        fingerprint: fingerprint.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required symbol revision key fingerprint",
+        )))?,
+        chunk_indexes: chunk_indexes.ok_or(Error::Code(
+            CodeError::InvalidCodeSymbolManifestBody(
+                "missing required symbol revision key chunk_indexes",
+            ),
         ))?,
-        chunk_indexes: chunk_indexes.ok_or(Error::InvalidCodeSymbolManifestBody(
-            "missing required symbol revision key chunk_indexes",
+        provenance_claim_id: provenance_claim_id.ok_or(Error::Code(
+            CodeError::InvalidCodeSymbolManifestBody(
+                "missing required symbol revision key provenance_claim_id",
+            ),
         ))?,
-        provenance_claim_id: provenance_claim_id.ok_or(Error::InvalidCodeSymbolManifestBody(
-            "missing required symbol revision key provenance_claim_id",
-        ))?,
-        source_session: source_session.ok_or(Error::InvalidCodeSymbolManifestBody(
-            "missing required symbol revision key source_session",
+        source_session: source_session.ok_or(Error::Code(
+            CodeError::InvalidCodeSymbolManifestBody(
+                "missing required symbol revision key source_session",
+            ),
         ))?,
     };
     validate_symbol_shape(&symbol)?;
@@ -475,31 +506,33 @@ pub(super) fn encode_code_symbol_entity_body(
 pub(super) fn string_key<'a>(value: &'a Value, context: &'static str) -> Result<&'a str> {
     value
         .as_str()
-        .ok_or(Error::InvalidCodeSymbolManifestBody(context))
+        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            context,
+        )))
 }
 
 pub(super) fn u32_from_value(value: &Value, field: &'static str) -> Result<u32> {
     value
         .as_u64()
         .and_then(|value| u32::try_from(value).ok())
-        .ok_or(Error::InvalidCodeSymbolManifestBody(field))
+        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(field)))
 }
 
 pub(super) fn binary_32(value: &Value, field: &'static str) -> Result<[u8; 32]> {
     let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidCodeSymbolManifestBody(field));
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(field)));
     };
     bytes
         .as_slice()
         .try_into()
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody(field))
+        .map_err(|_| Error::Code(CodeError::InvalidCodeSymbolManifestBody(field)))
 }
 
 pub(super) fn decode_chunk_indexes(value: &Value) -> Result<Vec<u32>> {
     let Value::Array(values) = value else {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "chunk_indexes must be a MessagePack array",
-        ));
+        )));
     };
     values
         .iter()
@@ -509,15 +542,15 @@ pub(super) fn decode_chunk_indexes(value: &Value) -> Result<Vec<u32>> {
 
 pub(super) fn entity_id_from_value(value: &Value, field: &'static str) -> Result<EntityId> {
     let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidCodeSymbolManifestBody(field));
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(field)));
     };
     EntityId::from_bytes(
         bytes
             .as_slice()
             .try_into()
-            .map_err(|_| Error::InvalidCodeSymbolManifestBody(field))?,
+            .map_err(|_| Error::Code(CodeError::InvalidCodeSymbolManifestBody(field)))?,
     )
-    .map_err(|_| Error::InvalidCodeSymbolManifestBody(field))
+    .map_err(|_| Error::Code(CodeError::InvalidCodeSymbolManifestBody(field)))
 }
 
 pub(super) fn hash_text_field(hasher: &mut Sha256, text: &str) {

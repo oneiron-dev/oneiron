@@ -14,6 +14,7 @@ use crate::registry::ENTITY_TYPE_ASSET;
 use crate::vault::LiveEntityRow;
 
 use super::HostSelfDispatcher;
+use crate::error::CodeError;
 
 /// Domain of the code-emission admission record's id, kept separate from the
 /// emission's own identity so a record handle can never collide with — or be
@@ -88,7 +89,7 @@ impl HostSelfDispatcher<'_> {
             .as_deref()
             .map(str::trim)
             .filter(|id| !id.is_empty())
-            .ok_or(Error::CodeEmissionMissingDreamerRunId)?;
+            .ok_or(Error::Code(CodeError::CodeEmissionMissingDreamerRunId))?;
         // A code-emission context is bound at construction to the canonical
         // vault (`with_code_emission_context`), and the session arm hands out
         // no entity door: an admission arriving on it would be a binding this
@@ -161,7 +162,7 @@ impl HostSelfDispatcher<'_> {
             .as_deref()
             .map(str::trim)
             .filter(|id| !id.is_empty())
-            .ok_or(Error::CodeEmissionMissingDreamerRunId)?;
+            .ok_or(Error::Code(CodeError::CodeEmissionMissingDreamerRunId))?;
         Ok(Some(consent::CodeEmissionAdmission {
             lane: consent::consent_lane_for(emission.tier, emission.source_trust),
             dreamer_run_id: dreamer_run_id.to_owned(),

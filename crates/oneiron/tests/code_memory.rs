@@ -16,6 +16,7 @@ use oneiron::code_memory::{
     CodeMemorySlotName, CodeMemorySlotValue, ProvenanceMaterialKind, SlotInsertOutcome,
 };
 use oneiron::deletion::DeleteReason;
+use oneiron::error::CodeError;
 use oneiron::error::RegistryError;
 use oneiron::note::TakeTarget;
 use oneiron::{
@@ -554,10 +555,10 @@ fn transfer_is_atomic() {
         .expect_err("an over-capacity destination must refuse the whole transfer");
     assert!(matches!(
         error,
-        Error::CodeMemoryLimitExceeded {
+        Error::Code(CodeError::CodeMemoryLimitExceeded {
             kind: "slot values",
             ..
-        }
+        })
     ));
 
     assert_eq!(
@@ -598,7 +599,7 @@ fn invalid_anchor_transfers_are_typed() {
             .expect_err("invalid transfer");
         assert!(matches!(
             error,
-            Error::CodeMemoryInvalidAnchorTransfer { .. }
+            Error::Code(CodeError::CodeMemoryInvalidAnchorTransfer { .. })
         ));
     }
 }
@@ -927,10 +928,10 @@ fn slot_limit_is_transactional() {
         .expect_err("the 257th distinct value must be refused");
     assert!(matches!(
         error,
-        Error::CodeMemoryLimitExceeded {
+        Error::Code(CodeError::CodeMemoryLimitExceeded {
             kind: "slot values",
             limit: CODE_MEMORY_MAX_VALUES_PER_SLOT
-        }
+        })
     ));
     assert_eq!(
         vault.code_memory_slots(anchor_symbol).expect("slots"),
@@ -952,7 +953,10 @@ fn attachment_requires_a_live_code_symbol_anchor() {
         value(note(&vault), id(0x2C), 0x60, 1_000),
     )
     .expect_err("a PERSON is not a code anchor");
-    assert!(matches!(error, Error::CodeMemoryInvalidAnchor { .. }));
+    assert!(matches!(
+        error,
+        Error::Code(CodeError::CodeMemoryInvalidAnchor { .. })
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -1049,12 +1053,18 @@ fn blocks_cycles_are_typed_and_not_written() {
     let transitive = vault
         .insert_blocks_edge(c, a, blocks_context(&actor))
         .expect_err("C -> A would close the readiness cycle");
-    assert!(matches!(transitive, Error::CodeMemoryBlocksCycle { .. }));
+    assert!(matches!(
+        transitive,
+        Error::Code(CodeError::CodeMemoryBlocksCycle { .. })
+    ));
 
     let reflexive = vault
         .insert_blocks_edge(a, a, blocks_context(&actor))
         .expect_err("A -> A is the same cycle family");
-    assert!(matches!(reflexive, Error::CodeMemoryBlocksCycle { .. }));
+    assert!(matches!(
+        reflexive,
+        Error::Code(CodeError::CodeMemoryBlocksCycle { .. })
+    ));
 
     assert_eq!(vault.blocks_dependencies(a).expect("read"), vec![b]);
     assert_eq!(vault.blocks_dependencies(b).expect("read"), vec![c]);
@@ -1105,7 +1115,10 @@ fn blocks_authority_is_gated() {
     let system = vault
         .insert_blocks_edge(a, c, blocks_context(&machine))
         .expect_err("System actors may not mint readiness dependencies");
-    assert!(matches!(system, Error::CodeMemoryBlocksActorDenied(_)));
+    assert!(matches!(
+        system,
+        Error::Code(CodeError::CodeMemoryBlocksActorDenied(_))
+    ));
 
     // A MACHINE entity presented through a `WriteActor` ASSERTING Human: the
     // stored entity type refuses the class, so the assertion buys nothing.
@@ -1113,13 +1126,19 @@ fn blocks_authority_is_gated() {
     let mismatch = vault
         .insert_blocks_edge(a, c, blocks_context(&forged))
         .expect_err("a forged actor class is refused");
-    assert!(matches!(mismatch, Error::CodeMemoryBlocksActorDenied(_)));
+    assert!(matches!(
+        mismatch,
+        Error::Code(CodeError::CodeMemoryBlocksActorDenied(_))
+    ));
 
     let ghost = WriteActor::new(id(0x79), EdgeActorClass::Human);
     let unresolved = vault
         .insert_blocks_edge(a, c, blocks_context(&ghost))
         .expect_err("an unresolvable actor is refused");
-    assert!(matches!(unresolved, Error::CodeMemoryBlocksActorDenied(_)));
+    assert!(matches!(
+        unresolved,
+        Error::Code(CodeError::CodeMemoryBlocksActorDenied(_))
+    ));
 
     let human_actor = human(&vault, 0x7A);
     for source in [
@@ -1139,7 +1158,7 @@ fn blocks_authority_is_gated() {
             .expect_err("a permit-requiring source is refused");
         assert!(matches!(
             untrusted,
-            Error::CodeMemoryBlocksSourceUntrusted { .. }
+            Error::Code(CodeError::CodeMemoryBlocksSourceUntrusted { .. })
         ));
     }
 
@@ -1170,7 +1189,10 @@ fn blocks_endpoints_must_be_live_code_symbols() {
         let error = vault
             .insert_blocks_edge(from, to, blocks_context(&actor))
             .expect_err("readiness needs a live CODE_SYMBOL on both ends");
-        assert!(matches!(error, Error::CodeMemoryInvalidAnchor { .. }));
+        assert!(matches!(
+            error,
+            Error::Code(CodeError::CodeMemoryInvalidAnchor { .. })
+        ));
     }
 
     for endpoint in [anchor_symbol, ghost, not_a_symbol] {
@@ -1640,7 +1662,10 @@ fn always_on_is_interface_or_policy_note_only() {
                 actor,
             ))
             .expect_err("only live NOTE entity refs register");
-        assert!(matches!(error, Error::CodeMemoryAlwaysOnInvalid(_)));
+        assert!(matches!(
+            error,
+            Error::Code(CodeError::CodeMemoryAlwaysOnInvalid(_))
+        ));
     }
 
     assert_eq!(
@@ -1699,10 +1724,10 @@ fn always_on_bound_is_eight_per_symbol() {
         .expect_err("the ninth distinct key is refused");
     assert!(matches!(
         error,
-        Error::CodeMemoryLimitExceeded {
+        Error::Code(CodeError::CodeMemoryLimitExceeded {
             kind: "always-on contracts per symbol",
             limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS
-        }
+        })
     ));
     assert_eq!(
         vault
@@ -1788,13 +1813,19 @@ fn relevance_pull_is_bounded() {
     let empty = vault
         .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(Vec::new()))
         .expect_err("a seedless pull is refused");
-    assert!(matches!(empty, Error::CodeMemoryInvalidAnchor { .. }));
+    assert!(matches!(
+        empty,
+        Error::Code(CodeError::CodeMemoryInvalidAnchor { .. })
+    ));
 
     let not_a_symbol = seed(&vault, 0xC4, ENTITY_TYPE_PERSON);
     let wrong_seed = vault
         .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(vec![not_a_symbol]))
         .expect_err("a non-CODE_SYMBOL seed is refused");
-    assert!(matches!(wrong_seed, Error::CodeMemoryInvalidAnchor { .. }));
+    assert!(matches!(
+        wrong_seed,
+        Error::Code(CodeError::CodeMemoryInvalidAnchor { .. })
+    ));
 
     let mut over_limit = CodeMemoryPullRequest::new(vec![anchor_symbol]);
     over_limit.limit = 100_000;
@@ -1803,10 +1834,10 @@ fn relevance_pull_is_bounded() {
         .expect_err("the caller limit is bounded by the hard maximum");
     assert!(matches!(
         overflow,
-        Error::CodeMemoryLimitExceeded {
+        Error::Code(CodeError::CodeMemoryLimitExceeded {
             kind: "pull note limit",
             ..
-        }
+        })
     ));
 
     let mut thresholded = CodeMemoryPullRequest::new(vec![anchor_symbol]);
@@ -1979,10 +2010,10 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
         .expect_err("eight live registrations fill the symbol");
     assert!(matches!(
         refused,
-        Error::CodeMemoryLimitExceeded {
+        Error::Code(CodeError::CodeMemoryLimitExceeded {
             kind: "always-on contracts per symbol",
             limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS
-        }
+        })
     ));
 
     for payload in &payloads {
