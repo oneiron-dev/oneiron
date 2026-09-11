@@ -50,8 +50,11 @@ impl LocalEmbedder {
     /// Blocking and slow by nature: a first run downloads over a gigabyte and
     /// every run quantises the projections. The caller runs it off the async
     /// runtime.
-    pub(super) fn load(config: &EmbedderConfig) -> oneiron::Result<std::sync::Arc<Self>> {
-        let dir = model_manager::ensure_all(&config.local)?;
+    pub(super) fn load(
+        config: &EmbedderConfig,
+        models: &model_manager::ModelManager,
+    ) -> oneiron::Result<std::sync::Arc<Self>> {
+        let dir = models.ensure_all(&config.local)?;
         let raw_config = std::fs::read_to_string(dir.join("config.json")).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model config.json: {e}"))
         })?;

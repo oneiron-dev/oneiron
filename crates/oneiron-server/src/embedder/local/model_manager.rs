@@ -17,6 +17,9 @@ use sha2::{Digest, Sha256};
 
 use crate::config::LocalEmbedderConfig;
 
+/// Where the pinned artifacts live. Only a test ever points this elsewhere.
+const HUGGINGFACE_BASE_URL: &str = "https://huggingface.co";
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// Refuse a file larger than this before writing it: a redirect to the wrong
@@ -164,68 +167,105 @@ pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf
     Ok(dir)
 }
 
-/// Makes every file present and verified, downloading what is missing.
+/// Fetches and verifies the local model's files.
 ///
-/// Returns the directory holding them. `model_dir` set in config short-circuits
-/// the download entirely: the operator supplied the files, so the server checks
-/// they exist and nothing else.
-pub(crate) fn ensure_all(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf> {
-    let dir = model_dir(config)?;
-    let files = model_files(config);
-    if config.model_dir.is_some() {
-        for artifact in &files {
-            let path = dir.join(artifact.file);
-            if !path.is_file() {
-                return Err(missing_file(&path));
-            }
-        }
-        return Ok(dir);
-    }
-    let mut fetched = 0usize;
-    for artifact in &files {
-        if ensure_one(config, &dir, artifact)? {
-            fetched += 1;
-        }
-    }
-    if fetched > 0 {
-        tracing::info!(dir = %dir.display(), fetched, "embedder model artifacts ready");
-    }
-    Ok(dir)
+/// Lives on the embedder slot, never in a process global: the artifacts belong
+/// to the server that is going to load them, and the worker holds that slot
+/// across every retry.
+pub(in crate::embedder) struct ModelManager {
+    /// Host the artifacts are fetched from, without a trailing slash.
+    base_url: String,
 }
 
-/// Returns whether the file had to be downloaded.
-fn ensure_one(
-    config: &LocalEmbedderConfig,
-    dir: &Path,
-    artifact: &PinnedArtifact,
-) -> oneiron::Result<bool> {
-    let path = dir.join(artifact.file);
-    if path.is_file() {
-        match verify(&path, artifact) {
-            Ok(()) => return Ok(false),
-            Err(error) => {
-                // A file that does not match its digest is not a file we can
-                // use, and leaving it in place would fail the same way on every
-                // restart. Remove it and fetch it again.
-                tracing::warn!(path = %path.display(), ?error, "embedder artifact failed verification; refetching");
-                std::fs::remove_file(&path).map_err(oneiron::Error::Io)?;
-            }
+impl Default for ModelManager {
+    /// The public Hugging Face host, which is where the pinned artifacts live.
+    fn default() -> Self {
+        Self {
+            base_url: HUGGINGFACE_BASE_URL.to_owned(),
         }
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(oneiron::Error::Io)?;
+}
+
+impl ModelManager {
+    /// Fetches from somewhere other than Hugging Face.
+    ///
+    /// Test-only, and the narrowest door that makes the fetch path reachable
+    /// without the network: a row that must prove what happens to a bad file on
+    /// disk points this at a stub on loopback.
+    #[cfg(test)]
+    pub(in crate::embedder) fn with_base_url(base_url: &str) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_owned(),
+        }
     }
-    let url = format!(
-        "https://huggingface.co/{}/resolve/{}/{}",
-        config.repo, config.revision, artifact.file
-    );
-    tracing::info!(file = artifact.file, "downloading embedder model artifact");
-    download(&url, &path, artifact)?;
-    verify(&path, artifact).inspect_err(|_| {
-        // Never leave a bad artifact on disk: the next start would load it.
-        let _ = std::fs::remove_file(&path);
-    })?;
-    Ok(true)
+
+    /// Makes every file present and verified, downloading what is missing.
+    ///
+    /// Returns the directory holding them. `model_dir` set in config
+    /// short-circuits the download entirely: the operator supplied the files,
+    /// so the server checks they exist and nothing else.
+    pub(in crate::embedder) fn ensure_all(
+        &self,
+        config: &LocalEmbedderConfig,
+    ) -> oneiron::Result<PathBuf> {
+        let dir = model_dir(config)?;
+        let files = model_files(config);
+        if config.model_dir.is_some() {
+            for artifact in &files {
+                let path = dir.join(artifact.file);
+                if !path.is_file() {
+                    return Err(missing_file(&path));
+                }
+            }
+            return Ok(dir);
+        }
+        let mut fetched = 0usize;
+        for artifact in &files {
+            if self.ensure_one(config, &dir, artifact)? {
+                fetched += 1;
+            }
+        }
+        if fetched > 0 {
+            tracing::info!(dir = %dir.display(), fetched, "embedder model artifacts ready");
+        }
+        Ok(dir)
+    }
+
+    /// Returns whether the file had to be downloaded.
+    pub(super) fn ensure_one(
+        &self,
+        config: &LocalEmbedderConfig,
+        dir: &Path,
+        artifact: &PinnedArtifact,
+    ) -> oneiron::Result<bool> {
+        let path = dir.join(artifact.file);
+        if path.is_file() {
+            match verify(&path, artifact) {
+                Ok(()) => return Ok(false),
+                Err(error) => {
+                    // A file that does not match its digest is not a file we can
+                    // use, and leaving it in place would fail the same way on every
+                    // restart. Remove it and fetch it again.
+                    tracing::warn!(path = %path.display(), ?error, "embedder artifact failed verification; refetching");
+                    std::fs::remove_file(&path).map_err(oneiron::Error::Io)?;
+                }
+            }
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(oneiron::Error::Io)?;
+        }
+        let url = format!(
+            "{}/{}/resolve/{}/{}",
+            self.base_url, config.repo, config.revision, artifact.file
+        );
+        tracing::info!(file = artifact.file, "downloading embedder model artifact");
+        download(&url, &path, artifact)?;
+        verify(&path, artifact).inspect_err(|_| {
+            // Never leave a bad artifact on disk: the next start would load it.
+            let _ = std::fs::remove_file(&path);
+        })?;
+        Ok(true)
+    }
 }
 
 /// Fetches one file to a temporary sibling, then renames it into place.
