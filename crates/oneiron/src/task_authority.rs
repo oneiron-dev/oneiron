@@ -30,6 +30,7 @@ use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::error::RecordError;
 use crate::error::{Error, Result};
 use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::registry::ENTITY_TYPE_TASK;
@@ -262,49 +263,68 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
 pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthorityFact> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidTaskBody("task authority fact body"))?;
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("task authority fact body")))?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidTaskBody("task authority fact trailing bytes"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "task authority fact trailing bytes",
+        )));
     }
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("task authority fact body"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "task authority fact body",
+        )))?;
     // The key set is EXACT: a v1 fact has these seven keys and nothing else,
     // so no unread field can ride along in a body two decoders would disagree
     // about.
     if entries.len() != FACT_BODY_KEY_COUNT {
-        return Err(Error::InvalidTaskBody("task authority fact key set"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "task authority fact key set",
+        )));
     }
     let byte = |key| {
         fact_body_field(entries, key)?
             .as_u64()
             .and_then(|raw| u8::try_from(raw).ok())
-            .ok_or(Error::InvalidTaskBody("task authority fact byte field"))
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "task authority fact byte field",
+            )))
     };
     let entity_ref = |key| {
         fact_body_field(entries, key)?
             .as_str()
             .and_then(|hex| EntityId::from_hex(hex).ok())
-            .ok_or(Error::InvalidTaskBody("task authority fact entity ref"))
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "task authority fact entity ref",
+            )))
     };
 
     if byte(BODY_KEY_ROLE)? != TaskRole::AuthorityFact.role_byte() {
-        return Err(Error::InvalidTaskBody("task authority fact role"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "task authority fact role",
+        )));
     }
     if byte(BODY_KEY_SCHEMA_VERSION)? != TASK_AUTHORITY_FACT_SCHEMA_VERSION {
-        return Err(Error::InvalidTaskBody("task authority fact version"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "task authority fact version",
+        )));
     }
     if fact_body_field(entries, BODY_KEY_SUBKIND)?.as_str() != Some(TASK_AUTHORITY_FACT_SUBKIND) {
-        return Err(Error::InvalidTaskBody("task authority fact subkind"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "task authority fact subkind",
+        )));
     }
     Ok(TaskAuthorityFact {
         task_ref: entity_ref(BODY_KEY_TASK_REF)?,
-        kind: TaskAuthorityFactKind::from_byte(byte(BODY_KEY_KIND)?)
-            .ok_or(Error::InvalidTaskBody("task authority fact kind"))?,
+        kind: TaskAuthorityFactKind::from_byte(byte(BODY_KEY_KIND)?).ok_or(Error::Record(
+            RecordError::InvalidTaskBody("task authority fact kind"),
+        ))?,
         actor_ref: entity_ref(BODY_KEY_ACTOR_REF)?,
         occurred_at: fact_body_field(entries, BODY_KEY_OCCURRED_AT)?
             .as_u64()
-            .ok_or(Error::InvalidTaskBody("task authority fact timestamp"))?,
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "task authority fact timestamp",
+            )))?,
     })
 }
 
@@ -317,9 +337,13 @@ fn fact_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a 
         .map(|(_, value)| value);
     let value = values
         .next()
-        .ok_or(Error::InvalidTaskBody("task authority fact key set"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "task authority fact key set",
+        )))?;
     if values.next().is_some() {
-        return Err(Error::InvalidTaskBody("task authority fact duplicate key"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "task authority fact duplicate key",
+        )));
     }
     Ok(value)
 }
@@ -383,7 +407,9 @@ impl Vault {
             // from one task while naming another would let a proof minted for
             // a task the actor owns be re-pointed at one they do not.
             if fact.task_ref != task_ref {
-                return Err(Error::InvalidTaskBody("task authority fact subject"));
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task authority fact subject",
+                )));
             }
             facts.absorb(&fact)?;
         }
@@ -396,6 +422,7 @@ mod tests {
     use super::*;
 
     use crate::config::VaultConfig;
+    use crate::error::RecordError;
 
     fn open_vault() -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -629,7 +656,7 @@ mod tests {
         assert_eq!(state.owner_ref, id(0xF3));
         assert!(matches!(
             vault.task_authority_state(foreign),
-            Err(Error::InvalidTaskBody(_))
+            Err(Error::Record(RecordError::InvalidTaskBody(_)))
         ));
     }
 
@@ -685,14 +712,17 @@ mod tests {
             let entity = EntityId::now();
             assert!(matches!(
                 vault.put_entity(&entity, ENTITY_TYPE_TASK, occurred, 1, &body),
-                Err(Error::InvalidTaskBody(_))
+                Err(Error::Record(RecordError::InvalidTaskBody(_)))
             ));
             let mut wtxn = vault.store.env.write_txn().expect("write txn");
             let internal = vault
                 .batch_in()
                 .put_internal(&EntityId::now(), ENTITY_TYPE_TASK, occurred, 1, &body)
                 .apply(&mut wtxn);
-            assert!(matches!(internal, Err(Error::InvalidTaskBody(_))));
+            assert!(matches!(
+                internal,
+                Err(Error::Record(RecordError::InvalidTaskBody(_)))
+            ));
             drop(wtxn);
             assert!(vault.get(&entity).expect("read back").is_none());
         }

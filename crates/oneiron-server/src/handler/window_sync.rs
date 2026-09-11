@@ -259,7 +259,7 @@ fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
     if matches!(
         e,
         oneiron::Error::Sync(oneiron::error::SyncError::SyncProtocolError { .. })
-            | oneiron::Error::InvalidFederationGrantBody(_)
+            | oneiron::Error::Record(oneiron::error::RecordError::InvalidFederationGrantBody(_))
     ) {
         ProtocolError::InvalidPayload("sync selector rejected")
     } else {

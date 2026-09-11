@@ -13,6 +13,7 @@ use super::note_comm_record_family_scan;
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::RecordError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 use crate::temporal::TimeRange;
@@ -561,5 +562,5 @@ pub(super) fn next_event_sequence_in_txn(
 pub(crate) fn validate_comm_record_body_bytes(bytes: &[u8]) -> Result<()> {
     decode_comm_record(bytes)
         .map(|_| ())
-        .map_err(|_| Error::InvalidCommRecordBody("body failed validation"))
+        .map_err(|_| Error::Record(RecordError::InvalidCommRecordBody("body failed validation")))
 }

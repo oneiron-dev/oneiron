@@ -32,6 +32,7 @@ use super::keys::{
 use super::lifecycle::ChannelIdentityState;
 
 use super::shape::{ChannelIdentityShape, SelfHeldShape};
+use crate::error::RecordError;
 
 /// Vault-resident ChannelIdentity record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,7 +126,7 @@ impl ChannelIdentity {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidChannelIdentityBody`] when the proof does not cover the
+    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody) when the proof does not cover the
     /// triple, or when the row fails the record's bounds checks.
     pub(super) fn requested_delegated(
         channel: impl AsRef<str>,
@@ -138,10 +139,10 @@ impl ChannelIdentity {
         let channel_key = ChannelKey::normalize(channel.as_ref());
         let address = AssignmentAddress::normalize(channel.as_ref(), address_or_handle.as_ref());
         if !custody.covers(channel_key.as_str(), address.as_str(), &grant) {
-            return Err(Error::InvalidChannelIdentityBody(
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "delegated_grant identity requires a verified custody proof for its own \
                  (channel, mailbox, grant)",
-            ));
+            )));
         }
         let identity = Self {
             channel: channel_key.as_str().to_owned(),
@@ -295,19 +296,19 @@ impl ChannelIdentity {
                     self.state,
                     ChannelIdentityState::Rotating | ChannelIdentityState::Quarantine
                 ) {
-                    return Err(Error::InvalidChannelIdentityBody(
+                    return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                         "a delegated_grant identity is never rotated or quarantined: the \
                          product neither mints nor holds back the member's mailbox",
-                    ));
+                    )));
                 }
                 Ok(())
             }
-            (true, Some(_)) => Err(Error::InvalidChannelIdentityBody(
+            (true, Some(_)) => Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "only a delegated_grant identity may carry a delegated grant ref",
-            )),
-            (false, None) => Err(Error::InvalidChannelIdentityBody(
+            ))),
+            (false, None) => Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "delegated_grant identity requires a delegated grant ref",
-            )),
+            ))),
         }
     }
 

@@ -1607,8 +1607,8 @@ use crate::authority::{
     federation_scope_digest, fold_authority_log_with_peer_consent_roots,
     sign_federation_pact_gesture,
 };
-use crate::error::ClaimError;
-use crate::error::RegistryError;
+use crate::error::RecordError;
+use crate::error::{ClaimError, RegistryError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 fn auth_key(seed: u8) -> SigningKey {
@@ -2063,14 +2063,14 @@ fn peer_entry_from_another_vault_is_refused_under_the_claimed_peer() {
         let err = admit_peer_authority_log_entry(&vault, &peer.vault_id, &body)
             .expect_err("a foreign-vault entry must not be admitted under this peer");
         assert!(
-            matches!(err, Error::InvalidAuthorityLogBody(_)),
+            matches!(err, Error::Record(RecordError::InvalidAuthorityLogBody(_))),
             "unexpected error: {err:?}",
         );
     }
     assert!(
         matches!(
             peer_authority_roster(&vault, &peer.vault_id),
-            Err(Error::InvalidAuthorityLogBody(_)),
+            Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))),
         ),
         "with nothing admitted there is no rooted peer log to report",
     );
@@ -2087,7 +2087,7 @@ fn peer_log_without_its_genesis_reports_a_fold_root_mismatch() {
     }
     assert!(matches!(
         peer_authority_roster(&vault, &peer.vault_id),
-        Err(Error::InvalidAuthorityLogBody(_)),
+        Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))),
     ));
 }
 
@@ -2116,7 +2116,7 @@ fn peer_admission_rejects_the_four_thousand_ninety_seventh_distinct_hash() {
     let err = admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[1])
         .expect_err("a new distinct hash past the ceiling must be refused");
     assert!(
-        matches!(err, Error::InvalidAuthorityLogBody(_)),
+        matches!(err, Error::Record(RecordError::InvalidAuthorityLogBody(_))),
         "unexpected error: {err:?}",
     );
     admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[0])

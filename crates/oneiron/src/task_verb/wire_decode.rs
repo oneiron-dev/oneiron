@@ -24,6 +24,7 @@ use super::terminal_state::{
     ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord,
 };
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
+use crate::error::RecordError;
 
 pub(super) fn task_verb_body(vault: &Vault, task_ref: EntityId) -> Result<Option<TaskVerbBody>> {
     let rtxn = vault.store.env.read_txn()?;
@@ -55,7 +56,9 @@ pub(super) fn task_verb_body_in(
     if !TASK_VERB_BODY_SCHEMA_VERSIONS.contains(&body.schema_version)
         || body.role != TaskRole::Task.role_byte()
     {
-        return Err(Error::InvalidTaskBody("tasks.create.version"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.create.version",
+        )));
     }
     Ok(Some(body))
 }
@@ -87,37 +90,44 @@ pub(super) fn task_entity_role_in(
 pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
     let mut cursor = body;
     let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidTaskBody("tasks.create.body"))?;
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.body")))?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidTaskBody("tasks.create.body"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.create.body",
+        )));
     }
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.create.body"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.create.body",
+        )))?;
     let byte = |key| {
         task_body_field(entries, key)?
             .as_u64()
             .and_then(|value| u8::try_from(value).ok())
-            .ok_or(Error::InvalidTaskBody("tasks.create.body"))
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.create.body",
+            )))
     };
     let string = |key| {
         task_body_field(entries, key)?
             .as_str()
             .map(str::to_owned)
-            .ok_or(Error::InvalidTaskBody("tasks.create.body"))
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.create.body",
+            )))
     };
     let label = match task_body_field(entries, "label")? {
         Value::Nil => None,
-        value => Some(
-            value
-                .as_str()
-                .map(str::to_owned)
-                .ok_or(Error::InvalidTaskBody("tasks.create.body"))?,
-        ),
+        value => Some(value.as_str().map(str::to_owned).ok_or(Error::Record(
+            RecordError::InvalidTaskBody("tasks.create.body"),
+        ))?),
     };
     let created_at = task_body_field(entries, "created_at")?
         .as_u64()
-        .ok_or(Error::InvalidTaskBody("tasks.create.body"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.create.body",
+        )))?;
     Ok(TaskVerbBody {
         role: byte("role")?,
         schema_version: byte("schema_version")?,
@@ -128,7 +138,9 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
             .map(|value| {
                 value
                     .as_str()
-                    .ok_or(Error::InvalidTaskBody("tasks.body.kind"))
+                    .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.body.kind",
+                    )))
                     .and_then(TaskKind::from_token)
             })
             .transpose()?,
@@ -145,11 +157,15 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
             .map(|value| {
                 let entries = value
                     .as_map()
-                    .ok_or(Error::InvalidTaskBody("tasks.body.ttl"))?;
+                    .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.body.ttl",
+                    )))?;
                 task_body_field(entries, "deadline_at")?
                     .as_u64()
                     .map(TaskTtl::at)
-                    .ok_or(Error::InvalidTaskBody("tasks.body.ttl"))
+                    .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.body.ttl",
+                    )))
             })
             .transpose()?,
         state: task_body_optional(entries, "state")?
@@ -174,7 +190,9 @@ pub(super) fn task_body_optional<'a>(
         return Ok(None);
     };
     if values.next().is_some() {
-        return Err(Error::InvalidTaskBody("tasks.create.body"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.create.body",
+        )));
     }
     Ok(match value {
         Value::Nil => None,
@@ -185,17 +203,24 @@ pub(super) fn task_body_optional<'a>(
 pub(super) fn decode_entity_ref(value: &Value, context: &'static str) -> Result<EntityId> {
     value
         .as_str()
-        .ok_or(Error::InvalidTaskBody(context))
-        .and_then(|hex| EntityId::from_hex(hex).map_err(|_| Error::InvalidTaskBody(context)))
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(context)))
+        .and_then(|hex| {
+            EntityId::from_hex(hex)
+                .map_err(|_| Error::Record(RecordError::InvalidTaskBody(context)))
+        })
 }
 
 pub(super) fn decode_task_assignee(value: &Value) -> Result<TaskAssignee> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.body.assignee"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.assignee",
+        )))?;
     let kind = task_body_field(entries, "kind")?
         .as_str()
-        .ok_or(Error::InvalidTaskBody("tasks.body.assignee"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.assignee",
+        )))?;
     match kind {
         "dreamer" => Ok(TaskAssignee::Dreamer),
         "agent_def" => Ok(TaskAssignee::AgentDef {
@@ -216,30 +241,40 @@ pub(super) fn decode_task_assignee(value: &Value) -> Result<TaskAssignee> {
                 "tasks.body.assignee",
             )?,
         }),
-        _ => Err(Error::InvalidTaskBody("tasks.body.assignee")),
+        _ => Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.assignee",
+        ))),
     }
 }
 
 fn decode_consult_payload_ref(value: &Value) -> Result<ConsultPayloadRef> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.consult.ref"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.consult.ref",
+        )))?;
     let entity_ref =
         decode_entity_ref(task_body_field(entries, "entity_ref")?, "tasks.consult.ref")?;
     match task_body_field(entries, "kind")?.as_str() {
         Some("claim") => Ok(ConsultPayloadRef::Claim(entity_ref)),
         Some("turn") => Ok(ConsultPayloadRef::Turn(entity_ref)),
-        _ => Err(Error::InvalidTaskBody("tasks.consult.ref")),
+        _ => Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.consult.ref",
+        ))),
     }
 }
 
 pub(super) fn decode_consult_payload(value: &Value) -> Result<ConsultPayload> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.body.consult"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.consult",
+        )))?;
     let context_refs = task_body_field(entries, "context_refs")?
         .as_array()
-        .ok_or(Error::InvalidTaskBody("tasks.body.consult"))?
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.consult",
+        )))?
         .iter()
         .map(decode_consult_payload_ref)
         .collect::<Result<Vec<_>>>()?;
@@ -257,7 +292,9 @@ pub(super) fn decode_consult_payload(value: &Value) -> Result<ConsultPayload> {
                 value
                     .as_str()
                     .and_then(ConsultPurpose::from_token)
-                    .ok_or(Error::InvalidTaskBody("tasks.consult.purpose"))
+                    .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.consult.purpose",
+                    )))
             })
             .transpose()?,
         entity_delta: task_body_optional(entries, "entity_delta")?
@@ -274,27 +311,35 @@ pub(super) fn decode_consult_payload(value: &Value) -> Result<ConsultPayload> {
 fn decode_entity_delta_shape(value: &Value) -> Result<EntityDeltaShape> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))?;
-    let normalized_paths = task_body_field(entries, "normalized_paths")?
-        .as_array()
-        .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))?
-        .iter()
-        .map(|entry| {
-            entry
-                .as_str()
-                .map(str::to_owned)
-                .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.consult.delta_shape",
+        )))?;
+    let normalized_paths =
+        task_body_field(entries, "normalized_paths")?
+            .as_array()
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.consult.delta_shape",
+            )))?
+            .iter()
+            .map(|entry| {
+                entry.as_str().map(str::to_owned).ok_or(Error::Record(
+                    RecordError::InvalidTaskBody("tasks.consult.delta_shape"),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
     Ok(EntityDeltaShape {
         operation_kind: task_body_field(entries, "operation_kind")?
             .as_str()
             .map(str::to_owned)
-            .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))?,
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.consult.delta_shape",
+            )))?,
         target_entity_type: task_body_field(entries, "target_entity_type")?
             .as_u64()
             .and_then(|raw| u8::try_from(raw).ok())
-            .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))?,
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.consult.delta_shape",
+            )))?,
         normalized_paths,
     })
 }
@@ -302,7 +347,9 @@ fn decode_entity_delta_shape(value: &Value) -> Result<EntityDeltaShape> {
 fn decode_entity_delta_artifact(value: &Value) -> Result<EntityDeltaArtifact> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.consult.entity_delta"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.consult.entity_delta",
+        )))?;
     let optional_ref = |name| -> Result<Option<EntityId>> {
         task_body_optional(entries, name)?
             .map(|value| decode_entity_ref(value, "tasks.consult.entity_delta"))
@@ -334,12 +381,16 @@ fn decode_entity_delta_artifact(value: &Value) -> Result<EntityDeltaArtifact> {
 fn decode_consult_lineage(value: &Value) -> Result<ConsultLineage> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.consult.lineage"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.consult.lineage",
+        )))?;
     Ok(ConsultLineage {
         relation: task_body_field(entries, "relation")?
             .as_str()
             .and_then(ConsultLineageRelation::from_token)
-            .ok_or(Error::InvalidTaskBody("tasks.consult.lineage"))?,
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.consult.lineage",
+            )))?,
         parent_task_ref: decode_entity_ref(
             task_body_field(entries, "parent_task_ref")?,
             "tasks.consult.lineage",
@@ -350,12 +401,16 @@ fn decode_consult_lineage(value: &Value) -> Result<ConsultLineage> {
 fn decode_consult_result_summary(value: &Value) -> Result<ConsultResultSummary> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.terminal.summary"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.terminal.summary",
+        )))?;
     match task_body_field(entries, "outcome")?.as_str() {
         Some("answer") => Ok(ConsultResultSummary::Answer {
             evidence_refs: task_body_field(entries, "evidence_refs")?
                 .as_array()
-                .ok_or(Error::InvalidTaskBody("tasks.terminal.summary"))?
+                .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.terminal.summary",
+                )))?
                 .iter()
                 .map(decode_consult_payload_ref)
                 .collect::<Result<Vec<_>>>()?,
@@ -363,7 +418,9 @@ fn decode_consult_result_summary(value: &Value) -> Result<ConsultResultSummary> 
         Some("abstained") => Ok(ConsultResultSummary::Abstained {
             reason_ref: decode_consult_payload_ref(task_body_field(entries, "reason_ref")?)?,
         }),
-        _ => Err(Error::InvalidTaskBody("tasks.terminal.summary")),
+        _ => Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.terminal.summary",
+        ))),
     }
 }
 
@@ -388,11 +445,15 @@ fn decode_consult_result_summary(value: &Value) -> Result<ConsultResultSummary> 
 pub(super) fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalRecord> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.body.terminal"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.terminal",
+        )))?;
     let record = TaskTerminalRecord {
         disposition: task_body_field(entries, "disposition")?
             .as_str()
-            .ok_or(Error::InvalidTaskBody("tasks.terminal.disposition"))
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.terminal.disposition",
+            )))
             .and_then(TaskTerminalDisposition::from_token)?,
         result_ref: task_body_optional(entries, "result_ref")?
             .map(|value| decode_entity_ref(value, "tasks.body.terminal"))
@@ -402,13 +463,17 @@ pub(super) fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalR
             .transpose()?,
         finished_at: task_body_field(entries, "finished_at")?
             .as_u64()
-            .ok_or(Error::InvalidTaskBody("tasks.body.terminal"))?,
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.body.terminal",
+            )))?,
         ladder: task_body_optional(entries, "ladder")?
             .map(|value| {
                 value
                     .as_str()
                     .and_then(LadderTerminalDisposition::from_token)
-                    .ok_or(Error::InvalidTaskBody("tasks.terminal.ladder"))
+                    .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.terminal.ladder",
+                    )))
             })
             .transpose()?,
         counter_task_ref: task_body_optional(entries, "counter_task_ref")?
@@ -420,7 +485,9 @@ pub(super) fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalR
     if matches!(record.ladder, Some(LadderTerminalDisposition::Countered))
         != record.counter_task_ref.is_some()
     {
-        return Err(Error::InvalidTaskBody("tasks.terminal.ladder"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.terminal.ladder",
+        )));
     }
     Ok(record)
 }
@@ -428,19 +495,25 @@ pub(super) fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalR
 fn decode_ladder_terminal_state(value: &Value) -> Result<LadderTerminalState> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.body.state"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.state",
+        )))?;
     Ok(LadderTerminalState {
         disposition: task_body_field(entries, "disposition")?
             .as_str()
             .and_then(LadderTerminalDisposition::from_token)
-            .ok_or(Error::InvalidTaskBody("tasks.terminal.ladder"))?,
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.terminal.ladder",
+            )))?,
         result_ref: decode_entity_ref(task_body_field(entries, "result_ref")?, "tasks.body.state")?,
         counter_task_ref: task_body_optional(entries, "counter_task_ref")?
             .map(|value| decode_entity_ref(value, "tasks.body.state"))
             .transpose()?,
         finished_at: task_body_field(entries, "finished_at")?
             .as_u64()
-            .ok_or(Error::InvalidTaskBody("tasks.body.state"))?,
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.body.state",
+            )))?,
     })
 }
 
@@ -463,21 +536,27 @@ fn decode_interrupted_ladder_terminal(value: &Value) -> Result<LadderTerminalSta
     if terminal.disposition.defers_to_follow_on() && terminal.is_well_formed() {
         Ok(terminal)
     } else {
-        Err(Error::InvalidTaskBody("tasks.terminal.ladder"))
+        Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.terminal.ladder",
+        )))
     }
 }
 
 fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.body.state"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.state",
+        )))?;
     match task_body_field(entries, "state")?.as_str() {
         Some("queued") => Ok(TaskExecutionState::Queued),
-        Some("working") => Ok(TaskExecutionState::Working {
-            started_at: task_body_field(entries, "started_at")?
-                .as_u64()
-                .ok_or(Error::InvalidTaskBody("tasks.body.state"))?,
-        }),
+        Some("working") => {
+            Ok(TaskExecutionState::Working {
+                started_at: task_body_field(entries, "started_at")?.as_u64().ok_or(
+                    Error::Record(RecordError::InvalidTaskBody("tasks.body.state")),
+                )?,
+            })
+        }
         Some("interrupted") => Ok(TaskExecutionState::Interrupted {
             ladder: task_body_optional(entries, "ladder")?
                 .map(decode_interrupted_ladder_terminal)
@@ -486,7 +565,9 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
         Some("terminal") => Ok(TaskExecutionState::Terminal(decode_task_terminal_record(
             task_body_field(entries, "terminal")?,
         )?)),
-        _ => Err(Error::InvalidTaskBody("tasks.body.state")),
+        _ => Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.body.state",
+        ))),
     }
 }
 
@@ -497,9 +578,13 @@ pub(super) fn task_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> 
         .map(|(_, value)| value);
     let value = values
         .next()
-        .ok_or(Error::InvalidTaskBody("tasks.create.body"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.create.body",
+        )))?;
     if values.next().is_some() {
-        return Err(Error::InvalidTaskBody("tasks.create.body"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.create.body",
+        )));
     }
     Ok(value)
 }
@@ -507,9 +592,11 @@ pub(super) fn task_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> 
 fn task_body_has_typed_subkind(body: &[u8]) -> Result<bool> {
     let mut cursor = body;
     let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidTaskBody("tasks.create.body"))?;
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.body")))?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidTaskBody("tasks.create.body"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.create.body",
+        )));
     }
     let Some(entries) = value.as_map() else {
         return Ok(false);

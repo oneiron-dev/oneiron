@@ -17,8 +17,8 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::RecordError;
+use crate::error::{ClaimError, Error, Result};
 use crate::temporal::TimeRange;
 use rmpv::Value;
 
@@ -210,9 +210,9 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
             continue;
         }
         if heads[index].is_some() {
-            return Err(Error::InvalidCounterpartyContactBody(
+            return Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
                 "counterparty contact claim family has two live heads for one predicate",
-            ));
+            )));
         }
         heads[index] = Some(body.value);
     }
@@ -222,11 +222,11 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
         Value::from(COUNTERPARTY_CONTACT_SCHEMA_VERSION),
     )];
     for (index, predicate) in COUNTERPARTY_CONTACT_CLAIM_PREDICATES.iter().enumerate() {
-        let value = heads[index]
-            .take()
-            .ok_or(Error::InvalidCounterpartyContactBody(
+        let value = heads[index].take().ok_or(Error::Record(
+            RecordError::InvalidCounterpartyContactBody(
                 "counterparty contact claim family is missing a live head",
-            ))?;
+            ),
+        ))?;
         entries.push((Value::from(counterparty_contact_body_key(predicate)), value));
     }
     // Straight back through the canonical decoder, so the rebuilt record clears
@@ -301,9 +301,9 @@ fn fold_party_opt_out_heads_in_txn(
         None => match record.opt_out {
             Some(opt_out) => opt_out.reason,
             None => {
-                return Err(Error::InvalidCounterpartyContactBody(
+                return Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
                     "comm.opt_out reason is outside the receipt vocabulary",
-                ));
+                )));
             }
         },
     };
@@ -322,7 +322,9 @@ fn fold_party_opt_out_heads_in_txn(
 pub(super) fn comm_fold_error(error: crate::comm::CommError) -> Error {
     match error {
         crate::comm::CommError::Engine(error) => error,
-        _ => Error::InvalidCounterpartyContactBody("comm opt-out head failed to decode"),
+        _ => Error::Record(RecordError::InvalidCounterpartyContactBody(
+            "comm opt-out head failed to decode",
+        )),
     }
 }
 

@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::VaultConfig;
+use crate::error::RecordError;
 use crate::error::SyncError;
 use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_PERSON};
 use crate::self_heal::{
@@ -97,11 +98,14 @@ fn diagnostic_observer_b_quota_exhaustion_and_rejection_preserves_budget() -> Re
         malformed.push(0x80);
         assert!(matches!(
             ingest(id(9), &malformed),
-            Err(Error::InvalidDiagnosticBody(_))
+            Err(Error::Record(RecordError::InvalidDiagnosticBody(_)))
         ));
         assert!(ingest(first, &first_blob)?);
         let err = ingest(collision, &collision_blob).unwrap_err();
-        assert!(matches!(err, Error::InvalidDiagnosticBody(_)));
+        assert!(matches!(
+            err,
+            Error::Record(RecordError::InvalidDiagnosticBody(_))
+        ));
         assert!(remote_rejection_reason(&err).is_some());
         // Observer B continues after a remote rejection in the SAME txn.
         // Rejection must preserve the first debit and leave room for a sibling.

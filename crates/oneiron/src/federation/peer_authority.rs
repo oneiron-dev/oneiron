@@ -8,6 +8,7 @@ use crate::authority::{
     folded_peer_device_is_consent_root, genesis_vault_id,
 };
 use crate::entity_id::bytes_to_hex_lower;
+use crate::error::RecordError;
 use crate::error::{Error, Result};
 use crate::vault::Vault;
 
@@ -88,7 +89,9 @@ pub fn admit_peer_authority_log_entry(
             distinct += 1;
         }
         if distinct >= MAX_PEER_AUTHORITY_ENTRIES_PER_PEER {
-            return Err(Error::InvalidAuthorityLogBody("peer authority log flood"));
+            return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+                "peer authority log flood",
+            )));
         }
         vault.store.sync_state.put(wtxn, &key, bytes)?;
         Ok(())
@@ -110,9 +113,9 @@ pub fn peer_authority_roster(
         &peer_authority_prefix(peer_vault_id),
     )?);
     if fold.vault_id != Some(*peer_vault_id) {
-        return Err(Error::InvalidAuthorityLogBody(
+        return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "peer authority fold root mismatch",
-        ));
+        )));
     }
     Ok(fold)
 }
@@ -204,5 +207,7 @@ fn peer_authority_row_prefix(key: &str) -> Result<String> {
 }
 
 fn peer_authority_vault_mismatch() -> Error {
-    Error::InvalidAuthorityLogBody("peer authority log vault id")
+    Error::Record(RecordError::InvalidAuthorityLogBody(
+        "peer authority log vault id",
+    ))
 }

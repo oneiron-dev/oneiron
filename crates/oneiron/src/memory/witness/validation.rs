@@ -11,6 +11,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::error::RecordError;
 use crate::gate::{MAX_WITNESS_MESSAGE_ORDER, validate_canonical_witness_message_body};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::ManifestDbs;
@@ -99,9 +100,9 @@ pub(super) fn validate_existing_witness_message(
         ));
     }
     if &raw[ENTITY_METADATA_HEADER_LEN..] != body {
-        return Err(Error::InvalidWitnessMessageBody(
+        return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
             "an existing MESSAGE id is bound to its original canonical body",
-        )
+        ))
         .into());
     }
     if sole_edge_target(dbs, txn, message_id, EdgeKind::PartOf, "message")? != Some(*turn_id) {
@@ -198,17 +199,28 @@ pub(super) fn validate_existing_witness_message_orders(
 fn canonical_witness_message_order(body: &[u8]) -> MemoryResult<u32> {
     validate_canonical_witness_message_body(body)?;
     let mut cursor = body;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidWitnessMessageBody("MESSAGE order is not canonical"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Record(RecordError::InvalidWitnessMessageBody(
+            "MESSAGE order is not canonical",
+        ))
+    })?;
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidWitnessMessageBody("MESSAGE order is not canonical").into());
+        return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
+            "MESSAGE order is not canonical",
+        ))
+        .into());
     };
     entries
         .into_iter()
         .find_map(|(key, value)| (key.as_str() == Some("order")).then(|| value.as_u64()))
         .flatten()
         .and_then(|order| u32::try_from(order).ok())
-        .ok_or_else(|| Error::InvalidWitnessMessageBody("MESSAGE order is not canonical").into())
+        .ok_or_else(|| {
+            Error::Record(RecordError::InvalidWitnessMessageBody(
+                "MESSAGE order is not canonical",
+            ))
+            .into()
+        })
 }
 
 /// The call's ORDER axis, checked as a set (ONE-1686).

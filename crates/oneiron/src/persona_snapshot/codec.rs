@@ -13,7 +13,7 @@ use super::types::{
     PERSONA_SNAPSHOT_EXPORT_SCHEMA_VERSION, PersonaSnapshotExportRecord,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 
 pub(super) fn validate_fingerprint_hex(fingerprint: &str) -> Result<()> {
     if fingerprint.len() == FINGERPRINT_HEX_LEN
@@ -242,7 +242,7 @@ fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Va
 }
 
 pub(super) fn invalid_snapshot(reason: &'static str) -> Error {
-    Error::InvalidPersonaSnapshot(reason)
+    Error::Record(RecordError::InvalidPersonaSnapshot(reason))
 }
 
 pub(super) fn hash_hex(bytes: &[u8]) -> String {

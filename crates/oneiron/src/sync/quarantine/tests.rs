@@ -5,8 +5,8 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::GateError;
+use crate::error::RecordError;
+use crate::error::{ArtifactError, GateError};
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::bridge::{Materializer, format_edge_key};
@@ -120,11 +120,15 @@ fn remote_rejection_reason_classifies_secret_scan_denials_only() {
     assert_eq!(remote_rejection_reason(&other_gate), None);
     assert_eq!(remote_rejection_reason(&pending_secret_scan), None);
     assert_eq!(
-        remote_rejection_reason(&Error::CompanionRecordAlreadyExists).as_deref(),
+        remote_rejection_reason(&Error::Record(RecordError::CompanionRecordAlreadyExists))
+            .as_deref(),
         Some("CompanionRecordAlreadyExists")
     );
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidPsychProfileBody("bad profile")).as_deref(),
+        remote_rejection_reason(&Error::Record(RecordError::InvalidPsychProfileBody(
+            "bad profile"
+        )))
+        .as_deref(),
         Some("InvalidPsychProfileBody")
     );
     assert_eq!(
@@ -142,13 +146,19 @@ fn remote_rejection_reason_classifies_secret_scan_denials_only() {
         Some("InvalidAgentDefBody")
     );
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidTaskBody("missing task role")).as_deref(),
+        remote_rejection_reason(&Error::Record(RecordError::InvalidTaskBody(
+            "missing task role"
+        )))
+        .as_deref(),
         Some("InvalidTaskBody")
     );
     // ONE-1394: a malformed replicated DIAGNOSTIC row quarantines and the
     // window continues, instead of aborting the batch as a LOCAL failure.
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidDiagnosticBody("unknown body key")).as_deref(),
+        remote_rejection_reason(&Error::Record(RecordError::InvalidDiagnosticBody(
+            "unknown body key"
+        )))
+        .as_deref(),
         Some("InvalidDiagnosticBody")
     );
 }

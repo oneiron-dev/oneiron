@@ -1055,7 +1055,9 @@ fn a_malformed_authority_fact_row_does_not_poison_the_board() {
 
     assert!(matches!(
         vault.task_authority_state(poisoned),
-        Err(crate::error::Error::InvalidTaskBody(_))
+        Err(crate::error::Error::Record(
+            crate::error::RecordError::InvalidTaskBody(_)
+        ))
     ));
     let authority = vault
         .task_authority_state(healthy)

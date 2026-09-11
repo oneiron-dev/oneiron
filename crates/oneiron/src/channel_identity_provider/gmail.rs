@@ -274,7 +274,7 @@ impl GmailDelegatedAdapterConfig {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidChannelIdentityBody`] when the custody record name is
+    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody) when the custody record name is
     /// blank or exceeds the grant schema's ref cap; [`Error::InvalidConfig`]
     /// when the mailbox is not a single ordinary address.
     pub fn new(
@@ -416,7 +416,7 @@ impl GmailDelegatedAdapter {
     /// # Errors
     ///
     /// As [`Self::verify_custody_grant`], plus
-    /// [`Error::ChannelIdentityAlreadyExists`] when `identity_id` is taken or
+    /// [`RecordError::ChannelIdentityAlreadyExists`](crate::error::RecordError::ChannelIdentityAlreadyExists) when `identity_id` is taken or
     /// the mailbox already has an occupant, plus body validation.
     pub fn provision_delegated_identity(
         &self,

@@ -333,7 +333,9 @@ fn vad_annotation_core_error_maps_gate_rejection_to_invalid_state() {
 fn core_engine_error_maps_invalid_counterparty_contact_body_to_bad_request() {
     let error = core_engine_error(
         "core context-pack failed",
-        oneiron::Error::InvalidCounterpartyContactBody("body failed validation"),
+        oneiron::Error::Record(oneiron::error::RecordError::InvalidCounterpartyContactBody(
+            "body failed validation",
+        )),
     );
 
     assert_eq!(error.status(), StatusCode::BAD_REQUEST);
@@ -446,7 +448,9 @@ fn core_engine_error_maps_agent_dispatch_failures_to_bad_request() {
 fn core_engine_error_maps_invalid_task_body_to_bad_request() {
     let error = core_engine_error(
         "core batch commit failed",
-        oneiron::Error::InvalidTaskBody("missing task role"),
+        oneiron::Error::Record(oneiron::error::RecordError::InvalidTaskBody(
+            "missing task role",
+        )),
     );
 
     assert_eq!(error.status(), StatusCode::BAD_REQUEST);

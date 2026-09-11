@@ -9,6 +9,7 @@ use crate::delivery_window::{DeliveryWindowApnsInterruptionLevel, DeliveryWindow
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::error::RecordError;
 use crate::habit::TaskRole;
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
@@ -282,27 +283,31 @@ impl Vault {
             return Ok(None);
         }
         if crate::habit::task_role_from_body_bytes(body_bytes)? != TaskRole::Task {
-            return Err(Error::InvalidTaskBody(
+            return Err(Error::Record(RecordError::InvalidTaskBody(
                 "connector send must use the Task role",
-            ));
+            )));
         }
-        let body: ConnectorSendTaskBody = rmp_serde::from_slice(body_bytes)
-            .map_err(|_| Error::InvalidTaskBody("invalid connector send body"))?;
+        let body: ConnectorSendTaskBody = rmp_serde::from_slice(body_bytes).map_err(|_| {
+            Error::Record(RecordError::InvalidTaskBody("invalid connector send body"))
+        })?;
         if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
             || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
         {
-            return Err(Error::InvalidTaskBody(
+            return Err(Error::Record(RecordError::InvalidTaskBody(
                 "unsupported connector send body version",
-            ));
+            )));
         }
-        let actor_ref = EntityId::from_hex(&body.actor_ref)
-            .map_err(|_| Error::InvalidTaskBody("invalid connector send actor"))?;
+        let actor_ref = EntityId::from_hex(&body.actor_ref).map_err(|_| {
+            Error::Record(RecordError::InvalidTaskBody("invalid connector send actor"))
+        })?;
         let actor_class = match body.actor_class.as_str() {
             "human" => EdgeActorClass::Human,
             "agent" => EdgeActorClass::Agent,
             "system" => EdgeActorClass::System,
             _ => {
-                return Err(Error::InvalidTaskBody("invalid connector send actor class"));
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "invalid connector send actor class",
+                )));
             }
         };
         let assignee_ref = connector_actor_id(&body.channel)?;
@@ -353,19 +358,27 @@ impl Vault {
     ) -> Result<ConnectorSendTaskBody, Error> {
         let raw = self
             .get_raw(&task_ref)?
-            .ok_or(Error::InvalidTaskBody("missing connector send task"))?;
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "missing connector send task",
+            )))?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("connector task entity header"))?;
         if header.entity_type != ENTITY_TYPE_TASK || raw.len() < ENTITY_METADATA_HEADER_LEN {
-            return Err(Error::InvalidTaskBody("invalid connector task header"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "invalid connector task header",
+            )));
         }
         let body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
-            .map_err(|_| Error::InvalidTaskBody("invalid connector send body"))?;
+            .map_err(|_| {
+                Error::Record(RecordError::InvalidTaskBody("invalid connector send body"))
+            })?;
         if body.role != 1
             || body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
             || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
         {
-            return Err(Error::InvalidTaskBody("unsupported connector send body"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "unsupported connector send body",
+            )));
         }
         Ok(body)
     }
@@ -379,19 +392,23 @@ impl Vault {
         learned_at: u64,
     ) -> Result<ConnectorSendTask, Error> {
         if !(-840..=840).contains(&utc_offset_minutes) {
-            return Err(Error::InvalidTaskBody("utc offset out of range"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "utc offset out of range",
+            )));
         }
         if iana_timezone.is_some_and(|s| {
             s.trim().is_empty() || s.len() > 255 || s.chars().any(char::is_control)
         }) {
-            return Err(Error::InvalidTaskBody("invalid IANA timezone"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "invalid IANA timezone",
+            )));
         }
         // Check terminality in the same write transaction that hydrates the fields.
         update_connector_send_task_body(self, task_ref, learned_at, |body| {
             if body.outcome.is_some() {
-                return Err(Error::InvalidTaskBody(
+                return Err(Error::Record(RecordError::InvalidTaskBody(
                     "terminal connector task cannot refresh timezone",
-                ));
+                )));
             }
             body.utc_offset_minutes = Some(utc_offset_minutes);
             body.iana_timezone = iana_timezone.map(str::to_owned);
@@ -483,20 +500,21 @@ fn update_connector_send_task_body(
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("connector task entity header"))?;
         if header.entity_type != ENTITY_TYPE_TASK {
-            return Err(Error::InvalidTaskBody(
+            return Err(Error::Record(RecordError::InvalidTaskBody(
                 "connector send entity is not a TASK",
-            ));
+            )));
         }
         let mut body: ConnectorSendTaskBody =
-            rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
-                .map_err(|_| Error::InvalidTaskBody("invalid connector send body"))?;
+            rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| {
+                Error::Record(RecordError::InvalidTaskBody("invalid connector send body"))
+            })?;
         if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
             || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
             || body.role != TaskRole::Task.role_byte()
         {
-            return Err(Error::InvalidTaskBody(
+            return Err(Error::Record(RecordError::InvalidTaskBody(
                 "unsupported connector send body version",
-            ));
+            )));
         }
         update(&mut body)?;
         let encoded = rmp_serde::to_vec_named(&body)
@@ -530,8 +548,11 @@ fn update_connector_send_task_body(
 }
 
 fn has_connector_send_subkind(body: &[u8]) -> Result<bool, Error> {
-    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
-        .map_err(|_| Error::InvalidTaskBody("body is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body)).map_err(|_| {
+        Error::Record(RecordError::InvalidTaskBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
     Ok(value.as_map().is_some_and(|entries| {
         entries.iter().any(|(key, value)| {
             key.as_str() == Some("subkind") && value.as_str() == Some(CONNECTOR_SEND_TASK_SUBKIND)

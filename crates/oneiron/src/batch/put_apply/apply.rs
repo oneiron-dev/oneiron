@@ -20,8 +20,8 @@ use super::{
 use crate::claim::ClaimApprovalStatus;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::{Error, ErrorKind, RegistryError, Result};
+use crate::error::RecordError;
+use crate::error::{ArtifactError, Error, ErrorKind, RegistryError, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,
@@ -532,9 +532,9 @@ pub(in crate::batch) fn apply_put(
         // internal local path. Replicated MESSAGEs have already failed closed
         // above, and public raw puts never reach this arm.
         if old_type == ENTITY_TYPE_MESSAGE && body_changed {
-            return Err(Error::InvalidWitnessMessageBody(
+            return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
                 "an existing MESSAGE id is bound to its original canonical body",
-            ));
+            )));
         }
         if old_type == ENTITY_TYPE_TASK {
             validate_task_checkin_immutable(

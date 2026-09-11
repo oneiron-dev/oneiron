@@ -10,6 +10,7 @@ use crate::{
     attempt_queue::EnqueueOutcome,
 };
 
+use crate::error::RecordError;
 use crate::test_util::entity;
 
 fn provenance(seed: u8) -> CompanionProvenance {
@@ -931,7 +932,10 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         )
         .commit()
         .expect_err("second raw active revived row for key must be rejected");
-    assert!(matches!(err, Error::CompanionRecordAlreadyExists));
+    assert!(matches!(
+        err,
+        Error::Record(RecordError::CompanionRecordAlreadyExists)
+    ));
     Ok(())
 }
 
@@ -1134,7 +1138,10 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     let duplicate = vault
         .create_companion_record(&duplicate_personal_id, &personal, 13)
         .expect_err("duplicate register key must fail closed");
-    assert!(matches!(duplicate, Error::CompanionRecordAlreadyExists));
+    assert!(matches!(
+        duplicate,
+        Error::Record(RecordError::CompanionRecordAlreadyExists)
+    ));
     let raw_duplicate = vault
         .batch()
         .put(
@@ -1146,7 +1153,10 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         )
         .commit()
         .expect_err("raw batch put must preserve companion register key uniqueness");
-    assert!(matches!(raw_duplicate, Error::CompanionRecordAlreadyExists));
+    assert!(matches!(
+        raw_duplicate,
+        Error::Record(RecordError::CompanionRecordAlreadyExists)
+    ));
 
     let mut retired_create = neutral.clone();
     retired_create.lifecycle = ClaimLifecycleStatus::Retracted;
@@ -1333,7 +1343,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .expect_err("retired keys must require explicit revive");
     assert!(matches!(
         duplicate_after_retire,
-        Error::CompanionRecordAlreadyExists
+        Error::Record(RecordError::CompanionRecordAlreadyExists)
     ));
 
     let err = vault

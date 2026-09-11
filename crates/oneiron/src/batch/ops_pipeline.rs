@@ -8,8 +8,8 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::companion::{ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body};
 use crate::edge::{encode_edge_value, validate_edge_weight};
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, OffRecordError, Result};
+use crate::error::RecordError;
+use crate::error::{Error, OffRecordError, RegistryError, Result};
 use crate::off_record::PromoteReplayGrant;
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
 use crate::store::Store;
@@ -405,9 +405,9 @@ pub(crate) fn apply_ops_session(
                             }));
                         }
                         if &raw[ENTITY_METADATA_HEADER_LEN..] != data.as_slice() {
-                            return Err(Error::InvalidWitnessMessageBody(
+                            return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
                                 "an existing MESSAGE id is bound to its original canonical body",
-                            ));
+                            )));
                         }
                     }
                 }

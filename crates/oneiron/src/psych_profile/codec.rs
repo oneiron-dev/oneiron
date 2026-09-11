@@ -12,7 +12,7 @@ use super::record::{
 };
 use crate::claim::unit_interval_f32;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 
 /// Encodes a PsychProfile body in canonical MessagePack field order.
 pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
@@ -263,5 +263,5 @@ pub(super) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Re
 }
 
 pub(super) fn invalid_profile(reason: &'static str) -> Error {
-    Error::InvalidPsychProfileBody(reason)
+    Error::Record(RecordError::InvalidPsychProfileBody(reason))
 }

@@ -16,6 +16,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, child_of_prefix};
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
+use crate::error::RecordError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::store::Store;
@@ -130,16 +131,25 @@ pub(crate) fn task_body_for_test(role: TaskRole) -> Vec<u8> {
 /// root, and non-string keys.
 fn task_body_entries(bytes: &[u8]) -> Result<Vec<(Value, Value)>> {
     let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidTaskBody("body is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Record(RecordError::InvalidTaskBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
     if cursor.position() != bytes.len() as u64 {
-        return Err(Error::InvalidTaskBody("trailing bytes after body map"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "trailing bytes after body map",
+        )));
     }
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidTaskBody("body must be a MessagePack map"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "body must be a MessagePack map",
+        )));
     };
     if entries.iter().any(|(key, _)| key.as_str().is_none()) {
-        return Err(Error::InvalidTaskBody("body keys must be strings"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "body keys must be strings",
+        )));
     }
     Ok(entries)
 }
@@ -151,18 +161,23 @@ pub(crate) fn task_role_from_body_bytes(bytes: &[u8]) -> Result<TaskRole> {
             continue;
         }
         if role.is_some() {
-            return Err(Error::InvalidTaskBody("duplicate task role key"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "duplicate task role key",
+            )));
         }
         let role_byte = value
             .as_u64()
             .and_then(|raw| u8::try_from(raw).ok())
-            .ok_or(Error::InvalidTaskBody("task role must be a byte"))?;
-        role = Some(
-            TaskRole::from_role_byte(role_byte)
-                .ok_or(Error::InvalidTaskBody("unknown task role"))?,
-        );
+            .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                "task role must be a byte",
+            )))?;
+        role = Some(TaskRole::from_role_byte(role_byte).ok_or(Error::Record(
+            RecordError::InvalidTaskBody("unknown task role"),
+        ))?);
     }
-    role.ok_or(Error::InvalidTaskBody("missing task role"))
+    role.ok_or(Error::Record(RecordError::InvalidTaskBody(
+        "missing task role",
+    )))
 }
 
 /// The two derived counters a Habit-role TASK stores.
@@ -352,14 +367,14 @@ pub(crate) fn strip_streak_fields(body: &[u8]) -> Result<Option<Vec<u8>>> {
 pub(crate) fn reject_public_streak_fields(body: &[u8]) -> Result<()> {
     let entries = task_body_entries(body)?;
     if entries.iter().any(|(key, _)| is_streak_key(key)) {
-        return Err(Error::InvalidTaskBody(
+        return Err(Error::Record(RecordError::InvalidTaskBody(
             "task streak counters are derived from check-ins",
-        ));
+        )));
     }
     if task_role_from_body_bytes(body)?.is_engine_reserved() {
-        return Err(Error::InvalidTaskBody(
+        return Err(Error::Record(RecordError::InvalidTaskBody(
             "reserved task role is written only by its engine door",
-        ));
+        )));
     }
     Ok(())
 }
@@ -407,7 +422,7 @@ mod tests {
             TaskRole::AuthorityFact
         );
         match reject_public_streak_fields(&task_body_for_test(TaskRole::AuthorityFact)) {
-            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+            Err(crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(msg))) => {
                 assert_eq!(msg, "reserved task role is written only by its engine door");
             }
             other => panic!("expected a reserved-role rejection, got {other:?}"),
@@ -436,7 +451,7 @@ mod tests {
             (Value::from(TASK_BODY_ROLE_KEY), Value::from(role_byte)),
         ]));
         match task_role_from_body_bytes(&duplicate_role) {
-            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+            Err(crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(msg))) => {
                 assert_eq!(msg, "duplicate task role key");
             }
             other => panic!("expected duplicate-role-key rejection, got {other:?}"),
@@ -444,7 +459,7 @@ mod tests {
 
         let non_map = encode(&Value::from(role_byte));
         match task_role_from_body_bytes(&non_map) {
-            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+            Err(crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(msg))) => {
                 assert_eq!(msg, "body must be a MessagePack map");
             }
             other => panic!("expected non-map rejection, got {other:?}"),
@@ -455,7 +470,7 @@ mod tests {
             Value::from(role_byte),
         )]));
         match task_role_from_body_bytes(&non_string_key) {
-            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+            Err(crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(msg))) => {
                 assert_eq!(msg, "body keys must be strings");
             }
             other => panic!("expected non-string-key rejection, got {other:?}"),
@@ -575,7 +590,7 @@ mod tests {
 
         // The public doors refuse a caller-supplied counter.
         match reject_public_streak_fields(&written) {
-            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+            Err(crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(msg))) => {
                 assert_eq!(msg, "task streak counters are derived from check-ins");
             }
             other => panic!("expected a derived-field rejection, got {other:?}"),
