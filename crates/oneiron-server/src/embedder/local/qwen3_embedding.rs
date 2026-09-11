@@ -397,6 +397,10 @@ impl MaskCache {
     }
 
     /// The lengths held right now, oldest first.
+    ///
+    /// The window is not something the forward pass asks about; it is what a
+    /// row proving the bound reads, so it exists only in a test build.
+    #[cfg(test)]
     pub(super) fn lengths(&self) -> Vec<usize> {
         self.entries.iter().map(|(length, _)| *length).collect()
     }
