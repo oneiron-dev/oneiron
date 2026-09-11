@@ -1,14 +1,15 @@
-//! First-seen sidecar keys and the process-local logical clock domains.
+//! First-seen sidecar keys and the per-vault logical observation clock.
 //!
 //! The sidecar sync keys and codec used by the readonly/backfill fold path,
-//! plus the process-local observation clock. The clock's backing static lives
-//! in [`authority_local_clocks`] and must exist exactly once crate-wide.
+//! plus the observation clock itself. The clock belongs to the vault that
+//! observes: one [`AuthorityLocalClock`] lives behind a mutex on `StoreCore`,
+//! so it dies with the handle and two vaults in one process cannot read each
+//! other's anchor.
 
-use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use crate::error::Error;
+use crate::store::StoreCore;
 
 use super::*;
 
@@ -81,7 +82,7 @@ pub(crate) fn is_indeterminate_first_seen(err: &Error) -> bool {
     matches!(err, Error::CorruptedIndex(msg) if *msg == AUTHORITY_FIRST_SEEN_INDETERMINATE)
 }
 
-/// One clock domain's monotonic ANCHOR: the observed second count
+/// One vault's monotonic observation ANCHOR: the observed second count
 /// `anchor_secs` and the [`Instant`] `anchor_instant` it was taken at.
 ///
 /// The pair is an anchor, NOT a running total, and that is the whole point.
@@ -94,77 +95,72 @@ pub(crate) fn is_indeterminate_first_seen(err: &Error) -> bool {
 /// hole). Keeping the anchor fixed makes each call measure real elapsed time
 /// from ONE origin, so the sub-second remainders accumulate and the second
 /// boundary is crossed exactly when it is crossed in wall time.
-struct AuthorityLocalClock {
+///
+/// Unset until the first observation seeds it, and it dies with the vault
+/// handle that owns it: a reopen starts a fresh anchor from the persisted
+/// floor, which is exactly the old domain-release semantics with no registry
+/// to release from.
+#[derive(Default)]
+pub(crate) struct AuthorityLocalClock {
+    anchor: Option<AuthorityClockAnchor>,
+}
+
+struct AuthorityClockAnchor {
     anchor_instant: Instant,
     anchor_secs: u64,
 }
 
-fn authority_local_clocks() -> &'static Mutex<BTreeMap<usize, AuthorityLocalClock>> {
-    static LOCAL_CLOCKS: OnceLock<Mutex<BTreeMap<usize, AuthorityLocalClock>>> = OnceLock::new();
-    LOCAL_CLOCKS.get_or_init(|| Mutex::new(BTreeMap::new()))
-}
-
-pub(crate) fn authority_observation_secs_for_domain(
-    clock_domain: usize,
-    previous_floor: u64,
-    candidate_wall_secs: u64,
-) -> u64 {
-    authority_observation_secs_for_domain_at(
-        clock_domain,
-        previous_floor,
-        candidate_wall_secs,
-        Instant::now(),
-    )
-}
-
-// Keep the clock transition shared with tests that supply an exact monotonic instant.
-pub(super) fn authority_observation_secs_for_domain_at(
-    clock_domain: usize,
-    previous_floor: u64,
-    candidate_wall_secs: u64,
-    now: Instant,
-) -> u64 {
-    let mut clocks = authority_local_clocks()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match clocks.get_mut(&clock_domain) {
-        Some(clock) => {
-            let elapsed = now
-                .saturating_duration_since(clock.anchor_instant)
-                .as_secs();
-            let anchored = clock.anchor_secs.saturating_add(elapsed);
-            // The persisted floor is the only thing that may REBASE the anchor:
-            // a floor above the anchor-derived value means another writer (or a
-            // reopen) advanced local observation past this domain's origin, so
-            // the floor becomes the new origin and `now` its instant. Rebasing
-            // here is safe precisely because it is monotone upward — it can
-            // delay a widen, never skip one.
-            if previous_floor > anchored {
-                clock.anchor_secs = previous_floor;
-                clock.anchor_instant = now;
-                return previous_floor;
+impl AuthorityLocalClock {
+    /// The monotone observation this vault reports for `candidate_wall_secs`,
+    /// measured from `now` on the monotonic clock.
+    pub(crate) fn observation_secs_at(
+        &mut self,
+        previous_floor: u64,
+        candidate_wall_secs: u64,
+        now: Instant,
+    ) -> u64 {
+        match self.anchor.as_mut() {
+            Some(anchor) => {
+                let elapsed = now
+                    .saturating_duration_since(anchor.anchor_instant)
+                    .as_secs();
+                let anchored = anchor.anchor_secs.saturating_add(elapsed);
+                // The persisted floor is the only thing that may REBASE the
+                // anchor: a floor above the anchor-derived value means another
+                // writer (or a reopen) advanced local observation past this
+                // vault's origin, so the floor becomes the new origin and `now`
+                // its instant. Rebasing here is safe precisely because it is
+                // monotone upward — it can delay a widen, never skip one.
+                if previous_floor > anchored {
+                    anchor.anchor_secs = previous_floor;
+                    anchor.anchor_instant = now;
+                    return previous_floor;
+                }
+                anchored
             }
-            anchored
-        }
-        None => {
-            let observed = candidate_wall_secs.max(previous_floor);
-            clocks.insert(
-                clock_domain,
-                AuthorityLocalClock {
+            None => {
+                let observed = candidate_wall_secs.max(previous_floor);
+                self.anchor = Some(AuthorityClockAnchor {
                     anchor_instant: now,
                     anchor_secs: observed,
-                },
-            );
-            observed
+                });
+                observed
+            }
         }
     }
 }
 
-pub(crate) fn release_authority_clock_domain(clock_domain: usize) {
-    let mut clocks = authority_local_clocks()
+/// The monotone observation `store`'s vault reports for `candidate_wall_secs`.
+pub(crate) fn authority_observation_secs(
+    store: &StoreCore,
+    previous_floor: u64,
+    candidate_wall_secs: u64,
+) -> u64 {
+    store
+        .authority_local_clock
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    clocks.remove(&clock_domain);
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .observation_secs_at(previous_floor, candidate_wall_secs, Instant::now())
 }
 
 pub(crate) fn encode_authority_first_seen_secs(secs: u64) -> [u8; 8] {

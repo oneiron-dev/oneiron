@@ -254,7 +254,7 @@ constructors are `pub(crate)`, with public forwarders on `Error`.
 
 `scripts/ratchet/check.sh` ratchets four counters over non-test code — files at or over 800
 lines, `#[allow(` attributes, `println!`/`eprintln!`/`dbg!` calls, and process-global mutable
-statics (baseline 2 / 98 / 91 / 45, `scripts/ratchet/baseline.json`) — and
+statics (baseline 2 / 98 / 91 / 38, `scripts/ratchet/baseline.json`) — and
 `scripts/ratchet/root-surface-check.sh` pins the crate root at exactly the 702 names in
 `scripts/ratchet/root-surface.txt`. A change may lower a
 counter; raising one, or moving the pin, is a reviewed decision stated in the PR, never a

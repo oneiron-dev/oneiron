@@ -1298,7 +1298,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/first_seen_clock.rs",
-     "purpose": "First-seen sidecar keys and the process-local logical clock domains",
+     "purpose": "First-seen sidecar keys and the per-vault logical observation clock",
      "surface": {
       "crate-vis": 12
      }
@@ -21141,7 +21141,7 @@
      "purpose": "Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and…",
      "surface": {
       "const": 5,
-      "crate-vis": 43,
+      "crate-vis": 42,
       "enum": 1,
       "fn": 1,
       "struct": 1
