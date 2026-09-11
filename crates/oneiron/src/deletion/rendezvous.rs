@@ -1,3 +1,4 @@
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::store::GateDecisionId;
 
@@ -15,46 +16,27 @@ use crate::error::{Error, Result};
 // out of production entirely (the `#[cfg(not(test))]` shim is a no-op),
 // mirroring the established sweep-side fault-injection seam idiom.
 //
-// The slot is THREAD-LOCAL: the harness installs the sender on the deleter
-// thread itself, right before that thread calls into the delete, and the
-// delete fires it on that same thread. `cargo test --lib` runs the raced
-// tests as parallel threads of one process; a process-global slot let a
-// sibling test overwrite the sender (dropping it, so the eraser's `recv()`
-// failed with `RecvError`) or consume it with an unrelated headerful delete.
-// A per-thread slot is unreachable from every other test.
-#[cfg(test)]
-thread_local! {
-    static AFTER_HEADER_READ: std::cell::RefCell<Option<std::sync::mpsc::SyncSender<()>>> =
-        const { std::cell::RefCell::new(None) };
-}
+// The slot belongs to the VAULT being deleted from
+// (`crate::store::TestHooks::install_after_header_read_signal`), not to the
+// process and not to the deleter thread. A process-global slot let a sibling
+// test overwrite the sender (dropping it, so the eraser's `recv()` failed with
+// `RecvError`) or consume it with an unrelated headerful delete; a per-vault
+// slot is unreachable from every test that opened a different vault, which is
+// every other test.
 
-/// Installs the one-shot rendezvous sender consumed by
-/// [`signal_after_header_read`] for the CALLING thread. The raced-delete
-/// harness calls this inside the deleter thread before the delete; the
-/// matching receiver `recv()`s on the eraser side just before its commit.
+/// Fires this vault's post-header-read rendezvous signal, if one is armed.
+///
+/// Compiles out of every non-test build via the no-op shim below.
 #[cfg(test)]
-pub(crate) fn install_after_header_read_signal(tx: std::sync::mpsc::SyncSender<()>) {
-    AFTER_HEADER_READ.set(Some(tx));
-}
-
-/// Fires the rendezvous signal exactly once if this thread installed a sender,
-/// then clears it so a later headerful delete on the same thread never blocks
-/// on a stale rendezvous. A no-op on every thread that installed nothing.
-#[cfg(test)]
-pub(super) fn signal_after_header_read() {
-    if let Some(sender) = AFTER_HEADER_READ.take() {
-        // The rendezvous (`sync_channel(0)`) blocks here until the eraser
-        // `recv()`s; that recv is positioned immediately before its commit, so
-        // the deleter's header read is provably ordered before the erase.
-        let _ = sender.send(());
-    }
+pub(super) fn signal_after_header_read(vault: &Vault) {
+    vault.test_hooks().signal_after_header_read();
 }
 
 /// Production no-op shim for the race-test rendezvous seam: compiles out the
 /// signal entirely in non-test builds.
 #[cfg(not(test))]
 #[inline(always)]
-pub(super) fn signal_after_header_read() {}
+pub(super) fn signal_after_header_read(_vault: &Vault) {}
 
 #[cfg(all(test, feature = "sync"))]
 thread_local! {
@@ -187,76 +169,48 @@ pub(crate) enum DeleteRendezvous {
 /// the harness commits the revocation, and only then does `resume` release it.
 /// Both are `sync_channel(0)`.
 ///
-/// Keyed by `(step, target)`, not by step alone. `cargo test` runs the suite as
-/// parallel threads of ONE process against a single static, and several
-/// unrelated tests delete entities concurrently — a step-only match let a
-/// stranger's delete fire the harness's `arrived` channel, so the harness
-/// committed its revocation while its OWN deleter was still short of the seam.
-/// Matching the target entity makes each rendezvous belong to exactly the delete
-/// that installed it.
+/// Keyed by `(step, target)`, not by step alone. One vault serves many deletes
+/// — a test's own control delete, a warmup, the second park the raced-purge
+/// harness installs while its deleter is still held at the first — and a
+/// step-only match let any of them fire the harness's `arrived` channel, so the
+/// harness committed its revocation while its OWN deleter was still short of the
+/// seam. Matching the target entity makes each rendezvous belong to exactly the
+/// delete that installed it.
 ///
 /// The `arrived` half carries the staged [`GateDecisionId`] when the arm has
 /// one: a refused publish returns no request id to the caller, so the harness
 /// could not otherwise name the sidecar it must prove absent. `None` on the soft
 /// arm, which ledgers its decision in the shell-scrub txn and stages no sidecar.
 ///
-/// Compiles out of every non-test build via the no-op shim, exactly like
+/// The slot itself is a field on the vault's
+/// [`crate::store::TestHooks`]; it compiles out of every non-test build, and the
+/// firing side goes through the no-op shim below exactly like
 /// [`signal_after_header_read`].
 #[cfg(test)]
-type DeleteRendezvousChannels = (
+pub(crate) type DeleteRendezvousChannels = (
     DeleteRendezvous,
     EntityId,
     std::sync::mpsc::SyncSender<Option<GateDecisionId>>,
     std::sync::mpsc::Receiver<()>,
 );
 
-#[cfg(test)]
-static DELETE_RENDEZVOUS: std::sync::Mutex<Option<DeleteRendezvousChannels>> =
-    std::sync::Mutex::new(None);
-
-/// Installs the one-shot rendezvous consumed by [`signal_delete_rendezvous`]
-/// when a delete of `target` reaches `step`. Any other step, or any other
-/// entity, passes straight through.
-#[cfg(test)]
-pub(crate) fn install_delete_rendezvous(
-    step: DeleteRendezvous,
-    target: EntityId,
-    arrived: std::sync::mpsc::SyncSender<Option<GateDecisionId>>,
-    resume: std::sync::mpsc::Receiver<()>,
-) {
-    *DELETE_RENDEZVOUS
-        .lock()
-        .expect("DELETE_RENDEZVOUS poisoned") = Some((step, target, arrived, resume));
-}
-
-/// Parks the deleter once if a rendezvous is installed for THIS step and THIS
-/// entity, then clears it so later deletes never block on a stale rendezvous.
-/// The mutex guard is released before the blocking `recv` — holding it across
-/// the park would deadlock every other delete that reaches a seam.
+/// Parks this vault's deleter if a rendezvous is installed for `step` and `id`.
 #[cfg(test)]
 pub(super) fn signal_delete_rendezvous(
+    vault: &Vault,
     step: DeleteRendezvous,
     id: &EntityId,
     decision_id: Option<GateDecisionId>,
 ) {
-    let mut installed = DELETE_RENDEZVOUS
-        .lock()
-        .expect("DELETE_RENDEZVOUS poisoned");
-    if installed
-        .as_ref()
-        .is_none_or(|(at_step, target, _, _)| *at_step != step || target != id)
-    {
-        return;
-    }
-    let (_, _, arrived, resume) = installed.take().expect("checked installed above");
-    drop(installed);
-    let _ = arrived.send(decision_id);
-    let _ = resume.recv();
+    vault
+        .test_hooks()
+        .signal_delete_rendezvous(step, id, decision_id);
 }
 
 #[cfg(not(test))]
 #[inline(always)]
 pub(super) fn signal_delete_rendezvous(
+    _vault: &Vault,
     _step: DeleteRendezvous,
     _id: &EntityId,
     _decision_id: Option<GateDecisionId>,

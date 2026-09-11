@@ -656,15 +656,16 @@ fn read_only_descriptor_drift_honors_existing_effectful_row() {
     assert_eq!(records[0].state, IntentState::Pending);
 }
 
-struct ForceSyncObservingSender {
+struct ForceSyncObservingSender<'vault> {
+    vault: &'vault Vault,
     calls: usize,
     force_sync_calls_at_send: Option<usize>,
 }
 
-impl OutboundSender for ForceSyncObservingSender {
+impl OutboundSender for ForceSyncObservingSender<'_> {
     fn send(&mut self, _call: &FrozenOutboundCall) -> OutboundSendOutcome {
         self.calls += 1;
-        self.force_sync_calls_at_send = Some(FORCE_SYNC_CALLS.load(AtomicOrdering::SeqCst));
+        self.force_sync_calls_at_send = Some(self.vault.test_hooks().force_sync_calls());
         OutboundSendOutcome::Ambiguous
     }
 }
@@ -677,8 +678,9 @@ fn early_hit_replay_force_syncs_before_resend() {
     let attempt_id = attempt(22);
     let payload = b"durability-fenced replay";
     persist_pending(&vault, attempt_id, 0, payload, 100, true);
-    let before_replay = FORCE_SYNC_CALLS.load(AtomicOrdering::SeqCst);
+    let before_replay = vault.test_hooks().force_sync_calls();
     let mut sender = ForceSyncObservingSender {
+        vault: &vault,
         calls: 0,
         force_sync_calls_at_send: None,
     };

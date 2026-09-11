@@ -51,9 +51,6 @@ pub use self::sync_frames::next_backoff;
 pub use self::types::{EphemeralChangeOrigin, SyncClientConfig, SyncEvent, SyncStatus};
 
 #[cfg(test)]
-pub use self::federated::{clear_stop_after_staged_import, stop_after_staged_import_once};
-
-#[cfg(test)]
 mod tests;
 
 #[cfg(test)]

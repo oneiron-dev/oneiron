@@ -3,6 +3,55 @@
 use super::support::*;
 use super::*;
 
+/// The observation clock belongs to the vault that observes, so two vaults open
+/// at the same time cannot move each other's reading.
+///
+/// The clock used to be a process-wide `BTreeMap` keyed by a minted domain id.
+/// Nothing pinned the isolation that keying bought, so a later change that
+/// collapsed the map to one shared anchor — or moved the clock back to a plain
+/// static — would have been invisible: every existing clock test drives ONE
+/// vault. A second vault open in the same process is what makes the ownership
+/// observable.
+///
+/// MUTATION PROBE: share one `AuthorityLocalClock` across handles and this test
+/// fails at the second assertion — the behind vault inherits the first's
+/// far-future anchor and reports that instead of its own reading, ten days
+/// ahead of anything it saw.
+#[test]
+fn two_open_vaults_observe_on_independent_authority_clocks() {
+    let ahead_dir = tempfile::tempdir().unwrap();
+    let ahead = crate::Vault::open(ahead_dir.path(), crate::VaultConfig::device()).unwrap();
+    let behind_dir = tempfile::tempdir().unwrap();
+    let behind = crate::Vault::open(behind_dir.path(), crate::VaultConfig::device()).unwrap();
+
+    // Anchor the first vault ten days ahead of real Unix time.
+    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    assert_eq!(authority_observation_secs(&ahead.store, 0, future), future);
+
+    // The second vault has observed nothing, so ITS first observation is its
+    // own candidate — not the neighbour's anchor.
+    let seeded = 1_000;
+    assert_eq!(
+        authority_observation_secs(&behind.store, 0, seeded),
+        seeded,
+        "a vault's first observation is its own candidate, whatever another \
+         vault has observed"
+    );
+
+    // Neither reading moved the other. The first is still parked in the future
+    // with a past candidate offered...
+    assert!(
+        authority_observation_secs(&ahead.store, 0, seeded) >= future,
+        "an observation on another vault must not drag this anchor backwards"
+    );
+    // ...and the second still reports from its own origin with a future
+    // candidate offered, i.e. it never inherited the anchor next door.
+    assert!(
+        authority_observation_secs(&behind.store, 0, future) < future,
+        "an observation on another vault must not drag this anchor forwards"
+    );
+}
+
 #[test]
 fn authority_genesis_golden_vector_is_canonical() {
     let genesis = genesis_entry(1, 86_400, 123);

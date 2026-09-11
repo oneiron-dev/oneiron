@@ -616,7 +616,7 @@ where
 
 /// ONE-1149 rendezvous variant: forces the deleter's lock-free
 /// `read_entity_header` read to complete BEFORE the eraser commits, via the
-/// `#[cfg(test)]` `AFTER_HEADER_READ` seam in `vault.rs`. The eraser `recv()`s
+/// vault's `#[cfg(test)]` post-header-read hook on `StoreCore::test_hooks`. The eraser `recv()`s
 /// the deleter's post-header-read signal immediately before `commit()`, so the
 /// HEADERFUL leg is exercised every run (the bare-barrier variant can rarely
 /// lose the read-vs-commit race and divert to the headerless path). Only valid
@@ -648,8 +648,8 @@ where
     // ONE-1149 rendezvous: a rendezvous (`sync_channel(0)`) sender installed
     // into the production `#[cfg(test)]` seam. The deleter sends after it
     // proves the header `Some` (still holding no write lock); the eraser
-    // recv()s just before its commit. The seam is thread-local, so the deleter
-    // thread arms it itself before it is released.
+    // recv()s just before its commit. The seam belongs to this vault, so the
+    // deleter thread arms it there before it is released.
     let (rendezvous_tx, rendezvous_rx) = if rendezvous {
         let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
         (Some(tx), Some(rx))
@@ -665,7 +665,7 @@ where
         let deleter_gate = std::sync::Arc::clone(&gate);
         let deleter = scope.spawn(move || {
             if let Some(tx) = rendezvous_tx {
-                crate::deletion::install_after_header_read_signal(tx);
+                vault.test_hooks().install_after_header_read_signal(tx);
             }
             deleter_gate.wait();
             vault.delete_entity_with_reason(id, reason)

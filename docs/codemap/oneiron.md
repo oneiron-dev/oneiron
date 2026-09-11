@@ -173,7 +173,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/export_egress.rs` | src | s | 13 fn | — | Whole-vault manifest egress doors and the Vault export surface |
 | `src/batch/export/export_manifest.rs` | src | m | 6 struct · 35 fn · 2 const · 1 crate-vis | ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest, ExportSerializerManifest | Whole-vault export manifest artifact types and stanza impls |
 | `src/batch/export/foreign_stage/export_foreign_receipt.rs` | src | m | 3 struct · 3 enum · 3 fn · 4 const · 7 crate-vis | ForeignVaultImportSource, StagedVaultImport, VaultImportConfirmation, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus | Sync-gated import receipt codec, key consts, and status types |
-| `src/batch/export/foreign_stage/export_foreign_stage.rs` | src | m | 7 fn · 1 crate-vis | — | Sync-gated foreign-import staging operations and test hooks |
+| `src/batch/export/foreign_stage/export_foreign_stage.rs` | src | m | 2 fn · 4 crate-vis | — | Sync-gated foreign-import staging operations and test hooks |
 | `src/batch/export/foreign_stage/mod.rs` | src | s | 2 re-export | — | Sync-gated foreign-import staging submodule |
 | `src/batch/export/mod.rs` | src | s | 5 re-export | — | — |
 | `src/batch/export/tests.rs` | test | XL | — | — | — |
@@ -721,10 +721,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/delete/outcome.rs` | src | s | 1 struct · 1 crate-vis | DeleteEntityOutcome | Reason-aware delete result type and its missing() constructor |
 | `src/deletion/erase.rs` | src | m | 13 crate-vis | — | — |
 | `src/deletion/gate.rs` | src | s | 7 crate-vis | — | — |
-| `src/deletion/mod.rs` | src | s | 4 re-export · 13 crate-vis | — | ARCH-0038 deletion/redaction contract types |
+| `src/deletion/mod.rs` | src | s | 4 re-export · 12 crate-vis | — | ARCH-0038 deletion/redaction contract types |
 | `src/deletion/publish.rs` | src | m | 2 crate-vis | — | — |
 | `src/deletion/receipt.rs` | src | m | 15 crate-vis | — | — |
-| `src/deletion/rendezvous.rs` | src | s | 16 crate-vis | — | — |
+| `src/deletion/rendezvous.rs` | src | s | 15 crate-vis | — | — |
 | `src/deletion/sweep_queue.rs` | src | s | 1 fn · 13 crate-vis | — | — |
 | `src/deletion/tests.rs` | test | m | — | — | — |
 | `src/deletion/timeline.rs` | src | m | 3 struct · 5 enum · 4 fn · 2 crate-vis | HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb | — |
@@ -1086,7 +1086,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_topology/proposal_resolution.rs` | src | m | 3 fn · 5 crate-vis | — | The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds… |
 | `src/identity_topology/reassignment_map.rs` | src | m | 3 struct · 1 enum · 2 fn · 10 crate-vis | ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget | The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the… |
 | `src/identity_topology/replicated_event_validation.rs` | src | s | 9 crate-vis | — | Sync-path ingest for the type-76 family: event reads, participant and actor validation shared with the local… |
-| `src/identity_topology/shell_edge_reconcile.rs` | src | m | 7 crate-vis | — | Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the… |
+| `src/identity_topology/shell_edge_reconcile.rs` | src | m | 5 crate-vis | — | Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the… |
 | `src/identity_topology/store_entity_helpers.rs` | src | s | 7 crate-vis | — | Store-level (pre-vault) readers for the type-76 entity kind: the helpers the batch write/materialize path… |
 | `src/identity_topology/stored_event.rs` | src | m | 1 struct · 1 enum · 6 fn · 1 crate-vis | StoredIdentityOpAction, StoredIdentityOpEvent | The type-76 wire record types: one stored ledger event, the action payload it carries, and their pinned… |
 | `src/identity_topology/tests.rs` | test | XL | — | — | ONE-1743 (MS-01) unit tests: op vocabulary, the full (state, op) transition table, the seq-ordered ledger… |
@@ -1235,7 +1235,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/tests/delete_tombstone.rs` | test | L | — | — | Safe-delete receipts, crash recovery, tombstone publish boundary, and soft-erase edge cases |
 | `src/memory/tests/mod.rs` | test | m | 23 crate-vis | — | BRIDGE-01 acceptance tests, engine side |
 | `src/memory/tests/session_witness.rs` | test | L | — | — | Session overlay witness, room-shell claims, flip/replay races, and promoted turns |
-| `src/memory/tests/support.rs` | test | m | 19 crate-vis | — | Shared harnesses and fixtures for the memory acceptance tests |
+| `src/memory/tests/support.rs` | test | m | 17 crate-vis | — | Shared harnesses and fixtures for the memory acceptance tests |
 | `src/memory/tests/takes_notes.rs` | test | m | — | — | Note takes on claims, author binding, and stale upsert/retract conflicts |
 | `src/memory/tests/witness_policy.rs` | test | L | — | — | System-authorship ceiling rows, envelope/order validation, and the session-ownership door |
 | `src/memory/tests/witness_turns.rs` | test | L | — | — | Witness turn create/get/append/interleave, speaker atomicity, and meso enqueue on close |
@@ -1353,7 +1353,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_intent_ledger/codec.rs` | src | m | 1 const · 28 crate-vis | — | Pinned key sets, content digest, and MessagePack encode/decode |
 | `src/outbound_intent_ledger/dispatch.rs` | src | m | 2 fn · 5 crate-vis | — | Recovery walk, canonical-JSON intent identity, and test-only execute/recover/replay |
 | `src/outbound_intent_ledger/mod.rs` | src | s | 3 re-export · 5 crate-vis | — | Device-local durable intent ledger for effectful outbound calls |
-| `src/outbound_intent_ledger/store.rs` | src | m | 19 crate-vis | — | Storage-transaction reads, inserts, transitions, and the admission-gate validator |
+| `src/outbound_intent_ledger/store.rs` | src | m | 18 crate-vis | — | Storage-transaction reads, inserts, transitions, and the admission-gate validator |
 | `src/outbound_intent_ledger/tests.rs` | test | XL | — | — | — |
 | `src/outbound_intent_ledger/types.rs` | src | m | 13 struct · 8 enum · 20 fn · 2 type · 2 const · 14 crate-vis | BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerCorruptRow, IntentLedgerError +13 | Version consts, domain types, record impls, and listing/escalation/report types |
 | `src/overlay_db/accessors.rs` | src | m | 29 crate-vis | — | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
@@ -1687,7 +1687,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/vet.rs` | src | m | 5 crate-vis | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/store/handle.rs` | src | m | 4 struct · 12 crate-vis | RawDatabases, Store, StoreCore, StoreOwner | The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]… |
 | `src/store/key_encoding.rs` | src | s | 3 fn · 4 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and… |
-| `src/store/mod.rs` | src | s | 9 re-export · 6 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 9 re-export · 7 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 20 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 29 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |
 | `src/store/open_gates/mod.rs` | src | s | 1 re-export · 9 crate-vis | — | `Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight… |
@@ -1716,7 +1716,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/structural_kind_registry/mod.rs` | src | s | 4 crate-vis | — | Vault-scoped dynamic entity-type/kind registry: registration, load and rebuild, zone validation, and the… |
 | `src/store/structural_kind_registry/registry.rs` | src | m | 15 crate-vis | — | Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules |
 | `src/store/structural_kind_registry/rekey.rs` | src | m | 4 crate-vis | — | One-shot byte-space v3 type-byte migration over entities, type_index, counters, and registry rows |
-| `src/store/test_hooks.rs` | src | s | 8 crate-vis | — | Test-only failure-injection hooks for the store open and retrieval write paths |
+| `src/store/test_hooks.rs` | src | s | 15 crate-vis | — | The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it |
 | `src/store/tests.rs` | test | XL | — | — | — |
 | `src/store/writer_lease.rs` | src | s | 1 struct · 4 fn · 2 const · 2 crate-vis | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `src/store/writer_lease/tests.rs` | test | s | — | — | Focused process-owner lease and bootstrap regressions |
@@ -1753,9 +1753,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/tests.rs` | test | XL | — | — | — |
 | `src/sync/bridge/tombstones.rs` | src | m | 3 crate-vis | — | Tombstone materialization, savepoint batching, and protected-header handling |
 | `src/sync/client/base.rs` | src | s | 1 struct · 14 fn · 3 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
-| `src/sync/client/federated.rs` | src | s | 6 fn · 1 crate-vis | — | Federated admission and staged vault-import confirmation |
+| `src/sync/client/federated.rs` | src | s | 4 fn · 1 crate-vis | — | Federated admission and staged vault-import confirmation |
 | `src/sync/client/inbound.rs` | src | m | 3 fn · 1 crate-vis | — | Inbound wire dispatch, window-update import, and bulk history transfer |
-| `src/sync/client/mod.rs` | src | s | 4 re-export | — | Client-side sync over WebSocket |
+| `src/sync/client/mod.rs` | src | s | 3 re-export | — | Client-side sync over WebSocket |
 | `src/sync/client/sync_frames.rs` | src | s | 4 fn · 2 crate-vis | — | Initial-connect and re-bootstrap sync frame builders |
 | `src/sync/client/tests.rs` | test | XL | — | — | — |
 | `src/sync/client/types.rs` | src | s | 1 struct · 3 enum · 7 crate-vis | EphemeralChangeOrigin, SyncClientConfig, SyncEvent, SyncStatus | Sync client configuration, events, and sync_state key constants |
@@ -1881,7 +1881,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/edges.rs` | src | m | 13 fn · 7 crate-vis | — | Vault edge writes, adjacency queries and graph traversal |
 | `src/vault/entities.rs` | src | m | 1 struct · 17 fn · 12 crate-vis | HydratedShortId | Vault entity, vector, short-id and type-index reads and writes |
 | `src/vault/mod.rs` | src | s | 1 struct · 4 re-export · 4 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
-| `src/vault/open.rs` | src | m | 11 fn · 7 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
+| `src/vault/open.rs` | src | m | 11 fn · 8 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
 | `src/vault/search_retrieval.rs` | src | m | 21 fn · 5 crate-vis | — | Vault text and vector search, batch and query builders, and retrieval telemetry |
 | `src/vault/tests.rs` | test | L | — | — | — |
 | `src/vault/transactions.rs` | src | m | 17 fn | — | Vault maintenance, learned-at range scans, transaction helpers and sync state |

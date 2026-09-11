@@ -1545,7 +1545,7 @@ mod staged_content_gc {
 
         // Land the confirmation (and its same-txn GC) after the Pending receipt
         // is observed but before the content row is read.
-        install_staged_import_pre_content_hook(
+        vault.test_hooks().staged_import.install_pre_content_hook(
             id,
             Arc::new(move |vault: &Vault| {
                 assert!(
