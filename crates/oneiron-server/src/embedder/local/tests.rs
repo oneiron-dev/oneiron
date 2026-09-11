@@ -357,7 +357,7 @@ fn local_config(dir: &std::path::Path) -> crate::config::LocalEmbedderConfig {
 #[test]
 fn the_model_directory_is_root_org_name_revision() {
     let dir = tempfile::tempdir().expect("models dir");
-    let path = model_manager::model_dir(&local_config(dir.path()));
+    let path = model_manager::model_dir(&local_config(dir.path())).expect("a configured root");
     assert_eq!(
         path,
         dir.path()
@@ -369,17 +369,58 @@ fn the_model_directory_is_root_org_name_revision() {
 
 #[test]
 fn a_models_root_without_an_override_follows_the_xdg_data_directory() {
-    let config = crate::config::LocalEmbedderConfig::default();
-    let root = model_manager::models_root(&config);
-    assert!(
-        root.ends_with(std::path::Path::new("oneiron").join("models")),
-        "{}",
-        root.display()
+    let root = model_manager::resolve_models_root(
+        None,
+        Some(std::path::PathBuf::from("/data")),
+        Some(std::path::PathBuf::from("/home/someone")),
+    )
+    .expect("an XDG data directory resolves");
+    assert_eq!(
+        root,
+        std::path::Path::new("/data").join("oneiron").join("models")
     );
+}
+
+#[test]
+fn a_models_root_falls_back_to_the_home_share_tree() {
+    let root = model_manager::resolve_models_root(
+        None,
+        None,
+        Some(std::path::PathBuf::from("/home/someone")),
+    )
+    .expect("a home directory resolves");
+    assert_eq!(
+        root,
+        std::path::Path::new("/home/someone")
+            .join(".local")
+            .join("share")
+            .join("oneiron")
+            .join("models")
+    );
+}
+
+/// With no data directory to write to, the resolution refuses and names what
+/// would fix it. The alternative is a relative path: a gigabyte of model
+/// written into whatever directory the server started in, and downloaded again
+/// from the next one.
+#[test]
+fn a_models_root_with_nowhere_to_write_is_refused_by_name() {
+    let error = model_manager::resolve_models_root(None, None, None)
+        .expect_err("an unresolvable root is refused");
+    let oneiron::Error::InvalidConfig(message) = &error else {
+        panic!("{error:?}");
+    };
+    for named in ["XDG_DATA_HOME", "HOME", "models_dir"] {
+        assert!(message.contains(named), "{named} is not named: {message}");
+    }
     assert!(
-        !root.starts_with("."),
-        "the default root is never relative to the working directory: {}",
-        root.display()
+        model_manager::resolve_models_root(
+            Some(std::path::Path::new("/models")),
+            None,
+            None,
+        )
+        .is_ok(),
+        "a configured root needs no environment at all"
     );
 }
 
@@ -387,7 +428,9 @@ fn a_models_root_without_an_override_follows_the_xdg_data_directory() {
 fn a_file_whose_digest_does_not_match_is_refused() {
     let dir = tempfile::tempdir().expect("models dir");
     let config = local_config(dir.path());
-    let path = model_manager::model_dir(&config).join("config.json");
+    let path = model_manager::model_dir(&config)
+        .expect("a configured root")
+        .join("config.json");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
     // The right size, the wrong bytes: the size check passes and the digest
     // catches it, which is the ordering the verifier promises.

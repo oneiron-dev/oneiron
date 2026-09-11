@@ -99,36 +99,69 @@ pub(crate) const UNPINNED: &str = "unpinned";
 /// Root the downloaded models live under: `<root>/<org>/<name>/<rev>/<file>`.
 ///
 /// Follows the CJK-dictionary convention already in this crate — the XDG data
-/// directory first, then the platform's own application-support path — so a
-/// host has one place to look for everything the server downloads.
-pub(crate) fn models_root(config: &LocalEmbedderConfig) -> PathBuf {
-    if let Some(configured) = config.models_dir.as_ref() {
-        return configured.clone();
+/// directory first, then the home directory's share tree — so a host has one
+/// place to look for everything the server downloads.
+pub(crate) fn models_root(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf> {
+    resolve_models_root(
+        config.models_dir.as_deref(),
+        absolute_env_dir("XDG_DATA_HOME"),
+        absolute_env_dir("HOME"),
+    )
+}
+
+/// The root resolution itself, with the environment passed in.
+///
+/// A host with neither variable set has no data directory to write to, and a
+/// relative fallback would scatter a 1.19 GB checkpoint through whatever
+/// directory the process happened to start in — and then download it again
+/// from the next one. So the resolution fails and says which three settings
+/// would fix it.
+pub(super) fn resolve_models_root(
+    configured: Option<&Path>,
+    xdg_data_home: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> oneiron::Result<PathBuf> {
+    if let Some(configured) = configured {
+        return Ok(configured.to_path_buf());
     }
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(xdg).join("oneiron").join("models");
+    if let Some(xdg) = xdg_data_home {
+        return Ok(xdg.join("oneiron").join("models"));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
+    if let Some(home) = home {
+        return Ok(home
             .join(".local")
             .join("share")
             .join("oneiron")
-            .join("models");
+            .join("models"));
     }
-    PathBuf::from(".").join("oneiron-models")
+    Err(oneiron::Error::InvalidConfig(
+        "embedder models root is unresolvable: neither XDG_DATA_HOME nor HOME names an absolute \
+         directory; set embedder.models_dir (--embedder-models-dir / \
+         ONEIRON_EMBEDDER_MODELS_DIR) to the directory the model artifacts belong in"
+            .to_owned(),
+    ))
+}
+
+/// An environment variable read as an absolute directory.
+///
+/// Unset, empty and relative are the same answer here: none of them names a
+/// place a gigabyte of model may be written to.
+fn absolute_env_dir(key: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os(key)?);
+    path.is_absolute().then_some(path)
 }
 
 /// The directory the six files sit in.
-pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> PathBuf {
+pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf> {
     if let Some(configured) = config.model_dir.as_ref() {
-        return configured.clone();
+        return Ok(configured.clone());
     }
-    let mut dir = models_root(config);
+    let mut dir = models_root(config)?;
     for segment in config.repo.split('/') {
         dir.push(segment);
     }
     dir.push(&config.revision);
-    dir
+    Ok(dir)
 }
 
 /// Makes every file present and verified, downloading what is missing.
@@ -137,7 +170,7 @@ pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> PathBuf {
 /// the download entirely: the operator supplied the files, so the server checks
 /// they exist and nothing else.
 pub(crate) fn ensure_all(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf> {
-    let dir = model_dir(config);
+    let dir = model_dir(config)?;
     let files = model_files(config);
     if config.model_dir.is_some() {
         for artifact in &files {
