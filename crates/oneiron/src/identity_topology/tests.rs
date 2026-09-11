@@ -17,8 +17,8 @@ use crate::claim::{
 };
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::SyncError;
-use crate::error::{Error, Result};
+use crate::error::RegistryError;
+use crate::error::{Error, Result, SyncError};
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
 use crate::temporal::TimeRange;
 use crate::test_util::embedding_test_config;
@@ -725,7 +725,10 @@ fn type_76_is_a_pinned_engine_authored_maintenance_kind() {
             b"forged event",
         )
         .expect_err("public put of type 76 must reject");
-    assert!(matches!(err, Error::MaintenanceKindNotWritable(76)));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(76))
+    ));
     assert_eq!(event_count(&vault), 0);
 }
 
@@ -739,7 +742,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
     let err = vault
         .put_edge(&a, EdgeKind::MergedInto, &b, 0.3)
         .expect_err("raw merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .put_edge_with_vad(
             &a,
@@ -749,7 +755,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
             crate::affect::Vad::NEUTRAL,
         )
         .expect_err("raw split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
 
     // Batch builder creation + deletion ops.
     let err = vault
@@ -757,7 +766,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
         .edge_with_created_at(&a, EdgeKind::MergedInto, &b, 0.3, 100)
         .commit()
         .expect_err("batch created_at merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .batch()
         .edge_with_created_at_and_vad(
@@ -770,11 +782,17 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
         )
         .commit()
         .expect_err("batch created_at+vad split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
     let err = vault
         .delete_edge(&a, EdgeKind::MergedInto, &b)
         .expect_err("public delete of merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
 
     // Txn builder path.
     let err = vault
@@ -785,7 +803,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
                 .apply(wtxn)
         })
         .expect_err("txn builder split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
 
     // Operational setters (MS-01 perimeter: the reseat's "setters cannot
     // alter topology" carve-out was wrong — a zero weight makes PPR drop
@@ -793,23 +814,35 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
     let err = vault
         .set_edge_weight(&a, EdgeKind::MergedInto, &b, 0.0)
         .expect_err("weight setter merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .set_edge_vad(&a, EdgeKind::SplitInto, &b, crate::affect::Vad::NEUTRAL)
         .expect_err("vad setter split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
     let err = vault
         .batch()
         .set_edge_weight(&a, EdgeKind::SplitInto, &b, 0.9)
         .commit()
         .expect_err("batch weight setter split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
     let err = vault
         .batch()
         .set_edge_vad(&a, EdgeKind::MergedInto, &b, crate::affect::Vad::NEUTRAL)
         .commit()
         .expect_err("batch vad setter merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .with_write_txn(|wtxn| {
             vault
@@ -818,7 +851,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
                 .apply(wtxn)
         })
         .expect_err("txn vad setter merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
 
     // Nothing leaked through any of the rejected paths.
     assert_eq!(
@@ -1837,7 +1873,10 @@ fn operational_setters_leave_live_shell_edges_intact() {
     let err = vault
         .set_edge_weight(&loser, EdgeKind::MergedInto, &survivor, 0.0)
         .expect_err("weight rewrite of a live shell edge must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .set_edge_vad(
             &loser,
@@ -1846,7 +1885,10 @@ fn operational_setters_leave_live_shell_edges_intact() {
             crate::affect::Vad::NEUTRAL,
         )
         .expect_err("vad rewrite of a live shell edge must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
 
     let edges = vault.edges_out(&loser).expect("edges out");
     let shell = edges
@@ -1875,7 +1917,9 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
         .expect_err("delete_entity must reject the ledger event");
     assert!(matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+        ))
     ));
     for reason in [
         crate::deletion::DeleteReason::UserDelete,
@@ -1888,7 +1932,9 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
             .expect_err("reasoned delete must reject the ledger event");
         assert!(matches!(
             err,
-            Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+            Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+            ))
         ));
     }
     // Generic batch delete door.
@@ -1899,7 +1945,9 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
         .expect_err("batch delete must reject the ledger event");
     assert!(matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+        ))
     ));
     // Replayed CRDT tombstone door (a malformed value decodes HARD).
     let err = vault
@@ -1907,7 +1955,9 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
         .expect_err("replayed tombstone must reject the ledger event");
     assert!(matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+        ))
     ));
 
     // Record and shell both survived every rejected door; undo still works.

@@ -17,7 +17,7 @@ use super::export_foreign_receipt::{
     VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus, content_key,
     encode_vault_import_receipt, receipt_id, receipt_key, source_bytes, vault_import_stage_receipt,
 };
-use crate::error::SyncError;
+use crate::error::{RegistryError, SyncError};
 
 // Admission must be unique before helper effects occur within one process.
 static STAGED_IMPORT_ADMISSION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -326,8 +326,8 @@ pub fn stage_foreign_vault_import(
                     | Error::Sync(SyncError::CrdtDecodeError { .. })
                     | Error::InvalidClaimBody(_)
                     | Error::InvalidKey
-                    | Error::MaintenanceKindNotWritable(_)
-                    | Error::ReservedEdgeKind(_)
+                    | Error::Registry(RegistryError::MaintenanceKindNotWritable(_))
+                    | Error::Registry(RegistryError::ReservedEdgeKind(_))
                     | Error::AuthorityLogStoreKeyMismatch { .. })
                 // Only this selector-produced local-root fault is retryable.
                 || matches!(&error, Error::InvalidAuthorityLogBody(message) if *message != "missing local authority root")

@@ -19,6 +19,7 @@ use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
+use crate::error::RegistryError;
 use crate::error::{Error, Result};
 use crate::registry::{EntityClassification, TypeByteZone, entity_type_registry_entry};
 use crate::temporal::TimeRange;
@@ -372,8 +373,8 @@ impl Vault {
                     pack = %registration.pack,
                     "companion register static kind collides with incompatible dynamic metadata"
                 );
-                return Err(Error::StructuralKindTypeByteCollision(
-                    ENTITY_TYPE_COMPANION_REGISTER,
+                return Err(Error::Registry(
+                    RegistryError::StructuralKindTypeByteCollision(ENTITY_TYPE_COMPANION_REGISTER),
                 ));
             }
             tracing::warn!(

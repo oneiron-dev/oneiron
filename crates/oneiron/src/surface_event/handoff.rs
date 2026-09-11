@@ -16,6 +16,7 @@ use super::validate_non_blank;
 use super::{
     InboundSurfaceEventInput, InboundSurfaceRouteReceipt, SurfaceEvent, SurfaceEventDispatchRoute,
 };
+use crate::error::RegistryError;
 
 /// Attempt-queue kind owning inbound surface-event dispatch.
 pub const SURFACE_EVENT_ATTEMPT_KIND: &str = "surface_event.dispatch.v1";
@@ -420,10 +421,12 @@ fn sole_surface_event_attempt(
         return Ok(None);
     };
     if record.kind != SURFACE_EVENT_ATTEMPT_KIND {
-        return Err(Error::SurfaceEventCorrelationKindCollision {
-            correlation_id: correlation_id.to_owned(),
-            holding_kind: record.kind,
-        });
+        return Err(Error::Registry(
+            RegistryError::SurfaceEventCorrelationKindCollision {
+                correlation_id: correlation_id.to_owned(),
+                holding_kind: record.kind,
+            },
+        ));
     }
     Ok(Some(record))
 }

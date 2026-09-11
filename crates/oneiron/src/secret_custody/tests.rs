@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::config::VaultConfig;
-use crate::error::GateError;
+use crate::error::{GateError, RegistryError};
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -630,7 +630,10 @@ fn raw_put_doors_reject_secret_custody_byte() {
         .put_entity(&id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
         .expect_err("put_entity on SECRET_CUSTODY must be denied");
     assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(77)),
+        matches!(
+            err,
+            Error::Registry(RegistryError::MaintenanceKindNotWritable(77))
+        ),
         "got {err:?}"
     );
 
@@ -641,7 +644,10 @@ fn raw_put_doors_reject_secret_custody_byte() {
         .commit()
         .expect_err("batch put on SECRET_CUSTODY must be denied");
     assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(77)),
+        matches!(
+            err,
+            Error::Registry(RegistryError::MaintenanceKindNotWritable(77))
+        ),
         "got {err:?}"
     );
 

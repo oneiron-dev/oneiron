@@ -19,6 +19,7 @@ use oneiron::campaign::claims::{
     encode_campaign_member_value,
 };
 use oneiron::campaign::{CRM_PACK_ID, register_crm_pack};
+use oneiron::error::RegistryError;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD, TypeByteZone};
 use oneiron::saved_query::{
     SAVED_QUERY_SCHEMA_VERSION, SAVED_QUERY_SHORT_ID_PREFIX, commit_membership_plan,
@@ -324,11 +325,13 @@ fn saved_query_registers_dynamically_in_crm_band_without_static_byte() {
     // existing registrar, not this module, is what rejects it.
     assert!(matches!(
         register_saved_query_kind(&vault, 109),
-        Err(Error::StructuralKindPrefixCollision(prefix)) if prefix == SAVED_QUERY_SHORT_ID_PREFIX
+        Err(Error::Registry(RegistryError::StructuralKindPrefixCollision(prefix))) if prefix == SAVED_QUERY_SHORT_ID_PREFIX
     ));
     assert!(matches!(
         register_saved_query_kind(&vault, 50),
-        Err(Error::StructuralKindZoneViolation { .. })
+        Err(Error::Registry(
+            RegistryError::StructuralKindZoneViolation { .. }
+        ))
     ));
 }
 
@@ -343,12 +346,16 @@ fn crm_pack_registration_never_leaves_half_a_pack() {
     // A CRM-band byte for SAVED_QUERY that collides with CAMPAIGN's own slot.
     assert!(matches!(
         register_crm_pack(&vault, 107, 107),
-        Err(Error::StructuralKindTypeByteCollision(107))
+        Err(Error::Registry(
+            RegistryError::StructuralKindTypeByteCollision(107)
+        ))
     ));
     // An out-of-band SAVED_QUERY byte.
     assert!(matches!(
         register_crm_pack(&vault, 107, 50),
-        Err(Error::StructuralKindZoneViolation { .. })
+        Err(Error::Registry(
+            RegistryError::StructuralKindZoneViolation { .. }
+        ))
     ));
     assert_eq!(
         vault.structural_kind_registrations(),

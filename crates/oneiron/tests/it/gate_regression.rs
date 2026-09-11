@@ -1,6 +1,6 @@
 use crate::common::entity as test_id;
-use oneiron::error::GateError;
-use oneiron::error::{GateDenialOutcome, GateDenialReason};
+use oneiron::error::RegistryError;
+use oneiron::error::{GateDenialOutcome, GateDenialReason, GateError};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
@@ -99,7 +99,7 @@ fn assert_expected_error(err: Error, expected: ExpectedError) {
         }
         ExpectedError::MaintenanceKindNotWritable(kind) => {
             assert!(
-                matches!(err, Error::MaintenanceKindNotWritable(got) if got == kind),
+                matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(got)) if got == kind),
                 "expected MaintenanceKindNotWritable({kind}), got {err:?}",
             );
         }

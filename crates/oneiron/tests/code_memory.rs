@@ -16,6 +16,7 @@ use oneiron::code_memory::{
     CodeMemorySlotName, CodeMemorySlotValue, ProvenanceMaterialKind, SlotInsertOutcome,
 };
 use oneiron::deletion::DeleteReason;
+use oneiron::error::RegistryError;
 use oneiron::note::TakeTarget;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -1009,12 +1010,18 @@ fn generic_edge_doors_reject_blocks() {
     let create = vault
         .put_edge(&blocker, EdgeKind::Blocks, &blocked, 1.0)
         .expect_err("generic creation is reserved");
-    assert!(matches!(create, Error::ReservedEdgeKind("blocks")));
+    assert!(matches!(
+        create,
+        Error::Registry(RegistryError::ReservedEdgeKind("blocks"))
+    ));
 
     let delete = vault
         .delete_edge(&blocker, EdgeKind::Blocks, &blocked)
         .expect_err("generic deletion is reserved");
-    assert!(matches!(delete, Error::ReservedEdgeKind("blocks")));
+    assert!(matches!(
+        delete,
+        Error::Registry(RegistryError::ReservedEdgeKind("blocks"))
+    ));
 
     assert!(
         vault.blocks_dependencies(blocker).expect("read").is_empty(),
@@ -1239,7 +1246,7 @@ fn blocks_survives_maintenance_and_reopen_then_retires_through_the_door() {
     assert!(
         matches!(
             vault.delete_edge(&a, EdgeKind::Blocks, &b),
-            Err(Error::ReservedEdgeKind("blocks"))
+            Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")))
         ),
         "generic deletion stays reserved even after the edge is gone"
     );

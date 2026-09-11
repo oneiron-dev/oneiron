@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use heed::RwTxn;
 
 use crate::entity_id::EntityId;
+use crate::error::RegistryError;
 use crate::error::{Error, ErrorKind, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
@@ -25,7 +26,9 @@ pub(super) fn reject_engine_authored_delete(
     // (ONE-1741 added the content anchor); the batch/bulk delete door and the
     // deletion path both consult it, so the guards cannot drift out of sync.
     if crate::registry::is_delete_protected_engine_record(header.entity_type) {
-        return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+        return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            header.entity_type,
+        )));
     }
     Ok(())
 }

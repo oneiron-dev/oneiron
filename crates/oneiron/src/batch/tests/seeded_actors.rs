@@ -1,7 +1,7 @@
 //! Seeded and pinned actors, agent ceilings and fork gating.
 
 use super::*;
-use crate::error::GateError;
+use crate::error::{GateError, RegistryError};
 
 /// A minimal valid policy manifest carrying only the supplied `actor_ceilings`
 /// rows (mirrors the gate/dispatch test fixture shape).
@@ -91,7 +91,7 @@ fn pinned_actor_ids_are_ordinary_write_targets() -> Result<()> {
         assert!(
             matches!(
                 err,
-                Error::EntityTypeImmutable { existing, attempted, .. }
+                Error::Registry(RegistryError::EntityTypeImmutable { existing, attempted, .. })
                     if existing == ENTITY_TYPE_AGENT_DEF && attempted == ENTITY_TYPE_PERSON
             ),
             "expected the ordinary entity-type rule for {byte:#04x}, got {err:?}"

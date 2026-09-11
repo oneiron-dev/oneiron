@@ -19,6 +19,7 @@ use crate::store::Store;
 
 use super::storage::get_code_revision_in_txn;
 use super::types::CodeRevision;
+use crate::error::RegistryError;
 
 pub(super) fn put_lifecycle_edge(
     store: &Store,
@@ -58,10 +59,10 @@ pub(super) fn validate_child_of_insert(
 ) -> Result<()> {
     let parents = child_of_parents(store, txn, child)?;
     if parents.len() > 1 || parents.first().is_some_and(|existing| existing != parent) {
-        return Err(Error::ChildOfCardinality);
+        return Err(Error::Registry(RegistryError::ChildOfCardinality));
     }
     if child == parent || would_create_child_of_cycle(store, txn, child, parent)? {
-        return Err(Error::CycleDetected);
+        return Err(Error::Registry(RegistryError::CycleDetected));
     }
     Ok(())
 }

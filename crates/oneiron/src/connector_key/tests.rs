@@ -13,6 +13,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
+use crate::error::RegistryError;
 use crate::test_util::entity as test_id;
 
 fn all_dimension_budgets() -> Vec<EffectorBudget> {
@@ -751,7 +752,9 @@ fn connector_key_registry_entry_is_pinned() -> Result<()> {
     assert_eq!(short_id_prefix(ENTITY_TYPE_CONNECTOR_KEY)?, "ck");
     assert!(matches!(
         validate_public_entity_type(ENTITY_TYPE_CONNECTOR_KEY),
-        Err(Error::MaintenanceKindNotWritable(70))
+        Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            70
+        )))
     ));
     Ok(())
 }

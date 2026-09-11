@@ -2150,7 +2150,7 @@ fn live_stored_child_of_winner_resolves_without_reviving_crdt_only_losers() {
 /// A public `edge_with_created_at` (`BatchOp::PublicEdgeWithCreatedAt`) that
 /// adds a second parent without deleting the first is stamped LATER than the
 /// stored link — so if it were treated as a replicated candidate it would WIN
-/// and silently reparent. It must still return `Error::ChildOfCardinality` and
+/// and silently reparent. It must still return `oneiron::error::RegistryError::ChildOfCardinality` and
 /// leave the stored parent untouched.
 #[test]
 fn public_child_of_second_parent_is_never_lww_normalized() {
@@ -2183,7 +2183,10 @@ fn public_child_of_second_parent_is_never_lww_normalized() {
         .commit()
         .expect_err("a public second parent must still be rejected");
     assert!(
-        matches!(err, oneiron::Error::ChildOfCardinality),
+        matches!(
+            err,
+            oneiron::Error::Registry(oneiron::error::RegistryError::ChildOfCardinality)
+        ),
         "public timestamped ChildOf writes keep strict cardinality, got {err:?}"
     );
     assert_eq!(child_of_parents(&a.vault, &child), vec![stored_parent]);
@@ -2195,7 +2198,10 @@ fn public_child_of_second_parent_is_never_lww_normalized() {
         .edge(&child, EdgeKind::ChildOf, &public_parent, 1.0)
         .commit()
         .expect_err("a public second parent must still be rejected");
-    assert!(matches!(err, oneiron::Error::ChildOfCardinality));
+    assert!(matches!(
+        err,
+        oneiron::Error::Registry(oneiron::error::RegistryError::ChildOfCardinality)
+    ));
     assert_eq!(child_of_parents(&a.vault, &child), vec![stored_parent]);
 }
 

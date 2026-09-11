@@ -555,11 +555,21 @@ fn edge_record_error() -> crate::error::Error {
 /// one arm reserves BOTH generic doors — creation and deletion.
 pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
     match kind {
-        EdgeKind::MergedInto => Err(crate::error::Error::ReservedEdgeKind("merged_into")),
-        EdgeKind::SplitInto => Err(crate::error::Error::ReservedEdgeKind("split_into")),
-        EdgeKind::Blocks => Err(crate::error::Error::ReservedEdgeKind("blocks")),
-        EdgeKind::Fulfills => Err(crate::error::Error::ReservedEdgeKind("fulfills")),
-        EdgeKind::DischargedBy => Err(crate::error::Error::ReservedEdgeKind("discharged_by")),
+        EdgeKind::MergedInto => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("merged_into"),
+        )),
+        EdgeKind::SplitInto => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("split_into"),
+        )),
+        EdgeKind::Blocks => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("blocks"),
+        )),
+        EdgeKind::Fulfills => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("fulfills"),
+        )),
+        EdgeKind::DischargedBy => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("discharged_by"),
+        )),
         _ => Ok(()),
     }
 }
@@ -590,7 +600,9 @@ pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<
 pub(crate) fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
     validate_public_edge_kind(kind)?;
     match kind {
-        EdgeKind::SameAs => Err(crate::error::Error::ReservedEdgeKind("same_as")),
+        EdgeKind::SameAs => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("same_as"),
+        )),
         _ => Ok(()),
     }
 }

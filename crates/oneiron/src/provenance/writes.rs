@@ -268,7 +268,7 @@ impl Vault {
     ///   is on-disk corruption → [`Error::CorruptedIndex`], never skipped.
     ///
     /// Public puts of type byte 121 stay rejected with
-    /// [`Error::MaintenanceKindNotWritable`]: this method is the ONLY public
+    /// [`RegistryError::MaintenanceKindNotWritable`](crate::error::RegistryError::MaintenanceKindNotWritable): this method is the ONLY public
     /// door, and it only ever writes the engine-shaped body.
     pub fn ensure_model_substrate(&self, name: &str, version: &str, now: u64) -> Result<EntityId> {
         validate_model_substrate_field(name, "model name must be non-empty and at most 256 bytes")?;

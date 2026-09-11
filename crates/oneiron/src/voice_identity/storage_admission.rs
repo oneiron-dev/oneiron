@@ -23,6 +23,7 @@ use super::types::{
     VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintCalibration, VoicePrintRecordV1,
     VoiceSegmentEmbeddingInput,
 };
+use crate::error::RegistryError;
 
 pub(super) fn collect_prefix_rows(
     store: &Store,
@@ -198,10 +199,10 @@ pub(super) fn require_relationship_entity(
     if found == Some(ENTITY_TYPE_RELATIONSHIP) {
         Ok(())
     } else {
-        Err(Error::InvalidRelationship {
+        Err(Error::Registry(RegistryError::InvalidRelationship {
             relationship: *relationship,
             found,
-        })
+        }))
     }
 }
 

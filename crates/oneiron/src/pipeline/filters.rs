@@ -15,6 +15,7 @@ use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PipelineFilterConfig, RelMode,
     ScoredEntity, WorldAuthoritySet, WorldScope,
 };
+use crate::error::RegistryError;
 
 /// D19 read-path status gate (its own pipeline stage; ARCH-0003 retrieval
 /// rule, ARCH-0004 §H items 1/2/4).
@@ -168,10 +169,10 @@ pub(super) fn apply_facet_filter(
         .get(store, rtxn, active_facet)?
         .map(|meta| meta.entity_type);
     if active_facet_type != Some(ENTITY_TYPE_FACET) {
-        return Err(Error::InvalidFacet {
+        return Err(Error::Registry(RegistryError::InvalidFacet {
             facet: *active_facet,
             found: active_facet_type,
-        });
+        }));
     }
 
     let mut kept = Vec::with_capacity(scores.len());
@@ -294,10 +295,10 @@ pub(super) fn apply_relationship_filter(
         .get(store, rtxn, active_relationship)?
         .map(|meta| meta.entity_type);
     if found != Some(ENTITY_TYPE_RELATIONSHIP) {
-        return Err(Error::InvalidRelationship {
+        return Err(Error::Registry(RegistryError::InvalidRelationship {
             relationship: *active_relationship,
             found,
-        });
+        }));
     }
     let mut in_scope = Vec::with_capacity(scores.len());
     let mut other = Vec::new();
@@ -669,10 +670,10 @@ fn pipeline_candidate_matches_facet_filter(
         .get(store, rtxn, &active_facet)?
         .map(|meta| meta.entity_type);
     if active_facet_type != Some(ENTITY_TYPE_FACET) {
-        return Err(Error::InvalidFacet {
+        return Err(Error::Registry(RegistryError::InvalidFacet {
             facet: active_facet,
             found: active_facet_type,
-        });
+        }));
     }
 
     if entity_type != ENTITY_TYPE_CLAIM {
@@ -700,10 +701,10 @@ fn pipeline_candidate_matches_relationship_filter(
         .get(store, rtxn, &active_relationship)?
         .map(|meta| meta.entity_type);
     if found != Some(ENTITY_TYPE_RELATIONSHIP) {
-        return Err(Error::InvalidRelationship {
+        return Err(Error::Registry(RegistryError::InvalidRelationship {
             relationship: active_relationship,
             found,
-        });
+        }));
     }
     if entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);

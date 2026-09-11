@@ -8,8 +8,8 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::companion::{ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body};
 use crate::edge::{encode_edge_value, validate_edge_weight};
 use crate::entity_id::EntityId;
-use crate::error::OffRecordError;
-use crate::error::{Error, Result};
+use crate::error::RegistryError;
+use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::PromoteReplayGrant;
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
 use crate::store::Store;
@@ -398,11 +398,11 @@ pub(crate) fn apply_ops_session(
                         let header = EntityMetadataHeader::parse(&raw)
                             .ok_or(Error::CorruptedIndex("entity header"))?;
                         if header.entity_type != *entity_type {
-                            return Err(Error::EntityTypeImmutable {
+                            return Err(Error::Registry(RegistryError::EntityTypeImmutable {
                                 id: *id,
                                 existing: header.entity_type,
                                 attempted: *entity_type,
-                            });
+                            }));
                         }
                         if &raw[ENTITY_METADATA_HEADER_LEN..] != data.as_slice() {
                             return Err(Error::InvalidWitnessMessageBody(

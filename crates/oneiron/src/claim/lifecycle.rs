@@ -16,6 +16,7 @@ use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::{EdgeKind, validate_edge_weight};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::RegistryError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::GateDecisionRecord;
@@ -211,7 +212,7 @@ impl Vault {
                 }
             };
             if !visited.insert(next) {
-                return Err(Error::CycleDetected);
+                return Err(Error::Registry(RegistryError::CycleDetected));
             }
             head = next;
         }

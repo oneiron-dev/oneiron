@@ -50,7 +50,7 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 ///
 /// Genuinely unknown bytes fail with [`Error::InvalidEntityType`]; every
 /// REGISTERED `Maintenance`-classified kind fails with the distinct
-/// [`Error::MaintenanceKindNotWritable`] — every engine-authored record in the
+/// [`RegistryError::MaintenanceKindNotWritable`](crate::error::RegistryError::MaintenanceKindNotWritable) — every engine-authored record in the
 /// v3 system zone (REDACTION_AUDIT, MODEL, AUTHORITY_LOG, POLICY_MANIFEST,
 /// FEDERATION_GRANT, DIAGNOSTIC, CONNECTOR_KEY, PSYCH_PROFILE, ACCESS_GRANT,
 /// IDENTITY_TOPOLOGY_EVENT, SECRET_CUSTODY, CHANNEL_IDENTITY,
@@ -70,12 +70,14 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 /// `Vault::emit_diagnostic_event`) bypass this gate via `allow_maintenance`.
 ///
 /// [`Error::InvalidEntityType`]: crate::error::Error::InvalidEntityType
-/// [`Error::MaintenanceKindNotWritable`]: crate::error::Error::MaintenanceKindNotWritable
+/// [`RegistryError::MaintenanceKindNotWritable`]: crate::error::RegistryError::MaintenanceKindNotWritable
 pub(crate) fn validate_public_entity_type(entity_type: u8) -> crate::error::Result<()> {
     let entry = entity_type_registry_entry(entity_type)
         .ok_or(crate::error::Error::InvalidEntityType(entity_type))?;
     if entry.classification == EntityClassification::Maintenance {
-        return Err(crate::error::Error::MaintenanceKindNotWritable(entity_type));
+        return Err(crate::error::Error::Registry(
+            crate::error::RegistryError::MaintenanceKindNotWritable(entity_type),
+        ));
     }
     Ok(())
 }

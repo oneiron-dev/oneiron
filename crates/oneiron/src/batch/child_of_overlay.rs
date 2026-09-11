@@ -6,6 +6,7 @@ use heed::RwTxn;
 
 use crate::edge::{EdgeKind, encode_edge_value, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::RegistryError;
 use crate::error::{Error, Result};
 use crate::habit::TaskRole;
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
@@ -444,20 +445,22 @@ pub(super) fn validate_child_of_batch(
             // can treat a remote ChildOf cardinality violation as a
             // quarantine-and-continue rejection instead of aborting the
             // whole materialization batch (ONE-1124).
-            return Err(Error::ChildOfCardinality);
+            return Err(Error::Registry(RegistryError::ChildOfCardinality));
         }
         let Some(parent) = parents.iter().next() else {
             continue;
         };
         let parent_entity = effective_entity_after_batch(store, rtxn, child_of_overlay, parent)?;
         if parent_entity == EffectiveEntity::Missing {
-            return Err(Error::ChildOfParentMissing { parent: *parent });
+            return Err(Error::Registry(RegistryError::ChildOfParentMissing {
+                parent: *parent,
+            }));
         }
         if child == *parent {
-            return Err(Error::CycleDetected);
+            return Err(Error::Registry(RegistryError::CycleDetected));
         }
         if would_create_child_of_cycle(store, rtxn, child_of_overlay, &child, parent)? {
-            return Err(Error::CycleDetected);
+            return Err(Error::Registry(RegistryError::CycleDetected));
         }
         if let EffectiveEntity::Task(child_role) =
             effective_entity_after_batch(store, rtxn, child_of_overlay, &child)?
@@ -477,14 +480,18 @@ pub(super) fn validate_child_of_batch(
 pub(super) fn validate_task_nesting(child_role: TaskRole, parent: EffectiveEntity) -> Result<()> {
     match parent {
         EffectiveEntity::Task(parent_role) if parent_role.allows_child(child_role) => Ok(()),
-        EffectiveEntity::Task(parent_role) => Err(Error::TaskChildOfNesting {
-            parent_role: parent_role.role_byte(),
-            child_role: child_role.role_byte(),
-        }),
-        EffectiveEntity::NonTask(parent_entity_type) => Err(Error::TaskChildOfParentNotTask {
-            child_role: child_role.role_byte(),
-            parent_entity_type,
-        }),
+        EffectiveEntity::Task(parent_role) => {
+            Err(Error::Registry(RegistryError::TaskChildOfNesting {
+                parent_role: parent_role.role_byte(),
+                child_role: child_role.role_byte(),
+            }))
+        }
+        EffectiveEntity::NonTask(parent_entity_type) => {
+            Err(Error::Registry(RegistryError::TaskChildOfParentNotTask {
+                child_role: child_role.role_byte(),
+                parent_entity_type,
+            }))
+        }
         // Unreachable: the caller rejects a missing parent before the matrix.
         EffectiveEntity::Missing => Ok(()),
     }

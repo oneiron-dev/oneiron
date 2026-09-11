@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::error::ErrorKind;
+use crate::error::RegistryError;
 use crate::registry::{
     ENTITY_TYPE_SKILL, EntityClassification, TypeByteZone, entity_type_registry_entry,
     is_structural_kind, short_id_prefix, zone_of,
@@ -570,7 +571,10 @@ fn registry_row_and_type_byte_immutability() -> Result<()> {
             &encode_skill_record(&skill)?,
         )
         .expect_err("type byte is immutable");
-    assert!(matches!(err, Error::EntityTypeImmutable { .. }));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::EntityTypeImmutable { .. })
+    ));
     Ok(())
 }
 

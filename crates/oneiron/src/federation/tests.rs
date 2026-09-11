@@ -1607,6 +1607,7 @@ use crate::authority::{
     federation_scope_digest, fold_authority_log_with_peer_consent_roots,
     sign_federation_pact_gesture,
 };
+use crate::error::RegistryError;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 fn auth_key(seed: u8) -> SigningKey {
@@ -2764,21 +2765,21 @@ fn raw_edge_writers_cannot_mint_a_coreference_link() {
 
     assert!(matches!(
         vault.put_edge(&local, EdgeKind::SameAs, &other, 1.0),
-        Err(Error::ReservedEdgeKind("same_as"))
+        Err(Error::Registry(RegistryError::ReservedEdgeKind("same_as")))
     ));
     assert!(matches!(
         vault
             .batch()
             .edge(&local, EdgeKind::SameAs, &other, 0.0)
             .commit(),
-        Err(Error::ReservedEdgeKind("same_as"))
+        Err(Error::Registry(RegistryError::ReservedEdgeKind("same_as")))
     ));
     assert!(matches!(
         vault
             .batch()
             .edge_with_created_at(&local, EdgeKind::SameAs, &other, 0.0, 7)
             .commit(),
-        Err(Error::ReservedEdgeKind("same_as"))
+        Err(Error::Registry(RegistryError::ReservedEdgeKind("same_as")))
     ));
     assert!(
         !vault.edge_exists(&local, EdgeKind::SameAs, &other).unwrap(),

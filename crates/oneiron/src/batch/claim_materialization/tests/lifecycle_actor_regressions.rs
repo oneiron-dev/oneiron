@@ -7,6 +7,7 @@ use super::*;
 use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, claim_demotion_rung};
 use crate::edge::EdgeKind;
 use crate::error::GateError;
+use crate::error::RegistryError;
 use crate::gate::gate_metric_emission_count_for_test;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG};
 
@@ -317,11 +318,13 @@ fn public_actor_retype_is_immutable_and_preserves_lifecycle_authority() -> Resul
             b"not an actor",
         )
         .expect_err("a public Put cannot corrupt the actor type");
-    assert!(matches!(error, Error::EntityTypeImmutable {
+    assert!(
+        matches!(error, Error::Registry(RegistryError::EntityTypeImmutable {
         id: rejected,
         existing: crate::registry::ENTITY_TYPE_PERSON,
         attempted: ENTITY_TYPE_ORG,
-    } if rejected == actor.entity_ref()));
+    }) if rejected == actor.entity_ref())
+    );
     assert_eq!(vault.get_raw(&actor.entity_ref())?.expect("actor"), raw);
     assert_eq!(binding_digest(&vault, id)?, digest);
     assert_eq!(gate_metric_emission_count_for_test(), before);

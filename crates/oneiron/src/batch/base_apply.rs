@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use heed::RwTxn;
 
 use crate::entity_id::EntityId;
+use crate::error::RegistryError;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
@@ -167,7 +168,9 @@ pub(super) fn apply_ops_with_origin(
                             | ENTITY_TYPE_OUTBOUND_GRANT
                     )
                 {
-                    return Err(Error::MaintenanceKindNotWritable(entity_type));
+                    return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                        entity_type,
+                    )));
                 }
                 // ONE-1865 arm-pending seal (SECRET-01, ONE-1919): the custody
                 // record is the secret VALUE's home, so a replicated carry of
