@@ -4,6 +4,7 @@ use crate::error::{Error, Result};
 use crate::skill::{SkillContentHash, SkillRecord, canonical_skill_tree_hash};
 
 use super::support::validate_text;
+use crate::error::ArtifactError;
 
 const MAX_CAPABILITY_ENTRIES: usize = 256;
 pub(super) const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
@@ -70,9 +71,9 @@ impl SkillCapabilitySurface {
     pub(super) fn validate(&self) -> Result<()> {
         for entries in [&self.bins, &self.env, &self.mcp, &self.allowed_tools] {
             if entries.len() > MAX_CAPABILITY_ENTRIES {
-                return Err(Error::InvalidSkillBody(
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "capability surface has too many entries",
-                ));
+                )));
             }
             for entry in entries {
                 validate_text(
@@ -120,25 +121,26 @@ impl HubPackage {
     pub fn content_hash(&self) -> Result<SkillContentHash> {
         self.capabilities.validate()?;
         if self.files.len() > MAX_HUB_PACKAGE_FILES {
-            return Err(Error::InvalidSkillBody("hub package has too many files"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "hub package has too many files",
+            )));
         }
         let mut total_bytes = 0_usize;
         for file in &self.files {
             if file.content.len() > MAX_HUB_FILE_BYTES {
-                return Err(Error::InvalidSkillBody(
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "hub package file exceeds the maximum size",
-                ));
+                )));
             }
-            total_bytes =
-                total_bytes
-                    .checked_add(file.content.len())
-                    .ok_or(Error::InvalidSkillBody(
-                        "hub package total size exceeds the maximum",
-                    ))?;
-            if total_bytes > MAX_HUB_PACKAGE_TOTAL_BYTES {
-                return Err(Error::InvalidSkillBody(
+            total_bytes = total_bytes
+                .checked_add(file.content.len())
+                .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "hub package total size exceeds the maximum",
-                ));
+                )))?;
+            if total_bytes > MAX_HUB_PACKAGE_TOTAL_BYTES {
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                    "hub package total size exceeds the maximum",
+                )));
             }
         }
         canonical_skill_tree_hash(

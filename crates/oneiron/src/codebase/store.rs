@@ -16,6 +16,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::{CodeArtifactBody, decode_code_artifact_body};
 use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
 use crate::secret_snapshot::{SnapshotCustodyReport, custody_key, encode_report};
@@ -530,8 +531,11 @@ fn codebase_scope_index_key(scope_key: &CodebaseScopeKey, id: &EntityId) -> Vec<
 
 fn code_artifact_repo_ref_from_body(bytes: &[u8]) -> Result<RepoRef> {
     let artifact = decode_code_artifact_body(bytes)?;
-    RepoRef::parse(&artifact.repo_ref)
-        .map_err(|_| Error::InvalidCodeArtifactBody("repo_ref must be a valid v1 repo_ref"))
+    RepoRef::parse(&artifact.repo_ref).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "repo_ref must be a valid v1 repo_ref",
+        ))
+    })
 }
 
 fn fork_has_other_snapshot(

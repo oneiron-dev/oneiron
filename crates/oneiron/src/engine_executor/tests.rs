@@ -40,6 +40,7 @@ fn prompt_package_root() -> std::path::PathBuf {
     crate::prompt::workspace_prompt_package_root().expect("workspace prompt package")
 }
 
+use crate::error::ArtifactError;
 use crate::error::GateError;
 use crate::test_util::{embedding_test_config, entity};
 
@@ -678,7 +679,7 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
 
     assert!(matches!(
         err,
-        EngineExecutorError::Engine(Error::InvalidCodeArtifactBody(_))
+        EngineExecutorError::Engine(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_)))
     ));
     assert!(
         vault

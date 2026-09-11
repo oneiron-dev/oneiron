@@ -41,6 +41,7 @@ fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
 
+use crate::error::ArtifactError;
 use crate::test_util::entity;
 
 fn read_u64_meta(vault: &Vault, key: &[u8]) -> Result<u64> {
@@ -1742,7 +1743,10 @@ fn attempt_queue_cleanup_maintenance_rejects_zero_timeout() -> Result<()> {
         .cleanup_attempt_queue_leases(0)
         .run()
         .unwrap_err();
-    assert_matches!(err, Error::InvalidAttemptQueueRecord(_));
+    assert_matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))
+    );
 
     Ok(())
 }

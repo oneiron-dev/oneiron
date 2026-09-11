@@ -15,6 +15,7 @@ use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, DispatchHealer,
     HEALER_REFERENCE_CONTEXT_SEAM_ABSENT, HealerSlot, HealerSlotOutcome, KillOutcome, KillProposal,
 };
+use crate::error::ArtifactError;
 
 impl AgentDispatcher<'_> {
     /// Resolves one failure case onto its configured healer slot.
@@ -32,9 +33,9 @@ impl AgentDispatcher<'_> {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidAgentDispatchInput`] when `agent_def_ref` is not a hex
+    /// [`ArtifactError::InvalidAgentDispatchInput`](crate::error::ArtifactError::InvalidAgentDispatchInput) when `agent_def_ref` is not a hex
     /// EntityId or when the reference-context seam is absent;
-    /// [`Error::AgentNotDispatchable`] when the named row's live ceiling
+    /// [`ArtifactError::AgentNotDispatchable`](crate::error::ArtifactError::AgentNotDispatchable) when the named row's live ceiling
     /// exceeds propose-only, plus everything the dispatchability predicate
     /// raises for a missing, inactive, unapproved, or disabled row.
     pub fn dispatch_healer_slot(&self, input: DispatchHealer) -> Result<HealerSlotOutcome> {
@@ -42,9 +43,9 @@ impl AgentDispatcher<'_> {
             HealerSlot::Reserved => Ok(HealerSlotOutcome::Reserved { case: input.case }),
             HealerSlot::AgentDef { agent_def_ref } => {
                 let healer_ref = EntityId::from_hex(&agent_def_ref).map_err(|_| {
-                    Error::InvalidAgentDispatchInput(
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "healer agent_def_ref must be a hex-encoded EntityId string",
-                    )
+                    ))
                 })?;
                 // Read LIVE, never the frozen payload snapshot: a healer that
                 // could act at `Auto` would repair the agent it is diagnosing
@@ -52,13 +53,13 @@ impl AgentDispatcher<'_> {
                 let definition =
                     self.dispatchable_definition(&AgentDispatchTarget::Custom(healer_ref))?;
                 if definition.ceiling.widens_beyond(AgentCeiling::Proposed) {
-                    return Err(Error::AgentNotDispatchable(
+                    return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
                         "healer agent definition exceeds the propose-only ceiling",
-                    ));
+                    )));
                 }
-                Err(Error::InvalidAgentDispatchInput(
+                Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     HEALER_REFERENCE_CONTEXT_SEAM_ABSENT,
-                ))
+                )))
             }
         }
     }
@@ -80,19 +81,21 @@ impl AgentDispatcher<'_> {
     ) -> Result<KillOutcome> {
         let queue = AttemptQueue::new(self.vault);
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let record = queue.get_in_write_txn(&wtxn, *spawn_attempt_id)?.ok_or(
-            Error::InvalidAgentDispatchInput("kill target attempt not found"),
-        )?;
+        let record = queue
+            .get_in_write_txn(&wtxn, *spawn_attempt_id)?
+            .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "kill target attempt not found",
+            )))?;
         if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "kill target must be a dreamer attempt",
-            ));
+            )));
         }
         let payload = decode_dreamer_attempt_payload(&record.payload)?;
         if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "kill target must be an agent dispatch attempt",
-            ));
+            )));
         }
         decode_agent_dispatch_input(&payload.input)?;
 

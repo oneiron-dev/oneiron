@@ -16,8 +16,8 @@ use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::{EdgeKind, validate_edge_weight};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::ClaimError;
-use crate::error::{Error, RegistryError, Result};
+use crate::error::ArtifactError;
+use crate::error::{ClaimError, Error, RegistryError, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
@@ -338,14 +338,14 @@ impl Vault {
             return Ok(());
         }
         if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "generated code revision claim cannot supersede user-stated truth",
-            ));
+            )));
         }
         if old_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "generated claim cannot supersede user-stated code revision truth",
-            ));
+            )));
         }
         Err(Error::InvalidClaimBody(
             "generated claim cannot supersede user-stated truth",

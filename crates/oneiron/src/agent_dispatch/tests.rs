@@ -15,6 +15,7 @@ use crate::dreamer_runner::{
     DreamerMilestoneClaim, DreamerMilestoneKind, decode_dreamer_attempt_payload,
     dreamer_milestone_value,
 };
+use crate::error::ArtifactError;
 use crate::error::ErrorKind;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::task_verb::{TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition};
@@ -243,7 +244,10 @@ fn dispatch_rejections() -> Result<()> {
     vault.put_agent_definition(&superseded_id, &superseded, t(1), 1)?;
     let err = dispatch_custom(&dispatcher, superseded_id, None, 10)
         .expect_err("superseded definition must not dispatch");
-    assert!(matches!(err, Error::AgentNotDispatchable(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::AgentNotDispatchable(_))
+    ));
 
     let proposed_id = test_id(0x43);
     let mut proposed = custom_agent("1.0.0");
@@ -251,7 +255,10 @@ fn dispatch_rejections() -> Result<()> {
     vault.put_agent_definition(&proposed_id, &proposed, t(1), 1)?;
     let err = dispatch_custom(&dispatcher, proposed_id, None, 10)
         .expect_err("unapproved definition must not dispatch");
-    assert!(matches!(err, Error::AgentNotDispatchable(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::AgentNotDispatchable(_))
+    ));
 
     // Nothing was enqueued by any rejection.
     assert!(AttemptQueue::new(&vault).list()?.is_empty());
@@ -271,7 +278,7 @@ fn missing_agent_definition_rejects_explicit_dispatch() -> Result<()> {
         .expect_err("missing definition must not dispatch");
     assert!(matches!(
         err,
-        Error::AgentDefinitionNotFound { id } if id == missing_id
+        Error::Artifact(ArtifactError::AgentDefinitionNotFound { id }) if id == missing_id
     ));
     assert!(AttemptQueue::new(&vault).list()?.is_empty());
     Ok(())
@@ -302,7 +309,7 @@ fn disabled_agent_definition_rejects_explicit_dispatch() -> Result<()> {
     let err = dispatch_to(herald_id).expect_err("a disabled row must not dispatch");
     assert!(matches!(
         err,
-        Error::AgentDefinitionDisabled { id } if id == herald_id
+        Error::Artifact(ArtifactError::AgentDefinitionDisabled { id }) if id == herald_id
     ));
 
     // A disabled row that is ALSO inactive still reports the landed
@@ -312,7 +319,10 @@ fn disabled_agent_definition_rejects_explicit_dispatch() -> Result<()> {
     disabled_and_retired.lifecycle_status = ClaimLifecycleStatus::Retracted;
     vault.update_agent_definition(&herald_id, &disabled_and_retired, t(3), 3)?;
     let err = dispatch_to(herald_id).expect_err("an inactive row must not dispatch");
-    assert!(matches!(err, Error::AgentNotDispatchable(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::AgentNotDispatchable(_))
+    ));
 
     assert!(AttemptQueue::new(&vault).list()?.is_empty());
     Ok(())

@@ -1,6 +1,7 @@
 //! Actor-scoped dedupe, task_ref compatibility, and the run-id bound.
 
 use super::*;
+use crate::error::ArtifactError;
 
 /// ONE-1876: the advisory dedupe index gains an ACTOR axis.
 ///
@@ -9,6 +10,7 @@ use super::*;
 /// so everything here is about the second axis and its bounded legacy window.
 mod one_1876_tests {
     use super::*;
+    use crate::error::ArtifactError;
 
     const KIND: &str = "claim_extraction";
     const ACTOR_A: &str = "actor-a";
@@ -266,7 +268,7 @@ mod one_1876_tests {
             .expect_err("an actor scope with no key is corruption");
         assert!(matches!(
             err,
-            Error::InvalidAttemptQueueRecord(reason) if reason == ERR_DEDUPE_ACTOR_WITHOUT_KEY
+            Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_DEDUPE_ACTOR_WITHOUT_KEY
         ));
 
         Ok(())
@@ -485,7 +487,7 @@ fn a_run_id_leaves_room_for_the_skill_edit_cycle_prefix() -> Result<()> {
         .expect_err("a run no cycle could name is not enqueued");
     assert!(matches!(
         refused,
-        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_RUN_ID_TOO_LONG
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_RUN_ID_TOO_LONG
     ));
     Ok(())
 }

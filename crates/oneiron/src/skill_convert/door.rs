@@ -19,6 +19,7 @@ use super::types::{
     CONVERT_RATIONALE_MAX_BYTES, ConvertOutcome, ConvertRequest, RefineVerdict, SkillRefineBrief,
     SkillRefiner,
 };
+use crate::error::ArtifactError;
 
 /// Converts selected turns/messages into a SKILL record (ARCH-0017 road 02).
 ///
@@ -75,9 +76,9 @@ pub fn convert_messages_to_skill(
                 .iter()
                 .any(|neighbor| neighbor.entity == *existing)
             {
-                return Err(Error::InvalidSkillBody(
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "merge target must be one of the skills the refine brief offered",
-                ));
+                )));
             }
             (rationale.as_str(), Some(*existing))
         }
@@ -108,9 +109,9 @@ pub fn convert_messages_to_skill(
                 // non-active old revision, so the gate could never admit the
                 // proposal. Refuse rather than land a record with no future.
                 if target.lifecycle_status == SkillLifecycle::Superseded {
-                    return Err(Error::InvalidSkillBody(
+                    return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                         "merge target was superseded while the refinement ran",
-                    ));
+                    )));
                 }
                 converted_record(
                     // The proposal continues the TARGET's skill id — that is
@@ -185,7 +186,7 @@ fn converted_record(
 
 pub(super) fn validate_text(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
     if text.trim().is_empty() || text.len() > max_bytes {
-        return Err(Error::InvalidSkillBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(context)));
     }
     Ok(())
 }

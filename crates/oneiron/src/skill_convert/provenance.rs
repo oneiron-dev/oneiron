@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::skill::{SkillContentHash, SkillRecord};
 
 use super::types::ConvertUtterance;
+use crate::error::ArtifactError;
 
 /// Provenance key carrying the source message/turn ids a converted skill was
 /// derived from, as an array of 32-char entity-id hex strings.
@@ -64,14 +65,14 @@ pub fn source_message_refs(record: &SkillRecord) -> Result<Vec<EntityId>> {
         return Ok(Vec::new());
     };
     let Value::Array(refs) = value else {
-        return Err(Error::InvalidSkillBody(CONTEXT));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)));
     };
     refs.iter()
         .map(|entry| {
             entry
                 .as_str()
                 .and_then(|hex| EntityId::from_hex(hex).ok())
-                .ok_or(Error::InvalidSkillBody(CONTEXT))
+                .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)))
         })
         .collect()
 }

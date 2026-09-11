@@ -1,6 +1,7 @@
 //! Landing codec and projection, soft-request handoff, hard force, and the reserve.
 
 use super::*;
+use crate::error::ArtifactError;
 
 // ─── ONE-1896 · two-rung graceful cancel, landing, and reserve ──────────
 //
@@ -59,7 +60,7 @@ fn landing_round_trips_on_the_wire_and_never_projects_as_completed() -> Result<(
     raw.extend(encoded);
     assert!(matches!(
         decode_record(&raw, malformed.id).expect_err("landing without a lease is refused"),
-        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_LANDING_WITHOUT_LEASE
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_LANDING_WITHOUT_LEASE
     ));
 
     // A landing record may not ride a row that is not landing or landed.
@@ -70,7 +71,7 @@ fn landing_round_trips_on_the_wire_and_never_projects_as_completed() -> Result<(
     raw.extend(encoded);
     assert!(matches!(
         decode_record(&raw, misplaced.id).expect_err("misplaced landing record is refused"),
-        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_LANDING_RECORD_MISPLACED
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_LANDING_RECORD_MISPLACED
     ));
 
     // Projections: still running, never completed, never cancelled.
@@ -374,7 +375,7 @@ fn soft_request_without_standing_changes_nothing() -> Result<()> {
                 CancelStanding::PeerAgent
             ))
             .expect_err("the runtime identity is reserved"),
-        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_CANCEL_ACTOR_IS_RUNTIME
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_CANCEL_ACTOR_IS_RUNTIME
     ));
     assert_eq!(queue.get(leased.id)?.expect("row"), before);
 
@@ -705,7 +706,7 @@ fn landing_reserve_is_landing_only_bounded_and_reports_exhaustion() -> Result<()
                 now: 18,
             })
             .expect_err("a handoff without a resume point is refused"),
-        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_HANDOFF_WITHOUT_RESUME_POINT
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_HANDOFF_WITHOUT_RESUME_POINT
     ));
 
     let FinishLandingOutcome::Landed(landed) = queue.finish_landing(FinishAttemptLanding {

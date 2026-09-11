@@ -1,6 +1,7 @@
 //! The gate itself: the entry points, and the transaction that rules.
 
 use super::*;
+use crate::error::ArtifactError;
 
 // ---------------------------------------------------------------------------
 // The gate
@@ -22,7 +23,7 @@ use super::*;
 ///
 /// # Errors
 ///
-/// [`Error::InvalidSkillBody`] when no judge is registered or the proposal
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when no judge is registered or the proposal
 /// names no drafting cycle; then everything
 /// [`score_gate_skill_edit_in_cycle`] errors on.
 pub fn score_gate_skill_edit(vault: &Vault, proposal: &EntityId) -> Result<HeldOutVerdict> {
@@ -38,7 +39,7 @@ pub fn score_gate_skill_edit(vault: &Vault, proposal: &EntityId) -> Result<HeldO
 /// # Errors
 ///
 /// Everything [`score_gate_skill_edit_in_cycle`] errors on, plus
-/// [`Error::InvalidSkillBody`] when the proposal names no drafting cycle.
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when the proposal names no drafting cycle.
 pub fn score_gate_skill_edit_with_scorer(
     vault: &Vault,
     proposal: &EntityId,
@@ -61,7 +62,7 @@ pub fn score_gate_skill_edit_with_scorer(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidSkillBody`] when `attempt` names no stored queue row; then
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when `attempt` names no stored queue row; then
 /// everything the gate itself errors on (see the entry point's list).
 pub fn score_gate_skill_edit_in_cycle(
     vault: &Vault,
@@ -112,9 +113,9 @@ pub fn score_gate_skill_edit_in_cycle(
 /// # Errors
 ///
 /// [`Error::EntityNotFound`] when the proposal is gone; whatever the scorer
-/// returns; [`Error::InvalidSkillBody`] for a proposal that is not an open,
+/// returns; [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) for a proposal that is not an open,
 /// cycle-stamped optimizer-born candidate, an unusable score, and every refusal
-/// arm of [`SkillEditDisposition`]; [`Error::SkillEditGateRetry`] when the
+/// arm of [`SkillEditDisposition`]; [`ArtifactError::SkillEditGateRetry`](crate::error::ArtifactError::SkillEditGateRetry) when the
 /// snapshot moved under the call — the proposal body, the reserved evidence, or
 /// a terminal reason — and when the skill reserves no evidence to score over at
 /// all. Rejections and cap deferrals are `Ok`.
@@ -363,7 +364,7 @@ pub(super) fn readable_target(read: Result<Option<SkillRecord>>) -> Result<Optio
 
 /// The typed, retryable "nothing was learned, and nothing was written".
 const fn retry(reason: &'static str) -> Error {
-    Error::SkillEditGateRetry(reason)
+    Error::Artifact(ArtifactError::SkillEditGateRetry(reason))
 }
 
 /// Test-only rendezvous between the lock-free pre-read and the transaction that

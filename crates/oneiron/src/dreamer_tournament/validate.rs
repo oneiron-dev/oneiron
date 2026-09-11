@@ -16,6 +16,7 @@ use super::types::{
     MAX_TOURNAMENT_JUDGE_TEXT_BYTES, MAX_TOURNAMENT_RUN_ID_BYTES, MAX_TOURNAMENT_STRATEGY_BYTES,
     OF366_CLAIM_AUTHORING_LENSES,
 };
+use crate::error::ArtifactError;
 
 pub(super) fn validate_run(run: &DreamerTournamentRun) -> Result<()> {
     validate_identifier(
@@ -539,5 +540,5 @@ pub(super) fn validate_evidence_refs(refs: &[String]) -> Result<()> {
 }
 
 pub(super) fn invalid_tournament(reason: &'static str) -> Error {
-    Error::InvalidAttemptQueueRecord(reason)
+    Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason))
 }

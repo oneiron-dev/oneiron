@@ -16,6 +16,7 @@ use super::error::{
     ERR_PAYLOAD_ENCODE, ERR_PAYLOAD_SCHEMA, ERR_UNKNOWN_MODEL_SLUG,
 };
 use super::validate::validate_connector;
+use crate::error::ArtifactError;
 /// Wire version of every connector payload this module encodes.
 pub const BYOA_CONNECTOR_SCHEMA_VERSION: u8 = 1;
 
@@ -156,7 +157,9 @@ impl TryFrom<String> for ByoEndpointProtocol {
         match value.as_str() {
             "openai_compat" => Ok(Self::OpenAiCompat),
             "anthropic_messages" => Ok(Self::AnthropicMessages),
-            _ => Err(Error::InvalidAgentDispatchInput(ERR_ENDPOINT_PROTOCOL)),
+            _ => Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                ERR_ENDPOINT_PROTOCOL,
+            ))),
         }
     }
 }
@@ -247,7 +250,9 @@ impl TryFrom<String> for ProtocolAttachKind {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.as_str() {
             "mcp" => Ok(Self::Mcp),
-            _ => Err(Error::InvalidAgentDispatchInput(ERR_ATTACH_KIND)),
+            _ => Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                ERR_ATTACH_KIND,
+            ))),
         }
     }
 }
@@ -390,8 +395,11 @@ pub struct ByoaAttemptPayload {
 /// Returns [`ByoaError::Store`] when the payload cannot be encoded.
 pub fn encode_byoa_attempt_payload(payload: &ByoaAttemptPayload) -> ByoaResult<Vec<u8>> {
     validate_connector(&payload.connector)?;
-    rmp_serde::to_vec_named(payload)
-        .map_err(|_| ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_PAYLOAD_ENCODE)))
+    rmp_serde::to_vec_named(payload).map_err(|_| {
+        ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            ERR_PAYLOAD_ENCODE,
+        )))
+    })
 }
 
 /// Decodes a connector payload written by [`encode_byoa_attempt_payload`].
@@ -402,11 +410,14 @@ pub fn encode_byoa_attempt_payload(payload: &ByoaAttemptPayload) -> ByoaResult<V
 /// version this build understands, or when the decoded connector would not
 /// pass the dispatch door.
 pub fn decode_byoa_attempt_payload(bytes: &[u8]) -> ByoaResult<ByoaAttemptPayload> {
-    let payload: ByoaAttemptPayload = rmp_serde::from_slice(bytes)
-        .map_err(|_| ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_PAYLOAD_DECODE)))?;
+    let payload: ByoaAttemptPayload = rmp_serde::from_slice(bytes).map_err(|_| {
+        ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            ERR_PAYLOAD_DECODE,
+        )))
+    })?;
     if payload.schema_version != BYOA_CONNECTOR_SCHEMA_VERSION {
-        return Err(ByoaError::Store(Error::InvalidAgentDispatchInput(
-            ERR_PAYLOAD_SCHEMA,
+        return Err(ByoaError::Store(Error::Artifact(
+            ArtifactError::InvalidAgentDispatchInput(ERR_PAYLOAD_SCHEMA),
         )));
     }
     // The same door the writer passed, applied on read: a row hand-written

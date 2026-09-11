@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 pub(super) const MAX_HUB_TEXT_BYTES: usize = 4096;
 
@@ -12,23 +12,25 @@ pub(super) fn exact_map<'a>(
     context: &'static str,
 ) -> Result<&'a [(Value, Value)]> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidSkillBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(context)));
     };
     let mut seen = vec![false; keys.len()];
     for (key, _) in entries {
-        let key = key.as_str().ok_or(Error::InvalidSkillBody(context))?;
+        let key = key
+            .as_str()
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(context)))?;
         let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(Error::InvalidSkillBody(context));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(context)));
         };
         if seen[index] {
-            return Err(Error::InvalidSkillBody(context));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(context)));
         }
         seen[index] = true;
     }
     if seen.into_iter().all(|present| present) {
         Ok(entries)
     } else {
-        Err(Error::InvalidSkillBody(context))
+        Err(Error::Artifact(ArtifactError::InvalidSkillBody(context)))
     }
 }
 
@@ -40,7 +42,7 @@ pub(super) fn required_value<'a>(
     entries
         .iter()
         .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or(Error::InvalidSkillBody(context))
+        .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(context)))
 }
 
 pub(super) fn required_text(
@@ -51,14 +53,14 @@ pub(super) fn required_text(
 ) -> Result<String> {
     let text = required_value(entries, key, context)?
         .as_str()
-        .ok_or(Error::InvalidSkillBody(context))?;
+        .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(context)))?;
     validate_text(text, max_bytes, context)?;
     Ok(text.to_owned())
 }
 
 pub(super) fn validate_text(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
     if text.trim().is_empty() || text.len() > max_bytes {
-        return Err(Error::InvalidSkillBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(context)));
     }
     Ok(())
 }
@@ -71,10 +73,10 @@ pub(super) fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u
 
 pub(super) fn decode_value(bytes: &[u8], context: &'static str) -> Result<Value> {
     let mut cursor = Cursor::new(bytes);
-    let value =
-        rmpv::decode::read_value(&mut cursor).map_err(|_| Error::InvalidSkillBody(context))?;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::Artifact(ArtifactError::InvalidSkillBody(context)))?;
     if cursor.position() != bytes.len() as u64 {
-        return Err(Error::InvalidSkillBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(context)));
     }
     Ok(value)
 }

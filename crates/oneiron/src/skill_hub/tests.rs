@@ -1,6 +1,6 @@
 use super::*;
-use crate::error::ClaimError;
-use crate::error::RegistryError;
+use crate::error::ArtifactError;
+use crate::error::{ClaimError, RegistryError};
 use crate::skill::SkillGovernanceTier;
 use crate::skill_optimize::{SkillTierVerdict, skill_governance_tier};
 
@@ -793,7 +793,10 @@ fn import_refuses_hash_collision_across_skill_ids() -> Result<()> {
         .import_skill_from_hub(&second_ref, &second, t(3), 4)
         .expect_err("matching content must not dedup across skill ids");
 
-    assert!(matches!(error, Error::InvalidSkillBody(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidSkillBody(_))
+    ));
     assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
     assert_eq!(
         vault
@@ -824,7 +827,10 @@ fn import_refuses_conflicting_capabilities_on_dedup() -> Result<()> {
         .import_skill_from_hub(&second_ref, &second, t(3), 4)
         .expect_err("matching content must not dedup conflicting capabilities");
 
-    assert!(matches!(error, Error::InvalidSkillBody(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidSkillBody(_))
+    ));
     assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
     Ok(())
 }
@@ -1157,7 +1163,10 @@ fn sync_enforces_content_hash_pin_under_any_policy() -> Result<()> {
             4,
         )
         .expect_err("content-hash pin must bind every sync policy");
-    assert!(matches!(error, Error::InvalidSkillBody(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidSkillBody(_))
+    ));
     assert_eq!(
         vault
             .get_skill_record(&entity)?
@@ -1245,7 +1254,10 @@ fn content_hash_frozen_requires_pin() -> Result<()> {
             4,
         )
         .expect_err("content-hash-frozen policy requires a content_hash pin");
-    assert!(matches!(error, Error::InvalidSkillBody(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidSkillBody(_))
+    ));
     Ok(())
 }
 
@@ -1818,9 +1830,9 @@ fn a_non_anchor_entity_squatting_the_anchor_id_is_refused() -> Result<()> {
     assert!(
         matches!(
             error,
-            Error::SkillContentAnchorTypeMismatch {
+            Error::Artifact(ArtifactError::SkillContentAnchorTypeMismatch {
                 existing: crate::registry::ENTITY_TYPE_PERSON
-            }
+            })
         ),
         "expected a typed anchor mismatch, got {error:?}"
     );

@@ -29,6 +29,7 @@ use super::verbs::{
     LandingOutcome, LandingReserveSpendOutcome, RecordAttemptResumePoint, RejectAttemptCancel,
     RequestAttemptCancel, SpendAttemptLandingReserve,
 };
+use crate::error::ArtifactError;
 
 /// Who authored one soft-request row, and why.
 #[derive(Debug)]
@@ -431,7 +432,9 @@ impl AttemptQueue<'_> {
     ) -> Result<LandingReserveSpendOutcome> {
         validate_lease_owner(&input.lease_owner)?;
         if input.units == 0 {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_SPEND_ZERO));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_RESERVE_SPEND_ZERO,
+            )));
         }
 
         let mut wtxn = self.store.env.write_txn()?;

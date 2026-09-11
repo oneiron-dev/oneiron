@@ -26,6 +26,7 @@ use super::storage::{
     collect_code_revision_records_by_index_prefix, read_code_revision_record_in_txn,
 };
 use super::types::{CodeRevision, CodeRevisionFrontierRecord, CodeRevisionIntegrityRecord};
+use crate::error::ArtifactError;
 
 const CODE_REVISION_FRONTIER_KEYS: [&str; 4] =
     ["session_id", "revision_id", "revision_fold", "finalized_at"];
@@ -59,21 +60,23 @@ pub(super) fn decode_code_revision_frontier_record(
 ) -> Result<CodeRevisionFrontierRecord> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
-        Error::InvalidCodeArtifactBody("code revision frontier is not valid MessagePack")
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "code revision frontier is not valid MessagePack",
+        ))
     })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "trailing bytes after code revision frontier map",
-        ));
+        )));
     }
     decode_code_revision_frontier_value(&value)
 }
 
 fn decode_code_revision_frontier_value(value: &Value) -> Result<CodeRevisionFrontierRecord> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision frontier must be a MessagePack map",
-        ));
+        )));
     };
     let mut session_id = None;
     let mut revision_id = None;
@@ -82,21 +85,23 @@ fn decode_code_revision_frontier_value(value: &Value) -> Result<CodeRevisionFron
     let mut seen = [false; CODE_REVISION_FRONTIER_KEYS.len()];
 
     for (key, value) in entries {
-        let key = key.as_str().ok_or(Error::InvalidCodeArtifactBody(
-            "code revision frontier keys must be strings",
-        ))?;
+        let key = key
+            .as_str()
+            .ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "code revision frontier keys must be strings",
+            )))?;
         let Some(index) = CODE_REVISION_FRONTIER_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision frontier key is not in the pinned CODE_REVISION_FRONTIER_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "duplicate code revision frontier key",
-            ));
+            )));
         }
         seen[index] = true;
 
@@ -110,17 +115,21 @@ fn decode_code_revision_frontier_value(value: &Value) -> Result<CodeRevisionFron
     }
 
     Ok(CodeRevisionFrontierRecord {
-        session_id: session_id.ok_or(Error::InvalidCodeArtifactBody(
+        session_id: session_id.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision frontier key session_id",
-        ))?,
-        revision_id: revision_id.ok_or(Error::InvalidCodeArtifactBody(
+        )))?,
+        revision_id: revision_id.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision frontier key revision_id",
+        )))?,
+        revision_fold: revision_fold.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision frontier key revision_fold",
+            ),
         ))?,
-        revision_fold: revision_fold.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision frontier key revision_fold",
-        ))?,
-        finalized_at: finalized_at.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision frontier key finalized_at",
+        finalized_at: finalized_at.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision frontier key finalized_at",
+            ),
         ))?,
     })
 }
@@ -143,9 +152,9 @@ pub(super) fn rebuild_code_revision_frontier_in_txn(
     let mut visiting = HashSet::new();
     for revision in &revisions {
         if revision.session_id != *session_id {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision session index mismatch",
-            ));
+            )));
         }
         let integrity = ensure_code_revision_integrity_record_in_txn(
             store,
@@ -163,9 +172,9 @@ pub(super) fn rebuild_code_revision_frontier_in_txn(
         }
     }
 
-    let frontier = frontier.ok_or(Error::InvalidCodeArtifactBody(
+    let frontier = frontier.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
         "code revision frontier record missing",
-    ))?;
+    )))?;
     let encoded = encode_code_revision_frontier_record(&frontier)?;
     store.vault_meta.put(
         wtxn,
@@ -184,16 +193,16 @@ pub(super) fn validate_code_revision_frontier_update(
     let Some(frontier) = get_code_revision_frontier_in_txn(store, rtxn, &revision.session_id)?
     else {
         if revision.parent_revision_id.is_some() {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision frontier record missing",
-            ));
+            )));
         }
         return Ok(true);
     };
     if frontier.session_id != revision.session_id {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision frontier session mismatch",
-        ));
+        )));
     }
     verify_code_revision_frontier_record_in_txn(store, rtxn, &frontier)?;
 
@@ -207,9 +216,9 @@ fn code_revision_frontier_update_decision(
 ) -> Result<bool> {
     let Some(frontier) = frontier else {
         if revision.parent_revision_id.is_some() {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision frontier record missing",
-            ));
+            )));
         }
         return Ok(true);
     };
@@ -223,9 +232,9 @@ fn code_revision_frontier_update_decision(
     } else if duplicate_converges {
         Ok(false)
     } else {
-        Err(Error::InvalidCodeArtifactBody(
+        Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision frontier conflict",
-        ))
+        )))
     }
 }
 
@@ -234,13 +243,14 @@ pub(super) fn verify_code_revision_frontier_in_txn(
     rtxn: &RoTxn<'_>,
     session_id: &EntityId,
 ) -> Result<()> {
-    let frontier = get_code_revision_frontier_in_txn(store, rtxn, session_id)?.ok_or(
-        Error::InvalidCodeArtifactBody("code revision frontier record missing"),
-    )?;
+    let frontier =
+        get_code_revision_frontier_in_txn(store, rtxn, session_id)?.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("code revision frontier record missing"),
+        ))?;
     if frontier.session_id != *session_id {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision frontier session mismatch",
-        ));
+        )));
     }
     verify_code_revision_frontier_record_in_txn(store, rtxn, &frontier)
 }
@@ -251,13 +261,15 @@ fn verify_code_revision_frontier_record_in_txn(
     frontier: &CodeRevisionFrontierRecord,
 ) -> Result<()> {
     let revision = read_code_revision_record_in_txn(store, rtxn, &frontier.revision_id)?.ok_or(
-        Error::InvalidCodeArtifactBody("code revision frontier points at a missing revision"),
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "code revision frontier points at a missing revision",
+        )),
     )?;
     if revision.session_id != frontier.session_id || revision.finalized_at != frontier.finalized_at
     {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision frontier record does not match revision record",
-        ));
+        )));
     }
     let mut visiting = HashSet::new();
     let integrity = verify_or_build_code_revision_integrity_record_in_txn(
@@ -267,9 +279,9 @@ fn verify_code_revision_frontier_record_in_txn(
         &mut visiting,
     )?;
     if integrity.revision_fold != frontier.revision_fold {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision frontier fold mismatch",
-        ));
+        )));
     }
     Ok(())
 }
@@ -285,9 +297,9 @@ pub(super) fn verify_code_revision_session_trace_in_txn(
     let mut saw_stored_integrity = false;
     for revision in revisions {
         if revision.session_id != *session_id {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision session index mismatch",
-            ));
+            )));
         }
         saw_stored_integrity |=
             load_optional_code_revision_integrity_record(store, rtxn, &revision.revision_id)?
@@ -311,23 +323,23 @@ pub(super) fn verify_code_revision_session_trace_in_txn(
     }
     let Some(stored_frontier) = stored_frontier else {
         if saw_stored_integrity {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision frontier record missing",
-            ));
+            )));
         }
         return Ok(());
     };
-    let computed_frontier = computed_frontier.ok_or(Error::InvalidCodeArtifactBody(
-        "code revision frontier record missing",
+    let computed_frontier = computed_frontier.ok_or(Error::Artifact(
+        ArtifactError::InvalidCodeArtifactBody("code revision frontier record missing"),
     ))?;
     if computed_frontier.revision_id != stored_frontier.revision_id
         || computed_frontier.revision_fold != stored_frontier.revision_fold
         || computed_frontier.finalized_at != stored_frontier.finalized_at
         || computed_frontier.session_id != stored_frontier.session_id
     {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision frontier record does not match session trace",
-        ));
+        )));
     }
     Ok(())
 }

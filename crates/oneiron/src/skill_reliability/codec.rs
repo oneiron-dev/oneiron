@@ -2,7 +2,7 @@
 
 use rmpv::Value;
 
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 pub(super) const ENTITY_ID_LEN: usize = 16;
 
@@ -17,7 +17,7 @@ pub(super) const KEY_AT: &str = "at";
 // ---------------------------------------------------------------------------
 
 pub(super) const fn invalid(reason: &'static str) -> Error {
-    Error::InvalidSkillBody(reason)
+    Error::Artifact(ArtifactError::InvalidSkillBody(reason))
 }
 
 pub(super) fn map_entry<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 /// Magic prefix for recovery artifacts: `ONEIRONA`.
 pub const RECOVERY_ARTIFACT_MAGIC: [u8; 8] = *b"ONEIRONA";
@@ -132,8 +132,9 @@ pub fn decode_recovery_artifact(
     bytes: &[u8],
     expected_artifact_type: u16,
 ) -> Result<RecoveryArtifact> {
-    validate_recovery_artifact(bytes, expected_artifact_type)
-        .map_err(|failure| Error::InvalidRecoveryArtifact(failure.reason()))
+    validate_recovery_artifact(bytes, expected_artifact_type).map_err(|failure| {
+        Error::Artifact(ArtifactError::InvalidRecoveryArtifact(failure.reason()))
+    })
 }
 
 /// Reads an artifact from `path`; invalid artifacts are quarantined intact.
@@ -267,9 +268,11 @@ fn quarantine_invalid_artifact(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
         }
     }
 
-    Err(Error::RecoveryArtifactQuarantineExhausted {
-        path: path.to_path_buf(),
-    })
+    Err(Error::Artifact(
+        ArtifactError::RecoveryArtifactQuarantineExhausted {
+            path: path.to_path_buf(),
+        },
+    ))
 }
 
 fn artifact_file_matches(path: &Path, bytes: &[u8]) -> std::io::Result<bool> {

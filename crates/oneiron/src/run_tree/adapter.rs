@@ -11,6 +11,7 @@ use super::types::{
     RunTree, RunTreeFailureDiagram, RunTreeNode, RunTreeNodeMarker, RunTreeNodeMarkerKind,
     RunTreeStatus,
 };
+use crate::error::ArtifactError;
 
 /// Read adapter over the runtime attempt queue.
 pub struct RunTreeAdapter<'a> {
@@ -70,7 +71,7 @@ impl<'a> RunTreeAdapter<'a> {
     ) -> Result<(String, Option<String>)> {
         let agent_label = match self.read_run(dreamer_run_id) {
             Ok(tree) => first_root_agent_label(&tree),
-            Err(Error::InvalidAttemptQueueRecord(_)) => None,
+            Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))) => None,
             Err(error) => return Err(error),
         };
         Ok((

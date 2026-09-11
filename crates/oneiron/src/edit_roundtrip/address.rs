@@ -1,6 +1,7 @@
 //! Cell addressing, ranges and op validation.
 
 use super::EditOp;
+use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -32,9 +33,9 @@ impl OfficeFormat {
             XLSX_MEDIA_TYPE | XLSM_MEDIA_TYPE => Ok(Self::Xlsx),
             DOCX_MEDIA_TYPE => Ok(Self::Docx),
             PPTX_MEDIA_TYPE => Ok(Self::Pptx),
-            _ => Err(Error::EditRoundtripFailed(
+            _ => Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "media type is not a supported office format",
-            )),
+            ))),
         }
     }
 
@@ -75,21 +76,25 @@ impl CellRef {
     pub fn parse(text: &str) -> Result<Self> {
         let split = text
             .find(|c: char| c.is_ascii_digit())
-            .ok_or(Error::EditRoundtripFailed("cell reference missing a row"))?;
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "cell reference missing a row",
+            )))?;
         if split == 0 {
-            return Err(Error::EditRoundtripFailed(
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "cell reference missing a column",
-            ));
+            )));
         }
         let (letters, digits) = text.split_at(split);
         let col = letters_to_column(letters)?;
-        let row: u32 = digits
-            .parse()
-            .map_err(|_| Error::EditRoundtripFailed("cell reference row is not a number"))?;
+        let row: u32 = digits.parse().map_err(|_| {
+            Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "cell reference row is not a number",
+            ))
+        })?;
         if row == 0 {
-            return Err(Error::EditRoundtripFailed(
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "cell reference row must be >= 1",
-            ));
+            )));
         }
         Ok(Self { col, row })
     }
@@ -116,9 +121,11 @@ impl RangeRef {
 
     /// Parses an `"A1:B2"` range.
     pub fn parse(text: &str) -> Result<Self> {
-        let (start, end) = text
-            .split_once(':')
-            .ok_or(Error::EditRoundtripFailed("range reference missing ':'"))?;
+        let (start, end) =
+            text.split_once(':')
+                .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                    "range reference missing ':'",
+                )))?;
         Ok(Self {
             start: CellRef::parse(start)?,
             end: CellRef::parse(end)?,
@@ -147,20 +154,24 @@ pub(super) fn column_to_letters(mut index: u32) -> String {
 
 fn letters_to_column(letters: &str) -> Result<u32> {
     if letters.is_empty() {
-        return Err(Error::EditRoundtripFailed("column reference is empty"));
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "column reference is empty",
+        )));
     }
     let mut col: u32 = 0;
     for ch in letters.chars() {
         if !ch.is_ascii_alphabetic() {
-            return Err(Error::EditRoundtripFailed(
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "column reference has a non-letter",
-            ));
+            )));
         }
         let value = u32::from(ch.to_ascii_uppercase() as u8 - b'A') + 1;
         col = col
             .checked_mul(26)
             .and_then(|c| c.checked_add(value))
-            .ok_or(Error::EditRoundtripFailed("column reference overflow"))?;
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "column reference overflow",
+            )))?;
     }
     Ok(col)
 }
@@ -205,18 +216,18 @@ fn check_range(range: RangeRef) -> Result<()> {
     check_cell(range.start)?;
     check_cell(range.end)?;
     if range.start.col > range.end.col || range.start.row > range.end.row {
-        return Err(Error::InvalidEditManifest(
+        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
             "edit op range is inverted; start must be at or above-left of end",
-        ));
+        )));
     }
     Ok(())
 }
 
 fn ensure_one_based(index: u32) -> Result<()> {
     if index == 0 {
-        return Err(Error::InvalidEditManifest(
+        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
             "edit op uses a 0 index; cells, ranges, and axis positions are 1-based",
-        ));
+        )));
     }
     Ok(())
 }

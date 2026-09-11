@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use crate::{EdgeKind, EntityId, Error, Result};
 
 use super::replay::CODE_RUN_REPLAY_HASH_LEN;
+use crate::error::ArtifactError;
 
 pub(super) const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:sha256:";
 pub(super) const CODE_RUN_LAYOUT_HASH_DOMAIN: &[u8] = b"oneiron:code-run-replay-layout:v1";
@@ -197,5 +198,5 @@ where
 }
 
 pub(super) fn invalid_code_run_replay(message: &'static str) -> Error {
-    Error::InvalidCodeArtifactBody(message)
+    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(message))
 }

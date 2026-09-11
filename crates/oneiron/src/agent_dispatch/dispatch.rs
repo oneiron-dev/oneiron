@@ -19,6 +19,7 @@ use super::types::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentSpawnContext, DEFAULT_BASE_LOGICAL_ID,
     DispatchAgent,
 };
+use crate::error::ArtifactError;
 
 /// Dispatch adapter over an already-open vault (house pattern:
 /// `RunTreeAdapter::new`, `DreamerRunnerStore::new`). The OF-334 verb home is
@@ -43,10 +44,10 @@ impl<'a> AgentDispatcher<'a> {
     ///
     /// # Errors
     ///
-    /// [`Error::AgentDefinitionNotFound`] when the named row is absent;
-    /// [`Error::AgentNotDispatchable`] when it is not Active or not approved;
-    /// [`Error::AgentDefinitionDisabled`] when its stored `enabled` is off;
-    /// [`Error::InvalidAgentDispatchInput`] when a deduped-existing row's
+    /// [`ArtifactError::AgentDefinitionNotFound`](crate::error::ArtifactError::AgentDefinitionNotFound) when the named row is absent;
+    /// [`ArtifactError::AgentNotDispatchable`](crate::error::ArtifactError::AgentNotDispatchable) when it is not Active or not approved;
+    /// [`ArtifactError::AgentDefinitionDisabled`](crate::error::ArtifactError::AgentDefinitionDisabled) when its stored `enabled` is off;
+    /// [`ArtifactError::InvalidAgentDispatchInput`](crate::error::ArtifactError::InvalidAgentDispatchInput) when a deduped-existing row's
     /// payload fails the pinned codec (fail-closed).
     pub fn dispatch(&self, input: DispatchAgent) -> Result<AgentDispatchOutcome> {
         self.dispatch_with_context(input, AgentSpawnContext::default())
@@ -62,7 +63,7 @@ impl<'a> AgentDispatcher<'a> {
     /// # Errors
     ///
     /// Everything [`Self::dispatch`] raises, plus
-    /// [`Error::InvalidAgentDispatchInput`] when the parent's depth budget is
+    /// [`ArtifactError::InvalidAgentDispatchInput`](crate::error::ArtifactError::InvalidAgentDispatchInput) when the parent's depth budget is
     /// exhausted, when the requested context descriptor widens the parent's, or
     /// when the attenuated fork cannot be registered. A dispatch that cannot
     /// attenuate NEVER falls back to the wider source row.
@@ -201,16 +202,16 @@ impl<'a> AgentDispatcher<'a> {
             EnqueueDreamerAttemptOutcome::Existing(status) => {
                 let status = agent_dispatch_status(status)?;
                 if status.input.target != dispatch_input.target {
-                    return Err(Error::InvalidAgentDispatchInput(
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "existing dedupe row targets a different agent",
-                    ));
+                    )));
                 }
                 let existing_parent =
                     decode_dreamer_attempt_payload(&status.attempt.payload)?.parent_attempt;
                 if existing_parent != requested_parent {
-                    return Err(Error::InvalidAgentDispatchInput(
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "existing dedupe row belongs to a different parent",
-                    ));
+                    )));
                 }
                 // The dedupe key names the INTENT, so the persisted row must
                 // carry the SAME effective spawn input; a different one is a
@@ -219,9 +220,9 @@ impl<'a> AgentDispatcher<'a> {
                     || status.input.context_from != dispatch_input.context_from
                     || status.input.depth_remaining != dispatch_input.depth_remaining
                 {
-                    return Err(Error::InvalidAgentDispatchInput(
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "existing dedupe row carries a different spawn context",
-                    ));
+                    )));
                 }
                 AgentDispatchOutcome::Existing(status)
             }
@@ -236,25 +237,26 @@ impl<'a> AgentDispatcher<'a> {
         target: &AgentDispatchTarget,
     ) -> Result<AgentDefinition> {
         let AgentDispatchTarget::Custom(id) = target;
-        let definition = self
-            .vault
-            .get_agent_definition(id)?
-            .ok_or(Error::AgentDefinitionNotFound { id: *id })?;
+        let definition = self.vault.get_agent_definition(id)?.ok_or(Error::Artifact(
+            ArtifactError::AgentDefinitionNotFound { id: *id },
+        ))?;
         if definition.lifecycle_status != ClaimLifecycleStatus::Active {
-            return Err(Error::AgentNotDispatchable(
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
                 "agent definition is not active",
-            ));
+            )));
         }
         if !matches!(
             definition.approval_status,
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
         ) {
-            return Err(Error::AgentNotDispatchable(
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
                 "agent definition is not approved",
-            ));
+            )));
         }
         if !definition.enabled {
-            return Err(Error::AgentDefinitionDisabled { id: *id });
+            return Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled {
+                id: *id,
+            }));
         }
         Ok(definition)
     }
@@ -267,7 +269,7 @@ impl<'a> AgentDispatcher<'a> {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidAgentDispatchInput`] when the parent's budget is
+    /// [`ArtifactError::InvalidAgentDispatchInput`](crate::error::ArtifactError::InvalidAgentDispatchInput) when the parent's budget is
     /// exhausted.
     pub fn child_depth_remaining(&self, parent_attempt: AttemptId) -> Result<u8> {
         child_depth_from(self.parent_dispatch_input(parent_attempt)?)
@@ -315,9 +317,9 @@ impl<'a> AgentDispatcher<'a> {
         let (id, _) = self
             .vault
             .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)?
-            .ok_or(Error::AgentNotDispatchable(
+            .ok_or(Error::Artifact(ArtifactError::AgentNotDispatchable(
                 "the seeded default base agent definition is absent",
-            ))?;
+            )))?;
         self.dispatch(DispatchAgent {
             target: AgentDispatchTarget::Custom(id),
             parent_attempt,

@@ -84,7 +84,10 @@ fn widest_lease_owner_fits_attempt_queue_ceiling() {
         )
         .expect_err("overlong lease_owner must fail attempt-queue validation");
     assert!(
-        matches!(err, oneiron::Error::InvalidAttemptQueueRecord(_)),
+        matches!(
+            err,
+            oneiron::Error::Artifact(oneiron::error::ArtifactError::InvalidAttemptQueueRecord(_))
+        ),
         "expected InvalidAttemptQueueRecord, got {err:?}"
     );
 }
