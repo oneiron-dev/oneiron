@@ -241,6 +241,7 @@ pub fn hold_rate_knobs(
 enum BookingEvaluationScope {
     All,
     Book,
+    Amend,
     Hold,
     SlotList,
 }
@@ -259,6 +260,15 @@ fn rule_applies_to_evaluation(rule: &BookingAntiAbuseRule, scope: BookingEvaluat
                 | BookingAntiAbuseRule::QuarantineBorderline
                 | BookingAntiAbuseRule::BookRate { .. }
         ),
+        // ARCH-0062 amends an existing booking "via token: same solver
+        // rules". A token is not a form: an amendment carries no honeypot
+        // field, no submit clock, no intake box and no address to correct,
+        // so none of those controls has evidence to read here. It is still a
+        // write, so it keeps the bounded per-minute bucket, spent by the
+        // adapter below this pure evaluator exactly as confirmation spends it.
+        BookingEvaluationScope::Amend => {
+            matches!(rule, BookingAntiAbuseRule::BookRate { .. })
+        }
         // Slot lookup and hold creation have no form evidence. Their only
         // controls are their endpoint counters, consumed by the adapter.
         BookingEvaluationScope::Hold => false,
@@ -427,6 +437,17 @@ pub fn evaluate_booking_book_request(
     facts: &BookingRequestFacts,
 ) -> BookingAbuseVerdict {
     evaluate_booking_request_for(rows, facts, BookingEvaluationScope::Book)
+}
+
+/// Amendment-specific evaluation for cancel and reschedule. Book-time form
+/// rules cannot refuse it; only the shared write bucket, spent by the
+/// adapter, still applies.
+#[must_use]
+pub fn evaluate_booking_amend_request(
+    rows: &[BookingAntiAbuseRuleRow],
+    facts: &BookingRequestFacts,
+) -> BookingAbuseVerdict {
+    evaluate_booking_request_for(rows, facts, BookingEvaluationScope::Amend)
 }
 
 /// Hold creation has only its endpoint quota, evaluated by the adapter.

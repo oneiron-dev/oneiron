@@ -47,7 +47,7 @@ use oneiron::booking::{
 };
 use oneiron::{EntityId, Vault};
 
-use super::booking_anti_abuse::{enforce_book, enforce_hold, enforce_slot_list};
+use super::booking_anti_abuse::{enforce_amend, enforce_book, enforce_hold, enforce_slot_list};
 use super::{check_api_auth, json_payload};
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -384,7 +384,9 @@ pub(crate) async fn booking_cancel(
 ///    keys, resolve the page subject internally, and bind any submitted action
 ///    token to that same page;
 /// 2. call ONE-1817 admission exactly once, in the class this operation
-///    belongs to;
+///    belongs to — listing, hold, confirmation, or amendment. Cancel and
+///    reschedule are amendments: they present an action token rather than a
+///    form, so the book-time form controls never see them;
 /// 3. normalize free text through ONE-1816 and replace it with a canonical
 ///    `ConstraintObject`;
 /// 4. call the merged oracle — for availability as the answer, for a hold as
@@ -441,10 +443,11 @@ pub(crate) async fn execute_booking_operation(
         BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
             enforce_hold(State(Arc::clone(server)), facts).await?
         }
-        BookingOperationRequest::Book(BookingBookInput::Confirm(_))
-        | BookingOperationRequest::Reschedule(_)
-        | BookingOperationRequest::Cancel(_) => {
+        BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => {
             enforce_book(State(Arc::clone(server)), facts).await?
+        }
+        BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
+            enforce_amend(State(Arc::clone(server)), facts).await?
         }
     };
     if let Some(response) = admission_short_circuit(&request, disposition)? {
