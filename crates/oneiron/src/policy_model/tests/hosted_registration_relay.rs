@@ -1,6 +1,7 @@
 //! Hosted policy registration accountability, row-ref dedup, policy hashes, hosted relay plane.
 
 use super::*;
+use crate::error::RelayError;
 
 #[test]
 fn hosted_registration_rejects_a_policy_it_could_not_enforce() {
@@ -1007,10 +1008,10 @@ fn relay_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "policy_manifest",
                 ..
-            }
+            })
         ),
         "unexpected error: {err}"
     );

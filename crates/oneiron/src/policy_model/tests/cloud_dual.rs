@@ -1,6 +1,7 @@
 //! Cloud-vault receipt trust/attestation, trust domains, degrade halts, dual-plane passes and enforce doors.
 
 use super::*;
+use crate::error::RelayError;
 
 #[test]
 fn cloud_vault_receipt_without_hosted_attestation_reruns_the_hosted_pass() -> Result<()> {
@@ -176,7 +177,7 @@ fn cloud_vault_missing_receipt_falls_back_to_the_hosted_pass() -> Result<()> {
         .expect_err("missing receipt must be untrusted");
     assert!(matches!(
         err,
-        Error::RelayVaultReceiptUntrusted { reason: "missing" }
+        Error::Relay(RelayError::RelayVaultReceiptUntrusted { reason: "missing" })
     ));
 
     let backend = blocking_backend();
@@ -296,9 +297,9 @@ fn cloud_vault_receipt_binding_mismatch_fails_closed_to_the_hosted_pass() -> Res
         .expect_err("frontier mismatch must be rejected by the CloudVault arm");
     assert!(matches!(
         err,
-        Error::RelayVaultReceiptUntrusted {
+        Error::Relay(RelayError::RelayVaultReceiptUntrusted {
             reason: "binding_mismatch"
-        }
+        })
     ));
     let backend = blocking_backend();
     let budget = lease("cloud-binding-mismatch");
@@ -332,9 +333,9 @@ fn cloud_vault_content_hash_mismatch_audits_exact_cause() -> Result<()> {
         .expect_err("stored content hash mismatch must be untrusted");
     assert!(matches!(
         err,
-        Error::RelayVaultReceiptUntrusted {
+        Error::Relay(RelayError::RelayVaultReceiptUntrusted {
             reason: "binding_mismatch"
-        }
+        })
     ));
     cloud_pass(&vault, request, &no_hosted_policy_registry(), &source, None)?;
     let receipts = gate_receipts(&vault)?;
@@ -826,7 +827,10 @@ fn the_owner_enforce_door_and_a_production_minted_hosted_clean_allow() -> Result
 
     let outcome = vault.enforce_policy_model_verdict(request.clone(), &config, hosted, false);
     assert!(
-        matches!(outcome, Err(Error::PolicyVerdictNotInForce)),
+        matches!(
+            outcome,
+            Err(Error::Relay(RelayError::PolicyVerdictNotInForce))
+        ),
         "a hosted verdict is not this door's to enforce, whatever it decided; got {outcome:?}"
     );
 
@@ -845,7 +849,10 @@ fn the_owner_enforce_door_and_a_production_minted_hosted_clean_allow() -> Result
     legacy.plane_minted = None;
     let refused_legacy = vault.enforce_policy_model_verdict(request, &config, legacy, false);
     assert!(
-        matches!(refused_legacy, Err(Error::PolicyVerdictNotInForce)),
+        matches!(
+            refused_legacy,
+            Err(Error::Relay(RelayError::PolicyVerdictNotInForce))
+        ),
         "an unstamped verdict is not trusted by omission; got {refused_legacy:?}"
     );
     Ok(())
@@ -897,7 +904,10 @@ fn the_owner_enforce_door_refuses_a_production_minted_hosted_verdict() -> Result
     let refused =
         vault.enforce_policy_model_verdict(request.clone(), &config, hosted_verdict, false);
     assert!(
-        matches!(refused, Err(Error::PolicyVerdictNotInForce)),
+        matches!(
+            refused,
+            Err(Error::Relay(RelayError::PolicyVerdictNotInForce))
+        ),
         "a hosted Block must not be enforced as the owner's own; got {refused:?}"
     );
 
@@ -946,7 +956,10 @@ fn the_owner_enforce_door_refuses_an_attested_hosted_verdict() -> Result<()> {
 
     let refused =
         vault.enforce_policy_model_verdict(request.clone(), &config, hosted_verdict, false);
-    assert!(matches!(refused, Err(Error::PolicyVerdictNotInForce)));
+    assert!(matches!(
+        refused,
+        Err(Error::Relay(RelayError::PolicyVerdictNotInForce))
+    ));
 
     // The owner's own verdict for the same request still enforces. The door
     // refuses a PLANE, not a shape.
@@ -1071,7 +1084,10 @@ fn enforcing_a_verdict_about_other_content_is_refused() -> Result<()> {
         false,
     );
     assert!(
-        matches!(refused, Err(Error::PolicyVerdictNotInForce)),
+        matches!(
+            refused,
+            Err(Error::Relay(RelayError::PolicyVerdictNotInForce))
+        ),
         "a verdict about other content must be refused, not enforced",
     );
     Ok(())
@@ -1104,7 +1120,10 @@ fn enforcing_a_verdict_the_manifest_moved_under_is_refused() -> Result<()> {
     let refused =
         vault.enforce_policy_model_verdict(request, &PolicyModelConfig::default(), verdict, false);
     assert!(
-        matches!(refused, Err(Error::PolicyVerdictNotInForce)),
+        matches!(
+            refused,
+            Err(Error::Relay(RelayError::PolicyVerdictNotInForce))
+        ),
         "a verdict the manifest moved under must be refused, not enforced",
     );
     Ok(())

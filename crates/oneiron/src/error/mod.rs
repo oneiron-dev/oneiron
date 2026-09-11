@@ -9,8 +9,10 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_RELATIONSHIP, TypeByteZone};
 use crate::temporal::TemporalExpressionParseError;
 
+mod relay;
 mod sync;
 
+pub use self::relay::RelayError;
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
 pub use self::sync::{
@@ -1734,70 +1736,6 @@ pub enum Error {
     CodeBlastRadiusMissingTouchedSymbols,
     #[error("code blast-radius symbol is absent from graph: {0:?}")]
     CodeBlastRadiusUnknownSymbol(EntityId),
-    /// A connector-edge service identity failed relay attestation validation
-    /// (B11-2b / ONE-1572): it must carry the `connector-edge:<name>` grammar
-    /// and name a service present in the caller-supplied edge service
-    /// registry. Fail-closed — an unregistered or malformed identity can
-    /// never mint an attested relay domain.
-    #[error("invalid connector-edge service identity `{service_identity}`: {reason}")]
-    RelayAttestationInvalidServiceIdentity {
-        service_identity: String,
-        reason: &'static str,
-    },
-    /// A CloudVault receipt was missing or did not verify against local policy state.
-    #[error("cloud vault receipt is untrusted: {reason}")]
-    RelayVaultReceiptUntrusted { reason: &'static str },
-    /// A verdict handed to `Vault::enforce_policy_model_verdict` is not the
-    /// verdict for the request beside it, or the manifest has moved since it
-    /// was decided. Either way it cannot be pinned to the policy in force, so
-    /// the door refuses instead of enforcing it.
-    #[error("policy verdict is not bound to this request under the policy in force")]
-    PolicyVerdictNotInForce,
-    /// A connector-edge identity claimed a connection class other than the
-    /// one its service identity is registered for (B11-2b / ONE-1572) — e.g.
-    /// a hosted connector claiming cloud-vault peer standing, which would
-    /// skip the relay floor. Rejected before any witness is minted.
-    #[error(
-        "connector-edge service `{service_identity}` claimed connection class `{claimed}` but is registered as `{registered}`"
-    )]
-    RelayAttestationClassMismatch {
-        service_identity: String,
-        claimed: &'static str,
-        registered: &'static str,
-    },
-    /// A connector-edge service registration conflicted with an existing
-    /// registration under a different connection class (B11-2b / ONE-1572).
-    /// Fail-closed: a deployment manifest can never silently re-register an
-    /// edge service to a stronger (or weaker) class.
-    #[error(
-        "connector-edge service `{service}` is already registered as `{registered}`; conflicting registration as `{claimed}` rejected"
-    )]
-    RelayAttestationEdgeServiceConflict {
-        service: String,
-        registered: &'static str,
-        claimed: &'static str,
-    },
-    /// A hosted legal policy was rejected at registration because one of its
-    /// attribution fields cannot survive the gate-notice ledger's bounds.
-    /// Caught here rather than at receipt-append time, so a policy that would
-    /// make every hosted `Warn`/`Block` fail to receipt never registers.
-    #[error("hosted legal policy for connector-edge service `{service}`: {field} {reason}")]
-    RelayHostedLegalPolicyInvalid {
-        service: String,
-        field: &'static str,
-        reason: &'static str,
-    },
-    /// The vault's own policy manifest cannot be read as written, named by
-    /// the manifest key at fault. The owner plane's twin of
-    /// [`Self::RelayHostedLegalPolicyInvalid`]: a defect the substrate owner
-    /// fixes in the manifest, not a fault of the request that tripped it, so
-    /// the key and the reason stay `'static` and machine-readable rather than
-    /// formatted into prose.
-    #[error("policy manifest: {field} {reason}")]
-    PolicyManifestInvalid {
-        field: &'static str,
-        reason: &'static str,
-    },
     /// A code-memory anchor, locator, slot name, or pull argument failed its
     /// own bounded structural validation (ONE-1608). The anchor rule this
     /// most often reports is the load-bearing one: a durable note is keyed by
@@ -1940,6 +1878,10 @@ pub enum Error {
     /// embed this type, which would make both errors recursive.
     #[error(transparent)]
     VaultRead(#[from] crate::code_run::vault_read::VaultReadError),
+    /// Relay-domain failure, see [`RelayError`].
+    /// Transparent, so Display and `source()` are the leaf's.
+    #[error(transparent)]
+    Relay(#[from] RelayError),
     /// Sync-domain failure: CRDT windows, the sync protocol and engine,
     /// replay receipts and identity topology. Transparent, so Display and
     /// `source()` are the leaf's.
@@ -2243,17 +2185,6 @@ impl Error {
                 ErrorKind::CodeBlastRadiusMissingTouchedSymbols
             }
             Self::CodeBlastRadiusUnknownSymbol(_) => ErrorKind::CodeBlastRadiusUnknownSymbol,
-            Self::RelayAttestationInvalidServiceIdentity { .. } => {
-                ErrorKind::RelayAttestationInvalidServiceIdentity
-            }
-            Self::RelayVaultReceiptUntrusted { .. } => ErrorKind::RelayVaultReceiptUntrusted,
-            Self::PolicyVerdictNotInForce => ErrorKind::PolicyVerdictNotInForce,
-            Self::RelayAttestationClassMismatch { .. } => ErrorKind::RelayAttestationClassMismatch,
-            Self::RelayAttestationEdgeServiceConflict { .. } => {
-                ErrorKind::RelayAttestationEdgeServiceConflict
-            }
-            Self::RelayHostedLegalPolicyInvalid { .. } => ErrorKind::RelayHostedLegalPolicyInvalid,
-            Self::PolicyManifestInvalid { .. } => ErrorKind::PolicyManifestInvalid,
             Self::CodeMemoryInvalidAnchor { .. } => ErrorKind::CodeMemoryInvalidAnchor,
             Self::CodeMemoryInvalidAnchorTransfer { .. } => {
                 ErrorKind::CodeMemoryInvalidAnchorTransfer
@@ -2282,6 +2213,7 @@ impl Error {
                 ErrorKind::VaultCleanupWakeTriggerRejected
             }
             Self::VaultRead(_) => ErrorKind::VaultRead,
+            Self::Relay(inner) => inner.kind(),
             Self::Sync(inner) => inner.kind(),
         }
     }
