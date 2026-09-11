@@ -191,7 +191,7 @@ impl Vault {
             ))
         })?;
         for decision in recorded_decisions {
-            decision.record_metrics();
+            decision.record_metrics(&self.store.diagnostics.gate);
         }
         Ok(bundle)
     }
@@ -491,7 +491,7 @@ impl Vault {
             ))
         })?;
         for decision in recorded_decisions {
-            decision.record_metrics();
+            decision.record_metrics(&self.store.diagnostics.gate);
         }
         // These ids are the Dreamer members actually approved in the committed
         // transaction. The canonical consolidator must open a separate writer.

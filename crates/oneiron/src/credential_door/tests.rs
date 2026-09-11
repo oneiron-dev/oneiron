@@ -88,7 +88,7 @@ fn register_door_secret(vault: &Vault) {
 /// 1. the pinned instant is somewhere the wall clock cannot be, so a door that
 ///    had quietly gone back to reading `unix_seconds_now()` would see every
 ///    fixture credential as issued in the far future and deny it;
-/// 2. raising the floor REBASES the clock domain's anchor at the next reading,
+/// 2. raising the floor REBASES this vault's clock anchor at the next reading,
 ///    so a test's own reading and the readings its door calls take are the
 ///    same second unless a whole second of wall time passes between them —
 ///    which is what lets the boundary assertions stay exact now that no test

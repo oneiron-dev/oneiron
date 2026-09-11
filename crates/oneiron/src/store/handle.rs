@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use heed::types::{Bytes, Str};
 use heed::{Database, Env, RoTxn, RwTxn};
 
+use crate::authority::AuthorityLocalClock;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -99,7 +100,7 @@ pub struct RawDatabases {
 /// registries. The Drop-sensitive singletons live in [`StoreOwner`] — a
 /// `StoreCore` clone deliberately carries none of them, so a session vault
 /// handle (ONE-1727) can hold `Arc<StoreCore>` without duplicating close,
-/// path-deregistration, or clock-domain-release responsibilities.
+/// path-deregistration, or environment-close responsibilities.
 ///
 /// INVARIANT: no `Arc<StoreCore>` may outlive the owning [`StoreOwner`]. The
 /// owner's always-on drop assertion enforces this at runtime; the session
@@ -121,15 +122,19 @@ pub struct StoreCore {
     /// Serializes reward-to-weight tuning so concurrent callers cannot lose
     /// a gradient step between read, compute, and persist.
     pub(in crate::store) retrieval_blend_tuning_lock: Mutex<()>,
-    /// Process-local clock domain for monotonic authority first-seen windows.
-    /// Read-only mirror; release-on-drop responsibility is the owner's.
-    pub(crate) authority_clock_domain: usize,
+    /// This vault's monotonic authority first-seen observation clock. It dies
+    /// with the handle: a reopen re-anchors from the persisted floor, so there
+    /// is no registry to release from and no cross-vault anchor to share.
+    pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
+    /// This vault's content-free diagnostic counters. Per-vault, not
+    /// per-process: see [`Diagnostics`] for why the three families moved here.
+    pub(crate) diagnostics: Diagnostics,
 }
 
 /// Drop-sensitive singletons of an open vault; exactly one per open path
 /// (ARCH-0052 store split). Deliberately NOT `Clone` and never Arc-shared:
-/// duplicating any of these would corrupt the base vault (double clock-domain
-/// release, premature path deregistration, early environment close).
+/// duplicating any of these would corrupt the base vault (premature path
+/// deregistration, early environment close).
 pub struct StoreOwner {
     /// Always-on tripwire for the "no `Arc<StoreCore>` outlives the owner"
     /// invariant; see [`StoreCore`].
@@ -142,8 +147,6 @@ pub struct StoreOwner {
                   before _registered_path releases the vault root (ONE-1142)"
     )]
     pub(in crate::store) env: OwnedEnv,
-    /// The clock domain this owner releases exactly once on drop.
-    pub(in crate::store) authority_clock_domain: usize,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]
     // has closed the LMDB environment — a reopen racing this drop can never
@@ -236,6 +239,10 @@ pub struct Store {
 )]
 pub(crate) struct SessionStoreView<'store> {
     _owner: &'store StoreOwner,
+    /// The shared substrate this view's writes belong to. Held so a writer
+    /// generic over [`ManifestDbs`] records a diagnostic into the vault it is
+    /// writing rather than into a process-wide counter.
+    core: &'store StoreCore,
     /// The overlay every accessor above stages into. Held so a staging site
     /// inside a base write transaction can install its segment (see
     /// [`SessionStoreView::install_txn_segment`]) without the caller having to
@@ -359,14 +366,24 @@ macro_rules! manifest_dbs {
         )]
         pub(crate) trait ManifestDbs {
             $(fn $name(&self) -> &$ty;)+
+
+            /// The diagnostic counters of the vault this write target belongs
+            /// to. Not a database: it is here because an index writer generic
+            /// over `&impl ManifestDbs` must record into the vault it is
+            /// writing, and the write target is the only handle it holds.
+            fn diagnostics(&self) -> &Diagnostics;
         }
 
         impl ManifestDbs for Store {
             $(fn $name(&self) -> &$ty { &self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
             $(fn $name(&self) -> &$ty { &self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
         }
     };
 }
@@ -418,7 +435,6 @@ impl Drop for StoreOwner {
              would release the vault root while the environment is still \
              live (ARCH-0052 store-split invariant)"
         );
-        crate::authority::release_authority_clock_domain(self.authority_clock_domain);
     }
 }
 
@@ -468,6 +484,7 @@ impl Store {
             |base, keyspace| OverlayDb::composed(base, overlay.clone(), snapshot.clone(), keyspace);
         Ok(SessionStoreView {
             _owner: &self.owner,
+            core: &self.core,
             overlay: overlay.clone(),
             entities: db(self.core.raw.entities, OverlayKeyspace::Entities),
             edges_out: db(self.core.raw.edges_out, OverlayKeyspace::EdgesOut),

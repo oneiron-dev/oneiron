@@ -1005,9 +1005,8 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     let (_dir, vault) = open_test_vault();
     // Make wall/authority clock skew deterministic without sleeps. This local
     // time is still past learned_at (2) + the 86_400-second widening delay.
-    let clock_domain = vault.store.authority_clock_domain;
     assert_eq!(
-        crate::authority::authority_observation_secs_for_domain(clock_domain, 0, 1_000_000),
+        crate::authority::authority_observation_secs(&vault.store, 0, 1_000_000),
         1_000_000
     );
     let owner = authority_test_key(84);
@@ -1033,13 +1032,13 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     })?;
 
     // The authority clock is already anchored; deleting sidecars does not reset
-    // it. Bracket migration in that same clock domain, not raw wall time, which
+    // it. Bracket migration on that same vault clock, not raw wall time, which
     // can cross a second before the anchor does.
     let clock_key = crate::authority::authority_first_seen_clock_sync_key();
     let previous_floor = authority_first_seen_for_test(&vault, clock_key)?
         .expect("authority writes must persist the observation clock");
-    let observed_before = crate::authority::authority_observation_secs_for_domain(
-        clock_domain,
+    let observed_before = crate::authority::authority_observation_secs(
+        &vault.store,
         previous_floor,
         crate::unix_seconds_now(),
     );

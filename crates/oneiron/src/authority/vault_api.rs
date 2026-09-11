@@ -161,11 +161,8 @@ impl Vault {
                 .get(wtxn, floor_key)?
                 .and_then(|raw| decode_authority_first_seen_secs(&raw))
                 .unwrap_or(0);
-            let observed_floor = authority_observation_secs_for_domain(
-                self.store.authority_clock_domain,
-                previous_floor,
-                unix_seconds_now(),
-            );
+            let observed_floor =
+                authority_observation_secs(&self.store, previous_floor, unix_seconds_now());
             if observed_floor != previous_floor {
                 let encoded = encode_authority_first_seen_secs(observed_floor);
                 self.store.sync_state.put(wtxn, floor_key, &encoded)?;
@@ -293,11 +290,8 @@ impl Vault {
                 .get(wtxn, authority_first_seen_clock_sync_key())?
                 .and_then(|raw| decode_authority_first_seen_secs(&raw))
                 .unwrap_or(previous_floor);
-            let now_secs = authority_observation_secs_for_domain(
-                self.store.authority_clock_domain,
-                previous_floor,
-                unix_seconds_now(),
-            );
+            let now_secs =
+                authority_observation_secs(&self.store, previous_floor, unix_seconds_now());
             if now_secs != previous_floor {
                 let encoded = encode_authority_first_seen_secs(now_secs);
                 self.store
@@ -327,7 +321,7 @@ impl Vault {
     /// maturity is an AUTHORIZATION decision here — the facade's owner-verb
     /// gate consumes this fold — so it runs on the same monotonic clock
     /// [`Vault::authority_fold`] uses: the persisted floor read through `txn`,
-    /// raised through [`authority_observation_secs_for_domain`]. On the raw
+    /// raised through [`authority_observation_secs`]. On the raw
     /// wall clock a forward jump would mature a pending owner enrollment early
     /// and expose an Active human binding INSIDE the veto window, while a jump
     /// backward below the persisted floor would un-apply an elapsed rotation
@@ -364,11 +358,7 @@ impl Vault {
             .sync_state
             .get(txn, authority_first_seen_backfill_sync_key())?
             .is_some();
-        let now_secs = authority_observation_secs_for_domain(
-            self.store.authority_clock_domain,
-            persisted_floor,
-            unix_seconds_now(),
-        );
+        let now_secs = authority_observation_secs(&self.store, persisted_floor, unix_seconds_now());
         for row in self
             .store
             .type_index

@@ -1,12 +1,13 @@
 # BM25 Integrity Diagnostics
 
-ONE-315 decision: BM25 index-corruption observability uses content-free,
-process-local counters in core `oneiron`, not default per-token or per-term
-runtime warnings.
+ONE-315 decision: BM25 index-corruption observability uses content-free
+counters in core `oneiron`, not default per-token or per-term runtime warnings.
+The counters belong to the vault, not to the process (2026-09 state-ownership
+pass), so two vaults open in one process count separately.
 
 ## Surface
 
-`bm25_diagnostics_snapshot()` returns stable counters for:
+`vault.diagnostics().bm25_snapshot()` returns stable counters for:
 
 - `malformed_posting_alignment`
 - `missing_scored_document_metadata`

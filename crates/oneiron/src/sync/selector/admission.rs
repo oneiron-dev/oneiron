@@ -129,13 +129,14 @@ pub(in crate::sync) fn revalidate_admitted_federated_claims(
         if result.is_err() {
             return;
         }
-        result = recheck_admitted_claim_blob(&policy, value);
+        result = recheck_admitted_claim_blob(&vault.store, &policy, value);
     });
     result
 }
 
 #[cfg(feature = "sync")]
 fn recheck_admitted_claim_blob(
+    store: &crate::store::Store,
     policy: &crate::gate::PolicyManifestResolution,
     value: Option<&[u8]>,
 ) -> Result<()> {
@@ -146,7 +147,7 @@ fn recheck_admitted_claim_blob(
         return Ok(());
     }
     let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
-    crate::gate::check_federated_claim_admission(&body, policy)
+    crate::gate::check_federated_claim_admission(store, &body, policy)
 }
 
 #[cfg(feature = "sync")]
@@ -292,7 +293,7 @@ fn admit_federated_entity_blob(
 
     let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
     let body = restamp_federated_claim_source(body);
-    crate::gate::check_federated_claim_admission(&body, policy)?;
+    crate::gate::check_federated_claim_admission(&vault.store, &body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;
 
     let mut admitted = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + encoded.len());

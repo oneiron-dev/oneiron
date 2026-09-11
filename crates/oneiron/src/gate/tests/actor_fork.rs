@@ -695,8 +695,11 @@ fn charter_drift_degrades_to_pending_without_debits() -> Result<()> {
         crate::connector_key::rewrite_connector_key_in_txn(&vault.store, wtxn, &key_id, &record)
     })?;
 
-    let pending_before =
-        gate_metrics_snapshot().count(GateOutcome::Pending, GateMetricReasonClass::CharterPolicy);
+    let pending_before = vault
+        .diagnostics()
+        .gate
+        .snapshot()
+        .count(GateOutcome::Pending, GateMetricReasonClass::CharterPolicy);
     let (decision, charge) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
@@ -709,8 +712,11 @@ fn charter_drift_degrades_to_pending_without_debits() -> Result<()> {
         .effector_budget_read("line", None)?
         .expect("governing key");
     assert_eq!(read.rows[0].used, 0, "no debit occurred under drift");
-    let pending_after =
-        gate_metrics_snapshot().count(GateOutcome::Pending, GateMetricReasonClass::CharterPolicy);
+    let pending_after = vault
+        .diagnostics()
+        .gate
+        .snapshot()
+        .count(GateOutcome::Pending, GateMetricReasonClass::CharterPolicy);
     assert!(
         pending_after > pending_before,
         "CharterPolicy pending metric counts"
