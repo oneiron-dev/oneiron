@@ -338,7 +338,7 @@ pub struct EnqueueDreamerSkillOptimizeAttempt {
 /// puts the cleanup pass on the TIMER wake (whose default scope is Macro), and
 /// [`crate::dreamer_runner::DreamerRunnerStore::enqueue_vault_cleanup`]
 /// refuses every other trigger with
-/// [`crate::error::Error::VaultCleanupWakeTriggerRejected`]. A maintenance
+/// [`MaintenanceError::VaultCleanupWakeTriggerRejected`](crate::error::MaintenanceError::VaultCleanupWakeTriggerRejected). A maintenance
 /// scan registered on a compaction or session-end wake would make an
 /// interactive turn pay for housekeeping.
 ///

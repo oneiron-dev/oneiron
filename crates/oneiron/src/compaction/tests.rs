@@ -125,7 +125,7 @@ fn invariant(error: Error) -> &'static str {
 fn rejection(error: Error) -> CompactionPacketError {
     assert_eq!(error.kind(), ErrorKind::CompactionPacketRejected);
     match error {
-        Error::CompactionPacketRejected(axis) => axis,
+        Error::Maintenance(MaintenanceError::CompactionPacketRejected(axis)) => axis,
         other => panic!("expected a compaction packet rejection, got {other:?}"),
     }
 }
@@ -631,6 +631,7 @@ use std::time::Duration;
 
 use crate::agent_def::{CompactionOwnership, ContextBudgetSplit, MemoryProfile};
 use crate::context_pack::PackFormat;
+use crate::error::MaintenanceError;
 use crate::llm::ModelTierRef;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::{ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
