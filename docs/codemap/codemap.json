@@ -2586,7 +2586,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -28600,9 +28600,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/booking_anti_abuse/guards.rs",
-     "purpose": "Slot-list/hold/book anti-abuse enforcement guards",
+     "purpose": "Slot-list/hold/book/amend anti-abuse enforcement guards",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -28626,7 +28626,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking_anti_abuse/tests_guards.rs",

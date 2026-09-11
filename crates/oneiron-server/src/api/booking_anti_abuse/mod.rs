@@ -1,9 +1,9 @@
 //! ONE-1817 [BK-06] booking anti-abuse route guards.
 //!
 //! The HTTP adapter over `oneiron::booking::anti_abuse`. The later BK-04 /
-//! BK-08 slot-list, hold, and book handlers call `enforce_*` BEFORE touching
-//! the solver or lifecycle, and use the response-cache helpers when they
-//! serve a listing; enforcement never moves below the route layer. Guards
+//! BK-08 slot-list, hold, book, and amend handlers call `enforce_*` BEFORE
+//! touching the solver or lifecycle, and use the response-cache helpers when
+//! they serve a listing; enforcement never moves below the route layer. Guards
 //! thread `State<Arc<SyncServer>>` and fail as `crate::error::ApiError` —
 //! no invented request state and no new server field: rows, counters, and
 //! the cache all persist through `server.vault` under the booking-only meta
@@ -31,5 +31,5 @@ mod tests_support;
 
 pub(crate) use self::cache::{cached_slot_list_body, remember_slot_list_body};
 pub(crate) use self::guards::{
-    BookingHttpDisposition, enforce_book, enforce_hold, enforce_slot_list,
+    BookingHttpDisposition, enforce_amend, enforce_book, enforce_hold, enforce_slot_list,
 };
