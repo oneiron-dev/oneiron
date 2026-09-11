@@ -1980,8 +1980,8 @@
      "path": "src/batch/export/foreign_stage/export_foreign_stage.rs",
      "purpose": "Sync-gated foreign-import staging operations and test hooks",
      "surface": {
-      "crate-vis": 1,
-      "fn": 7
+      "crate-vis": 4,
+      "fn": 2
      }
     },
     {
@@ -9190,7 +9190,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "re-export": 4
      }
     },
@@ -9221,7 +9221,7 @@
      "path": "src/deletion/rendezvous.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -13707,7 +13707,7 @@
      "path": "src/identity_topology/shell_edge_reconcile.rs",
      "purpose": "Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 5
      }
     },
     {
@@ -15707,7 +15707,7 @@
      "path": "src/memory/tests/support.rs",
      "purpose": "Shared harnesses and fixtures for the memory acceptance tests",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 17
      }
     },
     {
@@ -17058,7 +17058,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -21074,7 +21074,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 9
      }
     },
@@ -21406,9 +21406,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/test_hooks.rs",
-     "purpose": "Test-only failure-injection hooks for the store open and retrieval write paths",
+     "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 15
      }
     },
     {
@@ -21817,7 +21817,7 @@
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
       "crate-vis": 1,
-      "fn": 6
+      "fn": 4
      }
     },
     {
@@ -21838,7 +21838,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "re-export": 4
+      "re-export": 3
      }
     },
     {
@@ -23250,7 +23250,7 @@
      "path": "src/vault/open.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 11
      }
     },
