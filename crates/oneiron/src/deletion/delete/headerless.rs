@@ -61,6 +61,7 @@ impl Vault {
         maybe_fail_after_tombstone_before_purge();
         // Past the linearization point on the headerless leg too.
         signal_delete_rendezvous(
+            self,
             DeleteRendezvous::AfterTombstonePublish,
             id,
             gate_decision.as_ref().map(|decision| decision.decision_id),

@@ -129,6 +129,24 @@ pub struct StoreCore {
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
+    /// Serializes this vault's foreign-import admission window: the receipt
+    /// read, the selector admission and the stage-if-absent write are one
+    /// logical step, and the durable re-read is the cross-process guard. It was
+    /// a process-wide lock, which serialized unrelated vaults for no reason —
+    /// every row it protects is addressed through the vault it belongs to.
+    #[cfg(feature = "sync")]
+    pub(crate) staged_import_admission_lock: Mutex<()>,
+    /// Serializes this vault's staged-import confirmation: the durable receipt
+    /// read and the terminal transition are one logical step. Same scope
+    /// correction as [`Self::staged_import_admission_lock`], and a separate
+    /// lock because the two critical sections never nest.
+    #[cfg(feature = "sync")]
+    pub(crate) staged_import_confirm_lock: Mutex<()>,
+    /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
+    /// carries neither the field nor its types: see [`TestHooks`] for why a
+    /// test seam is exactly the state that must not be process-wide.
+    #[cfg(test)]
+    pub(crate) test_hooks: TestHooks,
 }
 
 /// Drop-sensitive singletons of an open vault; exactly one per open path

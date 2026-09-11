@@ -256,14 +256,14 @@ fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
         // The rendezvous fires from inside the delete AFTER its header read
         // proves the target exists and BEFORE it takes any write lock — i.e.
         // squarely inside the gate-to-purge window this test is about. The
-        // seam is thread-local, so the deleter thread installs it itself.
+        // seam belongs to this vault, so the deleter thread arms it there.
         let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
 
         let err = std::thread::scope(|scope| {
             let deleter_gate = std::sync::Arc::clone(&gate);
             let vault_ref = &vault;
             let deleter = scope.spawn(move || {
-                crate::deletion::install_after_header_read_signal(tx);
+                vault_ref.test_hooks().install_after_header_read_signal(tx);
                 deleter_gate.wait();
                 facade_for(vault_ref, owner).safe_delete(&subject.to_hex(), reason)
             });
@@ -325,7 +325,6 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
 
     use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
 
-    let _serial = lock_delete_rendezvous();
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
@@ -362,7 +361,7 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     // deadlock here — the revocation has to commit while the deleter parks.
     let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
     let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
-    crate::deletion::install_delete_rendezvous(
+    vault.test_hooks().install_delete_rendezvous(
         crate::deletion::DeleteRendezvous::BeforeTombstonePublish,
         subject,
         arrived_tx,
@@ -508,7 +507,6 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
 #[cfg(feature = "sync")]
 #[test]
 fn revocation_racing_the_soft_delete_publish_refuses_and_publishes_nothing() {
-    let _serial = lock_delete_rendezvous();
     for live_window in [true, false] {
         let leg = if live_window { "live" } else { "transient" };
         let mut harness = PublishBoundaryHarness::open("facade-soft-publish-boundary", live_window);
@@ -590,7 +588,6 @@ fn revocation_racing_the_soft_delete_publish_refuses_and_publishes_nothing() {
 #[cfg(feature = "sync")]
 #[test]
 fn revocation_after_the_publish_commit_lets_the_delete_complete() {
-    let _serial = lock_delete_rendezvous();
     let steps = [
         // Entry to the first post-publication destructive step: the soft-erase
         // for gdpr/policy, the purge for user_hard_delete.
@@ -668,7 +665,6 @@ fn revocation_after_the_publish_commit_lets_the_delete_complete() {
 #[cfg(feature = "sync")]
 #[test]
 fn revocation_after_the_publish_commit_lets_a_headerless_delete_complete() {
-    let _serial = lock_delete_rendezvous();
     for live_window in [true, false] {
         let leg = if live_window { "live" } else { "transient" };
         let harness = PublishBoundaryHarness::open_for_vector_residue(
@@ -757,7 +753,6 @@ fn revocation_after_the_publish_commit_lets_a_headerless_delete_complete() {
 #[cfg(not(feature = "sync"))]
 #[test]
 fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
-    let _serial = lock_delete_rendezvous();
     for reason in [
         SafeDeleteReason::UserHardDelete,
         SafeDeleteReason::GdprDelete,
@@ -827,7 +822,6 @@ fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
 #[cfg(not(feature = "sync"))]
 #[test]
 fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing() {
-    let _serial = lock_delete_rendezvous();
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = std::sync::Arc::new(
         crate::Vault::open(
