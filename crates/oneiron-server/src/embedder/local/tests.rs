@@ -321,6 +321,30 @@ fn a_head_count_that_is_not_a_multiple_of_the_kv_count_is_refused() {
     );
 }
 
+/// The same refusal config resolution makes against the default model, made
+/// again against whatever window the loaded model declares.
+#[test]
+fn an_input_cap_above_the_loaded_models_window_is_refused_with_both_numbers() {
+    let model_config =
+        qwen3_embedding::Config::parse(&config_json("Qwen3Model")).expect("the config parses");
+    let over = crate::config::EmbedderConfig {
+        max_input_tokens: model_config.max_position_embeddings + 1,
+        ..crate::config::EmbedderConfig::default()
+    };
+    let error = check_input_window(&over, &model_config).expect_err("a cap above the window");
+    let oneiron::Error::InvalidConfig(message) = &error else {
+        panic!("{error:?}");
+    };
+    assert!(message.contains("32769"), "{message}");
+    assert!(message.contains("32768"), "{message}");
+
+    let at_the_window = crate::config::EmbedderConfig {
+        max_input_tokens: model_config.max_position_embeddings,
+        ..crate::config::EmbedderConfig::default()
+    };
+    assert!(check_input_window(&at_the_window, &model_config).is_ok());
+}
+
 // ─── device and precision ────────────────────────────────────────────────
 
 #[test]

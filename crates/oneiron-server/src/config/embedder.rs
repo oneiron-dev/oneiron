@@ -26,6 +26,10 @@ pub const DEFAULT_LOCAL_REPO: &str = "microsoft/harrier-oss-v1-0.6b";
 pub const DEFAULT_LOCAL_REVISION: &str = "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee";
 /// Dimensionality of the default local model. No MRL, so no `fast_dims`.
 pub const DEFAULT_DIMENSIONS: usize = 1024;
+/// Context window of the default local model: `max_position_embeddings` in its
+/// `config.json` at the pinned revision. The rotary tables are built to it, so
+/// a longer input has no position to sit at.
+pub const DEFAULT_LOCAL_MAX_POSITION_EMBEDDINGS: usize = 32_768;
 /// Instruction prepended to a QUERY and never to a document. The model's own
 /// asymmetry: documents are embedded raw.
 pub const DEFAULT_QUERY_INSTRUCTION: &str =
