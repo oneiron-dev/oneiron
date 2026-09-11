@@ -60,7 +60,7 @@ fn batch_put_updates_content_hash_on_reput() -> Result<()> {
 fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
-    // The type byte is immutable on re-put (D2, crate::error::RegistryError::EntityTypeImmutable);
+    // The type byte is immutable on re-put (D2, RegistryError::EntityTypeImmutable);
     // re-typing coverage lives in the EntityTypeImmutable tests. This test
     // pins that a same-type re-put re-homes the temporal indexes while the
     // short id stays stable and the content hash refreshes. Type byte 2

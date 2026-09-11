@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 use super::package::{HubIndexEntry, HubPackage};
 use super::record::{HubPin, HubRef, SkillHubKind};
-use crate::error::ArtifactError;
 
 /// Pluggable package-fetch boundary behind the hub doors.
 pub trait SkillHubAdapter {
