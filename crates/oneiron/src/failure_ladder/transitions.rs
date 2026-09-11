@@ -17,6 +17,7 @@ use super::blocked_reports::{BlockedReportRef, BlockedReportVerification, verify
 use super::classify::{TypedFailureEvidence, TypedFailureVerdict};
 use super::lineage::{FailureLadderOutcome, HandleAttemptFailure};
 use super::scope::FailureScope;
+use crate::error::ArtifactError;
 
 /// Step 0: `stable_reason` must be non-empty, and every non-Indeterminate
 /// verdict must carry BOTH `evidence_ref` and `tier`. Returns the parsed
@@ -118,10 +119,12 @@ pub(super) fn fail_once(
         now: input.now,
     })? {
         FailOutcome::Failed(record) => Ok(record),
-        FailOutcome::AlreadyFailed(_) => Err(Error::InvalidAttemptQueueTransition {
-            action: "failure ladder",
-            state: "failed",
-        }),
+        FailOutcome::AlreadyFailed(_) => Err(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueTransition {
+                action: "failure ladder",
+                state: "failed",
+            },
+        )),
     }
 }
 

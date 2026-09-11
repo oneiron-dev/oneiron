@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{Error, Result};
 
 use super::record::SkillRecord;
+use crate::error::ArtifactError;
 
 /// Byte length of a lowercase-hex SHA-256 canonical content hash on the wire.
 pub const SKILL_CONTENT_HASH_HEX_LEN: usize = 64;
@@ -54,12 +55,14 @@ impl SkillContentHash {
     pub fn parse_hex(hex: &str) -> Result<Self> {
         const CONTEXT: &str = "contentHash must be 64 lowercase hex characters";
         if hex.len() != SKILL_CONTENT_HASH_HEX_LEN {
-            return Err(Error::InvalidSkillBody(CONTEXT));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)));
         }
         let mut bytes = [0_u8; 32];
         for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-            let hi = hex_nibble(chunk[0]).ok_or(Error::InvalidSkillBody(CONTEXT))?;
-            let lo = hex_nibble(chunk[1]).ok_or(Error::InvalidSkillBody(CONTEXT))?;
+            let hi = hex_nibble(chunk[0])
+                .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)))?;
+            let lo = hex_nibble(chunk[1])
+                .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)))?;
             bytes[index] = (hi << 4) | lo;
         }
         Ok(Self(bytes))
@@ -96,9 +99,9 @@ where
         entries.push((path, content));
     }
     if entries.is_empty() {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "skill tree must contain at least one file",
-        ));
+        )));
     }
     entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
     // ASCII case-fold duplicate rejection (subsumes exact duplicates):
@@ -108,7 +111,9 @@ where
     let mut folded = HashSet::new();
     for (path, _) in &entries {
         if !folded.insert(path.to_ascii_lowercase()) {
-            return Err(Error::InvalidSkillBody("duplicate skill tree path"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "duplicate skill tree path",
+            )));
         }
     }
 
@@ -133,13 +138,13 @@ fn validate_skill_tree_path(path: &str) -> Result<()> {
         || path.contains(':')
         || path.contains('\0')
     {
-        return Err(Error::InvalidSkillBody(CONTEXT));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)));
     }
     if path
         .split('/')
         .any(|segment| segment.is_empty() || segment == "." || segment == "..")
     {
-        return Err(Error::InvalidSkillBody(CONTEXT));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)));
     }
     Ok(())
 }
@@ -152,15 +157,15 @@ fn validate_skill_tree_path(path: &str) -> Result<()> {
 /// error, never a warning.
 pub fn cross_check_declared_content_hash(record: &SkillRecord, declared_hex: &str) -> Result<()> {
     let Some(canonical) = record.content_hash else {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "cannot cross-check: record carries no canonical content hash",
-        ));
+        )));
     };
     let declared = SkillContentHash::parse_hex(&declared_hex.to_ascii_lowercase())?;
     if declared != canonical {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "declared per-skill hash does not match canonical content hash",
-        ));
+        )));
     }
     Ok(())
 }

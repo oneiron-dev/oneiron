@@ -5,6 +5,7 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::error::ArtifactError;
 use crate::error::GateError;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TASK;
@@ -127,11 +128,17 @@ fn remote_rejection_reason_classifies_secret_scan_denials_only() {
         Some("InvalidPsychProfileBody")
     );
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidSkillBody("bad skill")).as_deref(),
+        remote_rejection_reason(&Error::Artifact(ArtifactError::InvalidSkillBody(
+            "bad skill"
+        )))
+        .as_deref(),
         Some("InvalidSkillBody")
     );
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidAgentDefBody("bad agent def")).as_deref(),
+        remote_rejection_reason(&Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "bad agent def"
+        )))
+        .as_deref(),
         Some("InvalidAgentDefBody")
     );
     assert_eq!(

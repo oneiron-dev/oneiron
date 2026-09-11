@@ -17,6 +17,7 @@ use super::record::{
     SkillRecord,
 };
 use super::validate::{validate_skill_record, validate_text_field};
+use crate::error::ArtifactError;
 
 pub fn encode_skill_record(record: &SkillRecord) -> Result<Vec<u8>> {
     validate_skill_record(record)?;
@@ -82,17 +83,24 @@ pub fn encode_skill_record(record: &SkillRecord) -> Result<Vec<u8>> {
 
 pub fn decode_skill_record(bytes: &[u8]) -> Result<SkillRecord> {
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidSkillBody("body is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidSkillBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidSkillBody("trailing bytes after body map"));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "trailing bytes after body map",
+        )));
     }
     decode_skill_record_value(&value)
 }
 
 fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidSkillBody("body must be a MessagePack map"));
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "body must be a MessagePack map",
+        )));
     };
 
     let mut skill_id = None;
@@ -113,18 +121,22 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidSkillBody("body keys must be strings"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "body keys must be strings",
+            )));
         };
         let Some(index) = SKILL_RECORD_BODY_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "body key is not in the pinned SKILL_RECORD_BODY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidSkillBody("duplicate body key"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "duplicate body key",
+            )));
         }
         seen[index] = true;
 
@@ -152,16 +164,16 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
             }
             KEY_APPROVAL_STATUS => {
                 approval_status = Some(value.as_str().and_then(ClaimApprovalStatus::parse).ok_or(
-                    Error::InvalidSkillBody(
+                    Error::Artifact(ArtifactError::InvalidSkillBody(
                         "approvalStatus must be one of auto|proposed|approved|rejected",
-                    ),
+                    )),
                 )?);
             }
             KEY_LIFECYCLE_STATUS => {
                 lifecycle_status = Some(value.as_str().and_then(SkillLifecycle::parse).ok_or(
-                    Error::InvalidSkillBody(
+                    Error::Artifact(ArtifactError::InvalidSkillBody(
                         "lifecycleStatus must be one of candidate|active|stale|quarantined|superseded",
-                    ),
+                    )),
                 )?);
             }
             KEY_SOURCE => {
@@ -170,49 +182,63 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
                         value
                             .as_str()
                             .and_then(ClaimSource::parse)
-                            .ok_or(Error::InvalidSkillBody(
+                            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
                                 "source must be one of user_stated|observed|inferred|imported|tool_output|generated",
-                            ))?,
+                            )))?,
                     );
             }
             KEY_CONFIDENCE => {
                 confidence = Some(crate::claim::unit_interval_f32(value).ok_or(
-                    Error::InvalidSkillBody("confidence must be finite in [0, 1]"),
+                    Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "confidence must be finite in [0, 1]",
+                    )),
                 )?);
             }
             KEY_GENERATED => {
                 let Value::Boolean(flag) = value else {
-                    return Err(Error::InvalidSkillBody("generated must be a boolean"));
+                    return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "generated must be a boolean",
+                    )));
                 };
                 generated = Some(*flag);
             }
             KEY_HUMAN_AUTHORED => {
                 let Value::Boolean(flag) = value else {
-                    return Err(Error::InvalidSkillBody("humanAuthored must be a boolean"));
+                    return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "humanAuthored must be a boolean",
+                    )));
                 };
                 human_authored = Some(*flag);
             }
             KEY_DEPENDENCIES => dependencies = Some(decode_skill_dependencies(value)?),
             KEY_PROVENANCE => provenance = Some(value.clone()),
             KEY_CONTENT_HASH => {
-                let hex = value.as_str().ok_or(Error::InvalidSkillBody(
-                    "contentHash must be 64 lowercase hex characters",
-                ))?;
+                let hex =
+                    value
+                        .as_str()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                            "contentHash must be 64 lowercase hex characters",
+                        )))?;
                 content_hash = Some(SkillContentHash::parse_hex(hex)?);
             }
             KEY_FORKED_FROM => {
-                let hex = value.as_str().ok_or(Error::InvalidSkillBody(
-                    "forkedFrom must be a 32-char entity id hex string",
-                ))?;
+                let hex =
+                    value
+                        .as_str()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                            "forkedFrom must be a 32-char entity id hex string",
+                        )))?;
                 forked_from = Some(EntityId::from_hex(hex).map_err(|_| {
-                    Error::InvalidSkillBody("forkedFrom must be a 32-char entity id hex string")
+                    Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "forkedFrom must be a 32-char entity id hex string",
+                    ))
                 })?);
             }
             KEY_GOVERNANCE_TIER => {
                 governance_tier = Some(value.as_str().and_then(SkillGovernanceTier::parse).ok_or(
-                    Error::InvalidSkillBody(
+                    Error::Artifact(ArtifactError::InvalidSkillBody(
                         "governanceTier must be one of identity|alignment|standard",
-                    ),
+                    )),
                 )?);
             }
             _ => unreachable!("index resolved from SKILL_RECORD_BODY_KEYS"),
@@ -220,24 +246,39 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
     }
 
     let record = SkillRecord {
-        skill_id: skill_id.ok_or(Error::InvalidSkillBody("missing required key skillId"))?,
-        desc: desc.ok_or(Error::InvalidSkillBody("missing required key desc"))?,
-        version: version.ok_or(Error::InvalidSkillBody("missing required key version"))?,
-        approval_status: approval_status.ok_or(Error::InvalidSkillBody(
-            "missing required key approvalStatus",
+        skill_id: skill_id.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "missing required key skillId",
+        )))?,
+        desc: desc.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "missing required key desc",
+        )))?,
+        version: version.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "missing required key version",
+        )))?,
+        approval_status: approval_status.ok_or(Error::Artifact(
+            ArtifactError::InvalidSkillBody("missing required key approvalStatus"),
         ))?,
-        lifecycle_status: lifecycle_status.ok_or(Error::InvalidSkillBody(
-            "missing required key lifecycleStatus",
+        lifecycle_status: lifecycle_status.ok_or(Error::Artifact(
+            ArtifactError::InvalidSkillBody("missing required key lifecycleStatus"),
         ))?,
-        source: source.ok_or(Error::InvalidSkillBody("missing required key source"))?,
-        confidence: confidence.ok_or(Error::InvalidSkillBody("missing required key confidence"))?,
-        generated: generated.ok_or(Error::InvalidSkillBody("missing required key generated"))?,
-        human_authored: human_authored.ok_or(Error::InvalidSkillBody(
+        source: source.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "missing required key source",
+        )))?,
+        confidence: confidence.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "missing required key confidence",
+        )))?,
+        generated: generated.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "missing required key generated",
+        )))?,
+        human_authored: human_authored.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
             "missing required key humanAuthored",
-        ))?,
-        dependencies: dependencies
-            .ok_or(Error::InvalidSkillBody("missing required key dependencies"))?,
-        provenance: provenance.ok_or(Error::InvalidSkillBody("missing required key provenance"))?,
+        )))?,
+        dependencies: dependencies.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "missing required key dependencies",
+        )))?,
+        provenance: provenance.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "missing required key provenance",
+        )))?,
         // Optional identity/lineage layer: absent on pre-ONE-1735 bodies
         // and on records whose canonical tree is not materialized.
         content_hash,
@@ -269,23 +310,23 @@ fn encode_skill_dependency(dependency: &SkillDependency) -> Value {
 
 fn decode_skill_dependencies(value: &Value) -> Result<Vec<SkillDependency>> {
     let Value::Array(values) = value else {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "dependencies must be a MessagePack array",
-        ));
+        )));
     };
     if values.len() > SKILL_MAX_DEPENDENCIES {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "dependencies must contain at most 64 entries",
-        ));
+        )));
     }
     values.iter().map(decode_skill_dependency).collect()
 }
 
 fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "dependency must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut skill_id = None;
@@ -294,15 +335,19 @@ fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidSkillBody("dependency keys must be strings"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "dependency keys must be strings",
+            )));
         };
         let Some(index) = SKILL_DEPENDENCY_KEYS.iter().position(|known| *known == key) else {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "dependency key must be skillId|minVersion",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidSkillBody("duplicate dependency key"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "duplicate dependency key",
+            )));
         }
         seen[index] = true;
         match SKILL_DEPENDENCY_KEYS[index] {
@@ -328,12 +373,12 @@ fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
     }
 
     Ok(SkillDependency {
-        skill_id: skill_id.ok_or(Error::InvalidSkillBody(
+        skill_id: skill_id.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
             "missing required dependency key skillId",
-        ))?,
-        min_version: min_version.ok_or(Error::InvalidSkillBody(
+        )))?,
+        min_version: min_version.ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
             "missing required dependency key minVersion",
-        ))?,
+        )))?,
     })
 }
 
@@ -350,7 +395,9 @@ pub(crate) fn is_legacy_opaque_skill_body(bytes: &[u8]) -> bool {
 }
 
 pub(super) fn text_value(value: &Value, max_bytes: usize, context: &'static str) -> Result<String> {
-    let text = value.as_str().ok_or(Error::InvalidSkillBody(context))?;
+    let text = value
+        .as_str()
+        .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(context)))?;
     validate_text_field(text, max_bytes, context)?;
     Ok(text.to_owned())
 }

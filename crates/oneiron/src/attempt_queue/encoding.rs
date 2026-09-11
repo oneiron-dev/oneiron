@@ -15,6 +15,7 @@ use super::validate::{
     validate_optional_dedupe, validate_optional_dedupe_actor_ref, validate_optional_failure_reason,
     validate_optional_result_ref, validate_optional_run_id,
 };
+use crate::error::ArtifactError;
 
 // Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
 pub(super) const DEDUPE_DOMAIN_V1: &[u8] = b"oneiron.job_queue.dedupe.v1\0";
@@ -42,12 +43,14 @@ pub(super) fn validate_dedupe_record(
     dedupe_key: &str,
 ) -> Result<()> {
     if record.kind != kind {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_KIND_MISMATCH));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_DEDUPE_KIND_MISMATCH,
+        )));
     }
     if record.dedupe_key.as_deref() != Some(dedupe_key) {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             "dedupe index points at an attempt with a different dedupe key",
-        ));
+        )));
     }
     Ok(())
 }
@@ -147,7 +150,9 @@ pub(super) fn ready_key(ready_at: u64, id: AttemptId) -> [u8; READY_KEY_LEN] {
 
 pub(super) fn decode_ready_key(bytes: &[u8]) -> Result<(u64, AttemptId)> {
     if bytes.len() != READY_KEY_LEN {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_READY_KEY_LEN));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_READY_KEY_LEN,
+        )));
     }
     let mut created_at = [0_u8; 8];
     created_at.copy_from_slice(&bytes[..8]);
@@ -168,29 +173,35 @@ pub(super) fn decode_ready_key(bytes: &[u8]) -> Result<(u64, AttemptId)> {
 /// byte.
 pub(super) fn encode_record(record: &AttemptRecord) -> Result<Vec<u8>> {
     let mut encoded = vec![ATTEMPT_RECORD_VERSION];
-    let mut body = rmp_serde::to_vec_named(record)
-        .map_err(|_| Error::InvalidAttemptQueueRecord("failed to encode attempt record"))?;
+    let mut body = rmp_serde::to_vec_named(record).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            "failed to encode attempt record",
+        ))
+    })?;
     encoded.append(&mut body);
     Ok(encoded)
 }
 
 pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<AttemptRecord> {
     let Some((&version, body)) = raw.split_first() else {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             "missing attempt record version",
-        ));
+        )));
     };
     if version != ATTEMPT_RECORD_VERSION {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             "unsupported attempt record version",
-        ));
+        )));
     }
-    let record: AttemptRecord = rmp_serde::from_slice(body)
-        .map_err(|_| Error::InvalidAttemptQueueRecord("failed to decode attempt record"))?;
+    let record: AttemptRecord = rmp_serde::from_slice(body).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            "failed to decode attempt record",
+        ))
+    })?;
     if record.id != expected_id {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             "job_records key/id mismatch",
-        ));
+        )));
     }
     validate_kind(&record.kind)?;
     validate_optional_dedupe(record.dedupe_key.as_deref())?;
@@ -199,9 +210,9 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     // it would name an index entry that cannot exist, so no-key rows are
     // always actorless on both the write and the read side.
     if record.dedupe_actor_ref.is_some() && record.dedupe_key.is_none() {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_DEDUPE_ACTOR_WITHOUT_KEY,
-        ));
+        )));
     }
     validate_optional_run_id(record.run_id.as_deref())?;
     validate_optional_failure_reason(record.last_error.as_deref())?;
@@ -222,55 +233,63 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
             AttemptState::Landing | AttemptState::Cancelled
         )
     {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_LANDING_RECORD_MISPLACED,
-        ));
+        )));
     }
     if record.cancel_state.cancellation.is_some() && record.state != AttemptState::Cancelled {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCELLATION_MISPLACED));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_CANCELLATION_MISPLACED,
+        )));
     }
     match record.state {
         AttemptState::Queued if record.lease_owner.is_some() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "queued attempt must not have a lease owner",
-            ));
+            )));
         }
         AttemptState::Leased if record.lease_owner.is_none() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "leased attempt must have a lease owner",
-            ));
+            )));
         }
         AttemptState::Leased if waiting_on_backoff(&record) => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "leased attempt must not have backoff state",
-            ));
+            )));
         }
         AttemptState::Paused if record.lease_owner.is_some() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "paused attempt must not have a lease owner",
-            ));
+            )));
         }
         AttemptState::Scheduled if record.lease_owner.is_some() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "scheduled attempt must not have a lease owner",
-            ));
+            )));
         }
         AttemptState::Scheduled if record.scheduled_at.is_none() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "scheduled attempt must have a scheduled instant",
-            ));
+            )));
         }
         // A landing row still OWNS its lease — that is what buys it the bounded
         // time to finish — so it is shaped like a leased row plus its landing
         // record, never like a queued or terminal one.
         AttemptState::Landing if record.lease_owner.is_none() => {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_LANDING_WITHOUT_LEASE));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_LANDING_WITHOUT_LEASE,
+            )));
         }
         AttemptState::Landing if waiting_on_backoff(&record) => {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_LANDING_WITH_BACKOFF));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_LANDING_WITH_BACKOFF,
+            )));
         }
         AttemptState::Landing if record.cancel_state.landing.is_none() => {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_LANDING_WITHOUT_RECORD));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_LANDING_WITHOUT_RECORD,
+            )));
         }
         AttemptState::Completed
         | AttemptState::Failed
@@ -278,9 +297,9 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         | AttemptState::Abandoned
             if record.lease_owner.is_some() =>
         {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "terminal attempt must not have a lease owner",
-            ));
+            )));
         }
         AttemptState::Completed
         | AttemptState::Failed
@@ -288,32 +307,32 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         | AttemptState::Abandoned
             if waiting_on_backoff(&record) =>
         {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "terminal attempt must not have backoff state",
-            ));
+            )));
         }
         AttemptState::Completed | AttemptState::Cancelled if record.last_error.is_some() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "non-failed terminal attempt must not have a failure reason",
-            ));
+            )));
         }
         AttemptState::Failed if record.last_error.is_none() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "failed attempt must have a failure reason",
-            ));
+            )));
         }
         // An abandonment is only auditable if the row still says what it left
         // behind and why it stopped. Both are required at the door, so a row
         // that lost either can never be read back as a well-formed abandonment.
         AttemptState::Abandoned if record.result_ref.is_none() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_ABANDONED_WITHOUT_RESULT,
-            ));
+            )));
         }
         AttemptState::Abandoned if record.last_error.is_none() => {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_ABANDONED_WITHOUT_REASON,
-            ));
+            )));
         }
         _ => {}
     }

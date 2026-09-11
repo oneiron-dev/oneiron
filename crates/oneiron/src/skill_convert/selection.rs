@@ -19,6 +19,7 @@ use super::types::{
     CONVERT_HINT_MAX_BYTES, CONVERT_MAX_NEIGHBORS, CONVERT_MAX_SOURCE_MESSAGES, ConvertRequest,
     ConvertUtterance, SkillNeighbor,
 };
+use crate::error::ArtifactError;
 
 /// How many SKILL rows the neighbour retrieval reads before it stops.
 const CONVERT_NEIGHBOR_SCAN_LIMIT: usize = 1024;
@@ -40,21 +41,21 @@ pub(super) fn resolve_selection(
     request: &ConvertRequest,
 ) -> Result<Vec<ConvertUtterance>> {
     if request.message_refs.is_empty() {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "conversion needs at least one selected message",
-        ));
+        )));
     }
     if request.message_refs.len() > CONVERT_MAX_SOURCE_MESSAGES {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "conversion selects at most 64 messages",
-        ));
+        )));
     }
     let mut selected = BTreeSet::new();
     for reference in &request.message_refs {
         if !selected.insert(*reference) {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "conversion selects each message at most once",
-            ));
+            )));
         }
     }
     if let Some(hint) = &request.hint {
@@ -83,16 +84,16 @@ pub(super) fn resolve_selection(
                 said.extend(utterance(vault, reference, "author", "content")?);
             }
             _ => {
-                return Err(Error::InvalidSkillBody(
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "conversion selects TURN or MESSAGE entities",
-                ));
+                )));
             }
         }
     }
     if said.iter().all(|spoken| spoken.text.is_none()) {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "the selection carries no words to refine",
-        ));
+        )));
     }
     Ok(said)
 }

@@ -1,7 +1,7 @@
 //! The N dial over vault_meta, and the two text helpers every child in this module uses.
 
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 /// `vault_meta` key holding N, the attributed outcomes a skill must carry
 /// before it can be optimized.
@@ -24,7 +24,7 @@ pub const DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES: u32 = 5;
 pub(super) const SKILL_SCAN_PAGE: usize = 1024;
 
 pub(super) const fn invalid(reason: &'static str) -> Error {
-    Error::InvalidSkillBody(reason)
+    Error::Artifact(ArtifactError::InvalidSkillBody(reason))
 }
 
 pub(super) fn validate_text(value: &str, max_bytes: usize, reason: &'static str) -> Result<()> {
@@ -59,7 +59,7 @@ pub fn skill_optimize_min_outcomes(vault: &Vault) -> Result<u32> {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidSkillBody`] when `min_outcomes` is zero — a job that may
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when `min_outcomes` is zero — a job that may
 /// rewrite a skill on no evidence at all is the thing N exists to prevent.
 pub fn set_skill_optimize_min_outcomes(vault: &Vault, min_outcomes: u32) -> Result<()> {
     if min_outcomes == 0 {

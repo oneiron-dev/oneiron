@@ -18,6 +18,7 @@ use super::record::HubRef;
 use super::support::{
     decode_value, encode_value, exact_map, map_value, required_value, validate_text,
 };
+use crate::error::ArtifactError;
 
 /// Claim predicate for mutable hub aliases attached to canonical skill identity.
 pub const PREDICATE_SKILL_HUB_PROVENANCE: &str = "skill.hub_provenance";
@@ -167,7 +168,9 @@ impl Vault {
                 PREDICATE_SKILL_HUB_PROVENANCE,
             )? {
                 let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
-                    Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
+                    Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "hub provenance claim is missing hubRef",
+                    )),
                 )?)?;
                 if same_hub_alias(&stored_ref, hub_ref) {
                     prior_rows.push((claim_id, occurred_start));
@@ -194,9 +197,10 @@ impl Vault {
         for (claim_id, body, _) in
             self.active_claims_for_predicate_in_txn(&*wtxn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?
         {
-            let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
-                Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
-            )?)?;
+            let stored_ref =
+                HubRef::from_value(map_value(&body.value, "hubRef").ok_or(Error::Artifact(
+                    ArtifactError::InvalidSkillBody("hub provenance claim is missing hubRef"),
+                ))?)?;
             if same_hub_alias(&stored_ref, hub_ref) {
                 replacement_id = Some(claim_id);
                 break;
@@ -249,9 +253,9 @@ impl Vault {
         for (id, body, occurred_start) in
             self.active_claims_for_predicate_in_txn(&*wtxn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?
         {
-            HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
-                Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
-            )?)?;
+            HubRef::from_value(map_value(&body.value, "hubRef").ok_or(Error::Artifact(
+                ArtifactError::InvalidSkillBody("hub provenance claim is missing hubRef"),
+            ))?)?;
             prior_rows.push((id, occurred_start));
         }
 
@@ -566,22 +570,26 @@ fn string_set_value(values: &BTreeSet<String>) -> Value {
 
 fn decode_string_set(value: &Value) -> Result<BTreeSet<String>> {
     let Value::Array(values) = value else {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "capability entries must be an array",
-        ));
+        )));
     };
     let mut decoded = BTreeSet::new();
     for value in values {
         let text = value
             .as_str()
-            .ok_or(Error::InvalidSkillBody("capability entry must be text"))?;
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "capability entry must be text",
+            )))?;
         validate_text(
             text,
             MAX_CAPABILITY_TEXT_BYTES,
             "capability entries must be non-empty",
         )?;
         if !decoded.insert(text.to_owned()) {
-            return Err(Error::InvalidSkillBody("duplicate capability entry"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "duplicate capability entry",
+            )));
         }
     }
     Ok(decoded)

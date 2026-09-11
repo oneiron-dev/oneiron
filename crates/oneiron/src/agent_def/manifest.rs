@@ -9,6 +9,7 @@ use super::types::{
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
+use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use crate::llm::ModelTierRef;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
@@ -134,18 +135,21 @@ impl AgentDefinitionManifestFields {
         enabled: bool,
         display_name: String,
     ) -> Result<AgentDefinition> {
-        let ceiling = AgentCeiling::parse(&self.ceiling).ok_or(Error::InvalidAgentDefBody(
-            "manifest ceiling must be one of auto|proposed",
+        let ceiling = AgentCeiling::parse(&self.ceiling).ok_or(Error::Artifact(
+            ArtifactError::InvalidAgentDefBody("manifest ceiling must be one of auto|proposed"),
         ))?;
-        let approval_status =
-            ClaimApprovalStatus::parse(&self.approval_status).ok_or(Error::InvalidAgentDefBody(
+        let approval_status = ClaimApprovalStatus::parse(&self.approval_status).ok_or(
+            Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "manifest approvalStatus must be a known claim approval status",
-            ))?;
-        let lifecycle_status = ClaimLifecycleStatus::parse(&self.lifecycle_status).ok_or(
-            Error::InvalidAgentDefBody("manifest lifecycleStatus must be a known claim lifecycle"),
+            )),
         )?;
-        let source = ClaimSource::parse(&self.source).ok_or(Error::InvalidAgentDefBody(
-            "manifest source must be a known claim source",
+        let lifecycle_status = ClaimLifecycleStatus::parse(&self.lifecycle_status).ok_or(
+            Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "manifest lifecycleStatus must be a known claim lifecycle",
+            )),
+        )?;
+        let source = ClaimSource::parse(&self.source).ok_or(Error::Artifact(
+            ArtifactError::InvalidAgentDefBody("manifest source must be a known claim source"),
         ))?;
         Ok(AgentDefinition::new(
             self.agent_id.clone(),
@@ -222,12 +226,14 @@ pub(super) fn parse_system_agent_definition_manifest(
     json: &str,
 ) -> Result<SystemAgentDefinitionManifest> {
     let manifest: SystemAgentDefinitionManifest = serde_json::from_str(json).map_err(|_| {
-        Error::InvalidAgentDefBody("system agent manifest is not valid schema-v1 JSON")
+        Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "system agent manifest is not valid schema-v1 JSON",
+        ))
     })?;
     if manifest.version != 1 {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "system agent manifest schema version must be 1",
-        ));
+        )));
     }
     let mut logical_ids = HashSet::new();
     let mut row_ids = HashSet::new();
@@ -239,9 +245,9 @@ pub(super) fn parse_system_agent_definition_manifest(
             "manifest logical id must be a non-empty string at most 256 bytes",
         )?;
         if !seed.logical_id.starts_with(SYSTEM_LOGICAL_ID_PREFIX) {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "manifest logical id must use the reserved sys. prefix",
-            ));
+            )));
         }
         validate_text_field(
             &seed.display_name,
@@ -252,24 +258,24 @@ pub(super) fn parse_system_agent_definition_manifest(
         // entity stored AT the actor id, so a divergent actor id could never
         // resolve to the seeded definition.
         if seed.actor_entity_id.0 != seed.entity_id.0 {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "manifest schema v1 requires actor_entity_id to equal entity_id",
-            ));
+            )));
         }
         if !logical_ids.insert(seed.logical_id.as_str()) {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "manifest logical ids must be unique",
-            ));
+            )));
         }
         if !row_ids.insert(seed.entity_id.0) {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "manifest row ids must be unique",
-            ));
+            )));
         }
         if !actor_ids.insert(seed.actor_entity_id.0) {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "manifest actor ids must be unique",
-            ));
+            )));
         }
     }
     Ok(manifest)
@@ -286,9 +292,9 @@ pub(super) fn system_agent_manifest() -> Result<&'static SystemAgentDefinitionMa
             parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON).ok()
         })
         .as_ref()
-        .ok_or(Error::InvalidAgentDefBody(
+        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "embedded system agent manifest is malformed",
-        ))
+        )))
 }
 
 /// The `sys.*` logical-id reservation, enforced at the AGENT_DEF put-decode
@@ -304,9 +310,9 @@ pub(crate) fn validate_reserved_logical_id(id: &EntityId, def: &AgentDefinition)
     if legacy_logical_id_row(logical_id)? == Some(*id) {
         return Ok(());
     }
-    Err(Error::InvalidAgentDefBody(
+    Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
         "sys.* logical ids are reserved for seeded rows",
-    ))
+    )))
 }
 
 /// Seeds/reconciles the canonical roster inside the caller's write
@@ -347,19 +353,26 @@ pub(super) fn reconcile_system_agent_definitions_in(
         let legacy_enabled = take_legacy_system_agent_toggle(store, wtxn, &seed.logical_id)?;
         match store.entities.get(wtxn, id.as_bytes())? {
             Some(raw) => {
-                let header = EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::SeededAgentDefinitionConflict { id })?;
+                let header = EntityMetadataHeader::parse(&raw).ok_or(Error::Artifact(
+                    ArtifactError::SeededAgentDefinitionConflict { id },
+                ))?;
                 if header.entity_type != ENTITY_TYPE_AGENT_DEF {
-                    return Err(Error::SeededAgentDefinitionConflict { id });
+                    return Err(Error::Artifact(
+                        ArtifactError::SeededAgentDefinitionConflict { id },
+                    ));
                 }
-                let stored = decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
-                    .map_err(|_| Error::SeededAgentDefinitionConflict { id })?;
+                let stored =
+                    decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| {
+                        Error::Artifact(ArtifactError::SeededAgentDefinitionConflict { id })
+                    })?;
                 // A valid occupant whose logical id is missing or different is
                 // a legacy foreign row: conflict, never adoption, never
                 // overwrite. A match leaves every stored byte alone —
                 // including user edits, `display_name`, and `enabled = false`.
                 if stored.logical_id.as_deref() != Some(seed.logical_id.as_str()) {
-                    return Err(Error::SeededAgentDefinitionConflict { id });
+                    return Err(Error::Artifact(
+                        ArtifactError::SeededAgentDefinitionConflict { id },
+                    ));
                 }
             }
             None => {

@@ -4,6 +4,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::codec::CODE_REVISION_HASH_LEN;
+use crate::error::ArtifactError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -24,9 +25,9 @@ impl CodeRevisionKind {
         match value {
             "commit" => Ok(Self::Commit),
             "revert" => Ok(Self::Revert),
-            _ => Err(Error::InvalidCodeArtifactBody(
+            _ => Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision kind must be commit or revert",
-            )),
+            ))),
         }
     }
 }

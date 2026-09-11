@@ -1325,7 +1325,7 @@ fn a_cooperative_worker_lands_through_the_driver_and_is_not_reported_completed()
         .expect_err("a landed row cannot also complete");
     assert!(matches!(
         err,
-        crate::Error::InvalidAttemptQueueTransition { action, state }
+        crate::Error::Artifact(crate::error::ArtifactError::InvalidAttemptQueueTransition { action, state })
             if action == "complete" && state == "cancelled"
     ));
     Ok(())

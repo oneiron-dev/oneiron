@@ -10,6 +10,7 @@ use super::{
 };
 use crate::blob_artifact::BlobVersionProvenance;
 use crate::entity_id::EntityId;
+use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -81,7 +82,9 @@ pub fn run_edit_roundtrip<S: EditSession>(
     run_ref: &str,
 ) -> Result<EditOutcome> {
     if run_ref.trim().is_empty() {
-        return Err(Error::EditRoundtripFailed("run_ref must be non-empty"));
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "run_ref must be non-empty",
+        )));
     }
 
     // The op vocabulary and inspection are spreadsheet-specific, and `classify`
@@ -90,9 +93,9 @@ pub fn run_edit_roundtrip<S: EditSession>(
     // would be vacuous. Until format-appropriate pipelines exist, accept only
     // xlsx/xlsm; a docx/pptx artifact is an unsupported-media-type refusal.
     if !matches!(format, OfficeFormat::Xlsx) {
-        return Err(Error::InvalidEditManifest(
+        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
             "edit round-trip supports only xlsx/xlsm; docx and pptx are not yet supported",
-        ));
+        )));
     }
 
     // Reject a malformed plan before it can reach a session: cells, ranges, and
@@ -113,9 +116,9 @@ pub fn run_edit_roundtrip<S: EditSession>(
     // would shift that grid and leave the preserved parts stale, so refuse it
     // here rather than emit a silently-wrong file; cell-level ops stay allowed.
     if mutation_mode == MutationMode::Minimal && plan.ops.iter().any(EditOp::is_structural) {
-        return Err(Error::InvalidEditManifest(
+        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
             "minimal-mutation mode refuses structural ops: preserved pivot/chart/macro parts would go stale against the shifted grid",
-        ));
+        )));
     }
 
     // Stage 2: targeted edit through the seam.
@@ -129,9 +132,9 @@ pub fn run_edit_roundtrip<S: EditSession>(
     // and let the caller route to a recalc-capable session rather than propose.
     let recalc = if plan.needs_recalc(&applied.applied_ops) {
         if !session.supports_recalc() {
-            return Err(Error::EditRoundtripFailed(
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "edit may change formula values but the session cannot recalc; route to a recalc-capable session",
-            ));
+            )));
         }
         match opc::read(&current) {
             Ok(package) => {

@@ -28,6 +28,7 @@ use super::verbs::{
     ForceCancelOutcome, LandingWarningOutcome, LeaseWarningOutcome, WarnAttemptBudgetPressure,
     WarnAttemptLeaseExpiry, WarnExpiringAttemptLeases,
 };
+use crate::error::ArtifactError;
 
 impl AttemptQueue<'_> {
     /// Finishes a landing: the row becomes terminally cancelled in
@@ -62,9 +63,9 @@ impl AttemptQueue<'_> {
         let lease_owner = input.lease_owner.clone();
         validate_transition_lease(&record, &lease_owner, input.attempt_count, "finish_landing")?;
         if input.hand_off && record.cancel_state.resume_point.is_none() {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_HANDOFF_WITHOUT_RESUME_POINT,
-            ));
+            )));
         }
 
         let successor = if input.hand_off {
@@ -288,7 +289,9 @@ impl AttemptQueue<'_> {
         input: WarnExpiringAttemptLeases,
     ) -> Result<AttemptLeaseWarningReport> {
         if input.lease_timeout_secs == 0 {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_LEASE_TIMEOUT_ZERO));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_LEASE_TIMEOUT_ZERO,
+            )));
         }
 
         let mut candidates = Vec::new();
@@ -347,7 +350,9 @@ impl AttemptQueue<'_> {
     /// idempotent per outstanding ask, so repeated polling records one row.
     pub fn warn_lease_expiry(&self, input: WarnAttemptLeaseExpiry) -> Result<LeaseWarningOutcome> {
         if input.lease_timeout_secs == 0 {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_LEASE_TIMEOUT_ZERO));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_LEASE_TIMEOUT_ZERO,
+            )));
         }
 
         let mut wtxn = self.store.env.write_txn()?;

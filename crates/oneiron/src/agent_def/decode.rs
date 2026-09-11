@@ -10,6 +10,7 @@ use super::types::{
     MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
 };
 use crate::claim::ClaimSource;
+use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use crate::llm::ModelTierRef;
 use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
@@ -21,9 +22,9 @@ use std::collections::HashSet;
 /// duplicate keys are all refused.
 pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "memory_profile must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut window_token_budget = None;
@@ -34,26 +35,30 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
 
     for (entry_key, value) in entries {
         let Some(entry_key) = entry_key.as_str() else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "memory_profile keys must be strings",
-            ));
+            )));
         };
         let Some(index) = MEMORY_PROFILE_KEYS
             .iter()
             .position(|known| *known == entry_key)
         else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "memory_profile key is not in the pinned MEMORY_PROFILE_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidAgentDefBody("duplicate memory_profile key"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate memory_profile key",
+            )));
         }
         seen[index] = true;
         match MEMORY_PROFILE_KEYS[index] {
             KEY_PROFILE_WINDOW_TOKEN_BUDGET => {
-                window_token_budget = Some(value.as_u64().ok_or(Error::InvalidAgentDefBody(
-                    "memory_profile window_token_budget must be an unsigned integer",
+                window_token_budget = Some(value.as_u64().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDefBody(
+                        "memory_profile window_token_budget must be an unsigned integer",
+                    ),
                 ))?);
             }
             KEY_PROFILE_BUDGET_SPLIT => {
@@ -68,9 +73,12 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
                 compaction_backend = Some(ModelTierRef(tier));
             }
             KEY_PROFILE_COMPACTION => {
-                let text = value.as_str().ok_or(Error::InvalidAgentDefBody(
-                    "memory_profile compaction must be one of engine|byoa",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                            "memory_profile compaction must be one of engine|byoa",
+                        )))?;
                 compaction = Some(CompactionOwnership::parse(text)?);
             }
             _ => unreachable!("index resolved from MEMORY_PROFILE_KEYS"),
@@ -78,54 +86,64 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
     }
 
     Ok(MemoryProfile {
-        window_token_budget: window_token_budget.ok_or(Error::InvalidAgentDefBody(
-            "missing required memory_profile key window_token_budget",
+        window_token_budget: window_token_budget.ok_or(Error::Artifact(
+            ArtifactError::InvalidAgentDefBody(
+                "missing required memory_profile key window_token_budget",
+            ),
         ))?,
         budget_split,
-        compaction_backend: compaction_backend.ok_or(Error::InvalidAgentDefBody(
-            "missing required memory_profile key compaction_backend",
+        compaction_backend: compaction_backend.ok_or(Error::Artifact(
+            ArtifactError::InvalidAgentDefBody(
+                "missing required memory_profile key compaction_backend",
+            ),
         ))?,
-        compaction: compaction.ok_or(Error::InvalidAgentDefBody(
+        compaction: compaction.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required memory_profile key compaction",
-        ))?,
+        )))?,
     })
 }
 
 fn decode_context_budget_split(value: &Value) -> Result<ContextBudgetSplit> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "budget_split must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut fractions = [None; CONTEXT_BUDGET_SPLIT_KEYS.len()];
 
     for (entry_key, value) in entries {
         let Some(entry_key) = entry_key.as_str() else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "budget_split keys must be strings",
-            ));
+            )));
         };
         let Some(index) = CONTEXT_BUDGET_SPLIT_KEYS
             .iter()
             .position(|known| *known == entry_key)
         else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "budget_split key is not in the pinned CONTEXT_BUDGET_SPLIT_KEYS set",
-            ));
+            )));
         };
         if fractions[index].is_some() {
-            return Err(Error::InvalidAgentDefBody("duplicate budget_split key"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate budget_split key",
+            )));
         }
         let Value::F32(fraction) = value else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "budget_split fractions must be 32-bit floats",
-            ));
+            )));
         };
         fractions[index] = Some(*fraction);
     }
 
-    let missing = || Error::InvalidAgentDefBody("missing required budget_split key");
+    let missing = || {
+        Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "missing required budget_split key",
+        ))
+    };
     Ok(ContextBudgetSplit {
         claims: fractions[0].ok_or_else(missing)?,
         turns: fractions[1].ok_or_else(missing)?,
@@ -146,23 +164,23 @@ pub(super) fn encode_mcp_ref(mcp: &McpRef) -> Value {
 
 pub(super) fn decode_skill_dependencies(value: &Value) -> Result<Vec<SkillDependency>> {
     let Value::Array(values) = value else {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "skills must be a MessagePack array",
-        ));
+        )));
     };
     if values.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "skills must contain at most 64 entries",
-        ));
+        )));
     }
     values.iter().map(decode_skill_dependency).collect()
 }
 
 fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "skill dependency must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut skill_id = None;
@@ -171,17 +189,19 @@ fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "skill dependency keys must be strings",
-            ));
+            )));
         };
         let Some(index) = SKILL_DEPENDENCY_KEYS.iter().position(|known| *known == key) else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "skill dependency key must be skillId|minVersion",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidAgentDefBody("duplicate skill dependency key"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate skill dependency key",
+            )));
         }
         seen[index] = true;
         match SKILL_DEPENDENCY_KEYS[index] {
@@ -207,25 +227,25 @@ fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
     }
 
     Ok(SkillDependency {
-        skill_id: skill_id.ok_or(Error::InvalidAgentDefBody(
+        skill_id: skill_id.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required skill dependency key skillId",
-        ))?,
-        min_version: min_version.ok_or(Error::InvalidAgentDefBody(
+        )))?,
+        min_version: min_version.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required skill dependency key minVersion",
-        ))?,
+        )))?,
     })
 }
 
 pub(super) fn decode_connectors(value: &Value) -> Result<Vec<String>> {
     let Value::Array(values) = value else {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "connectors must be a MessagePack array",
-        ));
+        )));
     };
     if values.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "connectors must contain at most 64 entries",
-        ));
+        )));
     }
     values
         .iter()
@@ -241,23 +261,23 @@ pub(super) fn decode_connectors(value: &Value) -> Result<Vec<String>> {
 
 pub(super) fn decode_mcp_refs(value: &Value) -> Result<Vec<McpRef>> {
     let Value::Array(values) = value else {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "codeModeMcps must be a MessagePack array",
-        ));
+        )));
     };
     if values.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "codeModeMcps must contain at most 64 entries",
-        ));
+        )));
     }
     values.iter().map(decode_mcp_ref).collect()
 }
 
 fn decode_mcp_ref(value: &Value) -> Result<McpRef> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "MCP ref must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut key = None;
@@ -266,15 +286,19 @@ fn decode_mcp_ref(value: &Value) -> Result<McpRef> {
 
     for (entry_key, value) in entries {
         let Some(entry_key) = entry_key.as_str() else {
-            return Err(Error::InvalidAgentDefBody("MCP ref keys must be strings"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "MCP ref keys must be strings",
+            )));
         };
         let Some(index) = MCP_REF_KEYS.iter().position(|known| *known == entry_key) else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "MCP ref key must be key|minVersion",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidAgentDefBody("duplicate MCP ref key"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate MCP ref key",
+            )));
         }
         seen[index] = true;
         match MCP_REF_KEYS[index] {
@@ -300,12 +324,12 @@ fn decode_mcp_ref(value: &Value) -> Result<McpRef> {
     }
 
     Ok(McpRef {
-        key: key.ok_or(Error::InvalidAgentDefBody(
+        key: key.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required MCP ref key key",
-        ))?,
-        min_version: min_version.ok_or(Error::InvalidAgentDefBody(
+        )))?,
+        min_version: min_version.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required MCP ref key minVersion",
-        ))?,
+        )))?,
     })
 }
 
@@ -354,19 +378,19 @@ pub(super) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
         )?;
     }
     if !def.confidence.is_finite() || !(0.0..=1.0).contains(&def.confidence) {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "confidence must be finite in the unit interval",
-        ));
+        )));
     }
     if def.generated == def.human_authored {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "exactly one of generated or humanAuthored must be true",
-        ));
+        )));
     }
     if def.generated != (def.source == ClaimSource::Generated) {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "generated flag must match generated source",
-        ));
+        )));
     }
     validate_provenance(&def.provenance)?;
     validate_skill_dependencies(&def.skills)?;
@@ -379,16 +403,16 @@ pub(super) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
 }
 
 /// RT-05 profile validation (ONE-1687). Rides the existing
-/// [`Error::InvalidAgentDefBody`] axis — no new error family.
+/// [`ArtifactError::InvalidAgentDefBody`](crate::error::ArtifactError::InvalidAgentDefBody) axis — no new error family.
 ///
 /// The frontier-tier ban is deliberately NOT here: decode holds no vault and
 /// no registry, so a string sniff would be the wrong authority. It fires at
 /// backend resolution instead, where the registered tier class is known.
 fn validate_memory_profile(profile: &MemoryProfile) -> Result<()> {
     if profile.window_token_budget == 0 {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "memory_profile window_token_budget must be greater than zero",
-        ));
+        )));
     }
     validate_text_field(
         profile.compaction_backend.as_str(),
@@ -401,15 +425,15 @@ fn validate_memory_profile(profile: &MemoryProfile) -> Result<()> {
             .iter()
             .any(|f| !f.is_finite() || *f <= 0.0 || *f >= 1.0)
         {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "memory_profile budget_split fractions must be finite and inside (0.0, 1.0)",
-            ));
+            )));
         }
         let sum: f32 = fractions.iter().sum();
         if (sum - 1.0).abs() > 1e-6 {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "memory_profile budget_split fractions must sum to 1.0",
-            ));
+            )));
         }
     }
     Ok(())
@@ -417,29 +441,31 @@ fn validate_memory_profile(profile: &MemoryProfile) -> Result<()> {
 
 fn validate_provenance(provenance: &Value) -> Result<()> {
     let Value::Map(entries) = provenance else {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "provenance must be a non-empty MessagePack map",
-        ));
+        )));
     };
     if entries.is_empty() {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "provenance must be a non-empty MessagePack map",
-        ));
+        )));
     }
     let mut seen = HashSet::new();
     for (key, _) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "provenance keys must be strings",
-            ));
+            )));
         };
         if key.trim().is_empty() {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "provenance keys must be non-empty strings",
-            ));
+            )));
         }
         if !seen.insert(key) {
-            return Err(Error::InvalidAgentDefBody("duplicate provenance key"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate provenance key",
+            )));
         }
     }
     Ok(())
@@ -447,9 +473,9 @@ fn validate_provenance(provenance: &Value) -> Result<()> {
 
 fn validate_skill_dependencies(skills: &[SkillDependency]) -> Result<()> {
     if skills.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "skills must contain at most 64 entries",
-        ));
+        )));
     }
     let mut seen = HashSet::new();
     for dependency in skills {
@@ -459,7 +485,9 @@ fn validate_skill_dependencies(skills: &[SkillDependency]) -> Result<()> {
             "skill dependency skillId must be a non-empty UTF-8 string at most 256 bytes",
         )?;
         if !seen.insert(dependency.skill_id.as_str()) {
-            return Err(Error::InvalidAgentDefBody("duplicate skill dependency"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate skill dependency",
+            )));
         }
         if let Some(min_version) = &dependency.min_version {
             validate_text_field(
@@ -474,9 +502,9 @@ fn validate_skill_dependencies(skills: &[SkillDependency]) -> Result<()> {
 
 fn validate_connectors(connectors: &[String]) -> Result<()> {
     if connectors.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "connectors must contain at most 64 entries",
-        ));
+        )));
     }
     let mut seen = HashSet::new();
     for connector in connectors {
@@ -486,7 +514,9 @@ fn validate_connectors(connectors: &[String]) -> Result<()> {
             "connector key must be a non-empty UTF-8 string at most 256 bytes",
         )?;
         if !seen.insert(connector.as_str()) {
-            return Err(Error::InvalidAgentDefBody("duplicate connector"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate connector",
+            )));
         }
     }
     Ok(())
@@ -494,9 +524,9 @@ fn validate_connectors(connectors: &[String]) -> Result<()> {
 
 fn validate_mcp_refs(mcps: &[McpRef]) -> Result<()> {
     if mcps.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "codeModeMcps must contain at most 64 entries",
-        ));
+        )));
     }
     let mut seen = HashSet::new();
     for mcp in mcps {
@@ -506,7 +536,9 @@ fn validate_mcp_refs(mcps: &[McpRef]) -> Result<()> {
             "MCP ref key must be a non-empty UTF-8 string at most 256 bytes",
         )?;
         if !seen.insert(mcp.key.as_str()) {
-            return Err(Error::InvalidAgentDefBody("duplicate MCP ref"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate MCP ref",
+            )));
         }
         if let Some(min_version) = &mcp.min_version {
             validate_text_field(
@@ -520,7 +552,9 @@ fn validate_mcp_refs(mcps: &[McpRef]) -> Result<()> {
 }
 
 pub(super) fn text_value(value: &Value, max_bytes: usize, context: &'static str) -> Result<String> {
-    let text = value.as_str().ok_or(Error::InvalidAgentDefBody(context))?;
+    let text = value
+        .as_str()
+        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(context)))?;
     validate_text_field(text, max_bytes, context)?;
     Ok(text.to_owned())
 }
@@ -531,7 +565,7 @@ pub(super) fn validate_text_field(
     context: &'static str,
 ) -> Result<()> {
     if text.trim().is_empty() || text.len() > max_bytes {
-        return Err(Error::InvalidAgentDefBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(context)));
     }
     Ok(())
 }

@@ -9,6 +9,7 @@ use super::model::{
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use crate::habit::TaskRole;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
@@ -79,11 +80,15 @@ pub(super) struct ThreadHead {
 pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result<()> {
     if text.is_empty() || text.len() > ANNOTATION_LOCATOR_TEXT_MAX_BYTES {
         return Err(match context {
-            "xlsx locator sheet" => Error::InvalidAnchor("xlsx locator sheet is empty or too long"),
-            "docx locator para_path" => {
-                Error::InvalidAnchor("docx locator para_path is empty or too long")
-            }
-            _ => Error::InvalidAnchor("pptx locator shape_id is empty or too long"),
+            "xlsx locator sheet" => Error::Artifact(ArtifactError::InvalidAnchor(
+                "xlsx locator sheet is empty or too long",
+            )),
+            "docx locator para_path" => Error::Artifact(ArtifactError::InvalidAnchor(
+                "docx locator para_path is empty or too long",
+            )),
+            _ => Error::Artifact(ArtifactError::InvalidAnchor(
+                "pptx locator shape_id is empty or too long",
+            )),
         });
     }
     Ok(())
@@ -133,7 +138,9 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
             let shape_id = map_str(value, KEY_SHAPE_ID)?.to_owned();
             Locator::pptx(slide, shape_id)
         }
-        _ => Err(Error::InvalidAnchor("unknown locator format")),
+        _ => Err(Error::Artifact(ArtifactError::InvalidAnchor(
+            "unknown locator format",
+        ))),
     }
 }
 
@@ -176,11 +183,12 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
     let thread_id = map_entity(value, KEY_THREAD_ID)?;
     let origin_version = map_u64(value, KEY_ORIGIN_VERSION)?;
     let anchor_version = map_u64(value, KEY_ANCHOR_VERSION)?;
-    let state = ThreadState::parse(map_str(value, KEY_STATE)?)
-        .ok_or(Error::InvalidAnchor("thread state is unknown"))?;
-    let locator = decode_locator(
-        map_get(value, KEY_LOCATOR).ok_or(Error::InvalidAnchor("thread head missing locator"))?,
-    )?;
+    let state = ThreadState::parse(map_str(value, KEY_STATE)?).ok_or(Error::Artifact(
+        ArtifactError::InvalidAnchor("thread state is unknown"),
+    ))?;
+    let locator = decode_locator(map_get(value, KEY_LOCATOR).ok_or(Error::Artifact(
+        ArtifactError::InvalidAnchor("thread head missing locator"),
+    ))?)?;
     let drift = match map_get(value, KEY_DRIFT) {
         None | Some(Value::Nil) => None,
         Some(drift_value) => Some(DriftMarker {
@@ -262,9 +270,9 @@ pub(super) fn decode_brief_value(value: &Value, artifact_id: EntityId) -> Result
     let task_id = map_entity(value, KEY_TASK_ID)?;
     let brief_ref = map_str(value, KEY_BRIEF_REF)?.to_owned();
     let anchor_version = map_u64(value, KEY_ANCHOR_VERSION)?;
-    let locator = decode_locator(
-        map_get(value, KEY_LOCATOR).ok_or(Error::InvalidAnchor("brief missing locator"))?,
-    )?;
+    let locator = decode_locator(map_get(value, KEY_LOCATOR).ok_or(Error::Artifact(
+        ArtifactError::InvalidAnchor("brief missing locator"),
+    ))?)?;
     let assignee = match map_get(value, KEY_ASSIGNEE) {
         None | Some(Value::Nil) => None,
         Some(_) => Some(map_entity(value, KEY_ASSIGNEE)?),
@@ -298,24 +306,24 @@ fn map_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
 fn map_str<'a>(value: &'a Value, key: &'static str) -> Result<&'a str> {
     map_get(value, key)
         .and_then(Value::as_str)
-        .ok_or(Error::InvalidAnchor(key))
+        .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(key)))
 }
 
 fn map_u64(value: &Value, key: &'static str) -> Result<u64> {
     map_get(value, key)
         .and_then(Value::as_u64)
-        .ok_or(Error::InvalidAnchor(key))
+        .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(key)))
 }
 
 fn map_entity(value: &Value, key: &'static str) -> Result<EntityId> {
     let Some(Value::Binary(bytes)) = map_get(value, key) else {
-        return Err(Error::InvalidAnchor(key));
+        return Err(Error::Artifact(ArtifactError::InvalidAnchor(key)));
     };
     let raw: [u8; ENTITY_ID_LEN] = bytes
         .as_slice()
         .try_into()
-        .map_err(|_| Error::InvalidAnchor(key))?;
-    EntityId::from_bytes(raw).map_err(|_| Error::InvalidAnchor(key))
+        .map_err(|_| Error::Artifact(ArtifactError::InvalidAnchor(key)))?;
+    EntityId::from_bytes(raw).map_err(|_| Error::Artifact(ArtifactError::InvalidAnchor(key)))
 }
 
 fn annotation_stances(actor_class: EdgeActorClass) -> (ClaimSource, ClaimApprovalStatus) {

@@ -10,6 +10,7 @@ mod one_1698_tests {
         EnqueueOutcome,
     };
     use crate::claim::ClaimSource;
+    use crate::error::ArtifactError;
     use crate::temporal::TimeRange;
 
     /// The seeded row a `sys.*` logical id names, as a dispatch target.
@@ -626,7 +627,7 @@ mod one_1698_tests {
             .expect_err("a stale generation cannot complete");
         assert!(matches!(
             err,
-            Error::InvalidAttemptQueueTransition { action, state }
+            Error::Artifact(ArtifactError::InvalidAttemptQueueTransition { action, state })
                 if action == "complete" && state == "stale_attempt"
         ));
         let refusal = queue.reject_cancel(RejectAttemptCancel {
@@ -710,7 +711,10 @@ mod one_1698_tests {
         let error = dispatcher
             .kill_spawn(&masquerader.id, &spawner.attempt.id, 4)
             .expect_err("non-dreamer target must be rejected");
-        assert!(matches!(error, Error::InvalidAgentDispatchInput(_)));
+        assert!(matches!(
+            error,
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(_))
+        ));
         assert_eq!(
             queue
                 .get(masquerader.id)?
@@ -738,7 +742,7 @@ mod one_1698_tests {
         let mismatch = dispatcher
             .dispatch_default_base(None, Some("shared".to_owned()), None, 2)
             .expect_err("cross-target dedupe must fail closed");
-        let Error::InvalidAgentDispatchInput(reason) = mismatch else {
+        let Error::Artifact(ArtifactError::InvalidAgentDispatchInput(reason)) = mismatch else {
             panic!("expected invalid agent dispatch input");
         };
         assert_eq!(reason, "existing dedupe row targets a different agent");
@@ -778,7 +782,7 @@ mod one_1698_tests {
         let mismatch = dispatcher
             .dispatch_default_base(Some(other_parent), Some("parent-owned".to_owned()), None, 7)
             .expect_err("cross-parent dedupe must fail closed");
-        let Error::InvalidAgentDispatchInput(reason) = mismatch else {
+        let Error::Artifact(ArtifactError::InvalidAgentDispatchInput(reason)) = mismatch else {
             panic!("expected invalid agent dispatch input");
         };
         assert_eq!(reason, "existing dedupe row belongs to a different parent");

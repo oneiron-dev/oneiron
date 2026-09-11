@@ -19,7 +19,7 @@ use crate::store::Store;
 
 use super::storage::get_code_revision_in_txn;
 use super::types::CodeRevision;
-use crate::error::RegistryError;
+use crate::error::{ArtifactError, RegistryError};
 
 pub(super) fn put_lifecycle_edge(
     store: &Store,
@@ -125,8 +125,10 @@ pub(super) fn require_known_code_revision(
         ENTITY_TYPE_CODE_ARTIFACT,
         "code revision id must be a CODE_ARTIFACT entity",
     )?;
-    get_code_revision_in_txn(store, rtxn, revision_id)?.ok_or(Error::InvalidCodeArtifactBody(
-        "code revision must be finalized before it can be referenced",
+    get_code_revision_in_txn(store, rtxn, revision_id)?.ok_or(Error::Artifact(
+        ArtifactError::InvalidCodeArtifactBody(
+            "code revision must be finalized before it can be referenced",
+        ),
     ))
 }
 
@@ -148,9 +150,9 @@ pub(super) fn code_artifact_body_bytes(
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "revision_id must be a CODE_ARTIFACT entity",
-        ));
+        )));
     }
     decode_code_artifact_body(
         raw.get(ENTITY_METADATA_HEADER_LEN..)
@@ -165,7 +167,9 @@ pub(super) fn require_revision_session(
     context: &'static str,
 ) -> Result<()> {
     if revision.session_id != session_id {
-        return Err(Error::InvalidCodeArtifactBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            context,
+        )));
     }
     Ok(())
 }
@@ -184,9 +188,9 @@ pub(super) fn require_code_revision_ancestor(
             return Ok(());
         }
         if !visited.insert(cursor) {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision parent chain contains a cycle",
-            ));
+            )));
         }
         let revision = require_known_code_revision(store, rtxn, &cursor)?;
         let Some(parent_id) = revision.parent_revision_id else {
@@ -198,9 +202,9 @@ pub(super) fn require_code_revision_ancestor(
     if visited.len() >= MAX_ANCESTOR_DEPTH {
         return Err(Error::IndexOverflow("code_revision_parent_chain"));
     }
-    Err(Error::InvalidCodeArtifactBody(
+    Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
         "reverted_to_revision_id must be an ancestor of parent_revision_id",
-    ))
+    )))
 }
 
 pub(super) fn require_entity_type(
@@ -215,7 +219,9 @@ pub(super) fn require_entity_type(
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != expected_type {
-        return Err(Error::InvalidCodeArtifactBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            context,
+        )));
     }
     Ok(())
 }

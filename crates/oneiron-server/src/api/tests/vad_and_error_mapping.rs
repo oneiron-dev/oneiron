@@ -394,7 +394,9 @@ fn core_engine_error_maps_hosted_media_known_match_to_invalid_state() {
 fn core_engine_error_maps_invalid_skill_body_to_bad_request() {
     let error = core_engine_error(
         "core batch commit failed",
-        oneiron::Error::InvalidSkillBody("provenance must be a non-empty MessagePack map"),
+        oneiron::Error::Artifact(oneiron::error::ArtifactError::InvalidSkillBody(
+            "provenance must be a non-empty MessagePack map",
+        )),
     );
 
     assert_eq!(error.status(), StatusCode::BAD_REQUEST);
@@ -415,10 +417,14 @@ fn core_engine_error_maps_invalid_skill_body_to_bad_request() {
 fn core_engine_error_maps_agent_dispatch_failures_to_bad_request() {
     let id = oneiron::EntityId::from_bytes([0x71; 16]).expect("non-reserved fixture id");
     for error in [
-        oneiron::Error::AgentNotDispatchable("agent definition not found"),
-        oneiron::Error::InvalidAgentDispatchInput("input must decode as an agent dispatch map"),
-        oneiron::Error::AgentDefinitionNotFound { id },
-        oneiron::Error::AgentDefinitionDisabled { id },
+        oneiron::Error::Artifact(oneiron::error::ArtifactError::AgentNotDispatchable(
+            "agent definition not found",
+        )),
+        oneiron::Error::Artifact(oneiron::error::ArtifactError::InvalidAgentDispatchInput(
+            "input must decode as an agent dispatch map",
+        )),
+        oneiron::Error::Artifact(oneiron::error::ArtifactError::AgentDefinitionNotFound { id }),
+        oneiron::Error::Artifact(oneiron::error::ArtifactError::AgentDefinitionDisabled { id }),
     ] {
         let detail = error.to_string();
         let mapped = core_engine_error("core dispatch failed", error);

@@ -24,6 +24,7 @@ use super::store_keys::{
     blob_artifact_head_key, blob_artifact_version_key, blob_artifact_version_prefix, encode_value,
     entity_value, hash_from_value, read_value, require_entity_type, u64_value,
 };
+use crate::error::ArtifactError;
 
 /// One record of the append-only version chain: content hash + provenance +
 /// the `blob.version` claim id (the LEDGER event for this version).
@@ -89,9 +90,9 @@ impl Vault {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
         if header.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
-            return Err(Error::InvalidBlobArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "entity is not a type-85 BLOB_ARTIFACT",
-            ));
+            )));
         }
         decode_blob_artifact_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
@@ -146,9 +147,9 @@ impl Vault {
     ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
         if bytes.is_empty() {
-            return Err(Error::InvalidBlobArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "blob artifact version bytes must be non-empty",
-            ));
+            )));
         }
         let content_hash = *blake3::hash(bytes).as_bytes();
         let asset_id = blob_artifact_asset_entity_id(&content_hash)?;
@@ -171,9 +172,9 @@ impl Vault {
         };
         let version_key = blob_artifact_version_key(artifact_id, next_version);
         if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
-            return Err(Error::InvalidBlobArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "blob artifact version is already recorded",
-            ));
+            )));
         }
 
         let candidate = ClaimCandidate::new(
@@ -350,9 +351,9 @@ fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<V
 pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobArtifactVersion> {
     let value = read_value(bytes, "version record")?;
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidBlobArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "version record must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut version = None;
@@ -364,21 +365,23 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
     let mut seen = [false; BLOB_ARTIFACT_VERSION_RECORD_KEYS.len()];
 
     for (key, value) in &entries {
-        let key = key.as_str().ok_or(Error::InvalidBlobArtifactBody(
-            "version record keys must be strings",
-        ))?;
+        let key = key
+            .as_str()
+            .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "version record keys must be strings",
+            )))?;
         let Some(index) = BLOB_ARTIFACT_VERSION_RECORD_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidBlobArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "version record key is not in the pinned BLOB_ARTIFACT_VERSION_RECORD_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidBlobArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "duplicate version record key",
-            ));
+            )));
         }
         seen[index] = true;
 
@@ -386,8 +389,8 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
             KEY_VERSION => version = Some(u64_value(value, "version")?),
             KEY_CONTENT_HASH => content_hash = Some(hash_from_value(value, "content_hash")?),
             KEY_PROVENANCE => {
-                let text = value.as_str().ok_or(Error::InvalidBlobArtifactBody(
-                    "provenance must be a UTF-8 string",
+                let text = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidBlobArtifactBody("provenance must be a UTF-8 string"),
                 ))?;
                 provenance_kind = Some(text.to_owned());
             }
@@ -397,9 +400,9 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
                     other => Some(
                         other
                             .as_str()
-                            .ok_or(Error::InvalidBlobArtifactBody(
+                            .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                                 "run_ref must be a UTF-8 string or nil",
-                            ))?
+                            )))?
                             .to_owned(),
                     ),
                 });
@@ -410,35 +413,37 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
         }
     }
 
-    let version = version.ok_or(Error::InvalidBlobArtifactBody(
+    let version = version.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
         "missing required version record key version",
-    ))?;
+    )))?;
     if version == 0 {
-        return Err(Error::InvalidBlobArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "version record version must be at least 1",
-        ));
+        )));
     }
     let provenance = BlobVersionProvenance::from_parts(
-        &provenance_kind.ok_or(Error::InvalidBlobArtifactBody(
+        &provenance_kind.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key provenance",
-        ))?,
-        run_ref.ok_or(Error::InvalidBlobArtifactBody(
+        )))?,
+        run_ref.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key run_ref",
-        ))?,
+        )))?,
     )?;
     validate_provenance(&provenance)?;
     Ok(BlobArtifactVersion {
         version,
-        content_hash: content_hash.ok_or(Error::InvalidBlobArtifactBody(
-            "missing required version record key content_hash",
+        content_hash: content_hash.ok_or(Error::Artifact(
+            ArtifactError::InvalidBlobArtifactBody(
+                "missing required version record key content_hash",
+            ),
         ))?,
         provenance,
-        claim_id: claim_id.ok_or(Error::InvalidBlobArtifactBody(
+        claim_id: claim_id.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key claim_id",
-        ))?,
-        created_at: created_at.ok_or(Error::InvalidBlobArtifactBody(
+        )))?,
+        created_at: created_at.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key created_at",
-        ))?,
+        )))?,
     })
 }
 
@@ -470,9 +475,9 @@ fn read_blob_asset_in_txn(
         return Err(crate::secret_custody::reject_secret_custody_byte());
     }
     if header.entity_type != ENTITY_TYPE_ASSET {
-        return Err(Error::InvalidBlobArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "version content hash did not resolve to an ASSET",
-        ));
+        )));
     }
     let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
     if blake3::hash(&body).as_bytes() != content_hash {

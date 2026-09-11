@@ -59,8 +59,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::blob_artifact::decode_blob_artifact_body;
 use crate::entity_id::EntityId;
-use crate::error::SecretError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::secret_custody::{
     SecretCustodyStatus, policy_manifest_bodies_strict, put_secret_custody_in_txn,
@@ -341,7 +340,7 @@ pub(crate) fn taint_refs_to_value(refs: &[SecretTaintRef]) -> Value {
 ///
 /// Returns `None` on any malformation so each call site can raise its own
 /// typed body reject (the artifact body says
-/// [`Error::InvalidBlobArtifactBody`], a sidecar row says
+/// [`ArtifactError::InvalidBlobArtifactBody`](crate::error::ArtifactError::InvalidBlobArtifactBody), a sidecar row says
 /// [`SecretError::InvalidSecretRotationBody`](crate::error::SecretError::InvalidSecretRotationBody)) instead of importing a foreign
 /// error class. Validation is strict: bounded non-empty names, `u32`
 /// generations, a bounded ref count, and no duplicate secret names — a

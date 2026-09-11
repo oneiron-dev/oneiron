@@ -15,6 +15,7 @@ use super::cancel::{
     AttemptLanding, AttemptLandingReserve, AttemptResumePoint,
 };
 use super::validate::validate_result_ref;
+use crate::error::ArtifactError;
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
@@ -54,9 +55,9 @@ impl AttemptId {
 
     /// Parses a raw 16-byte storage key.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let bytes: [u8; 16] = bytes
-            .try_into()
-            .map_err(|_| Error::InvalidAttemptQueueRecord(ERR_ATTEMPT_ID_LEN))?;
+        let bytes: [u8; 16] = bytes.try_into().map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(ERR_ATTEMPT_ID_LEN))
+        })?;
         Ok(Self { bytes })
     }
 }
@@ -75,7 +76,7 @@ impl AttemptResultRef {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidAttemptQueueRecord`] when the reference is
+    /// Returns [`ArtifactError::InvalidAttemptQueueRecord`](crate::error::ArtifactError::InvalidAttemptQueueRecord) when the reference is
     /// empty, over-long, or carries a control character.
     pub fn new(value: impl Into<String>) -> Result<Self> {
         let value = value.into();

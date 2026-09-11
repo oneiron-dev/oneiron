@@ -27,6 +27,7 @@ use super::error::{
     ERR_STOP_REASON_TOO_LONG, invalid,
 };
 use super::validate::validate_exhaust;
+use crate::error::ArtifactError;
 /// The proof that one network reach crossed the injected egress port.
 ///
 /// Scope, expiry, and audit reference all live on the lease so the guarantee
@@ -155,7 +156,9 @@ impl TryFrom<String> for ByoaTerminalDisposition {
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
             "abandoned" => Ok(Self::Abandoned),
-            _ => Err(Error::InvalidAgentDispatchInput(ERR_DISPOSITION)),
+            _ => Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                ERR_DISPOSITION,
+            ))),
         }
     }
 }
@@ -224,13 +227,13 @@ pub(super) fn normalize_capture_reason(
     };
     // Match queue admission on every request, including read-only retries.
     if reason.is_empty() {
-        return Err(ByoaError::Store(Error::InvalidAttemptQueueRecord(
-            ERR_STOP_REASON_EMPTY,
+        return Err(ByoaError::Store(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueRecord(ERR_STOP_REASON_EMPTY),
         )));
     }
     if reason.len() > MAX_STOP_REASON_LEN {
-        return Err(ByoaError::Store(Error::InvalidAttemptQueueRecord(
-            ERR_STOP_REASON_TOO_LONG,
+        return Err(ByoaError::Store(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueRecord(ERR_STOP_REASON_TOO_LONG),
         )));
     }
     Ok(reason)
@@ -272,7 +275,11 @@ pub fn byoa_result_ref(artifact_id: &EntityId, version: u64) -> ByoaResult<Attem
 ///
 /// Returns [`ByoaError::Store`] when the reference is not this module's shape.
 pub fn parse_byoa_result_ref(result_ref: &AttemptResultRef) -> ByoaResult<(EntityId, u64)> {
-    let shape = || ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_RESULT_REF_SHAPE));
+    let shape = || {
+        ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            ERR_RESULT_REF_SHAPE,
+        )))
+    };
     let body = result_ref
         .as_str()
         .strip_prefix(BYOA_RESULT_REF_PREFIX)
@@ -424,8 +431,11 @@ pub(super) fn byoa_exhaust_artifact_name(attempt_id: AttemptId) -> String {
 
 pub(super) fn encode_exhaust_envelope(envelope: &ByoaExhaustEnvelope) -> ByoaResult<Vec<u8>> {
     validate_exhaust(&envelope.exhaust)?;
-    rmp_serde::to_vec_named(envelope)
-        .map_err(|_| ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_EXHAUST_ENCODE)))
+    rmp_serde::to_vec_named(envelope).map_err(|_| {
+        ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            ERR_EXHAUST_ENCODE,
+        )))
+    })
 }
 
 /// Decodes one exhaust artifact version body.
@@ -446,11 +456,14 @@ fn decode_exhaust_envelope(bytes: &[u8]) -> ByoaResult<ByoaExhaustEnvelope> {
     if bytes.len() > MAX_EXHAUST_ENCODED_BYTES {
         return Err(invalid(ERR_EXHAUST_TOO_LARGE));
     }
-    let envelope: ByoaExhaustEnvelope = rmp_serde::from_slice(bytes)
-        .map_err(|_| ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_EXHAUST_ENCODE)))?;
+    let envelope: ByoaExhaustEnvelope = rmp_serde::from_slice(bytes).map_err(|_| {
+        ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            ERR_EXHAUST_ENCODE,
+        )))
+    })?;
     if envelope.schema_version != BYOA_CONNECTOR_SCHEMA_VERSION {
-        return Err(ByoaError::Store(Error::InvalidAgentDispatchInput(
-            ERR_PAYLOAD_SCHEMA,
+        return Err(ByoaError::Store(Error::Artifact(
+            ArtifactError::InvalidAgentDispatchInput(ERR_PAYLOAD_SCHEMA),
         )));
     }
     validate_exhaust(&envelope.exhaust)?;

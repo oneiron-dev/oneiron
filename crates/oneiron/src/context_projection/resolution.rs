@@ -10,6 +10,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -70,7 +71,7 @@ impl ResolvedContextProjection {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidAgentDispatchInput`] when the descriptor is malformed, when
+/// [`ArtifactError::InvalidAgentDispatchInput`](crate::error::ArtifactError::InvalidAgentDispatchInput) when the descriptor is malformed, when
 /// it widens beyond `request.parent`, or when a `context_from` ref does not
 /// name a SETTLED sibling TASK with a `Completed` terminal result (missing,
 /// unsettled, non-TASK, or non-completed rows all reject).
@@ -361,19 +362,19 @@ fn resolve_sibling_results(vault: &Vault, context_from: &[EntityId]) -> Result<V
         let Some((disposition, result_ref)) =
             crate::task_verb::settled_task_result_binding(vault, *entity_ref)?
         else {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom names no settled sibling TASK result",
-            ));
+            )));
         };
         if disposition != TaskTerminalDisposition::Completed {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom names a sibling TASK settled without a completed result",
-            ));
+            )));
         }
         if resolved.contains(&result_ref) {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom names the same sibling result twice",
-            ));
+            )));
         }
         resolved.push(result_ref);
     }

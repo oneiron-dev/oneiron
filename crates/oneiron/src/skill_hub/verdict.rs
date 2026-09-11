@@ -14,6 +14,7 @@ use crate::temporal::TimeRange;
 
 use super::package::HubPackage;
 use super::support::{MAX_HUB_TEXT_BYTES, map_text, map_value, validate_text};
+use crate::error::ArtifactError;
 
 /// Claim predicate for scanner receipts attached to a canonical content hash.
 pub const PREDICATE_SKILL_SCAN_VERDICT: &str = "skill.scan_verdict";
@@ -200,9 +201,9 @@ impl Vault {
     ) -> Result<EntityId> {
         let skill = self.read_skill_record_in_txn(&*wtxn, entity)?;
         if skill.content_hash != Some(content_hash) {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "scan receipt content hash does not match the skill",
-            ));
+            )));
         }
         let hash_hex = content_hash.to_hex();
         // ONE-1741: verdicts hang off the deterministic content anchor, not the
@@ -414,9 +415,11 @@ impl Vault {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_SKILL_CONTENT_ANCHOR {
-                return Err(Error::SkillContentAnchorTypeMismatch {
-                    existing: header.entity_type,
-                });
+                return Err(Error::Artifact(
+                    ArtifactError::SkillContentAnchorTypeMismatch {
+                        existing: header.entity_type,
+                    },
+                ));
             }
             return Ok(anchor);
         }

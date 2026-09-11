@@ -8,6 +8,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 
 use super::schema::{AmendmentDelta, DeltaSource, OpsSummary, engine_ver, u32_saturating};
+use crate::error::ArtifactError;
 
 /// Traversal depth cap for [`delta_from_field_diff`]. Past it, a subtree is
 /// compared as one opaque leaf: a Δ is telemetry, and no telemetry number is
@@ -331,7 +332,7 @@ impl<'a> DeltaCaptureContext<'a> {
 ///
 /// # Errors
 ///
-/// [`Error::DeltaCaptureUnavailable`] when the context offers no lane at all.
+/// [`ArtifactError::DeltaCaptureUnavailable`](crate::error::ArtifactError::DeltaCaptureUnavailable) when the context offers no lane at all.
 /// Callers treat it as telemetry loss, never as a failed approval.
 pub fn capture_delta_best(ctx: &DeltaCaptureContext<'_>) -> Result<AmendmentDelta> {
     if let Some(recorded) = ctx.recorded {
@@ -343,5 +344,7 @@ pub fn capture_delta_best(ctx: &DeltaCaptureContext<'_>) -> Result<AmendmentDelt
     if let Some((before, after)) = ctx.texts {
         return Ok(delta_from_reconstructed(before, after));
     }
-    Err(Error::DeltaCaptureUnavailable("context offers no lane"))
+    Err(Error::Artifact(ArtifactError::DeltaCaptureUnavailable(
+        "context offers no lane",
+    )))
 }

@@ -17,6 +17,7 @@ use super::transitions::{
     fail_once, require_dispatch_scope, require_evidence_ref, retry_once, validated_evidence_ref,
     verified_blocked_reports,
 };
+use crate::error::ArtifactError;
 
 /// Domain separator for the deterministic `case_ref` correlation key.
 const FAILURE_CASE_REF_DOMAIN: &[u8] = b"oneiron.failure-case.v1\0";
@@ -111,7 +112,7 @@ impl<'a> FailureLadder<'a> {
     ///
     /// [`Error::InvalidConfig`] for invalid evidence or a scope that does not
     /// bind the failing row's dispatched agent — both raised BEFORE any
-    /// transition; [`Error::InvalidAttemptQueueTransition`] when the row is
+    /// transition; [`ArtifactError::InvalidAttemptQueueTransition`](crate::error::ArtifactError::InvalidAttemptQueueTransition) when the row is
     /// absent or when a concurrent failure input already won the single
     /// transition, in which case NOTHING is routed.
     pub fn handle_attempt_failure(
@@ -124,12 +125,12 @@ impl<'a> FailureLadder<'a> {
         // transition. The lease fence itself stays where it already is: inside
         // the queue's own retry/fail transition.
         let evidence_ref = validated_evidence_ref(&input.evidence)?;
-        let current = queue
-            .get(input.attempt_id)?
-            .ok_or(Error::InvalidAttemptQueueTransition {
+        let current = queue.get(input.attempt_id)?.ok_or(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueTransition {
                 action: "failure ladder",
                 state: "missing",
-            })?;
+            },
+        ))?;
         require_dispatch_scope(&current, &policy.scope)?;
 
         // 2/3. Classify, then verify supplementary reports. No report decides

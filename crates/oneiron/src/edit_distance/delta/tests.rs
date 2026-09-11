@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::edit_distance::{LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef};
+use crate::error::ArtifactError;
 
 // ─── fixtures ───────────────────────────────────────────────────────────
 
@@ -306,7 +307,7 @@ fn chooser_reports_an_empty_context_as_unavailable() {
     };
     assert!(matches!(
         capture_delta_best(&ctx),
-        Err(Error::DeltaCaptureUnavailable(_))
+        Err(Error::Artifact(ArtifactError::DeltaCaptureUnavailable(_)))
     ));
 }
 

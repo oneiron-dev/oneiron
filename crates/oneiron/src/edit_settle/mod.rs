@@ -12,7 +12,7 @@
 //!   the proposal ref
 //!
 //! consumes a proposal. A second settle of *any* kind on the same proposal is a
-//! typed refusal ([`Error::EditProposalAlreadySettled`]). Until settled, a
+//! typed refusal ([`ArtifactError::EditProposalAlreadySettled`](crate::error::ArtifactError::EditProposalAlreadySettled)). Until settled, a
 //! proposal is invisible to the version chain — the retained bytes are never a
 //! version, never read back.
 //!
@@ -36,7 +36,7 @@
 //! # Stale-proposal refusal (D5)
 //!
 //! A proposal is produced FROM a specific head ([`EditProposal::base_content_hash`]).
-//! Select refuses ([`Error::EditProposalStale`]) when that base no longer equals
+//! Select refuses ([`ArtifactError::EditProposalStale`](crate::error::ArtifactError::EditProposalStale)) when that base no longer equals
 //! the artifact head — an intervening edit moved the head, so committing these
 //! bytes would clobber it and replay a stale manifest onto newer anchors.
 //!

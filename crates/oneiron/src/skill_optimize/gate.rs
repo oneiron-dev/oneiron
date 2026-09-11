@@ -49,7 +49,7 @@
 //! When the WORLD moves under an in-flight call instead — the reserved
 //! evidence changes while the scorer is thinking, or a terminal reason read
 //! before the write door no longer holds inside it — there is no ruling at all.
-//! The transaction returns [`Error::SkillEditGateRetry`] and rolls back, so no
+//! The transaction returns [`ArtifactError::SkillEditGateRetry`](crate::error::ArtifactError::SkillEditGateRetry) and rolls back, so no
 //! verdict row, no closure, no cap spend and no marker change commits: the
 //! proposal is left byte-identical to a call that never ran. That is a
 //! RETRYABLE outcome, typed apart from every refusal, and a rerun over a

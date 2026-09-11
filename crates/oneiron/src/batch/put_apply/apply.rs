@@ -20,8 +20,8 @@ use super::{
 use crate::claim::ClaimApprovalStatus;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::ArtifactError;
+use crate::error::{Error, ErrorKind, RegistryError, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,
@@ -578,9 +578,9 @@ pub(in crate::batch) fn apply_put(
             && body_changed
             && crate::code_revision::has_finalized_code_revision_in_txn(store, wtxn, &id)?
         {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "finalized code revision artifacts are immutable",
-            ));
+            )));
         }
         if let Some(old_code_artifact_body) = old_code_artifact_body {
             crate::codebase::reconcile_codebase_snapshot_after_code_artifact_put(

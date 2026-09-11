@@ -26,6 +26,7 @@ use super::types::{
     DreamerAttemptPayload, DreamerBudgetRecord, DreamerBudgetReservation, DreamerHomeNodeClass,
     DreamerHomeNodeDesignation, DreamerParkedAttemptRecord, DreamerRunTreeRecord,
 };
+use crate::error::ArtifactError;
 
 /// Encodes a Dreamer attempt payload in canonical MessagePack field order.
 pub fn encode_dreamer_attempt_payload(payload: &DreamerAttemptPayload) -> Result<Vec<u8>> {
@@ -764,5 +765,5 @@ pub(super) fn validate_home_node_designation(record: &DreamerHomeNodeDesignation
 }
 
 pub(super) const fn invalid_dreamer_runner(reason: &'static str) -> Error {
-    Error::InvalidAttemptQueueRecord(reason)
+    Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason))
 }

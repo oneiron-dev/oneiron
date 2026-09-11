@@ -18,6 +18,7 @@ use crate::blob_artifact::{
 };
 use crate::edit_roundtrip::{EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
+use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::temporal::TimeRange;
@@ -34,7 +35,7 @@ impl Vault {
     /// records the select in the consume-once ledger with a receipt.
     ///
     /// Consume-once: a proposal already settled (select or discard) is refused
-    /// with [`Error::EditProposalAlreadySettled`] before any side effect.
+    /// with [`ArtifactError::EditProposalAlreadySettled`](crate::error::ArtifactError::EditProposalAlreadySettled) before any side effect.
     ///
     /// [`BlobVersionProvenance::AgentRun`]: crate::blob_artifact::BlobVersionProvenance::AgentRun
     pub fn settle_select_edit_proposal(
@@ -80,7 +81,7 @@ impl Vault {
             // committing these bytes would clobber it and replay a stale manifest
             // onto newer anchors.
             if base.content_hash != proposal.base_content_hash {
-                return Err(Error::EditProposalStale);
+                return Err(Error::Artifact(ArtifactError::EditProposalStale));
             }
             let version = self.append_blob_artifact_version_in_txn(
                 wtxn,
@@ -141,7 +142,7 @@ impl Vault {
     /// Nothing is appended to the version chain and no anchor moves.
     ///
     /// Consume-once: a proposal already settled is refused with
-    /// [`Error::EditProposalAlreadySettled`].
+    /// [`ArtifactError::EditProposalAlreadySettled`](crate::error::ArtifactError::EditProposalAlreadySettled).
     pub fn settle_discard_edit_proposal(
         &self,
         artifact_id: &EntityId,
@@ -275,9 +276,9 @@ impl Vault {
                 if self.settle_standing_grant_authorizes(actor, brief_ref)? {
                     Ok(())
                 } else {
-                    Err(Error::SettleNotAuthorized(
+                    Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
                         "no standing actor×artifact.settle×brief grant covers this settle",
-                    ))
+                    )))
                 }
             }
         }
@@ -311,9 +312,9 @@ impl Vault {
                 if covered {
                     Ok(())
                 } else {
-                    Err(Error::SettleNotAuthorized(
+                    Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
                         "no standing actor×artifact.settle×brief grant covers this settle",
-                    ))
+                    )))
                 }
             }
         }
@@ -324,21 +325,21 @@ impl Vault {
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
         if !proposal.validation.ok {
-            return Err(Error::EditRoundtripFailed(
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "proposal failed the corruption gate; a rejected output is never settleable",
-            ));
+            )));
         }
         if proposal.new_bytes.is_empty() {
-            return Err(Error::EditRoundtripFailed(
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "proposal has no bytes to settle",
-            ));
+            )));
         }
         // The op vocabulary and re-anchor replay are spreadsheet-specific, the
         // same gate ARTL-3 applies.
         if !matches!(proposal.format, OfficeFormat::Xlsx) {
-            return Err(Error::InvalidEditManifest(
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
                 "settle supports only xlsx proposals; docx and pptx are not yet supported",
-            ));
+            )));
         }
         Ok(())
     }
@@ -350,9 +351,9 @@ impl Vault {
 /// to it too.
 fn validate_settle_proposal_ref(run_ref: &str) -> Result<()> {
     if run_ref.trim().is_empty() || run_ref.len() > BLOB_ARTIFACT_RUN_REF_MAX_BYTES {
-        return Err(Error::EditRoundtripFailed(
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "proposal run_ref must be non-empty and within the run-ref length bound",
-        ));
+        )));
     }
     secret_scan::scan_metadata_field(run_ref)?;
     Ok(())
