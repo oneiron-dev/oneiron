@@ -8,6 +8,8 @@ use anyhow::Context;
 use oneiron::{HostingPrivacyPosture, SyncConfigField, SyncProtocolValidation};
 use serde::Deserialize;
 
+use super::embedder::{EmbedderConfig, EmbedderProvider};
+use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
@@ -103,6 +105,7 @@ impl EnvConfig {
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
         values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
         values.runtime = lookup_runtime_override(&mut lookup)?;
+        values.embedder = lookup_embedder_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.hosted_kms_key_ref = lookup("ONEIRON_HOSTED_KMS_KEY_REF");
 
@@ -193,6 +196,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
             SyncConfigField::MaxEphemeralSnapshotBytes,
         ));
     }
+    validate_embedder_config(config)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -215,6 +219,86 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+/// Refuses an embedder section that cannot produce a working slot.
+///
+/// The `model_id` grammar is deliberately NOT re-checked here: the vault
+/// enforces it at open, and a second copy of that grammar in this crate is a
+/// place for the two to drift.
+fn validate_embedder_config(config: &ServeConfig) -> anyhow::Result<()> {
+    let Some(embedder) = config.embedder.as_ref() else {
+        return Ok(());
+    };
+    if !embedder.is_active() {
+        return Ok(());
+    }
+    if embedder.dimensions != config.dimensions {
+        anyhow::bail!(
+            "embedder.dimensions ({}) must equal dimensions ({}); one vault holds one embedding space",
+            embedder.dimensions,
+            config.dimensions
+        );
+    }
+    if embedder.batch_size == 0 {
+        anyhow::bail!("embedder.batch_size must be greater than zero");
+    }
+    if embedder.max_input_tokens == 0 {
+        anyhow::bail!("embedder.max_input_tokens must be greater than zero");
+    }
+    match embedder.provider {
+        EmbedderProvider::Endpoint => validate_endpoint_embedder(embedder)?,
+        EmbedderProvider::Local => validate_local_embedder(embedder)?,
+        EmbedderProvider::None => {}
+    }
+    Ok(())
+}
+
+fn validate_endpoint_embedder(embedder: &EmbedderConfig) -> anyhow::Result<()> {
+    if embedder
+        .endpoint
+        .endpoint
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        anyhow::bail!(
+            "embedder.provider = \"endpoint\" requires embedder.endpoint (--embedder-endpoint / ONEIRON_EMBEDDER_ENDPOINT)"
+        );
+    }
+    if embedder.endpoint.timeout_ms == 0 {
+        anyhow::bail!(
+            "embedder.timeout_ms must be greater than zero; a zero timeout refuses every request before it is sent"
+        );
+    }
+    if embedder
+        .endpoint
+        .model_key
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        anyhow::bail!(
+            "embedder.provider = \"endpoint\" requires embedder.model_key (--embedder-model-key / ONEIRON_EMBEDDER_MODEL_KEY)"
+        );
+    }
+    Ok(())
+}
+
+fn validate_local_embedder(embedder: &EmbedderConfig) -> anyhow::Result<()> {
+    // bf16 has no CPU matmul path in candle worth running, so the pairing is
+    // refused while it is still a config error rather than a load failure ten
+    // minutes into a download.
+    if embedder.local.quant == super::embedder::EmbedderQuant::None
+        && embedder.local.device == super::embedder::EmbedderDevice::Cpu
+    {
+        anyhow::bail!(
+            "embedder.quant = \"none\" needs a GPU device; keep quant = \"q8_0\" on a CPU host"
+        );
     }
     Ok(())
 }
@@ -278,6 +362,7 @@ struct FileServeConfig {
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
+    embedder: Option<EmbedderConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
     hosted_kms_key_ref: Option<String>,
 }
@@ -316,6 +401,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: value.runtime,
+            embedder: value.embedder,
             privacy_posture: value.privacy_posture,
             hosted_kms_key_ref: value.hosted_kms_key_ref,
         }
@@ -355,6 +441,7 @@ struct PartialServeConfig {
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
+    embedder: Option<EmbedderConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
     hosted_kms_key_ref: Option<String>,
 }
@@ -411,6 +498,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
+            .field("embedder", &self.embedder)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -515,6 +603,15 @@ impl PartialServeConfig {
         if let Some(value) = self.runtime {
             resolved.runtime.apply_override(value);
         }
+        // Naming any embedder key in any layer is what makes the section
+        // present. Absent everywhere, `resolved.embedder` stays `None` and the
+        // server runs exactly as it did before this key existed.
+        if let Some(value) = self.embedder {
+            resolved
+                .embedder
+                .get_or_insert_with(EmbedderConfig::default)
+                .apply_override(value);
+        }
         if let Some(value) = self.privacy_posture {
             resolved.privacy_posture = value;
         }
@@ -563,10 +660,16 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: runtime_override_from_args(value),
+            embedder: embedder_override_from_args(value),
             privacy_posture: value.privacy_posture,
             hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
         }
     }
+}
+
+fn embedder_override_from_args(args: &ServeArgs) -> Option<EmbedderConfigOverride> {
+    let over = EmbedderConfigOverride::from(&args.embedder);
+    (!over.is_empty()).then_some(over)
 }
 
 fn lookup_runtime_override(
