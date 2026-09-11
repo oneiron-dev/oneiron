@@ -38,8 +38,9 @@ ONE-218 heed vendor), workspace clippy (`-D warnings`, all targets/features), fe
 off a Node host — ONE-1997), `cargo test -p oneiron --lib --no-default-features`,
 and `cargo test --doc --workspace --exclude oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
 script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCFLAGS="-D warnings"
-cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync
---profile full`.
+cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync,test-hooks
+--profile full` (the bare `sync` feature does not build: `sync::selector::tests` calls a
+`test-hooks`-gated helper).
 
 Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh`. Leg coverage is
 narrower than the script: `fmt-clippy` runs the code-map pin, fmt and workspace clippy;
@@ -211,10 +212,11 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
 wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 106 more over-bar
 modules the same way, so a directory module is now the normal shape for anything substantial.
-Three files still sit over the bar and nothing is deferred any more — the `_attribution` block in
-`scripts/ratchet/baseline.json` gives the structural reason for each one. `error.rs` is capped by
-its 1436-line `Error` enum; `voice_cascade/tts_spikes.rs` and `claim/lifecycle.rs` are reasoned
-indivisible. Do not use those three as precedent for a new large file.
+Two files still sit over the bar and nothing is deferred any more — the `_attribution` block in
+`scripts/ratchet/baseline.json` gives the structural reason for each one:
+`voice_cascade/tts_spikes.rs` and `claim/lifecycle.rs` are reasoned indivisible. Do not use
+either as precedent for a new large file. (`error.rs` was the third until ONE-1993 split it;
+see *The error type* below.)
 
 Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
 regenerated deterministically and are the only current answer to "where does X live now".
@@ -231,9 +233,28 @@ gets its own file under the owning module directory:
 
 Never create `utils.rs` or `helpers.rs` — name a file for what it does.
 
+## The error type
+
+`crates/oneiron/src/error/` is a directory module (ONE-1993, `DESIGN-error-enum.md` option B).
+`error/mod.rs` holds `pub enum Error` with the 21 cross-cutting bag variants, `pub enum
+ErrorKind`, `kind()`, `is_retryable`, the two manual `From` impls and the two one-hop `From`
+delegations. The other 203 variants live in twelve per-domain enums, one file each —
+`artifact`, `claim`, `code`, `gate`, `maintenance`, `off_record`, `record`, `registry`, `relay`,
+`secret`, `store`, `sync` — reached from the root through an `#[error(transparent)]` `#[from]`
+wrapper, so Display and `source()` are still the leaf's.
+
+A new variant goes in the domain enum that owns the door it refuses, constructed as
+`Error::Domain(DomainError::Variant ..)`, with its `ErrorKind` twin and a `kind()` arm in that
+domain's `kind()`. It goes in the bag only when it is genuinely cross-cutting (storage, io,
+arithmetic, invariant). `ErrorKind` is the stable persisted surface — its Debug names are
+written to disk as quarantine reason codes and are the server's mapping key — so it stays flat
+and is never renamed or reordered. Each domain enum is `pub` and re-exported from `error`, never
+from the crate root: the root-surface pin stays at 702 names. `kind()` and the moved
+constructors are `pub(crate)`, with public forwarders on `Error`.
+
 `scripts/ratchet/check.sh` ratchets four counters over non-test code — files at or over 800
 lines, `#[allow(` attributes, `println!`/`eprintln!`/`dbg!` calls, and process-global mutable
-statics (baseline 3 / 98 / 91 / 45, `scripts/ratchet/baseline.json`) — and
+statics (baseline 2 / 98 / 91 / 45, `scripts/ratchet/baseline.json`) — and
 `scripts/ratchet/root-surface-check.sh` pins the crate root at exactly the 702 names in
 `scripts/ratchet/root-surface.txt`. A change may lower a
 counter; raising one, or moving the pin, is a reviewed decision stated in the PR, never a
