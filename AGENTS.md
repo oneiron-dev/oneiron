@@ -215,7 +215,7 @@ modules the same way, so a directory module is now the normal shape for anything
 Two files still sit over the bar and nothing is deferred any more — the `_attribution` block in
 `scripts/ratchet/baseline.json` gives the structural reason for each one:
 `voice_cascade/tts_spikes.rs` and `claim/lifecycle.rs` are reasoned indivisible. Do not use
-either as precedent for a new large file. (`error.rs` was the third until ONE-1993 split it;
+either as precedent for a new large file. (`error.rs` was the third until ONE-2001 split it;
 see *The error type* below.)
 
 Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
@@ -235,7 +235,7 @@ Never create `utils.rs` or `helpers.rs` — name a file for what it does.
 
 ## The error type
 
-`crates/oneiron/src/error/` is a directory module (ONE-1993, `DESIGN-error-enum.md` option B).
+`crates/oneiron/src/error/` is a directory module (ONE-2001, `DESIGN-error-enum.md` option B).
 `error/mod.rs` holds `pub enum Error` with the 21 cross-cutting bag variants, `pub enum
 ErrorKind`, `kind()`, `is_retryable`, the two manual `From` impls and the two one-hop `From`
 delegations. The other 203 variants live in twelve per-domain enums, one file each —
