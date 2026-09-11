@@ -4,6 +4,7 @@ use super::ingest::{read_asset_blob, validate_manifest_path, validate_project_id
 use super::repo_ref::{RepoRef, normalize_commit_hash, validate_normalized_commit_hash};
 use crate::Vault;
 use crate::entity_id::EntityId;
+use crate::error::CodeError;
 use crate::error::{Error, Result};
 use rmpv::Value;
 
@@ -205,21 +206,24 @@ pub fn encode_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<Vec<u8>> 
 
 pub fn decode_codebase_snapshot(bytes: &[u8]) -> Result<CodebaseSnapshot> {
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidCodebaseSnapshotBody("snapshot is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "snapshot is not valid MessagePack",
+        ))
+    })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "trailing bytes after snapshot map",
-        ));
+        )));
     }
     decode_codebase_snapshot_value(&value)
 }
 
 fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "snapshot must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut project_id: Option<String> = None;
@@ -232,44 +236,52 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "snapshot keys must be strings",
-            ));
+            )));
         };
         let Some(index) = CODEBASE_SNAPSHOT_BODY_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "snapshot key is not in the pinned CODEBASE_SNAPSHOT_BODY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodebaseSnapshotBody("duplicate snapshot key"));
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "duplicate snapshot key",
+            )));
         }
         seen[index] = true;
 
         match CODEBASE_SNAPSHOT_BODY_KEYS[index] {
             KEY_PROJECT_ID => {
-                let text = value.as_str().ok_or(Error::InvalidCodebaseSnapshotBody(
-                    "project_id must be a UTF-8 string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                            "project_id must be a UTF-8 string",
+                        )))?;
                 validate_project_id(text)?;
                 project_id = Some(text.to_owned());
             }
             KEY_REPO_REF => {
-                let text = value.as_str().ok_or(Error::InvalidCodebaseSnapshotBody(
-                    "repo_ref must be a UTF-8 string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                            "repo_ref must be a UTF-8 string",
+                        )))?;
                 repo_ref = Some(RepoRef::parse(text)?);
             }
             KEY_COMMIT_HASH => {
                 commit_hash = Some(match value {
                     Value::Nil => None,
                     _ => Some(normalize_commit_hash(value.as_str().ok_or(
-                        Error::InvalidCodebaseSnapshotBody(
+                        Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                             "commit_hash must be null or a UTF-8 string",
-                        ),
+                        )),
                     )?)?),
                 });
             }
@@ -287,9 +299,9 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
             }
             KEY_FILES => {
                 let Value::Array(values) = value else {
-                    return Err(Error::InvalidCodebaseSnapshotBody(
+                    return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                         "files must be a MessagePack array",
-                    ));
+                    )));
                 };
                 files = Some(
                     values
@@ -303,34 +315,34 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
     }
 
     let mut snapshot = CodebaseSnapshot {
-        project_id: project_id.ok_or(Error::InvalidCodebaseSnapshotBody(
+        project_id: project_id.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required snapshot key project_id",
-        ))?,
-        repo_ref: repo_ref.ok_or(Error::InvalidCodebaseSnapshotBody(
+        )))?,
+        repo_ref: repo_ref.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required snapshot key repo_ref",
-        ))?,
-        commit_hash: commit_hash.ok_or(Error::InvalidCodebaseSnapshotBody(
+        )))?,
+        commit_hash: commit_hash.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required snapshot key commit_hash",
-        ))?,
+        )))?,
         fork_hash: [0; CODEBASE_FORK_HASH_LEN],
         scope_key: [0; CODEBASE_SCOPE_KEY_LEN],
-        files: files.ok_or(Error::InvalidCodebaseSnapshotBody(
+        files: files.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required snapshot key files",
-        ))?,
+        )))?,
     };
     let expected_fork_hash = codebase_fork_hash(&snapshot.files)?;
     let expected_scope_key = codebase_scope_key(&snapshot.project_id, &snapshot.repo_ref)?;
     snapshot.fork_hash = fork_hash.unwrap_or(expected_fork_hash);
     snapshot.scope_key = scope_key.unwrap_or(expected_scope_key);
     if snapshot.fork_hash != expected_fork_hash {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "fork_hash must match the file manifest",
-        ));
+        )));
     }
     if snapshot.scope_key != expected_scope_key {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "scope_key must match project_id and repo_ref",
-        ));
+        )));
     }
     validate_codebase_snapshot(&snapshot)?;
     Ok(snapshot)
@@ -338,9 +350,9 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
 
 fn decode_codebase_file_entry(value: &Value) -> Result<CodebaseFileEntry> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "file entry must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut path: Option<String> = None;
@@ -350,46 +362,53 @@ fn decode_codebase_file_entry(value: &Value) -> Result<CodebaseFileEntry> {
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "file entry keys must be strings",
-            ));
+            )));
         };
         let Some(index) = CODEBASE_FILE_ENTRY_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "file entry key is not in the pinned CODEBASE_FILE_ENTRY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "duplicate file entry key",
-            ));
+            )));
         }
         seen[index] = true;
 
         match CODEBASE_FILE_ENTRY_KEYS[index] {
             KEY_FILE_PATH => {
-                let text = value.as_str().ok_or(Error::InvalidCodebaseSnapshotBody(
-                    "file path must be a UTF-8 string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                            "file path must be a UTF-8 string",
+                        )))?;
                 validate_manifest_path(text)?;
                 path = Some(text.to_owned());
             }
             KEY_FILE_CONTENT_HASH => {
                 let Value::Binary(bytes) = value else {
-                    return Err(Error::InvalidCodebaseSnapshotBody(
+                    return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                         "content_hash must be MessagePack binary",
-                    ));
+                    )));
                 };
                 content_hash = Some(bytes.as_slice().try_into().map_err(|_| {
-                    Error::InvalidCodebaseSnapshotBody("content_hash must be 32-byte binary")
+                    Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                        "content_hash must be 32-byte binary",
+                    ))
                 })?);
             }
             KEY_FILE_SIZE_BYTES => {
-                size_bytes = Some(value.as_u64().ok_or(Error::InvalidCodebaseSnapshotBody(
-                    "size_bytes must be an unsigned integer",
+                size_bytes = Some(value.as_u64().ok_or(Error::Code(
+                    CodeError::InvalidCodebaseSnapshotBody(
+                        "size_bytes must be an unsigned integer",
+                    ),
                 ))?);
             }
             _ => unreachable!("index resolved from CODEBASE_FILE_ENTRY_KEYS"),
@@ -397,15 +416,15 @@ fn decode_codebase_file_entry(value: &Value) -> Result<CodebaseFileEntry> {
     }
 
     Ok(CodebaseFileEntry {
-        path: path.ok_or(Error::InvalidCodebaseSnapshotBody(
+        path: path.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required file entry key path",
-        ))?,
-        content_hash: content_hash.ok_or(Error::InvalidCodebaseSnapshotBody(
+        )))?,
+        content_hash: content_hash.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required file entry key content_hash",
-        ))?,
-        size_bytes: size_bytes.ok_or(Error::InvalidCodebaseSnapshotBody(
+        )))?,
+        size_bytes: size_bytes.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required file entry key size_bytes",
-        ))?,
+        )))?,
     })
 }
 
@@ -413,9 +432,9 @@ pub(super) fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<
     validate_project_id(&snapshot.project_id)?;
     let canonical_repo_ref = snapshot.repo_ref.canonical();
     if RepoRef::parse(&canonical_repo_ref)? != snapshot.repo_ref {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "repo_ref must be a canonical v1 repo_ref",
-        ));
+        )));
     }
     if let Some(commit_hash) = &snapshot.commit_hash {
         validate_normalized_commit_hash(commit_hash)?;
@@ -423,24 +442,24 @@ pub(super) fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<
     if let Some(repo_commit) = snapshot.repo_ref.commit_hash()
         && snapshot.commit_hash.as_deref() != Some(repo_commit)
     {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "repo_ref commit must match snapshot commit_hash",
-        ));
+        )));
     }
     if snapshot.fork_hash != codebase_fork_hash(&snapshot.files)? {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "fork_hash must match the file manifest",
-        ));
+        )));
     }
     if snapshot.scope_key != codebase_scope_key(&snapshot.project_id, &snapshot.repo_ref)? {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "scope_key must match project_id and repo_ref",
-        ));
+        )));
     }
     if snapshot.files.len() > CODEBASE_SNAPSHOT_MAX_FILES {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "file manifest exceeds 100000 entries",
-        ));
+        )));
     }
 
     let mut previous: Option<&str> = None;
@@ -449,9 +468,9 @@ pub(super) fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<
         if let Some(prev) = previous
             && prev >= entry.path.as_str()
         {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "file manifest paths must be sorted and unique",
-            ));
+            )));
         }
         previous = Some(entry.path.as_str());
     }
@@ -460,12 +479,12 @@ pub(super) fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<
 
 fn hash_from_value<const N: usize>(value: &Value, context: &'static str) -> Result<[u8; N]> {
     let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidCodebaseSnapshotBody(context));
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(context)));
     };
     bytes
         .as_slice()
         .try_into()
-        .map_err(|_| Error::InvalidCodebaseSnapshotBody(context))
+        .map_err(|_| Error::Code(CodeError::InvalidCodebaseSnapshotBody(context)))
 }
 
 fn codebase_fork_hash(files: &[CodebaseFileEntry]) -> Result<CodebaseForkHash> {
@@ -510,12 +529,12 @@ pub(super) fn validate_bounded_text(
     context: &'static str,
 ) -> Result<()> {
     if text.is_empty() || text.len() > max_bytes {
-        return Err(Error::InvalidCodebaseSnapshotBody(context));
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(context)));
     }
     if text.chars().any(char::is_control) {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "text fields must not contain control characters",
-        ));
+        )));
     }
     Ok(())
 }

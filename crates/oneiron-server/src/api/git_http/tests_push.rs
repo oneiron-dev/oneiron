@@ -242,11 +242,13 @@ mod tests {
     #[tokio::test]
     async fn git_http_internal_failure_text_never_reaches_the_client() {
         for error in [
-            oneiron::Error::ReceivePackLandingRefused {
+            oneiron::Error::Code(oneiron::error::CodeError::ReceivePackLandingRefused {
                 reason: "/private/vault/data.mdb secret".to_owned(),
-            },
+            }),
             oneiron::Error::ConcurrentWrite("/private/vault/data.mdb secret"),
-            oneiron::Error::RepoMutationFailed("/private/vault/data.mdb secret".to_owned()),
+            oneiron::Error::Code(oneiron::error::CodeError::RepoMutationFailed(
+                "/private/vault/data.mdb secret".to_owned(),
+            )),
             oneiron::Error::InvariantViolation("/private/vault/data.mdb secret"),
         ] {
             let response = serve_failure(Ok(Err(error)));
@@ -272,9 +274,11 @@ mod tests {
         let refused = landed_response(
             Some(receive_pack_head()),
             receive_pack_report(),
-            Ok(Err(oneiron::Error::ReceivePackLandingRefused {
-                reason: "publication conflicted".to_owned(),
-            })),
+            Ok(Err(oneiron::Error::Code(
+                oneiron::error::CodeError::ReceivePackLandingRefused {
+                    reason: "publication conflicted".to_owned(),
+                },
+            ))),
         );
         assert_eq!(
             refused.status(),

@@ -1,7 +1,7 @@
 //! RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization.
 
 use super::snapshot::{CODEBASE_FILE_PATH_MAX_BYTES, validate_bounded_text};
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 
 pub const CODEBASE_REPO_REF_MAX_BYTES: usize = 1024;
 
@@ -29,9 +29,9 @@ impl RepoRef {
             "repo_ref must be non-empty and at most 1024 bytes",
         )?;
         if input.trim() != input {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "repo_ref must not have leading or trailing whitespace",
-            ));
+            )));
         }
 
         if let Some(path) = input.strip_prefix("local:") {
@@ -57,14 +57,14 @@ impl RepoRef {
             "TASK_LIST repoUrl must be non-empty and at most 1024 bytes",
         )?;
         if repo_url.trim() != repo_url {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "TASK_LIST repoUrl must not have leading or trailing whitespace",
-            ));
+            )));
         }
         if repo_url.contains('#') {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "TASK_LIST repoUrl migration requires commit_ref separately",
-            ));
+            )));
         }
         let commit = normalize_commit_hash(commit_ref)?;
         Self::parse(&format!("{repo_url}#{commit}"))
@@ -94,11 +94,12 @@ impl RepoRef {
 }
 
 fn parse_local_repo_ref(input: &str) -> Result<RepoRef> {
-    let (path, commit) = input
-        .split_once('#')
-        .ok_or(Error::InvalidCodebaseSnapshotBody(
-            "local repo_ref must include #<40-hex-commit>",
-        ))?;
+    let (path, commit) =
+        input
+            .split_once('#')
+            .ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "local repo_ref must include #<40-hex-commit>",
+            )))?;
     let commit = normalize_commit_hash(commit)?;
     validate_bounded_text(
         path,
@@ -106,9 +107,9 @@ fn parse_local_repo_ref(input: &str) -> Result<RepoRef> {
         "local repo_ref path must be non-empty and at most 4096 bytes",
     )?;
     if path.trim() != path {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "local repo_ref path must not have leading or trailing whitespace",
-        ));
+        )));
     }
     Ok(RepoRef::LocalFolder {
         path: path.to_owned(),
@@ -122,11 +123,11 @@ fn parse_github_repo_ref(input: &str) -> Result<RepoRef> {
         .or_else(|| input.strip_prefix("http://github.com/"))
         .or_else(|| input.strip_prefix("git@github.com:"))
         .unwrap_or(input);
-    let (repo_path, commit) = rest
-        .split_once('#')
-        .ok_or(Error::InvalidCodebaseSnapshotBody(
-            "GitHub repo_ref must include #<40-hex-commit>",
-        ))?;
+    let (repo_path, commit) =
+        rest.split_once('#')
+            .ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "GitHub repo_ref must include #<40-hex-commit>",
+            )))?;
     let commit = normalize_commit_hash(commit)?;
 
     let repo_path = repo_path.trim_end_matches(".git");
@@ -134,9 +135,9 @@ fn parse_github_repo_ref(input: &str) -> Result<RepoRef> {
     let owner = parts.next().unwrap_or_default();
     let repo = parts.next().unwrap_or_default();
     if parts.next().is_some() || owner.is_empty() || repo.is_empty() {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "GitHub repo_ref must identify owner/repo",
-        ));
+        )));
     }
     validate_github_segment(owner, "GitHub owner")?;
     validate_github_segment(repo, "GitHub repo")?;
@@ -153,7 +154,7 @@ fn validate_github_segment(segment: &str, context: &'static str) -> Result<()> {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
     {
-        return Err(Error::InvalidCodebaseSnapshotBody(context));
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(context)));
     }
     Ok(())
 }
@@ -162,18 +163,18 @@ pub(super) fn normalize_commit_hash(input: impl AsRef<str>) -> Result<String> {
     let input = input.as_ref();
     if input.len() != CODEBASE_COMMIT_HASH_HEX_LEN || !input.bytes().all(|b| b.is_ascii_hexdigit())
     {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "commit hash must be 40 hexadecimal characters",
-        ));
+        )));
     }
     Ok(input.to_ascii_lowercase())
 }
 
 pub(super) fn validate_normalized_commit_hash(input: &str) -> Result<()> {
     if normalize_commit_hash(input)? != input {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "commit hash must use lowercase hexadecimal",
-        ));
+        )));
     }
     Ok(())
 }

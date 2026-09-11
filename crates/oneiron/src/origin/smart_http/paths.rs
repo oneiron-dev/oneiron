@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::Vault;
 use crate::credential_door::CredentialDoorError;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 
 /// Directory under the vault root that holds the served bare repositories.
 /// It is the `GIT_PROJECT_ROOT` of every serve invocation.
@@ -116,17 +116,17 @@ pub(super) fn now_secs() -> u64 {
 }
 
 pub(super) fn serve_failed(reason: impl Into<String>) -> Error {
-    Error::GitHttpServeFailed {
+    Error::Code(CodeError::GitHttpServeFailed {
         reason: reason.into(),
-    }
+    })
 }
 
 /// Carries a door refusal out through the crate error surface without ever
 /// carrying a secret: the door's messages name paths and reason codes only.
 pub(super) fn door_refused(error: &CredentialDoorError) -> Error {
-    Error::ReceivePackDoorRejected {
+    Error::Code(CodeError::ReceivePackDoorRejected {
         reason: error.to_string(),
-    }
+    })
 }
 
 /// Validates a repository name from the route.
@@ -137,22 +137,22 @@ pub(super) fn door_refused(error: &CredentialDoorError) -> Error {
 /// repository directory directly under the serving root.
 pub fn validate_repo_name(name: &str) -> Result<()> {
     if name.is_empty() || name.len() > ORIGIN_MAX_REPO_NAME_BYTES {
-        return Err(Error::GitHttpInvalidRepoName(
+        return Err(Error::Code(CodeError::GitHttpInvalidRepoName(
             "origin repo name must be non-empty and at most 100 bytes",
-        ));
+        )));
     }
     if name.starts_with('.') {
-        return Err(Error::GitHttpInvalidRepoName(
+        return Err(Error::Code(CodeError::GitHttpInvalidRepoName(
             "origin repo name must not start with a dot",
-        ));
+        )));
     }
     let shaped = name
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
     if !shaped {
-        return Err(Error::GitHttpInvalidRepoName(
+        return Err(Error::Code(CodeError::GitHttpInvalidRepoName(
             "origin repo name must be [A-Za-z0-9._-]",
-        ));
+        )));
     }
     Ok(())
 }
@@ -181,15 +181,15 @@ pub fn origin_repo_dir(vault: &Vault, repo_name: &str) -> Result<PathBuf> {
     let root = origin_serving_root(vault)?;
     let dir = root.join(format!("{repo_name}{ORIGIN_REPO_DIR_SUFFIX}"));
     if !dir.is_dir() {
-        return Err(Error::GitHttpRepoNotFound {
+        return Err(Error::Code(CodeError::GitHttpRepoNotFound {
             repo: repo_name.to_owned(),
-        });
+        }));
     }
     let dir = dir.canonicalize()?;
     if !dir.starts_with(&root) {
-        return Err(Error::GitHttpInvalidRepoName(
+        return Err(Error::Code(CodeError::GitHttpInvalidRepoName(
             "origin repo path escapes the serving root",
-        ));
+        )));
     }
     Ok(dir)
 }

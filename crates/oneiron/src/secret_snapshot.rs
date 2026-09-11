@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::batch::secret_scan;
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
+use crate::error::CodeError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_custody::read_secret_custody_in_txn;
@@ -194,8 +195,11 @@ pub(crate) fn custody_key(fork_hash: &[u8; 32]) -> Vec<u8> {
 }
 
 pub(crate) fn encode_report(report: &SnapshotCustodyReport) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(report)
-        .map_err(|_| Error::InvalidCodebaseSnapshotBody("encode custody report"))
+    rmp_serde::to_vec_named(report).map_err(|_| {
+        Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "encode custody report",
+        ))
+    })
 }
 
 fn suggested_secret_name(path: &str) -> String {

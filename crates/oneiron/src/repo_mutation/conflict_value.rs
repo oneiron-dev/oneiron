@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::git::{validate_git_object_hash, validate_git_ref_label, validate_relative_repo_path};
+use crate::error::CodeError;
 
 pub const REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION: u8 = 1;
 pub const REPO_CONFLICT_OPEN_VALUE_KEYS: [&str; 8] = [
@@ -58,9 +59,9 @@ pub(super) fn normalize_repo_conflict_paths(paths: Vec<String>) -> Result<Vec<St
         validate_relative_repo_path(&path)?;
         normalized.insert(path);
         if normalized.len() > MAX_REPO_CONFLICT_PATHS {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo conflict path list exceeds max count",
-            ));
+            )));
         }
     }
     Ok(normalized.into_iter().collect())
@@ -355,7 +356,7 @@ fn string_array_field(map: &HashMap<&str, &Value>, key: &str) -> Result<Vec<Stri
         paths.push(path.to_owned());
     }
     normalize_repo_conflict_paths(paths).map_err(|error| match error {
-        Error::InvalidRepoMutationRecord(_) => {
+        Error::Code(CodeError::InvalidRepoMutationRecord(_)) => {
             Error::InvalidClaimBody("repo conflict path is invalid")
         }
         other => other,

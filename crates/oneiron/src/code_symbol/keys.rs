@@ -16,6 +16,7 @@ use super::types::{
 use super::validate::{
     compare_chunks, validate_chunk, validate_manifest_path, validate_symbol_shape, validate_text,
 };
+use crate::error::CodeError;
 
 pub(super) const CODE_SYMBOL_MANIFEST_KEY_PREFIX: &[u8] = b"code_symbol:manifest:v1:";
 
@@ -47,9 +48,9 @@ pub fn derive_symbol_fingerprint(
     validate_text(name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
     validate_text(kind, CODE_SYMBOL_KIND_MAX_BYTES, "symbol kind")?;
     if chunks.is_empty() {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol fingerprint requires at least one chunk",
-        ));
+        )));
     }
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.code_symbol.fingerprint.v1\0");
@@ -61,9 +62,9 @@ pub fn derive_symbol_fingerprint(
     for chunk in chunks {
         validate_chunk(chunk)?;
         if chunk.path != path {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "symbol revision chunk path must match symbol path",
-            ));
+            )));
         }
         hash_text_field(&mut hasher, &chunk.path);
         hasher.update(chunk.start_line.to_le_bytes());

@@ -15,6 +15,7 @@ use oneiron::deletion::DeleteReason;
 use oneiron::dreamer_consolidation::{
     ConsolidationEvidenceEnvelope, decode_consolidation_evidence, encode_consolidation_evidence,
 };
+use oneiron::error::CodeError;
 use oneiron::error::GateError;
 use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::{
@@ -365,7 +366,10 @@ fn missing_run_id_never_reaches_gate() {
             2,
         )))
         .unwrap_err();
-    assert!(matches!(error, Error::CodeEmissionMissingDreamerRunId));
+    assert!(matches!(
+        error,
+        Error::Code(CodeError::CodeEmissionMissingDreamerRunId)
+    ));
     assert_eq!(vault.gate_decisions(100).unwrap(), before_rows);
     assert_eq!(vault.pending_gate_consents(10).unwrap(), before_pending);
     assert!(vault.get_claim(&id(0x43)).unwrap().is_none());
@@ -392,7 +396,10 @@ fn review_context_authoring_id_must_match_emission() {
             2,
         )))
         .unwrap_err();
-    assert!(matches!(error, Error::CodeReviewAuthoringRunIdMismatch));
+    assert!(matches!(
+        error,
+        Error::Code(CodeError::CodeReviewAuthoringRunIdMismatch)
+    ));
     assert_eq!(vault.gate_decisions(100).unwrap(), rows);
     assert!(vault.get_claim(&id(0x54)).unwrap().is_none());
 }
@@ -1082,7 +1089,10 @@ fn review_lane_rejects_non_candidate_operations() {
         )),
     ] {
         let error = dispatch.dispatch(call).unwrap_err();
-        assert!(matches!(error, Error::CodeReviewUnsupportedOperation));
+        assert!(matches!(
+            error,
+            Error::Code(CodeError::CodeReviewUnsupportedOperation)
+        ));
     }
     assert_eq!(vault.gate_decisions(100).unwrap(), rows);
     assert_eq!(vault.pending_gate_consents(10).unwrap(), pending);

@@ -188,11 +188,16 @@ pub(super) fn serve_failure(
             StatusCode::INTERNAL_SERVER_ERROR,
             "git smart-http produced no response".to_owned(),
         ),
-        Ok(Err(oneiron::Error::ReceivePackLandingRefused { .. })) => (
+        Ok(Err(oneiron::Error::Code(oneiron::error::CodeError::ReceivePackLandingRefused {
+            ..
+        }))) => (
             StatusCode::CONFLICT,
             "git publication refused; ref effects may be partial".to_owned(),
         ),
-        Ok(Err(oneiron::Error::ConcurrentWrite(_) | oneiron::Error::RepoMutationFailed(_))) => (
+        Ok(Err(
+            oneiron::Error::ConcurrentWrite(_)
+            | oneiron::Error::Code(oneiron::error::CodeError::RepoMutationFailed(_)),
+        )) => (
             StatusCode::SERVICE_UNAVAILABLE,
             "git publication is pending; ref effects may be partial; retry to recover".to_owned(),
         ),

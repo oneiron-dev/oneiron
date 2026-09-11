@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::git_wire::{redact_bridged_failure, run_bridged_git_argv};
 
 use super::support::{path_arg, truncate_failure, utf8_trimmed};
+use crate::error::CodeError;
 
 const MAX_COMMIT_MESSAGE_BYTES: usize = 4096;
 const MAX_BASE_REF_BYTES: usize = 256;
@@ -27,9 +28,9 @@ pub(super) fn git_common_dir(repo_root: &Path) -> Result<PathBuf> {
 
 pub(super) fn resolve_mutable_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
     let RepoRef::LocalFolder { path, .. } = repo_ref else {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "only local repo_refs can be mutated",
-        ));
+        )));
     };
     let output = run_git_at_path(
         Path::new(path),
@@ -41,15 +42,15 @@ pub(super) fn resolve_mutable_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
 
 pub(super) fn canonical_repo_ref_for_root(repo_ref: &RepoRef, repo_root: &Path) -> Result<RepoRef> {
     let RepoRef::LocalFolder { commit, .. } = repo_ref else {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "only local repo_refs can be mutated",
-        ));
+        )));
     };
     let path = repo_root
         .to_str()
-        .ok_or(Error::InvalidRepoMutationRecord(
+        .ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
             "local repo path must be UTF-8",
-        ))?
+        )))?
         .to_owned();
     Ok(RepoRef::LocalFolder {
         path,
@@ -71,61 +72,61 @@ pub(super) fn current_head_commit(repo_root: &Path) -> Result<String> {
     if commit.len() != CODEBASE_COMMIT_HASH_HEX_LEN
         || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "git HEAD commit must be a 40-hex hash",
-        ));
+        )));
     }
     Ok(commit.to_ascii_lowercase())
 }
 
 pub(super) fn validate_relative_repo_path(path: &str) -> Result<()> {
     if path.is_empty() || path.len() > CODEBASE_FILE_PATH_MAX_BYTES {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo mutation path must be non-empty and at most 4096 bytes",
-        ));
+        )));
     }
     if path.contains('\\') {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo mutation path must use forward slashes",
-        ));
+        )));
     }
     let parsed = Path::new(path);
     if parsed.is_absolute() {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo mutation path must be repository-relative",
-        ));
+        )));
     }
     let mut has_component = false;
     for component in parsed.components() {
         match component {
             Component::Normal(part) => {
                 if part == OsStr::new(".git") {
-                    return Err(Error::InvalidRepoMutationRecord(
+                    return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                         "repo mutation path must not target .git",
-                    ));
+                    )));
                 }
                 has_component = true;
             }
             _ => {
-                return Err(Error::InvalidRepoMutationRecord(
+                return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                     "repo mutation path must not contain . or .. components",
-                ));
+                )));
             }
         }
     }
     if !has_component {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo mutation path must contain a file component",
-        ));
+        )));
     }
     Ok(())
 }
 
 pub(super) fn validate_commit_message(message: &str) -> Result<()> {
     if message.is_empty() || message.len() > MAX_COMMIT_MESSAGE_BYTES || message.contains('\0') {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "commit message must be non-empty, bounded, and contain no NUL",
-        ));
+        )));
     }
     Ok(())
 }
@@ -136,9 +137,9 @@ pub(super) fn validate_base_ref(base_ref: &str) -> Result<()> {
         || base_ref.contains('\0')
         || base_ref.starts_with('-')
     {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "worktree base ref must be non-empty, bounded, contain no NUL, and not start with '-'",
-        ));
+        )));
     }
     Ok(())
 }
@@ -153,15 +154,15 @@ pub(super) fn validate_git_ref_label(label: &str) -> Result<()> {
         || label.ends_with(".lock")
         || label.bytes().any(|byte| byte.is_ascii_control())
     {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "git ref label must be a safe branch/ref label",
-        ));
+        )));
     }
     for part in label.split('/') {
         if part.is_empty() || part == "." || part.ends_with(".lock") {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "git ref label must be a safe branch/ref label",
-            ));
+            )));
         }
     }
     Ok(())
@@ -171,16 +172,16 @@ pub(super) fn validate_git_object_hash(hash: &str, context: &'static str) -> Res
     if hash.len() != CODEBASE_COMMIT_HASH_HEX_LEN
         || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err(Error::InvalidRepoMutationRecord(context));
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(context)));
     }
     Ok(())
 }
 
 pub(super) fn validate_worktree_path(path: &Path) -> Result<()> {
     if path.as_os_str().is_empty() {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "worktree path must be non-empty",
-        ));
+        )));
     }
     path_arg(path)?;
     Ok(())
@@ -218,9 +219,9 @@ pub(super) fn run_git_allow_exit_codes(
     if output.success && allowed_codes.contains(&0) {
         return Ok(output.stdout);
     }
-    Err(Error::InvalidRepoMutationRecord(
+    Err(Error::Code(CodeError::InvalidRepoMutationRecord(
         "git command failed with an unexpected exit code",
-    ))
+    )))
 }
 
 pub(super) fn run_git_at_path(path: &Path, args: &[String]) -> Result<Vec<u8>> {
@@ -228,10 +229,8 @@ pub(super) fn run_git_at_path(path: &Path, args: &[String]) -> Result<Vec<u8>> {
     if output.success {
         return Ok(output.stdout);
     }
-    Err(Error::RepoMutationFailed(format_git_failure(
-        args,
-        output.exit_code,
-        &output.stderr,
+    Err(Error::Code(CodeError::RepoMutationFailed(
+        format_git_failure(args, output.exit_code, &output.stderr),
     )))
 }
 

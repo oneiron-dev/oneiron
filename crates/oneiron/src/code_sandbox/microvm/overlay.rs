@@ -15,6 +15,7 @@ use crate::{EntityId, Error, Result};
 
 use super::backend::backend_error;
 use super::handle::MicroVmHandle;
+use crate::error::CodeError;
 
 /// Provisions the overlay + egress layout every backend shares.
 ///
@@ -23,7 +24,7 @@ use super::handle::MicroVmHandle;
 ///
 /// # Errors
 ///
-/// Returns [`Error::MicroVmBackendError`] when the contract is not
+/// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when the contract is not
 /// propose-only or the overlay directory cannot be created.
 pub fn prepare_overlay_handle(
     root: &Path,
@@ -170,7 +171,7 @@ pub(super) struct OverlayWalkBounds {
 ///
 /// # Errors
 ///
-/// Returns [`Error::MicroVmOverlayError`] when the overlay root is missing or
+/// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) when the overlay root is missing or
 /// invalid, an entry vanishes during traversal, a resource bound is exceeded,
 /// or an entry has a non-UTF-8 name, is a symlink, or is not a plain file.
 pub fn collect_overlay_writes(
@@ -344,7 +345,7 @@ pub(super) fn overlay_io_detail(class: &str, error: &std::io::Error) -> String {
 }
 
 pub(super) fn overlay_error(detail: impl Into<String>) -> Error {
-    Error::MicroVmOverlayError {
+    Error::Code(CodeError::MicroVmOverlayError {
         detail: detail.into(),
-    }
+    })
 }

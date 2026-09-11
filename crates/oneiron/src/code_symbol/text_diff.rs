@@ -10,6 +10,7 @@ use super::rust_source::{
 };
 use super::types::{CodeChunk, CodeEmbeddingInput, CodeEmbeddingVector, CodeSymbolRevision};
 use super::validate::{validate_manifest_path, validate_symbol_indexes};
+use crate::error::CodeError;
 
 pub fn derive_code_chunks_from_text_diff(
     path: &str,
@@ -157,8 +158,11 @@ pub(super) fn subtract_line_range(ranges: &mut Vec<Range<usize>>, covered: Range
 }
 
 pub(super) fn source_end_line(source: &str) -> Result<u32> {
-    u32::try_from(source.lines().count().max(1))
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("line number exceeds u32"))
+    u32::try_from(source.lines().count().max(1)).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "line number exceeds u32",
+        ))
+    })
 }
 
 fn changed_equal_length_chunks(
@@ -193,13 +197,19 @@ pub(super) fn chunk_for_line_range(
     end: usize,
     source_text: &str,
 ) -> Result<CodeChunk> {
-    let line_number = u32::try_from(start + 1)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("line number exceeds u32"))?;
+    let line_number = u32::try_from(start + 1).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "line number exceeds u32",
+        ))
+    })?;
     if start == end {
         return CodeChunk::from_text(path, line_number, line_number, "");
     }
-    let end_line = u32::try_from(end)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("line number exceeds u32"))?;
+    let end_line = u32::try_from(end).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "line number exceeds u32",
+        ))
+    })?;
     let mut text = lines[start..end].join("\n");
     if end == lines.len() && source_text.ends_with('\n') {
         text.push('\n');
@@ -216,13 +226,16 @@ pub(super) fn symbol_line_range(
     let mut end_line = 0_u32;
     for index in &symbol.chunk_indexes {
         let index = usize::try_from(*index).map_err(|_| {
-            Error::InvalidCodeSymbolManifestBody("symbol chunk index exceeds usize")
+            Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                "symbol chunk index exceeds usize",
+            ))
         })?;
-        let chunk = chunks
-            .get(index)
-            .ok_or(Error::InvalidCodeSymbolManifestBody(
-                "symbol chunk index is out of bounds",
-            ))?;
+        let chunk =
+            chunks
+                .get(index)
+                .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                    "symbol chunk index is out of bounds",
+                )))?;
         start_line = start_line.min(chunk.start_line);
         end_line = end_line.max(chunk.end_line);
     }

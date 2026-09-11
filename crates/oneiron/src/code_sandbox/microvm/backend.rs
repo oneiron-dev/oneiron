@@ -13,6 +13,7 @@ use super::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};
 use super::overlay::{
     collect_overlay_writes, overlay_error, overlay_io_detail, prepare_overlay_handle,
 };
+use crate::error::CodeError;
 
 /// Virtualization backend able to run one propose-only guest.
 pub trait MicroVmBackend: Send + Sync {
@@ -23,7 +24,7 @@ pub trait MicroVmBackend: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmBackendError`] when provisioning fails or the
+    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when provisioning fails or the
     /// contract is not a propose-only one.
     fn prepare(
         &self,
@@ -35,7 +36,7 @@ pub trait MicroVmBackend: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmBackendError`] when the VM is unknown, the
+    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when the VM is unknown, the
     /// budget is unbounded, the image is incomplete, or the guest cannot boot.
     fn run(
         &self,
@@ -48,7 +49,7 @@ pub trait MicroVmBackend: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmOverlayError`] when the overlay cannot be read
+    /// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) when the overlay cannot be read
     /// or contains an entry that is not a plain file.
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>>;
 
@@ -56,7 +57,7 @@ pub trait MicroVmBackend: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmBackendError`] when the VM has no egress
+    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when the VM has no egress
     /// channel this backend can bind.
     fn proxy_credentials(
         &self,
@@ -109,7 +110,7 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
 ///
 /// # Errors
 ///
-/// Returns [`Error::MicroVmBackendUnavailable`] when the tier needs isolation
+/// Returns [`CodeError::MicroVmBackendUnavailable`](crate::error::CodeError::MicroVmBackendUnavailable) when the tier needs isolation
 /// and no backend is compiled in or detected.
 pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn MicroVmBackend>>> {
     match tier {
@@ -145,9 +146,9 @@ fn select_isolating_backend(tier: SandboxGuestTier) -> Result<Box<dyn MicroVmBac
 
 #[cfg(any(test, all(not(debug_assertions), not(feature = "microvm-dev"))))]
 pub(super) fn backend_unavailable(tier: SandboxGuestTier) -> Error {
-    Error::MicroVmBackendUnavailable {
+    Error::Code(CodeError::MicroVmBackendUnavailable {
         tier: tier.as_str(),
-    }
+    })
 }
 
 #[cfg(feature = "microvm-firecracker")]
@@ -317,8 +318,8 @@ impl fmt::Debug for DevProcessBackend {
 }
 
 pub(super) fn backend_error(backend: &'static str, detail: impl Into<String>) -> Error {
-    Error::MicroVmBackendError {
+    Error::Code(CodeError::MicroVmBackendError {
         backend,
         detail: detail.into(),
-    }
+    })
 }

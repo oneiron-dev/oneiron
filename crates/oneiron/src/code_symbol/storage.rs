@@ -36,6 +36,7 @@ use super::validate::{
     scan_code_symbol_manifest_metadata, validate_code_symbol_graph_edge,
     validate_code_symbol_manifest, validate_manifest_path, validate_text,
 };
+use crate::error::CodeError;
 
 impl Vault {
     pub fn put_code_symbol_manifest(
@@ -203,9 +204,9 @@ impl Vault {
             {
                 let manifest = decode_code_symbol_manifest(&raw)?;
                 if manifest.repo_ref != *repo_ref {
-                    return Err(Error::InvalidCodeSymbolManifestBody(
+                    return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                         "symbol revision index repo_ref does not match manifest",
-                    ));
+                    )));
                 }
                 validate_code_artifact_target(&self.store, &rtxn, &id, &manifest.repo_ref)?;
                 if let Some(symbol) = manifest.symbols.iter().find(|symbol| {
@@ -427,18 +428,20 @@ fn validate_code_artifact_target(
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol manifest target is not a CODE_ARTIFACT",
-        ));
+        )));
     }
     let artifact = decode_code_artifact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     let artifact_repo_ref = RepoRef::parse(&artifact.repo_ref).map_err(|_| {
-        Error::InvalidCodeSymbolManifestBody("CODE artifact repo_ref must be a valid v1 repo_ref")
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "CODE artifact repo_ref must be a valid v1 repo_ref",
+        ))
     })?;
     if &artifact_repo_ref != repo_ref {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol manifest repo_ref must match CODE artifact repo_ref",
-        ));
+        )));
     }
     Ok(())
 }
@@ -453,9 +456,9 @@ fn validate_code_artifact_entity_exists(
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol manifest target is not a CODE_ARTIFACT",
-        ));
+        )));
     }
     Ok(())
 }

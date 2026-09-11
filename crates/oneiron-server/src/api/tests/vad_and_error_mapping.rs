@@ -371,12 +371,12 @@ fn core_engine_error_maps_temporal_parse_errors_to_bad_request() {
 fn core_engine_error_maps_hosted_media_known_match_to_invalid_state() {
     let error = core_engine_error(
         "core ingest failed",
-        oneiron::Error::HostedMediaHashMatchKnownMatch {
+        oneiron::Error::Code(oneiron::error::CodeError::HostedMediaHashMatchKnownMatch {
             provider: "unit-provider".into(),
             reference: "case-123".into(),
             path: "assets/known.bin".into(),
             content_hash: Box::new([0xAB; 32]),
-        },
+        }),
     );
 
     assert_eq!(error.status(), StatusCode::CONFLICT);

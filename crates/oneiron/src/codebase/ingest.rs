@@ -8,6 +8,7 @@ use super::store::codebase_asset_entity_id;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::error::CodeError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use gix::bstr::ByteSlice;
@@ -129,12 +130,12 @@ pub(super) fn check_hosted_media_hash_matches(
                 provider,
                 reference,
             } => {
-                return Err(Error::HostedMediaHashMatchKnownMatch {
+                return Err(Error::Code(CodeError::HostedMediaHashMatchKnownMatch {
                     provider: provider.into_boxed_str(),
                     reference: reference.into_boxed_str(),
                     path: blob.path.clone().into_boxed_str(),
                     content_hash: Box::new(blob.content_hash),
-                });
+                }));
             }
         }
     }
@@ -227,12 +228,15 @@ pub(super) fn collect_repo_blobs(
 ) -> Result<()> {
     for entry in tree.iter() {
         let entry = entry.map_err(|_| {
-            Error::InvalidCodebaseSnapshotBody("Git tree entry could not be decoded")
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "Git tree entry could not be decoded",
+            ))
         })?;
-        let filename = entry
-            .filename()
-            .to_str()
-            .map_err(|_| Error::InvalidCodebaseSnapshotBody("Git tree path must be UTF-8"))?;
+        let filename = entry.filename().to_str().map_err(|_| {
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "Git tree path must be UTF-8",
+            ))
+        })?;
         let path = if prefix.is_empty() {
             filename.to_owned()
         } else {
@@ -242,20 +246,28 @@ pub(super) fn collect_repo_blobs(
             EntryKind::Tree => {
                 validate_manifest_path(&path)?;
                 let subtree_object = entry.object().map_err(|_| {
-                    Error::InvalidCodebaseSnapshotBody("Git subtree object could not be read")
+                    Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                        "Git subtree object could not be read",
+                    ))
                 })?;
                 let subtree = subtree_object.try_into_tree().map_err(|_| {
-                    Error::InvalidCodebaseSnapshotBody("Git subtree object could not be read")
+                    Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                        "Git subtree object could not be read",
+                    ))
                 })?;
                 collect_repo_blobs(&subtree, &path, out)?;
             }
             EntryKind::Blob | EntryKind::BlobExecutable | EntryKind::Link => {
                 validate_manifest_path(&path)?;
                 let blob_object = entry.object().map_err(|_| {
-                    Error::InvalidCodebaseSnapshotBody("Git blob object could not be read")
+                    Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                        "Git blob object could not be read",
+                    ))
                 })?;
                 let mut blob = blob_object.try_into_blob().map_err(|_| {
-                    Error::InvalidCodebaseSnapshotBody("Git blob object could not be read")
+                    Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                        "Git blob object could not be read",
+                    ))
                 })?;
                 let data = blob.take_data();
                 let content_hash = *blake3::hash(&data).as_bytes();
@@ -284,9 +296,9 @@ pub(super) fn read_asset_blob(
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_ASSET {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "manifest content hash did not resolve to an ASSET",
-        ));
+        )));
     }
     let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
     if blake3::hash(&body).as_bytes() != content_hash {
@@ -315,9 +327,9 @@ pub(super) fn validate_project_id(project_id: &str) -> Result<()> {
         "project_id must be non-empty and at most 256 bytes",
     )?;
     if project_id.trim() != project_id {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "project_id must not have leading or trailing whitespace",
-        ));
+        )));
     }
     Ok(())
 }
@@ -329,17 +341,17 @@ pub(super) fn validate_manifest_path(path: &str) -> Result<()> {
         "file path must be non-empty and at most 4096 bytes",
     )?;
     if path.starts_with('/') || path.contains('\\') {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "file path must be repository-relative",
-        ));
+        )));
     }
     if path
         .split('/')
         .any(|part| part.is_empty() || part == "." || part == "..")
     {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "file path must be normalized and cannot contain . or .. segments",
-        ));
+        )));
     }
     Ok(())
 }
