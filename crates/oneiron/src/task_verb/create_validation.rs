@@ -15,6 +15,7 @@ use super::terminal_state::TaskTerminalDisposition;
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use super::wire_decode::{task_body_field, task_body_optional, task_verb_body, task_verb_body_in};
 use super::wire_encode::{consult_payload_value, task_assignee_value};
+use crate::error::RecordError;
 
 pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Value {
     Value::Map(vec![
@@ -81,8 +82,8 @@ pub(crate) fn reject_born_expired_task_deadline(data: &[u8], now: u64) -> Result
     match raw_task_deadline_at(data) {
         // Same predicate as the facade's, so the two doors cannot disagree
         // about which deadlines are in the future.
-        Some(deadline_at) if deadline_at <= now => Err(Error::InvalidTaskBody(
-            "a task deadline must be in the future",
+        Some(deadline_at) if deadline_at <= now => Err(Error::Record(
+            RecordError::InvalidTaskBody("a task deadline must be in the future"),
         )),
         _ => Ok(()),
     }
@@ -109,7 +110,9 @@ pub(crate) fn reject_incoherent_task_terminal(data: &[u8]) -> Result<()> {
     if countered != names_counter {
         // The same error family the decoder raises for this field, so the two
         // doors cannot disagree about what is wrong.
-        return Err(Error::InvalidTaskBody("tasks.terminal.ladder"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.terminal.ladder",
+        )));
     }
     Ok(())
 }

@@ -9,7 +9,7 @@ use crate::edge::{
     validate_edge_weight,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, RegistryError, Result};
 use crate::store::Store;
 
 /// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind
@@ -22,7 +22,7 @@ use crate::store::Store;
 /// the two hot-flag bytes to 24 bytes in BOTH directions while the truth
 /// `edge.provenance` Claim stays live. "An unattributed write can never
 /// displace attributed truth as current state" — the put is rejected with
-/// the typed [`Error::EdgeIsProvenanced`], whose message routes the caller
+/// the typed [`ClaimError::EdgeIsProvenanced`](crate::error::ClaimError::EdgeIsProvenanced), whose message routes the caller
 /// to the provenance path (`put_edge_provenance` / the `as_actor`-bound
 /// surface) and the operational setters (`set_edge_weight` /
 /// `set_edge_vad`). Layout dispatch is VALUE LENGTH (no tag byte; the
@@ -68,7 +68,9 @@ pub(super) fn reject_if_existing_edge_is_provenanced(
     if let Some(existing) = store.edges_out.get(wtxn, &key_out)?
         && existing.len() == EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
     {
-        return Err(Error::EdgeIsProvenanced { kind: kind as u8 });
+        return Err(Error::Claim(ClaimError::EdgeIsProvenanced {
+            kind: kind as u8,
+        }));
     }
     Ok(())
 }
@@ -208,7 +210,7 @@ pub(super) fn apply_edge_with_created_at(
 ///
 /// ONE-1608 blocks door, apply side (ARCH-0055 shape, unconditional): an
 /// `EdgeKind::Blocks` removal is refused outright with the typed
-/// [`Error::ReservedEdgeKind`]. Retirement of a `blocks` row is reserved to
+/// [`RegistryError::ReservedEdgeKind`](crate::error::RegistryError::ReservedEdgeKind). Retirement of a `blocks` row is reserved to
 /// `code_memory::remove_blocks_edge`, which authorizes the actor and then
 /// deletes both index rows itself inside its own transaction — it never
 /// routes through here, so this arm has no legitimate caller.
@@ -229,7 +231,7 @@ pub(super) fn apply_delete_edge(
     tgt: EntityId,
 ) -> Result<bool> {
     if kind == EdgeKind::Blocks {
-        return Err(Error::ReservedEdgeKind("blocks"));
+        return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);

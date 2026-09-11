@@ -1,6 +1,6 @@
 //! The one cap-only admission rule, pure + door-side halves.
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{
     CustodyClass, CustodyTier, SecretBinding, SecretCustodyAdmission, SecretCustodyFloor,
     SecretCustodyStatus,
@@ -13,7 +13,7 @@ use crate::secret_custody::{
 /// The one admission rule, pure: `Ok(requested)` iff `requested` is at or
 /// below `floor.band_for(class).max` AND at or below
 /// `binding.tier_ceiling`. The binding must be resolved from the record by
-/// the caller (a missing binding is [`Error::SecretBindingDenied`],
+/// the caller (a missing binding is [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied),
 /// settled before this call) — never caller-invented.
 ///
 /// Rule (b) is a pure upper CAP: ONE-1919's floor keystone narrows the
@@ -29,13 +29,13 @@ pub fn tier_admission(
 ) -> Result<CustodyTier> {
     let band = floor.band_for(class);
     if requested > band.max || requested > binding.tier_ceiling {
-        return Err(Error::SecretTierDenied {
+        return Err(Error::Secret(SecretError::SecretTierDenied {
             class,
             requested,
             floor_min: band.min,
             floor_max: band.max,
             binding_ceiling: binding.tier_ceiling,
-        });
+        }));
     }
     Ok(requested)
 }
@@ -50,16 +50,16 @@ pub(super) fn admit_record_use(
     floor: &SecretCustodyFloor,
 ) -> Result<()> {
     if rec.status != SecretCustodyStatus::Active {
-        return Err(Error::SecretCustodyNotActive {
+        return Err(Error::Secret(SecretError::SecretCustodyNotActive {
             name: rec.name.clone(),
-        });
+        }));
     }
-    let binding = rec
-        .binding_for(effector)
-        .ok_or_else(|| Error::SecretBindingDenied {
+    let binding = rec.binding_for(effector).ok_or_else(|| {
+        Error::Secret(SecretError::SecretBindingDenied {
             effector: effector.to_owned(),
             secret_ref: rec.name.clone(),
-        })?;
+        })
+    })?;
     tier_admission(rec.class, requested, binding, floor)?;
     Ok(())
 }

@@ -5,7 +5,7 @@ use super::mint::standing_outbound_grant_in_txn;
 use super::scope::StandingOutboundGrantScope;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 
 /// One usage row per immutable envelope, shared by all grants naming it.
 pub const CHANNEL_IDENTITY_GRANT_USAGE_PREFIX: &[u8] = b"outbound_grant:channel_identity_usage:v1:";
@@ -52,7 +52,7 @@ impl Vault {
         // are denials; no error ever falls through to a less constrained dial.
         let envelope = match self.validate_autonomy_action(&txn, &grant, now) {
             Ok(envelope) => envelope,
-            Err(Error::InvalidConsentBound(_)) => return Ok(false),
+            Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(false),
             Err(error) => return Err(error),
         };
         if envelope.relationship_context != candidate.relationship_context
@@ -67,7 +67,7 @@ impl Vault {
             now,
         ) {
             Ok(mode) => mode,
-            Err(Error::InvalidConsentBound(_)) => return Ok(false),
+            Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(false),
             Err(error) => return Err(error),
         };
         if mode.action_grant_ref != Some(*grant_ref)

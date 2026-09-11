@@ -13,6 +13,7 @@ use super::super::record::{
 use super::super::txn::{
     append_connector_key_op_record, read_connector_key_in_txn, rewrite_connector_key_in_txn,
 };
+use crate::error::RecordError;
 
 impl Vault {
     /// Compiles and STAGES a charter proposal (GOV-10). Never changes
@@ -85,10 +86,10 @@ impl Vault {
             return Err(invalid_body("charter op on revoked key"));
         }
         let Some(pending) = record.pending_charter.clone() else {
-            return Err(Error::ConnectorCharterMissing);
+            return Err(Error::Record(RecordError::ConnectorCharterMissing));
         };
         if pending.compiled_hash != expected_compiled_hash {
-            return Err(Error::ConnectorCharterApprovalMismatch);
+            return Err(Error::Record(RecordError::ConnectorCharterApprovalMismatch));
         }
         let stamped = ConnectorKeyRecord {
             charter: Some(ConnectorCharterBlock {
@@ -131,7 +132,7 @@ impl Vault {
             return Err(invalid_body("charter op on revoked key"));
         }
         if record.pending_charter.is_none() {
-            return Err(Error::ConnectorCharterMissing);
+            return Err(Error::Record(RecordError::ConnectorCharterMissing));
         }
         let discarded = ConnectorKeyRecord {
             pending_charter: None,

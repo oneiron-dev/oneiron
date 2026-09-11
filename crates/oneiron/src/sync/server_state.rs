@@ -196,6 +196,7 @@ mod tests {
     use super::super::loro_support::{export_all_updates, map_get_bytes, map_insert_bytes};
     use super::*;
     use crate::config::VaultConfig;
+    use crate::error::SyncError;
 
     use core::assert_matches;
 
@@ -353,7 +354,7 @@ mod tests {
 
         let err = load_root_from_state(&vault).unwrap_err();
         assert!(
-            matches!(err, Error::CrdtDecodeError { .. }),
+            matches!(err, Error::Sync(SyncError::CrdtDecodeError { .. })),
             "corrupt d:root must error, not boot empty — got {err:?}"
         );
     }

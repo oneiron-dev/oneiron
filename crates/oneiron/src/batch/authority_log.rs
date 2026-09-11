@@ -10,7 +10,7 @@ use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::store::Store;
@@ -52,7 +52,9 @@ pub(super) fn check_authority_log_store_key(
     data: &[u8],
 ) -> Result<AuthorityLogKeyOccupant> {
     if crate::authority::authority_log_entity_id_from_hash(entry_hash)? != *id {
-        return Err(Error::AuthorityLogStoreKeyMismatch { id: *id });
+        return Err(Error::Record(RecordError::AuthorityLogStoreKeyMismatch {
+            id: *id,
+        }));
     }
     let Some(existing) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(AuthorityLogKeyOccupant::Admissible);
@@ -79,7 +81,9 @@ pub(super) fn check_authority_log_store_key(
     // derived. Same-type occupants keep the append-only rule unchanged.
     if existing_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         if existing[ENTITY_METADATA_HEADER_LEN..] != *data {
-            return Err(Error::AuthorityLogAppendOnlyViolation { id: *id });
+            return Err(Error::Record(
+                RecordError::AuthorityLogAppendOnlyViolation { id: *id },
+            ));
         }
         return Ok(AuthorityLogKeyOccupant::Admissible);
     }
@@ -193,17 +197,22 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
         }
         _ => entry
             .vault_id
-            .ok_or(Error::InvalidAuthorityLogBody("missing authority vault id"))?,
+            .ok_or(Error::Record(RecordError::InvalidAuthorityLogBody(
+                "missing authority vault id",
+            )))?,
     };
     let local_fold =
         crate::authority::fold_authority_log(&stored_authority_log_entries(store, wtxn)?);
-    let local_vault_id = local_fold.vault_id.ok_or(Error::InvalidAuthorityLogBody(
-        "missing local authority root",
-    ))?;
+    let local_vault_id =
+        local_fold
+            .vault_id
+            .ok_or(Error::Record(RecordError::InvalidAuthorityLogBody(
+                "missing local authority root",
+            )))?;
     if entry_vault_id != local_vault_id {
-        return Err(Error::InvalidAuthorityLogBody(
+        return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "foreign authority log vault id",
-        ));
+        )));
     }
     Ok(ReplicatedAuthorityLogValidation {
         signer_known: local_fold.roster.contains_key(&entry.signer.public_key),
@@ -324,7 +333,7 @@ pub(super) fn validate_companion_register_put(
         if let Some(existing_id) = lookup.active_id
             && existing_id != *id
         {
-            return Err(Error::CompanionRecordAlreadyExists);
+            return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
         }
         if let Some(prior_lifecycle_events) = prior_lifecycle_events {
             let persisted_retired = lookup.retired_history_id.is_some();
@@ -347,7 +356,7 @@ pub(super) fn validate_companion_register_put(
             if let Some(existing_id) = lookup.any_id
                 && existing_id != *id
             {
-                return Err(Error::CompanionRecordAlreadyExists);
+                return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
             }
         }
     }

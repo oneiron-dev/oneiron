@@ -6,6 +6,7 @@ use crate::attempt_queue::{
     CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, ManifestEntry, ManifestKind,
     RetryAttempt,
 };
+use crate::error::ArtifactError;
 use crate::outbound::retry_audit::persist_failed_send_receipt_and_retry;
 use crate::receipt::{
     FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind, ReceiptQuery, ReceiptRecord,
@@ -236,10 +237,10 @@ fn persist_and_retry_are_one_txn() -> crate::Result<()> {
     .expect_err("the receipt write must roll back when retry rejects a stale lease");
     assert!(matches!(
         error,
-        Error::InvalidAttemptQueueTransition {
+        Error::Artifact(ArtifactError::InvalidAttemptQueueTransition {
             action: "retry",
             state: "stale_attempt",
-        }
+        })
     ));
     assert_eq!(retry_storage_snapshot(&vault)?, before);
     assert!(vault.store.send_receipt_rows()?.is_empty());
@@ -489,10 +490,10 @@ fn already_delivered_completion_rejects_stale_or_foreign_leases() -> crate::Resu
         .expect_err("a delivered winner does not bypass the completion lease CAS");
         assert!(matches!(
             error,
-            Error::InvalidAttemptQueueTransition {
+            Error::Artifact(ArtifactError::InvalidAttemptQueueTransition {
                 action: "complete",
                 state,
-            } if state == expected_state
+            }) if state == expected_state
         ));
         assert_eq!(retry_storage_snapshot(&vault)?, before);
         assert_eq!(queue.list()?, vec![current]);

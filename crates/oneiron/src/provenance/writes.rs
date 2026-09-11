@@ -20,7 +20,7 @@ use crate::edge::{
     edge_value_layout_for_kind,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_MODEL;
 use crate::store::Store;
@@ -56,30 +56,30 @@ impl Vault {
     /// One LMDB write transaction performs ALL of:
     ///
     /// 1. write-once id gate — `claim_id` must not already name a stored
-    ///    entity ([`Error::ProvenanceClaimIdInUse`]; re-putting an existing
+    ///    entity ([`ClaimError::ProvenanceClaimIdInUse`](crate::error::ClaimError::ProvenanceClaimIdInUse); re-putting an existing
     ///    id would resurrect a closed Claim in place — the lifecycle
     ///    operations are the only mutators of a stored provenance Claim);
     /// 2. subject-edge gate — `subject.kind` must be a SEMANTIC kind
-    ///    ([`Error::ProvenanceOnStructuralEdge`] otherwise) and the edge must
+    ///    ([`ClaimError::ProvenanceOnStructuralEdge`](crate::error::ClaimError::ProvenanceOnStructuralEdge) otherwise) and the edge must
     ///    already exist ([`Error::EdgeNotFound`]; the path never upserts — it
     ///    would have to invent `weight`/`created_at`);
     /// 3. actor gate (D13) — `body.actor_entity_ref` must exist
     ///    ([`Error::EntityNotFound`]) and the CALLER-SUPPLIED `actor_class`
     ///    must be compatible with the actor entity's kind
-    ///    ([`Error::ActorClassMismatch`]; never defaulted). The validated
+    ///    ([`ClaimError::ActorClassMismatch`](crate::error::ClaimError::ActorClassMismatch); never defaulted). The validated
     ///    class is persisted as the value record's `actor_class` BODY key
     ///    (ONE-1138 / ONE-1112 C2 relocation — the wrapper's `evid` stays
     ///    empty) so a later winner refresh can restamp a HISTORICAL Claim's
     ///    flags (see the provenance module docs). A caller-set
     ///    `body.actor_class` that CONFLICTS with the `actor_class` parameter
-    ///    is rejected typed ([`Error::InvalidProvenanceBody`]);
+    ///    is rejected typed ([`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody));
     /// 4. substrate gate (ONE-1138) — when `body.substrate_ref` is present
     ///    it must name a stored MODEL (type byte 121) entity
-    ///    ([`Error::InvalidModelSubstrate`] otherwise); absent =
+    ///    ([`ClaimError::InvalidModelSubstrate`](crate::error::ClaimError::InvalidModelSubstrate) otherwise); absent =
     ///    unrecorded-and-valid;
     /// 5. supersession (retractionRules SUPERSEDE + D14) — an incoming
     ///    `learned_at` OLDER than the live frontier for this EdgeRef is
-    ///    rejected typed ([`Error::ProvenancePrecedenceViolation`]); every
+    ///    rejected typed ([`ClaimError::ProvenancePrecedenceViolation`](crate::error::ClaimError::ProvenancePrecedenceViolation)); every
     ///    live Claim STRICTLY older than the incoming one is closed in the
     ///    same transaction (`life` = superseded, `valid_to` set to the
     ///    incoming `learned_at` when absent, envelope `occurred.end`
@@ -102,7 +102,7 @@ impl Vault {
     /// The Claim envelope's `occurred` interval derives from the validity
     /// window per D15: absent `valid_from` → `learned_at`; absent `valid_to`
     /// → `u64::MAX`. A derived interval with `start > end` is rejected with
-    /// [`Error::InvalidProvenanceBody`] — never reordered. The wrapping
+    /// [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody) — never reordered. The wrapping
     /// Claim stores `conf` = `body.confidence` and `from`/`to` =
     /// `valid_from`/`valid_to` (claim-layer mirrors of the authoritative
     /// 10-key record) with `appr` = `auto`, `life` = `active`.
@@ -132,17 +132,17 @@ impl Vault {
     ///
     /// Typed failure modes (nothing is written on any of them):
     /// * `prior_claim_id == new_claim_id` →
-    ///   [`Error::ProvenanceSelfSupersession`];
+    ///   [`ClaimError::ProvenanceSelfSupersession`](crate::error::ClaimError::ProvenanceSelfSupersession);
     /// * `new_claim_id` already names a stored entity →
-    ///   [`Error::ProvenanceClaimIdInUse`] (claim ids are write-once);
+    ///   [`ClaimError::ProvenanceClaimIdInUse`](crate::error::ClaimError::ProvenanceClaimIdInUse) (claim ids are write-once);
     /// * prior entity missing → [`Error::EntityNotFound`];
     /// * prior is not a type-0 Claim or its predicate is not
-    ///   `edge.provenance` → [`Error::NotAProvenanceClaim`];
+    ///   `edge.provenance` → [`ClaimError::NotAProvenanceClaim`](crate::error::ClaimError::NotAProvenanceClaim);
     /// * prior addresses a different EdgeRef than `subject` →
-    ///   [`Error::ProvenanceSubjectMismatch`];
-    /// * prior is no longer live → [`Error::ProvenanceClaimAlreadyClosed`];
+    ///   [`ClaimError::ProvenanceSubjectMismatch`](crate::error::ClaimError::ProvenanceSubjectMismatch);
+    /// * prior is no longer live → [`ClaimError::ProvenanceClaimAlreadyClosed`](crate::error::ClaimError::ProvenanceClaimAlreadyClosed);
     /// * `learned_at` older than the live frontier →
-    ///   [`Error::ProvenancePrecedenceViolation`].
+    ///   [`ClaimError::ProvenancePrecedenceViolation`](crate::error::ClaimError::ProvenancePrecedenceViolation).
     pub fn supersede_edge_provenance(
         &self,
         prior_claim_id: &EntityId,
@@ -177,19 +177,19 @@ impl Vault {
     ///
     /// Typed failure modes (nothing is written on any of them): missing
     /// claim → [`Error::EntityNotFound`]; not an `edge.provenance` Claim →
-    /// [`Error::NotAProvenanceClaim`]; already closed (double-retract /
-    /// retract-after-supersede) → [`Error::ProvenanceClaimAlreadyClosed`];
+    /// [`ClaimError::NotAProvenanceClaim`](crate::error::ClaimError::NotAProvenanceClaim); already closed (double-retract /
+    /// retract-after-supersede) → [`ClaimError::ProvenanceClaimAlreadyClosed`](crate::error::ClaimError::ProvenanceClaimAlreadyClosed);
     /// `now` earlier than the record's `valid_from` (or derived envelope
-    /// start) → [`Error::InvalidProvenanceBody`]; subject edge missing →
+    /// start) → [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody); subject edge missing →
     /// [`Error::EdgeNotFound`].
     pub fn retract_edge_provenance(&self, claim_id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
 
         let claim = self.load_provenance_claim_in_txn(&wtxn, claim_id)?;
         if claim.wrapper.lifecycle != ClaimLifecycleStatus::Active {
-            return Err(Error::ProvenanceClaimAlreadyClosed {
+            return Err(Error::Claim(ClaimError::ProvenanceClaimAlreadyClosed {
                 lifecycle: claim.wrapper.lifecycle.as_str(),
-            });
+            }));
         }
         let retracted = retract_record(&claim.record, now)?;
         let (occurred, learned_at, retracted_claim_body, data) =
@@ -263,12 +263,12 @@ impl Vault {
     ///   short-id);
     /// * `name` / `version` must be non-empty and at most
     ///   [`crate::provenance::MODEL_SUBSTRATE_FIELD_MAX_BYTES`] bytes —
-    ///   [`Error::InvalidModelSubstrate`] otherwise;
+    ///   [`ClaimError::InvalidModelSubstrate`](crate::error::ClaimError::InvalidModelSubstrate) otherwise;
     /// * a stored MODEL entity whose body fails the engine-shape decode
     ///   is on-disk corruption → [`Error::CorruptedIndex`], never skipped.
     ///
     /// Public puts of type byte 121 stay rejected with
-    /// [`Error::MaintenanceKindNotWritable`]: this method is the ONLY public
+    /// [`RegistryError::MaintenanceKindNotWritable`](crate::error::RegistryError::MaintenanceKindNotWritable): this method is the ONLY public
     /// door, and it only ever writes the engine-shaped body.
     pub fn ensure_model_substrate(&self, name: &str, version: &str, now: u64) -> Result<EntityId> {
         validate_model_substrate_field(name, "model name must be non-empty and at most 256 bytes")?;
@@ -389,7 +389,7 @@ impl Vault {
             imported_evidence,
         } = write;
         if explicit_prior == Some(claim_id) {
-            return Err(Error::ProvenanceSelfSupersession);
+            return Err(Error::Claim(ClaimError::ProvenanceSelfSupersession));
         }
 
         // ONE-1138 / ONE-1112 C2: the validated caller-supplied class is
@@ -399,9 +399,9 @@ impl Vault {
         if let Some(body_class) = body.actor_class
             && body_class != actor_class
         {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "body actor_class conflicts with the caller-supplied actor_class parameter",
-            ));
+            )));
         }
         let mut record = body.clone();
         record.actor_class = Some(actor_class);
@@ -414,9 +414,9 @@ impl Vault {
         // Provenance only attaches to SEMANTIC kinds — a static property of
         // the kind, checked before any I/O.
         if edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural {
-            return Err(Error::ProvenanceOnStructuralEdge {
+            return Err(Error::Claim(ClaimError::ProvenanceOnStructuralEdge {
                 kind: subject.kind as u8,
-            });
+            }));
         }
 
         // D15 envelope sentinels (index-key derivation only; the
@@ -426,9 +426,9 @@ impl Vault {
             end: body.valid_to.unwrap_or(u64::MAX),
         };
         if occurred.start > occurred.end {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "derived occurred envelope start exceeds end (valid_to before valid_from/learned_at)",
-            ));
+            )));
         }
 
         let mut claim_body = ClaimBody::new(
@@ -454,7 +454,7 @@ impl Vault {
         // is rejected before a single byte moves. Re-putting an existing id
         // would overwrite the stored Claim in place — resurrecting a
         // retracted/superseded wrapper as a fresh `active` body and
-        // bypassing [`Error::ProvenanceClaimAlreadyClosed`] (ARCH-0003:
+        // bypassing [`ClaimError::ProvenanceClaimAlreadyClosed`](crate::error::ClaimError::ProvenanceClaimAlreadyClosed) (ARCH-0003:
         // "claims are never silently deleted"). The lifecycle operations
         // (retract / supersede) are the ONLY mutators of an existing
         // provenance Claim.
@@ -464,7 +464,7 @@ impl Vault {
             .get(wtxn, claim_id.as_bytes())?
             .is_some()
         {
-            return Err(Error::ProvenanceClaimIdInUse);
+            return Err(Error::Claim(ClaimError::ProvenanceClaimIdInUse));
         }
 
         // Subject edge must exist — no upsert.
@@ -493,15 +493,15 @@ impl Vault {
                 .store
                 .entities
                 .get(wtxn, substrate_ref.as_bytes())?
-                .ok_or(Error::InvalidModelSubstrate(
+                .ok_or(Error::Claim(ClaimError::InvalidModelSubstrate(
                     "substrate_ref does not name a stored entity",
-                ))?;
+                )))?;
             let substrate_header = EntityMetadataHeader::parse(&substrate_raw)
                 .ok_or(Error::CorruptedIndex("entity header"))?;
             if substrate_header.entity_type != ENTITY_TYPE_MODEL {
-                return Err(Error::InvalidModelSubstrate(
+                return Err(Error::Claim(ClaimError::InvalidModelSubstrate(
                     "substrate_ref must name a MODEL (type byte 121) entity",
-                ));
+                )));
             }
             // A present, type-correct (MODEL) substrate row whose body
             // fails the engine MODEL shape ({name, version} ≤256B) is
@@ -531,12 +531,12 @@ impl Vault {
             .map(|prior_id| -> Result<EntityId> {
                 let prior = self.load_provenance_claim_in_txn(wtxn, prior_id)?;
                 if prior.subject != *subject {
-                    return Err(Error::ProvenanceSubjectMismatch);
+                    return Err(Error::Claim(ClaimError::ProvenanceSubjectMismatch));
                 }
                 if prior.wrapper.lifecycle != ClaimLifecycleStatus::Active {
-                    return Err(Error::ProvenanceClaimAlreadyClosed {
+                    return Err(Error::Claim(ClaimError::ProvenanceClaimAlreadyClosed {
                         lifecycle: prior.wrapper.lifecycle.as_str(),
-                    });
+                    }));
                 }
                 Ok(prior.id)
             })
@@ -548,10 +548,10 @@ impl Vault {
         if let Some(frontier) = live.iter().map(|claim| claim.learned_at).max()
             && learned_at < frontier
         {
-            return Err(Error::ProvenancePrecedenceViolation {
+            return Err(Error::Claim(ClaimError::ProvenancePrecedenceViolation {
                 incoming_learned_at: learned_at,
                 frontier_learned_at: frontier,
-            });
+            }));
         }
         if let Some(prior_id) = prior_id
             && !live.iter().any(|claim| claim.id == prior_id)

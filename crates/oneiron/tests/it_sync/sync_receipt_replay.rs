@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
+use oneiron::error::RegistryError;
 use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
 use oneiron::sync::lease;
@@ -1219,7 +1220,7 @@ fn public_write_gate_still_rejects_maintenance_band() {
         )
         .unwrap_err();
     assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(byte) if byte == ENTITY_TYPE_REDACTION_AUDIT),
+        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(byte)) if byte == ENTITY_TYPE_REDACTION_AUDIT),
         "public gate must still reject REDACTION_AUDIT, got: {err:?}"
     );
     assert!(vault.get_raw(&id).unwrap().is_none());

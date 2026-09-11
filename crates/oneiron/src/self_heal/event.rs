@@ -3,7 +3,7 @@
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, RecordError};
 
 /// Schema version stamped into, and required by, every DIAGNOSTIC body.
 pub const DIAGNOSTIC_SCHEMA_VERSION: u64 = 1;
@@ -352,5 +352,5 @@ pub trait DeterministicDetector: Send + Sync {
 }
 
 pub(super) fn invalid_diagnostic(reason: &'static str) -> Error {
-    Error::InvalidDiagnosticBody(reason)
+    Error::Record(RecordError::InvalidDiagnosticBody(reason))
 }

@@ -1,6 +1,7 @@
 //! Graph reads: type index, peers, hierarchy, cycles, child-of, learned-range scans.
 
 use super::*;
+use crate::error::RegistryError;
 
 #[test]
 fn entities_by_type_returns_correct_ids() -> Result<()> {
@@ -751,7 +752,7 @@ fn generic_child_of_writes_reject_cycles() -> Result<()> {
     let err = vault
         .put_edge(&a, EdgeKind::ChildOf, &c, 1.0)
         .expect_err("generic ChildOf write should reject cycles");
-    assert_matches!(err, Error::CycleDetected);
+    assert_matches!(err, Error::Registry(RegistryError::CycleDetected));
     assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &c)?);
     Ok(())
 }
@@ -773,7 +774,7 @@ fn generic_child_of_writes_reject_second_parent() -> Result<()> {
         .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
         .commit()
         .expect_err("generic ChildOf write should reject second parent");
-    assert_matches!(err, Error::ChildOfCardinality);
+    assert_matches!(err, Error::Registry(RegistryError::ChildOfCardinality));
     assert!(!vault.edge_exists(&child, EdgeKind::ChildOf, &parent_b)?);
 
     vault.put_edge(&child, EdgeKind::ChildOf, &parent_a, 0.5)?;
@@ -841,7 +842,7 @@ fn edge_checked_detects_cycle_atomically() -> Result<()> {
     // Try to make a a child of c — would create cycle a→b→c→a
     let result = vault.batch().edge_checked(&a, &c, 1.0).commit();
     assert!(
-        matches!(result, Err(Error::CycleDetected)),
+        matches!(result, Err(Error::Registry(RegistryError::CycleDetected))),
         "expected CycleDetected, got {result:?}"
     );
 
@@ -882,7 +883,7 @@ fn edge_checked_rejects_self_cycle() -> Result<()> {
 
     let result = vault.batch().edge_checked(&node, &node, 1.0).commit();
     assert!(
-        matches!(result, Err(Error::CycleDetected)),
+        matches!(result, Err(Error::Registry(RegistryError::CycleDetected))),
         "self-cycle should be rejected, got {result:?}"
     );
     assert!(

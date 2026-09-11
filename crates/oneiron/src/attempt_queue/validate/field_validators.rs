@@ -9,7 +9,7 @@ use crate::attempt_queue::types::{
     AttemptEvent, AttemptRecord, AttemptState, CleanupAttemptLeases, MAX_ATTEMPT_MANIFEST_ENTRIES,
     ManifestEntry,
 };
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 const MAX_KIND_LEN: usize = 128;
 
@@ -208,10 +208,14 @@ pub(in crate::attempt_queue) const ERR_RESULT_REF_REBOUND: &str =
 
 pub(in crate::attempt_queue) fn validate_kind(kind: &str) -> Result<()> {
     if kind.is_empty() {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_EMPTY_KIND));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_EMPTY_KIND,
+        )));
     }
     if kind.len() > MAX_KIND_LEN {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_KIND_TOO_LONG));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_KIND_TOO_LONG,
+        )));
     }
     Ok(())
 }
@@ -219,10 +223,14 @@ pub(in crate::attempt_queue) fn validate_kind(kind: &str) -> Result<()> {
 pub(in crate::attempt_queue) fn validate_optional_dedupe(dedupe_key: Option<&str>) -> Result<()> {
     if let Some(dedupe_key) = dedupe_key {
         if dedupe_key.is_empty() {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_KEY_EMPTY));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_DEDUPE_KEY_EMPTY,
+            )));
         }
         if dedupe_key.len() > MAX_DEDUPE_KEY_LEN {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_KEY_TOO_LONG));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_DEDUPE_KEY_TOO_LONG,
+            )));
         }
     }
     Ok(())
@@ -239,12 +247,14 @@ pub(in crate::attempt_queue) fn validate_optional_dedupe_actor_ref(
 ) -> Result<()> {
     if let Some(actor_ref) = actor_ref {
         if actor_ref.is_empty() {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_ACTOR_REF_EMPTY));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_DEDUPE_ACTOR_REF_EMPTY,
+            )));
         }
         if actor_ref.len() > MAX_DEDUPE_ACTOR_REF_LEN {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_DEDUPE_ACTOR_REF_TOO_LONG,
-            ));
+            )));
         }
     }
     Ok(())
@@ -259,12 +269,14 @@ pub(in crate::attempt_queue) fn validate_optional_failure_reason(
 ) -> Result<()> {
     if let Some(reason) = reason {
         if reason.is_empty() {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_FAILURE_REASON_EMPTY));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_FAILURE_REASON_EMPTY,
+            )));
         }
         if reason.len() > MAX_FAILURE_REASON_LEN {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_FAILURE_REASON_TOO_LONG,
-            ));
+            )));
         }
     }
     Ok(())
@@ -279,13 +291,19 @@ pub(in crate::attempt_queue) fn validate_optional_failure_reason(
 /// a durable row.
 pub(in crate::attempt_queue) fn validate_result_ref(result_ref: &str) -> Result<()> {
     if result_ref.is_empty() {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_EMPTY));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RESULT_REF_EMPTY,
+        )));
     }
     if result_ref.len() > MAX_RESULT_REF_LEN {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_TOO_LONG));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RESULT_REF_TOO_LONG,
+        )));
     }
     if result_ref.chars().any(char::is_control) {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_CONTROL));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RESULT_REF_CONTROL,
+        )));
     }
     Ok(())
 }
@@ -315,9 +333,9 @@ pub(in crate::attempt_queue) fn validate_result_rebind(
     result_ref: &super::types::AttemptResultRef,
 ) -> Result<()> {
     match record.result_ref.as_ref() {
-        Some(existing) if existing != result_ref => {
-            Err(Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_REBOUND))
-        }
+        Some(existing) if existing != result_ref => Err(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueRecord(ERR_RESULT_REF_REBOUND),
+        )),
         _ => Ok(()),
     }
 }
@@ -325,10 +343,14 @@ pub(in crate::attempt_queue) fn validate_result_rebind(
 pub(in crate::attempt_queue) fn validate_optional_run_id(run_id: Option<&str>) -> Result<()> {
     if let Some(run_id) = run_id {
         if run_id.is_empty() {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_RUN_ID_EMPTY));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_RUN_ID_EMPTY,
+            )));
         }
         if run_id.len() > MAX_RUN_ID_LEN {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_RUN_ID_TOO_LONG));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_RUN_ID_TOO_LONG,
+            )));
         }
     }
     Ok(())
@@ -336,14 +358,14 @@ pub(in crate::attempt_queue) fn validate_optional_run_id(run_id: Option<&str>) -
 
 pub(in crate::attempt_queue) fn validate_intervention_actor(actor: &str) -> Result<()> {
     if actor.is_empty() {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_INTERVENTION_ACTOR_EMPTY,
-        ));
+        )));
     }
     if actor.len() > MAX_INTERVENTION_ACTOR_LEN {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_INTERVENTION_ACTOR_TOO_LONG,
-        ));
+        )));
     }
     Ok(())
 }
@@ -353,14 +375,14 @@ pub(in crate::attempt_queue) fn validate_optional_intervention_note(
 ) -> Result<()> {
     if let Some(note) = note {
         if note.is_empty() {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_INTERVENTION_NOTE_EMPTY,
-            ));
+            )));
         }
         if note.len() > MAX_INTERVENTION_NOTE_LEN {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_INTERVENTION_NOTE_TOO_LONG,
-            ));
+            )));
         }
     }
     Ok(())
@@ -368,10 +390,14 @@ pub(in crate::attempt_queue) fn validate_optional_intervention_note(
 
 pub(in crate::attempt_queue) fn validate_lease_owner(lease_owner: &str) -> Result<()> {
     if lease_owner.is_empty() {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_LEASE_OWNER_EMPTY));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_LEASE_OWNER_EMPTY,
+        )));
     }
     if lease_owner.len() > MAX_LEASE_OWNER_LEN {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_LEASE_OWNER_TOO_LONG));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_LEASE_OWNER_TOO_LONG,
+        )));
     }
     Ok(())
 }
@@ -380,7 +406,9 @@ pub(in crate::attempt_queue) fn validate_cleanup_leases_input(
     input: &CleanupAttemptLeases,
 ) -> Result<()> {
     if input.lease_timeout_secs == 0 {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_LEASE_TIMEOUT_ZERO));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_LEASE_TIMEOUT_ZERO,
+        )));
     }
     Ok(())
 }
@@ -427,9 +455,9 @@ pub(in crate::attempt_queue) fn validate_attempt_events(events: &[AttemptEvent])
     let mut previous_sequence = 0;
     for event in events {
         if event.sequence == 0 || event.sequence <= previous_sequence {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "attempt event sequence must be strictly increasing",
-            ));
+            )));
         }
         validate_intervention_actor(&event.actor)?;
         validate_optional_intervention_note(event.note.as_deref())?;
@@ -446,27 +474,29 @@ pub(in crate::attempt_queue) fn validate_attempt_events(events: &[AttemptEvent])
 /// hold `@` freely — everything after the first delimiter is the version.
 pub(in crate::attempt_queue) fn validate_manifest_entry(entry: &ManifestEntry) -> Result<()> {
     if entry.reference.is_empty() {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_MANIFEST_REFERENCE_EMPTY,
-        ));
+        )));
     }
     if entry.reference.contains('@') {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_MANIFEST_REFERENCE_HAS_AT,
-        ));
+        )));
     }
     if entry.reference.len() > MAX_MANIFEST_REFERENCE_LEN {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_MANIFEST_REFERENCE_TOO_LONG,
-        ));
+        )));
     }
     if entry.version.is_empty() {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_MANIFEST_VERSION_EMPTY));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_MANIFEST_VERSION_EMPTY,
+        )));
     }
     if entry.version.len() > MAX_MANIFEST_VERSION_LEN {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_MANIFEST_VERSION_TOO_LONG,
-        ));
+        )));
     }
     Ok(())
 }
@@ -475,7 +505,9 @@ pub(in crate::attempt_queue) fn validate_attempt_manifest(
     manifest: &[ManifestEntry],
 ) -> Result<()> {
     if manifest.len() > MAX_ATTEMPT_MANIFEST_ENTRIES {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_MANIFEST_FULL));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_MANIFEST_FULL,
+        )));
     }
     for entry in manifest {
         validate_manifest_entry(entry)?;
@@ -492,9 +524,9 @@ pub(in crate::attempt_queue) fn validate_attempt_manifest(
 pub(in crate::attempt_queue) fn validate_cancel_actor(actor: &str) -> Result<()> {
     validate_intervention_actor(actor)?;
     if actor == ATTEMPT_RUNTIME_ACTOR {
-        return Err(Error::InvalidAttemptQueueRecord(
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_CANCEL_ACTOR_IS_RUNTIME,
-        ));
+        )));
     }
     Ok(())
 }
@@ -503,7 +535,9 @@ pub(in crate::attempt_queue) fn validate_cancel_standing(standing: CancelStandin
     if standing.may_request() {
         Ok(())
     } else {
-        Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_NO_STANDING))
+        Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_CANCEL_NO_STANDING,
+        )))
     }
 }
 
@@ -512,10 +546,14 @@ pub(in crate::attempt_queue) fn validate_optional_cancel_status(
 ) -> Result<()> {
     if let Some(status) = status {
         if status.is_empty() {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_STATUS_EMPTY));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_CANCEL_STATUS_EMPTY,
+            )));
         }
         if status.len() > MAX_CANCEL_STATUS_LEN {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_STATUS_TOO_LONG));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_CANCEL_STATUS_TOO_LONG,
+            )));
         }
     }
     Ok(())
@@ -525,21 +563,25 @@ pub(in crate::attempt_queue) fn validate_resume_point(
     resume_point: &AttemptResumePoint,
 ) -> Result<()> {
     if resume_point.marker.is_empty() {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_RESUME_MARKER_EMPTY));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RESUME_MARKER_EMPTY,
+        )));
     }
     if resume_point.marker.len() > MAX_RESUME_MARKER_LEN {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_RESUME_MARKER_TOO_LONG));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RESUME_MARKER_TOO_LONG,
+        )));
     }
     if let Some(artifact_ref) = resume_point.artifact_ref.as_deref() {
         if artifact_ref.is_empty() {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_RESUME_ARTIFACT_REF_EMPTY,
-            ));
+            )));
         }
         if artifact_ref.len() > MAX_RESUME_ARTIFACT_REF_LEN {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_RESUME_ARTIFACT_REF_TOO_LONG,
-            ));
+            )));
         }
     }
     Ok(())
@@ -556,7 +598,9 @@ pub(in crate::attempt_queue) fn validate_optional_resume_point(
 
 pub(in crate::attempt_queue) fn validate_reserve_percent(reserve_percent: u64) -> Result<()> {
     if reserve_percent == 0 || reserve_percent > MAX_LANDING_RESERVE_PERCENT {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_PERCENT_RANGE));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RESERVE_PERCENT_RANGE,
+        )));
     }
     Ok(())
 }

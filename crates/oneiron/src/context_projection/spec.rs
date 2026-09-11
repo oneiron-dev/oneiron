@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, RecordError, Result};
 
 /// Most layer names one projection may name.
 pub const CONTEXT_SPEC_MAX_LAYERS: usize = 32;
@@ -139,9 +139,9 @@ pub fn normalize_context_spec(spec: ContextSpec) -> ContextSpec {
 /// Structural validation of one descriptor, independent of any parent.
 pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
     if spec.layers.len() > CONTEXT_SPEC_MAX_LAYERS {
-        return Err(Error::InvalidAgentDispatchInput(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "context spec names too many layers",
-        ));
+        )));
     }
     for layer in &spec.layers {
         validate_label(
@@ -153,14 +153,14 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
         MemoryProjection::Default | MemoryProjection::Exclude => {}
         MemoryProjection::Scoped { domains, limit } => {
             if domains.is_empty() {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "scoped memory projection must name at least one domain",
-                ));
+                )));
             }
             if domains.len() > CONTEXT_SPEC_MAX_DOMAINS {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "scoped memory projection names too many domains",
-                ));
+                )));
             }
             for domain in domains {
                 validate_label(
@@ -168,15 +168,15 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
                     "memory domain must be non-empty, bounded, and separator-free",
                 )?;
                 if domain.contains(':') {
-                    return Err(Error::InvalidAgentDispatchInput(
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "memory domain must be non-empty, bounded, and separator-free",
-                    ));
+                    )));
                 }
             }
             if *limit == 0 || *limit > CONTEXT_SPEC_MAX_MEMORY_LIMIT {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "scoped memory projection limit is out of range",
-                ));
+                )));
             }
         }
     }
@@ -184,9 +184,9 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
         ChatProjection::Default | ChatProjection::Exclude => {}
         ChatProjection::Recent { last_n } => {
             if *last_n == 0 || *last_n > CONTEXT_SPEC_MAX_CHAT_LAST_N {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "recent chat projection last_n is out of range",
-                ));
+                )));
             }
         }
     }
@@ -221,26 +221,32 @@ fn normalize_text(text: Option<String>) -> Option<String> {
 
 fn validate_label(label: &str, reason: &'static str) -> Result<()> {
     if label.trim().is_empty() || label.len() > CONTEXT_SPEC_MAX_LABEL_BYTES {
-        return Err(Error::InvalidAgentDispatchInput(reason));
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            reason,
+        )));
     }
     Ok(())
 }
 
 pub(super) fn validate_optional_text(text: Option<&str>, reason: &'static str) -> Result<()> {
     match text {
-        Some(text) if text.len() > CONTEXT_SPEC_MAX_TEXT_BYTES => {
-            Err(Error::InvalidAgentDispatchInput(reason))
-        }
+        Some(text) if text.len() > CONTEXT_SPEC_MAX_TEXT_BYTES => Err(Error::Artifact(
+            ArtifactError::InvalidAgentDispatchInput(reason),
+        )),
         Some(_) | None => Ok(()),
     }
 }
 
 pub(super) fn validate_panel_text(text: &str, _field: &'static str) -> Result<()> {
     if text.trim().is_empty() {
-        return Err(Error::InvalidTaskBody("panel spec text must be non-empty"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec text must be non-empty",
+        )));
     }
     if text.len() > CONTEXT_SPEC_MAX_TEXT_BYTES {
-        return Err(Error::InvalidTaskBody("panel spec text is too long"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec text is too long",
+        )));
     }
     Ok(())
 }

@@ -6,6 +6,7 @@
 use super::*;
 
 use crate::edit_distance::delta::{DeltaSource, OpsSummary};
+use crate::error::GateError;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config())
@@ -179,7 +180,10 @@ fn a_magnitude_band_is_rejected_on_a_trigger_that_has_no_magnitude() {
         let mut receipt = ask(trigger, EscalationRuling::Approve);
         receipt.budget_band = Some(5);
         let error = record_escalation_at(&vault, receipt, 1_000).expect_err("banded non-budget");
-        assert!(matches!(error, Error::InvalidConsentBound(_)));
+        assert!(matches!(
+            error,
+            Error::Gate(GateError::InvalidConsentBound(_))
+        ));
     }
     // The budget trigger takes it, and projects it.
     let mut receipt = ask(EscalationTrigger::Budget, EscalationRuling::Approve);
@@ -202,7 +206,10 @@ fn an_unusable_scope_never_reaches_storage() {
         let mut receipt = ask(EscalationTrigger::Unsure, EscalationRuling::Approve);
         receipt.scope = scope.to_owned();
         let error = record_escalation_at(&vault, receipt, 1_000).expect_err("unusable scope");
-        assert!(matches!(error, Error::InvalidConsentBound(_)));
+        assert!(matches!(
+            error,
+            Error::Gate(GateError::InvalidConsentBound(_))
+        ));
     }
     assert!(ledger_receipts(&vault).is_empty());
 }
@@ -494,7 +501,7 @@ fn the_n_dial_moves_the_threshold_and_refuses_zero() {
     let (_dir, vault) = open_vault();
     assert!(matches!(
         set_escalation_standing_n(&vault, 0).expect_err("zero is not a threshold"),
-        Error::InvalidConsentBound(_)
+        Error::Gate(GateError::InvalidConsentBound(_))
     ));
     set_escalation_standing_n(&vault, 2).expect("dial");
     assert_eq!(escalation_standing_n(&vault).expect("read"), 2);
@@ -654,7 +661,10 @@ fn accepting_an_unknown_row_ref_is_a_typed_refusal() {
     let (_dir, vault) = open_vault();
     let error = accept_standing_policy_at(&vault, &crate::test_util::entity(0x32), 6_000)
         .expect_err("no such row");
-    assert!(matches!(error, Error::InvalidConsentBound(_)));
+    assert!(matches!(
+        error,
+        Error::Gate(GateError::InvalidConsentBound(_))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -697,7 +707,7 @@ fn the_suppression_read_is_scope_and_trigger_exact() {
     // rather than answering "no policy" for a question it cannot key.
     assert!(matches!(
         standing_policy_for(&vault, "  ", EscalationTrigger::Policy).expect_err("unusable scope"),
-        Error::InvalidConsentBound(_)
+        Error::Gate(GateError::InvalidConsentBound(_))
     ));
 }
 

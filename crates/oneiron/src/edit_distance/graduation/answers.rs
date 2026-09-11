@@ -6,7 +6,7 @@ use super::{ANSWER_KEY_PREFIX, ANSWER_ROW_LABEL, ROW_VERSION, decode_row, encode
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::consent_graduation::RampScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -219,7 +219,7 @@ pub enum OfferAnswerOutcome {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] when the scope tuple is unbuildable, when no
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable, when no
 /// offer is standing, or (for [`OfferAnswer::NotNow`]) when the ask is already
 /// suppressed; plus whatever the grant door rejects, and storage failures.
 pub fn answer_graduation_offer(
@@ -240,9 +240,9 @@ pub(super) fn answer_graduation_offer_at(
     scope.validate()?;
     vault.with_write_txn(|wtxn| {
         if !crate::consent_graduation::offer_is_standing_in_txn(vault, &*wtxn, scope)? {
-            return Err(Error::InvalidConsentBound(
+            return Err(Error::Gate(GateError::InvalidConsentBound(
                 "no graduation offer is standing for this scope",
-            ));
+            )));
         }
         match answer {
             OfferAnswer::GoAuto(owner) => {
@@ -256,9 +256,9 @@ pub(super) fn answer_graduation_offer_at(
             OfferAnswer::NotNow => {
                 let state = snooze_state_in_txn(&vault.store, &*wtxn, scope)?;
                 if state.suppresses_asks_at(at) {
-                    return Err(Error::InvalidConsentBound(
+                    return Err(Error::Gate(GateError::InvalidConsentBound(
                         "this scope's graduation offer is already held; there is nothing to decline",
-                    ));
+                    )));
                 }
                 append_answer_in_txn(vault, wtxn, scope, ANSWER_NOT_NOW, at)?;
                 Ok(OfferAnswerOutcome::Snoozed(state.declined_at(at)))
@@ -276,7 +276,7 @@ pub(super) fn answer_graduation_offer_at(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] when the scope tuple is unbuildable, plus
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable, plus
 /// storage failures.
 pub fn unpin_scope(vault: &Vault, scope: &RampScope) -> Result<()> {
     unpin_scope_at(vault, scope, crate::unix_seconds_now())

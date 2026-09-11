@@ -115,7 +115,7 @@ impl Vault {
     /// `search_connector_catalog` omits the connector (Active-only),
     /// `describe_connector` still resolves it as Revoked, `route_connector_call`
     /// returns `None`, and re-registering the same name fails
-    /// [`Error::ConnectorKeyAlreadyExists`] rather than recycling the name
+    /// [`RecordError::ConnectorKeyAlreadyExists`](crate::error::RecordError::ConnectorKeyAlreadyExists) rather than recycling the name
     /// onto a different connector.
     pub fn remove_connector_key(&self, id: &EntityId, at: u64) -> Result<ConnectorKeyRecord> {
         let mut wtxn = self.store.env.write_txn()?;

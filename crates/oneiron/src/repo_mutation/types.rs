@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 
 pub type RepoForkHash = [u8; 32];
 
@@ -40,9 +40,9 @@ impl RepoMutationStatus {
             "prepared" => Ok(Self::Prepared),
             "applied" => Ok(Self::Applied),
             "failed" => Ok(Self::Failed),
-            _ => Err(Error::InvalidRepoMutationRecord(
+            _ => Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo mutation status must be prepared, applied, or failed",
-            )),
+            ))),
         }
     }
 }

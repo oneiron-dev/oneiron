@@ -17,7 +17,7 @@ use crate::claim::{
 };
 use crate::edge::{EdgeKind, EdgeValueLayout, edge_value_layout_for_kind};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::provenance::EdgeRef;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
@@ -140,9 +140,9 @@ impl Vault {
         let claim_body = self.claim_body_for_claim_vad_in_txn(&wtxn, claim_id)?;
         if !claim_consolidatable(&claim_body) {
             if claim_body.lifecycle != ClaimLifecycleStatus::Active {
-                return Err(Error::ClaimAlreadyClosed {
+                return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
                     status: claim_body.lifecycle,
-                });
+                }));
             }
             let message = if claim_body.stale {
                 "claim is stale and not consolidatable"

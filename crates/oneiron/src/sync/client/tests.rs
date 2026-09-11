@@ -94,6 +94,7 @@ fn commit_local_entity(
     export_updates_since(&window.doc, &vv_before.encode()).unwrap()
 }
 
+use crate::error::SyncError;
 use crate::test_util::{entity as test_entity_id, put_policy_manifest_bytes};
 
 fn encode_policy_manifest(extra_entries: Vec<(rmpv::Value, rmpv::Value)>) -> Vec<u8> {
@@ -1321,12 +1322,12 @@ fn client_rejects_non_positive_ephemeral_timeout() {
     );
 
     match result {
-        Err(Error::SyncProtocolError {
+        Err(Error::Sync(SyncError::SyncProtocolError {
             context:
                 SyncProtocolValidation::InvalidConfig {
                     field: SyncConfigField::EphemeralTimeoutMs,
                 },
-        }) => {}
+        })) => {}
         Ok(_) => panic!("client construction must reject non-positive ephemeral timeout"),
         Err(err) => panic!("unexpected error: {err}"),
     }
@@ -2106,7 +2107,12 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
         &update,
     );
     assert!(
-        matches!(rejected, Err(crate::Error::GateWriteRejected { .. })),
+        matches!(
+            rejected,
+            Err(crate::Error::Gate(
+                crate::error::GateError::GateWriteRejected { .. }
+            ))
+        ),
         "gate refusal must surface as a retryable Err, got {rejected:?}",
     );
     assert!(
@@ -2126,7 +2132,12 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
         &update,
     );
     assert!(
-        matches!(again, Err(crate::Error::GateWriteRejected { .. })),
+        matches!(
+            again,
+            Err(crate::Error::Gate(
+                crate::error::GateError::GateWriteRejected { .. }
+            ))
+        ),
         "retry must re-run admission, got {again:?}",
     );
     assert!(
@@ -2161,7 +2172,9 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     );
     assert!(matches!(
         rejected,
-        Err(crate::Error::GateWriteRejected { .. })
+        Err(crate::Error::Gate(
+            crate::error::GateError::GateWriteRejected { .. }
+        ))
     ));
 
     // Heal: the operator installs the missing Imported permit. Nothing about the

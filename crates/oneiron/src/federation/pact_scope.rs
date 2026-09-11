@@ -7,7 +7,7 @@ use rmpv::Value;
 use super::codec::{encode_msgpack_value, required_value};
 
 use crate::entity_id::{EntityId, is_foreign_world_id_range};
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 
 /// Current FederationPactScope canonical encoding schema version.
 pub const FEDERATION_PACT_SCOPE_SCHEMA_VERSION: u64 = 1;
@@ -659,5 +659,7 @@ fn pact_scope_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a 
 }
 
 fn invalid_pact_scope() -> Error {
-    Error::InvalidFederationGrantBody("pact scope failed validation")
+    Error::Record(RecordError::InvalidFederationGrantBody(
+        "pact scope failed validation",
+    ))
 }

@@ -15,9 +15,9 @@
 //!
 //! The predicate gate (D17) is part of body validation: predicates must match
 //! the pinned grammar (≥2 segments of `[a-z][a-z0-9_]*` joined by `.`, total
-//! ≤128 bytes) or the write fails with [`crate::Error::InvalidPredicate`]. The
+//! ≤128 bytes) or the write fails with [`ClaimError::InvalidPredicate`](crate::error::ClaimError::InvalidPredicate). The
 //! `edge.*`, `skill.*` and `actor.*` namespaces are engine-reserved: public
-//! writes are rejected with [`crate::Error::ReservedPredicate`]. Crate-private
+//! writes are rejected with [`ClaimError::ReservedPredicate`](crate::error::ClaimError::ReservedPredicate). Crate-private
 //! provenance, skill-hub and actor-claim doors own local writes, while the
 //! `sync` feature's replicated-put
 //! door (`put_replicated`) admits rematerialization; every door still runs

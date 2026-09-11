@@ -1,6 +1,7 @@
 //! Batch write path, temporal/long-interval indexes and their open-time migration.
 
 use super::*;
+use crate::error::StoreError;
 
 #[test]
 fn put_query_and_delete_edges() -> Result<()> {
@@ -484,7 +485,7 @@ fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
     let Err(err) = Vault::open(path, mismatch_cfg) else {
         panic!("expected embedding model change rejection");
     };
-    assert_matches!(err, Error::EmbeddingModelChanged { .. });
+    assert_matches!(err, Error::Store(StoreError::EmbeddingModelChanged { .. }));
 
     let cfg = test_config();
     let _guard = lmdb_database_open_guard()?;

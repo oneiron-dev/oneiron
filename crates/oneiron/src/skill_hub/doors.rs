@@ -18,6 +18,7 @@ use super::index::{
 use super::package::{HubIndexEntry, HubPackage};
 use super::record::{HubPin, HubRef, HubSyncPolicy};
 use super::support::{map_text, map_value};
+use crate::error::ArtifactError;
 
 /// Claim predicate for capability-widening update proposals.
 pub const PREDICATE_SKILL_HUB_UPDATE_PROPOSAL: &str = "skill.hub_update_proposal";
@@ -122,19 +123,21 @@ impl Vault {
             .content_hash
             .is_some_and(|declared| declared != content_hash)
         {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "package content hash does not match its canonical file tree",
-            ));
+            )));
         }
         if let HubPin::ContentHash(pinned_hash) = &hub_ref.pin
             && SkillContentHash::parse_hex(pinned_hash)? != content_hash
         {
-            return Err(Error::InvalidSkillBody("content-hash-pinned ref drifted"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "content-hash-pinned ref drifted",
+            )));
         }
         if package.record.source != ClaimSource::Imported {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "hub import package must carry imported source",
-            ));
+            )));
         }
 
         let mut wtxn = self.store.env.write_txn()?;
@@ -143,9 +146,9 @@ impl Vault {
                 Some(existing) => {
                     let existing_record = self.read_skill_record_in_txn(&wtxn, &existing)?;
                     if existing_record.skill_id != package.record.skill_id {
-                        return Err(Error::InvalidSkillBody(
+                        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                             "hub import content hash collides with a different skill id",
-                        ));
+                        )));
                     }
                     existing
                 }
@@ -185,9 +188,9 @@ impl Vault {
 
         match self.read_admitted_capability_surface_in_txn(&wtxn, &entity)? {
             Some(admitted) if admitted != package.capabilities => {
-                return Err(Error::InvalidSkillBody(
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "matching content hash carries conflicting capabilities",
-                ));
+                )));
             }
             Some(_) => {}
             None => self.write_admitted_capability_surface_in_txn(
@@ -246,32 +249,34 @@ impl Vault {
             || package.record.source != ClaimSource::Imported
             || current.skill_id != package.record.skill_id
         {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "hub sync package must match an imported skill",
-            ));
+            )));
         }
         if package
             .record
             .content_hash
             .is_some_and(|declared| declared != content_hash)
         {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "package content hash does not match its canonical file tree",
-            ));
+            )));
         }
         // A content-hash pin binds the ref's identity on every sync path, not only under the
         // frozen policy (mirrors the import door at import_skill_from_hub_with_id).
         if let HubPin::ContentHash(pinned) = &hub_ref.pin
             && SkillContentHash::parse_hex(pinned)? != content_hash
         {
-            return Err(Error::InvalidSkillBody("content-hash-pinned ref drifted"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "content-hash-pinned ref drifted",
+            )));
         }
         if sync_policy == HubSyncPolicy::ContentHashFrozen
             && !matches!(&hub_ref.pin, HubPin::ContentHash(_))
         {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "content-hash-frozen policy requires a content_hash pin",
-            ));
+            )));
         }
         if !sync_policy.allows_automatic_update() {
             return Ok(HubSyncDisposition::RefusedByPolicy);
@@ -284,7 +289,9 @@ impl Vault {
             let mut matches_provenance_alias = false;
             for (_, body, _) in &provenance_rows {
                 let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
-                    Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
+                    Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "hub provenance claim is missing hubRef",
+                    )),
                 )?)?;
                 if same_hub_alias(&stored_ref, hub_ref) {
                     matches_provenance_alias = true;

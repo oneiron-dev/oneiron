@@ -51,7 +51,7 @@ const ADMISSION_TICKET_PREFIX: &[u8] = b"skill_optimize/admission_ticket/v1\0";
 /// # Errors
 ///
 /// [`Error::EntityNotFound`] when the proposal is gone;
-/// [`Error::InvalidSkillBody`] when the proposal is not an open optimizer-born
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when the proposal is not an open optimizer-born
 /// candidate, when no [`SkillEditDisposition::Accepted`] verdict stands for it,
 /// and for every refusal arm (protected or moved tier on either record, moved
 /// or purged target, lost or malformed cited source).
@@ -349,7 +349,7 @@ fn decode_origin_marker(raw: &[u8]) -> Result<Vec<Option<String>>> {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidSkillBody`] on an origin-laundering create;
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) on an origin-laundering create;
 /// [`Error::CorruptedIndex`] on an unreadable marker — fail closed, because a
 /// marker nobody can read is exactly the case the bypass would hide behind.
 pub(crate) fn optimizer_birth_marker_for_create_in_txn(
@@ -413,7 +413,7 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 ///   exists to stop, and a peer that has genuinely re-drafted has a new
 ///   revision to send, not a rewrite of this one.
 ///
-/// The refusal is [`Error::InvalidSkillBody`], which `sync::quarantine`
+/// The refusal is [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody), which `sync::quarantine`
 /// classifies as a REMOTE rejection: the row is quarantined and the window
 /// continues, so a fail-closed answer here is never a stalled replica.
 ///
@@ -444,7 +444,7 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidSkillBody`] when an optimizer-born record's origin
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when an optimizer-born record's origin
 /// provenance is edited, when a LOCAL optimizer-born candidate is flipped
 /// active without [`admit_optimized_skill_revision`] having authorized exactly
 /// this revision in this transaction, and when a REPLICATED one is activated by

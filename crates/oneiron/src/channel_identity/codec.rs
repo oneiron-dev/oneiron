@@ -35,6 +35,7 @@ use super::lifecycle::ChannelIdentityState;
 use super::record::ChannelIdentity;
 
 use super::shape::ChannelIdentityShape;
+use crate::error::RecordError;
 
 /// Encodes a ChannelIdentity body in canonical MessagePack field order.
 ///
@@ -263,9 +264,9 @@ pub(super) fn decode_channel_identity_value(value: &Value) -> Result<ChannelIden
             Some(decode_delegated_grant(entries)?)
         }
         _ => {
-            return Err(Error::InvalidChannelIdentityBody(
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "unsupported channel identity schema version",
-            ));
+            )));
         }
     };
 
@@ -446,7 +447,9 @@ pub(super) fn validate_non_empty_bounded(
     reason: &'static str,
 ) -> Result<()> {
     if value.trim().is_empty() || value.len() > max {
-        Err(Error::InvalidChannelIdentityBody(reason))
+        Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+            reason,
+        )))
     } else {
         Ok(())
     }
@@ -470,5 +473,7 @@ pub(super) fn encode_msgpack_value(value: &Value, context: &'static str) -> Resu
 }
 
 pub(super) fn invalid_identity() -> Error {
-    Error::InvalidChannelIdentityBody("body failed validation")
+    Error::Record(RecordError::InvalidChannelIdentityBody(
+        "body failed validation",
+    ))
 }

@@ -25,6 +25,7 @@ use crate::attempt_queue::validate::{
 use crate::error::{Error, Result};
 
 use super::AttemptQueue;
+use crate::error::ArtifactError;
 const RETRY_REASON_LEASE_TIMEOUT: &str = "lease_timeout";
 /// Stable reason stamped on a retried source row when the caller supplied none.
 pub(in crate::attempt_queue) const RETRY_REASON_UNSPECIFIED: &str = "retry";
@@ -324,7 +325,9 @@ impl AttemptQueue<'_> {
             ));
         }
         if record.manifest.len() >= MAX_ATTEMPT_MANIFEST_ENTRIES {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_MANIFEST_FULL));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_MANIFEST_FULL,
+            )));
         }
         record.manifest.push(entry);
         let encoded = encode_record(&record)?;

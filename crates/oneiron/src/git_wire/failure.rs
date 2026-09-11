@@ -2,17 +2,17 @@
 
 use super::record::hex_lower;
 use super::{GitWireOperation, GitWireProcessOutput};
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 
 /// Result alias of every GitWire operation.
 pub type GitWireResult<T> = Result<T>;
 
 pub(super) fn invalid(message: &'static str) -> Error {
-    Error::InvalidRepoMutationRecord(message)
+    Error::Code(CodeError::InvalidRepoMutationRecord(message))
 }
 
 pub(super) fn uncertain(message: String) -> Error {
-    Error::RepoMutationFailed(message)
+    Error::Code(CodeError::RepoMutationFailed(message))
 }
 
 /// The classified cause of a git failure.

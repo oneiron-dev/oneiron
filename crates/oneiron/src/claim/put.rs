@@ -10,7 +10,7 @@ use crate::batch::{
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
@@ -210,7 +210,7 @@ impl Vault {
         edge_gate_body: &ClaimBody,
     ) -> Result<()> {
         if new_id == old_id {
-            return Err(Error::ClaimSelfSupersession);
+            return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
 
         let mut wtxn = self.store.env.write_txn()?;

@@ -246,20 +246,20 @@ pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportEr
         return TransportError::AdmissionDenied(denial);
     }
     match e {
-        crate::error::Error::CrdtDecodeError { .. } => {
+        crate::error::Error::Sync(crate::error::SyncError::CrdtDecodeError { .. }) => {
             TransportError::InvalidPayload("federated update import failed")
         }
         // Reached only when a code is outside the typed taxonomy above, so the
         // raw codes stay auditable instead of being dropped.
-        crate::error::Error::GateWriteRejected {
+        crate::error::Error::Gate(crate::error::GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => TransportError::Storage(format!(
+        }) => TransportError::Storage(format!(
             "federated admission rejected: outcome={outcome}, reasons={reason_codes:?}"
         )),
-        crate::error::Error::SyncProtocolError {
+        crate::error::Error::Sync(crate::error::SyncError::SyncProtocolError {
             context: SyncProtocolValidation::FederatedTombstoneAdmission,
-        } => TransportError::InvalidPayload("federated tombstone update rejected"),
+        }) => TransportError::InvalidPayload("federated tombstone update rejected"),
         e if is_local_federated_admission_failure(&e) => {
             TransportError::Storage(format!("federated admission failed: {e}"))
         }
@@ -274,13 +274,15 @@ fn is_local_federated_admission_failure(e: &crate::error::Error) -> bool {
             | crate::error::Error::Io(_)
             | crate::error::Error::MapFull
             | crate::error::Error::InvalidConfig(_)
-            | crate::error::Error::EmbeddingModelChanged { .. }
-            | crate::error::Error::HnswConfigChanged { .. }
-            | crate::error::Error::StorageAbiVersionChanged { .. }
-            | crate::error::Error::StorageSchemaVersionChanged { .. }
-            | crate::error::Error::DbManifestMismatch { .. }
-            | crate::error::Error::VaultRootPreflight { .. }
-            | crate::error::Error::WindowNotFound { .. }
-            | crate::error::Error::WindowBusy { .. }
+            | crate::error::Error::Store(crate::error::StoreError::EmbeddingModelChanged { .. })
+            | crate::error::Error::Store(crate::error::StoreError::HnswConfigChanged { .. })
+            | crate::error::Error::Store(crate::error::StoreError::StorageAbiVersionChanged { .. })
+            | crate::error::Error::Store(
+                crate::error::StoreError::StorageSchemaVersionChanged { .. }
+            )
+            | crate::error::Error::Store(crate::error::StoreError::DbManifestMismatch { .. })
+            | crate::error::Error::Store(crate::error::StoreError::VaultRootPreflight { .. })
+            | crate::error::Error::Sync(crate::error::SyncError::WindowNotFound { .. })
+            | crate::error::Error::Sync(crate::error::SyncError::WindowBusy { .. })
     )
 }

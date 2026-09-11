@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 use crate::sync::bridge::Materializer;
 use crate::sync::types::{WindowKey, parse_window_key_str};
 
@@ -227,7 +227,7 @@ pub fn drain_remat_markers(
         let window_key = WindowKey::new(window.clone());
         let doc = match crate::sync::window::load_window_from_state(vault, user_id, &window_key) {
             Ok(doc) => doc,
-            Err(Error::WindowNotFound { .. }) => {
+            Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
                 // No persisted snapshot (d:w: absent) — rebuild from
                 // Observer A's durable update rows (u:w:) so the tombstone
                 // whose purge failed can still be drained; otherwise a

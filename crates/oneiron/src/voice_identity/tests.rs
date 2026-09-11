@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::counterparty_contact::CounterpartyContactRecord;
-use crate::error::ErrorKind;
+use crate::error::{ErrorKind, RegistryError};
 use crate::temporal::TimeRange;
 use crate::test_util::entity as test_id;
 
@@ -1266,7 +1266,7 @@ fn relationship_retention_validates_computes_and_prunes_when_due() -> Result<()>
                 )
             })
             .expect_err("non-relationship retention link"),
-        Error::InvalidRelationship { .. }
+        Error::Registry(RegistryError::InvalidRelationship { .. })
     ));
 
     vault.enroll_voice_print(&VoiceEnrollmentRequest {
@@ -1287,7 +1287,7 @@ fn relationship_retention_validates_computes_and_prunes_when_due() -> Result<()>
         vault
             .end_voice_relationship(subject, not_a_relationship, 1_000, 100)
             .expect_err("retention end must name a real RELATIONSHIP"),
-        Error::InvalidRelationship { .. }
+        Error::Registry(RegistryError::InvalidRelationship { .. })
     ));
     let other_relationship = test_id(0x59);
     seed_relationship(&vault, other_relationship)?;

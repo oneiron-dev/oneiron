@@ -179,7 +179,7 @@ pub const SECRET_SCOPE_READ: &str = "read";
 /// A binding scoping which effector may use a secret ref, at what tier
 /// ceiling. The binding check scopes usage, drives tier admission, and
 /// stamps receipts. No binding covering `(secret_ref, effector)` with the
-/// required scope ⇒ [`Error::SecretBindingDenied`].
+/// required scope ⇒ [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretBinding {
     /// The effector, e.g. `"connector:gmail"`, `"door:receive-pack"`.

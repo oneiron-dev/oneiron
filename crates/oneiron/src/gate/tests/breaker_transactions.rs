@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::GateError;
 
 #[test]
 fn staged_breaker_outcome_materializes_once() -> Result<()> {
@@ -402,7 +403,7 @@ fn failed_bundle_resolution_keeps_breaker_tripped() -> Result<()> {
             GateConsentBundleAction::Approve,
             9,
         ),
-        Err(Error::GateConsentStale { .. })
+        Err(Error::Gate(GateError::GateConsentStale { .. }))
     ));
 
     assert_eq!(

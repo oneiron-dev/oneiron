@@ -53,7 +53,7 @@ impl Store {
     ///    identity again afterwards. Nothing is created and nothing is
     ///    written.
     /// 2. All 28 manifest databases are opened in a READ transaction — a
-    ///    missing one is [`Error::DbManifestMismatch`] — and the storage ABI
+    ///    missing one is [`StoreError::DbManifestMismatch`](crate::error::StoreError::DbManifestMismatch) — and the storage ABI
     ///    and schema stamps must equal this engine's exactly. Committing that
     ///    read transaction writes nothing; it is how LMDB publishes the
     ///    database handles it opened.

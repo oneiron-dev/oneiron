@@ -22,6 +22,7 @@ fn test_config() -> VaultConfig {
     config
 }
 
+use crate::error::ArtifactError;
 use crate::test_util::entity;
 
 fn artifact_body(tag: u8) -> CodeArtifactBody {
@@ -245,12 +246,9 @@ fn corrupt_code_revision_parent_fold_self_consistent(
         .get(&wtxn, &key)?
         .ok_or(Error::EntityNotFound)?;
     let mut record = decode_code_revision_integrity_record(&raw)?;
-    let parent_fold = record
-        .parent_fold
-        .as_mut()
-        .ok_or(Error::InvalidCodeArtifactBody(
-            "test revision must have a parent fold",
-        ))?;
+    let parent_fold = record.parent_fold.as_mut().ok_or(Error::Artifact(
+        ArtifactError::InvalidCodeArtifactBody("test revision must have a parent fold"),
+    ))?;
     parent_fold[0] ^= 0x40;
     record.revision_fold = compute_code_revision_fold(
         revision.kind,
@@ -941,7 +939,10 @@ fn code_integrity_frontier_session_mismatch_fails_closed_on_update() -> Result<(
         .commit_code_revision(&CodeRevision::commit_child(second, session, first, 200))
         .expect_err("frontier stored under a session key must decode to the same session");
 
-    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))
+    ));
     Ok(())
 }
 
@@ -963,7 +964,10 @@ fn code_integrity_parent_fold_mismatch_fails_closed() -> Result<()> {
         .get_code_revision(&child)
         .expect_err("descendant must verify the current parent fold");
 
-    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))
+    ));
     Ok(())
 }
 
@@ -1003,7 +1007,10 @@ fn code_integrity_parent_session_mismatch_fails_closed() -> Result<()> {
         .get_code_revision(&child)
         .expect_err("parent from a different session must fail closed on read");
 
-    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))
+    ));
     Ok(())
 }
 
@@ -1039,7 +1046,10 @@ fn code_integrity_parent_cycle_fails_closed_without_recursive_overflow() -> Resu
         .get_code_revision(&second)
         .expect_err("corrupt parent cycles must fail closed");
 
-    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))
+    ));
     Ok(())
 }
 
@@ -1084,7 +1094,10 @@ fn code_integrity_revert_target_must_remain_parent_ancestor() -> Result<()> {
         .get_code_revision(&reverted)
         .expect_err("revert target must remain an ancestor of the parent revision");
 
-    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))
+    ));
     Ok(())
 }
 
@@ -1114,7 +1127,10 @@ fn code_integrity_provenance_claim_id_is_fold_authenticated() -> Result<()> {
         .get_code_revision(&revision_id)
         .expect_err("provenance tampering must alter the authenticated fold");
 
-    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))
+    ));
     Ok(())
 }
 
@@ -1151,7 +1167,10 @@ fn code_integrity_provenance_claim_id_type_mismatch_fails_closed() -> Result<()>
         .get_code_revision(&revision_id)
         .expect_err("non-CLAIM provenance must fail closed on read");
 
-    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))
+    ));
     Ok(())
 }
 
@@ -1170,7 +1189,10 @@ fn code_integrity_empty_session_index_with_frontier_fails_closed() -> Result<()>
         .code_revisions_for_session(&session)
         .expect_err("frontier without session index rows must fail closed");
 
-    assert!(matches!(err, Error::InvalidCodeArtifactBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))
+    ));
     Ok(())
 }
 

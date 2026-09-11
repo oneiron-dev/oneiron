@@ -10,7 +10,7 @@ use crate::affect::Vad;
 use crate::claim::ClaimSubject;
 use crate::edge::{EdgeKind, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
@@ -86,9 +86,9 @@ pub(super) fn validate_public_raw_put(
         // cannot bind to an actor; `put_authored_note`, reached only from
         // `Memory::author_take`, is the one NOTE writer.
         crate::registry::ENTITY_TYPE_NOTE => {
-            return Err(Error::InvalidNoteBody(
+            return Err(Error::Record(RecordError::InvalidNoteBody(
                 ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE,
-            ));
+            )));
         }
         // ONE-1686 (RT-04): a MESSAGE body IS the six-axis witness envelope —
         // author, message type, content, metadata, visibility, order — and the
@@ -103,9 +103,9 @@ pub(super) fn validate_public_raw_put(
         // about the same body is not a seam, it is a hole. The witness door
         // says so by name, with the ceiling's own proof in hand.
         crate::registry::ENTITY_TYPE_MESSAGE if door != RawPutDoor::WitnessMessage => {
-            return Err(Error::InvalidWitnessMessageBody(
+            return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
                 ERR_RAW_MESSAGE_PUT_REQUIRES_WITNESS,
-            ));
+            )));
         }
         ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
         ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
@@ -150,9 +150,9 @@ pub(super) fn validate_public_raw_put(
 pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Result<()> {
     let body = crate::note::decode_note_body(data)?;
     if body.author_ref != *author {
-        return Err(Error::InvalidNoteBody(
+        return Err(Error::Record(RecordError::InvalidNoteBody(
             "NOTE author_ref must be the verified bound actor",
-        ));
+        )));
     }
     Ok(())
 }
@@ -160,9 +160,9 @@ pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Res
 pub(super) fn validate_habit_checkin_body(data: &[u8]) -> Result<()> {
     match crate::habit::task_role_from_body_bytes(data)? {
         TaskRole::HabitCheckin => Ok(()),
-        _ => Err(Error::InvalidTaskBody(
+        _ => Err(Error::Record(RecordError::InvalidTaskBody(
             "habit check-in writes require HabitCheckin role",
-        )),
+        ))),
     }
 }
 

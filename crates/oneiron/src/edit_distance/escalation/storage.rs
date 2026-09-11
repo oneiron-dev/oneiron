@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::types::{EscalationRuling, EscalationTrigger};
 use crate::edit_distance::delta::AmendmentDelta;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 
 // ---------------------------------------------------------------------------
 // Keyspace + pinned strings
@@ -168,9 +168,9 @@ pub(super) fn escalation_receipt_id(id: &EntityId) -> String {
 pub(super) fn normalized_scope(scope: &str) -> Result<&str> {
     let trimmed = scope.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_ESCALATION_SCOPE_LEN {
-        return Err(Error::InvalidConsentBound(
+        return Err(Error::Gate(GateError::InvalidConsentBound(
             "an escalation scope must be non-empty and within the consent-ref bound",
-        ));
+        )));
     }
     Ok(trimmed)
 }

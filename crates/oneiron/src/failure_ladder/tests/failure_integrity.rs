@@ -3,6 +3,7 @@ use crate::attempt_queue::{
     AcceptAttemptLanding, AttemptResumePoint, FinishAttemptLanding, FinishLandingOutcome,
     LandingOutcome, LandingTrigger,
 };
+use crate::error::ArtifactError;
 use crate::genui::{
     FailureDiagnosisState, HealerQaFeed, SurfacedFailureCardInput, surfaced_failure_card,
 };
@@ -248,7 +249,7 @@ fn abandoned_attempt_routes_no_late_failure() -> Result<()> {
             .expect_err("an abandoned attempt must stay settled");
         assert!(matches!(
             error,
-            Error::InvalidAttemptQueueTransition { action, state: "abandoned" }
+            Error::Artifact(ArtifactError::InvalidAttemptQueueTransition { action, state: "abandoned" })
                 if action == expected_action
         ));
         assert_eq!(queue.list()?, before, "no row was changed or enqueued");

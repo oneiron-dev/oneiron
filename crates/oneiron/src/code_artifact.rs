@@ -3,7 +3,7 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::temporal::TimeRange;
 
@@ -39,9 +39,9 @@ impl CodeArtifactClass {
         match value {
             "codebase" => Ok(Self::Codebase),
             "artifact" => Ok(Self::Artifact),
-            _ => Err(Error::InvalidCodeArtifactBody(
+            _ => Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "class must be codebase or artifact",
-            )),
+            ))),
         }
     }
 }
@@ -102,12 +102,15 @@ pub fn encode_code_artifact_body(body: &CodeArtifactBody) -> Result<Vec<u8>> {
 
 pub fn decode_code_artifact_body(bytes: &[u8]) -> Result<CodeArtifactBody> {
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidCodeArtifactBody("body is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "trailing bytes after body map",
-        ));
+        )));
     }
     decode_code_artifact_body_value(&value)
 }
@@ -118,9 +121,9 @@ pub(crate) fn validate_code_artifact_body_bytes(bytes: &[u8]) -> Result<()> {
 
 fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "body must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut summary_prompt: Option<String> = None;
@@ -131,25 +134,29 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidCodeArtifactBody("body keys must be strings"));
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "body keys must be strings",
+            )));
         };
         let Some(index) = CODE_ARTIFACT_BODY_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "body key is not in the pinned CODE_ARTIFACT_BODY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodeArtifactBody("duplicate body key"));
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "duplicate body key",
+            )));
         }
         seen[index] = true;
 
         match CODE_ARTIFACT_BODY_KEYS[index] {
             KEY_SUMMARY_PROMPT => {
-                let text = value.as_str().ok_or(Error::InvalidCodeArtifactBody(
-                    "summary_prompt must be a UTF-8 string",
+                let text = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidCodeArtifactBody("summary_prompt must be a UTF-8 string"),
                 ))?;
                 validate_text_field(
                     text,
@@ -162,8 +169,8 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
                 summary_hash = Some(hash_from_value(value)?);
             }
             KEY_REPO_REF => {
-                let text = value.as_str().ok_or(Error::InvalidCodeArtifactBody(
-                    "repo_ref must be a UTF-8 string",
+                let text = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidCodeArtifactBody("repo_ref must be a UTF-8 string"),
                 ))?;
                 validate_text_field(
                     text,
@@ -173,8 +180,8 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
                 repo_ref = Some(text.to_owned());
             }
             KEY_CLASS => {
-                let text = value.as_str().ok_or(Error::InvalidCodeArtifactBody(
-                    "class must be a UTF-8 string",
+                let text = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidCodeArtifactBody("class must be a UTF-8 string"),
                 ))?;
                 class = Some(CodeArtifactClass::parse(text)?);
             }
@@ -183,15 +190,15 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
     }
 
     let body = CodeArtifactBody {
-        summary_prompt: summary_prompt.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required replay key summary_prompt",
+        summary_prompt: summary_prompt.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("missing required replay key summary_prompt"),
         ))?,
-        summary_hash: summary_hash.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required replay key summary_hash",
+        summary_hash: summary_hash.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("missing required replay key summary_hash"),
         ))?,
-        repo_ref: repo_ref.ok_or(Error::InvalidCodeArtifactBody(
+        repo_ref: repo_ref.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required replay key repo_ref",
-        ))?,
+        )))?,
         class: class.unwrap_or_default(),
     };
     validate_code_artifact_body(&body)?;
@@ -209,28 +216,34 @@ fn validate_code_artifact_body(body: &CodeArtifactBody) -> Result<()> {
         CODE_ARTIFACT_REPO_REF_MAX_BYTES,
         "repo_ref must be non-empty and at most 1024 bytes",
     )?;
-    crate::codebase::RepoRef::parse(&body.repo_ref)
-        .map_err(|_| Error::InvalidCodeArtifactBody("repo_ref must be a valid v1 repo_ref"))?;
+    crate::codebase::RepoRef::parse(&body.repo_ref).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "repo_ref must be a valid v1 repo_ref",
+        ))
+    })?;
     Ok(())
 }
 
 fn validate_text_field(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
     if text.is_empty() || text.len() > max_bytes {
-        return Err(Error::InvalidCodeArtifactBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            context,
+        )));
     }
     Ok(())
 }
 
 fn hash_from_value(value: &Value) -> Result<[u8; CODE_ARTIFACT_SUMMARY_HASH_LEN]> {
     let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "summary_hash must be MessagePack binary",
-        ));
+        )));
     };
-    bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| Error::InvalidCodeArtifactBody("summary_hash must be 32-byte binary"))
+    bytes.as_slice().try_into().map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "summary_hash must be 32-byte binary",
+        ))
+    })
 }
 
 impl Vault {
@@ -252,9 +265,9 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "entity is not a type-83 CODE_ARTIFACT",
-            ));
+            )));
         }
         decode_code_artifact_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }

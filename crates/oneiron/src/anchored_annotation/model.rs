@@ -4,7 +4,7 @@
 use super::codec::validate_locator_text;
 use super::reanchor::{col_to_letters, parse_a1_cell};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 /// CLAIM predicate for a thread head (anchor + lifecycle state + drift).
 pub const ANNOTATION_THREAD_PREDICATE: &str = "annotation.thread";
@@ -137,10 +137,13 @@ impl Locator {
         let sheet = sheet.into();
         validate_locator_text(&sheet, "xlsx locator sheet")?;
         if range.len() > ANNOTATION_LOCATOR_RANGE_MAX_BYTES {
-            return Err(Error::InvalidAnchor("xlsx locator range is too long"));
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "xlsx locator range is too long",
+            )));
         }
-        let range =
-            A1Range::parse(range).ok_or(Error::InvalidAnchor("xlsx locator range is not A1"))?;
+        let range = A1Range::parse(range).ok_or(Error::Artifact(ArtifactError::InvalidAnchor(
+            "xlsx locator range is not A1",
+        )))?;
         Ok(Self::Xlsx { sheet, range })
     }
 
@@ -149,7 +152,9 @@ impl Locator {
         let para_path = para_path.into();
         validate_locator_text(&para_path, "docx locator para_path")?;
         if char_start > char_end {
-            return Err(Error::InvalidAnchor("docx locator char span is inverted"));
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "docx locator char span is inverted",
+            )));
         }
         Ok(Self::Docx {
             para_path,
@@ -163,7 +168,9 @@ impl Locator {
         let shape_id = shape_id.into();
         validate_locator_text(&shape_id, "pptx locator shape_id")?;
         if slide == 0 {
-            return Err(Error::InvalidAnchor("pptx locator slide must be 1-based"));
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "pptx locator slide must be 1-based",
+            )));
         }
         Ok(Self::Pptx { slide, shape_id })
     }

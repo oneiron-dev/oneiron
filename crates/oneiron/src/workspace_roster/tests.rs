@@ -24,7 +24,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
-use crate::error::ErrorKind;
+use crate::error::{ErrorKind, RecordError};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::test_util::{entity, open_test_vault_with};
@@ -415,7 +415,7 @@ fn optional_delegated_mailbox_uses_custody_ref_only() -> Result<()> {
         .expect_err("Requested lifecycle cannot complete autonomy");
     assert!(matches!(
         err,
-        Error::WorkspaceMailboxAutonomyNotReady { identity_ref, requested_mode }
+        Error::Record(RecordError::WorkspaceMailboxAutonomyNotReady { identity_ref, requested_mode })
             if identity_ref == requested.identity_ref && requested_mode == requested.autonomy.rung.as_str()
     ));
 
@@ -674,7 +674,7 @@ fn assert_mailbox_waiting(
         .expect_err("external fulfillment is still required");
     assert!(matches!(
         error,
-        Error::WorkspaceMailboxAutonomyNotReady { identity_ref, requested_mode }
+        Error::Record(RecordError::WorkspaceMailboxAutonomyNotReady { identity_ref, requested_mode })
             if identity_ref == mailbox.identity_ref && requested_mode == mailbox.autonomy.rung.as_str()
     ));
     let journal = read_journal(vault, &onboarding_key(&intent.onboarding_id))?.expect("journal");

@@ -37,6 +37,7 @@ use crate::code_run::CodeRunRawOutput;
 use crate::codebase::{CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot, RepoRef};
 use crate::config::VaultConfig;
 use crate::entity_id::ENTITY_ID_LEN;
+use crate::error::SecretError;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::secret_custody::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
@@ -218,7 +219,7 @@ fn rotate_refuses_a_missing_or_inactive_record() {
     let (_tmp, vault) = temp_vault();
     assert!(matches!(
         vault.rotate_secret("nope", VALUE_V2, AT_ROTATED),
-        Err(Error::SecretRefNotFound { .. })
+        Err(Error::Secret(SecretError::SecretRefNotFound { .. }))
     ));
 
     register(&vault, SECRET, VALUE_V1);
@@ -226,7 +227,7 @@ fn rotate_refuses_a_missing_or_inactive_record() {
     assert!(
         matches!(
             vault.rotate_secret(SECRET, VALUE_V2, AT_ROTATED),
-            Err(Error::SecretCustodyNotActive { .. })
+            Err(Error::Secret(SecretError::SecretCustodyNotActive { .. }))
         ),
         "a revoked record has no value to rotate"
     );
@@ -351,11 +352,11 @@ fn revoke_kills_every_lease_and_every_door_for_the_ref() {
 
     assert!(matches!(
         vault.materialize_secret_lease(SECRET, EFFECTOR, 3_600),
-        Err(Error::SecretCustodyNotActive { .. })
+        Err(Error::Secret(SecretError::SecretCustodyNotActive { .. }))
     ));
     assert!(matches!(
         vault.inject_secret_at_door(SECRET, EFFECTOR, &mut |_: &[u8]| Ok(())),
-        Err(Error::SecretCustodyNotActive { .. })
+        Err(Error::Secret(SecretError::SecretCustodyNotActive { .. }))
     ));
     // The spared secret still works: revoke is scoped to its ref.
     vault
@@ -485,7 +486,7 @@ fn a_reclaimed_name_starts_above_the_dead_generation_and_its_old_exhaust_stays_s
         .publish_artifact_pointer("site", ArtifactPointerChannel::Preview, &fork_hash)
         .expect_err("the dead life's exhaust refuses publish");
     assert!(
-        matches!(refused, Error::TaintedArtifactStale { ref artifact } if artifact == "site"),
+        matches!(refused, Error::Secret(SecretError::TaintedArtifactStale { ref artifact }) if artifact == "site"),
         "got {refused:?}"
     );
 
@@ -525,7 +526,7 @@ fn a_reclaim_asserting_a_dead_generation_is_refused() {
         .register_secret(replay)
         .expect_err("a generation at or below the high-water is refused");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
     assert_eq!(
@@ -757,12 +758,12 @@ fn malformed_taint_refs_refuse_rather_than_defaulting_to_clean() {
 
     assert!(matches!(
         vault.mark_artifact_tainted(&id, &[taint("", 0)]),
-        Err(Error::InvalidSecretRotationBody(_))
+        Err(Error::Secret(SecretError::InvalidSecretRotationBody(_)))
     ));
     assert!(
         matches!(
             vault.mark_artifact_tainted(&id, &[taint(SECRET, 0), taint(SECRET, 1)]),
-            Err(Error::InvalidSecretRotationBody(_))
+            Err(Error::Secret(SecretError::InvalidSecretRotationBody(_)))
         ),
         "one secret cannot be asserted at two generations by one body"
     );
@@ -779,7 +780,7 @@ fn malformed_taint_refs_refuse_rather_than_defaulting_to_clean() {
     wtxn.commit().expect("commit");
     assert!(matches!(
         vault.artifact_taint_state(&id),
-        Err(Error::InvalidSecretRotationBody(_))
+        Err(Error::Secret(SecretError::InvalidSecretRotationBody(_)))
     ));
 }
 
@@ -882,7 +883,7 @@ fn publish_refuses_stale_tainted_exhaust_then_stamps_the_pointer_when_the_dial_o
         .publish_artifact_pointer("site", ArtifactPointerChannel::Preview, &fork_hash)
         .expect_err("stale tainted exhaust refuses publish");
     assert!(
-        matches!(refused, Error::TaintedArtifactStale { ref artifact } if artifact == "site"),
+        matches!(refused, Error::Secret(SecretError::TaintedArtifactStale { ref artifact }) if artifact == "site"),
         "got {refused:?}"
     );
     assert!(

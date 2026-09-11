@@ -8,7 +8,7 @@ use super::types::AgentDefinition;
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::temporal::TimeRange;
 
@@ -66,9 +66,9 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_AGENT_DEF {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "entity is not a type-17 AGENT_DEF",
-            ));
+            )));
         }
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
@@ -103,9 +103,9 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_AGENT_DEF {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "entity is not a type-17 AGENT_DEF",
-            ));
+            )));
         }
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
     }

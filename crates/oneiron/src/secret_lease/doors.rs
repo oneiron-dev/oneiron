@@ -17,7 +17,7 @@ use super::types::{
 };
 use crate::credential_door::{AdmittedLease, DoorResult};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{CustodyTier, SecretCustodyFloor};
 use crate::unix_seconds_now;
 use crate::vault::Vault;
@@ -259,10 +259,10 @@ impl Vault {
             .iter()
             .any(|declared| Path::new(declared) == target_path)
         {
-            return Err(Error::SecretLeasePathNotDeclared {
+            return Err(Error::Secret(SecretError::SecretLeasePathNotDeclared {
                 secret_ref: rec.name,
                 path: target_path.display().to_string(),
-            });
+            }));
         }
         // One registration row per lease (SOL-1920-02): a live registration
         // pins the lease to its path. A DIFFERENT declared path under the
@@ -272,11 +272,11 @@ impl Vault {
         // (`replace`) is the S4 recovery flow and stays admitted.
         let replace = match read_local_registration_in_txn(&self.store, &wtxn, lease_id)? {
             Some(stored) if stored.registration.path.as_path() != target_path => {
-                return Err(Error::SecretLeasePathConflict {
+                return Err(Error::Secret(SecretError::SecretLeasePathConflict {
                     lease_id: lease.lease_id,
                     registered_path: stored.registration.path.display().to_string(),
                     requested_path: target_path.display().to_string(),
-                });
+                }));
             }
             Some(_) => true,
             None => false,
@@ -324,9 +324,9 @@ impl Vault {
     pub fn revoke_secret_lease(&self, lease_id: &EntityId, at: u64) -> Result<SecretLease> {
         let mut wtxn = self.store.env.write_txn()?;
         let Some(mut lease) = read_secret_lease_in_txn(&self.store, &wtxn, lease_id)? else {
-            return Err(Error::SecretLeaseNotFound {
+            return Err(Error::Secret(SecretError::SecretLeaseNotFound {
                 lease_id: *lease_id,
-            });
+            }));
         };
         if lease.status != SecretLeaseStatus::Revoked {
             lease.status = SecretLeaseStatus::Revoked;

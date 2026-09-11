@@ -7,7 +7,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::temporal::TimeRange;
 
@@ -88,14 +88,14 @@ pub fn check_lfs_expectation(
     if let Some(expected_size) = expected_size
         && expected_size != actual_size
     {
-        return Err(Error::InvalidLfsObject(
+        return Err(Error::Artifact(ArtifactError::InvalidLfsObject(
             "declared lfs size does not match the body length",
-        ));
+        )));
     }
     if LfsOid::digest(bytes) != expected_oid {
-        return Err(Error::InvalidLfsObject(
+        return Err(Error::Artifact(ArtifactError::InvalidLfsObject(
             "body sha256 does not match the declared lfs oid",
-        ));
+        )));
     }
     Ok(())
 }

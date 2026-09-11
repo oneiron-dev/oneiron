@@ -1,6 +1,7 @@
 //! Shared fixtures, helpers, and telemetry captures for the attempt-queue tests.
 
 use super::*;
+use crate::error::ArtifactError;
 
 #[derive(Clone, Default)]
 pub(super) struct TelemetryCapture {
@@ -106,10 +107,10 @@ pub(super) const LEGACY_DEDUPE_KEY_CLAIM_EXTRACTION_SAME: &[u8] = b"\x00\x10clai
 pub(super) fn assert_invalid_transition(err: Error, action: &'static str, state: &'static str) {
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueTransition {
+        Error::Artifact(ArtifactError::InvalidAttemptQueueTransition {
             action: got_action,
             state: got_state,
-        } if got_action == action && got_state == state
+        }) if got_action == action && got_state == state
     ));
 }
 

@@ -1,0 +1,8403 @@
+{
+ "schema": 1,
+ "base_rev": "51d7e4a79ecf801ee316f1cc9a079a89c5bb55dc",
+ "source": "crates/oneiron/src/error/mod.rs",
+ "totals": {
+  "variants": 224,
+  "error_kind_variants": 219,
+  "per_domain": {
+   "root": 21,
+   "artifact": 24,
+   "claim": 19,
+   "code": 32,
+   "gate": 16,
+   "maintenance": 5,
+   "offrecord": 12,
+   "record": 28,
+   "registry": 16,
+   "relay": 7,
+   "secret": 16,
+   "store": 12,
+   "sync": 16
+  },
+  "shapes": {
+   "tuple": 79,
+   "struct": 111,
+   "unit": 34
+  },
+  "cfg_gated": 11
+ },
+ "domains": {
+  "root": {
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "wrapper": null
+  },
+  "store": {
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "wrapper": "Store",
+   "wrapper_decl": "#[error(transparent)]\nStore(#[from] StoreError),"
+  },
+  "registry": {
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "wrapper": "Registry",
+   "wrapper_decl": "#[error(transparent)]\nRegistry(#[from] RegistryError),"
+  },
+  "claim": {
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "wrapper": "Claim",
+   "wrapper_decl": "#[error(transparent)]\nClaim(#[from] ClaimError),"
+  },
+  "gate": {
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "wrapper": "Gate",
+   "wrapper_decl": "#[error(transparent)]\nGate(#[from] GateError),"
+  },
+  "record": {
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "wrapper": "Record",
+   "wrapper_decl": "#[error(transparent)]\nRecord(#[from] RecordError),"
+  },
+  "artifact": {
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "wrapper": "Artifact",
+   "wrapper_decl": "#[error(transparent)]\nArtifact(#[from] ArtifactError),"
+  },
+  "code": {
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "wrapper": "Code",
+   "wrapper_decl": "#[error(transparent)]\nCode(#[from] CodeError),"
+  },
+  "sync": {
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "wrapper": "Sync",
+   "wrapper_decl": "#[error(transparent)]\nSync(#[from] SyncError),"
+  },
+  "offrecord": {
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "wrapper": "OffRecord",
+   "wrapper_decl": "#[error(transparent)]\nOffRecord(#[from] OffRecordError),"
+  },
+  "secret": {
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "wrapper": "Secret",
+   "wrapper_decl": "#[error(transparent)]\nSecret(#[from] SecretError),"
+  },
+  "relay": {
+   "enum": "RelayError",
+   "file": "crates/oneiron/src/error/relay.rs",
+   "wrapper": "Relay",
+   "wrapper_decl": "#[error(transparent)]\nRelay(#[from] RelayError),"
+  },
+  "maintenance": {
+   "enum": "MaintenanceError",
+   "file": "crates/oneiron/src/error/maintenance.rs",
+   "wrapper": "Maintenance",
+   "wrapper_decl": "#[error(transparent)]\nMaintenance(#[from] MaintenanceError),"
+  }
+ },
+ "variants": [
+  {
+   "name": "Storage",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "heed::Error"
+   ],
+   "error_attr": "#[error(\"storage error: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 283,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "sync"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "Io",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "std::io::Error"
+   ],
+   "error_attr": "#[error(\"io error: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 286,
+   "refs": {
+    "prod": 14,
+    "test": 10,
+    "total": 24,
+    "files": 14,
+    "modules": 10,
+    "crates": {
+     "oneiron": 24
+    },
+    "top_modules": [
+     "sync",
+     "<crate root>",
+     "linkedin_lead_preload",
+     "origin",
+     "secret_lease",
+     "store"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "DimensionMismatch",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "struct",
+   "payload": [
+    "expected: usize",
+    "got: usize"
+   ],
+   "error_attr": "#[error(\"dimension mismatch: expected {expected}, got {got}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 289,
+   "refs": {
+    "prod": 12,
+    "test": 9,
+    "total": 21,
+    "files": 14,
+    "modules": 12,
+    "crates": {
+     "oneiron": 21
+    },
+    "top_modules": [
+     "pipeline",
+     "<crate root>",
+     "batch",
+     "cluster",
+     "embed",
+     "hnsw"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidVector",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "struct",
+   "payload": [
+    "index: usize",
+    "value: f32"
+   ],
+   "error_attr": "#[error(\"invalid vector component at index {index}: {value}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 292,
+   "refs": {
+    "prod": 4,
+    "test": 9,
+    "total": 13,
+    "files": 9,
+    "modules": 9,
+    "crates": {
+     "oneiron": 13
+    },
+    "top_modules": [
+     "<crate root>",
+     "batch",
+     "cluster",
+     "dreamer_runner",
+     "maintain",
+     "slim"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidEdgeWeight",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "struct",
+   "payload": [
+    "value: f32"
+   ],
+   "error_attr": "#[error(\"invalid edge weight: {value} (contract range [0, 1])\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 296,
+   "refs": {
+    "prod": 6,
+    "test": 3,
+    "total": 9,
+    "files": 7,
+    "modules": 6,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "<crate root>",
+     "batch",
+     "claim",
+     "sync",
+     "tests",
+     "vault"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidVad",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "struct",
+   "payload": [
+    "component: VadComponent",
+    "value: f32"
+   ],
+   "error_attr": "#[error(\"invalid VAD component {component:?}: {value}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 299,
+   "refs": {
+    "prod": 7,
+    "test": 2,
+    "total": 9,
+    "files": 8,
+    "modules": 6,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "batch",
+     "<crate root>",
+     "affect",
+     "tests",
+     "vault"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "MapFull",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"lmdb map is full\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 302,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "sync"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidConfig",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "String"
+   ],
+   "error_attr": "#[error(\"invalid config: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 305,
+   "refs": {
+    "prod": 637,
+    "test": 207,
+    "total": 844,
+    "files": 197,
+    "modules": 83,
+    "crates": {
+     "oneiron": 818,
+     "oneiron-driver": 22,
+     "oneiron-server": 4
+    },
+    "top_modules": [
+     "crates",
+     "campaign",
+     "lens",
+     "pipeline",
+     "batch",
+     "gate"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidTemporalExpression",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "TemporalExpressionParseError"
+   ],
+   "error_attr": "#[error(\"invalid temporal expression: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 308,
+   "refs": {
+    "prod": 1,
+    "test": 5,
+    "total": 6,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 5,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "pipeline",
+     "crates"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EntityNotFound",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"entity not found\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 311,
+   "refs": {
+    "prod": 215,
+    "test": 158,
+    "total": 373,
+    "files": 158,
+    "modules": 78,
+    "crates": {
+     "oneiron": 373
+    },
+    "top_modules": [
+     "campaign",
+     "batch",
+     "gate",
+     "calendar",
+     "code_sandbox",
+     "connector_key"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConcurrentWrite",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"concurrent write detected: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 314,
+   "refs": {
+    "prod": 43,
+    "test": 16,
+    "total": 59,
+    "files": 27,
+    "modules": 20,
+    "crates": {
+     "oneiron": 53,
+     "oneiron-server": 4,
+     "oneiron-remote": 2
+    },
+    "top_modules": [
+     "crates",
+     "store",
+     "engine_executor",
+     "campaign",
+     "code_run",
+     "git_wire"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ArithmeticOverflow",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"arithmetic overflow: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 317,
+   "refs": {
+    "prod": 106,
+    "test": 7,
+    "total": 113,
+    "files": 63,
+    "modules": 41,
+    "crates": {
+     "oneiron": 113
+    },
+    "top_modules": [
+     "sync",
+     "code_run",
+     "attempt_queue",
+     "edit_distance",
+     "origin",
+     "session_overlay"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvariantViolation",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invariant violation: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 320,
+   "refs": {
+    "prod": 411,
+    "test": 120,
+    "total": 531,
+    "files": 240,
+    "modules": 118,
+    "crates": {
+     "oneiron": 530,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "edit_distance",
+     "batch",
+     "store",
+     "gate",
+     "crates",
+     "code_run"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidKey",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"invalid key or value bytes\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 323,
+   "refs": {
+    "prod": 85,
+    "test": 44,
+    "total": 129,
+    "files": 45,
+    "modules": 27,
+    "crates": {
+     "oneiron": 127,
+     "oneiron-bench": 2
+    },
+    "top_modules": [
+     "sync",
+     "batch",
+     "crates",
+     "calendar",
+     "<crate root>",
+     "bm25"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CorruptedIndex",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"corrupted index: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 326,
+   "refs": {
+    "prod": 1276,
+    "test": 213,
+    "total": 1489,
+    "files": 387,
+    "modules": 146,
+    "crates": {
+     "oneiron": 1484,
+     "oneiron-server": 5
+    },
+    "top_modules": [
+     "edit_distance",
+     "sync",
+     "store",
+     "batch",
+     "code_run",
+     "campaign"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "IndexOverflow",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"index overflow: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 329,
+   "refs": {
+    "prod": 58,
+    "test": 12,
+    "total": 70,
+    "files": 38,
+    "modules": 19,
+    "crates": {
+     "oneiron": 70
+    },
+    "top_modules": [
+     "origin",
+     "<crate root>",
+     "affect",
+     "batch",
+     "claim",
+     "code_memory"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidEntityType",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "u8"
+   ],
+   "error_attr": "#[error(\"invalid entity type: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 332,
+   "refs": {
+    "prod": 46,
+    "test": 11,
+    "total": 57,
+    "files": 30,
+    "modules": 22,
+    "crates": {
+     "oneiron": 56,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "crates",
+     "<crate root>",
+     "access_grant",
+     "affect",
+     "authority",
+     "channel_identity"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidClaimBody",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid claim body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 336,
+   "refs": {
+    "prod": 615,
+    "test": 239,
+    "total": 854,
+    "files": 171,
+    "modules": 72,
+    "crates": {
+     "oneiron": 850,
+     "oneiron-driver": 3,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "batch",
+     "crates",
+     "booking",
+     "campaign",
+     "edit_distance",
+     "gate"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "claim-named but in the 21-variant bag: 854 lines across 72 modules"
+  },
+  {
+   "name": "InvalidTimeRange",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "struct",
+   "payload": [
+    "start: u64",
+    "end: u64"
+   ],
+   "error_attr": "#[error(\"invalid time range: occurred_start {start} > occurred_end {end}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 343,
+   "refs": {
+    "prod": 6,
+    "test": 8,
+    "total": 14,
+    "files": 9,
+    "modules": 8,
+    "crates": {
+     "oneiron": 14
+    },
+    "top_modules": [
+     "batch",
+     "claim",
+     "commitment",
+     "pipeline",
+     "tests"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EdgeNotFound",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"edge not found\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 347,
+   "refs": {
+    "prod": 14,
+    "test": 2,
+    "total": 16,
+    "files": 8,
+    "modules": 6,
+    "crates": {
+     "oneiron": 16
+    },
+    "top_modules": [
+     "batch",
+     "federation",
+     "gate",
+     "provenance",
+     "vault"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "UpstreamToolFailure",
+   "domain": "root",
+   "enum": "Error",
+   "file": "crates/oneiron/src/error/mod.rs",
+   "shape": "struct",
+   "payload": [
+    "tool: &'static str",
+    "code: String"
+   ],
+   "error_attr": "#[error(\"upstream tool failure: tool={tool}, code={code}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 351,
+   "refs": {
+    "prod": 3,
+    "test": 1,
+    "total": 4,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "linkedin_connector",
+     "saved_query"
+    ]
+   },
+   "action": "keep",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidCodeArtifactBody",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid CODE artifact body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 21,
+   "refs": {
+    "prod": 125,
+    "test": 10,
+    "total": 135,
+    "files": 13,
+    "modules": 7,
+    "crates": {
+     "oneiron": 135
+    },
+    "top_modules": [
+     "<crate root>",
+     "batch",
+     "claim",
+     "code_revision",
+     "code_run",
+     "codebase"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidBlobArtifactBody",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid BLOB artifact body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 25,
+   "refs": {
+    "prod": 40,
+    "test": 3,
+    "total": 43,
+    "files": 6,
+    "modules": 3,
+    "crates": {
+     "oneiron": 43
+    },
+    "top_modules": [
+     "<crate root>",
+     "blob_artifact",
+     "build_cache"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidLfsObject",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid LFS object: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 34,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "origin"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "design pins 'code/blob/lfs artifacts' to ArtifactError even though origin/ constructs it"
+  },
+  {
+   "name": "InvalidAnchor",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid anchor: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 38,
+   "refs": {
+    "prod": 21,
+    "test": 0,
+    "total": 21,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 21
+    },
+    "top_modules": [
+     "anchored_annotation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "AnnotationThreadNotFound",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"anchored-annotation thread not found\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 42,
+   "refs": {
+    "prod": 3,
+    "test": 0,
+    "total": 3,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "anchored_annotation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidEditManifest",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid edit manifest: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 45,
+   "refs": {
+    "prod": 8,
+    "test": 4,
+    "total": 12,
+    "files": 5,
+    "modules": 2,
+    "crates": {
+     "oneiron": 12
+    },
+    "top_modules": [
+     "edit_roundtrip",
+     "edit_settle"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EditRoundtripFailed",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"edit round-trip failed: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 50,
+   "refs": {
+    "prod": 39,
+    "test": 15,
+    "total": 54,
+    "files": 6,
+    "modules": 3,
+    "crates": {
+     "oneiron": 54
+    },
+    "top_modules": [
+     "edit_roundtrip",
+     "edit_settle"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EditProposalAlreadySettled",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "struct",
+   "payload": [
+    "outcome: &'static str"
+   ],
+   "error_attr": "#[error(\"edit proposal already settled: prior outcome was {outcome}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 57,
+   "refs": {
+    "prod": 4,
+    "test": 3,
+    "total": 7,
+    "files": 4,
+    "modules": 1,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "edit_settle"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EditProposalStale",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"edit proposal is stale: its base no longer matches the artifact head\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 64,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "edit_settle"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SettleNotAuthorized",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"settle not authorized: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 69,
+   "refs": {
+    "prod": 2,
+    "test": 3,
+    "total": 5,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "edit_settle"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidSkillBody",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid SKILL body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 73,
+   "refs": {
+    "prod": 160,
+    "test": 6,
+    "total": 166,
+    "files": 25,
+    "modules": 9,
+    "crates": {
+     "oneiron": 165,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "skill_optimize",
+     "crates",
+     "batch",
+     "skill",
+     "skill_convert",
+     "skill_hub"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SkillEditGateRetry",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"skill edit gate must be retried: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 85,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "skill_optimize"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SkillContentAnchorTypeMismatch",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "struct",
+   "payload": [
+    "existing: u8"
+   ],
+   "error_attr": "#[error(\"skill content anchor id is held by entity type {existing}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 90,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "skill_hub"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidAgentDefBody",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid AGENT_DEF body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 94,
+   "refs": {
+    "prod": 116,
+    "test": 3,
+    "total": 119,
+    "files": 8,
+    "modules": 3,
+    "crates": {
+     "oneiron": 119
+    },
+    "top_modules": [
+     "agent_def",
+     "batch",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "AgentDefinitionNotFound",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId"
+   ],
+   "error_attr": "#[error(\"agent definition not found: {}\", id.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 98,
+   "refs": {
+    "prod": 3,
+    "test": 2,
+    "total": 5,
+    "files": 4,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "crates",
+     "agent_dispatch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "AgentDefinitionDisabled",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId"
+   ],
+   "error_attr": "#[error(\"agent definition disabled: {}\", id.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 102,
+   "refs": {
+    "prod": 3,
+    "test": 2,
+    "total": 5,
+    "files": 4,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "crates",
+     "agent_dispatch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SeededAgentDefinitionConflict",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId"
+   ],
+   "error_attr": "#[error(\"seeded agent definition conflict at {}\", id.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 107,
+   "refs": {
+    "prod": 4,
+    "test": 1,
+    "total": 5,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "agent_def"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "AgentNotDispatchable",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"agent not dispatchable: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 111,
+   "refs": {
+    "prod": 7,
+    "test": 4,
+    "total": 11,
+    "files": 5,
+    "modules": 2,
+    "crates": {
+     "oneiron": 10,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "crates",
+     "agent_dispatch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidAgentDispatchInput",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid agent dispatch input: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 114,
+   "refs": {
+    "prod": 92,
+    "test": 11,
+    "total": 103,
+    "files": 17,
+    "modules": 6,
+    "crates": {
+     "oneiron": 102,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "dispatch_byoa",
+     "crates",
+     "agent_dispatch",
+     "context_projection"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidRecoveryArtifact",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid recovery artifact: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 118,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "<crate root>",
+     "recovery"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RecoveryArtifactQuarantineExhausted",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "struct",
+   "payload": [
+    "path: PathBuf"
+   ],
+   "error_attr": "#[error(\n        \"recovery artifact quarantine suffix space exhausted for {}\",\n        path.display()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 125,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "<crate root>"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidAttemptQueueRecord",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid attempt queue record: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 128,
+   "refs": {
+    "prod": 96,
+    "test": 36,
+    "total": 132,
+    "files": 27,
+    "modules": 15,
+    "crates": {
+     "oneiron": 131,
+     "oneiron-driver": 1
+    },
+    "top_modules": [
+     "attempt_queue",
+     "dispatch_byoa",
+     "crates",
+     "companion",
+     "dreamer_runner",
+     "dreamer_tournament"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidAttemptQueueTransition",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "struct",
+   "payload": [
+    "action: &'static str",
+    "state: &'static str"
+   ],
+   "error_attr": "#[error(\"invalid attempt queue transition: action={action}, state={state}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 133,
+   "refs": {
+    "prod": 6,
+    "test": 8,
+    "total": 14,
+    "files": 11,
+    "modules": 8,
+    "crates": {
+     "oneiron": 14
+    },
+    "top_modules": [
+     "attempt_queue",
+     "failure_ladder",
+     "agent_dispatch",
+     "dispatch_byoa",
+     "dreamer_wake",
+     "outbound"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "DeltaCaptureUnavailable",
+   "domain": "artifact",
+   "enum": "ArtifactError",
+   "file": "crates/oneiron/src/error/artifact.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"no amendment delta capture lane is available: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 142,
+   "refs": {
+    "prod": 2,
+    "test": 1,
+    "total": 3,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "edit_distance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "ARCH-0056 amendment-delta telemetry; constructed in edit_distance/"
+  },
+  {
+   "name": "InvalidPredicate",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "predicate: String",
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\"invalid claim predicate {predicate:?}: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 20,
+   "refs": {
+    "prod": 4,
+    "test": 8,
+    "total": 12,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 12
+    },
+    "top_modules": [
+     "claim"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "doc: 'Claim predicate violates the pinned D17 grammar'; constructed in claim/"
+  },
+  {
+   "name": "ReservedPredicate",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "predicate: String"
+   ],
+   "error_attr": "#[error(\"reserved claim predicate namespace: {predicate:?}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 27,
+   "refs": {
+    "prod": 4,
+    "test": 10,
+    "total": 14,
+    "files": 10,
+    "modules": 7,
+    "crates": {
+     "oneiron": 14
+    },
+    "top_modules": [
+     "edit_distance",
+     "actor_claims",
+     "claim",
+     "provenance",
+     "skill_hub",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "doc: 'Claim predicate lives in the reserved edge.* namespace'"
+  },
+  {
+   "name": "ActorLacksClaimAuthority",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "as the checking door words it. reason: &'static str"
+   ],
+   "error_attr": "#[error(\"actor lacks authority over this claim: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 45,
+   "refs": {
+    "prod": 5,
+    "test": 1,
+    "total": 6,
+    "files": 4,
+    "modules": 3,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "authority",
+     "claim",
+     "commitment_wake"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ProvenanceOnStructuralEdge",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "kind: u8"
+   ],
+   "error_attr": "#[error(\"edge.provenance subject kind {kind} is structural, not semantic\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 52,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ActorClassMismatch",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "actor_entity_type: u8",
+    "actor_class: u8"
+   ],
+   "error_attr": "#[error(\"actor class {actor_class} is incompatible with actor entity type {actor_entity_type}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 57,
+   "refs": {
+    "prod": 7,
+    "test": 7,
+    "total": 14,
+    "files": 11,
+    "modules": 7,
+    "crates": {
+     "oneiron": 14
+    },
+    "top_modules": [
+     "batch",
+     "dispatch_byoa",
+     "federation",
+     "identity_topology",
+     "linkedin_lead_preload",
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidProvenanceBody",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid edge.provenance body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 65,
+   "refs": {
+    "prod": 56,
+    "test": 14,
+    "total": 70,
+    "files": 15,
+    "modules": 6,
+    "crates": {
+     "oneiron": 70
+    },
+    "top_modules": [
+     "provenance",
+     "claim",
+     "deletion",
+     "tests",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidModelSubstrate",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid model substrate: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 71,
+   "refs": {
+    "prod": 5,
+    "test": 0,
+    "total": 5,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EmitAdjacentReceiptRequired",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "surface: &'static str",
+    "kind: &'static str"
+   ],
+   "error_attr": "#[error(\"{surface} requires an emit-adjacent receipt kind, got {kind}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 78,
+   "refs": {
+    "prod": 2,
+    "test": 2,
+    "total": 4,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "receipt"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "emit-receipt surface (OF-369/RS9); not a cfg(sync) receipt"
+  },
+  {
+   "name": "ClaimAlreadyClosed",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "status: ClaimLifecycleStatus"
+   ],
+   "error_attr": "#[error(\"claim already closed: lifecycle status is {status:?}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 88,
+   "refs": {
+    "prod": 9,
+    "test": 2,
+    "total": 11,
+    "files": 7,
+    "modules": 6,
+    "crates": {
+     "oneiron": 11
+    },
+    "top_modules": [
+     "affect",
+     "claim",
+     "commitment",
+     "commitment_lifecycle",
+     "repo_mutation",
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "WriteVerbTargetStale",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "target: EntityId",
+    "lifecycle: ClaimLifecycleStatus",
+    "successor_short_id: String"
+   ],
+   "error_attr": "#[error(\n        \"write verb target {} is no longer the lifecycle head (life is {lifecycle:?}); current head is {successor_short_id}\",\n        target.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 110,
+   "refs": {
+    "prod": 8,
+    "test": 10,
+    "total": 18,
+    "files": 9,
+    "modules": 7,
+    "crates": {
+     "oneiron": 17,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "crates",
+     "claim",
+     "code_run",
+     "commitment",
+     "memory",
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ClaimSelfSupersession",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"claim cannot supersede itself\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 118,
+   "refs": {
+    "prod": 6,
+    "test": 0,
+    "total": 6,
+    "files": 4,
+    "modules": 3,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "claim",
+     "counterparty_contact",
+     "repo_mutation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ProvenanceClaimLifecycle",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "predicate: String"
+   ],
+   "error_attr": "#[error(\n        \"claim predicate {predicate:?} is a reserved edge.* provenance claim; use the edge-provenance lifecycle API (put_edge_provenance / retract_edge_provenance), not the generic claim lifecycle ops\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 129,
+   "refs": {
+    "prod": 5,
+    "test": 3,
+    "total": 8,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "claim"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "NotAProvenanceClaim",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"not an edge.provenance claim: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 134,
+   "refs": {
+    "prod": 6,
+    "test": 0,
+    "total": 6,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ProvenanceClaimAlreadyClosed",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "lifecycle: &'static str"
+   ],
+   "error_attr": "#[error(\"edge.provenance claim is already closed: lifecycle is {lifecycle}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 139,
+   "refs": {
+    "prod": 5,
+    "test": 0,
+    "total": 5,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ProvenanceClaimIdInUse",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"edge.provenance claim id already in use: provenance claim ids are write-once\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 149,
+   "refs": {
+    "prod": 3,
+    "test": 0,
+    "total": 3,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ProvenanceSubjectMismatch",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"edge.provenance subject mismatch: prior and new claims address different EdgeRefs\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 154,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ProvenanceSelfSupersession",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"edge.provenance claim cannot supersede itself\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 158,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "provenance"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ProvenancePrecedenceViolation",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "incoming_learned_at: u64",
+    "frontier_learned_at: u64"
+   ],
+   "error_attr": "#[error(\n        \"edge.provenance precedence violation: incoming learned_at {incoming_learned_at} predates the live frontier {frontier_learned_at}\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 166,
+   "refs": {
+    "prod": 4,
+    "test": 1,
+    "total": 5,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "provenance",
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EdgeIsProvenanced",
+   "domain": "claim",
+   "enum": "ClaimError",
+   "file": "crates/oneiron/src/error/claim.rs",
+   "shape": "struct",
+   "payload": [
+    "kind: u8"
+   ],
+   "error_attr": "#[error(\n        \"edge (kind {kind}) is provenanced: a plain edge put cannot displace attributed truth; modify the relation via put_edge_provenance / the actor-bound surface (as_actor), set weight via set_edge_weight, set VAD via set_edge_vad\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 181,
+   "refs": {
+    "prod": 4,
+    "test": 3,
+    "total": 7,
+    "files": 4,
+    "modules": 4,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "batch",
+     "tests",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidCodebaseSnapshotBody",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid codebase snapshot body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 20,
+   "refs": {
+    "prod": 77,
+    "test": 0,
+    "total": 77,
+    "files": 6,
+    "modules": 2,
+    "crates": {
+     "oneiron": 77
+    },
+    "top_modules": [
+     "<crate root>",
+     "codebase"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "HostedMediaHashMatchKnownMatch",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "provider: Box<str>",
+    "reference: Box<str>",
+    "path: Box<str>",
+    "content_hash: Box<[u8; 32]>"
+   ],
+   "error_attr": "#[error(\n        \"hosted media hash-match known match: provider={provider:?}, reference={reference:?}, path={path:?}, content_hash={}\",\n        bytes_to_hex_lower(content_hash.as_ref())\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 27,
+   "refs": {
+    "prod": 1,
+    "test": 2,
+    "total": 3,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "crates",
+     "codebase"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "constructed in codebase/; hosted-media provider on the code ingest path"
+  },
+  {
+   "name": "InvalidCodeSymbolManifestBody",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid code symbol manifest body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 36,
+   "refs": {
+    "prod": 94,
+    "test": 0,
+    "total": 94,
+    "files": 7,
+    "modules": 1,
+    "crates": {
+     "oneiron": 94
+    },
+    "top_modules": [
+     "code_symbol"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidRepoMutationRecord",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid repo mutation record: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 40,
+   "refs": {
+    "prod": 85,
+    "test": 2,
+    "total": 87,
+    "files": 12,
+    "modules": 2,
+    "crates": {
+     "oneiron": 87
+    },
+    "top_modules": [
+     "git_wire",
+     "repo_mutation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RepoMutationFailed",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "String"
+   ],
+   "error_attr": "#[error(\"repo mutation failed: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 43,
+   "refs": {
+    "prod": 5,
+    "test": 2,
+    "total": 7,
+    "files": 6,
+    "modules": 3,
+    "crates": {
+     "oneiron": 5,
+     "oneiron-server": 2
+    },
+    "top_modules": [
+     "crates",
+     "git_wire",
+     "repo_mutation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RepoMutationRecoveryDiverged",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "seq: u64",
+    "pre_action_fork_hash: Box<[u8; 32]>",
+    "expected_post_action_fork_hash: Option<Box<[u8; 32]>>",
+    "actual_fork_hash: Box<[u8; 32]>"
+   ],
+   "error_attr": "#[error(\n        \"repo mutation recovery diverged for sequence {seq}; current state matches neither the recorded pre-state nor expected post-state\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 49,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "repo_mutation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "MicroVmBackendUnavailable",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "tier: &'static str"
+   ],
+   "error_attr": "#[error(\"no microVM backend is available for guest tier `{tier}`\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 58,
+   "refs": {
+    "prod": 3,
+    "test": 0,
+    "total": 3,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "code_sandbox"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "MicroVmBackendError",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "backend: &'static str",
+    "detail: String"
+   ],
+   "error_attr": "#[error(\"microVM backend `{backend}` failed: {detail}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 61,
+   "refs": {
+    "prod": 10,
+    "test": 0,
+    "total": 10,
+    "files": 6,
+    "modules": 2,
+    "crates": {
+     "oneiron": 10
+    },
+    "top_modules": [
+     "code_sandbox"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "MicroVmOverlayError",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "detail: String"
+   ],
+   "error_attr": "#[error(\"microVM overlay error: {detail}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 68,
+   "refs": {
+    "prod": 9,
+    "test": 0,
+    "total": 9,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "code_sandbox"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "MicroVmCredentialDestinationDenied",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "credential: String",
+    "scheme: String",
+    "host: String"
+   ],
+   "error_attr": "#[error(\"credential `{credential}` is not bound to destination {scheme}://{host}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 72,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "code_sandbox"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeEmissionMissingDreamerRunId",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"code emission is missing dreamer run id\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 78,
+   "refs": {
+    "prod": 3,
+    "test": 2,
+    "total": 5,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "code_run",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeReviewContextRequired",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"code review context is required\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 80,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "code_run"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeReviewUnsupportedOperation",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"code review does not support this operation\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 82,
+   "refs": {
+    "prod": 2,
+    "test": 1,
+    "total": 3,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "code_run",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeReviewMissingReviewerRunId",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"code review is missing reviewer run id\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 84,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "code_run"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeReviewRunIdNotDistinct",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"code review reviewer run id must differ from authoring run id\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 86,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "code_run"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeReviewMissingArtifactRefs",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"code review is missing code artifact references\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 88,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "code_run"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeReviewAuthoringRunIdMismatch",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"code review authoring run id does not match emission\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 90,
+   "refs": {
+    "prod": 1,
+    "test": 2,
+    "total": 3,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "code_run",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeBlastRadiusMissingTouchedSymbols",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"code blast-radius walk is missing touched symbols\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 92,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "code_run"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeBlastRadiusUnknownSymbol",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "EntityId"
+   ],
+   "error_attr": "#[error(\"code blast-radius symbol is absent from graph: {0:?}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 94,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "code_run"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeMemoryInvalidAnchor",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\"invalid code-memory anchor: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 101,
+   "refs": {
+    "prod": 13,
+    "test": 4,
+    "total": 17,
+    "files": 5,
+    "modules": 2,
+    "crates": {
+     "oneiron": 17
+    },
+    "top_modules": [
+     "code_memory",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeMemoryInvalidAnchorTransfer",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "from: EntityId",
+    "to: EntityId",
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\n        \"invalid code-memory anchor transfer {} -> {}: {reason}\",\n        from.to_hex(),\n        to.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 113,
+   "refs": {
+    "prod": 3,
+    "test": 1,
+    "total": 4,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "code_memory",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeMemoryBlocksCycle",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "from: EntityId",
+    "to: EntityId"
+   ],
+   "error_attr": "#[error(\"blocks edge {} -> {} would close a readiness cycle\", from.to_hex(), to.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 123,
+   "refs": {
+    "prod": 2,
+    "test": 2,
+    "total": 4,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "code_memory",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeMemoryBlocksActorDenied",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"blocks edge door denied the write actor: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 130,
+   "refs": {
+    "prod": 3,
+    "test": 3,
+    "total": 6,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "code_memory",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeMemoryBlocksSourceUntrusted",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "source_kind: &'static str"
+   ],
+   "error_attr": "#[error(\"blocks edge door requires an explicit auto-permit for source `{source_kind}`\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 136,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "code_memory",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeMemoryAlwaysOnInvalid",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid always-on code-memory contract: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 142,
+   "refs": {
+    "prod": 3,
+    "test": 1,
+    "total": 4,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "code_memory",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CodeMemoryLimitExceeded",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [
+    "kind: &'static str",
+    "limit: usize"
+   ],
+   "error_attr": "#[error(\"code-memory limit exceeded for {kind}: {limit}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 147,
+   "refs": {
+    "prod": 6,
+    "test": 6,
+    "total": 12,
+    "files": 5,
+    "modules": 2,
+    "crates": {
+     "oneiron": 12
+    },
+    "top_modules": [
+     "code_memory",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "GitHttpInvalidRepoName",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid origin repo name: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 152,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "origin"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "GitHttpRepoNotFound",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [],
+   "error_attr": "#[error(\"origin does not serve repository `{repo}`\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 156,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "origin"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "GitHttpServeFailed",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [],
+   "error_attr": "#[error(\"git smart-http serve failed: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 163,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "origin"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ReceivePackDoorRejected",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [],
+   "error_attr": "#[error(\"credential door refused the push: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 172,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "origin"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ReceivePackLandingRefused",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "struct",
+   "payload": [],
+   "error_attr": "#[error(\"receive-pack landing refused: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 180,
+   "refs": {
+    "prod": 9,
+    "test": 2,
+    "total": 11,
+    "files": 5,
+    "modules": 2,
+    "crates": {
+     "oneiron": 8,
+     "oneiron-server": 3
+    },
+    "top_modules": [
+     "crates",
+     "origin"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "VaultRead",
+   "domain": "code",
+   "enum": "CodeError",
+   "file": "crates/oneiron/src/error/code.rs",
+   "shape": "tuple",
+   "payload": [
+    "#[from] crate::code_run::vault_read::VaultReadError"
+   ],
+   "error_attr": "#[error(transparent)]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": true,
+   "src_line": 188,
+   "refs": {
+    "prod": 0,
+    "test": 0,
+    "total": 0,
+    "files": 0,
+    "modules": 0,
+    "crates": {},
+    "top_modules": []
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": "constructed only through `#[from] VaultReadError` (thiserror generates the From impl); `?` on a VaultReadError is the only caller",
+   "dead_verdict": null,
+   "note": "orchestrator ruling 2026-09-11: VaultReadError lives in code_run/vault_read/, so the wrapper sits with the other code_run variants, not under StoreError as the design pinned it"
+  },
+  {
+   "name": "PersonaSnapshotConsentStale",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "struct",
+   "payload": [
+    "consent_stamp: String",
+    "compile_stamp: String"
+   ],
+   "error_attr": "#[error(\n        \"persona snapshot export consent is stale: consent bound to {consent_stamp}, compile stamp is {compile_stamp}\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 201,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "persona_snapshot"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "consent staleness against a compile stamp; record-named but gate-semantic"
+  },
+  {
+   "name": "InvalidDisclosureScope",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid disclosure scope: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 208,
+   "refs": {
+    "prod": 7,
+    "test": 0,
+    "total": 7,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "disclosure"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "DisclosureClampViolation",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"disclosure clamp violation: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 212,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "context_pack"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidConsentBound",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid consent bound: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 217,
+   "refs": {
+    "prod": 51,
+    "test": 7,
+    "total": 58,
+    "files": 19,
+    "modules": 9,
+    "crates": {
+     "oneiron": 58
+    },
+    "top_modules": [
+     "edit_distance",
+     "workspace_roster",
+     "channel_identity_autonomy",
+     "consent",
+     "consent_graduation",
+     "outbound_grant"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidConsentGrantRow",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid consent grant row: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 221,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "consent"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidConsentEffectFacts",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid consent effect facts: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 226,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "consent"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConsentOwnerNotAuthenticated",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"consent owner not authenticated: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 232,
+   "refs": {
+    "prod": 10,
+    "test": 4,
+    "total": 14,
+    "files": 4,
+    "modules": 4,
+    "crates": {
+     "oneiron": 14
+    },
+    "top_modules": [
+     "workspace_roster",
+     "consent",
+     "gate"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConsentUnauthenticatedActor",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"consent actor is not authenticated: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 237,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "genui"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConsentCatastropheNotRememberable",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"catastrophe floor is non-rememberable: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 243,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "consent"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConsentGrantNotFound",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"consent grant not found\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 246,
+   "refs": {
+    "prod": 4,
+    "test": 2,
+    "total": 6,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "edit_distance",
+     "consent"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConsentGrantRevoked",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"consent grant is revoked\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 249,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "consent"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConsentApproveOnceSpent",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"approve-once digest already spent: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 255,
+   "refs": {
+    "prod": 6,
+    "test": 0,
+    "total": 6,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "consent"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SourceNotTrustedForAuto",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "struct",
+   "payload": [
+    "claim_source: &'static str"
+   ],
+   "error_attr": "#[error(\n        \"claim source {claim_source} is not trusted for auto approval; route as proposed/inbox review\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 262,
+   "refs": {
+    "prod": 7,
+    "test": 5,
+    "total": 12,
+    "files": 5,
+    "modules": 5,
+    "crates": {
+     "oneiron": 12
+    },
+    "top_modules": [
+     "batch",
+     "gate",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "source-trust ceiling refusing an auto-approved write; constructed under gate/"
+  },
+  {
+   "name": "FamilyRequiresAutoGrant",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "struct",
+   "payload": [
+    "in the voice its other refusals use. family: &'static str"
+   ],
+   "error_attr": "#[error(\"{family} needs an auto grant: this family has no consent flow\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 276,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "claim"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "doc: 'asked the gate for Auto, did not get it'; sibling of GateWriteRejected"
+  },
+  {
+   "name": "GateWriteRejected",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "struct",
+   "payload": [
+    "outcome: &'static str",
+    "reason_codes: Vec<&'static str>"
+   ],
+   "error_attr": "#[error(\"gate write rejected: outcome={outcome}, reasons={reason_codes:?}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 285,
+   "refs": {
+    "prod": 14,
+    "test": 52,
+    "total": 66,
+    "files": 39,
+    "modules": 23,
+    "crates": {
+     "oneiron": 64,
+     "oneiron-server": 2
+    },
+    "top_modules": [
+     "crates",
+     "batch",
+     "gate",
+     "linkedin_lead_preload",
+     "sync",
+     "<crate root>"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "GateConsentStale",
+   "domain": "gate",
+   "enum": "GateError",
+   "file": "crates/oneiron/src/error/gate.rs",
+   "shape": "struct",
+   "payload": [
+    "claim_id: EntityId"
+   ],
+   "error_attr": "#[error(\"gate consent approval is stale for claim {}\", claim_id.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 292,
+   "refs": {
+    "prod": 6,
+    "test": 10,
+    "total": 16,
+    "files": 10,
+    "modules": 5,
+    "crates": {
+     "oneiron": 16
+    },
+    "top_modules": [
+     "gate",
+     "inbox",
+     "memory"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CompactionPacketRejected",
+   "domain": "maintenance",
+   "enum": "MaintenanceError",
+   "file": "crates/oneiron/src/error/maintenance.rs",
+   "shape": "tuple",
+   "payload": [
+    "CompactionPacketError"
+   ],
+   "error_attr": "#[error(\"compaction packet rejected: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 114,
+   "refs": {
+    "prod": 0,
+    "test": 1,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "compaction"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "VaultCleanupRestoreNotArchived",
+   "domain": "maintenance",
+   "enum": "MaintenanceError",
+   "file": "crates/oneiron/src/error/maintenance.rs",
+   "shape": "struct",
+   "payload": [],
+   "error_attr": "#[error(\"restore refused: {entity} carries no archived_by_cleanup marker\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 123,
+   "refs": {
+    "prod": 5,
+    "test": 0,
+    "total": 5,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "vault_cleanup"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "VaultCleanupArchiveMarkerUndecodable",
+   "domain": "maintenance",
+   "enum": "MaintenanceError",
+   "file": "crates/oneiron/src/error/maintenance.rs",
+   "shape": "struct",
+   "payload": [],
+   "error_attr": "#[error(\"cleanup archive marker for {entity} is not readable as an archive: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 134,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "vault_cleanup"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "VaultCleanupProposalNotFound",
+   "domain": "maintenance",
+   "enum": "MaintenanceError",
+   "file": "crates/oneiron/src/error/maintenance.rs",
+   "shape": "struct",
+   "payload": [],
+   "error_attr": "#[error(\"vault cleanup proposal {proposal} not found\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 144,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "vault_cleanup"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "VaultCleanupWakeTriggerRejected",
+   "domain": "maintenance",
+   "enum": "MaintenanceError",
+   "file": "crates/oneiron/src/error/maintenance.rs",
+   "shape": "struct",
+   "payload": [],
+   "error_attr": "#[error(\"vault cleanup registers on the timer wake only, not {trigger}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 153,
+   "refs": {
+    "prod": 5,
+    "test": 0,
+    "total": 5,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "dreamer_runner"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "KillSwitchDisabled",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"off-record sessions are disabled by configuration\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 18,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "branch_store_oracle",
+     "off_record"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "doc: 'Off-record entry is disabled by the vault-level kill-switch'"
+  },
+  {
+   "name": "OffRecordSessionAlreadyExists",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "session_ref: String"
+   ],
+   "error_attr": "#[error(\"off-record session already exists: {session_ref}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 23,
+   "refs": {
+    "prod": 3,
+    "test": 0,
+    "total": 3,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "branch_store_oracle",
+     "off_record"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordSessionNotFound",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "session_ref: String"
+   ],
+   "error_attr": "#[error(\"off-record session not found: {session_ref}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 27,
+   "refs": {
+    "prod": 7,
+    "test": 0,
+    "total": 7,
+    "files": 4,
+    "modules": 2,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "branch_store_oracle",
+     "off_record"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordSessionClosing",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "session_ref: String"
+   ],
+   "error_attr": "#[error(\"off-record session {session_ref} is closing: the record is frozen\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 33,
+   "refs": {
+    "prod": 13,
+    "test": 0,
+    "total": 13,
+    "files": 4,
+    "modules": 2,
+    "crates": {
+     "oneiron": 13
+    },
+    "top_modules": [
+     "branch_store_oracle",
+     "off_record"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordOverlayFull",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "budget_bytes: usize",
+    "attempted_bytes: usize"
+   ],
+   "error_attr": "#[error(\n        \"off-record overlay is full: budget {budget_bytes} bytes, attempted {attempted_bytes} bytes\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 39,
+   "refs": {
+    "prod": 3,
+    "test": 12,
+    "total": 15,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 15
+    },
+    "top_modules": [
+     "session_overlay",
+     "branch_store_oracle"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordOverlayLeaseClosed",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "generation: u64"
+   ],
+   "error_attr": "#[error(\"off-record overlay generation {generation} is closed\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 46,
+   "refs": {
+    "prod": 14,
+    "test": 2,
+    "total": 16,
+    "files": 7,
+    "modules": 4,
+    "crates": {
+     "oneiron": 16
+    },
+    "top_modules": [
+     "branch_store_oracle",
+     "session_overlay"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordPromoteUnauthenticated",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "session_ref: String",
+    "actor_ref: String"
+   ],
+   "error_attr": "#[error(\n        \"off-record promote in session {session_ref} is not authenticated: actor {actor_ref} does not authenticate the owner principal\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 56,
+   "refs": {
+    "prod": 0,
+    "test": 0,
+    "total": 0,
+    "files": 0,
+    "modules": 0,
+    "crates": {},
+    "top_modules": []
+   },
+   "action": "move",
+   "dead": true,
+   "reachable_via": null,
+   "dead_verdict": {
+    "verdict": "keep",
+    "action": "move",
+    "references": 0,
+    "evidence": [
+     "zero occurrences anywhere in the repo outside error.rs: declaration (error.rs:1864), ErrorKind twin (error.rs:438), kind() arm (error.rs:2629)",
+     "its ErrorKind name is NOT in remote_rejection_reason's allowlist, so it cannot be persisted as a quarantine reason code",
+     "the door it documents is unbuilt, and provably so: OffRecordSession::promote_turn (off_record/lifecycle/session.rs:686) is `fn promote_turn(&self, turn: &EntityId)` \u2014 it takes no actor argument, so there is nothing to authenticate. The OF-326 / ONE-1645 authentication it describes has not been wired"
+    ],
+    "why_keep": "same reason as AnalyzerAssetMissing, plus this one is a forward declaration of a fail-closed consent door. Deleting it drops the recorded intent that promote MUST authenticate the owner principal, and nothing else in the tree records that."
+   },
+   "note": null
+  },
+  {
+   "name": "OffRecordTaintedBaseWrite",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "entity_ref: String"
+   ],
+   "error_attr": "#[error(\"base write rejected: {entity_ref} is a live off-record overlay member\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 68,
+   "refs": {
+    "prod": 5,
+    "test": 2,
+    "total": 7,
+    "files": 5,
+    "modules": 5,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "batch",
+     "branch_store_oracle",
+     "compaction",
+     "off_record"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordWitnessDoorRejected",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "session_ref: String",
+    "conversation_ref: String"
+   ],
+   "error_attr": "#[error(\n        \"witness rejected: conversation {conversation_ref} belongs to live off-record session {session_ref}\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 76,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "memory"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordGuestTurnRefRejected",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "session_ref: String"
+   ],
+   "error_attr": "#[error(\n        \"executor witness rejected: off-record session {session_ref} takes turn identity from the session, not from a guest-supplied turn ref\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 91,
+   "refs": {
+    "prod": 3,
+    "test": 0,
+    "total": 3,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "branch_store_oracle",
+     "off_record"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordTalkOnly",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "session_ref: String"
+   ],
+   "error_attr": "#[error(\n        \"off-record session {session_ref} is talk-only: outbound and commitment verbs are disabled; exit off-record mode to take this action\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 98,
+   "refs": {
+    "prod": 6,
+    "test": 1,
+    "total": 7,
+    "files": 7,
+    "modules": 6,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "off_record",
+     "outbound",
+     "branch_store_oracle",
+     "code_run"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OffRecordTurnNotInJournal",
+   "domain": "offrecord",
+   "enum": "OffRecordError",
+   "file": "crates/oneiron/src/error/off_record.rs",
+   "shape": "struct",
+   "payload": [
+    "turn_ref: String"
+   ],
+   "error_attr": "#[error(\"off-record promote found no journaled turn {turn_ref} to replay\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 105,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "session_overlay"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "AccessGrantAlreadyExists",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"access grant already exists\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 19,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "<crate root>",
+     "access_grant"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "OutboundGrantAlreadyExists",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"outbound grant already exists\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 22,
+   "refs": {
+    "prod": 7,
+    "test": 0,
+    "total": 7,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "booking",
+     "outbound_grant"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConnectorKeyAlreadyExists",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"connector key already exists\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 26,
+   "refs": {
+    "prod": 4,
+    "test": 5,
+    "total": 9,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "connector_key"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ChannelIdentityAlreadyExists",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"channel identity already exists\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 29,
+   "refs": {
+    "prod": 7,
+    "test": 0,
+    "total": 7,
+    "files": 4,
+    "modules": 3,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "<crate root>",
+     "channel_identity",
+     "channel_identity_provider"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CounterpartyContactAlreadyExists",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"counterparty contact already exists\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 33,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "counterparty_contact"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CompanionRecordAlreadyExists",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"companion record already exists\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 36,
+   "refs": {
+    "prod": 4,
+    "test": 5,
+    "total": 9,
+    "files": 4,
+    "modules": 3,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "batch",
+     "companion",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidFederationGrantBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid federation grant body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 39,
+   "refs": {
+    "prod": 3,
+    "test": 0,
+    "total": 3,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "crates",
+     "federation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidAuthorityLogBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid authority log body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 41,
+   "refs": {
+    "prod": 11,
+    "test": 5,
+    "total": 16,
+    "files": 7,
+    "modules": 5,
+    "crates": {
+     "oneiron": 16
+    },
+    "top_modules": [
+     "batch",
+     "authority",
+     "federation",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ContextPackValidation",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId",
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\"context pack validation failed for entity {}: {reason}\", id.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 44,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "context_pack"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "cross-record assembly anomaly; constructed in context_pack/"
+  },
+  {
+   "name": "InvalidCompanionRecordBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid companion record body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 65,
+   "refs": {
+    "prod": 1,
+    "test": 3,
+    "total": 4,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "batch",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidPsychProfileBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid psych profile body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 69,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "psych_profile",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidPersonaSnapshot",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid persona snapshot: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 75,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "persona_snapshot"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidNoteBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid NOTE body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 79,
+   "refs": {
+    "prod": 17,
+    "test": 3,
+    "total": 20,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 20
+    },
+    "top_modules": [
+     "<crate root>",
+     "batch",
+     "memory"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidWitnessMessageBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid MESSAGE witness envelope: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 90,
+   "refs": {
+    "prod": 12,
+    "test": 0,
+    "total": 12,
+    "files": 5,
+    "modules": 4,
+    "crates": {
+     "oneiron": 12
+    },
+    "top_modules": [
+     "batch",
+     "gate",
+     "memory"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidAccessGrantBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid access grant body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 94,
+   "refs": {
+    "prod": 6,
+    "test": 0,
+    "total": 6,
+    "files": 4,
+    "modules": 2,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "<crate root>",
+     "access_grant"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidOutboundGrantBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid outbound grant body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 98,
+   "refs": {
+    "prod": 5,
+    "test": 0,
+    "total": 5,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "gate",
+     "outbound_grant"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidConnectorKeyBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid connector key body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 102,
+   "refs": {
+    "prod": 4,
+    "test": 49,
+    "total": 53,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 53
+    },
+    "top_modules": [
+     "connector_key"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConnectorCharterCompile",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "struct",
+   "payload": [
+    "line_number: u32",
+    "message: String"
+   ],
+   "error_attr": "#[error(\"connector charter compile failed at line {line_number}: {message}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 106,
+   "refs": {
+    "prod": 2,
+    "test": 1,
+    "total": 3,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "connector_key"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConnectorCharterApprovalMismatch",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"connector charter approval hash mismatch\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 110,
+   "refs": {
+    "prod": 1,
+    "test": 2,
+    "total": 3,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "connector_key",
+     "gate"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ConnectorCharterMissing",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"connector charter proposal not found\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 113,
+   "refs": {
+    "prod": 2,
+    "test": 2,
+    "total": 4,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "connector_key"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidChannelIdentityBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid channel identity body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 117,
+   "refs": {
+    "prod": 22,
+    "test": 1,
+    "total": 23,
+    "files": 9,
+    "modules": 5,
+    "crates": {
+     "oneiron": 23
+    },
+    "top_modules": [
+     "channel_identity",
+     "<crate root>",
+     "channel_identity_provider",
+     "surface_event"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "WorkspaceMailboxAutonomyNotReady",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "struct",
+   "payload": [
+    "identity_ref: EntityId",
+    "requested_mode: String"
+   ],
+   "error_attr": "#[error(\n        \"workspace mailbox autonomy is not ready for {identity_ref:?} (requested {requested_mode})\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 123,
+   "refs": {
+    "prod": 1,
+    "test": 7,
+    "total": 8,
+    "files": 4,
+    "modules": 2,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "workspace_roster"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "ONE-1829 onboarding-journal state on a record surface"
+  },
+  {
+   "name": "InvalidCounterpartyContactBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid counterparty contact body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 130,
+   "refs": {
+    "prod": 6,
+    "test": 1,
+    "total": 7,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 6,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "crates",
+     "counterparty_contact"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidCommRecordBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid comm record body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 134,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "comm"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidDiagnosticBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid diagnostic body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 141,
+   "refs": {
+    "prod": 4,
+    "test": 1,
+    "total": 5,
+    "files": 4,
+    "modules": 4,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "sync",
+     "self_heal"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidTaskBody",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid TASK body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 144,
+   "refs": {
+    "prod": 131,
+    "test": 28,
+    "total": 159,
+    "files": 26,
+    "modules": 12,
+    "crates": {
+     "oneiron": 158,
+     "oneiron-server": 1
+    },
+    "top_modules": [
+     "batch",
+     "context_projection",
+     "outbound",
+     "task_verb",
+     "crates",
+     "<crate root>"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "AuthorityLogAppendOnlyViolation",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId"
+   ],
+   "error_attr": "#[error(\n        \"authority log row {} is append-only: body-divergent overwrite rejected\",\n        id.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 154,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "batch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "AuthorityLogStoreKeyMismatch",
+   "domain": "record",
+   "enum": "RecordError",
+   "file": "crates/oneiron/src/error/record.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId"
+   ],
+   "error_attr": "#[error(\n        \"authority log row {} does not match its content-derived store key\",\n        id.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 163,
+   "refs": {
+    "prod": 2,
+    "test": 1,
+    "total": 3,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "batch",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidFacet",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "facet: EntityId",
+    "found: Option<u8>"
+   ],
+   "error_attr": "#[error(\n        \"invalid active facet {}: resolved type {found:?}, expected FACET ({ENTITY_TYPE_FACET})\",\n        facet.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 28,
+   "refs": {
+    "prod": 3,
+    "test": 3,
+    "total": 6,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "pipeline",
+     "batch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidRelationship",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "relationship: EntityId",
+    "found: Option<u8>"
+   ],
+   "error_attr": "#[error(\n        \"invalid active relationship {}: resolved type {found:?}, expected RELATIONSHIP ({ENTITY_TYPE_RELATIONSHIP})\",\n        relationship.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 34,
+   "refs": {
+    "prod": 3,
+    "test": 4,
+    "total": 7,
+    "files": 4,
+    "modules": 3,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "pipeline",
+     "voice_identity"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidFacetOfEdge",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "src: EntityId",
+    "src_type: Option<u8>",
+    "tgt: EntityId",
+    "tgt_type: Option<u8>"
+   ],
+   "error_attr": "#[error(\n        \"invalid FacetOf edge {} (type {src_type:?}) -> {} (type {tgt_type:?}): expected CLAIM/TURN/EVENT -> FACET\",\n        src.to_hex(),\n        tgt.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 55,
+   "refs": {
+    "prod": 5,
+    "test": 1,
+    "total": 6,
+    "files": 4,
+    "modules": 4,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "batch",
+     "sync",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "MaintenanceKindNotWritable",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "tuple",
+   "payload": [
+    "u8"
+   ],
+   "error_attr": "#[error(\"maintenance entity kind {0} is engine-authored and not writable via the public API\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 66,
+   "refs": {
+    "prod": 14,
+    "test": 25,
+    "total": 39,
+    "files": 22,
+    "modules": 20,
+    "crates": {
+     "oneiron": 39
+    },
+    "top_modules": [
+     "sync",
+     "batch",
+     "deletion",
+     "crates",
+     "connector_key",
+     "gate"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": "a type-byte-zone refusal, sibling of InvalidEntityType; not a maintenance op"
+  },
+  {
+   "name": "StructuralKindZoneViolation",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "type_byte: u8",
+    "declared_zone: TypeByteZone",
+    "actual_zone: TypeByteZone",
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\n        \"structural kind band violation for type byte {type_byte}: declared={declared_zone:?}, actual={actual_zone:?}: {reason}\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 72,
+   "refs": {
+    "prod": 3,
+    "test": 3,
+    "total": 6,
+    "files": 4,
+    "modules": 4,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "<crate root>",
+     "campaign",
+     "store",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "StructuralKindTypeByteCollision",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "tuple",
+   "payload": [
+    "u8"
+   ],
+   "error_attr": "#[error(\"structural kind type-byte collision: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 80,
+   "refs": {
+    "prod": 5,
+    "test": 4,
+    "total": 9,
+    "files": 6,
+    "modules": 6,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "<crate root>",
+     "campaign",
+     "companion",
+     "store",
+     "tests",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "StructuralKindPrefixCollision",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "tuple",
+   "payload": [
+    "String"
+   ],
+   "error_attr": "#[error(\"structural kind short-id prefix collision: {0:?}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 83,
+   "refs": {
+    "prod": 2,
+    "test": 4,
+    "total": 6,
+    "files": 4,
+    "modules": 4,
+    "crates": {
+     "oneiron": 6
+    },
+    "top_modules": [
+     "campaign",
+     "store",
+     "tests",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidStructuralKindRegistration",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid structural kind registration: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 86,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "store"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SurfaceEventCorrelationKindCollision",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "correlation_id: String",
+    "holding_kind: String"
+   ],
+   "error_attr": "#[error(\n        \"surface event correlation id `{correlation_id}` is already held by attempt kind `{holding_kind}`\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 95,
+   "refs": {
+    "prod": 1,
+    "test": 2,
+    "total": 3,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "surface_event"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EntityTypeImmutable",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId",
+    "existing: u8",
+    "attempted: u8"
+   ],
+   "error_attr": "#[error(\n        \"entity type is immutable: entity {} has type {existing}, re-put attempted type {attempted}\",\n        id.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 107,
+   "refs": {
+    "prod": 6,
+    "test": 9,
+    "total": 15,
+    "files": 11,
+    "modules": 8,
+    "crates": {
+     "oneiron": 15
+    },
+    "top_modules": [
+     "batch",
+     "agent_def",
+     "sync",
+     "tests",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CycleDetected",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"cycle detected in tree hierarchy\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 114,
+   "refs": {
+    "prod": 5,
+    "test": 6,
+    "total": 11,
+    "files": 6,
+    "modules": 6,
+    "crates": {
+     "oneiron": 11
+    },
+    "top_modules": [
+     "batch",
+     "<crate root>",
+     "claim",
+     "code_revision",
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ChildOfCardinality",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"childof requires a single parent\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 118,
+   "refs": {
+    "prod": 2,
+    "test": 6,
+    "total": 8,
+    "files": 6,
+    "modules": 6,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "batch",
+     "code_revision",
+     "genui",
+     "tests",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ChildOfParentMissing",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "parent: EntityId"
+   ],
+   "error_attr": "#[error(\"childof parent {} does not exist\", parent.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 128,
+   "refs": {
+    "prod": 1,
+    "test": 3,
+    "total": 4,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "batch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "TaskChildOfParentNotTask",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "child_role: u8",
+    "parent_entity_type: u8"
+   ],
+   "error_attr": "#[error(\n        \"TASK child (role {child_role}) cannot be a child of non-TASK entity type {parent_entity_type}\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 138,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "batch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "TaskChildOfNesting",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "struct",
+   "payload": [
+    "parent_role: u8",
+    "child_role: u8"
+   ],
+   "error_attr": "#[error(\"TASK role {parent_role} cannot parent TASK role {child_role}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 147,
+   "refs": {
+    "prod": 1,
+    "test": 4,
+    "total": 5,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "batch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ReservedEdgeKind",
+   "domain": "registry",
+   "enum": "RegistryError",
+   "file": "crates/oneiron/src/error/registry.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"edge kind is reserved to an engine door: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 152,
+   "refs": {
+    "prod": 14,
+    "test": 27,
+    "total": 41,
+    "files": 14,
+    "modules": 12,
+    "crates": {
+     "oneiron": 41
+    },
+    "top_modules": [
+     "batch",
+     "<crate root>",
+     "commitment_lifecycle",
+     "edge",
+     "federation",
+     "identity_topology"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RelayAttestationInvalidServiceIdentity",
+   "domain": "relay",
+   "enum": "RelayError",
+   "file": "crates/oneiron/src/error/relay.rs",
+   "shape": "struct",
+   "payload": [
+    "service_identity: String",
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\"invalid connector-edge service identity `{service_identity}`: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 20,
+   "refs": {
+    "prod": 5,
+    "test": 0,
+    "total": 5,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "policy_model"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RelayVaultReceiptUntrusted",
+   "domain": "relay",
+   "enum": "RelayError",
+   "file": "crates/oneiron/src/error/relay.rs",
+   "shape": "struct",
+   "payload": [
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\"cloud vault receipt is untrusted: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 26,
+   "refs": {
+    "prod": 6,
+    "test": 3,
+    "total": 9,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "policy_model"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "PolicyVerdictNotInForce",
+   "domain": "relay",
+   "enum": "RelayError",
+   "file": "crates/oneiron/src/error/relay.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"policy verdict is not bound to this request under the policy in force\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 32,
+   "refs": {
+    "prod": 3,
+    "test": 7,
+    "total": 10,
+    "files": 3,
+    "modules": 2,
+    "crates": {
+     "oneiron": 10
+    },
+    "top_modules": [
+     "policy_model"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RelayAttestationClassMismatch",
+   "domain": "relay",
+   "enum": "RelayError",
+   "file": "crates/oneiron/src/error/relay.rs",
+   "shape": "struct",
+   "payload": [
+    "service_identity: String",
+    "claimed: &'static str",
+    "registered: &'static str"
+   ],
+   "error_attr": "#[error(\n        \"connector-edge service `{service_identity}` claimed connection class `{claimed}` but is registered as `{registered}`\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 40,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "policy_model"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RelayAttestationEdgeServiceConflict",
+   "domain": "relay",
+   "enum": "RelayError",
+   "file": "crates/oneiron/src/error/relay.rs",
+   "shape": "struct",
+   "payload": [
+    "service: String",
+    "registered: &'static str",
+    "claimed: &'static str"
+   ],
+   "error_attr": "#[error(\n        \"connector-edge service `{service}` is already registered as `{registered}`; conflicting registration as `{claimed}` rejected\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 52,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "policy_model"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RelayHostedLegalPolicyInvalid",
+   "domain": "relay",
+   "enum": "RelayError",
+   "file": "crates/oneiron/src/error/relay.rs",
+   "shape": "struct",
+   "payload": [
+    "service: String",
+    "field: &'static str",
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\"hosted legal policy for connector-edge service `{service}`: {field} {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 62,
+   "refs": {
+    "prod": 7,
+    "test": 0,
+    "total": 7,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "policy_model"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "PolicyManifestInvalid",
+   "domain": "relay",
+   "enum": "RelayError",
+   "file": "crates/oneiron/src/error/relay.rs",
+   "shape": "struct",
+   "payload": [
+    "field: &'static str",
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\"policy manifest: {field} {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 74,
+   "refs": {
+    "prod": 6,
+    "test": 9,
+    "total": 15,
+    "files": 5,
+    "modules": 3,
+    "crates": {
+     "oneiron": 15
+    },
+    "top_modules": [
+     "policy_model"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidSecretCustodyBody",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid secret custody body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 19,
+   "refs": {
+    "prod": 12,
+    "test": 10,
+    "total": 22,
+    "files": 5,
+    "modules": 4,
+    "crates": {
+     "oneiron": 22
+    },
+    "top_modules": [
+     "<crate root>",
+     "secret_custody",
+     "secret_manifest",
+     "secret_rotation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretNameInUse",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "name: String"
+   ],
+   "error_attr": "#[error(\"secret name in use: {name}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 23,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "secret_custody"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretCustodyNotActive",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "name: String"
+   ],
+   "error_attr": "#[error(\"secret custody record is not active: {name}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 26,
+   "refs": {
+    "prod": 10,
+    "test": 3,
+    "total": 13,
+    "files": 8,
+    "modules": 6,
+    "crates": {
+     "oneiron": 13
+    },
+    "top_modules": [
+     "<crate root>",
+     "channel_identity",
+     "channel_identity_provider",
+     "secret_custody",
+     "secret_lease",
+     "secret_rotation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretBindingDenied",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "effector: String",
+    "secret_ref: String"
+   ],
+   "error_attr": "#[error(\"no secret binding for effector `{effector}` on secret `{secret_ref}`\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 31,
+   "refs": {
+    "prod": 12,
+    "test": 5,
+    "total": 17,
+    "files": 11,
+    "modules": 5,
+    "crates": {
+     "oneiron": 17
+    },
+    "top_modules": [
+     "calendar",
+     "channel_identity",
+     "channel_identity_provider",
+     "secret_custody",
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ManifestWidensFloor",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "secret_ref: String",
+    "class: crate::secret_custody::CustodyClass",
+    "requested: crate::secret_custody::CustodyTier",
+    "floor_max: crate::secret_custody::CustodyTier"
+   ],
+   "error_attr": "#[error(\n        \"manifest widens the vault floor for `{secret_ref}` ({class:?}): requested {requested:?} exceeds floor max {floor_max:?}\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 40,
+   "refs": {
+    "prod": 6,
+    "test": 2,
+    "total": 8,
+    "files": 5,
+    "modules": 3,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "<crate root>",
+     "secret_custody",
+     "secret_manifest"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretTierDenied",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "class: crate::secret_custody::CustodyClass",
+    "requested: crate::secret_custody::CustodyTier",
+    "floor_min: crate::secret_custody::CustodyTier",
+    "floor_max: crate::secret_custody::CustodyTier",
+    "binding_ceiling: crate::secret_custody::CustodyTier"
+   ],
+   "error_attr": "#[error(\n        \"secret tier admission denied ({class:?}): requested {requested:?} exceeds the floor max {floor_max:?} or the binding ceiling {binding_ceiling:?} (band min {floor_min:?} is informational)\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 53,
+   "refs": {
+    "prod": 3,
+    "test": 6,
+    "total": 9,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretRefNotFound",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "name: String"
+   ],
+   "error_attr": "#[error(\"no live secret custody record for ref `{name}`\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 63,
+   "refs": {
+    "prod": 8,
+    "test": 2,
+    "total": 10,
+    "files": 8,
+    "modules": 5,
+    "crates": {
+     "oneiron": 10
+    },
+    "top_modules": [
+     "<crate root>",
+     "channel_identity",
+     "channel_identity_provider",
+     "secret_lease",
+     "secret_rotation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretLeaseNotFound",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "lease_id: EntityId"
+   ],
+   "error_attr": "#[error(\"no secret lease row for id {}\", lease_id.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 66,
+   "refs": {
+    "prod": 3,
+    "test": 2,
+    "total": 5,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretLeaseNotActive",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "lease_id: EntityId",
+    "status: crate::secret_lease::SecretLeaseStatus"
+   ],
+   "error_attr": "#[error(\"secret lease {} is not active: {status:?}\", lease_id.to_hex())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 69,
+   "refs": {
+    "prod": 2,
+    "test": 2,
+    "total": 4,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretLeasePathNotDeclared",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "secret_ref: String",
+    "path: String"
+   ],
+   "error_attr": "#[error(\"path `{path}` is not a manifest-declared secret path for `{secret_ref}`\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 76,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretLeasePathConflict",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "lease_id: EntityId",
+    "registered_path: String",
+    "requested_path: String"
+   ],
+   "error_attr": "#[error(\n        \"secret lease {} already registers `{registered_path}`; requested `{requested_path}` \u2014 mint a fresh lease for a new path\",\n        lease_id.to_hex()\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 86,
+   "refs": {
+    "prod": 1,
+    "test": 1,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretLeasePathRefused",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "path: String",
+    "reason: &'static str"
+   ],
+   "error_attr": "#[error(\"secret lease target path `{path}` refused: {reason}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 96,
+   "refs": {
+    "prod": 5,
+    "test": 3,
+    "total": 8,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SecretLeaseReceiptWriteFailed",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"secret lease materialization receipt write failed: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 101,
+   "refs": {
+    "prod": 0,
+    "test": 2,
+    "total": 2,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidSecretLeaseBody",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid secret lease body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 105,
+   "refs": {
+    "prod": 1,
+    "test": 0,
+    "total": 1,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 1
+    },
+    "top_modules": [
+     "secret_lease"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidSecretRotationBody",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid secret rotation body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 109,
+   "refs": {
+    "prod": 2,
+    "test": 3,
+    "total": 5,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "<crate root>",
+     "secret_rotation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "TaintedArtifactStale",
+   "domain": "secret",
+   "enum": "SecretError",
+   "file": "crates/oneiron/src/error/secret.rs",
+   "shape": "struct",
+   "payload": [
+    "artifact: String"
+   ],
+   "error_attr": "#[error(\n        \"artifact `{artifact}` is secret-tainted by a rotated or revoked record; publish refused (set secret.taint.allow_stale_publish to override)\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 118,
+   "refs": {
+    "prod": 2,
+    "test": 2,
+    "total": 4,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "<crate root>",
+     "secret_rotation"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "EmbeddingModelChanged",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "struct",
+   "payload": [
+    "stored: String",
+    "requested: String"
+   ],
+   "error_attr": "#[error(\"embedding model changed: stored={stored}, requested={requested}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 115,
+   "refs": {
+    "prod": 7,
+    "test": 8,
+    "total": 15,
+    "files": 9,
+    "modules": 6,
+    "crates": {
+     "oneiron": 15
+    },
+    "top_modules": [
+     "store",
+     "<crate root>",
+     "embed",
+     "sync",
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "HnswConfigChanged",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "struct",
+   "payload": [
+    "stored: String",
+    "requested: String"
+   ],
+   "error_attr": "#[error(\"hnsw config changed: stored={stored}, requested={requested}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 118,
+   "refs": {
+    "prod": 8,
+    "test": 6,
+    "total": 14,
+    "files": 7,
+    "modules": 5,
+    "crates": {
+     "oneiron": 14
+    },
+    "top_modules": [
+     "store",
+     "<crate root>",
+     "sync",
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "StorageAbiVersionChanged",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "struct",
+   "payload": [
+    "stored: Option<u16>",
+    "current: u16"
+   ],
+   "error_attr": "#[error(\"storage ABI version changed: stored={stored:?}, current={current}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 123,
+   "refs": {
+    "prod": 6,
+    "test": 17,
+    "total": 23,
+    "files": 8,
+    "modules": 6,
+    "crates": {
+     "oneiron": 23
+    },
+    "top_modules": [
+     "store",
+     "branch_store_oracle",
+     "sync",
+     "tests",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "StorageSchemaVersionChanged",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "struct",
+   "payload": [
+    "stored: Option<u16>",
+    "current: u16"
+   ],
+   "error_attr": "#[error(\"storage schema version changed: stored={stored:?}, current={current}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 127,
+   "refs": {
+    "prod": 4,
+    "test": 0,
+    "total": 4,
+    "files": 3,
+    "modules": 3,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "store",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "DbManifestMismatch",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "struct",
+   "payload": [
+    "missing: Vec<String>",
+    "unexpected: Vec<String>"
+   ],
+   "error_attr": "#[error(\"DB manifest mismatch: missing={missing:?}, unexpected={unexpected:?}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 130,
+   "refs": {
+    "prod": 6,
+    "test": 2,
+    "total": 8,
+    "files": 5,
+    "modules": 4,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "store",
+     "sync",
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "VaultRootPreflight",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "struct",
+   "payload": [
+    "path: PathBuf",
+    "problem: VaultRootProblem"
+   ],
+   "error_attr": "#[error(\"vault root preflight failed at {}: {problem}\", path.display())]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 136,
+   "refs": {
+    "prod": 4,
+    "test": 10,
+    "total": 14,
+    "files": 5,
+    "modules": 4,
+    "crates": {
+     "oneiron": 14
+    },
+    "top_modules": [
+     "store",
+     "sync",
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "MissingPostingEntry",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\"missing posting entry\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 142,
+   "refs": {
+    "prod": 3,
+    "test": 0,
+    "total": 3,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "batch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "IncompatibleAnalyzer",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "struct",
+   "payload": [
+    "lang: String",
+    "stored_mode: &'static str",
+    "current_mode: &'static str"
+   ],
+   "error_attr": "#[error(\n        \"text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 161,
+   "refs": {
+    "prod": 10,
+    "test": 4,
+    "total": 14,
+    "files": 6,
+    "modules": 4,
+    "crates": {
+     "oneiron": 14
+    },
+    "top_modules": [
+     "<crate root>",
+     "maintain",
+     "store",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "Bm25FieldSchemaChanged",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "unit",
+   "payload": null,
+   "error_attr": "#[error(\n        \"bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search\"\n    )]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 182,
+   "refs": {
+    "prod": 6,
+    "test": 1,
+    "total": 7,
+    "files": 5,
+    "modules": 4,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "<crate root>",
+     "maintain",
+     "store",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidRankProfile",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "struct",
+   "payload": [
+    "parameter: &'static str",
+    "value: f64"
+   ],
+   "error_attr": "#[error(\"invalid bm25 rank profile: {parameter} = {value}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 191,
+   "refs": {
+    "prod": 9,
+    "test": 3,
+    "total": 12,
+    "files": 5,
+    "modules": 4,
+    "crates": {
+     "oneiron": 12
+    },
+    "top_modules": [
+     "<crate root>",
+     "bm25",
+     "pipeline",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "AnalyzerAssetMissing",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "tuple",
+   "payload": [
+    "String"
+   ],
+   "error_attr": "#[error(\"analyzer asset missing: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 202,
+   "refs": {
+    "prod": 0,
+    "test": 0,
+    "total": 0,
+    "files": 0,
+    "modules": 0,
+    "crates": {},
+    "top_modules": []
+   },
+   "action": "move",
+   "dead": true,
+   "reachable_via": null,
+   "dead_verdict": {
+    "verdict": "keep",
+    "action": "move",
+    "references": 0,
+    "evidence": [
+     "zero occurrences anywhere in the repo outside error.rs: the only three lines are its ErrorKind twin (error.rs:416), its own declaration (error.rs:1742) and its kind() arm (error.rs:2605) \u2014 grepped across crates/, docs/, scripts/, apps/, packages/ and every .json/.jsonl/.snap",
+     "its ErrorKind name is NOT in remote_rejection_reason's allowlist in sync/quarantine/keys_classifier.rs, so it can never become a persisted quarantine reason code; and reason_code_for only ever sees a CONSTRUCTED error, which this never is",
+     "the door it documents is unbuilt: no dict-asset existence check exists. analyzer/manifest.rs fails the open-time handshake with IncompatibleAnalyzer, and config.rs:330 documents IncompatibleAnalyzer as the escape hatch"
+    ],
+    "why_keep": "deleting it edits ErrorKind, and `ErrorKind byte-identical` is the single invariant that makes this refactor mechanically verifiable (check c). It costs nothing to carry: it moves with StoreError like any other variant, with zero call sites to rewrite. Delete it in its own one-line PR, before or after, never inside this one."
+   },
+   "note": null
+  },
+  {
+   "name": "AnalyzerError",
+   "domain": "store",
+   "enum": "StoreError",
+   "file": "crates/oneiron/src/error/store.rs",
+   "shape": "tuple",
+   "payload": [
+    "String"
+   ],
+   "error_attr": "#[error(\"analyzer error: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 207,
+   "refs": {
+    "prod": 6,
+    "test": 2,
+    "total": 8,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "dreamer_wake",
+     "vault"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "CrdtDecodeError",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "context: &'static str",
+    "source: loro::LoroError"
+   ],
+   "error_attr": "#[error(\"crdt decode error ({context}): {source}\")]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": true,
+   "has_from": false,
+   "src_line": 314,
+   "refs": {
+    "prod": 11,
+    "test": 3,
+    "total": 14,
+    "files": 10,
+    "modules": 7,
+    "crates": {
+     "oneiron": 12,
+     "oneiron-server": 2
+    },
+    "top_modules": [
+     "sync",
+     "crates",
+     "batch"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "WindowNotFound",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "window_key: String"
+   ],
+   "error_attr": "#[error(\"sync window not found: {window_key}\")]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 322,
+   "refs": {
+    "prod": 7,
+    "test": 2,
+    "total": 9,
+    "files": 9,
+    "modules": 6,
+    "crates": {
+     "oneiron": 9
+    },
+    "top_modules": [
+     "sync",
+     "deletion",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "WindowBusy",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "window_key: String",
+    "outstanding_handles: usize"
+   ],
+   "error_attr": "#[error(\n        \"sync window busy: {window_key} has {outstanding_handles} outstanding external handle(s); unload refused \u2014 retry after the last handle drops\"\n    )]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 341,
+   "refs": {
+    "prod": 2,
+    "test": 11,
+    "total": 13,
+    "files": 4,
+    "modules": 4,
+    "crates": {
+     "oneiron": 13
+    },
+    "top_modules": [
+     "sync",
+     "<crate root>",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SyncProtocolError",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "context: SyncProtocolValidation"
+   ],
+   "error_attr": "#[error(\"sync protocol error: {context}\")]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 348,
+   "refs": {
+    "prod": 3,
+    "test": 12,
+    "total": 15,
+    "files": 9,
+    "modules": 7,
+    "crates": {
+     "oneiron": 11,
+     "oneiron-server": 4
+    },
+    "top_modules": [
+     "sync",
+     "crates",
+     "batch",
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "SyncEngineError",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "context: SyncEngineContext",
+    "source: Box<dyn StdError + Send + Sync + 'static>"
+   ],
+   "error_attr": "#[error(\"sync engine error ({context}): {source}\")]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": true,
+   "has_from": false,
+   "src_line": 352,
+   "refs": {
+    "prod": 0,
+    "test": 2,
+    "total": 2,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "tests"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "MaintenanceIngestQuotaExceeded",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "peer_key_hex: String",
+    "accepted_count: u32",
+    "max_ops_per_peer_window: u32",
+    "window_start_secs: u64",
+    "quota_window_secs: u64"
+   ],
+   "error_attr": "#[error(\n        \"maintenance ingest quota exceeded for peer {peer_key_hex}: accepted {accepted_count}/{max_ops_per_peer_window} in quota window starting {window_start_secs} ({quota_window_secs}s)\"\n    )]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 365,
+   "refs": {
+    "prod": 4,
+    "test": 4,
+    "total": 8,
+    "files": 5,
+    "modules": 4,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidRedactionReceiptBody",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid redaction audit receipt body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 381,
+   "refs": {
+    "prod": 31,
+    "test": 0,
+    "total": 31,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 31
+    },
+    "top_modules": [
+     "deletion",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "RedactionReceiptDivergence",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId"
+   ],
+   "error_attr": "#[error(\n        \"redaction audit receipt {} is immutable: divergent remote bytes are quarantined, local bytes kept\",\n        id.to_hex()\n    )]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 393,
+   "refs": {
+    "prod": 2,
+    "test": 0,
+    "total": 2,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 2
+    },
+    "top_modules": [
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ReceiptAttestationInvalid",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId"
+   ],
+   "error_attr": "#[error(\n        \"redaction audit receipt {} attestation invalid: signature/pubkey fails verification\",\n        id.to_hex()\n    )]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 406,
+   "refs": {
+    "prod": 5,
+    "test": 0,
+    "total": 5,
+    "files": 1,
+    "modules": 1,
+    "crates": {
+     "oneiron": 5
+    },
+    "top_modules": [
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ReceiptLeaseUnknown",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "client_id: u64"
+   ],
+   "error_attr": "#[error(\"redaction audit receipt claims unleased client {client_id:016x}\")]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 414,
+   "refs": {
+    "prod": 2,
+    "test": 1,
+    "total": 3,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 3
+    },
+    "top_modules": [
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "ReceiptLeaseRevoked",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "client_id: u64"
+   ],
+   "error_attr": "#[error(\"redaction audit receipt claims revoked client {client_id:016x}\")]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 421,
+   "refs": {
+    "prod": 4,
+    "test": 3,
+    "total": 7,
+    "files": 2,
+    "modules": 2,
+    "crates": {
+     "oneiron": 7
+    },
+    "top_modules": [
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "IdentityTopologyRejected",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "tuple",
+   "payload": [
+    "crate::identity_topology::IdentityTopologyRejection"
+   ],
+   "error_attr": "#[error(\"identity topology op rejected: {0:?}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 425,
+   "refs": {
+    "prod": 15,
+    "test": 3,
+    "total": 18,
+    "files": 8,
+    "modules": 4,
+    "crates": {
+     "oneiron": 18
+    },
+    "top_modules": [
+     "identity_redirect",
+     "identity_topology",
+     "sync",
+     "crates"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "InvalidIdentityTopologyEventBody",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"invalid identity topology event body: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 429,
+   "refs": {
+    "prod": 63,
+    "test": 19,
+    "total": 82,
+    "files": 9,
+    "modules": 2,
+    "crates": {
+     "oneiron": 82
+    },
+    "top_modules": [
+     "identity_topology",
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "IdentityTopologyEventDivergence",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "struct",
+   "payload": [
+    "id: EntityId"
+   ],
+   "error_attr": "#[error(\"identity topology event divergence for {}\", id.to_hex())]",
+   "cfg": [
+    "#[cfg(feature = \"sync\")]"
+   ],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 436,
+   "refs": {
+    "prod": 2,
+    "test": 2,
+    "total": 4,
+    "files": 2,
+    "modules": 1,
+    "crates": {
+     "oneiron": 4
+    },
+    "top_modules": [
+     "sync"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "IdentityTopologyUnarmed",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"identity topology op is not armed yet: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 442,
+   "refs": {
+    "prod": 3,
+    "test": 5,
+    "total": 8,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 8
+    },
+    "top_modules": [
+     "identity_topology"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  },
+  {
+   "name": "IdentityProposalAmendmentOutOfScope",
+   "domain": "sync",
+   "enum": "SyncError",
+   "file": "crates/oneiron/src/error/sync.rs",
+   "shape": "tuple",
+   "payload": [
+    "&'static str"
+   ],
+   "error_attr": "#[error(\"identity proposal amendment is out of scope: {0}\")]",
+   "cfg": [],
+   "other_attrs": [],
+   "has_source": false,
+   "has_from": false,
+   "src_line": 450,
+   "refs": {
+    "prod": 6,
+    "test": 5,
+    "total": 11,
+    "files": 3,
+    "modules": 1,
+    "crates": {
+     "oneiron": 11
+    },
+    "top_modules": [
+     "identity_topology"
+    ]
+   },
+   "action": "move",
+   "dead": false,
+   "reachable_via": null,
+   "dead_verdict": null,
+   "note": null
+  }
+ ],
+ "moving_items": [
+  {
+   "item": "GateDenialOutcome",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "gate",
+   "note": "GateDenial taxonomy, error.rs:16-48"
+  },
+  {
+   "item": "GateDenialReason",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "gate",
+   "note": "error.rs:50-169"
+  },
+  {
+   "item": "GateDenial",
+   "kind": "struct",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "gate",
+   "note": "error.rs:171-202"
+  },
+  {
+   "item": "Error::gate_denial",
+   "kind": "method",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "gate",
+   "note": "reads GateWriteRejected; becomes GateError::gate_denial, root delegates"
+  },
+  {
+   "item": "CompactionPacketError",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "maintenance",
+   "note": "error.rs:204-281 incl. Display"
+  },
+  {
+   "item": "From<CompactionPacketError>",
+   "kind": "impl",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "maintenance",
+   "note": "targets CompactionPacketRejected; becomes From<..> for MaintenanceError"
+  },
+  {
+   "item": "SyncConfigField",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "error.rs:520-547"
+  },
+  {
+   "item": "SyncSelectorValidation",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "error.rs:549-646"
+  },
+  {
+   "item": "SyncProtocolPruneScope",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "error.rs:648-655"
+  },
+  {
+   "item": "SyncProtocolValidation",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "error.rs:657-711"
+  },
+  {
+   "item": "SyncEngineContext",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "error.rs:713-755"
+  },
+  {
+   "item": "SyncRollbackError",
+   "kind": "struct",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "error.rs:757-805 incl. StdError impl"
+  },
+  {
+   "item": "Error::sync_protocol",
+   "kind": "method",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "cfg(sync) constructor; becomes SyncError::sync_protocol"
+  },
+  {
+   "item": "Error::sync_engine",
+   "kind": "method",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "cfg(sync) constructor"
+  },
+  {
+   "item": "Error::sync_engine_rollback",
+   "kind": "method",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "sync",
+   "note": "cfg(sync) constructor"
+  },
+  {
+   "item": "VaultRootEntry",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "store",
+   "note": "error.rs:807-828"
+  },
+  {
+   "item": "VaultRootProblem",
+   "kind": "enum",
+   "from": "crates/oneiron/src/error.rs",
+   "to_domain": "store",
+   "note": "error.rs:830-901"
+  },
+  {
+   "item": "VaultReadError",
+   "kind": "enum",
+   "from": "crates/oneiron/src/code_run/vault_read/error.rs",
+   "to_domain": "code",
+   "note": "NOT in error.rs; stays put, only the VaultRead wrapper variant relocates"
+  }
+ ],
+ "from_impls": [
+  {
+   "impl": "From<heed::Error> for Error",
+   "file": "crates/oneiron/src/error.rs",
+   "targets": [
+    "MapFull",
+    "Storage"
+   ],
+   "goes_to": "root",
+   "note": "both targets are bag variants; impl is unchanged"
+  },
+  {
+   "impl": "From<std::io::Error> for Error",
+   "file": "crates/oneiron/src/error.rs",
+   "targets": [
+    "Io"
+   ],
+   "goes_to": "root",
+   "note": "bag variant; impl is unchanged"
+  },
+  {
+   "impl": "From<CompactionPacketError> for Error",
+   "file": "crates/oneiron/src/error.rs",
+   "targets": [
+    "CompactionPacketRejected"
+   ],
+   "goes_to": "maintenance",
+   "note": "becomes From<CompactionPacketError> for MaintenanceError; the root #[from] wrapper then supplies From<CompactionPacketError> for Error only via two hops, so KEEP a root-level From<CompactionPacketError> for Error delegating to MaintenanceError"
+  },
+  {
+   "impl": "From<ScheduleError> for crate::Error",
+   "file": "crates/oneiron/src/commitment_schedule.rs",
+   "targets": [
+    "InvariantViolation",
+    "ArithmeticOverflow",
+    "<passthrough Engine(inner)>"
+   ],
+   "goes_to": "stays put",
+   "note": "all targets are bag variants; file is untouched by the rewrite"
+  },
+  {
+   "impl": "From<ConnectorCharterCompileIssue> for Error",
+   "file": "crates/oneiron/src/connector_key/charter.rs",
+   "targets": [
+    "ConnectorCharterCompile"
+   ],
+   "goes_to": "stays put, body rewritten",
+   "note": "target moves to RecordError; the impl stays in charter.rs and its body becomes Error::Record(RecordError::ConnectorCharterCompile { .. })"
+  }
+ ],
+ "root_methods": [
+  {
+   "name": "kind",
+   "note": "21 bag arms + 12 delegations to <Domain>Error::kind(); stays exhaustive, no wildcard"
+  },
+  {
+   "name": "is_retryable",
+   "note": "ConcurrentWrite/UpstreamToolFailure/Io stay; SkillEditGateRetry delegates to ArtifactError, cfg(sync) WindowBusy delegates to SyncError; trailing wildcard arm stays"
+  },
+  {
+   "name": "gate_denial",
+   "note": "moves to GateError; root keeps a delegating wrapper so the 3 external path uses hold"
+  },
+  {
+   "name": "invalid_vector_component",
+   "note": "pub(crate); target InvalidVector is a bag variant; unchanged"
+  }
+ ],
+ "promotion_candidates": [
+  {
+   "name": "GateWriteRejected",
+   "domain": "gate",
+   "modules": 23,
+   "top_modules": [
+    "crates",
+    "batch",
+    "gate",
+    "linkedin_lead_preload",
+    "sync",
+    "<crate root>"
+   ],
+   "total": 66
+  },
+  {
+   "name": "MaintenanceKindNotWritable",
+   "domain": "registry",
+   "modules": 20,
+   "top_modules": [
+    "sync",
+    "batch",
+    "deletion",
+    "crates",
+    "connector_key",
+    "gate"
+   ],
+   "total": 39
+  },
+  {
+   "name": "InvalidAttemptQueueRecord",
+   "domain": "artifact",
+   "modules": 15,
+   "top_modules": [
+    "attempt_queue",
+    "dispatch_byoa",
+    "crates",
+    "companion",
+    "dreamer_runner",
+    "dreamer_tournament"
+   ],
+   "total": 132
+  },
+  {
+   "name": "InvalidTaskBody",
+   "domain": "record",
+   "modules": 12,
+   "top_modules": [
+    "batch",
+    "context_projection",
+    "outbound",
+    "task_verb",
+    "crates",
+    "<crate root>"
+   ],
+   "total": 159
+  },
+  {
+   "name": "ReservedEdgeKind",
+   "domain": "registry",
+   "modules": 12,
+   "top_modules": [
+    "batch",
+    "<crate root>",
+    "commitment_lifecycle",
+    "edge",
+    "federation",
+    "identity_topology"
+   ],
+   "total": 41
+  }
+ ],
+ "dead_candidates": [
+  "OffRecordPromoteUnauthenticated",
+  "AnalyzerAssetMissing"
+ ],
+ "dead_verdicts": {
+  "AnalyzerAssetMissing": {
+   "verdict": "keep",
+   "action": "move",
+   "references": 0,
+   "evidence": [
+    "zero occurrences anywhere in the repo outside error.rs: the only three lines are its ErrorKind twin (error.rs:416), its own declaration (error.rs:1742) and its kind() arm (error.rs:2605) \u2014 grepped across crates/, docs/, scripts/, apps/, packages/ and every .json/.jsonl/.snap",
+    "its ErrorKind name is NOT in remote_rejection_reason's allowlist in sync/quarantine/keys_classifier.rs, so it can never become a persisted quarantine reason code; and reason_code_for only ever sees a CONSTRUCTED error, which this never is",
+    "the door it documents is unbuilt: no dict-asset existence check exists. analyzer/manifest.rs fails the open-time handshake with IncompatibleAnalyzer, and config.rs:330 documents IncompatibleAnalyzer as the escape hatch"
+   ],
+   "why_keep": "deleting it edits ErrorKind, and `ErrorKind byte-identical` is the single invariant that makes this refactor mechanically verifiable (check c). It costs nothing to carry: it moves with StoreError like any other variant, with zero call sites to rewrite. Delete it in its own one-line PR, before or after, never inside this one."
+  },
+  "OffRecordPromoteUnauthenticated": {
+   "verdict": "keep",
+   "action": "move",
+   "references": 0,
+   "evidence": [
+    "zero occurrences anywhere in the repo outside error.rs: declaration (error.rs:1864), ErrorKind twin (error.rs:438), kind() arm (error.rs:2629)",
+    "its ErrorKind name is NOT in remote_rejection_reason's allowlist, so it cannot be persisted as a quarantine reason code",
+    "the door it documents is unbuilt, and provably so: OffRecordSession::promote_turn (off_record/lifecycle/session.rs:686) is `fn promote_turn(&self, turn: &EntityId)` \u2014 it takes no actor argument, so there is nothing to authenticate. The OF-326 / ONE-1645 authentication it describes has not been wired"
+   ],
+   "why_keep": "same reason as AnalyzerAssetMissing, plus this one is a forward declaration of a fail-closed consent door. Deleting it drops the recorded intent that promote MUST authenticate the owner principal, and nothing else in the tree records that."
+  }
+ },
+ "reachable_without_naming": {
+  "VaultRead": "constructed only through `#[from] VaultReadError` (thiserror generates the From impl); `?` on a VaultReadError is the only caller"
+ }
+}

@@ -19,7 +19,7 @@ use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::registry::{EntityClassification, TypeByteZone, entity_type_registry_entry};
 use crate::temporal::TimeRange;
 use crate::vault::entity_id_from_type_index_key;
@@ -78,7 +78,7 @@ impl Vault {
         if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some()
             || companion_record_any_id_for_key_in_txn(&self.store, &*wtxn, &key)?.is_some()
         {
-            return Err(Error::CompanionRecordAlreadyExists);
+            return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
         }
         self.apply_companion_record_body(wtxn, id, learned_at, data)?;
         Ok(())
@@ -291,7 +291,7 @@ impl Vault {
             .is_some()
             || companion_record_id_for_key_in_txn(&self.store, &wtxn, &key)?.is_some()
         {
-            return Err(Error::CompanionRecordAlreadyExists);
+            return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
         }
         let data = encode_companion_record_body(&revived)?;
         self.apply_companion_record_body(&mut wtxn, revived_id, revived_at, data)?;
@@ -372,8 +372,8 @@ impl Vault {
                     pack = %registration.pack,
                     "companion register static kind collides with incompatible dynamic metadata"
                 );
-                return Err(Error::StructuralKindTypeByteCollision(
-                    ENTITY_TYPE_COMPANION_REGISTER,
+                return Err(Error::Registry(
+                    RegistryError::StructuralKindTypeByteCollision(ENTITY_TYPE_COMPANION_REGISTER),
                 ));
             }
             tracing::warn!(

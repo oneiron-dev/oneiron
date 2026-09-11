@@ -662,7 +662,7 @@ fn assert_context_pack_validation(
     expected_reason: &'static str,
 ) {
     match err {
-        Error::ContextPackValidation { id, reason } => {
+        Error::Record(RecordError::ContextPackValidation { id, reason }) => {
             assert_eq!(id, expected_id);
             assert_eq!(reason, expected_reason);
         }
@@ -3979,6 +3979,7 @@ fn psych_profile_pack_section_is_explicit_for_missing_fresh_and_stale() -> Resul
 // ═══════════════════════════════════════════════════════════════════════
 
 use crate::agent_def::{CompactionOwnership, MemoryProfile};
+use crate::error::RecordError;
 use crate::llm::ModelTierRef;
 
 fn rt05_profile(budget: u64) -> MemoryProfile {

@@ -2,6 +2,7 @@
 //! widening-reject fixture.
 
 use super::*;
+use crate::error::SecretError;
 
 fn floor() -> SecretCustodyFloor {
     SecretCustodyFloor::default()
@@ -59,12 +60,12 @@ fn binding_ceiling_above_floor_max_is_rejected() {
     )]);
     let err = validate_secret_manifest(&m, &floor()).expect_err("widening reject");
     match err {
-        Error::ManifestWidensFloor {
+        Error::Secret(SecretError::ManifestWidensFloor {
             secret_ref,
             class,
             requested,
             floor_max,
-        } => {
+        }) => {
             assert_eq!(secret_ref, "door-key");
             assert_eq!(class, CustodyClass::CrossVault);
             assert_eq!(requested, CustodyTier::T2LocalRegistered);
@@ -98,7 +99,7 @@ fn duplicate_entry_name_is_rejected() {
     ]);
     let err = validate_secret_manifest(&m, &floor()).expect_err("dup name reject");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
 }

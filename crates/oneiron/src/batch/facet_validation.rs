@@ -2,7 +2,7 @@ use super::*;
 
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use crate::store::Store;
 
@@ -26,8 +26,8 @@ pub(crate) fn stored_entity_type(
 /// ONE-1645 write-time type table for `FacetOf` (u8 17) edges: a facet stamp
 /// may only run `CLAIM | TURN | EVENT → FACET`. Anything else — including an
 /// endpoint with no entity row, whose type is unknowable — is a typed
-/// [`Error::InvalidFacetOfEdge`] that aborts the batch atomically. This
-/// mirrors the fail-closed-on-missing shape [`Error::InvalidFacet`] already
+/// [`RegistryError::InvalidFacetOfEdge`](crate::error::RegistryError::InvalidFacetOfEdge) that aborts the batch atomically. This
+/// mirrors the fail-closed-on-missing shape [`RegistryError::InvalidFacet`](crate::error::RegistryError::InvalidFacet) already
 /// uses on the read side: a stamp's endpoints must be established facts
 /// before the stamp.
 ///
@@ -99,12 +99,12 @@ pub(crate) fn validate_facet_of_edge(
     {
         return Ok(());
     }
-    Err(Error::InvalidFacetOfEdge {
+    Err(Error::Registry(RegistryError::InvalidFacetOfEdge {
         src,
         src_type,
         tgt,
         tgt_type,
-    })
+    }))
 }
 
 /// The ONE-1645 `FacetOf` table as a pure predicate over KNOWN endpoint types.

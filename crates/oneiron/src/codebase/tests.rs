@@ -4,7 +4,7 @@ use crate::code_artifact::{CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody};
 use crate::code_revision::{CODE_REVISION_CLAIM_PREDICATE, CodeRevision};
 use crate::context_pack::PackFormat;
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::error::{Error, ErrorKind};
+use crate::error::{CodeError, Error, ErrorKind};
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::secret_custody::{
@@ -1378,12 +1378,12 @@ fn local_repo_ingest_preserves_known_match_metadata() -> Result<()> {
         .unwrap_err();
 
     match error {
-        Error::HostedMediaHashMatchKnownMatch {
+        Error::Code(CodeError::HostedMediaHashMatchKnownMatch {
             provider,
             reference,
             path,
             content_hash,
-        } => {
+        }) => {
             assert_eq!(&*provider, "unit-provider");
             assert_eq!(&*reference, "case-123");
             assert_eq!(&*path, "assets/known.bin");

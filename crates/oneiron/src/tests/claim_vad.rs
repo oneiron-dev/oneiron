@@ -1,6 +1,7 @@
 //! Claim-VAD consolidation/reappraisal, coping-outcome claims, claim_vad_now (flattens inline mod).
 
 use super::*;
+use crate::error::ClaimError;
 
 #[test]
 fn claim_vad_consolidation_populates_semantic_edges_from_fixture_turns() -> Result<()> {
@@ -454,9 +455,9 @@ fn claim_vad_consolidation_rejects_missing_and_closed_claims() -> Result<()> {
         .expect_err("closed claim must fail");
     assert_matches!(
         err,
-        Error::ClaimAlreadyClosed {
+        Error::Claim(ClaimError::ClaimAlreadyClosed {
             status: ClaimLifecycleStatus::Retracted
-        }
+        })
     );
     Ok(())
 }

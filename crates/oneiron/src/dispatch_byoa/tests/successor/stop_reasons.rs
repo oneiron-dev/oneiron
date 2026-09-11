@@ -1,6 +1,7 @@
 //! Stop reasons are part of failed and abandoned capture idempotency.
 
 use super::*;
+use crate::error::ArtifactError;
 
 const STOP_CASES: [(bool, ByoaTerminalDisposition, &str); 3] = [
     (
@@ -46,7 +47,7 @@ fn stop_reason_bounds_and_changes_are_rejected_without_custody_writes() {
                     .expect_err("invalid initial reason");
                 assert!(matches!(
                     error,
-                    ByoaError::Store(Error::InvalidAttemptQueueRecord(message))
+                    ByoaError::Store(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(message)))
                         if message == expected
                 ));
                 assert_eq!(custody_snapshot(&vault), before);
@@ -72,7 +73,7 @@ fn stop_reason_bounds_and_changes_are_rejected_without_custody_writes() {
                     .expect_err("invalid retry reason");
                 assert!(matches!(
                     error,
-                    ByoaError::Store(Error::InvalidAttemptQueueRecord(message))
+                    ByoaError::Store(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(message)))
                         if message == expected
                 ));
                 assert_eq!(custody_snapshot(&vault), before);
@@ -89,7 +90,9 @@ fn stop_reason_bounds_and_changes_are_rejected_without_custody_writes() {
                     .expect_err("a valid but different reason is not a canonical retry");
                 assert!(matches!(
                     error,
-                    ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_CAPTURE_CONFLICT))
+                    ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        ERR_CAPTURE_CONFLICT
+                    )))
                 ));
                 assert_eq!(custody_snapshot(&vault), before);
             }
@@ -128,7 +131,9 @@ fn omitted_and_explicit_default_stop_reasons_are_equivalent_on_retry() {
                 .expect_err("a custom reason cannot replace the stored default");
             assert!(matches!(
                 error,
-                ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_CAPTURE_CONFLICT))
+                ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    ERR_CAPTURE_CONFLICT
+                )))
             ));
             assert_eq!(custody_snapshot(&vault), before);
         }

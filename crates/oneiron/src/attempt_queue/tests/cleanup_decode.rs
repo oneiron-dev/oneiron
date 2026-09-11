@@ -1,6 +1,7 @@
 //! Stale-lease cleanup and recovery, decode-fails-closed guards, and the ready-key codec.
 
 use super::*;
+use crate::error::ArtifactError;
 
 #[test]
 fn attempt_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
@@ -107,7 +108,10 @@ fn attempt_queue_decode_fails_closed_on_record_key_id_mismatch() -> Result<()> {
             now: 20,
         })
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidAttemptQueueRecord(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))
+    ));
 
     Ok(())
 }
@@ -135,7 +139,10 @@ fn attempt_queue_decode_fails_closed_on_lease_owner_state_mismatch() -> Result<(
     }
 
     let err = queue.get(attempt.id).unwrap_err();
-    assert!(matches!(err, Error::InvalidAttemptQueueRecord(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))
+    ));
 
     Ok(())
 }
@@ -230,7 +237,9 @@ fn attempt_queue_cleanup_rejects_zero_timeout_without_requeuing() -> Result<()> 
         .unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueRecord(ERR_LEASE_TIMEOUT_ZERO)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_LEASE_TIMEOUT_ZERO
+        ))
     ));
 
     let persisted = queue.get(attempt.id)?.expect("leased attempt");

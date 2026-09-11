@@ -14,7 +14,7 @@ use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::edit_roundtrip::EditManifest;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 
 /// Projects the settlement ledger into OF-367 family receipts matching `query`.
@@ -144,7 +144,7 @@ pub(super) fn manifest_ref(manifest: &EditManifest) -> Result<[u8; 32]> {
 }
 
 pub(super) fn already_settled(existing: &SettlementRecord) -> Error {
-    Error::EditProposalAlreadySettled {
+    Error::Artifact(ArtifactError::EditProposalAlreadySettled {
         outcome: existing.outcome.as_str(),
-    }
+    })
 }

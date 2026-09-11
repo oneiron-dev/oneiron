@@ -20,6 +20,7 @@ use super::field_validators::{
     ERR_RESERVE_OVERSPENT, validate_intervention_actor, validate_optional_cancel_status,
     validate_optional_failure_reason, validate_optional_resume_point,
 };
+use crate::error::ArtifactError;
 
 /// Whether one optional receipt field is REQUIRED by, merely ALLOWED on, or
 /// FORBIDDEN to a given [`AttemptCancelReceiptKind`].
@@ -118,9 +119,11 @@ const fn cancel_receipt_shape(kind: AttemptCancelReceiptKind) -> CancelReceiptSh
 
 fn check_field(rule: FieldRule, present: bool, missing: &'static str) -> Result<()> {
     match (rule, present) {
-        (FieldRule::Required, false) => Err(Error::InvalidAttemptQueueRecord(missing)),
-        (FieldRule::Forbidden, true) => Err(Error::InvalidAttemptQueueRecord(
-            ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN,
+        (FieldRule::Required, false) => Err(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueRecord(missing),
+        )),
+        (FieldRule::Forbidden, true) => Err(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN),
         )),
         _ => Ok(()),
     }
@@ -175,16 +178,18 @@ pub(super) fn validate_cancel_receipt_fields(receipt: &AttemptCancelReceipt) -> 
     if let Some(standing) = receipt.standing
         && !standing.may_request()
     {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_NO_STANDING));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_CANCEL_NO_STANDING,
+        )));
     }
     Ok(())
 }
 
 fn check_reserve_units(rule: FieldRule, units: u64) -> Result<()> {
     match (rule, units) {
-        (FieldRule::Required, 0) | (FieldRule::Forbidden, 1..) => Err(
-            Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPT_RESERVE_UNITS),
-        ),
+        (FieldRule::Required, 0) | (FieldRule::Forbidden, 1..) => Err(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPT_RESERVE_UNITS),
+        )),
         _ => Ok(()),
     }
 }
@@ -197,24 +202,26 @@ fn validate_landing(landing: &AttemptLanding) -> Result<()> {
 /// Validates the whole ONE-1896 sub-record read back off a row.
 pub(in crate::attempt_queue) fn validate_cancel_state(state: &AttemptCancelState) -> Result<()> {
     if state.receipts.len() > MAX_ATTEMPT_CANCEL_RECEIPTS {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPTS_FULL));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_CANCEL_RECEIPTS_FULL,
+        )));
     }
     let mut previous_sequence = 0;
     let last_index = state.receipts.len().saturating_sub(1);
     for (index, receipt) in state.receipts.iter().enumerate() {
         if receipt.sequence == 0 || receipt.sequence <= previous_sequence {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_CANCEL_RECEIPT_SEQUENCE,
-            ));
+            )));
         }
         // The reserved terminal slot is spendable exactly once and only at the
         // end: a settled row that carried a terminal receipt in the middle
         // would be a row that kept writing history after it stopped, and two
         // of them would mean one terminal receipt had been overwritten.
         if receipt.kind.is_terminal() && index != last_index {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_CANCEL_RECEIPT_TERMINAL_ORDER,
-            ));
+            )));
         }
         match receipt.request_sequence {
             // An answer names a request that is strictly OLDER than itself;
@@ -224,9 +231,9 @@ pub(in crate::attempt_queue) fn validate_cancel_state(state: &AttemptCancelState
                     || request_sequence == 0
                     || request_sequence >= receipt.sequence =>
             {
-                return Err(Error::InvalidAttemptQueueRecord(
+                return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                     ERR_CANCEL_RECEIPT_REQUEST_REF,
-                ));
+                )));
             }
             _ => {}
         }
@@ -244,18 +251,24 @@ pub(in crate::attempt_queue) fn validate_cancel_state(state: &AttemptCancelState
     validate_optional_resume_point(state.resume_point.as_ref())?;
     if let Some(cancellation) = state.cancellation.as_ref() {
         if !cancellation.is_well_formed() {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCELLATION_MALFORMED));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_CANCELLATION_MALFORMED,
+            )));
         }
         validate_intervention_actor(&cancellation.actor)?;
         validate_optional_failure_reason(cancellation.reason.as_deref())?;
         // The terminal receipt reports the reserve AS SETTLED, so its own two
         // numbers must be consistent even if the live sub-record were lost.
         if cancellation.reserve_spent_units > cancellation.reserve_units {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_OVERSPENT));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_RESERVE_OVERSPENT,
+            )));
         }
     }
     if state.reserve.spent_units > state.reserve.reserve_units {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_OVERSPENT));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RESERVE_OVERSPENT,
+        )));
     }
     Ok(())
 }
@@ -294,7 +307,9 @@ pub(in crate::attempt_queue) fn append_cancel_receipt(
         MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
     };
     if record.cancel_state.receipts.len() >= cap {
-        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPTS_FULL));
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_CANCEL_RECEIPTS_FULL,
+        )));
     }
     let sequence = match record.cancel_state.receipts.last() {
         Some(receipt) => receipt

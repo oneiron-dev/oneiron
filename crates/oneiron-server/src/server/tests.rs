@@ -368,7 +368,10 @@ async fn corrupt_window_snapshot_fails_closed() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, oneiron::Error::CrdtDecodeError { .. }),
+        matches!(
+            err,
+            oneiron::Error::Sync(oneiron::error::SyncError::CrdtDecodeError { .. })
+        ),
         "corrupt persisted window must error, got {err:?}"
     );
 }

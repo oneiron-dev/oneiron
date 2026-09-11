@@ -17,7 +17,7 @@ use crate::claim::{
 };
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, RegistryError, Result, SyncError};
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
 use crate::temporal::TimeRange;
 use crate::test_util::embedding_test_config;
@@ -101,7 +101,7 @@ fn states_of(
 
 fn expect_rejection(error: Error) -> IdentityTopologyRejection {
     match error {
-        Error::IdentityTopologyRejected(rejection) => rejection,
+        Error::Sync(SyncError::IdentityTopologyRejected(rejection)) => rejection,
         other => panic!("expected identity-topology rejection, got {other:?}"),
     }
 }
@@ -627,7 +627,7 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
         padded.push(0);
         assert!(matches!(
             decode_identity_topology_event_body(&padded),
-            Err(Error::InvalidIdentityTopologyEventBody(_))
+            Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_)))
         ));
     }
 
@@ -635,7 +635,7 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     // seq, out-of-range confidence, both-targets map row.
     assert!(matches!(
         StoredIdentityOpEvent::decode_value(&Value::from("merge")),
-        Err(Error::InvalidIdentityTopologyEventBody(_))
+        Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_)))
     ));
     let base = |kind: &str| -> Vec<(Value, Value)> {
         vec![
@@ -649,7 +649,7 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     };
     assert!(matches!(
         StoredIdentityOpEvent::decode_value(&Value::Map(base("rename"))),
-        Err(Error::InvalidIdentityTopologyEventBody(_))
+        Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_)))
     ));
     let mut bad_plan = base("merge");
     bad_plan.push((Value::from("sources"), Value::Array(Vec::new())));
@@ -660,14 +660,14 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     bad_plan.push((Value::from("plan"), Value::from("rewrite_references")));
     assert!(matches!(
         StoredIdentityOpEvent::decode_value(&Value::Map(bad_plan)),
-        Err(Error::InvalidIdentityTopologyEventBody(_))
+        Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_)))
     ));
     let mut no_seq = base("undo");
     no_seq.retain(|(key, _)| key.as_str() != Some("seq"));
     no_seq.push((Value::from("target"), Value::Binary(a.as_bytes().to_vec())));
     assert!(matches!(
         StoredIdentityOpEvent::decode_value(&Value::Map(no_seq)),
-        Err(Error::InvalidIdentityTopologyEventBody(_))
+        Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_)))
     ));
     let mut bad_conf = base("undo");
     bad_conf.retain(|(key, _)| key.as_str() != Some("conf"));
@@ -675,7 +675,7 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     bad_conf.push((Value::from("target"), Value::Binary(a.as_bytes().to_vec())));
     assert!(matches!(
         StoredIdentityOpEvent::decode_value(&Value::Map(bad_conf)),
-        Err(Error::InvalidIdentityTopologyEventBody(_))
+        Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_)))
     ));
     let mut both_targets = base("split");
     both_targets.push((Value::from("entity"), Value::Binary(a.as_bytes().to_vec())));
@@ -696,7 +696,7 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     ));
     assert!(matches!(
         StoredIdentityOpEvent::decode_value(&Value::Map(both_targets)),
-        Err(Error::InvalidIdentityTopologyEventBody(_))
+        Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_)))
     ));
 }
 
@@ -724,7 +724,10 @@ fn type_76_is_a_pinned_engine_authored_maintenance_kind() {
             b"forged event",
         )
         .expect_err("public put of type 76 must reject");
-    assert!(matches!(err, Error::MaintenanceKindNotWritable(76)));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(76))
+    ));
     assert_eq!(event_count(&vault), 0);
 }
 
@@ -738,7 +741,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
     let err = vault
         .put_edge(&a, EdgeKind::MergedInto, &b, 0.3)
         .expect_err("raw merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .put_edge_with_vad(
             &a,
@@ -748,7 +754,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
             crate::affect::Vad::NEUTRAL,
         )
         .expect_err("raw split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
 
     // Batch builder creation + deletion ops.
     let err = vault
@@ -756,7 +765,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
         .edge_with_created_at(&a, EdgeKind::MergedInto, &b, 0.3, 100)
         .commit()
         .expect_err("batch created_at merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .batch()
         .edge_with_created_at_and_vad(
@@ -769,11 +781,17 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
         )
         .commit()
         .expect_err("batch created_at+vad split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
     let err = vault
         .delete_edge(&a, EdgeKind::MergedInto, &b)
         .expect_err("public delete of merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
 
     // Txn builder path.
     let err = vault
@@ -784,7 +802,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
                 .apply(wtxn)
         })
         .expect_err("txn builder split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
 
     // Operational setters (MS-01 perimeter: the reseat's "setters cannot
     // alter topology" carve-out was wrong — a zero weight makes PPR drop
@@ -792,23 +813,35 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
     let err = vault
         .set_edge_weight(&a, EdgeKind::MergedInto, &b, 0.0)
         .expect_err("weight setter merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .set_edge_vad(&a, EdgeKind::SplitInto, &b, crate::affect::Vad::NEUTRAL)
         .expect_err("vad setter split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
     let err = vault
         .batch()
         .set_edge_weight(&a, EdgeKind::SplitInto, &b, 0.9)
         .commit()
         .expect_err("batch weight setter split_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("split_into"))
+    ));
     let err = vault
         .batch()
         .set_edge_vad(&a, EdgeKind::MergedInto, &b, crate::affect::Vad::NEUTRAL)
         .commit()
         .expect_err("batch vad setter merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .with_write_txn(|wtxn| {
             vault
@@ -817,7 +850,10 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
                 .apply(wtxn)
         })
         .expect_err("txn vad setter merged_into must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
 
     // Nothing leaked through any of the rejected paths.
     assert_eq!(
@@ -1098,7 +1134,10 @@ fn actor_is_validated_at_the_door() {
             200,
         )
         .expect_err("class mismatch must reject");
-    assert!(matches!(err, Error::ActorClassMismatch { .. }));
+    assert!(matches!(
+        err,
+        Error::Claim(ClaimError::ActorClassMismatch { .. })
+    ));
 
     // Nothing recorded, nothing shelled.
     assert_eq!(event_count(&vault), 0);
@@ -1541,7 +1580,10 @@ fn facet_and_assert_distinct_doors_mint_their_own_effects() {
             300,
         )
         .expect_err("facet proposals are unarmed");
-    assert!(matches!(err, Error::IdentityTopologyUnarmed(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::IdentityTopologyUnarmed(_))
+    ));
 
     // ONE-1746: assert_distinct now applies. Like a facet op it moves NO
     // lifecycle state (§6) — its whole effect is the `entity.distinct_from`
@@ -1833,7 +1875,10 @@ fn operational_setters_leave_live_shell_edges_intact() {
     let err = vault
         .set_edge_weight(&loser, EdgeKind::MergedInto, &survivor, 0.0)
         .expect_err("weight rewrite of a live shell edge must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
     let err = vault
         .set_edge_vad(
             &loser,
@@ -1842,7 +1887,10 @@ fn operational_setters_leave_live_shell_edges_intact() {
             crate::affect::Vad::NEUTRAL,
         )
         .expect_err("vad rewrite of a live shell edge must reject");
-    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("merged_into"))
+    ));
 
     let edges = vault.edges_out(&loser).expect("edges out");
     let shell = edges
@@ -1871,7 +1919,9 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
         .expect_err("delete_entity must reject the ledger event");
     assert!(matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+        ))
     ));
     for reason in [
         crate::deletion::DeleteReason::UserDelete,
@@ -1884,7 +1934,9 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
             .expect_err("reasoned delete must reject the ledger event");
         assert!(matches!(
             err,
-            Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+            Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+            ))
         ));
     }
     // Generic batch delete door.
@@ -1895,7 +1947,9 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
         .expect_err("batch delete must reject the ledger event");
     assert!(matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+        ))
     ));
     // Replayed CRDT tombstone door (a malformed value decodes HARD).
     let err = vault
@@ -1903,7 +1957,9 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
         .expect_err("replayed tombstone must reject the ledger event");
     assert!(matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+        ))
     ));
 
     // Record and shell both survived every rejected door; undo still works.
@@ -2073,7 +2129,10 @@ fn reassignment_map_wire_rejects_unsorted_and_duplicate_rows() {
     let unsorted = tamper(&|rows| rows.swap(0, 1));
     let err = decode_identity_topology_event_body(&unsorted)
         .expect_err("unsorted map rows must fail decode");
-    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    ));
 
     // Duplicate items are the two-assignments-for-one-claim shape.
     let duplicated = tamper(&|rows| {
@@ -2082,7 +2141,10 @@ fn reassignment_map_wire_rejects_unsorted_and_duplicate_rows() {
     });
     let err = decode_identity_topology_event_body(&duplicated)
         .expect_err("duplicate map items must fail decode");
-    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    ));
 }
 
 #[test]
@@ -2147,7 +2209,10 @@ fn type_76_decoder_rejects_noncanonical_map_fields() {
         let err = decode_identity_topology_event_body(&bytes)
             .expect_err("noncanonical body must fail admission");
         assert!(
-            matches!(err, Error::InvalidIdentityTopologyEventBody(_)),
+            matches!(
+                err,
+                Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+            ),
             "{name}: {err:?}"
         );
     }
@@ -2166,7 +2231,10 @@ fn replicated_event_caps_reject_oversized_participant_and_body_work() {
     let bytes = encode_identity_topology_event_body(&over_participant_cap).expect("encode record");
     let err = decode_identity_topology_event_body(&bytes)
         .expect_err("over-cap participant fan-out must reject before storage");
-    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    ));
 
     let mut over_body_cap = replicated_merge_record(vec![id(0x62)], id(0x61), 1);
     over_body_cap.evidence = Some(IdentityOpEvidence {
@@ -2177,7 +2245,10 @@ fn replicated_event_caps_reject_oversized_participant_and_body_work() {
     assert!(bytes.len() > MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES);
     let err = decode_identity_topology_event_body(&bytes)
         .expect_err("over-cap body must reject before MessagePack decode");
-    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    ));
 }
 
 #[test]
@@ -2680,7 +2751,10 @@ fn amendment_out_of_scope_is_rejected_and_writes_nothing() {
         )
         .expect_err("a different op kind is out of scope");
     assert!(
-        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        matches!(
+            error,
+            Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(_))
+        ),
         "expected out-of-scope rejection, got {error:?}"
     );
 
@@ -2697,7 +2771,10 @@ fn amendment_out_of_scope_is_rejected_and_writes_nothing() {
         )
         .expect_err("an unnamed subject is out of scope");
     assert!(
-        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        matches!(
+            error,
+            Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(_))
+        ),
         "expected out-of-scope rejection, got {error:?}"
     );
 
@@ -2711,7 +2788,10 @@ fn amendment_out_of_scope_is_rejected_and_writes_nothing() {
         )
         .expect_err("a malformed body is out of scope");
     assert!(
-        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        matches!(
+            error,
+            Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(_))
+        ),
         "expected out-of-scope rejection, got {error:?}"
     );
 
@@ -2952,7 +3032,7 @@ fn amendment_codec_round_trips_and_refuses_unarmed_kinds() {
     // Only the two ops whose apply door is armed are amendable.
     assert!(matches!(
         encode_identity_op_amendment(&facet_op(id(0x8B))),
-        Err(Error::IdentityTopologyUnarmed(_))
+        Err(Error::Sync(SyncError::IdentityTopologyUnarmed(_)))
     ));
 
     // Trailing bytes are refused: an amendment must not smuggle a
@@ -3087,7 +3167,10 @@ fn amendment_scope_includes_reassignment_map() {
     )
     .expect_err("a head route to a stranger is out of scope");
     assert!(
-        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        matches!(
+            error,
+            Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(_))
+        ),
         "expected out-of-scope, got {error:?}"
     );
 
@@ -3116,7 +3199,10 @@ fn amendment_scope_includes_reassignment_map() {
     )
     .expect_err("an edge route through a stranger is out of scope");
     assert!(
-        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        matches!(
+            error,
+            Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(_))
+        ),
         "expected out-of-scope, got {error:?}"
     );
 
@@ -3866,7 +3952,10 @@ fn facet_event_wire_round_trips_and_bounds_its_mask_count() {
         &encode_identity_topology_event_body(&record(Vec::new())).expect("encode empty"),
     )
     .expect_err("a facet event minting nothing is not a legal op shape");
-    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    ));
 
     let over_cap = (0..=MAX_IDENTITY_TOPOLOGY_EVENT_FACETS)
         .map(|index| {
@@ -3879,7 +3968,10 @@ fn facet_event_wire_round_trips_and_bounds_its_mask_count() {
         &encode_identity_topology_event_body(&record(over_cap)).expect("encode over-cap"),
     )
     .expect_err("mask fan-out is bounded");
-    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    ));
 }
 
 /// The applied counts are OMITTED from the wire when zero, which is what
@@ -4136,7 +4228,10 @@ fn a_parked_facet_event_is_refused_at_the_replicated_door_too() {
             .expect("encode parked facet"),
     )
     .expect_err("a parked facet is unresolvable, so it is never stored");
-    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    ));
 
     // The local door's answer, for the same body shape.
     let (_dir, vault) = open_vault();
@@ -4153,7 +4248,7 @@ fn a_parked_facet_event_is_refused_at_the_replicated_door_too() {
         .expect_err("the local door refuses a parked facet");
     assert!(matches!(
         err,
-        Error::IdentityTopologyUnarmed("facet proposal")
+        Error::Sync(SyncError::IdentityTopologyUnarmed("facet proposal"))
     ));
 }
 
@@ -4227,7 +4322,10 @@ fn applied_counts_are_bounded_by_the_map_and_the_consent_axis() {
         .expect("encode over-applied"),
     )
     .expect_err("a one-row map cannot have applied two");
-    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    ));
 
     // Over-applied in EITHER class, in either direction.
     assert!(!admits(&record(
@@ -4483,7 +4581,7 @@ fn an_effective_re_assertion_promotes_the_parked_distinct_row_in_place() {
                 300,
             )
             .expect_err("assert_distinct has no resolution ramp"),
-        Error::IdentityTopologyUnarmed(_)
+        Error::Sync(SyncError::IdentityTopologyUnarmed(_))
     ));
 
     // Asserting the pair effectively IS the ruling — same claim id back, in
@@ -4631,7 +4729,7 @@ fn assert_distinct_event_wire_round_trips_and_pins_the_normalized_pair() {
     let bytes = encode_identity_topology_event_body(&unnormalized).expect("encode");
     assert!(matches!(
         decode_identity_topology_event_body(&bytes),
-        Err(Error::InvalidIdentityTopologyEventBody(_))
+        Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_)))
     ));
 
     // Neither is a self-pair, and an amendment of this kind has no park to
@@ -4648,7 +4746,7 @@ fn assert_distinct_event_wire_round_trips_and_pins_the_normalized_pair() {
     assert!(decode_identity_topology_event_body(&bytes).is_err());
     assert!(matches!(
         encode_identity_op_amendment(&distinct_op(id(0x21), id(0x22))),
-        Err(Error::IdentityTopologyUnarmed(_))
+        Err(Error::Sync(SyncError::IdentityTopologyUnarmed(_)))
     ));
 }
 

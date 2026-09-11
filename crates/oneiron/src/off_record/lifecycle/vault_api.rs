@@ -14,6 +14,7 @@ use super::session::OffRecordSessionVault;
 use super::types::{
     OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordSessionRecord,
 };
+use crate::error::OffRecordError;
 
 impl Vault {
     #[must_use]
@@ -22,7 +23,7 @@ impl Vault {
     }
 
     /// Explicitly enters off-record mode for `session_ref` (OF-326: enter is
-    /// never implicit). Errors with [`Error::OffRecordSessionAlreadyExists`]
+    /// never implicit). Errors with [`OffRecordError::OffRecordSessionAlreadyExists`](crate::error::OffRecordError::OffRecordSessionAlreadyExists)
     /// while a record for the ref exists — a closed session's ref may be
     /// reused because close removes the record.
     pub fn enter_off_record_session(
@@ -54,7 +55,7 @@ impl Vault {
         budget_bytes: usize,
     ) -> Result<Arc<OffRecordSessionEntry>> {
         if !self.config.off_record_enabled {
-            return Err(Error::KillSwitchDisabled);
+            return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
         self.store
@@ -105,9 +106,9 @@ impl Vault {
         // `seal_writes` takes only the overlay's own lock, never `entry.state`.
         let mut state = session_entry_state(&entry)?;
         if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
                 session_ref: session_ref.to_owned(),
-            });
+            }));
         }
         if state.record.mode == mode {
             return Ok(state.record.clone());
@@ -132,9 +133,9 @@ impl Vault {
     pub fn off_record_receipt_log(&self, session_ref: &str) -> Result<SessionLocalReceiptLog> {
         vet_off_record_session_ref(session_ref)?;
         if self.off_record_session(session_ref)?.is_none() {
-            return Err(Error::OffRecordSessionNotFound {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
                 session_ref: session_ref.to_owned(),
-            });
+            }));
         }
         Ok(SessionLocalReceiptLog::off_record(session_ref))
     }
@@ -156,7 +157,7 @@ impl Vault {
     /// close path, so its emit-adjacent receipts drop with the room.
     ///
     /// Concurrency contract: close first stamps `closing` on the record, after
-    /// which every mutator rejects with [`Error::OffRecordSessionClosing`], so
+    /// which every mutator rejects with [`OffRecordError::OffRecordSessionClosing`](crate::error::OffRecordError::OffRecordSessionClosing), so
     /// nothing writes into a room that is going away. Each later phase
     /// re-reads the record and fails closed on drift instead of trusting the
     /// frozen snapshot. The registry entry is dropped LAST, so a close
@@ -186,9 +187,9 @@ impl Vault {
         let (record, close_overlay) = {
             let mut state = session_entry_state(&entry)?;
             if state.gone {
-                return Err(Error::OffRecordSessionNotFound {
+                return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
                     session_ref: session_ref.to_owned(),
-                });
+                }));
             }
             state.record.closing = true;
             entry.publish_state(&state);

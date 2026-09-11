@@ -5,6 +5,7 @@ use super::tests::{
     git, hooks_dir, landing_outcome, landing_time, narrow_door_effectors, seeded_repo, temp_vault,
 };
 use super::*;
+use crate::error::CodeError;
 
 #[test]
 fn smart_http_serve_command_env_allowlist_is_closed() {
@@ -423,7 +424,10 @@ fn smart_http_landed_door_hook_refuses_an_unauthorized_slip() {
         10,
     );
     assert!(
-        matches!(refused, Err(Error::ReceivePackDoorRejected { .. })),
+        matches!(
+            refused,
+            Err(Error::Code(CodeError::ReceivePackDoorRejected { .. }))
+        ),
         "an unnarrowed slip is refused at the door, not at the transport"
     );
 }
@@ -463,7 +467,7 @@ fn smart_http_narrowed_dial_shuts_the_push_door_with_no_slip_presented() {
     assert!(
         matches!(
             stamp_admission(&vault, &request, repo_dir, DoorSeam::Landed),
-            Err(Error::ReceivePackDoorRejected { .. })
+            Err(Error::Code(CodeError::ReceivePackDoorRejected { .. }))
         ),
         "an emptied effector set closes the push path itself, not only what is downstream"
     );

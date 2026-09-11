@@ -10,16 +10,19 @@ use super::types::{
     CODE_SYMBOL_NAME_MAX_BYTES, CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CodeChunk,
     CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision,
 };
+use crate::error::CodeError;
 
 pub(super) fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<()> {
     let canonical_repo_ref = manifest.repo_ref.canonical();
-    if RepoRef::parse(&canonical_repo_ref)
-        .map_err(|_| Error::InvalidCodeSymbolManifestBody("repo_ref must be a valid v1 repo_ref"))?
-        != manifest.repo_ref
+    if RepoRef::parse(&canonical_repo_ref).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "repo_ref must be a valid v1 repo_ref",
+        ))
+    })? != manifest.repo_ref
     {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "repo_ref must be a canonical v1 repo_ref",
-        ));
+        )));
     }
     if let Some(commit_hash) = &manifest.commit_hash {
         validate_normalized_commit_hash(commit_hash)?;
@@ -27,19 +30,19 @@ pub(super) fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Re
     if let Some(repo_commit) = manifest.repo_ref.commit_hash()
         && manifest.commit_hash.as_deref() != Some(repo_commit)
     {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "GitHub repo_ref commit must match manifest commit_hash",
-        ));
+        )));
     }
     if manifest.chunks.len() > CODE_SYMBOL_MANIFEST_MAX_CHUNKS {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "chunk manifest exceeds 100000 entries",
-        ));
+        )));
     }
     if manifest.symbols.len() > CODE_SYMBOL_MANIFEST_MAX_SYMBOLS {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol manifest exceeds 100000 entries",
-        ));
+        )));
     }
 
     let mut previous_chunk: Option<&CodeChunk> = None;
@@ -48,9 +51,9 @@ pub(super) fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Re
         if let Some(previous) = previous_chunk
             && compare_chunks(previous, chunk) != std::cmp::Ordering::Less
         {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "chunks must be sorted and unique",
-            ));
+            )));
         }
         previous_chunk = Some(chunk);
     }
@@ -62,9 +65,9 @@ pub(super) fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Re
         if let Some(previous) = previous_symbol
             && compare_symbols(previous, symbol) != std::cmp::Ordering::Less
         {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "symbol revisions must be sorted and unique",
-            ));
+            )));
         }
         previous_symbol = Some(symbol);
     }
@@ -94,9 +97,9 @@ pub(super) fn scan_code_symbol_manifest_metadata(manifest: &CodeSymbolManifest) 
 pub(super) fn validate_chunk(chunk: &CodeChunk) -> Result<()> {
     validate_manifest_path(&chunk.path)?;
     if chunk.start_line == 0 || chunk.end_line == 0 || chunk.start_line > chunk.end_line {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "chunk line range must be 1-based and ordered",
-        ));
+        )));
     }
     Ok(())
 }
@@ -120,29 +123,29 @@ pub(super) fn validate_symbol_indexes(
     chunks: &[CodeChunk],
 ) -> Result<()> {
     if symbol.chunk_indexes.is_empty() {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol revision must reference at least one chunk",
-        ));
+        )));
     }
     let mut previous: Option<u32> = None;
     for raw_index in &symbol.chunk_indexes {
         let index = usize::try_from(*raw_index)
             .ok()
             .filter(|index| *index < chunks.len())
-            .ok_or(Error::InvalidCodeSymbolManifestBody(
+            .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "symbol revision chunk index is out of bounds",
-            ))?;
+            )))?;
         if chunks[index].path != symbol.path {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "symbol revision chunk path must match symbol path",
-            ));
+            )));
         }
         if let Some(previous) = previous
             && previous >= *raw_index
         {
-            return Err(Error::InvalidCodeSymbolManifestBody(
+            return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                 "symbol revision chunk indexes must be sorted and unique",
-            ));
+            )));
         }
         previous = Some(*raw_index);
     }
@@ -152,34 +155,34 @@ pub(super) fn validate_symbol_indexes(
 pub(super) fn validate_manifest_path(path: &str) -> Result<()> {
     validate_text(path, CODEBASE_FILE_PATH_MAX_BYTES, "file path")?;
     if path.starts_with('/') || path.contains('\\') {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "file path must be repository-relative",
-        ));
+        )));
     }
     if path
         .split('/')
         .any(|part| part.is_empty() || part == "." || part == "..")
     {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "file path must be normalized and cannot contain . or .. segments",
-        ));
+        )));
     }
     Ok(())
 }
 
 pub(super) fn validate_text(text: &str, max_bytes: usize, field: &'static str) -> Result<()> {
     if text.is_empty() || text.len() > max_bytes {
-        return Err(Error::InvalidCodeSymbolManifestBody(field));
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(field)));
     }
     if text.trim() != text {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "text fields must not have leading or trailing whitespace",
-        ));
+        )));
     }
     if text.chars().any(char::is_control) {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "text fields must not contain control characters",
-        ));
+        )));
     }
     Ok(())
 }
@@ -188,38 +191,38 @@ pub(super) fn normalize_commit_hash(input: impl AsRef<str>) -> Result<String> {
     let input = input.as_ref();
     if input.len() != CODEBASE_COMMIT_HASH_HEX_LEN || !input.bytes().all(|b| b.is_ascii_hexdigit())
     {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "commit hash must be 40 hexadecimal characters",
-        ));
+        )));
     }
     Ok(input.to_ascii_lowercase())
 }
 
 pub(super) fn validate_normalized_commit_hash(input: &str) -> Result<()> {
     if normalize_commit_hash(input)? != input {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "commit hash must use lowercase hexadecimal",
-        ));
+        )));
     }
     Ok(())
 }
 
 pub(super) fn validate_code_symbol_graph_edge(edge: &CodeSymbolGraphEdge) -> Result<()> {
     if edge.source == edge.target {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "code symbol graph edge cannot be a self-edge",
-        ));
+        )));
     }
     if !edge.weight.is_finite() || !(0.0..=1.0).contains(&edge.weight) || edge.weight == 0.0 {
-        return Err(Error::InvalidCodeSymbolManifestBody(
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "code symbol graph edge weight must be finite and in (0, 1]",
-        ));
+        )));
     }
     match edge.kind {
         EdgeKind::Mentions | EdgeKind::Attached => Ok(()),
-        _ => Err(Error::InvalidCodeSymbolManifestBody(
+        _ => Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "code symbol graph edge kind must be Mentions or Attached",
-        )),
+        ))),
     }
 }
 
@@ -261,7 +264,9 @@ pub(super) fn sort_chunks_with_index_remap(
     let mut sorted = Vec::with_capacity(indexed.len());
     for (new_index, (old_index, chunk)) in indexed.into_iter().enumerate() {
         remapped[old_index] = u32::try_from(new_index).map_err(|_| {
-            Error::InvalidCodeSymbolManifestBody("chunk manifest exceeds u32 indexes")
+            Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                "chunk manifest exceeds u32 indexes",
+            ))
         })?;
         sorted.push(chunk);
     }

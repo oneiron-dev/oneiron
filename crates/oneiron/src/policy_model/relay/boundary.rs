@@ -21,6 +21,7 @@ use super::outcome::{
 };
 use super::registry::EdgeServiceRegistry;
 use super::trust::{AttestedRelayDomain, RelayTrustDomain};
+use crate::error::RelayError;
 
 impl Vault {
     /// The relay-boundary pass over the hosted legal plane.
@@ -580,10 +581,10 @@ fn relay_skip_verdict(
 }
 
 pub(super) fn malformed_relay_policy_error() -> Error {
-    Error::PolicyManifestInvalid {
+    Error::Relay(RelayError::PolicyManifestInvalid {
         field: "policy_manifest",
         reason: "is malformed for relay-boundary pass",
-    }
+    })
 }
 
 impl EdgeServiceRegistry {

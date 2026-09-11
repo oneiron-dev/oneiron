@@ -18,6 +18,7 @@ use super::route_receipts::{TaskCreateReceipt, TaskResultInput, TaskStartedRecei
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::verb_kind::TaskAssignee;
 use super::wire_encode::encode_task_verb_body;
+use crate::error::RecordError;
 
 impl Memory<'_> {
     // ── authoritative execution facts (ONE-1700) ────────────────────────
@@ -228,8 +229,11 @@ impl Memory<'_> {
     fn require_execution_writer(&self, body: &TaskVerbBody) -> MemoryResult<()> {
         let expected = match body.assignee.and_then(TaskAssignee::entity_ref) {
             Some(entity_ref) => entity_ref,
-            None => EntityId::from_hex(&body.owner_ref)
-                .map_err(|_| MemoryError::from(Error::InvalidTaskBody("tasks.body.owner_ref")))?,
+            None => EntityId::from_hex(&body.owner_ref).map_err(|_| {
+                MemoryError::from(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.body.owner_ref",
+                )))
+            })?,
         };
         if expected == self.actor() {
             Ok(())

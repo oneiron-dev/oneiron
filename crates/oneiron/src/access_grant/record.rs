@@ -7,6 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::codec::invalid_grant;
+use crate::error::RecordError;
 
 /// Scope addressed by an AccessGrant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -278,9 +279,9 @@ impl AccessGrant {
             crate::share::validate_shared_brief_grant(self)?;
         }
         if self.capability != self.scope.required_capability() {
-            return Err(Error::InvalidAccessGrantBody(
+            return Err(Error::Record(RecordError::InvalidAccessGrantBody(
                 "scope and capability are not a matched pair",
-            ));
+            )));
         }
         match (self.status, self.revoked_at) {
             (AccessGrantStatus::Active, None) => Ok(()),

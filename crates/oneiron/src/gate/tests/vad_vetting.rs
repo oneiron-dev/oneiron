@@ -6,6 +6,7 @@ use super::*;
 mod vad_vetting_tests {
     use super::*;
     use crate::affect::{CLAIM_VAD_REAPPRAISAL_PREDICATE, Vad, VadAnnotation, VadAnnotationSource};
+    use crate::error::GateError;
     use crate::registry::ENTITY_TYPE_TURN;
 
     const RUN: &str = "bundle-vad-vetting";
@@ -207,7 +208,10 @@ mod vad_vetting_tests {
                 let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
                 let result = generic_approve(&vault, claim, door, stale_binding);
                 if stale_binding {
-                    assert!(matches!(result, Err(Error::GateConsentStale { .. })));
+                    assert!(matches!(
+                        result,
+                        Err(Error::Gate(GateError::GateConsentStale { .. }))
+                    ));
                     assert!(has_pending_gate_consent(&vault, &claim)?);
                     assert_eq!(
                         vault.get_claim(&claim)?.expect("uncommitted").approval,

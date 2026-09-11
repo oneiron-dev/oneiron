@@ -7,7 +7,7 @@
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncEngineContext};
+use crate::error::{Error, Result, SyncEngineContext, SyncError};
 
 pub(crate) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result<()> {
     map.insert(key, value)
@@ -142,12 +142,14 @@ pub(crate) fn export_all_updates(doc: &LoroDoc) -> Result<Vec<u8>> {
 ///
 /// Decodes the peer's binary `VersionVector::encode()` bytes and exports only
 /// the updates the peer is missing (`ExportMode::updates`). Malformed VV
-/// bytes return `Error::CrdtDecodeError` — fail-closed, NEVER treated as an
+/// bytes return `crate::error::SyncError::CrdtDecodeError` — fail-closed, NEVER treated as an
 /// empty VV (an empty-VV fallback would silently ship the full history).
 pub fn export_updates_since(doc: &LoroDoc, remote_vv: &[u8]) -> Result<Vec<u8>> {
-    let vv = VersionVector::decode(remote_vv).map_err(|source| Error::CrdtDecodeError {
-        context: "decode version vector",
-        source,
+    let vv = VersionVector::decode(remote_vv).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
+            context: "decode version vector",
+            source,
+        })
     })?;
 
     export_updates_from(doc, &vv)
@@ -167,9 +169,11 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
 }
 
 pub(crate) fn import_doc(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {
-    doc.import(bytes).map_err(|source| Error::CrdtDecodeError {
-        context: "import update",
-        source,
+    doc.import(bytes).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
+            context: "import update",
+            source,
+        })
     })?;
     Ok(())
 }
@@ -179,9 +183,11 @@ pub(crate) fn doc_version_vector(doc: &LoroDoc) -> Vec<u8> {
 }
 
 pub(crate) fn doc_from_snapshot(bytes: &[u8]) -> Result<LoroDoc> {
-    LoroDoc::from_snapshot(bytes).map_err(|source| Error::CrdtDecodeError {
-        context: "from snapshot",
-        source,
+    LoroDoc::from_snapshot(bytes).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
+            context: "from snapshot",
+            source,
+        })
     })
 }
 

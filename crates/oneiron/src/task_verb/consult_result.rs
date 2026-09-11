@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef, ConsultRecovery};
 use super::terminal_state::{ConsultResultSummary, TaskExecutionState, TaskTerminalRecord};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
+use crate::error::RecordError;
 
 /// One peer answer landing on an existing consult TASK.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,11 +57,15 @@ impl ConsultResultKind {
         match self {
             Self::Answer { evidence_refs, .. } => {
                 if evidence_refs.is_empty() {
-                    return Err(Error::InvalidTaskBody("tasks.consult.evidence"));
+                    return Err(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.consult.evidence",
+                    )));
                 }
                 let mut seen = HashSet::with_capacity(evidence_refs.len());
                 if evidence_refs.iter().any(|entry| !seen.insert(*entry)) {
-                    return Err(Error::InvalidTaskBody("tasks.consult.duplicate_ref"));
+                    return Err(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.consult.duplicate_ref",
+                    )));
                 }
                 Ok(())
             }

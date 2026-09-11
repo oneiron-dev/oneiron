@@ -1,6 +1,7 @@
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::blob_artifact::{BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion};
+use crate::error::ArtifactError;
 use crate::registry::ENTITY_TYPE_ASSET;
 use rmpv::Value;
 
@@ -200,7 +201,10 @@ fn requested_version_corruption_tombstones_hits_without_repair() {
         let metadata = vault.blob_artifact_version_metadata(first.artifact_id(), first.version());
         match replacement.as_deref() {
             None => assert!(metadata.expect("absent record").is_none()),
-            Some([0xc0]) => assert!(matches!(metadata, Err(Error::InvalidBlobArtifactBody(_)))),
+            Some([0xc0]) => assert!(matches!(
+                metadata,
+                Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(_)))
+            )),
             Some(_) => assert!(matches!(
                 metadata,
                 Err(Error::CorruptedIndex("blob artifact version record"))
@@ -255,11 +259,15 @@ fn taint_read_errors_refuse_metadata_only_hits_without_repair() {
     assert!(vault.artifact_taint_state(first.artifact_id()).is_err());
     assert!(matches!(
         cache.get(&key),
-        Err(BuildCacheError::Store(Error::InvalidBlobArtifactBody(_)))
+        Err(BuildCacheError::Store(Error::Artifact(
+            ArtifactError::InvalidBlobArtifactBody(_)
+        )))
     ));
     assert!(matches!(
         cache.put(&action, result(first)),
-        Err(BuildCacheError::Store(Error::InvalidBlobArtifactBody(_)))
+        Err(BuildCacheError::Store(Error::Artifact(
+            ArtifactError::InvalidBlobArtifactBody(_)
+        )))
     ));
     assert_eq!(raw_row(&vault, &key).expect("row"), before);
 }

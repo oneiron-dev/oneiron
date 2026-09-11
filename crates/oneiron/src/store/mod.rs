@@ -86,15 +86,15 @@
 //! migration with no behavioral win, so the split is intentional and
 //! documented here instead.
 //!
-//! [`StorageAbiVersionChanged`]: crate::error::Error::StorageAbiVersionChanged
-//! [`StorageSchemaVersionChanged`]: crate::error::Error::StorageSchemaVersionChanged
-//! [`DbManifestMismatch`]: crate::error::Error::DbManifestMismatch
-//! [`VaultRootPreflight`]: crate::error::Error::VaultRootPreflight
-//! [`HnswConfigChanged`]: crate::error::Error::HnswConfigChanged
-//! [`EmbeddingModelChanged`]: crate::error::Error::EmbeddingModelChanged
+//! [`StorageAbiVersionChanged`]: crate::error::StoreError::StorageAbiVersionChanged
+//! [`StorageSchemaVersionChanged`]: crate::error::StoreError::StorageSchemaVersionChanged
+//! [`DbManifestMismatch`]: crate::error::StoreError::DbManifestMismatch
+//! [`VaultRootPreflight`]: crate::error::StoreError::VaultRootPreflight
+//! [`HnswConfigChanged`]: crate::error::StoreError::HnswConfigChanged
+//! [`EmbeddingModelChanged`]: crate::error::StoreError::EmbeddingModelChanged
 //! [`InvalidConfig`]: crate::error::Error::InvalidConfig
-//! [`IncompatibleAnalyzer`]: crate::error::Error::IncompatibleAnalyzer
-//! [`Bm25FieldSchemaChanged`]: crate::error::Error::Bm25FieldSchemaChanged
+//! [`IncompatibleAnalyzer`]: crate::error::StoreError::IncompatibleAnalyzer
+//! [`Bm25FieldSchemaChanged`]: crate::error::StoreError::Bm25FieldSchemaChanged
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::config::VaultConfig::skip_text_index_manifest_check
 
 mod channel_identity_receipts;

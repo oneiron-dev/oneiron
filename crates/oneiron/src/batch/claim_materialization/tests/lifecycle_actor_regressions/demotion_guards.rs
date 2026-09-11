@@ -1,6 +1,7 @@
 //! Exact demotion deltas and current source-lineage authority.
 
 use super::*;
+use crate::error::GateError;
 
 #[test]
 fn demotion_binding_rejects_body_author_metadata_and_edge_rebinding() -> Result<()> {
@@ -213,7 +214,7 @@ fn demotion_preserves_lineage_scope_and_session_and_rechecks_current_policy() ->
         )
         .expect_err("the declared source cannot cover a revoked lineage member");
     assert!(
-        matches!(&error, Error::GateWriteRejected { outcome: "pending", reason_codes }
+        matches!(&error, Error::Gate(GateError::GateWriteRejected { outcome: "pending", reason_codes })
         if reason_codes == &vec!["gate.pending.source_trust"]),
         "{error:?}"
     );

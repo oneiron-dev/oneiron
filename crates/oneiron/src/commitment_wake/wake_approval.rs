@@ -21,6 +21,7 @@ use super::wake_event::{
 };
 use super::wake_fire::{WakeEligibility, wake_eligibility};
 use super::wake_proposal::CommitmentWakeProposalDraft;
+use crate::error::ClaimError;
 
 // ---------------------------------------------------------------------------
 // 5. Approved token, actor binding, and the outbound adapter
@@ -350,9 +351,11 @@ pub fn schedule_approved_commitment_wake(
         return Err(stale_commitment_wake_token());
     }
     if facade.actor() != approved.bound_actor {
-        return Err(MemoryError::from(Error::ActorLacksClaimAuthority {
-            reason: "commitment wake is bound to its authoring agent actor",
-        }));
+        return Err(MemoryError::from(Error::Claim(
+            ClaimError::ActorLacksClaimAuthority {
+                reason: "commitment wake is bound to its authoring agent actor",
+            },
+        )));
     }
     facade.schedule_outbound(&OutboundDraftInput {
         verb: approved.verb,

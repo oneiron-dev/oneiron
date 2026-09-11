@@ -6,6 +6,7 @@ use crate::attempt_queue::{
 };
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
+use crate::error::ClaimError;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::receipt::attempt_pack_receipt_id;
 use crate::registry::ENTITY_TYPE_TASK;
@@ -534,7 +535,7 @@ fn public_writes_of_the_four_predicates_are_reserved() -> Result<()> {
             .put_claim(&EntityId::now(), &body, t(80), 80)
             .expect_err("the generic claim API must refuse a reserved predicate");
         assert!(
-            matches!(error, Error::ReservedPredicate { .. }),
+            matches!(error, Error::Claim(ClaimError::ReservedPredicate { .. })),
             "typed reserved-namespace rejection, got {error:?}"
         );
     }

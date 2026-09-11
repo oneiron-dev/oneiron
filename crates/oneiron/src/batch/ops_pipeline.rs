@@ -8,7 +8,7 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::companion::{ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body};
 use crate::edge::{encode_edge_value, validate_edge_weight};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, OffRecordError, RecordError, RegistryError, Result};
 use crate::off_record::PromoteReplayGrant;
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
 use crate::store::Store;
@@ -107,9 +107,11 @@ pub(super) fn reject_overlay_member_base_write(
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
     if store.off_record_sessions.contains_entity(id)? && !origin.exempts(id) {
-        return Err(Error::OffRecordTaintedBaseWrite {
-            entity_ref: id.to_hex(),
-        });
+        return Err(Error::OffRecord(
+            OffRecordError::OffRecordTaintedBaseWrite {
+                entity_ref: id.to_hex(),
+            },
+        ));
     }
     Ok(())
 }
@@ -129,8 +131,10 @@ pub(super) fn check_decode_point_taint_guard(
     if !store.off_record_sessions.has_overlay_entities()? {
         return Ok(());
     }
-    let tainted = |id: &EntityId| Error::OffRecordTaintedBaseWrite {
-        entity_ref: id.to_hex(),
+    let tainted = |id: &EntityId| {
+        Error::OffRecord(OffRecordError::OffRecordTaintedBaseWrite {
+            entity_ref: id.to_hex(),
+        })
     };
     let check = |id: &EntityId| -> Result<()> {
         if !store.off_record_sessions.contains_entity(id)? {
@@ -393,16 +397,16 @@ pub(crate) fn apply_ops_session(
                         let header = EntityMetadataHeader::parse(&raw)
                             .ok_or(Error::CorruptedIndex("entity header"))?;
                         if header.entity_type != *entity_type {
-                            return Err(Error::EntityTypeImmutable {
+                            return Err(Error::Registry(RegistryError::EntityTypeImmutable {
                                 id: *id,
                                 existing: header.entity_type,
                                 attempted: *entity_type,
-                            });
+                            }));
                         }
                         if &raw[ENTITY_METADATA_HEADER_LEN..] != data.as_slice() {
-                            return Err(Error::InvalidWitnessMessageBody(
+                            return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
                                 "an existing MESSAGE id is bound to its original canonical body",
-                            ));
+                            )));
                         }
                     }
                 }

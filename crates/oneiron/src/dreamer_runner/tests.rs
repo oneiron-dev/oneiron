@@ -12,6 +12,7 @@ use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
 
 use super::*;
+use crate::error::ArtifactError;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -1595,7 +1596,10 @@ fn dreamer_macro_consolidation_admits_only_the_elected_home_node() -> Result<()>
         "primary",
         20,
     );
-    assert!(matches!(non_home, Err(Error::InvalidAttemptQueueRecord(_))));
+    assert!(matches!(
+        non_home,
+        Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_)))
+    ));
     let still_queued = runner
         .status(macro_attempt.attempt.id)?
         .expect("macro attempt");
@@ -1646,7 +1650,7 @@ fn dreamer_macro_consolidation_rejects_spoofed_remote_home_node_id() -> Result<(
     );
     assert!(matches!(
         spoofed_home_id,
-        Err(Error::InvalidAttemptQueueRecord(_))
+        Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_)))
     ));
 
     let honest_local = admit_consolidation(
@@ -1945,7 +1949,10 @@ fn park_row_ownership_enforced() -> Result<()> {
             now: 22,
         })
         .expect_err("overwrite by other owner refused");
-    assert!(matches!(error, Error::InvalidAttemptQueueRecord(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))
+    ));
     let parked = runner
         .parked_attempt(queued.attempt.id)?
         .expect("row intact");
@@ -1956,7 +1963,10 @@ fn park_row_ownership_enforced() -> Result<()> {
     let error = runner
         .resume_parked(queued.attempt.id, "owner-b", 23)
         .expect_err("unpark by other owner refused");
-    assert!(matches!(error, Error::InvalidAttemptQueueRecord(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))
+    ));
     assert!(
         runner.parked_attempt(queued.attempt.id)?.is_some(),
         "row intact"
@@ -2313,7 +2323,10 @@ fn dreamer_settle_rejects_actual_usage_beyond_remaining_budget() -> Result<()> {
         actual_units: 11,
         now: 30,
     });
-    assert!(matches!(result, Err(Error::InvalidAttemptQueueRecord(_))));
+    assert!(matches!(
+        result,
+        Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_)))
+    ));
     let budget = runner.budget("wake")?.expect("unchanged budget");
     assert_eq!(budget.budget_id, admitted.budget.budget_id);
     assert_eq!(budget.total_units, admitted.budget.total_units);

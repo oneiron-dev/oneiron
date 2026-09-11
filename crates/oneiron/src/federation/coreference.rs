@@ -81,7 +81,7 @@ impl CoreferenceStatus {
 /// # Errors
 ///
 /// Returns [`Error::EntityNotFound`] when `actor` is unattributed or either
-/// person is absent, [`Error::ActorClassMismatch`] when `actor` is not a
+/// person is absent, [`ClaimError::ActorClassMismatch`](crate::error::ClaimError::ActorClassMismatch) when `actor` is not a
 /// principal of the class it asserts, and propagates any batch failure.
 pub fn put_coreference_link(
     vault: &Vault,

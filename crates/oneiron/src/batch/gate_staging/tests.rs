@@ -144,16 +144,18 @@ fn rejected_pending_decision_unwinds_even_the_preserved_receipts_breaker() -> Re
                 &mut wtxn,
                 &claim,
                 recorded,
-                Err(crate::Error::SourceNotTrustedForAuto {
-                    claim_source: "generated",
-                }),
+                Err(crate::Error::Gate(
+                    crate::error::GateError::SourceNotTrustedForAuto {
+                        claim_source: "generated",
+                    },
+                )),
                 &mut staged,
                 &mut ids,
             )
             .expect_err("late validation rejects the claim");
             assert!(matches!(
                 error,
-                crate::Error::SourceNotTrustedForAuto { .. }
+                crate::Error::Gate(crate::error::GateError::SourceNotTrustedForAuto { .. })
             ));
         }
     }

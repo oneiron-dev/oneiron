@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use super::body::validate_text_field;
 use super::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 use super::versions::{KEY_CONTENT_HASH, KEY_PROVENANCE, KEY_RUN_REF, KEY_VERSION};
+use crate::error::ArtifactError;
 
 pub(super) const BLOB_VERSION_CLAIM_PREDICATE: &str = "blob.version";
 
@@ -46,9 +47,9 @@ impl BlobVersionProvenance {
         match (kind, run_ref) {
             (PROVENANCE_USER_UPLOAD, None) => Ok(Self::UserUpload),
             (PROVENANCE_AGENT_RUN, Some(run_ref)) => Ok(Self::AgentRun { run_ref }),
-            _ => Err(Error::InvalidBlobArtifactBody(
+            _ => Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "provenance must be user_upload without run_ref or agent_run with run_ref",
-            )),
+            ))),
         }
     }
 
@@ -78,9 +79,9 @@ pub(super) fn validate_provenance(provenance: &BlobVersionProvenance) -> Result<
             "run_ref must be non-empty and at most 1024 bytes",
         )?;
         if run_ref.trim().is_empty() {
-            return Err(Error::InvalidBlobArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "run_ref must be non-empty and at most 1024 bytes",
-            ));
+            )));
         }
         secret_scan::scan_metadata_field(run_ref)?;
     }

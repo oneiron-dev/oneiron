@@ -15,6 +15,7 @@ use super::codec::{decode_skill_record, encode_skill_record};
 use super::lifecycle::SkillLifecycle;
 use super::record::SkillRecord;
 use super::validate::validate_skill_update;
+use crate::error::ArtifactError;
 
 impl Vault {
     /// Typed SKILL put door. New records are born `candidate` — all three
@@ -61,9 +62,9 @@ impl Vault {
         let data = encode_skill_record(record)?;
         if self.store.entities.get(&*wtxn, id.as_bytes())?.is_none() {
             if record.lifecycle_status != SkillLifecycle::Candidate {
-                return Err(Error::InvalidSkillBody(
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "new skills are born candidate; the admission gate activates them",
-                ));
+                )));
             }
             // Fork lineage is not forgeable at the local create door: a
             // named parent must be a real type-7 SKILL. The DerivedFrom
@@ -87,21 +88,21 @@ impl Vault {
         parent: &EntityId,
     ) -> Result<()> {
         if parent == fork_id {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "forkedFrom cannot name the fork itself",
-            ));
+            )));
         }
         let Some(raw) = self.store.entities.get(wtxn, parent.as_bytes())? else {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "forkedFrom parent must exist as a type-7 SKILL",
-            ));
+            )));
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_SKILL {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "forkedFrom parent must exist as a type-7 SKILL",
-            ));
+            )));
         }
         Ok(())
     }
@@ -133,12 +134,14 @@ impl Vault {
             .get_skill_record(parent_id)?
             .ok_or(Error::EntityNotFound)?;
         if fork_id == parent_id || self.get_raw(fork_id)?.is_some() {
-            return Err(Error::InvalidSkillBody("fork target entity already exists"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "fork target entity already exists",
+            )));
         }
         if fork_skill_id == parent.skill_id {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "fork must take its own skillId; the parent keeps the imported one",
-            ));
+            )));
         }
         let mut fork = SkillRecord::new(
             fork_skill_id,
@@ -190,9 +193,9 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         if old_id == new_id {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "a skill revision cannot supersede itself",
-            ));
+            )));
         }
         let old = self
             .get_skill_record(old_id)?
@@ -201,31 +204,31 @@ impl Vault {
             .get_skill_record(new_id)?
             .ok_or(Error::EntityNotFound)?;
         if new.skill_id != old.skill_id {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "supersession links two revisions of one skill",
-            ));
+            )));
         }
         if new.version == old.version {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "superseding revision must carry a new version",
-            ));
+            )));
         }
         // Canon (ARCH-0053 §6): superseded means "new version ADMITTED".
         // A non-active successor would leave the skillId with no admitted
         // canon revision at all. Activation itself stays the admission
         // gate's act (ONE-1449): callers admit first, then supersede.
         if new.lifecycle_status != SkillLifecycle::Active {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "superseding revision must be admitted (active) before it supersedes",
-            ));
+            )));
         }
         // Explicit Active check, NOT `can_transition(Superseded)`: the table's
         // self-loop allowance would let an already-superseded revision pass and
         // mint a second (bogus) succession edge.
         if old.lifecycle_status != SkillLifecycle::Active {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "only an active skill revision can be superseded",
-            ));
+            )));
         }
         let mut frozen = old;
         frozen.lifecycle_status = SkillLifecycle::Superseded;
@@ -260,9 +263,9 @@ impl Vault {
         if record.lifecycle_status == SkillLifecycle::Superseded
             && existing.lifecycle_status != SkillLifecycle::Superseded
         {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "supersession is supersede_skill_record's act; a bare flip would orphan a frozen revision",
-            ));
+            )));
         }
         validate_skill_update(&existing, record)?;
         // ONE-1892's activation scan consult is deliberately NOT here: it runs
@@ -337,9 +340,9 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         if record.source != ClaimSource::Imported {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "hub import package must carry imported source",
-            ));
+            )));
         }
         let data = encode_skill_record(record)?;
         self.apply_skill_record_body(wtxn, id, occurred, learned_at, data, false)
@@ -352,7 +355,9 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_SKILL {
-            return Err(Error::InvalidSkillBody("entity is not a type-7 SKILL"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "entity is not a type-7 SKILL",
+            )));
         }
         decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
@@ -370,7 +375,9 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_SKILL {
-            return Err(Error::InvalidSkillBody("entity is not a type-7 SKILL"));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "entity is not a type-7 SKILL",
+            )));
         }
         decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
     }

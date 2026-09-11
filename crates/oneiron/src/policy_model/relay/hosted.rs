@@ -19,6 +19,7 @@ use super::outcome::{
     RelaySafeguardTier, VaultSideVerdictSource, degraded_hosted_pass, log_only_or_gated,
     pass_audit_of,
 };
+use crate::error::RelayError;
 
 impl Vault {
     /// The hosted pass, plus the re-check its await window requires.
@@ -257,19 +258,21 @@ impl Vault {
     ) -> Result<RelayBoundaryPass> {
         let binding = self.relay_verify_binding(request, config)?;
         let Some(receipt) = verdicts.latest_boundary_verdict(&binding.content_hash)? else {
-            return Err(Error::RelayVaultReceiptUntrusted { reason: "missing" });
+            return Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted {
+                reason: "missing",
+            }));
         };
         if receipt.binding.content_hash != binding.content_hash
             || receipt.binding.read_frontier_hash != binding.read_frontier_hash
         {
-            return Err(Error::RelayVaultReceiptUntrusted {
+            return Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted {
                 reason: "binding_mismatch",
-            });
+            }));
         }
         if receipt.safeguard_binding != config.safeguard_binding.selector() {
-            return Err(Error::RelayVaultReceiptUntrusted {
+            return Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted {
                 reason: "safeguard_binding_mismatch",
-            });
+            }));
         }
         // The dial gets the same treatment as the selector beside it, and for
         // the same reason: the receipt is only evidence while the
@@ -279,16 +282,16 @@ impl Vault {
         // run instead, not the pass it is deciding whether to trust. A receipt
         // recording no dial at all predates the field and is not trusted.
         if receipt.classifier_mode != Some(config.owner_classifier_mode) {
-            return Err(Error::RelayVaultReceiptUntrusted {
+            return Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted {
                 reason: "classifier_mode_mismatch",
-            });
+            }));
         }
         if let Some(policy) = hosted
             && !receipt.attests_hosted_plane(policy, config)
         {
-            return Err(Error::RelayVaultReceiptUntrusted {
+            return Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted {
                 reason: "hosted_plane_unattested",
-            });
+            }));
         }
         if receipt.decision != PolicyClassifyDecision::Allow {
             // Returned as it stands, and recorded as exactly that. The relay
@@ -318,7 +321,7 @@ impl Vault {
     ) -> Result<CloudVaultPassOrFallback> {
         match self.cloud_vault_verified_trust(request, hosted, config, verdicts) {
             Ok(pass) => Ok(CloudVaultPassOrFallback::Pass(pass)),
-            Err(Error::RelayVaultReceiptUntrusted { reason }) => {
+            Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted { reason })) => {
                 Ok(CloudVaultPassOrFallback::HostedFallback {
                     receipt_breach: reason,
                 })

@@ -16,6 +16,7 @@ use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
 };
 use crate::entity_id::EntityId;
+use crate::error::{ClaimError, SyncError};
 use crate::sync::loro_support::{
     map_delete, map_for_each_bytes, map_get_bytes, tombstone_map_contains_id,
 };
@@ -32,7 +33,7 @@ use crate::{Error, Result, Vault};
 ///   shell healing rides the bounded edge echo/materialization paths rather
 ///   than making unchanged startup replay quadratic;
 /// * divergent bytes for an existing id → typed
-///   [`crate::Error::IdentityTopologyEventDivergence`] (equivocation on an
+///   [`SyncError::IdentityTopologyEventDivergence`](crate::error::SyncError::IdentityTopologyEventDivergence) (equivocation on an
 ///   immutable single-writer record: local bytes win; callers quarantine
 ///   via `remote_rejection_reason`, never abort, never silent-LWW);
 /// * a fresh id → fail-closed D18 body validation, per-stream ingest
@@ -73,7 +74,9 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
             return Ok(false);
         }
         Some(false) => {
-            return Err(crate::Error::IdentityTopologyEventDivergence { id: *id });
+            return Err(crate::Error::Sync(
+                crate::error::SyncError::IdentityTopologyEventDivergence { id: *id },
+            ));
         }
         None => {}
     }
@@ -126,15 +129,17 @@ fn validate_replicated_identity_topology_record_before_mutation(
     vault
         .validate_replicated_identity_topology_event_in_txn(rtxn, record)
         .map_err(|err| match err {
-            Error::IdentityTopologyRejected(
+            Error::Sync(SyncError::IdentityTopologyRejected(
                 crate::identity_topology::IdentityTopologyRejection::NotStructural { .. }
                 | crate::identity_topology::IdentityTopologyRejection::FacetMerge { .. },
-            ) => Error::InvalidIdentityTopologyEventBody(
+            )) => Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event participant is not merge-eligible structural state",
-            ),
-            Error::ActorClassMismatch { .. } => Error::InvalidIdentityTopologyEventBody(
-                "identity topology event actor class does not match the available actor",
-            ),
+            )),
+            Error::Claim(ClaimError::ActorClassMismatch { .. }) => {
+                Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology event actor class does not match the available actor",
+                ))
+            }
             other => other,
         })
 }

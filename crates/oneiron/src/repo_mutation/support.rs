@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{Error, Result};
 
 use super::types::RepoForkHash;
+use crate::error::CodeError;
 
 const MAX_REPO_MUTATION_FAILURE_BYTES: usize = 4096;
 
@@ -25,11 +26,14 @@ pub(super) fn truncate_failure(message: &str) -> String {
 pub(super) fn path_arg(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_owned)
-        .ok_or(Error::InvalidRepoMutationRecord("path must be UTF-8"))
+        .ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
+            "path must be UTF-8",
+        )))
 }
 
 pub(super) fn utf8_trimmed(bytes: Vec<u8>, context: &'static str) -> Result<String> {
-    let text = String::from_utf8(bytes).map_err(|_| Error::InvalidRepoMutationRecord(context))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| Error::Code(CodeError::InvalidRepoMutationRecord(context)))?;
     Ok(text.trim_end_matches(['\r', '\n']).to_owned())
 }
 

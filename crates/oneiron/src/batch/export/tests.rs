@@ -892,6 +892,7 @@ mod staged_content_gc {
     use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
     use crate::entity_id::EntityId;
+    use crate::error::RecordError;
     use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
     use crate::sync::selector::{FederationAdmissionRole, admit_federated_window_update};
     use crate::sync::types::WindowKey;
@@ -1323,7 +1324,7 @@ mod staged_content_gc {
         )
         .expect_err("an invalid TASK body must not be admitted");
         assert!(
-            matches!(&err, Error::InvalidTaskBody(_)),
+            matches!(&err, Error::Record(RecordError::InvalidTaskBody(_))),
             "unexpected selector error: {err:?}"
         );
 
@@ -1332,7 +1333,10 @@ mod staged_content_gc {
         // it promised is quarantined away at replay.
         let refused = stage_prebuilt_update(&vault, 0x74, &invalid);
         assert!(
-            matches!(&refused, Err(Error::InvalidTaskBody(_))),
+            matches!(
+                &refused,
+                Err(Error::Record(RecordError::InvalidTaskBody(_)))
+            ),
             "staging must refuse an invalid TASK body: {refused:?}"
         );
         // The refusal is RETRYABLE, like a Gate rejection and unlike C7's
@@ -1340,7 +1344,7 @@ mod staged_content_gc {
         // would replay it as `Ok(Failed)` instead of refusing again.
         let again = stage_prebuilt_update(&vault, 0x74, &invalid);
         assert!(
-            matches!(&again, Err(Error::InvalidTaskBody(_))),
+            matches!(&again, Err(Error::Record(RecordError::InvalidTaskBody(_)))),
             "the refusal must leave no durable receipt behind: {again:?}"
         );
 
@@ -1427,7 +1431,10 @@ mod staged_content_gc {
         // The re-labelled variant is the whole point: `InvalidClaimBody` here
         // would be classified TERMINAL by staging below.
         assert!(
-            matches!(&err, Error::InvalidCompanionRecordBody(_)),
+            matches!(
+                &err,
+                Error::Record(RecordError::InvalidCompanionRecordBody(_))
+            ),
             "unexpected selector error: {err:?}"
         );
         // The coarse kind companion faults have always reported is unchanged, so
@@ -1439,7 +1446,10 @@ mod staged_content_gc {
         // it promised is quarantined away at replay.
         let refused = stage_prebuilt_update(&vault, 0x79, &invalid);
         assert!(
-            matches!(&refused, Err(Error::InvalidCompanionRecordBody(_))),
+            matches!(
+                &refused,
+                Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+            ),
             "staging must refuse an invalid companion body: {refused:?}"
         );
         // The refusal is RETRYABLE, like the TASK arm and unlike C7's truncated
@@ -1447,7 +1457,10 @@ mod staged_content_gc {
         // it as `Ok(Failed)` instead of refusing again.
         let again = stage_prebuilt_update(&vault, 0x79, &invalid);
         assert!(
-            matches!(&again, Err(Error::InvalidCompanionRecordBody(_))),
+            matches!(
+                &again,
+                Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+            ),
             "the refusal must leave no durable receipt behind: {again:?}"
         );
     }

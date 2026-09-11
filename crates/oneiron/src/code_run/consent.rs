@@ -8,7 +8,7 @@ use crate::code_sandbox::SandboxGuestTier;
 use crate::code_symbol::{CodeSymbolGraph, code_symbol_entity_id};
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodeSourceTrust {
@@ -101,13 +101,13 @@ impl<'a> ReviewContextInput<'a> {
         symbol_graph: &'a CodeSymbolGraph,
     ) -> Result<Self> {
         if reviewer_run_id.is_empty() {
-            return Err(Error::CodeReviewMissingReviewerRunId);
+            return Err(Error::Code(CodeError::CodeReviewMissingReviewerRunId));
         }
         if reviewer_run_id == authoring_dreamer_run_id {
-            return Err(Error::CodeReviewRunIdNotDistinct);
+            return Err(Error::Code(CodeError::CodeReviewRunIdNotDistinct));
         }
         if code_artifact_refs.is_empty() {
-            return Err(Error::CodeReviewMissingArtifactRefs);
+            return Err(Error::Code(CodeError::CodeReviewMissingArtifactRefs));
         }
         Ok(Self {
             authoring_dreamer_run_id,
@@ -131,7 +131,7 @@ impl BlastRadiusWalk {
         touched_symbols: &[EntityId],
     ) -> Result<Self> {
         if touched_symbols.is_empty() {
-            return Err(Error::CodeBlastRadiusMissingTouchedSymbols);
+            return Err(Error::Code(CodeError::CodeBlastRadiusMissingTouchedSymbols));
         }
         let (adjacency, entities_by_symbol) = index_reference_graph(graph)?;
         let mut visited = BTreeSet::new();
@@ -142,7 +142,7 @@ impl BlastRadiusWalk {
         // sorted, deduped symbol order, not caller order.
         for seed in BTreeSet::from_iter(touched_symbols.iter().copied()) {
             if !entities_by_symbol.contains_key(&seed) {
-                return Err(Error::CodeBlastRadiusUnknownSymbol(seed));
+                return Err(Error::Code(CodeError::CodeBlastRadiusUnknownSymbol(seed)));
             }
             visited.insert(seed);
             queue.push_back((seed, 0_u32));
@@ -309,14 +309,14 @@ pub fn admit_code_emission(
     let dreamer_run_id = dreamer_run_id
         .map(str::trim)
         .filter(|id| !id.is_empty())
-        .ok_or(Error::CodeEmissionMissingDreamerRunId)?;
+        .ok_or(Error::Code(CodeError::CodeEmissionMissingDreamerRunId))?;
     let lane = consent_lane_for(tier, source);
     let candidate_evidence = match lane {
         ConsentLane::Free => emission_record.map(code_emission_evidence),
         ConsentLane::Review => {
-            let review = review.ok_or(Error::CodeReviewContextRequired)?;
+            let review = review.ok_or(Error::Code(CodeError::CodeReviewContextRequired))?;
             if review.authoring_dreamer_run_id != dreamer_run_id {
-                return Err(Error::CodeReviewAuthoringRunIdMismatch);
+                return Err(Error::Code(CodeError::CodeReviewAuthoringRunIdMismatch));
             }
             Some(
                 BlastRadiusWalk::from_touched_symbols(review.symbol_graph, touched_symbols)?
@@ -376,6 +376,7 @@ mod tests {
         derive_symbol_fingerprint,
     };
     use crate::codebase::RepoRef;
+    use crate::error::CodeError;
 
     fn id(byte: u8) -> EntityId {
         EntityId::from_bytes([byte; 16]).expect("test entity id")
@@ -465,15 +466,15 @@ mod tests {
         let (graph, ids) = graph(false);
         assert!(matches!(
             ReviewContextInput::new("author", "author", &ids[..1], &graph),
-            Err(Error::CodeReviewRunIdNotDistinct)
+            Err(Error::Code(CodeError::CodeReviewRunIdNotDistinct))
         ));
         assert!(matches!(
             ReviewContextInput::new("author", "", &ids[..1], &graph),
-            Err(Error::CodeReviewMissingReviewerRunId)
+            Err(Error::Code(CodeError::CodeReviewMissingReviewerRunId))
         ));
         assert!(matches!(
             ReviewContextInput::new("author", "review", &[], &graph),
-            Err(Error::CodeReviewMissingArtifactRefs)
+            Err(Error::Code(CodeError::CodeReviewMissingArtifactRefs))
         ));
         assert!(ReviewContext::new("author".into(), "review".into(), vec![ids[0]], graph).is_ok());
     }
@@ -497,11 +498,11 @@ mod tests {
         );
         assert!(matches!(
             BlastRadiusWalk::from_touched_symbols(&graph, &[]),
-            Err(Error::CodeBlastRadiusMissingTouchedSymbols)
+            Err(Error::Code(CodeError::CodeBlastRadiusMissingTouchedSymbols))
         ));
         assert!(matches!(
             BlastRadiusWalk::from_touched_symbols(&graph, &[id(42)]),
-            Err(Error::CodeBlastRadiusUnknownSymbol(_))
+            Err(Error::Code(CodeError::CodeBlastRadiusUnknownSymbol(_)))
         ));
     }
 
@@ -598,7 +599,7 @@ mod tests {
                 None,
                 None
             ),
-            Err(Error::CodeEmissionMissingDreamerRunId)
+            Err(Error::Code(CodeError::CodeEmissionMissingDreamerRunId))
         ));
         assert!(matches!(
             admit_code_emission(
@@ -609,7 +610,7 @@ mod tests {
                 None,
                 None
             ),
-            Err(Error::CodeReviewContextRequired)
+            Err(Error::Code(CodeError::CodeReviewContextRequired))
         ));
         let (graph, ids) = graph(false);
         let review = ReviewContextInput::new("other", "review", &ids[..1], &graph).expect("review");
@@ -622,7 +623,7 @@ mod tests {
                 Some(&review),
                 None
             ),
-            Err(Error::CodeReviewAuthoringRunIdMismatch)
+            Err(Error::Code(CodeError::CodeReviewAuthoringRunIdMismatch))
         ));
     }
 }

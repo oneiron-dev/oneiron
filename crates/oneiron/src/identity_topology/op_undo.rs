@@ -14,6 +14,7 @@ use super::op_apply::{IdentityOpOutcome, IdentityOpWrite};
 use super::reassignment_map::clear_reassignment_rows_in_txn;
 use super::stored_event::StoredIdentityOpAction;
 use super::transition_table::IdentityTopologyRejection;
+use crate::error::SyncError;
 
 impl Vault {
     /// Undoes one applied merge/split event: appends the counter-event to
@@ -62,9 +63,9 @@ impl Vault {
             // that a review happened.
             StoredIdentityOpAction::Undo { .. }
             | StoredIdentityOpAction::ProposalResolution { .. } => {
-                return Err(Error::IdentityTopologyRejected(
+                return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
-                ));
+                )));
             }
             // A FACET event is not undoable either, and the fold's own undo
             // rule ([`evaluate_fold_undo`]) already says so — the door only
@@ -85,9 +86,9 @@ impl Vault {
             // shadow retraction path over the same row.
             StoredIdentityOpAction::Facet { .. }
             | StoredIdentityOpAction::AssertDistinct { .. } => {
-                return Err(Error::IdentityTopologyRejected(
+                return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
-                ));
+                )));
             }
             StoredIdentityOpAction::Merge { sources, survivor } => (
                 sources.clone(),
@@ -109,9 +110,9 @@ impl Vault {
         let fold = fold_identity_topology_log(&events);
         for entity in &shelled {
             if fold.current_event.get(entity) != Some(event) {
-                return Err(Error::IdentityTopologyRejected(
+                return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotCurrent { event: *event },
-                ));
+                )));
             }
         }
 

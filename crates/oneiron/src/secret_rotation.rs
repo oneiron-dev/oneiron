@@ -59,7 +59,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::blob_artifact::decode_blob_artifact_body;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::secret_custody::{
     SecretCustodyStatus, policy_manifest_bodies_strict, put_secret_custody_in_txn,
@@ -102,7 +102,7 @@ pub const SECRET_TAINT_REF_MAX_BYTES: usize = 512;
 pub const SECRET_TAINT_REFS_MAX: usize = 64;
 
 fn invalid_body(reason: &'static str) -> Error {
-    Error::InvalidSecretRotationBody(reason)
+    Error::Secret(SecretError::InvalidSecretRotationBody(reason))
 }
 
 fn receipt_key(receipt_id: &EntityId) -> Vec<u8> {
@@ -340,8 +340,8 @@ pub(crate) fn taint_refs_to_value(refs: &[SecretTaintRef]) -> Value {
 ///
 /// Returns `None` on any malformation so each call site can raise its own
 /// typed body reject (the artifact body says
-/// [`Error::InvalidBlobArtifactBody`], a sidecar row says
-/// [`Error::InvalidSecretRotationBody`]) instead of importing a foreign
+/// [`ArtifactError::InvalidBlobArtifactBody`](crate::error::ArtifactError::InvalidBlobArtifactBody), a sidecar row says
+/// [`SecretError::InvalidSecretRotationBody`](crate::error::SecretError::InvalidSecretRotationBody)) instead of importing a foreign
 /// error class. Validation is strict: bounded non-empty names, `u32`
 /// generations, a bounded ref count, and no duplicate secret names — a
 /// duplicated name would let one body assert two different generations for
@@ -590,10 +590,10 @@ impl Vault {
     /// ONE write transaction advances `rotation_generation` by one, stamps
     /// `rotated_at`, replaces the value bytes in the custody body, and
     /// writes the [`RotationReceipt`] row. The record must be `Active`
-    /// ([`Error::SecretCustodyNotActive`] otherwise) and its bindings must
+    /// ([`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive) otherwise) and its bindings must
     /// still fit the LIVE custody floor — a floor narrowed since
     /// registration refuses to re-bless a wider binding through a rotation
-    /// ([`Error::ManifestWidensFloor`]), the same narrow-only rule
+    /// ([`SecretError::ManifestWidensFloor`](crate::error::SecretError::ManifestWidensFloor)), the same narrow-only rule
     /// registration enforces.
     ///
     /// What this deliberately does NOT do:
@@ -616,14 +616,16 @@ impl Vault {
     ) -> Result<RotationReceipt> {
         let mut wtxn = self.store.env.write_txn()?;
         let id = resolve_secret_ref_in_txn(&self.store, &wtxn, secret_ref)?.ok_or_else(|| {
-            Error::SecretRefNotFound {
+            Error::Secret(SecretError::SecretRefNotFound {
                 name: secret_ref.to_owned(),
-            }
+            })
         })?;
         let mut rec = read_secret_custody_in_txn(&self.store, &wtxn, &id)?
             .ok_or(Error::CorruptedIndex("secret custody record for live name"))?;
         if rec.status != SecretCustodyStatus::Active {
-            return Err(Error::SecretCustodyNotActive { name: rec.name });
+            return Err(Error::Secret(SecretError::SecretCustodyNotActive {
+                name: rec.name,
+            }));
         }
 
         // Narrow-only, re-checked against the LIVE floor through the body
@@ -670,7 +672,7 @@ impl Vault {
     /// [`RotationReceipt`] of kind [`RotationKind::Revoked`] lands.
     ///
     /// Afterwards every door and materialization for the ref fails typed
-    /// ([`Error::SecretCustodyNotActive`]), and exhaust tainted by the ref
+    /// ([`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive)), and exhaust tainted by the ref
     /// derives [`ArtifactTaintState::TaintedStale`] — derived from the dead
     /// record, with no row rewritten anywhere in the exhaust plane.
     ///
@@ -679,9 +681,9 @@ impl Vault {
     pub fn revoke_secret(&self, secret_ref: &str, at: u64) -> Result<RotationReceipt> {
         let mut wtxn = self.store.env.write_txn()?;
         let id = resolve_secret_ref_in_txn(&self.store, &wtxn, secret_ref)?.ok_or_else(|| {
-            Error::SecretRefNotFound {
+            Error::Secret(SecretError::SecretRefNotFound {
                 name: secret_ref.to_owned(),
-            }
+            })
         })?;
         let mut rec = read_secret_custody_in_txn(&self.store, &wtxn, &id)?
             .ok_or(Error::CorruptedIndex("secret custody record for live name"))?;

@@ -218,8 +218,8 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
             assert!(
                 matches!(
                     decoded,
-                    Err(crate::error::Error::InvalidTaskBody(
-                        "tasks.terminal.ladder"
+                    Err(crate::error::Error::Record(
+                        crate::error::RecordError::InvalidTaskBody("tasks.terminal.ladder")
                     ))
                 ),
                 "{} settles without deferring and has no place on a live row",
@@ -267,8 +267,8 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
         assert!(
             matches!(
                 decode_task_verb_body(&encode_task_verb_body(incoherent)),
-                Err(crate::error::Error::InvalidTaskBody(
-                    "tasks.terminal.ladder"
+                Err(crate::error::Error::Record(
+                    crate::error::RecordError::InvalidTaskBody("tasks.terminal.ladder")
                 ))
             ),
             "{} paired with the wrong counter link has no coherent reading",
@@ -291,8 +291,8 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
     assert!(
         matches!(
             decode_task_verb_body(&encode_task_verb_body(ill_formed)),
-            Err(crate::error::Error::InvalidTaskBody(
-                "tasks.terminal.ladder"
+            Err(crate::error::Error::Record(
+                crate::error::RecordError::InvalidTaskBody("tasks.terminal.ladder")
             ))
         ),
         "an escalation that names a successor is not a well-formed ladder terminal"
@@ -314,8 +314,8 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
     assert!(
         matches!(
             decode_task_verb_body(&encode_task_verb_body(unladdered)),
-            Err(crate::error::Error::InvalidTaskBody(
-                "tasks.terminal.ladder"
+            Err(crate::error::Error::Record(
+                crate::error::RecordError::InvalidTaskBody("tasks.terminal.ladder")
             ))
         ),
         "a counter link with no ladder disposition names a successor to nothing",

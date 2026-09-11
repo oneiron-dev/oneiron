@@ -1,6 +1,7 @@
 //! Claim bodies, roles, typed validation matrix, public vs replicated doors.
 
 use super::*;
+use crate::error::RecordError;
 
 #[test]
 fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
@@ -552,7 +553,7 @@ fn unset_or_unknown_role_rejected_typed() -> Result<()> {
             .put_entity(&id, ENTITY_TYPE_TASK, test_time_range(1, 1), 1, &body)
             .expect_err(name);
         assert_eq!(err.kind(), ErrorKind::InvalidTaskBody, "{name}");
-        assert_matches!(err, Error::InvalidTaskBody(_));
+        assert_matches!(err, Error::Record(RecordError::InvalidTaskBody(_)));
         assert_no_entity_state(&vault, &id)?;
     }
 

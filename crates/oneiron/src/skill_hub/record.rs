@@ -8,6 +8,7 @@ use super::support::{
     MAX_HUB_TEXT_BYTES, decode_value, encode_value, exact_map, required_text, required_value,
     validate_text,
 };
+use crate::error::ArtifactError;
 
 /// Pinned MessagePack key set for a SKILL_HUB body.
 pub const SKILL_HUB_BODY_KEYS: [&str; 4] = ["kind", "endpoint", "trust_tier", "sync_policy"];
@@ -184,7 +185,9 @@ pub fn decode_skill_hub_record(bytes: &[u8]) -> Result<SkillHubRecord> {
         required_value(entries, SKILL_HUB_BODY_KEYS[0], "invalid SKILL_HUB body")?
             .as_str()
             .and_then(SkillHubKind::parse)
-            .ok_or(Error::InvalidSkillBody("invalid SKILL_HUB kind"))?,
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "invalid SKILL_HUB kind",
+            )))?,
         required_text(
             entries,
             SKILL_HUB_BODY_KEYS[1],
@@ -194,11 +197,15 @@ pub fn decode_skill_hub_record(bytes: &[u8]) -> Result<SkillHubRecord> {
         required_value(entries, SKILL_HUB_BODY_KEYS[2], "invalid SKILL_HUB body")?
             .as_str()
             .and_then(SkillHubTrustTier::parse)
-            .ok_or(Error::InvalidSkillBody("invalid SKILL_HUB trust tier"))?,
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "invalid SKILL_HUB trust tier",
+            )))?,
         required_value(entries, SKILL_HUB_BODY_KEYS[3], "invalid SKILL_HUB body")?
             .as_str()
             .and_then(HubSyncPolicy::parse)
-            .ok_or(Error::InvalidSkillBody("invalid SKILL_HUB sync policy"))?,
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "invalid SKILL_HUB sync policy",
+            )))?,
     )
 }
 
@@ -311,9 +318,14 @@ impl HubRef {
         let entries = exact_map(value, &HUB_REF_KEYS, "invalid hub ref")?;
         let hub_id = required_value(entries, HUB_REF_KEYS[0], "invalid hub ref")?
             .as_str()
-            .ok_or(Error::InvalidSkillBody("hubId must be an entity id"))?;
-        let hub_id = EntityId::from_hex(hub_id)
-            .map_err(|_| Error::InvalidSkillBody("hubId must be an entity id"))?;
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "hubId must be an entity id",
+            )))?;
+        let hub_id = EntityId::from_hex(hub_id).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidSkillBody(
+                "hubId must be an entity id",
+            ))
+        })?;
         let ref_string = required_text(
             entries,
             HUB_REF_KEYS[1],
@@ -327,12 +339,17 @@ impl HubRef {
         )?;
         let pin_type = required_value(pin_entries, HUB_PIN_KEYS[0], "invalid hub pin")?
             .as_str()
-            .ok_or(Error::InvalidSkillBody("invalid hub pin type"))?;
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "invalid hub pin type",
+            )))?;
         let pin_value = required_value(pin_entries, HUB_PIN_KEYS[1], "invalid hub pin")?;
         let text_pin = |constructor: fn(String) -> HubPin| -> Result<HubPin> {
-            let value = pin_value
-                .as_str()
-                .ok_or(Error::InvalidSkillBody("hub pin value must be text"))?;
+            let value =
+                pin_value
+                    .as_str()
+                    .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "hub pin value must be text",
+                    )))?;
             validate_text(value, MAX_HUB_TEXT_BYTES, "hub pin value must be non-empty")?;
             Ok(constructor(value.to_owned()))
         };
@@ -342,8 +359,16 @@ impl HubRef {
             "commit" => text_pin(HubPin::Commit)?,
             "content_hash" => text_pin(HubPin::ContentHash)?,
             "none" if matches!(pin_value, Value::Nil) => HubPin::None,
-            "none" => return Err(Error::InvalidSkillBody("none hub pin value must be nil")),
-            _ => return Err(Error::InvalidSkillBody("invalid hub pin type")),
+            "none" => {
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                    "none hub pin value must be nil",
+                )));
+            }
+            _ => {
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                    "invalid hub pin type",
+                )));
+            }
         };
         Self::new(hub_id, ref_string, pin)
     }

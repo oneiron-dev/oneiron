@@ -3,6 +3,7 @@ use crate::claim::validate_predicate;
 use crate::error::ErrorKind;
 use core::assert_matches;
 
+use crate::error::ClaimError;
 use crate::test_util::entity;
 
 #[test]
@@ -11,7 +12,7 @@ fn predicate_constant_pins_contract_literal() {
     // Reserved on every public path; writable only through the door.
     assert_matches!(
         validate_predicate(PREDICATE_EDGE_PROVENANCE, false),
-        Err(Error::ReservedPredicate { .. })
+        Err(Error::Claim(ClaimError::ReservedPredicate { .. }))
     );
     validate_predicate(PREDICATE_EDGE_PROVENANCE, true)
         .expect("the provenance door must admit the pinned predicate");
@@ -64,7 +65,7 @@ fn edge_ref_codec_pins_byte_offsets_and_aligns_with_edge_key() {
     for len in [0_usize, 16, 32, 34] {
         assert_matches!(
             EdgeRef::decode(&vec![0x11_u8; len]),
-            Err(Error::InvalidProvenanceBody(_))
+            Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
         );
     }
     // Unregistered kind byte.
@@ -72,14 +73,14 @@ fn edge_ref_codec_pins_byte_offsets_and_aligns_with_edge_key() {
     bad_kind[16] = 200;
     assert_matches!(
         EdgeRef::decode(&bad_kind),
-        Err(Error::InvalidProvenanceBody(_))
+        Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
     );
     // Reserved entity-id bytes (all zero source).
     let mut reserved = encoded;
     reserved[..16].copy_from_slice(&[0x00; 16]);
     assert_matches!(
         EdgeRef::decode(&reserved),
-        Err(Error::InvalidProvenanceBody(_))
+        Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
     );
 }
 
@@ -426,10 +427,10 @@ fn validate_actor_class_pins_d13_matrix() {
     for (actor_type, class, class_byte) in rejected {
         let err = validate_actor_class(actor_type, class)
             .expect_err("mismatched actor class must be rejected");
-        let Error::ActorClassMismatch {
+        let Error::Claim(ClaimError::ActorClassMismatch {
             actor_entity_type,
             actor_class,
-        } = err
+        }) = err
         else {
             panic!("expected ActorClassMismatch, got {err:?}");
         };
@@ -491,7 +492,7 @@ fn close_and_retract_record_transforms_pin_window_rules() {
     future.valid_from = Some(9000);
     assert_matches!(
         close_record_for_supersession(&future, 2000),
-        Err(Error::InvalidProvenanceBody(_))
+        Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
     );
 
     // RETRACT: status = retracted AND valid_to = now, OVERWRITING an
@@ -504,7 +505,7 @@ fn close_and_retract_record_transforms_pin_window_rules() {
     // RETRACT before valid_from → typed, never reordered.
     assert_matches!(
         retract_record(&future, 2000),
-        Err(Error::InvalidProvenanceBody(_))
+        Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
     );
 }
 
@@ -556,7 +557,7 @@ fn actor_class_evidence_codec_fail_closed() {
         assert!(
             matches!(
                 decode_actor_class_evidence(case.as_ref()),
-                Err(Error::InvalidProvenanceBody(_))
+                Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
             ),
             "case {case:?} must be rejected"
         );
@@ -594,13 +595,13 @@ fn resolve_persisted_actor_class_pins_transition_matrix() {
     for evidence in [&legacy_evidence, &agreeing_evidence] {
         assert_matches!(
             resolve_persisted_actor_class(&new_shape, Some(evidence)),
-            Err(Error::InvalidProvenanceBody(_))
+            Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
         );
     }
     // Neither place → typed reject, never a defaulted class.
     assert_matches!(
         resolve_persisted_actor_class(&legacy_shape, None),
-        Err(Error::InvalidProvenanceBody(_))
+        Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
     );
 }
 
@@ -668,11 +669,11 @@ fn stale_attest_target_reports_the_active_cohort_winner() -> Result<()> {
         .require_named_provenance_target_active(&prior)
         .expect_err("the named wrapper is no longer the cohort head");
     assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
-    let Error::WriteVerbTargetStale {
+    let Error::Claim(ClaimError::WriteVerbTargetStale {
         target,
         lifecycle,
         successor_short_id,
-    } = err
+    }) = err
     else {
         panic!("expected a typed stale-target refusal");
     };
@@ -705,11 +706,11 @@ fn stale_attest_with_fully_closed_cohort_names_the_target_itself() -> Result<()>
     let err = vault
         .require_named_provenance_target_active(&only)
         .expect_err("a retracted wrapper is stale");
-    let Error::WriteVerbTargetStale {
+    let Error::Claim(ClaimError::WriteVerbTargetStale {
         target,
         lifecycle,
         successor_short_id,
-    } = err
+    }) = err
     else {
         panic!("expected a typed stale-target refusal");
     };
@@ -753,11 +754,11 @@ fn stale_attest_with_closed_cohort_reports_the_newest_closed_wrapper() -> Result
     let err = vault
         .require_named_provenance_target_active(&prior)
         .expect_err("the named wrapper is still stale");
-    let Error::WriteVerbTargetStale {
+    let Error::Claim(ClaimError::WriteVerbTargetStale {
         lifecycle,
         successor_short_id,
         ..
-    } = err
+    }) = err
     else {
         panic!("expected a typed stale-target refusal");
     };

@@ -12,6 +12,7 @@ use super::types::{
     ATTEMPT_QUEUE_RETRY_REASON_COUNT, AttemptQueueCleanupReport, AttemptQueueRetryReason,
     AttemptQueueRetryReasonCount, CleanupAttemptLeases,
 };
+use crate::error::ArtifactError;
 
 static ATTEMPT_QUEUE_CLEANUP_RUNS: AtomicU64 = AtomicU64::new(0);
 static ATTEMPT_QUEUE_CLEANUP_STALE_REQUEUED: AtomicU64 = AtomicU64::new(0);
@@ -43,7 +44,7 @@ pub fn attempt_queue_cleanup_metrics_snapshot() -> AttemptQueueCleanupMetricsSna
 }
 
 pub(super) fn invalid_transition(action: &'static str, state: &'static str) -> Error {
-    Error::InvalidAttemptQueueTransition { action, state }
+    Error::Artifact(ArtifactError::InvalidAttemptQueueTransition { action, state })
 }
 
 pub(super) fn record_attempt_queue_cleanup_metrics(report: &AttemptQueueCleanupReport) {

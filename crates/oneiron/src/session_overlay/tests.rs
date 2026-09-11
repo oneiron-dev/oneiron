@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::OffRecordError;
 use crate::overlay_db::OverlayDb;
 use crate::temporal::TimeRange;
 use heed::types::Bytes;
@@ -90,10 +91,10 @@ fn same_overlay_segments_serialize_across_threads() -> Result<()> {
             .send(())
             .expect("second install receiver remains live");
         match second_overlay.put(OverlayKeyspace::Entities, b"b", &[2_u8; 3]) {
-            Err(Error::OffRecordOverlayFull {
+            Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
                 budget_bytes,
                 attempted_bytes,
-            }) => {
+            })) => {
                 assert_eq!(budget_bytes, budget);
                 assert_eq!(attempted_bytes, budget + 1);
                 segment.commit()
@@ -137,14 +138,14 @@ fn same_overlay_segments_serialize_across_threads() -> Result<()> {
     );
     match first_apply {
         Ok(()) => {}
-        Err(Error::OffRecordOverlayFull { .. }) => {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
             panic!("first post-commit apply returned OffRecordOverlayFull")
         }
         Err(other) => panic!("first post-commit apply failed: {other}"),
     }
     match second_apply {
         Ok(()) => {}
-        Err(Error::OffRecordOverlayFull { .. }) => {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
             panic!("second post-commit apply returned OffRecordOverlayFull")
         }
         Err(other) => panic!("second segment failed: {other}"),
@@ -184,7 +185,7 @@ fn close_wakes_all_blocked_segment_installers() -> Result<()> {
             .send(())
             .expect("first attempt receiver remains live");
         let result = match first_overlay.install_txn_segment() {
-            Err(Error::OffRecordOverlayLeaseClosed { .. }) => Ok(()),
+            Err(Error::OffRecord(OffRecordError::OffRecordOverlayLeaseClosed { .. })) => Ok(()),
             Err(other) => Err(other),
             Ok(segment) => {
                 drop(segment);
@@ -206,7 +207,7 @@ fn close_wakes_all_blocked_segment_installers() -> Result<()> {
             .send(())
             .expect("second attempt receiver remains live");
         let result = match second_overlay.install_txn_segment() {
-            Err(Error::OffRecordOverlayLeaseClosed { .. }) => Ok(()),
+            Err(Error::OffRecord(OffRecordError::OffRecordOverlayLeaseClosed { .. })) => Ok(()),
             Err(other) => Err(other),
             Ok(segment) => {
                 drop(segment);
@@ -312,10 +313,10 @@ fn apply_is_budget_infallible_after_authoritative_preflight() -> Result<()> {
 
     let segment = overlay.install_txn_segment()?;
     match overlay.put(OverlayKeyspace::Entities, b"b", &[2_u8; 2]) {
-        Err(Error::OffRecordOverlayFull {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
             budget_bytes,
             attempted_bytes,
-        }) => {
+        })) => {
             assert_eq!(budget_bytes, budget);
             assert_eq!(attempted_bytes, budget + 1);
         }
@@ -324,7 +325,7 @@ fn apply_is_budget_infallible_after_authoritative_preflight() -> Result<()> {
     }
     match segment.commit() {
         Ok(()) => {}
-        Err(Error::OffRecordOverlayFull { .. }) => {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
             panic!("empty post-preflight apply returned OffRecordOverlayFull")
         }
         Err(other) => panic!("empty post-preflight apply failed: {other}"),
@@ -346,7 +347,7 @@ fn apply_is_budget_infallible_after_authoritative_preflight() -> Result<()> {
     });
     match segment.commit() {
         Ok(()) => {}
-        Err(Error::OffRecordOverlayFull { .. }) => {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
             panic!("post-commit apply reconstructed OffRecordOverlayFull")
         }
         Err(other) => panic!("post-commit apply failed: {other}"),
@@ -469,10 +470,10 @@ fn put_rejects_budget_plus_one_before_staging() -> Result<()> {
     let value = vec![0_u8; budget + 1];
 
     match overlay.put(OverlayKeyspace::Entities, b"k", &value) {
-        Err(Error::OffRecordOverlayFull {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
             budget_bytes,
             attempted_bytes,
-        }) => {
+        })) => {
             assert_eq!(budget_bytes, budget);
             assert_eq!(attempted_bytes, budget + 2);
         }
@@ -492,10 +493,10 @@ fn payload_larger_than_budget_is_rejected_before_cloning() -> Result<()> {
     let value = vec![0_u8; 64];
 
     match overlay.put(OverlayKeyspace::Entities, b"k", &value) {
-        Err(Error::OffRecordOverlayFull {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
             budget_bytes,
             attempted_bytes,
-        }) => {
+        })) => {
             assert_eq!(budget_bytes, budget);
             assert_eq!(attempted_bytes, 65);
         }
@@ -508,10 +509,10 @@ fn payload_larger_than_budget_is_rejected_before_cloning() -> Result<()> {
     drop(snapshot);
 
     match overlay.delete_duplicate(OverlayKeyspace::TextPostings, b"k", &value, true) {
-        Err(Error::OffRecordOverlayFull {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
             budget_bytes,
             attempted_bytes,
-        }) => {
+        })) => {
             assert_eq!(budget_bytes, budget);
             assert_eq!(attempted_bytes, 65);
         }
@@ -534,10 +535,10 @@ fn dupsort_present_identity_keys_count_toward_budget_before_staging() -> Result<
     let segment = overlay.install_txn_segment()?;
 
     match overlay.put(OverlayKeyspace::TextPostings, b"t", &value) {
-        Err(Error::OffRecordOverlayFull {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
             budget_bytes,
             attempted_bytes,
-        }) => {
+        })) => {
             assert_eq!(budget_bytes, budget);
             assert_eq!(attempted_bytes, budget + value.len());
         }
@@ -576,10 +577,10 @@ fn mutations_at_capacity_are_charged_by_net_byte_change() -> Result<()> {
     overlay.delete(OverlayKeyspace::Entities, b"k")?;
     assert_eq!(overlay.snapshot()?.bytes_used(), 1);
     match overlay.put(OverlayKeyspace::Entities, b"k", &[9_u8; 8]) {
-        Err(Error::OffRecordOverlayFull {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
             budget_bytes,
             attempted_bytes,
-        }) => {
+        })) => {
             assert_eq!(budget_bytes, budget);
             assert_eq!(attempted_bytes, budget + 1);
         }
@@ -692,7 +693,7 @@ fn over_budget_journal_entry_is_rejected_before_append() -> Result<()> {
         JournalRole::TurnPut,
         put_op(vec![0_u8; budget + 1]),
     )) {
-        Err(Error::OffRecordOverlayFull { budget_bytes, .. }) => {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { budget_bytes, .. })) => {
             assert_eq!(budget_bytes, budget);
         }
         Err(other) => panic!("unexpected error: {other}"),

@@ -20,6 +20,7 @@ use crate::edit_distance::routing::{
 use crate::edit_distance::{
     FinalizedProposalText, LoroOpRef, ProposalArtifactRef, put_finalized_proposal_text,
 };
+use crate::error::GateError;
 use crate::llm::ModelId;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
@@ -560,7 +561,7 @@ fn the_export_door_rides_the_disclosure_consent_rail() -> Result<()> {
     let mut sink = CountingSink::default();
     let err = export_reservoir(&vault, ReservoirScope::default(), &mut sink)
         .expect_err("no grant, no export");
-    assert!(matches!(err, Error::ConsentGrantNotFound));
+    assert!(matches!(err, Error::Gate(GateError::ConsentGrantNotFound)));
     assert_eq!(sink.bytes, 0, "a refused export writes nothing");
 
     let owner = owner(&vault);
@@ -583,7 +584,7 @@ fn the_export_door_rides_the_disclosure_consent_rail() -> Result<()> {
                 ReservoirScope::default(),
                 &mut CountingSink::default()
             ),
-            Err(Error::ConsentGrantNotFound)
+            Err(Error::Gate(GateError::ConsentGrantNotFound))
         ),
         "revocation is immediate"
     );

@@ -26,6 +26,7 @@ use super::types::{
     EnqueueDreamerSkillOptimizeAttempt, EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt,
     FailDreamerAttemptOutcome, ParkDreamerAttempt,
 };
+use crate::error::MaintenanceError;
 
 /// Private Dreamer runner store over an already-open vault.
 pub struct DreamerRunnerStore<'a> {
@@ -205,14 +206,14 @@ impl<'a> DreamerRunnerStore<'a> {
     ///
     /// TIMER-SCOPED registration: ARCH-0073 puts the cleanup pass on the timer
     /// wake (default scope Macro), and every other trigger is refused with
-    /// [`Error::VaultCleanupWakeTriggerRejected`] rather than quietly
+    /// [`MaintenanceError::VaultCleanupWakeTriggerRejected`](crate::error::MaintenanceError::VaultCleanupWakeTriggerRejected) rather than quietly
     /// accepted. The refusal is the registration — a maintenance scan that can
     /// be attached to any wake is a maintenance scan an interactive turn ends
     /// up paying for.
     ///
     /// # Errors
     ///
-    /// [`Error::VaultCleanupWakeTriggerRejected`] for a non-timer trigger;
+    /// [`MaintenanceError::VaultCleanupWakeTriggerRejected`](crate::error::MaintenanceError::VaultCleanupWakeTriggerRejected) for a non-timer trigger;
     /// storage errors.
     pub fn enqueue_vault_cleanup(
         &self,
@@ -229,7 +230,7 @@ impl<'a> DreamerRunnerStore<'a> {
     ///
     /// # Errors
     ///
-    /// [`Error::VaultCleanupWakeTriggerRejected`] for a non-timer trigger;
+    /// [`MaintenanceError::VaultCleanupWakeTriggerRejected`](crate::error::MaintenanceError::VaultCleanupWakeTriggerRejected) for a non-timer trigger;
     /// storage errors.
     pub(crate) fn enqueue_vault_cleanup_in_txn(
         &self,
@@ -237,9 +238,11 @@ impl<'a> DreamerRunnerStore<'a> {
         input: EnqueueDreamerVaultCleanupAttempt,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         if input.trigger != WakeTrigger::Timer {
-            return Err(Error::VaultCleanupWakeTriggerRejected {
-                trigger: wake_trigger_name(input.trigger),
-            });
+            return Err(Error::Maintenance(
+                MaintenanceError::VaultCleanupWakeTriggerRejected {
+                    trigger: wake_trigger_name(input.trigger),
+                },
+            ));
         }
         self.enqueue_kind_in_txn(
             wtxn,

@@ -14,7 +14,7 @@ use super::paths::{now_secs, serve_failed};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
     GitOid, GitRefName, GitWire, GitWireCommitOutcome, GitWireReceipt, GitWireRepo, lock_repository,
 };
@@ -195,9 +195,9 @@ impl Vault {
         // nothing and a first landing that changed everything both have to end
         // with the repository carrying exactly what this outcome named.
         if !refs_already_applied(self, repo, &outcome.repo_root, &certified_refs(outcome))? {
-            return Err(Error::ReceivePackLandingRefused {
+            return Err(Error::Code(CodeError::ReceivePackLandingRefused {
                 reason: "the landing did not leave the refs it certified".to_owned(),
-            });
+            }));
         }
         Ok(landing)
     }
@@ -299,9 +299,11 @@ impl Vault {
                             && row.expected_old_oid == update.old_oid
                             && row.new_oid == *next
                     })
-                    .ok_or_else(|| Error::ReceivePackLandingRefused {
-                        reason: "receive-pack needs authenticated actor and durable provenance"
-                            .to_owned(),
+                    .ok_or_else(|| {
+                        Error::Code(CodeError::ReceivePackLandingRefused {
+                            reason: "receive-pack needs authenticated actor and durable provenance"
+                                .to_owned(),
+                        })
                     })?;
                 ReceivePackAttribution {
                     actor_id: existing.actor_id,
@@ -355,23 +357,23 @@ fn landing_from_publication(
     receipt: &OriginPublicationReceipt,
 ) -> Result<(GitWireReceipt, bool)> {
     if let Some(reason) = receipt.wire_rejection() {
-        return Err(Error::ReceivePackLandingRefused {
+        return Err(Error::Code(CodeError::ReceivePackLandingRefused {
             reason: format!("{reason:?}"),
-        });
+        }));
     }
     if receipt.record.status != OriginPublicationStatus::Published {
-        return Err(Error::ReceivePackLandingRefused {
+        return Err(Error::Code(CodeError::ReceivePackLandingRefused {
             reason: format!(
                 "publication for {} is {}",
                 printable_ref_name(name),
                 receipt.record.status.as_str()
             ),
-        });
+        }));
     }
     let Some(outcome) = receipt.wire.clone() else {
-        return Err(Error::ReceivePackLandingRefused {
+        return Err(Error::Code(CodeError::ReceivePackLandingRefused {
             reason: format!("publication for {} moved no ref", printable_ref_name(name)),
-        });
+        }));
     };
     landed_wire_outcome(outcome)
 }
@@ -381,8 +383,10 @@ fn landed_wire_outcome(outcome: GitWireCommitOutcome) -> Result<(GitWireReceipt,
     match outcome {
         GitWireCommitOutcome::Applied(receipt) => Ok((receipt, false)),
         GitWireCommitOutcome::Replayed(receipt) => Ok((receipt, true)),
-        GitWireCommitOutcome::Rejected { reason, .. } => Err(Error::ReceivePackLandingRefused {
-            reason: format!("{reason:?}"),
-        }),
+        GitWireCommitOutcome::Rejected { reason, .. } => {
+            Err(Error::Code(CodeError::ReceivePackLandingRefused {
+                reason: format!("{reason:?}"),
+            }))
+        }
     }
 }

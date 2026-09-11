@@ -22,7 +22,7 @@
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 
 /// The pinned NOTE body ABI. A NOTE body is exactly one MessagePack map over
 /// these three string keys — no more, no fewer, no repeats.
@@ -104,13 +104,20 @@ pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
 /// unknown kind, an unparseable actor ref, and blank markdown.
 pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidNoteBody("body is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Record(RecordError::InvalidNoteBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidNoteBody("trailing bytes after body map"));
+        return Err(Error::Record(RecordError::InvalidNoteBody(
+            "trailing bytes after body map",
+        )));
     }
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidNoteBody("body must be a MessagePack map"));
+        return Err(Error::Record(RecordError::InvalidNoteBody(
+            "body must be a MessagePack map",
+        )));
     };
 
     let mut kind: Option<NoteKind> = None;
@@ -120,15 +127,19 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
 
     for (key, value) in &entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidNoteBody("body keys must be strings"));
+            return Err(Error::Record(RecordError::InvalidNoteBody(
+                "body keys must be strings",
+            )));
         };
         let Some(index) = NOTE_BODY_KEYS.iter().position(|known| *known == key) else {
-            return Err(Error::InvalidNoteBody(
+            return Err(Error::Record(RecordError::InvalidNoteBody(
                 "body key is not in the pinned NOTE_BODY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidNoteBody("duplicate body key"));
+            return Err(Error::Record(RecordError::InvalidNoteBody(
+                "duplicate body key",
+            )));
         }
         seen[index] = true;
 
@@ -136,23 +147,31 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
             KEY_KIND => {
                 let raw = value
                     .as_str()
-                    .ok_or(Error::InvalidNoteBody("kind must be a UTF-8 string"))?;
-                kind =
-                    Some(NoteKind::parse(raw).ok_or(Error::InvalidNoteBody("unknown NOTE kind"))?);
+                    .ok_or(Error::Record(RecordError::InvalidNoteBody(
+                        "kind must be a UTF-8 string",
+                    )))?;
+                kind = Some(NoteKind::parse(raw).ok_or(Error::Record(
+                    RecordError::InvalidNoteBody("unknown NOTE kind"),
+                ))?);
             }
             KEY_AUTHOR_REF => {
                 let raw = value
                     .as_str()
-                    .ok_or(Error::InvalidNoteBody("author_ref must be a UTF-8 string"))?;
-                author_ref = Some(
-                    EntityId::from_hex(raw)
-                        .map_err(|_| Error::InvalidNoteBody("author_ref is not a 32-hex id"))?,
-                );
+                    .ok_or(Error::Record(RecordError::InvalidNoteBody(
+                        "author_ref must be a UTF-8 string",
+                    )))?;
+                author_ref = Some(EntityId::from_hex(raw).map_err(|_| {
+                    Error::Record(RecordError::InvalidNoteBody(
+                        "author_ref is not a 32-hex id",
+                    ))
+                })?);
             }
             KEY_MARKDOWN => {
                 let raw = value
                     .as_str()
-                    .ok_or(Error::InvalidNoteBody("markdown must be a UTF-8 string"))?;
+                    .ok_or(Error::Record(RecordError::InvalidNoteBody(
+                        "markdown must be a UTF-8 string",
+                    )))?;
                 validate_markdown(raw)?;
                 markdown = Some(raw.to_owned());
             }
@@ -161,17 +180,23 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
     }
 
     Ok(NoteBody {
-        kind: kind.ok_or(Error::InvalidNoteBody("missing required body key kind"))?,
-        author_ref: author_ref.ok_or(Error::InvalidNoteBody(
+        kind: kind.ok_or(Error::Record(RecordError::InvalidNoteBody(
+            "missing required body key kind",
+        )))?,
+        author_ref: author_ref.ok_or(Error::Record(RecordError::InvalidNoteBody(
             "missing required body key author_ref",
-        ))?,
-        markdown: markdown.ok_or(Error::InvalidNoteBody("missing required body key markdown"))?,
+        )))?,
+        markdown: markdown.ok_or(Error::Record(RecordError::InvalidNoteBody(
+            "missing required body key markdown",
+        )))?,
     })
 }
 
 fn validate_markdown(markdown: &str) -> Result<()> {
     if markdown.trim().is_empty() {
-        return Err(Error::InvalidNoteBody("markdown must not be blank"));
+        return Err(Error::Record(RecordError::InvalidNoteBody(
+            "markdown must not be blank",
+        )));
     }
     Ok(())
 }

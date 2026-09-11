@@ -2,6 +2,7 @@
 
 use super::test_support::*;
 use super::*;
+use crate::error::RecordError;
 
 // ── contextFrom ─────────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ fn panel_spec_rejects_non_peer_responders_before_planning() {
     };
     assert!(matches!(
         validate_lead_panel_spec(&spec),
-        Err(Error::InvalidTaskBody(_))
+        Err(Error::Record(RecordError::InvalidTaskBody(_)))
     ));
 }
 

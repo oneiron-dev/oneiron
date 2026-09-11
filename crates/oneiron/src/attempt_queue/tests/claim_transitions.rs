@@ -1,6 +1,7 @@
 //! Claim semantics and index hygiene, plus complete/fail transition guards.
 
 use super::*;
+use crate::error::ArtifactError;
 
 #[test]
 fn attempt_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
@@ -605,7 +606,9 @@ fn attempt_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
         .unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueRecord(ERR_FAILURE_REASON_EMPTY)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_FAILURE_REASON_EMPTY
+        ))
     ));
 
     claimed.state = AttemptState::Failed;
@@ -624,7 +627,9 @@ fn attempt_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
     let err = queue.get(claimed.id).unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueRecord(ERR_FAILURE_REASON_EMPTY)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_FAILURE_REASON_EMPTY
+        ))
     ));
 
     Ok(())

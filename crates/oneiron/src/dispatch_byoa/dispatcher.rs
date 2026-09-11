@@ -44,6 +44,7 @@ use super::validate::{
     encode_execution_transcript, validate_cli_sandbox, validate_connector, validate_endpoint,
     validate_execution_budget, validate_exhaust,
 };
+use crate::error::ArtifactError;
 /// Resolves an endpoint config into a concrete host-owned backend.
 ///
 /// The factory is the host's, not this module's: provider transports, custody
@@ -419,10 +420,12 @@ where
         let queue = AttemptQueue::new(self.vault);
         let record = queue
             .get_in_write_txn(wtxn, request.attempt_id)?
-            .ok_or(ByoaError::Store(Error::InvalidAttemptQueueTransition {
-                action: "capture_byoa_exhaust",
-                state: ERR_ATTEMPT_MISSING,
-            }))?;
+            .ok_or(ByoaError::Store(Error::Artifact(
+                ArtifactError::InvalidAttemptQueueTransition {
+                    action: "capture_byoa_exhaust",
+                    state: ERR_ATTEMPT_MISSING,
+                },
+            )))?;
         decode_byoa_record(&record)?;
         if record.state.is_running() {
             AttemptQueue::check_result_lease(
@@ -435,10 +438,12 @@ where
             || record.attempt_count != envelope.attempt_count
             || !disposition_matches_state(envelope.disposition, record.state)
         {
-            return Err(ByoaError::Store(Error::InvalidAttemptQueueTransition {
-                action,
-                state: record.state.as_str(),
-            }));
+            return Err(ByoaError::Store(Error::Artifact(
+                ArtifactError::InvalidAttemptQueueTransition {
+                    action,
+                    state: record.state.as_str(),
+                },
+            )));
         }
         let provenance = BlobVersionProvenance::AgentRun {
             run_ref: record

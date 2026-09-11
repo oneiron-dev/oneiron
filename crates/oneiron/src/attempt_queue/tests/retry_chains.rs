@@ -1,6 +1,7 @@
 //! Retry minting, retry_of lineage queryability, and bounded depth counting.
 
 use super::*;
+use crate::error::ArtifactError;
 
 #[test]
 fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Result<()> {
@@ -287,14 +288,18 @@ fn attempt_queue_retry_chain_depth_fails_closed_on_a_corrupt_lineage() -> Result
     put_raw_attempts(&vault, &[orphan])?;
     assert!(matches!(
         queue.retry_chain_depth(orphan_id).unwrap_err(),
-        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISSING_ROW)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RETRY_CHAIN_MISSING_ROW
+        ))
     ));
     // An id this queue never held at all is that same broken read.
     assert!(matches!(
         queue
             .retry_chain_depth(synthetic_attempt_id(404))
             .unwrap_err(),
-        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISSING_ROW)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RETRY_CHAIN_MISSING_ROW
+        ))
     ));
 
     // A lineage that returns to a row already on the walk.
@@ -309,7 +314,9 @@ fn attempt_queue_retry_chain_depth_fails_closed_on_a_corrupt_lineage() -> Result
     put_raw_attempts(&vault, &[first, second])?;
     assert!(matches!(
         queue.retry_chain_depth(first_id).unwrap_err(),
-        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RETRY_CHAIN_CYCLE
+        ))
     ));
 
     // A row naming ITSELF is the shortest cycle there is.
@@ -320,7 +327,9 @@ fn attempt_queue_retry_chain_depth_fails_closed_on_a_corrupt_lineage() -> Result
     put_raw_attempts(&vault, &[selfish])?;
     assert!(matches!(
         queue.retry_chain_depth(selfish_id).unwrap_err(),
-        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RETRY_CHAIN_CYCLE
+        ))
     ));
 
     // None of it reached the honest row beside them.
@@ -383,7 +392,9 @@ fn attempt_queue_retry_chain_depth_fails_closed_on_a_cross_chain_link() -> Resul
         assert!(
             matches!(
                 err,
-                Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH)
+                Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                    ERR_RETRY_CHAIN_MISMATCH
+                ))
             ),
             "a differing {field} must fail closed, got {err:?}"
         );
@@ -454,7 +465,9 @@ fn attempt_queue_retry_chain_depth_counts_real_successors_but_not_a_deep_cross_l
 
     assert!(matches!(
         queue.retry_chain_depth(parent).unwrap_err(),
-        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RETRY_CHAIN_MISMATCH
+        ))
     ));
     // The honest lineage beside it still counts exactly.
     assert_eq!(queue.retry_chain_depth(head)?, 3);

@@ -491,11 +491,11 @@ mod seam {
             super::PROPOSAL_AT,
         ) {
             Ok(IdentityOpOutcome::Parked { .. }) => {}
-            Err(oneiron::Error::IdentityTopologyRejected(
+            Err(oneiron::Error::Sync(oneiron::error::SyncError::IdentityTopologyRejected(
                 oneiron::identity_topology::IdentityTopologyRejection::DistinctPairSuppressed {
                     ..
                 },
-            )) => {}
+            ))) => {}
             other => panic!("merge proposal intake must park or be suppressed, got {other:?}"),
         }
     }

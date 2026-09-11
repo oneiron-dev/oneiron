@@ -8,7 +8,7 @@ use super::storage::{
 };
 use super::types::{EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -56,13 +56,13 @@ pub(super) fn escalation_standing_n_in_txn(store: &Store, txn: &heed::RoTxn<'_>)
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] when `n` is zero — a standing policy earned
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when `n` is zero — a standing policy earned
 /// by no rulings at all is not a learned policy — plus storage failures.
 pub fn set_escalation_standing_n(vault: &Vault, n: u32) -> Result<()> {
     if n == 0 {
-        return Err(Error::InvalidConsentBound(
+        return Err(Error::Gate(GateError::InvalidConsentBound(
             "a standing-policy threshold of zero rulings is not a threshold",
-        ));
+        )));
     }
     vault.with_write_txn(|wtxn| {
         vault
@@ -81,7 +81,7 @@ pub fn set_escalation_standing_n(vault: &Vault, n: u32) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] when the scope is unusable, or when a
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope is unusable, or when a
 /// magnitude band rides a trigger that has no magnitude; plus Δ encode and
 /// storage failures.
 pub fn record_escalation(vault: &Vault, receipt: EscalationReceipt) -> Result<EntityId> {
@@ -96,9 +96,9 @@ pub(crate) fn record_escalation_at(
 ) -> Result<EntityId> {
     let scope = normalized_scope(&receipt.scope)?.to_owned();
     if receipt.budget_band.is_some() && receipt.trigger != EscalationTrigger::Budget {
-        return Err(Error::InvalidConsentBound(
+        return Err(Error::Gate(GateError::InvalidConsentBound(
             "only a budget-triggered escalation carries a magnitude band",
-        ));
+        )));
     }
     let (ruling, delta) = ruling_parts(&receipt.ruling)?;
     let id = EntityId::now();
@@ -131,7 +131,7 @@ pub(crate) fn record_escalation_at(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] on an unusable scope,
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) on an unusable scope,
 /// [`Error::CorruptedIndex`] on an unreadable row, plus storage failures.
 pub fn escalation_stats(
     vault: &Vault,

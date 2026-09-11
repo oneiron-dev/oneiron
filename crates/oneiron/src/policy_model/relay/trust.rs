@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::error::{Error, Result};
 
 use super::registry::EdgeServiceRegistry;
+use crate::error::RelayError;
 
 /// Trust domain of a relay-boundary pass.
 ///
@@ -116,28 +117,32 @@ impl AuthenticatedConnectionIdentity {
     ) -> Result<Self> {
         let name = service_identity
             .strip_prefix(EDGE_SERVICE_IDENTITY_PREFIX)
-            .ok_or_else(|| Error::RelayAttestationInvalidServiceIdentity {
-                service_identity: service_identity.to_owned(),
-                reason: "service identity must match `connector-edge:<name>`",
+            .ok_or_else(|| {
+                Error::Relay(RelayError::RelayAttestationInvalidServiceIdentity {
+                    service_identity: service_identity.to_owned(),
+                    reason: "service identity must match `connector-edge:<name>`",
+                })
             })?;
         if name.is_empty() {
-            return Err(Error::RelayAttestationInvalidServiceIdentity {
-                service_identity: service_identity.to_owned(),
-                reason: "connector-edge service name must be non-empty",
-            });
+            return Err(Error::Relay(
+                RelayError::RelayAttestationInvalidServiceIdentity {
+                    service_identity: service_identity.to_owned(),
+                    reason: "connector-edge service name must be non-empty",
+                },
+            ));
         }
         let registered_class = registry.registered_class(name).ok_or_else(|| {
-            Error::RelayAttestationInvalidServiceIdentity {
+            Error::Relay(RelayError::RelayAttestationInvalidServiceIdentity {
                 service_identity: service_identity.to_owned(),
                 reason: "unregistered connector-edge service",
-            }
+            })
         })?;
         if registered_class != class {
-            return Err(Error::RelayAttestationClassMismatch {
+            return Err(Error::Relay(RelayError::RelayAttestationClassMismatch {
                 service_identity: service_identity.to_owned(),
                 claimed: class.as_str(),
                 registered: registered_class.as_str(),
-            });
+            }));
         }
         Ok(Self {
             service_identity: service_identity.to_owned(),

@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::VaultConfig;
-use crate::error::{Error, ErrorKind};
+use crate::error::{Error, ErrorKind, RegistryError};
 use crate::registry::{
     TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START,
     TYPE_BYTE_ZONE_SYSTEM_START, entity_type_registry_entry, zone_of,
@@ -101,12 +101,12 @@ fn campaign_kind_rejects_non_crm_assignment() {
 
     assert_eq!(error.kind(), ErrorKind::StructuralKindZoneViolation);
     match error {
-        Error::StructuralKindZoneViolation {
+        Error::Registry(RegistryError::StructuralKindZoneViolation {
             type_byte,
             declared_zone,
             actual_zone,
             ..
-        } => {
+        }) => {
             assert_eq!(type_byte, out_of_band);
             assert_eq!(declared_zone, TypeByteZone::CompiledProduct);
             assert_eq!(actual_zone, zone_of(out_of_band));
@@ -136,7 +136,7 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
         .expect_err("a taken byte must be refused by the existing registration path");
     assert_eq!(byte_error.kind(), ErrorKind::StructuralKindCollision);
     assert!(
-        matches!(byte_error, Error::StructuralKindTypeByteCollision(byte) if byte == campaign_byte),
+        matches!(byte_error, Error::Registry(RegistryError::StructuralKindTypeByteCollision(byte)) if byte == campaign_byte),
         "byte collision must surface the existing type-byte variant"
     );
 
@@ -154,7 +154,7 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
     assert!(
         matches!(
             prefix_error,
-            Error::StructuralKindPrefixCollision(ref prefix) if prefix == CAMPAIGN_SHORT_ID_PREFIX
+            Error::Registry(RegistryError::StructuralKindPrefixCollision(ref prefix)) if prefix == CAMPAIGN_SHORT_ID_PREFIX
         ),
         "prefix collision must surface the existing prefix variant"
     );

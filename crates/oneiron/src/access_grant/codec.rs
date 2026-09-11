@@ -9,6 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::record::{AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus};
+use crate::error::RecordError;
 
 /// Current AccessGrant body schema version.
 pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 2;
@@ -276,5 +277,7 @@ pub(crate) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Re
 }
 
 pub(crate) fn invalid_grant() -> Error {
-    Error::InvalidAccessGrantBody("body failed validation")
+    Error::Record(RecordError::InvalidAccessGrantBody(
+        "body failed validation",
+    ))
 }

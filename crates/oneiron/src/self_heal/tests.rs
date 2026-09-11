@@ -12,7 +12,7 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
-use crate::error::ErrorKind;
+use crate::error::{ErrorKind, RegistryError};
 use crate::registry::{
     ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteZone,
     entity_type_registry_entry,
@@ -345,7 +345,9 @@ fn public_byte_69_put_rejected() -> Result<()> {
         .put_entity(&id, ENTITY_TYPE_DIAGNOSTIC, at(1_000), 1_001, &body)
         .expect_err("a public put of byte 69 must fail");
     let expected = ENTITY_TYPE_DIAGNOSTIC;
-    assert!(matches!(err, Error::MaintenanceKindNotWritable(b) if b == expected));
+    assert!(
+        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(b)) if b == expected)
+    );
     assert_eq!(err.kind(), ErrorKind::MaintenanceKindNotWritable);
     assert_ne!(err.kind(), ErrorKind::InvalidEntityType);
     assert!(vault.get(&id)?.is_none(), "nothing was written");
@@ -358,7 +360,9 @@ fn public_byte_69_put_rejected() -> Result<()> {
                 .apply(wtxn)
         })
         .expect_err("a txn-batch put of byte 69 must fail");
-    assert!(matches!(err, Error::MaintenanceKindNotWritable(b) if b == expected));
+    assert!(
+        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(b)) if b == expected)
+    );
     assert!(vault.get(&id)?.is_none(), "nothing was written");
     assert!(vault.entities_by_type(ENTITY_TYPE_DIAGNOSTIC)?.is_empty());
 

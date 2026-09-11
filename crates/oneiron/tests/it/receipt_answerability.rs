@@ -1,6 +1,7 @@
 use crate::common::entity;
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron::error::GateError;
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EntityId, Error, HnswConfig, Result, TimeRange, Vault, VaultConfig, WriteActor,
@@ -383,10 +384,10 @@ fn public_surface_fixture() -> Result<PublicSurfaceFixture> {
             .commit()
             .expect_err("unsupported Dreamer candidate must be denied");
         match error {
-            Error::GateWriteRejected {
+            Error::Gate(GateError::GateWriteRejected {
                 outcome,
                 reason_codes,
-            } => {
+            }) => {
                 assert_eq!(outcome, "deny", "{case}: never downgrade to pending");
                 assert_eq!(
                     reason_codes,

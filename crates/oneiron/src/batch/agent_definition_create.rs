@@ -6,6 +6,7 @@ use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::store::Store;
 
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::error::ArtifactError;
 
 /// Validates fork lineage and the inherited ceiling for a local `AGENT_DEF` create.
 ///
@@ -21,30 +22,29 @@ pub(super) fn validate_local_agent_definition_create(
 ) -> Result<()> {
     if let Some(parent) = created.forked_from {
         if parent == *id {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "forkedFrom cannot name the fork itself",
-            ));
+            )));
         }
-        let parent_raw =
-            store
-                .entities
-                .get(wtxn, parent.as_bytes())?
-                .ok_or(Error::InvalidAgentDefBody(
-                    "forkedFrom parent must exist as a type-17 AGENT_DEF",
-                ))?;
+        let parent_raw = store
+            .entities
+            .get(wtxn, parent.as_bytes())?
+            .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "forkedFrom parent must exist as a type-17 AGENT_DEF",
+            )))?;
         let parent_header = EntityMetadataHeader::parse(&parent_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
         if parent_header.entity_type != ENTITY_TYPE_AGENT_DEF {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "forkedFrom parent must exist as a type-17 AGENT_DEF",
-            ));
+            )));
         }
         let parent_definition =
             crate::agent_def::decode_agent_definition(&parent_raw[ENTITY_METADATA_HEADER_LEN..])?;
         if created.ceiling.widens_beyond(parent_definition.ceiling) {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "forked agent ceiling cannot widen beyond its parent row ceiling",
-            ));
+            )));
         }
     }
     Ok(())

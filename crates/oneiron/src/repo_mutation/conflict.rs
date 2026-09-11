@@ -31,6 +31,7 @@ use super::support::{now_secs, utf8_trimmed};
 use super::trailer::commit_message_with_provenance_trailer;
 use super::types::{RepoConflictClaim, RepoConflictResolutionClaim};
 use super::worktree::apply_prepared_commit_file;
+use crate::error::{ClaimError, CodeError};
 
 impl Vault {
     /// Lists active typed repo conflict claims attached to a branch subject.
@@ -134,9 +135,9 @@ pub(super) fn record_repo_conflict(
         &theirs_tree,
     )?;
     if conflicted_paths.is_empty() {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo conflict record requires at least one conflicted path",
-        ));
+        )));
     }
 
     let claim_id = EntityId::now();
@@ -179,24 +180,24 @@ pub(super) fn resolve_repo_conflict_file(
     validate_commit_message(message)?;
     let open = require_active_repo_conflict_claim(vault, &open_conflict_claim_id, branch_subject)?;
     if open.repo_ref != *repo_ref || open.branch != branch_name {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "open conflict claim does not match this repo branch",
-        ));
+        )));
     }
     if !open
         .conflicted_paths
         .iter()
         .any(|conflict| conflict == path)
     {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "resolved path must be one of the recorded conflicted paths",
-        ));
+        )));
     }
     let current_branch = current_branch(repo_root)?;
     if current_branch != branch_name {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo conflict resolution must run on the recorded branch",
-        ));
+        )));
     }
 
     let _ = commit_message_with_provenance_trailer(message, provenance_claim_id)?;
@@ -223,9 +224,9 @@ pub(super) fn finish_repo_conflict_resolution(
         "resolved tree must be a 40-hex object id",
     )?;
     if current_branch(repo_root)? != prepared.branch_name {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "prepared conflict resolution must finish on its recorded branch",
-        ));
+        )));
     }
     let value = RepoConflictResolutionValue {
         repo_ref: repo_ref.clone(),
@@ -244,9 +245,9 @@ pub(super) fn finish_repo_conflict_resolution(
             true
         }
         Some(_) => {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "prepared conflict resolution claim id was reused",
-            ));
+            )));
         }
         None => false,
     };
@@ -263,14 +264,14 @@ pub(super) fn finish_repo_conflict_resolution(
         {
             return Ok(prepared.resolution_claim_id);
         }
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "open conflict was superseded by another resolution",
-        ));
+        )));
     }
     if open.lifecycle != ClaimLifecycleStatus::Active {
-        return Err(Error::ClaimAlreadyClosed {
+        return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
             status: open.lifecycle,
-        });
+        }));
     }
     let open = require_active_repo_conflict_claim(
         vault,
@@ -284,9 +285,9 @@ pub(super) fn finish_repo_conflict_resolution(
             .iter()
             .any(|path| path == &prepared.path)
     {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "prepared conflict resolution does not match the open conflict",
-        ));
+        )));
     }
     if !resolution_exists {
         put_repo_conflict_resolution_claim(
@@ -315,9 +316,9 @@ fn require_active_repo_conflict_claim(
         || body.lifecycle != ClaimLifecycleStatus::Active
         || body.subject != ClaimSubject::Entity(branch_subject)
     {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "open conflict claim must be active and attached to the branch subject",
-        ));
+        )));
     }
     let value = decode_repo_conflict_open_value(&body.value)?;
     Ok(RepoConflictClaim {
@@ -434,7 +435,7 @@ fn supersede_repo_conflict_claim(
     now: u64,
 ) -> Result<()> {
     if new_id == old_id {
-        return Err(Error::ClaimSelfSupersession);
+        return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
     }
     let mut wtxn = vault.store.env.write_txn()?;
     let new_raw = vault
@@ -451,9 +452,9 @@ fn supersede_repo_conflict_claim(
     if new_body.predicate != PREDICATE_CONFLICT_RESOLVED
         || new_body.lifecycle != ClaimLifecycleStatus::Active
     {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "new repo conflict claim must be an active resolution claim",
-        ));
+        )));
     }
 
     let old_raw = vault
@@ -468,14 +469,14 @@ fn supersede_repo_conflict_claim(
     }
     let mut old_body = decode_claim_body(&old_raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     if old_body.predicate != PREDICATE_CONFLICT_OPEN {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "old repo conflict claim must be an open conflict claim",
-        ));
+        )));
     }
     if old_body.lifecycle != ClaimLifecycleStatus::Active {
-        return Err(Error::ClaimAlreadyClosed {
+        return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
             status: old_body.lifecycle,
-        });
+        }));
     }
     old_body.lifecycle = ClaimLifecycleStatus::Superseded;
     old_body.valid_to = Some(now);

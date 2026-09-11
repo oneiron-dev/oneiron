@@ -15,7 +15,7 @@ use super::types::{
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT;
 use crate::temporal::TimeRange;
 
@@ -42,10 +42,10 @@ impl crate::Vault {
         verify_compile_against_stamp(compile)?;
         let compile_stamp = compile.stamp.identity();
         if consent.compile_stamp != compile_stamp {
-            return Err(Error::PersonaSnapshotConsentStale {
+            return Err(Error::Gate(GateError::PersonaSnapshotConsentStale {
                 consent_stamp: consent.compile_stamp.clone(),
                 compile_stamp,
-            });
+            }));
         }
 
         let known_row_ids: BTreeSet<&str> =

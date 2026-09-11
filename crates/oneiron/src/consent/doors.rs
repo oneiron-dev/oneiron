@@ -19,6 +19,7 @@ use super::support::{
     consent_approve_once_key, consent_grant_key, decode_approve_once_marker,
     encode_approve_once_marker, normalized_ref,
 };
+use crate::error::GateError;
 
 // ---------------------------------------------------------------------------
 // Owner authentication — invariant 2
@@ -100,7 +101,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ConsentOwnerNotAuthenticated`] when the principal did
+    /// Returns [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated) when the principal did
     /// not authenticate, the principal ref normalizes empty, the named actor
     /// is not a store-truth human entity, the entity is registry-inactive
     /// (merged / split shell), or a hex principal ref binds to another actor.
@@ -112,34 +113,42 @@ impl Vault {
         decision_id: GateDecisionId,
     ) -> Result<AuthenticatedOwner> {
         if !principal_authenticated {
-            return Err(Error::ConsentOwnerNotAuthenticated(
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "GenUI principal authentication did not succeed",
-            ));
+            )));
         }
-        let principal_ref = normalized_ref("principal_ref", principal_ref.to_owned())
-            .map_err(|_| Error::ConsentOwnerNotAuthenticated("principal_ref is empty"))?;
+        let principal_ref =
+            normalized_ref("principal_ref", principal_ref.to_owned()).map_err(|_| {
+                Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "principal_ref is empty",
+                ))
+            })?;
         // The ActorBound constructor is the lane's principal-shape check: an
         // unusable principal ref is a rejected authentication, not a stamped
         // grant on a malformed subject.
-        ActorBound::new(principal_ref.as_str())
-            .map_err(|_| Error::ConsentOwnerNotAuthenticated("principal_ref is unusable"))?;
+        ActorBound::new(principal_ref.as_str()).map_err(|_| {
+            Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "principal_ref is unusable",
+            ))
+        })?;
         if !self.is_store_truth_human_actor(&actor)? {
-            return Err(Error::ConsentOwnerNotAuthenticated(
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "actor is not a store-truth human entity",
-            ));
+            )));
         }
         // Registry-active: a merged or split shell is a redirect, not an
         // owner. The topology fold fails closed.
-        match self
-            .entity_lifecycle_state(&actor)
-            .map_err(|_| Error::ConsentOwnerNotAuthenticated("actor lifecycle is unreadable"))?
-        {
+        match self.entity_lifecycle_state(&actor).map_err(|_| {
+            Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "actor lifecycle is unreadable",
+            ))
+        })? {
             crate::identity_topology::EntityLifecycleState::Active => {}
             crate::identity_topology::EntityLifecycleState::Merged
             | crate::identity_topology::EntityLifecycleState::Split => {
-                return Err(Error::ConsentOwnerNotAuthenticated(
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                     "actor is registry-inactive (merged/split shell), not an owner",
-                ));
+                )));
             }
         }
         // A hex principal ref is an entity reference: it must decode to THIS
@@ -148,9 +157,9 @@ impl Vault {
         if let Ok(principal_id) = EntityId::from_hex(principal_ref.as_str())
             && principal_id != actor
         {
-            return Err(Error::ConsentOwnerNotAuthenticated(
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "principal_ref binds to a different actor entity",
-            ));
+            )));
         }
         Ok(AuthenticatedOwner {
             actor,
@@ -178,13 +187,13 @@ impl Vault {
     /// claimed in the SAME write transaction as the receipt, so a second
     /// `approve_once` over the same digest — the owner re-tapping an
     /// already-answered ask, or a replayed digest — is refused with
-    /// [`Error::ConsentApproveOnceSpent`]. LMDB serializes writers, so a
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent). LMDB serializes writers, so a
     /// concurrent mint sees the committed marker and rolls back.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ConsentApproveOnceSpent`] when the digest was already
-    /// approved, and [`Error::ConsentOwnerNotAuthenticated`] transitively
+    /// Returns [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent) when the digest was already
+    /// approved, and [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated) transitively
     /// from the owner-stamp check.
     pub fn approve_once(
         &self,
@@ -216,9 +225,9 @@ impl Vault {
     ) -> Result<()> {
         let key = consent_approve_once_key(digest);
         if self.store.vault_meta.get(&*wtxn, &key)?.is_some() {
-            return Err(Error::ConsentApproveOnceSpent(
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
                 "this op digest already carries an approve-once receipt",
-            ));
+            )));
         }
         let marker = encode_approve_once_marker(CONSENT_APPROVE_ONCE_AVAILABLE, decision_id);
         self.store.vault_meta.put(wtxn, &key, &marker)?;
@@ -254,9 +263,9 @@ impl Vault {
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
         if bound_catastrophe_class(&bound).is_some() {
-            return Err(Error::ConsentCatastropheNotRememberable(
+            return Err(Error::Gate(GateError::ConsentCatastropheNotRememberable(
                 "the catastrophe floor is non-rememberable; no standing grant may cover it",
-            ));
+            )));
         }
         let grant = StandingConsentGrant::from_bound(bound)?;
         let row = ConsentGrantRow {
@@ -308,7 +317,7 @@ impl Vault {
         let key = consent_grant_key(grant_ref);
         let mut wtxn = self.store.env.write_txn()?;
         let Some(raw) = self.store.vault_meta.get(&wtxn, &key)? else {
-            return Err(Error::ConsentGrantNotFound);
+            return Err(Error::Gate(GateError::ConsentGrantNotFound));
         };
         let mut row = decode_consent_grant_row(&raw)?;
         row.status = ConsentGrantStatus::Revoked;
@@ -336,11 +345,11 @@ impl Vault {
         let key = consent_grant_key(grant_ref);
         let mut wtxn = self.store.env.write_txn()?;
         let Some(raw) = self.store.vault_meta.get(&wtxn, &key)? else {
-            return Err(Error::ConsentGrantNotFound);
+            return Err(Error::Gate(GateError::ConsentGrantNotFound));
         };
         let row = decode_consent_grant_row(&raw)?;
         if !row.is_active() {
-            return Err(Error::ConsentGrantRevoked);
+            return Err(Error::Gate(GateError::ConsentGrantRevoked));
         }
         let receipt = ConsentReceipt::Used {
             decision_id: GateDecisionId::now(),
@@ -623,9 +632,9 @@ pub(crate) fn approve_once_authorization_in_txn(
         CONSENT_APPROVE_ONCE_AVAILABLE => Ok(Some(ApproveOnceAuthorization {
             effect_digest: *digest,
         })),
-        CONSENT_APPROVE_ONCE_SPENT => Err(Error::ConsentApproveOnceSpent(
+        CONSENT_APPROVE_ONCE_SPENT => Err(Error::Gate(GateError::ConsentApproveOnceSpent(
             "this approve-once authorization already delivered its effect",
-        )),
+        ))),
         _ => Err(Error::CorruptedIndex("consent approve-once marker state")),
     }
 }
@@ -643,15 +652,15 @@ pub(crate) fn spend_approve_once_in_txn(
 ) -> Result<()> {
     let key = consent_approve_once_key(&authorization.effect_digest);
     let Some(raw) = store.vault_meta.get(&*wtxn, &key)? else {
-        return Err(Error::ConsentApproveOnceSpent(
+        return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
             "approve-once authorization has no live marker",
-        ));
+        )));
     };
     let (state, decision_id) = decode_approve_once_marker(&raw)?;
     if state == CONSENT_APPROVE_ONCE_SPENT {
-        return Err(Error::ConsentApproveOnceSpent(
+        return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
             "this approve-once authorization already delivered its effect",
-        ));
+        )));
     }
     if state != CONSENT_APPROVE_ONCE_AVAILABLE {
         return Err(Error::CorruptedIndex("consent approve-once marker state"));

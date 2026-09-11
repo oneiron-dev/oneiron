@@ -12,6 +12,7 @@ use crate::error::{Error, Result};
 use super::codec::record_dispatch_input;
 use super::dispatch::AgentDispatcher;
 use super::types::AgentDispatchTarget;
+use crate::error::ArtifactError;
 
 impl AgentDispatcher<'_> {
     /// Resolves the requested descriptor against LIVE state, folding the
@@ -71,31 +72,31 @@ impl AgentDispatcher<'_> {
             return Ok(());
         }
         let Some(parent_attempt) = parent_attempt else {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom names sibling results but there is no parent attempt",
-            ));
+            )));
         };
         let Some(parent_record) = AttemptQueue::new(self.vault).get(parent_attempt)? else {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom requires a parent attempt row",
-            ));
+            )));
         };
         if parent_record.run_id.as_deref() != run_id {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom is admitted only inside the parent attempt's run",
-            ));
+            )));
         }
         let Some(parent_input) = record_dispatch_input(&parent_record) else {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom requires a parent with agent dispatch lineage",
-            ));
+            )));
         };
         let AgentDispatchTarget::Custom(parent_row) = parent_input.target;
         for entity_ref in context_from {
             if crate::task_verb::task_create_owner(self.vault, *entity_ref)? != Some(parent_row) {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "contextFrom names a settled result from a different parent",
-                ));
+                )));
             }
         }
         Ok(())

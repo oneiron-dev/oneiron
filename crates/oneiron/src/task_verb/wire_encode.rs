@@ -16,6 +16,7 @@ use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
 use super::terminal_state::{ConsultResultSummary, TaskExecutionState, TaskTerminalRecord};
 use super::verb_kind::TaskAssignee;
+use crate::error::RecordError;
 
 /// Serializes one rmpv value. Writing msgpack into a `Vec` cannot fail, so
 /// this is the infallible canonical-bytes primitive the terminal-register
@@ -322,6 +323,6 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
 pub(super) fn encode_task_realization_input(spec: &Value) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     rmpv::encode::write_value(&mut payload, spec)
-        .map_err(|_| Error::InvalidTaskBody("tasks.create.spec"))?;
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.spec")))?;
     Ok(payload)
 }

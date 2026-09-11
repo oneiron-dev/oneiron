@@ -20,6 +20,7 @@ use crate::{
 
 use super::super::{BudgetExhaustionPolicy, BudgetLease};
 use super::*;
+use crate::error::ArtifactError;
 
 fn block_on<F: Future>(future: F) -> F::Output {
     struct ThreadWaker(std::thread::Thread);
@@ -786,7 +787,10 @@ fn consume_refuses_when_parked_by_other_owner() -> Result<()> {
 
     let error =
         consume_trap_signal(&vault, &runner, &trap, 10_004).expect_err("owner mismatch refused");
-    assert!(matches!(error, Error::InvalidAttemptQueueRecord(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))
+    ));
 
     // The whole consume wtxn rolled back: no consumed transition landed and
     // the other owner's parked row is intact.

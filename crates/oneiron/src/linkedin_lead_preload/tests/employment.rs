@@ -1,5 +1,6 @@
 use super::*;
 use crate::claim::{decode_claim_body, encode_claim_body};
+use crate::error::GateError;
 use crate::provenance::{EdgeRef, SupersessionStatus, decode_edge_provenance_body};
 use rmpv::Value;
 
@@ -141,7 +142,7 @@ fn linkedin_employment_missing_or_other_actor_permit_rolls_back_absent_edge() ->
         assert!(
             matches!(
                 error,
-                LinkedInResolutionError::Vault(Error::GateWriteRejected { .. })
+                LinkedInResolutionError::Vault(Error::Gate(GateError::GateWriteRejected { .. }))
             ),
             "{error:?}"
         );
@@ -296,9 +297,9 @@ fn linkedin_employment_revoked_import_permit_blocks_rerun_without_mutation() -> 
     let before = snapshot(&vault);
     assert!(matches!(
         resolve_employment(&vault, person, company, &key(true, 1), actor),
-        Err(LinkedInResolutionError::Vault(
-            Error::GateWriteRejected { .. }
-        ))
+        Err(LinkedInResolutionError::Vault(Error::Gate(
+            GateError::GateWriteRejected { .. }
+        )))
     ));
     assert_eq!(snapshot(&vault), before);
     Ok(())

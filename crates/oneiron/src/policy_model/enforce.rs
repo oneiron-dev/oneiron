@@ -21,6 +21,7 @@ use super::planes::PolicyPlane;
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyVerdictCategory};
+use crate::error::RelayError;
 
 /// The manifest moved out from under the pass twice running, so no verdict
 /// could be pinned to the policy in force.
@@ -297,7 +298,7 @@ impl Vault {
     /// [`Vault::policy_model_verdict_is_stale_with_config`] recomputes this
     /// request's content binding and compares it, compares the safeguard
     /// selector, and re-checks the manifest frontier. Any of the three failing
-    /// is [`Error::PolicyVerdictNotInForce`] — a refusal, not a fail-open.
+    /// is [`RelayError::PolicyVerdictNotInForce`](crate::error::RelayError::PolicyVerdictNotInForce) — a refusal, not a fail-open.
     /// This door cannot re-derive (it has no model), so the honest answer is
     /// to send the caller back for a verdict that fits, not to act on one that
     /// does not.
@@ -349,10 +350,10 @@ impl Vault {
             || verdict.hosted_attestation.is_some()
             || matches!(verdict.category, PolicyVerdictCategory::HostedLegal { .. })
         {
-            return Err(Error::PolicyVerdictNotInForce);
+            return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
         }
         if self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)? {
-            return Err(Error::PolicyVerdictNotInForce);
+            return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
         }
         self.enforcement_from_verdict(
             request,

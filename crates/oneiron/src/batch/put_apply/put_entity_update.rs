@@ -4,7 +4,7 @@ use heed::RwTxn;
 
 use super::EntityMetadataHeader;
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{ArtifactError, Error, ErrorKind, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
 
@@ -19,7 +19,7 @@ use crate::store::Store;
 ///
 /// # Errors
 ///
-/// [`Error::InvalidSkillBody`] from the substrate update gate, the hub-sync
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) from the substrate update gate, the hub-sync
 /// door's variant of it, or ONE-1449's admission gate.
 pub(super) fn validate_skill_body_overwrite(
     store: &Store,
@@ -75,7 +75,7 @@ pub(super) fn validate_skill_body_overwrite(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidSkillBody`] for a create that is not born candidate or whose
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) for a create that is not born candidate or whose
 /// `forkedFrom` names itself, a missing row, or a row of another kind.
 pub(super) fn validate_local_skill_create(
     store: &Store,
@@ -84,31 +84,30 @@ pub(super) fn validate_local_skill_create(
     created: &crate::skill::SkillRecord,
 ) -> Result<()> {
     if created.lifecycle_status != crate::skill::SkillLifecycle::Candidate {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "new skills are born candidate; the admission gate activates them",
-        ));
+        )));
     }
     let Some(parent) = created.forked_from else {
         return Ok(());
     };
     if parent == *id {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "forkedFrom cannot name the fork itself",
-        ));
+        )));
     }
-    let parent_raw =
-        store
-            .entities
-            .get(wtxn, parent.as_bytes())?
-            .ok_or(Error::InvalidSkillBody(
-                "forkedFrom parent must exist as a type-7 SKILL",
-            ))?;
+    let parent_raw = store
+        .entities
+        .get(wtxn, parent.as_bytes())?
+        .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "forkedFrom parent must exist as a type-7 SKILL",
+        )))?;
     let parent_header =
         EntityMetadataHeader::parse(&parent_raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if parent_header.entity_type != ENTITY_TYPE_SKILL {
-        return Err(Error::InvalidSkillBody(
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "forkedFrom parent must exist as a type-7 SKILL",
-        ));
+        )));
     }
     Ok(())
 }

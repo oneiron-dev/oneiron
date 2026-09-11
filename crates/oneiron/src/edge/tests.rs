@@ -71,11 +71,15 @@ fn fulfillment_pair_is_structural_unweighted_and_reserved() {
         assert_eq!(crate::ppr::lambda_for_kind(kind), None);
         assert!(matches!(
             super::validate_public_edge_kind(kind),
-            Err(crate::error::Error::ReservedEdgeKind(_))
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::ReservedEdgeKind(_)
+            ))
         ));
         assert!(matches!(
             super::validate_public_edge_creation_kind(kind),
-            Err(crate::error::Error::ReservedEdgeKind(_))
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::ReservedEdgeKind(_)
+            ))
         ));
 
         // The door's explicit 1.0 round-trips as a 12-byte structural row.

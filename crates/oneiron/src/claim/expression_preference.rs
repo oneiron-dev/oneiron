@@ -11,7 +11,7 @@ use crate::Vault;
 use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_with_gate_mode};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, require_key_len};
@@ -175,9 +175,9 @@ impl Vault {
                         denial.outcome() == crate::error::GateDenialOutcome::Pending
                     }) =>
             {
-                Err(Error::FamilyRequiresAutoGrant {
+                Err(Error::Gate(GateError::FamilyRequiresAutoGrant {
                     family: "expression preference",
-                })
+                }))
             }
             other => other,
         }
@@ -422,9 +422,9 @@ impl Vault {
             return Ok(());
         }
         if actor.actor_class() != EdgeActorClass::Human {
-            return Err(Error::ActorLacksClaimAuthority {
+            return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
                 reason: "an expression preference is retracted by the actor that wrote it",
-            });
+            }));
         }
         let fold = self.authority_fold_readonly_in_txn(wtxn)?;
         if fold.vault_root_is_conflicted() {
@@ -435,9 +435,9 @@ impl Vault {
         if fold.vault_id.is_some()
             && !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
         {
-            return Err(Error::ActorLacksClaimAuthority {
+            return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
                 reason: "retracting another actor's preference needs an active owner binding",
-            });
+            }));
         }
         Ok(())
     }

@@ -2,7 +2,7 @@
 
 use super::EdgeProvenanceClaimBody;
 use crate::edge::EdgeActorClass;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use rmpv::Value;
 
@@ -13,7 +13,7 @@ use rmpv::Value;
 /// dispatched agent's substantive writes carry its definition's entity id as
 /// the envelope actor (N1 resolution 2026-07-10; milestone bookkeeping rides
 /// the system/Dreamer envelope instead); every other kind is rejected with
-/// [`Error::ActorClassMismatch`]. NEVER defaults.
+/// [`ClaimError::ActorClassMismatch`](crate::error::ClaimError::ActorClassMismatch). NEVER defaults.
 pub fn validate_actor_class(actor_entity_type: u8, actor_class: EdgeActorClass) -> Result<()> {
     let allowed = match actor_entity_type {
         ENTITY_TYPE_PERSON => matches!(actor_class, EdgeActorClass::Human | EdgeActorClass::Agent),
@@ -24,10 +24,10 @@ pub fn validate_actor_class(actor_entity_type: u8, actor_class: EdgeActorClass) 
     if allowed {
         Ok(())
     } else {
-        Err(Error::ActorClassMismatch {
+        Err(Error::Claim(ClaimError::ActorClassMismatch {
             actor_entity_type,
             actor_class: actor_class as u8,
-        })
+        }))
     }
 }
 
@@ -62,34 +62,34 @@ pub(crate) fn encode_actor_class_evidence(actor_class: EdgeActorClass) -> Value 
 /// a defaulted class (D13).
 pub(crate) fn decode_actor_class_evidence(evidence: Option<&Value>) -> Result<EdgeActorClass> {
     let Some(Value::Map(entries)) = evidence else {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "provenance claim is missing its persisted actor_class evidence",
-        ));
+        )));
     };
     let mut actor_class: Option<EdgeActorClass> = None;
     for (key, value) in entries {
         if key.as_str() != Some(EVIDENCE_KEY_ACTOR_CLASS) {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "unknown key in provenance actor_class evidence",
-            ));
+            )));
         }
         if actor_class.is_some() {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "duplicate actor_class evidence key",
-            ));
+            )));
         }
         let parsed = value
             .as_u64()
             .and_then(|raw| u8::try_from(raw).ok())
             .and_then(actor_class_from_u8)
-            .ok_or(Error::InvalidProvenanceBody(
+            .ok_or(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "actor_class evidence must be an integer u8 <= 2",
-            ))?;
+            )))?;
         actor_class = Some(parsed);
     }
-    actor_class.ok_or(Error::InvalidProvenanceBody(
+    actor_class.ok_or(Error::Claim(ClaimError::InvalidProvenanceBody(
         "provenance claim is missing its persisted actor_class evidence",
-    ))
+    )))
 }
 
 pub(super) fn actor_class_from_u8(value: u8) -> Option<EdgeActorClass> {
@@ -110,7 +110,7 @@ pub(super) fn actor_class_from_u8(value: u8) -> Option<EdgeActorClass> {
 ///   engine-owned `{"actor_class": u8}` map on the wrapper's `evid` →
 ///   decoded via the unchanged legacy codec;
 /// * BOTH places → ambiguous, fails closed
-///   ([`Error::InvalidProvenanceBody`]) — two sources of truth for a flag
+///   ([`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody)) — two sources of truth for a flag
 ///   refresh are never reconciled silently;
 /// * NEITHER place → fails closed the same way — a provenance Claim without
 ///   a persisted class cannot participate in flag refresh; the class is
@@ -120,9 +120,9 @@ pub(crate) fn resolve_persisted_actor_class(
     evidence: Option<&Value>,
 ) -> Result<EdgeActorClass> {
     match (record.actor_class, evidence) {
-        (Some(_), Some(_)) => Err(Error::InvalidProvenanceBody(
+        (Some(_), Some(_)) => Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "actor_class present in both the value record and the wrapper evid (ambiguous)",
-        )),
+        ))),
         (Some(class), None) => Ok(class),
         (None, evidence) => decode_actor_class_evidence(evidence),
     }
@@ -141,7 +141,7 @@ pub const MODEL_SUBSTRATE_FIELD_MAX_BYTES: usize = 256;
 /// non-empty UTF-8, at most [`MODEL_SUBSTRATE_FIELD_MAX_BYTES`] bytes.
 pub(super) fn validate_model_substrate_field(value: &str, context: &'static str) -> Result<()> {
     if value.is_empty() || value.len() > MODEL_SUBSTRATE_FIELD_MAX_BYTES {
-        return Err(Error::InvalidModelSubstrate(context));
+        return Err(Error::Claim(ClaimError::InvalidModelSubstrate(context)));
     }
     Ok(())
 }

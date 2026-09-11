@@ -270,34 +270,34 @@ pub fn pull_code_memory(
 ) -> Result<CodeMemoryPullResult> {
     crate::config::validate_ppr_vad_alpha(vault.config.ppr_vad_alpha)?;
     if request.seed_symbols.is_empty() {
-        return Err(Error::CodeMemoryInvalidAnchor {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
             reason: "pull requires at least one CODE_SYMBOL seed",
-        });
+        }));
     }
     if request.seed_symbols.len() > CODE_MEMORY_MAX_PULL_LIMIT {
-        return Err(Error::CodeMemoryLimitExceeded {
+        return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
             kind: "pull seed symbols",
             limit: CODE_MEMORY_MAX_PULL_LIMIT,
-        });
+        }));
     }
     if !request.minimum_relevance.is_finite() || request.minimum_relevance < 0.0 {
-        return Err(Error::CodeMemoryInvalidAnchor {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
             reason: "pull minimum relevance must be a finite non-negative score",
-        });
+        }));
     }
     if request.limit == 0 || request.limit > CODE_MEMORY_MAX_PULL_LIMIT {
-        return Err(Error::CodeMemoryLimitExceeded {
+        return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
             kind: "pull note limit",
             limit: CODE_MEMORY_MAX_PULL_LIMIT,
-        });
+        }));
     }
 
     let rtxn = vault.store.env.read_txn()?;
     for seed in &request.seed_symbols {
         if entity_type_in_txn(&vault.store, &rtxn, seed)? != Some(ENTITY_TYPE_CODE_SYMBOL) {
-            return Err(Error::CodeMemoryInvalidAnchor {
+            return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
                 reason: "every pull seed must be a live CODE_SYMBOL entity",
-            });
+            }));
         }
     }
 
@@ -417,30 +417,30 @@ pub fn register_always_on_contract(
     validate_code_symbol_anchor(store, txn, &contract.symbol_id)?;
     validate_time_range(contract.valid_time, "always-on contract valid time")?;
     let CodeMemoryPayloadRef::NoteEntity(note_id) = contract.payload else {
-        return Err(Error::CodeMemoryAlwaysOnInvalid(
+        return Err(Error::Code(CodeError::CodeMemoryAlwaysOnInvalid(
             "always-on contracts accept only NoteEntity payload refs",
-        ));
+        )));
     };
     let payload_type = entity_type_in_txn(store, txn, &note_id)?;
     if payload_type.is_none() {
-        return Err(Error::CodeMemoryAlwaysOnInvalid(
+        return Err(Error::Code(CodeError::CodeMemoryAlwaysOnInvalid(
             "always-on contract payload does not resolve to a live entity",
-        ));
+        )));
     }
     if payload_type != Some(ENTITY_TYPE_NOTE) {
-        return Err(Error::CodeMemoryAlwaysOnInvalid(
+        return Err(Error::Code(CodeError::CodeMemoryAlwaysOnInvalid(
             "always-on contract payload must be a NOTE entity",
-        ));
+        )));
     }
 
     let key = always_on_key(&contract.symbol_id, &contract.slot, contract.payload);
     if store.vault_meta.get(txn, &key)?.is_none() {
         let registered = count_prefix(store, txn, &always_on_symbol_prefix(&contract.symbol_id))?;
         if registered >= CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
-            return Err(Error::CodeMemoryLimitExceeded {
+            return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
                 kind: "always-on contracts per symbol",
                 limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS,
-            });
+            }));
         }
     }
     write_always_on(store, txn, &contract)

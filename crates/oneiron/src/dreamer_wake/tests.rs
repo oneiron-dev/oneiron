@@ -1008,10 +1008,9 @@ impl DreamerAttemptExecutor for OversizedErrorExecutor {
         _attempt: &DreamerAdmittedAttempt,
         _ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
-        Err(crate::Error::AnalyzerError(format!(
-            "x{}",
-            "語".repeat(400)
-        )))
+        Err(crate::Error::Store(
+            crate::error::StoreError::AnalyzerError(format!("x{}", "語".repeat(400))),
+        ))
     }
 }
 
@@ -1037,7 +1036,7 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
         error.to_string().len() > MAX_WAKE_PARK_REASON_BYTES,
         "the propagated error keeps its full Display"
     );
-    let crate::Error::AnalyzerError(payload) = error else {
+    let crate::Error::Store(crate::error::StoreError::AnalyzerError(payload)) = error else {
         panic!("expected the executor's AnalyzerError");
     };
     assert_eq!(payload, format!("x{}", "語".repeat(400)));
@@ -1326,7 +1325,7 @@ fn a_cooperative_worker_lands_through_the_driver_and_is_not_reported_completed()
         .expect_err("a landed row cannot also complete");
     assert!(matches!(
         err,
-        crate::Error::InvalidAttemptQueueTransition { action, state }
+        crate::Error::Artifact(crate::error::ArtifactError::InvalidAttemptQueueTransition { action, state })
             if action == "complete" && state == "cancelled"
     ));
     Ok(())

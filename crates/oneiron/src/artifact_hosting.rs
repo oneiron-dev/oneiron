@@ -13,7 +13,7 @@ use crate::codebase::{
     CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result, SecretError};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,
@@ -66,9 +66,9 @@ impl ArtifactPointerChannel {
         match value {
             "published" => Ok(Self::Published),
             "preview" => Ok(Self::Preview),
-            _ => Err(Error::InvalidCodebaseSnapshotBody(
+            _ => Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "artifact pointer channel must be published or preview",
-            )),
+            ))),
         }
     }
 }
@@ -174,7 +174,7 @@ impl Vault {
     /// records' CURRENT generations right here, at the check — read-time
     /// invalidation (ARCH-0069 S7, amended 2026-08-05). An artifact whose
     /// secrets have rotated or been revoked reads `TaintedStale` and the
-    /// publish refuses with [`Error::TaintedArtifactStale`].
+    /// publish refuses with [`SecretError::TaintedArtifactStale`](crate::error::SecretError::TaintedArtifactStale).
     ///
     /// It is a DIAL, not a wall. When the resolved policy key
     /// `secret.taint.allow_stale_publish` is on, the publish proceeds and
@@ -202,9 +202,9 @@ impl Vault {
             ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
             ArtifactTaintState::TaintedStale => {
                 if !allow_stale_publish_in_txn(&self.store, &wtxn)? {
-                    return Err(Error::TaintedArtifactStale {
+                    return Err(Error::Secret(SecretError::TaintedArtifactStale {
                         artifact: artifact.to_owned(),
-                    });
+                    }));
                 }
                 true
             }
@@ -378,18 +378,18 @@ impl Vault {
 
 pub fn parse_codebase_fork_hash_hex(value: &str) -> Result<CodebaseForkHash> {
     if value.len() != CODEBASE_FORK_HASH_LEN * 2 {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "forkHash must be 64 lowercase or uppercase hex characters",
-        ));
+        )));
     }
     let mut out = [0_u8; CODEBASE_FORK_HASH_LEN];
     let bytes = value.as_bytes();
     for (index, pair) in bytes.chunks_exact(2).enumerate() {
-        let high = hex_nibble(pair[0]).ok_or(Error::InvalidCodebaseSnapshotBody(
-            "forkHash must be hexadecimal",
+        let high = hex_nibble(pair[0]).ok_or(Error::Code(
+            CodeError::InvalidCodebaseSnapshotBody("forkHash must be hexadecimal"),
         ))?;
-        let low = hex_nibble(pair[1]).ok_or(Error::InvalidCodebaseSnapshotBody(
-            "forkHash must be hexadecimal",
+        let low = hex_nibble(pair[1]).ok_or(Error::Code(
+            CodeError::InvalidCodebaseSnapshotBody("forkHash must be hexadecimal"),
         ))?;
         out[index] = (high << 4) | low;
     }
@@ -485,9 +485,9 @@ fn validate_artifact_id(artifact: &str) -> Result<()> {
         "artifact id must be non-empty and at most 256 bytes",
     )?;
     if artifact.trim() != artifact {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "artifact id must not have leading or trailing whitespace",
-        ));
+        )));
     }
     Ok(())
 }
@@ -499,29 +499,29 @@ fn validate_artifact_path(path: &str) -> Result<()> {
         "artifact path must be non-empty and at most 4096 bytes",
     )?;
     if path.starts_with('/') || path.contains('\\') {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "artifact path must be bundle-relative",
-        ));
+        )));
     }
     if path
         .split('/')
         .any(|part| part.is_empty() || part == "." || part == "..")
     {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "artifact path must be normalized and cannot contain . or .. segments",
-        ));
+        )));
     }
     Ok(())
 }
 
 fn validate_bounded_text(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
     if text.is_empty() || text.len() > max_bytes {
-        return Err(Error::InvalidCodebaseSnapshotBody(context));
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(context)));
     }
     if text.chars().any(char::is_control) {
-        return Err(Error::InvalidCodebaseSnapshotBody(
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "artifact text fields must not contain control characters",
-        ));
+        )));
     }
     Ok(())
 }

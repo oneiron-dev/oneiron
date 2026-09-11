@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 use crate::sync::types::{WindowKey, parse_window_key_str};
 
 // ─── ra: tombstone re-assertion markers (ONE-1156c) ──────────────────────────
@@ -266,7 +266,7 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             // `u:w:` rows; no observers are attached, so no lock is needed.
             let doc = match load_window_from_state(vault, user_id, window_key) {
                 Ok(doc) => doc,
-                Err(Error::WindowNotFound { .. }) => {
+                Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
                     // Same fallback as the rm: drain: a flagged window
                     // without a persisted snapshot can still carry its
                     // tombstones in Observer A's durable update rows.

@@ -1,6 +1,7 @@
 //! Manifest lane appends, pack terminal receipts, and legacy backoff rows.
 
 use super::*;
+use crate::error::ArtifactError;
 
 // ─── ONE-1737 · ARCH-0053 §3 attempt-alive pack manifest ────────────────
 
@@ -98,10 +99,10 @@ fn manifest_door_refuses_every_terminal_state() -> Result<()> {
         assert!(
             matches!(
                 error,
-                Error::InvalidAttemptQueueTransition {
+                Error::Artifact(ArtifactError::InvalidAttemptQueueTransition {
                     action: "append_manifest_entry",
                     state: observed,
-                } if observed == state
+                }) if observed == state
             ),
             "expected a typed refusal naming {state}, got {error:?}"
         );
@@ -155,7 +156,7 @@ fn manifest_refuses_at_the_cap_instead_of_dropping_the_oldest_row() -> Result<()
 
     assert!(matches!(
         error,
-        Error::InvalidAttemptQueueRecord(ERR_MANIFEST_FULL)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(ERR_MANIFEST_FULL))
     ));
     let after = queue.get(attempt.id)?.expect("row persists");
     assert_eq!(
@@ -195,7 +196,7 @@ fn manifest_entries_are_validated() -> Result<()> {
             .append_manifest_entry(attempt.id, entry)
             .expect_err("a malformed manifest row is refused");
         assert!(
-            matches!(error, Error::InvalidAttemptQueueRecord(reason) if reason == expected),
+            matches!(error, Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == expected),
             "expected {expected}, got {error:?}"
         );
     }
@@ -238,7 +239,7 @@ fn a_manifest_wire_form_splits_on_the_first_at_and_refs_may_not_hold_one() -> Re
     assert!(
         matches!(
             error,
-            Error::InvalidAttemptQueueRecord(reason) if reason == ERR_MANIFEST_REFERENCE_HAS_AT
+            Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_MANIFEST_REFERENCE_HAS_AT
         ),
         "expected {ERR_MANIFEST_REFERENCE_HAS_AT}, got {error:?}"
     );

@@ -97,7 +97,7 @@ impl SkillEditDisposition {
     /// open-question rule already refuses.
     ///
     /// A raced snapshot is NOT on this list, because it is not a ruling at all:
-    /// it commits nothing and returns [`Error::SkillEditGateRetry`], leaving
+    /// it commits nothing and returns [`ArtifactError::SkillEditGateRetry`](crate::error::ArtifactError::SkillEditGateRetry), leaving
     /// the proposal in its pre-call state. A second durable open class would
     /// have grown one more row on every raced retry and made "open" mean two
     /// different things.

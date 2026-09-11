@@ -19,7 +19,7 @@ use super::types::WindowKey;
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 
 /// THE SYNC WINDOW-PACKING EGRESS DOOR (ARCH-0052 P6, owner ruling
@@ -133,9 +133,11 @@ pub fn export_window_updates_since(
     doc: &LoroDoc,
     remote_vv: &[u8],
 ) -> Result<Vec<u8>> {
-    VersionVector::decode(remote_vv).map_err(|source| Error::CrdtDecodeError {
-        context: "decode version vector",
-        source,
+    VersionVector::decode(remote_vv).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
+            context: "decode version vector",
+            source,
+        })
     })?;
     let scrubbed = scrub_secret_custody_carriers(vault, key, doc)?;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
