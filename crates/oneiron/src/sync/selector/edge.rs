@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::error::RegistryError;
 use crate::error::{Error, Result};
 use crate::sync::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 #[cfg(feature = "sync")]
@@ -33,7 +34,7 @@ use crate::sync::types::WindowKey;
 ///
 /// * PROVABLY off-table on the facts in hand — a KNOWN off-table source, or a
 ///   KNOWN non-FACET target, either one sufficient ALONE — is DROPPED with a
-///   typed [`Error::InvalidFacetOfEdge`] quarantine record. The row is not
+///   typed [`RegistryError::InvalidFacetOfEdge`](crate::error::RegistryError::InvalidFacetOfEdge) quarantine record. The row is not
 ///   copied, so the selector can never read it.
 /// * UNKNOWABLE deciding endpoint — the endpoint has not arrived yet — PASSES
 ///   THROUGH. The remat gate's defer-then-validate owns those: a hard verdict
@@ -130,7 +131,7 @@ enum AdmittedEdgeVerdict {
 /// Endpoint types resolve from two sources, in this order:
 ///
 /// 1. the LOCAL vault row (`batch::stored_entity_type`) — entity type is
-///    immutable per id ([`Error::EntityTypeImmutable`]), so a stored type is
+///    immutable per id ([`RegistryError::EntityTypeImmutable`](crate::error::RegistryError::EntityTypeImmutable)), so a stored type is
 ///    permanent truth about that id;
 /// 2. the ADMITTED UPDATE's own entities map — the endpoint arriving in the
 ///    SAME frame as its stamp is the common legitimate case, and reading it
@@ -173,14 +174,14 @@ fn admitted_facet_of_verdict(
     if !crate::batch::facet_of_endpoints_provably_off_table(src_type, tgt_type) {
         return Ok(AdmittedEdgeVerdict::Copy);
     }
-    Ok(AdmittedEdgeVerdict::DropOffTable(
-        Error::InvalidFacetOfEdge {
+    Ok(AdmittedEdgeVerdict::DropOffTable(Error::Registry(
+        RegistryError::InvalidFacetOfEdge {
             src,
             src_type,
             tgt,
             tgt_type,
         },
-    ))
+    )))
 }
 
 /// One endpoint's type byte at admission time: the stored row first (permanent

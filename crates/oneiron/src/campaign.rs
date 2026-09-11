@@ -15,6 +15,7 @@
 //! structural kind and stops there.
 
 use crate::Vault;
+use crate::error::RegistryError;
 use crate::error::{Error, Result};
 use crate::registry::{
     StructuralKindRegistration, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
@@ -143,7 +144,9 @@ pub fn register_crm_pack(
     saved_query_type_byte: u8,
 ) -> Result<CrmPackRegistration> {
     if campaign_type_byte == saved_query_type_byte {
-        return Err(Error::StructuralKindTypeByteCollision(campaign_type_byte));
+        return Err(Error::Registry(
+            RegistryError::StructuralKindTypeByteCollision(campaign_type_byte),
+        ));
     }
     vet_pack_slot(vault, campaign_type_byte, CAMPAIGN_SHORT_ID_PREFIX)?;
     vet_pack_slot(
@@ -176,17 +179,19 @@ fn vet_pack_slot(vault: &Vault, type_byte: u8, prefix: &str) -> Result<()> {
     if !(TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
         .contains(&type_byte)
     {
-        return Err(Error::StructuralKindZoneViolation {
-            type_byte,
-            declared_zone: TypeByteZone::CompiledProduct,
-            actual_zone: crate::registry::zone_of(type_byte),
-            reason: "type byte is outside the declared band",
-        });
+        return Err(Error::Registry(
+            RegistryError::StructuralKindZoneViolation {
+                type_byte,
+                declared_zone: TypeByteZone::CompiledProduct,
+                actual_zone: crate::registry::zone_of(type_byte),
+                reason: "type byte is outside the declared band",
+            },
+        ));
     }
     match vault.structural_kind_registration(type_byte) {
-        Some(existing) if !slot_matches(&existing, type_byte, prefix) => {
-            Err(Error::StructuralKindTypeByteCollision(type_byte))
-        }
+        Some(existing) if !slot_matches(&existing, type_byte, prefix) => Err(Error::Registry(
+            RegistryError::StructuralKindTypeByteCollision(type_byte),
+        )),
         _ => Ok(()),
     }
 }

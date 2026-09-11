@@ -7,6 +7,7 @@ use loro::{LoroDoc, LoroMap};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
+use crate::error::RegistryError;
 use crate::sync::loro_support::{map_get_bytes, tombstone_values_for_id};
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op, quarantine_rejected_op_in_txn,
@@ -98,7 +99,9 @@ pub(super) fn materialize_tombstones_from_delta(
                     && let Some(entity_blob) = map_get_bytes(&entities_map, &id.to_hex())
                     && let Some(header) = admitted_concurrent_delete_protected_header(&entity_blob)
                 {
-                    let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
+                    let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                        header.entity_type,
+                    ));
                     if let Err(quarantine_err) = quarantine_rejected_op(
                         vault,
                         window_key,
@@ -399,7 +402,7 @@ pub(super) fn quarantine_and_neutralize_protected_tombstone_in_txn(
     id: &EntityId,
     entity_type: u8,
 ) -> Result<()> {
-    let rejection = Error::MaintenanceKindNotWritable(entity_type);
+    let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(entity_type));
     let crdt_key = id.to_hex();
     for tombstone in tombstone_values_for_id(tombstones_map, id) {
         quarantine_rejected_op_in_txn(

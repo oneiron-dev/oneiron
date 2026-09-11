@@ -1,7 +1,7 @@
 //! Facet-of validation, taint guard, session apply and live-overlay exclusion.
 
 use super::*;
-use crate::error::OffRecordError;
+use crate::error::{OffRecordError, RegistryError};
 
 /// The gate preflight runs the entity write door's verdict in its OWN
 /// transaction, so a standalone claim preflight cannot leave a decision receipt
@@ -144,9 +144,9 @@ fn assert_invalid_facet_of_edge(
     context: &str,
 ) {
     match err {
-        Error::InvalidFacetOfEdge {
+        Error::Registry(RegistryError::InvalidFacetOfEdge {
             src_type, tgt_type, ..
-        } => {
+        }) => {
             assert_eq!(*src_type, expected_src_type, "{context}: src type");
             assert_eq!(*tgt_type, expected_tgt_type, "{context}: tgt type");
         }

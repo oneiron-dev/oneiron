@@ -120,7 +120,7 @@ impl Vault {
     ///
     /// `FacetOf` edges pass the commit-time type table (ONE-1645): the source
     /// must be an existing CLAIM, TURN, or EVENT and the target an existing
-    /// FACET, or the commit fails closed with [`Error::InvalidFacetOfEdge`]
+    /// FACET, or the commit fails closed with [`RegistryError::InvalidFacetOfEdge`](crate::error::RegistryError::InvalidFacetOfEdge)
     /// and writes nothing. Every other edge kind is unaffected.
     ///
     /// A stamp from ANY admitted source type can move a disclosure decision.
@@ -171,7 +171,7 @@ impl Vault {
     ///
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist
     /// (the setter never upserts); [`Error::InvalidEdgeWeight`] outside the
-    /// contract \[0, 1\]; [`Error::ReservedEdgeKind`] on the redirect-shell
+    /// contract \[0, 1\]; [`RegistryError::ReservedEdgeKind`](crate::error::RegistryError::ReservedEdgeKind) on the redirect-shell
     /// kinds (`merged_into` / `split_into`) — a weight rewrite is a
     /// topology-effect mutation (PPR drops a zero-weight shell edge), so
     /// shell edges move only through the identity-topology door
@@ -202,7 +202,7 @@ impl Vault {
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist;
     /// [`Error::InvalidVad`] on non-finite/out-of-range components; a typed
     /// rejection on structural 12-byte kinds (the contract layout table —
-    /// structural edges carry no VAD); [`Error::ReservedEdgeKind`] on the
+    /// structural edges carry no VAD); [`RegistryError::ReservedEdgeKind`](crate::error::RegistryError::ReservedEdgeKind) on the
     /// redirect-shell kinds (`merged_into` / `split_into`), same as every
     /// other public edge write (ARCH-0055).
     pub fn set_edge_vad(

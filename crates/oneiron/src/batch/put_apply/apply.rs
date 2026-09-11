@@ -20,6 +20,7 @@ use super::{
 use crate::claim::ClaimApprovalStatus;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
+use crate::error::RegistryError;
 use crate::error::{Error, ErrorKind, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
@@ -516,11 +517,11 @@ pub(in crate::batch) fn apply_put(
                 None
             };
         if old_type != entity_type {
-            return Err(Error::EntityTypeImmutable {
+            return Err(Error::Registry(RegistryError::EntityTypeImmutable {
                 id,
                 existing: old_type,
                 attempted: entity_type,
-            });
+            }));
         }
         // ONE-1686: MESSAGE identity is an idempotency key, not an update
         // handle. Executor retries deliberately re-PUT the same deterministic

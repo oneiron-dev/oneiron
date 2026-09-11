@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::RegistryError;
 use crate::skill::SkillGovernanceTier;
 use crate::skill_optimize::{SkillTierVerdict, skill_governance_tier};
 
@@ -1968,7 +1969,9 @@ fn content_anchor_is_delete_protected_on_every_door() -> Result<()> {
     assert!(
         matches!(
             vault.delete_entity(&anchor_id),
-            Err(Error::MaintenanceKindNotWritable(_))
+            Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                _
+            )))
         ),
         "targeted delete of the content anchor must be refused"
     );
@@ -1982,7 +1985,9 @@ fn content_anchor_is_delete_protected_on_every_door() -> Result<()> {
     assert!(
         matches!(
             vault.batch().delete(&anchor_id).commit(),
-            Err(Error::MaintenanceKindNotWritable(_))
+            Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                _
+            )))
         ),
         "batch delete of the content anchor must be refused"
     );

@@ -110,7 +110,7 @@ fn commitment_terminal_learned_at(vault: &Vault, id: &EntityId) -> Result<u64> {
 /// did not cause it to exist.
 ///
 /// This is the validated door those reserved kinds exist for. Public raw edge
-/// builders reject both with [`Error::ReservedEdgeKind`], so nothing else can
+/// builders reject both with [`RegistryError::ReservedEdgeKind`](crate::error::RegistryError::ReservedEdgeKind), so nothing else can
 /// forge a link or write one direction without the other. It takes no
 /// [`WriteEnvelope`] because edge rows carry no envelope evidence — it sits in
 /// the same ungated `&Vault` trust class as every other commitment verb — and

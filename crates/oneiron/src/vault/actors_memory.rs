@@ -4,6 +4,7 @@ use super::Vault;
 use super::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
+use crate::error::RegistryError;
 use crate::error::{Error, Result};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{StructuralKindRegistration, TypeByteZone};
@@ -175,13 +176,13 @@ impl Vault {
                 // `From<Error>` mapping renders it — no bespoke code is minted
                 // for a case the vocabulary already spells.
                 Some(existing) => {
-                    return Err(crate::memory::MemoryError::from(
-                        Error::EntityTypeImmutable {
+                    return Err(crate::memory::MemoryError::from(Error::Registry(
+                        RegistryError::EntityTypeImmutable {
                             id: owner,
                             existing,
                             attempted: crate::registry::ENTITY_TYPE_PERSON,
                         },
-                    ));
+                    )));
                 }
                 None => {}
             }

@@ -234,7 +234,7 @@ pub(super) struct EntitySelectorDecision {
 /// [`admitted_endpoint_type`] uses at the admission boundary:
 ///
 /// 1. the LOCAL vault row — entity type is immutable per id
-///    ([`Error::EntityTypeImmutable`]), so a stored type is PERMANENT truth
+///    ([`RegistryError::EntityTypeImmutable`](crate::error::RegistryError::EntityTypeImmutable)), so a stored type is PERMANENT truth
 ///    about that id, and the quarantine door that enforces it leaves LMDB
 ///    holding the first-writer type;
 /// 2. else the document blob.
@@ -337,7 +337,7 @@ pub(super) fn facet_scope_by_source(
 /// stored row winning OUTRIGHT when the two facts disagree:
 ///
 /// 1. the LOCAL vault row — entity type is immutable per id
-///    ([`Error::EntityTypeImmutable`]), so a stored type is PERMANENT truth
+///    ([`RegistryError::EntityTypeImmutable`](crate::error::RegistryError::EntityTypeImmutable)), so a stored type is PERMANENT truth
 ///    and the quarantine door that enforces it leaves LMDB holding the
 ///    first-writer type. When it exists, nothing else is consulted;
 /// 2. else the document blob — the not-yet-materialized endpoint of an honest

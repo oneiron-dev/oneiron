@@ -1,6 +1,7 @@
 //! Habit check-in rules and derived streak counters.
 
 use super::*;
+use crate::error::RegistryError;
 
 #[test]
 fn checkin_on_non_habit_rejected() -> Result<()> {
@@ -144,10 +145,10 @@ fn habit_with_checkins_cannot_change_role() -> Result<()> {
     // under the coarse kind sync replay classifies on.
     assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
     match err {
-        Error::TaskChildOfNesting {
+        Error::Registry(RegistryError::TaskChildOfNesting {
             parent_role,
             child_role,
-        } => {
+        }) => {
             assert_eq!(parent_role, TaskRole::Task.role_byte());
             assert_eq!(child_role, TaskRole::HabitCheckin.role_byte());
         }

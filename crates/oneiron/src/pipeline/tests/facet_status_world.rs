@@ -5,6 +5,7 @@ use super::*;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::error::RegistryError;
 
 /// AC 3 — *(no facet)* mode regression pin: a query that never calls
 /// `.facet()` returns every candidate, other-facet claims included,
@@ -524,7 +525,7 @@ fn claim_status_gate_covers_all_five_channels() -> Result<()> {
 
 /// Blocker 1 fail-closed: the active facet must resolve to an EXISTING
 /// FACET entity. A bogus id and a wrong-type (TURN) id both reject with
-/// the typed [`Error::InvalidFacet`] carrying what was actually found; a
+/// the typed [`RegistryError::InvalidFacet`](crate::error::RegistryError::InvalidFacet) carrying what was actually found; a
 /// real FACET passes. A wrong impl that stores arbitrary facet bytes and
 /// strict-drops every scoped claim fails the wrong-type leg.
 #[test]
@@ -541,7 +542,10 @@ fn facet_query_rejects_invalid_active_facet_typed() -> Result<()> {
         .run()
         .expect_err("a bogus active facet must be rejected");
     assert!(
-        matches!(err, Error::InvalidFacet { found: None, .. }),
+        matches!(
+            err,
+            Error::Registry(RegistryError::InvalidFacet { found: None, .. })
+        ),
         "expected InvalidFacet {{ found: None }}, got {err:?}"
     );
 
@@ -555,7 +559,7 @@ fn facet_query_rejects_invalid_active_facet_typed() -> Result<()> {
         .run()
         .expect_err("a non-FACET active facet must be rejected");
     assert!(
-        matches!(err, Error::InvalidFacet { found: Some(t), .. } if t == ENTITY_TYPE_TURN),
+        matches!(err, Error::Registry(RegistryError::InvalidFacet { found: Some(t), .. }) if t == ENTITY_TYPE_TURN),
         "expected InvalidFacet {{ found: Some(TURN) }}, got {err:?}"
     );
 

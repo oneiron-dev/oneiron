@@ -9,6 +9,7 @@ use crate::edge::{
     validate_edge_weight,
 };
 use crate::entity_id::EntityId;
+use crate::error::RegistryError;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
@@ -208,7 +209,7 @@ pub(super) fn apply_edge_with_created_at(
 ///
 /// ONE-1608 blocks door, apply side (ARCH-0055 shape, unconditional): an
 /// `EdgeKind::Blocks` removal is refused outright with the typed
-/// [`Error::ReservedEdgeKind`]. Retirement of a `blocks` row is reserved to
+/// [`RegistryError::ReservedEdgeKind`](crate::error::RegistryError::ReservedEdgeKind). Retirement of a `blocks` row is reserved to
 /// `code_memory::remove_blocks_edge`, which authorizes the actor and then
 /// deletes both index rows itself inside its own transaction — it never
 /// routes through here, so this arm has no legitimate caller.
@@ -229,7 +230,7 @@ pub(super) fn apply_delete_edge(
     tgt: EntityId,
 ) -> Result<bool> {
     if kind == EdgeKind::Blocks {
-        return Err(Error::ReservedEdgeKind("blocks"));
+        return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);

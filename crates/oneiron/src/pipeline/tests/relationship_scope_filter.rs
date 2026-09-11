@@ -1,6 +1,7 @@
 //! Relationship-scope filter, demotion, and facet/world conjunction.
 
 use super::*;
+use crate::error::RegistryError;
 
 /// The frozen run clock every relationship-scope test queries under,
 /// equal to the `learned_at` of every fixture row in this module.
@@ -464,7 +465,10 @@ fn relationship_query_rejects_invalid_active_relationship_typed() -> Result<()> 
         .run()
         .expect_err("a missing active relationship must fail closed");
     assert!(
-        matches!(err, Error::InvalidRelationship { found: None, .. }),
+        matches!(
+            err,
+            Error::Registry(RegistryError::InvalidRelationship { found: None, .. })
+        ),
         "expected InvalidRelationship {{ found: None }}, got {err:?}"
     );
 
@@ -477,7 +481,7 @@ fn relationship_query_rejects_invalid_active_relationship_typed() -> Result<()> 
         .run()
         .expect_err("a TURN cannot be the active relationship");
     assert!(
-        matches!(err, Error::InvalidRelationship { found: Some(t), .. } if t == ENTITY_TYPE_TURN),
+        matches!(err, Error::Registry(RegistryError::InvalidRelationship { found: Some(t), .. }) if t == ENTITY_TYPE_TURN),
         "expected InvalidRelationship {{ found: Some(TURN) }}, got {err:?}"
     );
 

@@ -37,6 +37,7 @@ fn test_config() -> VaultConfig {
     }
 }
 
+use crate::error::RegistryError;
 use crate::error::StoreError;
 use crate::test_util::entity;
 
@@ -68,7 +69,9 @@ fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
         .expect_err("public hard delete must reject the default policy manifest");
     assert_matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_POLICY_MANIFEST
+        ))
     );
     assert!(vault.get_raw(&id)?.is_some());
 
@@ -79,7 +82,9 @@ fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
         .expect_err("batch delete must reject the default policy manifest");
     assert_matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_POLICY_MANIFEST
+        ))
     );
     assert!(vault.get_raw(&id)?.is_some());
     Ok(())

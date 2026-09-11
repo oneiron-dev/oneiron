@@ -1,6 +1,7 @@
 //! Child-of tree shape and task-role pair validation.
 
 use super::*;
+use crate::error::RegistryError;
 
 /// Stages a TASK row carrying `role`.
 fn put_task_role<'a>(
@@ -92,7 +93,7 @@ fn cycle_reject() -> Result<()> {
         .edge(&goal, EdgeKind::ChildOf, &task, 1.0)
         .commit()
         .expect_err("an ancestor-cycle ChildOf commit must be rejected");
-    assert_matches!(err, Error::CycleDetected);
+    assert_matches!(err, Error::Registry(RegistryError::CycleDetected));
     assert!(!vault.edge_exists(&goal, EdgeKind::ChildOf, &task)?);
 
     // Self-parent is the degenerate case and reports the same typed error.
@@ -101,7 +102,7 @@ fn cycle_reject() -> Result<()> {
         .edge(&goal, EdgeKind::ChildOf, &goal, 1.0)
         .commit()
         .expect_err("a self-parent ChildOf commit must be rejected");
-    assert_matches!(self_err, Error::CycleDetected);
+    assert_matches!(self_err, Error::Registry(RegistryError::CycleDetected));
     assert!(!vault.edge_exists(&goal, EdgeKind::ChildOf, &goal)?);
 
     // Nothing from either rejected batch is visible.
@@ -125,7 +126,9 @@ fn dangling_parent_reject() -> Result<()> {
     // the caller learns WHICH parent went missing.
     assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
     match err {
-        Error::ChildOfParentMissing { parent } => assert_eq!(parent, absent),
+        Error::Registry(RegistryError::ChildOfParentMissing { parent }) => {
+            assert_eq!(parent, absent)
+        }
         other => panic!("expected a dangling-parent rejection, got {other:?}"),
     }
     assert!(!vault.edge_exists(&task, EdgeKind::ChildOf, &absent)?);
@@ -163,7 +166,9 @@ fn child_of_existence_reads_final_batch_state() -> Result<()> {
         .commit()
         .expect_err("a parent deleted by this batch cannot receive a new child");
     match err {
-        Error::ChildOfParentMissing { parent } => assert_eq!(parent, doomed_parent),
+        Error::Registry(RegistryError::ChildOfParentMissing { parent }) => {
+            assert_eq!(parent, doomed_parent)
+        }
         other => panic!("expected a dangling-parent rejection, got {other:?}"),
     }
     assert!(vault.entity_exists(&doomed_parent)?, "the batch aborted");
@@ -205,10 +210,10 @@ fn role_only_put_cannot_persist_a_forbidden_pair() -> Result<()> {
         .expect_err("a child role flip must be judged against the live edge");
     assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
     match err {
-        Error::TaskChildOfNesting {
+        Error::Registry(RegistryError::TaskChildOfNesting {
             parent_role,
             child_role,
-        } => {
+        }) => {
             assert_eq!(parent_role, TaskRole::Goal.role_byte());
             assert_eq!(child_role, TaskRole::Task.role_byte());
         }
@@ -230,10 +235,10 @@ fn role_only_put_cannot_persist_a_forbidden_pair() -> Result<()> {
         .commit()
         .expect_err("a parent role flip must be judged against its live children");
     match err {
-        Error::TaskChildOfNesting {
+        Error::Registry(RegistryError::TaskChildOfNesting {
             parent_role,
             child_role,
-        } => {
+        }) => {
             assert_eq!(parent_role, TaskRole::Goal.role_byte());
             assert_eq!(child_role, TaskRole::Task.role_byte());
         }
@@ -315,10 +320,10 @@ fn task_child_of_role_matrix_rejects_every_pair_outside_the_table() -> Result<()
             let err = result.expect_err(&format!("{parent_role:?} must not parent {child_role:?}"));
             assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
             match err {
-                Error::TaskChildOfNesting {
+                Error::Registry(RegistryError::TaskChildOfNesting {
                     parent_role: got_parent,
                     child_role: got_child,
-                } => {
+                }) => {
                     assert_eq!(got_parent, parent_role.role_byte());
                     assert_eq!(got_child, child_role.role_byte());
                 }
@@ -339,10 +344,10 @@ fn task_child_of_role_matrix_rejects_every_pair_outside_the_table() -> Result<()
         .expect_err("a TASK child under a non-TASK parent must be rejected");
     assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
     match err {
-        Error::TaskChildOfParentNotTask {
+        Error::Registry(RegistryError::TaskChildOfParentNotTask {
             child_role,
             parent_entity_type,
-        } => {
+        }) => {
             assert_eq!(child_role, TaskRole::Task.role_byte());
             assert_eq!(parent_entity_type, ENTITY_TYPE_PERSON);
         }
@@ -372,14 +377,17 @@ fn non_task_child_of_keeps_tree_guarantees_without_role_rules() -> Result<()> {
         .edge(&leaf, EdgeKind::ChildOf, &second_parent, 1.0)
         .commit()
         .expect_err("a non-TASK child still gets one parent");
-    assert_matches!(cardinality_err, Error::ChildOfCardinality);
+    assert_matches!(
+        cardinality_err,
+        Error::Registry(RegistryError::ChildOfCardinality)
+    );
 
     let cycle_err = vault
         .batch()
         .edge(&root, EdgeKind::ChildOf, &leaf, 1.0)
         .commit()
         .expect_err("a non-TASK cycle is still rejected");
-    assert_matches!(cycle_err, Error::CycleDetected);
+    assert_matches!(cycle_err, Error::Registry(RegistryError::CycleDetected));
 
     // And a missing parent is now rejected here too.
     let absent = EntityId::now();
@@ -389,7 +397,9 @@ fn non_task_child_of_keeps_tree_guarantees_without_role_rules() -> Result<()> {
         .commit()
         .expect_err("a non-TASK dangling parent is rejected");
     match dangling_err {
-        Error::ChildOfParentMissing { parent } => assert_eq!(parent, absent),
+        Error::Registry(RegistryError::ChildOfParentMissing { parent }) => {
+            assert_eq!(parent, absent)
+        }
         other => panic!("expected a dangling-parent rejection, got {other:?}"),
     }
 

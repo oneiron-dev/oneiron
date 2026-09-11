@@ -599,7 +599,9 @@ fn federated_admission_rejects_maintenance_band_non_claim_entities() {
     .expect_err("federated maintenance-band non-claims must fail closed");
     assert!(matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_POLICY_MANIFEST
+        ))
     ));
 }
 
@@ -630,7 +632,9 @@ fn federated_admission_rejects_classification_routed_maintenance_kinds() {
     .expect_err("classification-routed maintenance kinds must fail closed");
     assert!(matches!(
         err,
-        Error::MaintenanceKindNotWritable(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+        ))
     ));
 }
 
@@ -654,7 +658,10 @@ fn federated_admission_rejects_reserved_edge_kinds() {
             FederationAdmissionRole::Guest,
         )
         .expect_err("reserved-kind federated edges must fail closed");
-        assert!(matches!(err, Error::ReservedEdgeKind(_)));
+        assert!(matches!(
+            err,
+            Error::Registry(RegistryError::ReservedEdgeKind(_))
+        ));
     }
 }
 
@@ -2074,7 +2081,7 @@ fn selector_target_must_resolve_to_a_facet_before_any_scope_is_honored() {
 /// SOURCE TRUTH IS NOT THE CRDT WINNER — the LWW forgery a document-blob-first
 /// mirror hands a peer for free.
 ///
-/// Entity type is IMMUTABLE per id (`Error::EntityTypeImmutable`). The write
+/// Entity type is IMMUTABLE per id (`crate::error::RegistryError::EntityTypeImmutable`). The write
 /// door enforces it by QUARANTINING the re-type, which means LMDB keeps the
 /// FIRST-writer type — but the Loro map is last-write-wins and keeps the
 /// HIGHER-LAMPORT blob. The two therefore disagree by construction after a
@@ -3171,6 +3178,7 @@ use crate::authority::{
     AuthorityEntryHash, AuthorityVaultId, FederationLifecycleAction, FederationLifecycleKind,
     authority_entry_hash, federation_scope_digest, sign_federation_pact_gesture,
 };
+use crate::error::RegistryError;
 use crate::error::SyncError;
 use crate::federation::{
     FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,

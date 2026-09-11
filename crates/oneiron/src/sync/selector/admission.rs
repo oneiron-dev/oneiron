@@ -25,7 +25,7 @@ use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
 use super::edge::copy_admitted_edges;
-use crate::error::SyncError;
+use crate::error::{RegistryError, SyncError};
 
 /// Role carried by a member/guest federation import path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -278,7 +278,9 @@ fn admit_federated_entity_blob(
             |entry| entry.classification == EntityClassification::Maintenance,
         );
         if engine_authored {
-            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+            return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                header.entity_type,
+            )));
         }
         validate_admitted_replicated_body(
             &id,
