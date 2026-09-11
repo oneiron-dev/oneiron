@@ -15,6 +15,7 @@ use super::types::{
     StoredLocalRegistration, VaultInstant,
 };
 use crate::entity_id::EntityId;
+use crate::error::SecretError;
 use crate::error::{Error, Result};
 use crate::secret_custody::{
     CustodyTier, SecretCustodyAdmission, SecretCustodyFloor, read_secret_custody_admission_in_txn,
@@ -61,9 +62,9 @@ pub(super) fn write_materialization_receipt_in_txn(
 ) -> Result<()> {
     #[cfg(test)]
     if receipt_fault_hook::take_receipt_write_failure() {
-        return Err(Error::SecretLeaseReceiptWriteFailed(
+        return Err(Error::Secret(SecretError::SecretLeaseReceiptWriteFailed(
             "injected receipt-write failure",
-        ));
+        )));
     }
     let body = encode_materialization_receipt_body(receipt)?;
     store
@@ -195,10 +196,10 @@ pub(crate) fn teardown_local_registration_in_txn(
     Ok(())
 }
 
-/// Loads a lease for use: unknown id ⇒ [`Error::SecretLeaseNotFound`];
+/// Loads a lease for use: unknown id ⇒ [`SecretError::SecretLeaseNotFound`](crate::error::SecretError::SecretLeaseNotFound);
 /// a past-due `Active` lease is expired in place (lazy expiry, its T2 file
 /// torn down with it) and any non-`Active` status denies with
-/// [`Error::SecretLeaseNotActive`]. A lease is expired from `expires_at`
+/// [`SecretError::SecretLeaseNotActive`](crate::error::SecretError::SecretLeaseNotActive). A lease is expired from `expires_at`
 /// on: `now >= expires_at`.
 pub(super) fn read_live_lease_in_txn(
     store: &Store,
@@ -207,9 +208,9 @@ pub(super) fn read_live_lease_in_txn(
     now: u64,
 ) -> Result<SecretLease> {
     let Some(mut lease) = read_secret_lease_in_txn(store, wtxn, lease_id)? else {
-        return Err(Error::SecretLeaseNotFound {
+        return Err(Error::Secret(SecretError::SecretLeaseNotFound {
             lease_id: *lease_id,
-        });
+        }));
     };
     if lease.status == SecretLeaseStatus::Active && now >= lease.expires_at {
         lease.status = SecretLeaseStatus::Expired;
@@ -217,10 +218,10 @@ pub(super) fn read_live_lease_in_txn(
         teardown_local_registration_in_txn(store, wtxn, lease_id, now)?;
     }
     if lease.status != SecretLeaseStatus::Active {
-        return Err(Error::SecretLeaseNotActive {
+        return Err(Error::Secret(SecretError::SecretLeaseNotActive {
             lease_id: lease.lease_id,
             status: lease.status,
-        });
+        }));
     }
     Ok(lease)
 }
@@ -235,9 +236,9 @@ pub(super) fn read_record_for_ref_in_txn(
     secret_ref: &str,
 ) -> Result<(EntityId, SecretCustodyAdmission)> {
     let id = resolve_secret_ref_in_txn(store, txn, secret_ref)?.ok_or_else(|| {
-        Error::SecretRefNotFound {
+        Error::Secret(SecretError::SecretRefNotFound {
             name: secret_ref.to_owned(),
-        }
+        })
     })?;
     let rec = read_secret_custody_admission_in_txn(store, txn, &id)?
         .ok_or(Error::CorruptedIndex("secret custody record for live name"))?;

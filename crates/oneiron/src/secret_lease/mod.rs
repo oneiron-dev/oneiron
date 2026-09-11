@@ -27,12 +27,12 @@
 //! A request is admitted iff ALL of:
 //!
 //! 1. the record has a [`SecretBinding`] for `(secret_ref, effector)` —
-//!    otherwise [`Error::SecretBindingDenied`] (ONE-1919's binding
+//!    otherwise [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied) (ONE-1919's binding
 //!    discipline, regression-checked here);
 //! 2. `requested_tier <= floor.band_for(class).max` against the live vault
-//!    floor resolved per ONE-1919 — otherwise [`Error::SecretTierDenied`];
+//!    floor resolved per ONE-1919 — otherwise [`SecretError::SecretTierDenied`](crate::error::SecretError::SecretTierDenied);
 //! 3. `requested_tier <= binding.tier_ceiling` (exposure order
-//!    `T0 < T1 < T2`) — otherwise [`Error::SecretTierDenied`].
+//!    `T0 < T1 < T2`) — otherwise [`SecretError::SecretTierDenied`](crate::error::SecretError::SecretTierDenied).
 //!
 //! No minimum-exposure rule exists anywhere: floors and ceilings only ever
 //! CAP exposure. ONE-1919's keystone makes the band's `min` informational

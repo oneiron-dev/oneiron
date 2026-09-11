@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 
 // ---------------------------------------------------------------------------
 // T2 file lifecycle (SOL-1920-03)
@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 /// regular file already at the target is touched only under `replace` —
 /// same-path re-materialization, where this lease's live registration row
 /// already covers exactly this path. Anything else denies typed
-/// ([`Error::SecretLeasePathRefused`]). Ancestors are checked at policy time;
+/// ([`SecretError::SecretLeasePathRefused`](crate::error::SecretError::SecretLeasePathRefused)). Ancestors are checked at policy time;
 /// an ancestor swap between this check and open is the same race class as the
 /// documented leaf check-to-open race. Race-free traversal needs openat2 or
 /// dirfd handling and is intentionally out of scope here.
@@ -23,10 +23,10 @@ fn check_secret_file_policy(target_path: &Path, replace: bool) -> Result<()> {
     for ancestor in target_path.ancestors().skip(1) {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(Error::SecretLeasePathRefused {
+                return Err(Error::Secret(SecretError::SecretLeasePathRefused {
                     path: ancestor.display().to_string(),
                     reason: "ancestor is a symlink (the vault never follows)",
-                });
+                }));
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -41,22 +41,22 @@ fn check_secret_file_policy(target_path: &Path, replace: bool) -> Result<()> {
     };
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
-        return Err(Error::SecretLeasePathRefused {
+        return Err(Error::Secret(SecretError::SecretLeasePathRefused {
             path: target_path.display().to_string(),
             reason: "target is a symlink (the vault never follows)",
-        });
+        }));
     }
     if !file_type.is_file() {
-        return Err(Error::SecretLeasePathRefused {
+        return Err(Error::Secret(SecretError::SecretLeasePathRefused {
             path: target_path.display().to_string(),
             reason: "target exists and is not a regular file",
-        });
+        }));
     }
     if !replace {
-        return Err(Error::SecretLeasePathRefused {
+        return Err(Error::Secret(SecretError::SecretLeasePathRefused {
             path: target_path.display().to_string(),
             reason: "target file exists with no live registration under this lease",
-        });
+        }));
     }
     Ok(())
 }

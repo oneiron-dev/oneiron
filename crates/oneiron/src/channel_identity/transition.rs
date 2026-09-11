@@ -106,8 +106,8 @@ impl IdentityTransition<'_> {
 /// # Errors
 ///
 /// [`Error::InvalidChannelIdentityBody`] for a delegated birth outside
-/// `Requested` or a step that moves the key; [`Error::SecretRefNotFound`] /
-/// [`Error::SecretCustodyNotActive`] / [`Error::SecretBindingDenied`] when a
+/// `Requested` or a step that moves the key; [`SecretError::SecretRefNotFound`](crate::error::SecretError::SecretRefNotFound) /
+/// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive) / [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied) when a
 /// live delegated row cannot re-prove custody for its own mailbox; and
 /// [`Error::ChannelIdentityAlreadyExists`] when the write would put a second
 /// occupant on a key.

@@ -78,7 +78,7 @@ pub trait IcsHttpTransport: Send + Sync {
 
 /// The production fetcher: SECRET custody resolution plus door-scoped URL
 /// injection. The value read is binding-enforced
-/// (`Error::SecretBindingDenied` without a `read` grant for `effector`), the
+/// (`crate::error::SecretError::SecretBindingDenied` without a `read` grant for `effector`), the
 /// URL is consumed inside the transport call, and every error string the
 /// door emits is scrubbed of it.
 pub struct CustodyDoorIcsFeedFetcher<'a, T> {

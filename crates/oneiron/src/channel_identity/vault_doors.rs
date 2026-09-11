@@ -83,8 +83,8 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::ChannelIdentityAlreadyExists`] when `id` is taken or the mailbox
-    /// already has an occupant; [`Error::SecretRefNotFound`],
-    /// [`Error::SecretCustodyNotActive`] or [`Error::SecretBindingDenied`] when
+    /// already has an occupant; [`SecretError::SecretRefNotFound`](crate::error::SecretError::SecretRefNotFound),
+    /// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive) or [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied) when
     /// the named custody record is missing, inactive, unbound for the channel's
     /// effector, or does not name this mailbox as its subject; and
     /// [`Error::InvalidChannelIdentityBody`] when the resulting row fails

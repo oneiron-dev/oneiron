@@ -12,6 +12,7 @@ use std::sync::atomic::Ordering;
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::config::VaultConfig;
+use crate::error::SecretError;
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_custody::{
     SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyRecord, TierBand,
@@ -171,7 +172,10 @@ fn tier_matrix_cross_vault_admits_t0_only() {
     for requested in [CustodyTier::T1Leased, CustodyTier::T2LocalRegistered] {
         let err = tier_admission(CustodyClass::CrossVault, requested, &binding, &floor)
             .expect_err("above the cross-vault floor band denies");
-        assert!(matches!(err, Error::SecretTierDenied { .. }), "got {err:?}");
+        assert!(
+            matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
+            "got {err:?}"
+        );
     }
 }
 
@@ -193,7 +197,10 @@ fn tier_matrix_portable_admits_up_to_binding_ceiling() {
         &floor,
     )
     .expect_err("above the binding ceiling denies");
-    assert!(matches!(err, Error::SecretTierDenied { .. }), "got {err:?}");
+    assert!(
+        matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
+        "got {err:?}"
+    );
 }
 
 #[test]
@@ -230,11 +237,11 @@ fn tier_matrix_request_above_binding_ceiling_denies() {
     )
     .expect_err("T1 request against a T0 ceiling denies");
     match err {
-        Error::SecretTierDenied {
+        Error::Secret(SecretError::SecretTierDenied {
             requested,
             binding_ceiling,
             ..
-        } => {
+        }) => {
             assert_eq!(requested, CustodyTier::T1Leased);
             assert_eq!(binding_ceiling, CustodyTier::T0Doored);
         }
@@ -260,7 +267,10 @@ fn tier_matrix_request_outside_floor_band_denies() {
         &floor,
     )
     .expect_err("above the floor band max denies");
-    assert!(matches!(err, Error::SecretTierDenied { .. }), "got {err:?}");
+    assert!(
+        matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
+        "got {err:?}"
+    );
 }
 
 #[test]
@@ -314,7 +324,10 @@ fn tier_matrix_below_band_min_never_forces_upward() {
         &floor,
     )
     .expect_err("the binding ceiling still caps");
-    assert!(matches!(err, Error::SecretTierDenied { .. }), "got {err:?}");
+    assert!(
+        matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
+        "got {err:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -423,7 +436,10 @@ fn door_injection_is_the_only_cross_vault_rung() {
     let err = vault
         .materialize_secret_lease("door-only", EFFECTOR, 3600)
         .expect_err("cross-vault denies T1");
-    assert!(matches!(err, Error::SecretTierDenied { .. }), "got {err:?}");
+    assert!(
+        matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
+        "got {err:?}"
+    );
 }
 
 #[test]
@@ -444,7 +460,7 @@ fn missing_binding_denies_at_the_door() {
         .inject_secret_at_door("scoped", EFFECTOR, &mut |_value| Ok(()))
         .expect_err("no binding for (secret_ref, effector) denies");
     assert!(
-        matches!(err, Error::SecretBindingDenied { .. }),
+        matches!(err, Error::Secret(SecretError::SecretBindingDenied { .. })),
         "got {err:?}"
     );
 }
@@ -472,7 +488,7 @@ fn binding_without_read_scope_denies_the_value_read() {
         .inject_secret_at_door("no-read-scope", EFFECTOR, &mut |_value| Ok(()))
         .expect_err("an empty scope list grants no read");
     assert!(
-        matches!(err, Error::SecretBindingDenied { .. }),
+        matches!(err, Error::Secret(SecretError::SecretBindingDenied { .. })),
         "got {err:?}"
     );
 }
@@ -484,7 +500,7 @@ fn unknown_secret_ref_denies() {
         .inject_secret_at_door("absent", EFFECTOR, &mut |_value| Ok(()))
         .expect_err("unknown ref denies");
     assert!(
-        matches!(err, Error::SecretRefNotFound { .. }),
+        matches!(err, Error::Secret(SecretError::SecretRefNotFound { .. })),
         "got {err:?}"
     );
 }
@@ -710,7 +726,10 @@ fn receipt_write_failure_leaves_no_lease_row_and_no_value() {
         .materialize_secret_lease("fault", EFFECTOR, 3600)
         .expect_err("the injected receipt-write failure is typed");
     assert!(
-        matches!(err, Error::SecretLeaseReceiptWriteFailed(_)),
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeaseReceiptWriteFailed(_))
+        ),
         "got {err:?}"
     );
 
@@ -764,7 +783,7 @@ fn teardown_revoke_flips_status_and_rematerialize_mints_fresh_id() {
         .revoke_secret_lease(&EntityId::now(), 1_700_000_100)
         .expect_err("unknown lease denies");
     assert!(
-        matches!(err, Error::SecretLeaseNotFound { .. }),
+        matches!(err, Error::Secret(SecretError::SecretLeaseNotFound { .. })),
         "got {err:?}"
     );
 }
@@ -898,7 +917,10 @@ fn register_local_denies_an_undeclared_path() {
         .register_secret_local(&materialization.lease.lease_id, &stray, "project-alpha")
         .expect_err("an undeclared path denies");
     assert!(
-        matches!(err, Error::SecretLeasePathNotDeclared { .. }),
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeasePathNotDeclared { .. })
+        ),
         "got {err:?}"
     );
     assert!(!stray.exists(), "no file written on deny");
@@ -917,7 +939,7 @@ fn register_local_requires_a_live_lease() {
         .register_secret_local(&EntityId::now(), &path, "project-alpha")
         .expect_err("unknown lease denies");
     assert!(
-        matches!(err, Error::SecretLeaseNotFound { .. }),
+        matches!(err, Error::Secret(SecretError::SecretLeaseNotFound { .. })),
         "got {err:?}"
     );
 
@@ -934,10 +956,10 @@ fn register_local_requires_a_live_lease() {
     assert!(
         matches!(
             err,
-            Error::SecretLeaseNotActive {
+            Error::Secret(SecretError::SecretLeaseNotActive {
                 status: SecretLeaseStatus::Revoked,
                 ..
-            }
+            })
         ),
         "got {err:?}"
     );
@@ -952,10 +974,10 @@ fn register_local_requires_a_live_lease() {
     assert!(
         matches!(
             err,
-            Error::SecretLeaseNotActive {
+            Error::Secret(SecretError::SecretLeaseNotActive {
                 status: SecretLeaseStatus::Expired,
                 ..
-            }
+            })
         ),
         "got {err:?}"
     );
@@ -1003,11 +1025,11 @@ fn register_local_second_declared_path_conflicts() {
         .register_secret_local(&lease_id, &path_b, "project-alpha")
         .expect_err("a second declared path under one lease conflicts");
     match err {
-        Error::SecretLeasePathConflict {
+        Error::Secret(SecretError::SecretLeasePathConflict {
             lease_id: conflicted,
             registered_path,
             requested_path,
-        } => {
+        }) => {
             assert_eq!(conflicted, lease_id);
             assert_eq!(registered_path, path_a.display().to_string());
             assert_eq!(requested_path, path_b.display().to_string());
@@ -1048,7 +1070,10 @@ fn register_local_refuses_occupants_the_vault_did_not_create() {
         .register_secret_local(&lease_id, &path, "project-alpha")
         .expect_err("a stray occupant denies");
     assert!(
-        matches!(err, Error::SecretLeasePathRefused { .. }),
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+        ),
         "got {err:?}"
     );
     assert_eq!(
@@ -1068,7 +1093,10 @@ fn register_local_refuses_occupants_the_vault_did_not_create() {
             .register_secret_local(&lease_id, &path, "project-alpha")
             .expect_err("a symlink target denies");
         assert!(
-            matches!(err, Error::SecretLeasePathRefused { .. }),
+            matches!(
+                err,
+                Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            ),
             "got {err:?}"
         );
         assert!(!elsewhere.exists(), "the symlink was never followed");
@@ -1099,7 +1127,10 @@ fn register_local_refuses_symlinked_parent_directory() {
         .register_secret_local(&lease_id, &path, "project-alpha")
         .expect_err("a symlinked parent denies");
     assert!(
-        matches!(err, Error::SecretLeasePathRefused { .. }),
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+        ),
         "got {err:?}"
     );
     assert!(
