@@ -18,6 +18,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{LazyLock, Mutex};
 
@@ -41,6 +42,10 @@ pub(crate) struct TestHooks {
     /// The one-shot sender fired once a headerful delete has proven its header
     /// `Some` and before it takes any write lock.
     after_header_read: Mutex<Option<SyncSender<()>>>,
+    /// How many times the outbound intent ledger has forced an environment
+    /// sync on this vault. The durability fence is what the count proves, so
+    /// the reader wants an exact delta and now gets one.
+    force_sync_calls: AtomicUsize,
 }
 
 impl TestHooks {
@@ -113,6 +118,16 @@ impl TestHooks {
             // so the deleter's header read is provably ordered before the erase.
             let _ = sender.send(());
         }
+    }
+
+    /// Records one forced environment sync on this vault.
+    pub(crate) fn note_force_sync(&self) {
+        self.force_sync_calls.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Forced environment syncs this vault has performed.
+    pub(crate) fn force_sync_calls(&self) -> usize {
+        self.force_sync_calls.load(Ordering::SeqCst)
     }
 }
 
