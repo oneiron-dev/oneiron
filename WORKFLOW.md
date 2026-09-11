@@ -58,7 +58,7 @@ Two commands are current policy but are not yet wired into `scripts/verify.sh`
 
 ```bash
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-cargo nextest run -p oneiron --features sync --profile full
+cargo nextest run -p oneiron --features sync,test-hooks --profile full
 ```
 
 For distributed runs, `scripts/verify-leg.sh` covers only the code-map pin,

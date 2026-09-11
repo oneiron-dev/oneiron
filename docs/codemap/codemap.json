@@ -11446,27 +11446,171 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "CompactionPacketError",
-      "Error",
-      "ErrorKind",
+      "ArtifactError"
+     ],
+     "path": "src/error/artifact.rs",
+     "purpose": "Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimError"
+     ],
+     "path": "src/error/claim.rs",
+     "purpose": "Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeError"
+     ],
+     "path": "src/error/code.rs",
+     "purpose": "Code-domain errors: codebase snapshots and symbol manifests, repo mutations, the micro-VM backend, code…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "GateDenial",
       "GateDenialOutcome",
       "GateDenialReason",
-      "VaultRootEntry",
-      "VaultRootProblem"
+      "GateError"
+     ],
+     "path": "src/error/gate.rs",
+     "purpose": "Gate-domain errors: consent grants and bounds, disclosure scope and clamps, and the Gate write refusal with…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompactionPacketError",
+      "MaintenanceError"
+     ],
+     "path": "src/error/maintenance.rs",
+     "purpose": "Maintenance-domain errors: the compaction handoff refusal with its per-axis taxonomy, and the vault-cleanup…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Error",
+      "ErrorKind"
      ],
      "path": "src/error/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
-      "enum": 7,
-      "fn": 13,
-      "re-export": 2,
-      "struct": 1,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 6,
+      "re-export": 13,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OffRecordError"
+     ],
+     "path": "src/error/off_record.rs",
+     "purpose": "Off-record-domain errors: the kill switch, off-record session lifecycle, the overlay and its leases, and the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecordError"
+     ],
+     "path": "src/error/record.rs",
+     "purpose": "Record-domain errors: body validation and identity-collision refusals for the stored record families —…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RegistryError"
+     ],
+     "path": "src/error/registry.rs",
+     "purpose": "Registry-domain errors: structural-kind registration, entity-type and edge-kind refusals raised by the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RelayError"
+     ],
+     "path": "src/error/relay.rs",
+     "purpose": "Relay-domain errors: relay attestation refusals, vault-receipt trust, and the hosted policy manifest and…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretError"
+     ],
+     "path": "src/error/secret.rs",
+     "purpose": "Secret-domain errors: secret custody, binding and tier refusals, and the secret-lease doors with their…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreError",
+      "VaultRootEntry",
+      "VaultRootProblem"
+     ],
+     "path": "src/error/store.rs",
+     "purpose": "Store-domain errors: the vault-root preflight and the index/analyzer compatibility refusals a store open or…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3
      }
     },
     {
@@ -17737,7 +17881,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AttestedRelayDomain",
@@ -25148,9 +25292,9 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex"
     },
     "error": {
-     "files": 2,
+     "files": 13,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -25855,9 +25999,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 3,
+   "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1475,
+   "source_files": 1486,
    "test_files": 533
   },
   "oneiron-bench": {
