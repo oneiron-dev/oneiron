@@ -22,6 +22,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{LazyLock, Mutex};
 
+#[cfg(feature = "sync")]
+use crate::batch::export::StagedImportHooks;
 use crate::deletion::{DeleteRendezvous, DeleteRendezvousChannels};
 use crate::entity_id::EntityId;
 use crate::store::GateDecisionId;
@@ -42,6 +44,9 @@ pub(crate) struct TestHooks {
     /// The one-shot sender fired once a headerful delete has proven its header
     /// `Some` and before it takes any write lock.
     after_header_read: Mutex<Option<SyncSender<()>>>,
+    /// The staged-foreign-import seams; see [`StagedImportHooks`].
+    #[cfg(feature = "sync")]
+    pub(crate) staged_import: StagedImportHooks,
     /// How many times the outbound intent ledger has forced an environment
     /// sync on this vault. The durability fence is what the count proves, so
     /// the reader wants an exact delta and now gets one.
