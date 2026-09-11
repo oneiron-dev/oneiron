@@ -58,16 +58,14 @@ pub(crate) use receipt::{
 pub(crate) use receipt::{
     RedactionReceiptInput, RedactionScope, encode_redaction_audit_receipt, hex_lower,
 };
-#[cfg(test)]
-pub(crate) use rendezvous::DeleteRendezvous;
 #[cfg(all(test, not(feature = "sync")))]
 pub(crate) use rendezvous::arm_fail_first_txn_pending_tombstone;
+#[cfg(test)]
+pub(crate) use rendezvous::{DeleteRendezvous, DeleteRendezvousChannels};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use rendezvous::{
     arm_fail_after_tombstone_before_purge, arm_fail_live_tombstone_persist,
 };
-#[cfg(test)]
-pub(crate) use rendezvous::{install_after_header_read_signal, install_delete_rendezvous};
 #[cfg(test)]
 pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_SLA_SECS, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY,

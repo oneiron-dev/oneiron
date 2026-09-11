@@ -145,6 +145,7 @@ impl Vault {
                 let history_free = self.resolve_window_snapshot_mode(&window_key, &window.doc)?;
                 self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
                 signal_delete_rendezvous(
+                    self,
                     DeleteRendezvous::BeforeTombstonePublish,
                     id,
                     gate_decision.map(|decision| decision.decision_id),
@@ -208,6 +209,7 @@ impl Vault {
         let history_free = self.resolve_window_snapshot_mode(&window_key, &doc)?;
         self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
         signal_delete_rendezvous(
+            self,
             DeleteRendezvous::BeforeTombstonePublish,
             id,
             gate_decision.map(|decision| decision.decision_id),

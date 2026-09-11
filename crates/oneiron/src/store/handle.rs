@@ -129,6 +129,11 @@ pub struct StoreCore {
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
+    /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
+    /// carries neither the field nor its types: see [`TestHooks`] for why a
+    /// test seam is exactly the state that must not be process-wide.
+    #[cfg(test)]
+    pub(crate) test_hooks: TestHooks,
 }
 
 /// Drop-sensitive singletons of an open vault; exactly one per open path
