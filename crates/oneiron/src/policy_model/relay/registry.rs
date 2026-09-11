@@ -17,6 +17,7 @@ use super::super::planes::{
     POLICY_HOSTED_ROWS_MAX,
 };
 use super::trust::{ConnectionClass, EDGE_SERVICE_IDENTITY_PREFIX};
+use crate::error::RelayError;
 
 /// How long a jurisdiction name may be. Derived, not chosen: it is exactly the
 /// room the gate-notice ledger's body bound leaves once the longest hosted
@@ -73,20 +74,22 @@ fn validate_hosted_legal_policy(
         POLICY_DOCUMENT_MAX_LEN,
     )?;
     if policy.output_contract.is_none() {
-        return Err(Error::RelayHostedLegalPolicyInvalid {
+        return Err(Error::Relay(RelayError::RelayHostedLegalPolicyInvalid {
             service: service.to_owned(),
             field: "output_contract",
             reason: "must be declared so the engine can read the model's answer",
-        });
+        }));
     }
     validate_hosted_rows(service, policy)?;
     compile_pattern_rules(&policy.pattern_rules, &|category| {
         policy.publishes_category(category)
     })
-    .map_err(|defect| Error::RelayHostedLegalPolicyInvalid {
-        service: service.to_owned(),
-        field: defect.field,
-        reason: defect.reason,
+    .map_err(|defect| {
+        Error::Relay(RelayError::RelayHostedLegalPolicyInvalid {
+            service: service.to_owned(),
+            field: defect.field,
+            reason: defect.reason,
+        })
     })
 }
 
@@ -111,11 +114,11 @@ fn validate_hosted_legal_policy(
 /// enforced never reaches the relay to fail there.
 fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()> {
     let invalid = |field: &'static str, reason: &'static str| {
-        Err(Error::RelayHostedLegalPolicyInvalid {
+        Err(Error::Relay(RelayError::RelayHostedLegalPolicyInvalid {
             service: service.to_owned(),
             field,
             reason,
-        })
+        }))
     };
     if policy.rows.len() > POLICY_HOSTED_ROWS_MAX {
         return invalid(
@@ -219,20 +222,20 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
 
 fn https_attribution(service: &str, field: &'static str, value: &str) -> Result<()> {
     let Some(rest) = strip_scheme_ignore_ascii_case(value, HOSTED_LEGAL_DOCS_URL_SCHEME) else {
-        return Err(Error::RelayHostedLegalPolicyInvalid {
+        return Err(Error::Relay(RelayError::RelayHostedLegalPolicyInvalid {
             service: service.to_owned(),
             field,
             reason: "must be an https:// URL",
-        });
+        }));
     };
     // A bare `https://` passes a prefix check and points at nothing. The
     // scheme is not the document.
     if rest.trim().is_empty() {
-        return Err(Error::RelayHostedLegalPolicyInvalid {
+        return Err(Error::Relay(RelayError::RelayHostedLegalPolicyInvalid {
             service: service.to_owned(),
             field,
             reason: "must name a host after the https:// scheme",
-        });
+        }));
     }
     Ok(())
 }
@@ -251,18 +254,18 @@ fn bounded_attribution(
     max_len: usize,
 ) -> Result<()> {
     if value.trim().is_empty() {
-        return Err(Error::RelayHostedLegalPolicyInvalid {
+        return Err(Error::Relay(RelayError::RelayHostedLegalPolicyInvalid {
             service: service.to_owned(),
             field,
             reason: "must not be blank",
-        });
+        }));
     }
     if value.len() > max_len {
-        return Err(Error::RelayHostedLegalPolicyInvalid {
+        return Err(Error::Relay(RelayError::RelayHostedLegalPolicyInvalid {
             service: service.to_owned(),
             field,
             reason: "is longer than the gate-notice ledger accepts",
-        });
+        }));
     }
     Ok(())
 }
@@ -322,18 +325,22 @@ impl EdgeServiceRegistry {
     /// manifest can never silently re-stand an edge to another class.
     pub fn register(&mut self, service: &str, class: ConnectionClass) -> Result<()> {
         if service.is_empty() {
-            return Err(Error::RelayAttestationInvalidServiceIdentity {
-                service_identity: service.to_owned(),
-                reason: "registered connector-edge service name must be non-empty",
-            });
+            return Err(Error::Relay(
+                RelayError::RelayAttestationInvalidServiceIdentity {
+                    service_identity: service.to_owned(),
+                    reason: "registered connector-edge service name must be non-empty",
+                },
+            ));
         }
         match self.services.get(service) {
             Some(registered) if registered.class == class => Ok(()),
-            Some(registered) => Err(Error::RelayAttestationEdgeServiceConflict {
-                service: service.to_owned(),
-                registered: registered.class.as_str(),
-                claimed: class.as_str(),
-            }),
+            Some(registered) => Err(Error::Relay(
+                RelayError::RelayAttestationEdgeServiceConflict {
+                    service: service.to_owned(),
+                    registered: registered.class.as_str(),
+                    claimed: class.as_str(),
+                },
+            )),
             None => {
                 self.services.insert(
                     service.to_owned(),
@@ -371,10 +378,10 @@ impl EdgeServiceRegistry {
     ) -> Result<()> {
         let patterns = validate_hosted_legal_policy(service, &policy)?;
         let entry = self.services.get_mut(service).ok_or_else(|| {
-            Error::RelayAttestationInvalidServiceIdentity {
+            Error::Relay(RelayError::RelayAttestationInvalidServiceIdentity {
                 service_identity: service.to_owned(),
                 reason: "hosted legal policy requires a registered connector-edge service",
-            }
+            })
         })?;
         let mut policy = policy;
         policy.policy_hash = policy.derive_policy_hash();
