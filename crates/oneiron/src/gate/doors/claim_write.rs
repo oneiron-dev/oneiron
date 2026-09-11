@@ -21,9 +21,7 @@ use crate::gate::confirm::{
     critical_claim_can_land_auto_with_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
-use crate::gate::decision::{
-    GateDecision, GateOutcome, GateReasonCode, record_gate_decision_metrics,
-};
+use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
 use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
@@ -436,7 +434,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                     .and_then(|applied| applied.breaker_undo.clone()),
             };
             if !defer_metrics_until_commit {
-                recorded.record_metrics();
+                recorded.record_metrics(&store.diagnostics.gate);
             }
             *recorded_decision = Some(recorded);
         }
@@ -464,7 +462,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 // Caller-owned transactions have no same-transaction preflight
                 // identity, so they always mint a new attachment receipt.
                 store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
-                record_gate_decision_metrics(&decision);
+                store.diagnostics.gate.record_decision(&decision);
                 decision_record.clone()
             };
             let pending = PendingGateConsentRecord {

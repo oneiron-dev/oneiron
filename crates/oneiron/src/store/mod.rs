@@ -99,6 +99,7 @@
 
 mod channel_identity_receipts;
 mod commitment_due;
+mod diagnostics;
 mod gate_decision;
 mod handle;
 mod key_encoding;
@@ -124,6 +125,7 @@ mod tests;
 pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
+pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use handle::*;
 pub(crate) use key_encoding::*;

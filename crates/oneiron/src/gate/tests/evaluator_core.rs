@@ -5,7 +5,7 @@ use crate::error::GateError;
 
 #[test]
 fn gate_metrics_snapshot_has_stable_privacy_preserving_labels() {
-    let snapshot = gate_metrics_snapshot();
+    let snapshot = GateMetrics::default().snapshot();
     assert_eq!(
         snapshot.counters().len(),
         GATE_METRIC_OUTCOME_COUNT * GATE_METRIC_REASON_CLASS_COUNT
@@ -30,14 +30,15 @@ fn gate_metrics_snapshot_has_stable_privacy_preserving_labels() {
 
 #[test]
 fn gate_metrics_counters_advance_for_representative_decisions() {
-    let before = gate_metrics_snapshot();
-    record_gate_decision_metrics(&GateDecision::allow());
-    record_gate_decision_metrics(&GateDecision::deny(GateReasonCode::DenyPolicyFailClosed));
-    record_gate_decision_metrics(&GateDecision::pending(vec![
+    let metrics = GateMetrics::default();
+    let before = metrics.snapshot();
+    metrics.record_decision(&GateDecision::allow());
+    metrics.record_decision(&GateDecision::deny(GateReasonCode::DenyPolicyFailClosed));
+    metrics.record_decision(&GateDecision::pending(vec![
         GateReasonCode::PendingSourceTrust,
         GateReasonCode::PendingCriticalityFloor,
     ]));
-    let after = gate_metrics_snapshot();
+    let after = metrics.snapshot();
 
     assert_metric_counter_advanced(
         &before,
@@ -71,9 +72,8 @@ fn gate_metrics_counters_advance_for_representative_decisions() {
 
 #[test]
 fn gate_metrics_advance_at_claim_write_chokepoint_without_double_counting() -> Result<()> {
-    let before = gate_metrics_snapshot();
-
     let (_allow_tmp, allow_vault) = temp_vault();
+    let allow_before = allow_vault.diagnostics().gate.snapshot();
     let mut allow_policy = encode_policy_manifest(vec![]);
     trust_human_candidate_actor(&mut allow_policy);
     put_policy_manifest_bytes(&allow_vault, test_id(0x40), &allow_policy)?;
@@ -90,7 +90,10 @@ fn gate_metrics_advance_at_claim_write_chokepoint_without_double_counting() -> R
         )
         .commit()?;
 
+    let allow_after = allow_vault.diagnostics().gate.snapshot();
+
     let (_pending_tmp, pending_vault) = temp_vault();
+    let pending_before = pending_vault.diagnostics().gate.snapshot();
     put_policy_manifest_bytes(
         &pending_vault,
         test_id(0x5F),
@@ -112,7 +115,10 @@ fn gate_metrics_advance_at_claim_write_chokepoint_without_double_counting() -> R
         .expect_err("untrusted actor class must remain pending");
     assert_gate_rejected(pending_err, "pending", &["gate.pending.actor_ceiling"]);
 
+    let pending_after = pending_vault.diagnostics().gate.snapshot();
+
     let (_deny_tmp, deny_vault) = temp_vault();
+    let deny_before = deny_vault.diagnostics().gate.snapshot();
     put_policy_manifest_bytes(&deny_vault, test_id(0x45), b"not-msgpack")?;
     let deny_body = source_trust_claim(ClaimSource::UserStated);
     let (deny_candidate, deny_envelope) = claim_candidate_write_parts(&deny_vault, &deny_body)?;
@@ -129,24 +135,26 @@ fn gate_metrics_advance_at_claim_write_chokepoint_without_double_counting() -> R
         .expect_err("missing policy manifest must fail closed");
     assert_gate_rejected(deny_err, "deny", &["gate.deny.policy_fail_closed"]);
 
-    let after = gate_metrics_snapshot();
+    let deny_after = deny_vault.diagnostics().gate.snapshot();
+
+    // One counter set per vault, so each verdict is read where it was decided.
     assert_metric_counter_advanced(
-        &before,
-        &after,
+        &allow_before,
+        &allow_after,
         GateOutcome::Allow,
         GateMetricReasonClass::Allow,
         1,
     );
     assert_metric_counter_advanced(
-        &before,
-        &after,
+        &pending_before,
+        &pending_after,
         GateOutcome::Pending,
         GateMetricReasonClass::ActorCeiling,
         1,
     );
     assert_metric_counter_advanced(
-        &before,
-        &after,
+        &deny_before,
+        &deny_after,
         GateOutcome::Deny,
         GateMetricReasonClass::PolicyFailClosed,
         1,

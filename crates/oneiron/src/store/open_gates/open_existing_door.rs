@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::store::{
-    GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
+    Diagnostics, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
     PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreOwner,
@@ -120,6 +120,7 @@ impl Store {
             off_record_sessions: OffRecordSessionRegistry::default(),
             retrieval_blend_tuning_lock: Mutex::new(()),
             authority_clock_domain,
+            diagnostics: Diagnostics::default(),
         });
         let owner = StoreOwner {
             core: Arc::downgrade(&core),

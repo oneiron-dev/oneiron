@@ -20,10 +20,7 @@ use crate::error::Result;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 
-use super::decision::{
-    GateDecision, GateOutcome, GateReasonCode, external_effect_receipt_reasons,
-    record_gate_decision_metrics,
-};
+use super::decision::{GateDecision, GateOutcome, GateReasonCode, external_effect_receipt_reasons};
 use super::definition_ceiling::agent_definition_ceiling_for_effect_actor;
 use super::doors::{GateConsentBinding, gate_decision_matches_pending_candidate};
 use super::grants::external_effect_grant_matches;
@@ -430,7 +427,7 @@ pub(crate) fn record_external_effect_policy(
             gate_decision_matches_pending_candidate(record, &candidate)
         })?;
         if let Some(existing_id) = existing_id {
-            record_gate_decision_metrics(&decision);
+            store.diagnostics.gate.record_decision(&decision);
             return Ok((existing_id, decision));
         }
     }
@@ -440,7 +437,7 @@ pub(crate) fn record_external_effect_policy(
     {
         touch_standing_outbound_grant_in_txn(store, wtxn, &grant_id, grant, created_at)?;
     }
-    record_gate_decision_metrics(&decision);
+    store.diagnostics.gate.record_decision(&decision);
 
     Ok((decision_id, decision))
 }

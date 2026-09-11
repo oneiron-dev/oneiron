@@ -10,9 +10,54 @@ use super::input::ExternalEffectGateContext;
 pub(super) const GATE_METRIC_OUTCOME_COUNT: usize = 3;
 pub(super) const GATE_METRIC_REASON_CLASS_COUNT: usize = 17;
 
-static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
-    GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
-    GATE_METRIC_OUTCOME_COUNT];
+/// One vault's gate outcome x reason-class counters.
+///
+/// Owned by that vault's store handle (`StoreCore::diagnostics`), so a reader
+/// sees only what its own vault's doors decided.
+pub(crate) struct GateMetrics {
+    counters: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT]; GATE_METRIC_OUTCOME_COUNT],
+}
+
+impl Default for GateMetrics {
+    fn default() -> Self {
+        Self {
+            counters: [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
+                GATE_METRIC_OUTCOME_COUNT],
+        }
+    }
+}
+
+impl GateMetrics {
+    #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn snapshot(&self) -> GateMetricsSnapshot {
+        let mut counters =
+            Vec::with_capacity(GATE_METRIC_OUTCOME_COUNT * GATE_METRIC_REASON_CLASS_COUNT);
+        for outcome in GateOutcome::metric_values() {
+            for reason_class in GateMetricReasonClass::metric_values() {
+                counters.push(GateMetricCounter {
+                    outcome,
+                    reason_class,
+                    count: self.counters[outcome.metric_index()][reason_class.metric_index()]
+                        .load(AtomicOrdering::Relaxed),
+                });
+            }
+        }
+        GateMetricsSnapshot { counters }
+    }
+
+    pub(super) fn record_decision(&self, decision: &GateDecision) {
+        #[cfg(test)]
+        GATE_METRIC_EMISSIONS.with(|count| count.set(count.get().saturating_add(1)));
+        let outcome = decision.outcome();
+        // A decision with multiple reason codes records one outcome/reason-class co-occurrence per code.
+        for reason_code in decision.reason_codes() {
+            let reason_class = reason_code.metric_reason_class();
+            self.counters[outcome.metric_index()][reason_class.metric_index()]
+                .fetch_add(1, AtomicOrdering::Relaxed);
+        }
+    }
+}
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -485,36 +530,6 @@ impl GateMetricsSnapshot {
             .iter()
             .find(|counter| counter.outcome == outcome && counter.reason_class == reason_class)
             .map_or(0, |counter| counter.count)
-    }
-}
-
-#[must_use]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) fn gate_metrics_snapshot() -> GateMetricsSnapshot {
-    let mut counters =
-        Vec::with_capacity(GATE_METRIC_OUTCOME_COUNT * GATE_METRIC_REASON_CLASS_COUNT);
-    for outcome in GateOutcome::metric_values() {
-        for reason_class in GateMetricReasonClass::metric_values() {
-            counters.push(GateMetricCounter {
-                outcome,
-                reason_class,
-                count: GATE_METRIC_COUNTERS[outcome.metric_index()][reason_class.metric_index()]
-                    .load(AtomicOrdering::Relaxed),
-            });
-        }
-    }
-    GateMetricsSnapshot { counters }
-}
-
-pub(super) fn record_gate_decision_metrics(decision: &GateDecision) {
-    #[cfg(test)]
-    GATE_METRIC_EMISSIONS.with(|count| count.set(count.get().saturating_add(1)));
-    let outcome = decision.outcome();
-    // A decision with multiple reason codes records one outcome/reason-class co-occurrence per code.
-    for reason_code in decision.reason_codes() {
-        let reason_class = reason_code.metric_reason_class();
-        GATE_METRIC_COUNTERS[outcome.metric_index()][reason_class.metric_index()]
-            .fetch_add(1, AtomicOrdering::Relaxed);
     }
 }
 

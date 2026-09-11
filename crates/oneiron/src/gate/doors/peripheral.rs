@@ -8,7 +8,6 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::gate::constants::LOCAL_WRITE_ACTOR_ENTITY_REF;
-use crate::gate::decision::record_gate_decision_metrics;
 #[cfg(feature = "sync")]
 use crate::gate::decision::{GateDecision, GateReasonCode};
 use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
@@ -119,11 +118,12 @@ pub(crate) fn check_reserved_claim_policy(
 
 #[cfg(feature = "sync")]
 pub(crate) fn check_federated_claim_admission(
+    store: &Store,
     body: &ClaimBody,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
     let decision = federated_claim_admission_decision(body, policy);
-    record_gate_decision_metrics(&decision);
+    store.diagnostics.gate.record_decision(&decision);
     enforce_gate_decision(decision)
 }
 
@@ -182,7 +182,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
             None,
         );
         let decision = policy.evaluate_gate(&input);
-        record_gate_decision_metrics(&decision);
+        store.diagnostics.gate.record_decision(&decision);
         enforce_gate_decision(decision)?;
     }
 

@@ -13,7 +13,7 @@ use super::codec::{
     encode_forward, encode_posting_entry, find_posting_dup, read_field_stats, read_total_docs,
     validate_text_doc_id, write_field_stats, write_total_docs,
 };
-use super::diagnostics::{Bm25DiagnosticKind, record_bm25_diagnostic};
+use super::diagnostics::Bm25DiagnosticKind;
 use super::{DOC_META_LEN, ENTITY_ID_LEN, FIELD_STATS_LEN};
 
 // === Indexing ===
@@ -301,7 +301,7 @@ pub(crate) fn deindex_text(
     if !missing_posting_diagnostics.is_empty() {
         prove_bm25_doc_counted_for_missing_posting_repair(store, wtxn, id, &lengths)?;
         for kind in missing_posting_diagnostics {
-            record_bm25_diagnostic(kind);
+            store.diagnostics().bm25.record(kind);
         }
     }
     for (term, entry) in postings_to_delete {

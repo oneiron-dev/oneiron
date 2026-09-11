@@ -86,10 +86,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 3 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
 | `src/attempt_queue/engine/mutate.rs` | src | m | 4 fn · 3 crate-vis | — | Retry/intervene/manifest append plus lease-cleanup mutation doors |
 | `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 13 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
-| `src/attempt_queue/mod.rs` | src | s | 4 re-export · 4 crate-vis | — | Generic LMDB-backed background attempt queue |
+| `src/attempt_queue/mod.rs` | src | s | 4 re-export · 5 crate-vis | — | Generic LMDB-backed background attempt queue |
 | `src/attempt_queue/result.rs` | src | s | 2 fn · 3 crate-vis | — | Transaction-composable result attachment and abandonment |
 | `src/attempt_queue/settlement.rs` | src | s | 2 fn · 1 crate-vis | — | Transaction-composable completion and failure with terminal pack receipts |
-| `src/attempt_queue/telemetry.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | AttemptQueueCleanupMetricsSnapshot | Process-local cleanup counters, cleanup span emission, and the shared invalid-transition error constructor |
+| `src/attempt_queue/telemetry.rs` | src | s | 1 struct · 5 crate-vis | AttemptQueueCleanupMetricsSnapshot | Per-vault cleanup counters, cleanup span emission, and the shared invalid-transition error constructor |
 | `src/attempt_queue/tests/abandon_result.rs` | test | m | — | — | Abandon gates and terminal idempotence, write-once set_result, and result refs |
 | `src/attempt_queue/tests/actor_task_run.rs` | test | m | — | — | Actor-scoped dedupe, task_ref compatibility, and the run-id bound |
 | `src/attempt_queue/tests/claim_transitions.rs` | test | m | — | — | Claim semantics and index hygiene, plus complete/fail transition guards |
@@ -217,9 +217,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/versions.rs` | src | m | 1 struct · 7 fn · 1 const · 10 crate-vis | BlobArtifactVersion | Blob version chain: version record codec and the Vault version-chain API |
 | `src/bm25/codec.rs` | src | m | 17 crate-vis | — | Binary codecs, stat/total-docs accessors, corruption constructors, key validation |
 | `src/bm25/config.rs` | src | s | 1 enum · 9 crate-vis | Bm25Formula | Rank-profile config: field/channel params, formula, recency, defaults |
-| `src/bm25/diagnostics.rs` | src | s | 2 struct · 1 enum · 3 fn · 2 crate-vis | Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot | Process-local BM25 integrity diagnostics (counters, snapshot, record) |
+| `src/bm25/diagnostics.rs` | src | s | 2 struct · 1 enum · 2 fn · 3 crate-vis | Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot | Per-vault BM25 integrity diagnostics (counters, snapshot, record) |
 | `src/bm25/index.rs` | src | m | 2 crate-vis | — | Index/deindex mutation paths plus the missing-posting repair proof |
-| `src/bm25/mod.rs` | src | s | 2 re-export · 7 crate-vis | — | Analyzer-driven fielded inverted index + BM25F scorer |
+| `src/bm25/mod.rs` | src | s | 2 re-export · 8 crate-vis | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `src/bm25/query.rs` | src | m | 17 crate-vis | — | Query-side: term collection, prefix expansion, search entry points, hint collapse |
 | `src/bm25/scoped.rs` | src | s | 1 crate-vis | — | Bounded exact top-k over the existing BM25F scorer, under one read snapshot |
 | `src/bm25/scoring.rs` | src | s | 3 crate-vis | — | Shared BM25F scoring |
@@ -946,7 +946,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/ceiling.rs` | src | m | 35 crate-vis | — | — |
 | `src/gate/confirm.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 const · 10 crate-vis | CriticalWriteConfirmBinding, CriticalWriteConfirmResolution | — |
 | `src/gate/constants.rs` | src | s | 75 crate-vis | — | — |
-| `src/gate/decision.rs` | src | m | 27 crate-vis | — | — |
+| `src/gate/decision.rs` | src | m | 28 crate-vis | — | — |
 | `src/gate/decode/decode_manifest.rs` | src | s | 6 crate-vis | — | Manifest envelope plus DecodedPolicyManifest assembly |
 | `src/gate/decode/decode_map_util.rs` | src | s | 13 crate-vis | — | Generic MessagePack map accessors, signature values, and semver compare |
 | `src/gate/decode/decode_policy_tables.rs` | src | s | 8 crate-vis | — | Rule, axis, ceiling, grant, and owner-row table parsers |
@@ -1676,6 +1676,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/speculative/tests.rs` | test | m | — | — | — |
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 1 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/commitment_due.rs` | src | m | 14 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
+| `src/store/diagnostics.rs` | src | s | 1 struct · 2 fn | Diagnostics | The content-free counters one open vault owns |
 | `src/store/gate_decision/keys.rs` | src | s | 18 crate-vis | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
 | `src/store/gate_decision/ledger.rs` | src | m | 1 fn · 18 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
 | `src/store/gate_decision/lookup.rs` | src | s | 1 crate-vis | — | First-match reads on the caller's gate-decision ledger transaction |
@@ -1685,7 +1686,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/vet.rs` | src | m | 5 crate-vis | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/store/handle.rs` | src | m | 4 struct · 12 crate-vis | RawDatabases, Store, StoreCore, StoreOwner | The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]… |
 | `src/store/key_encoding.rs` | src | s | 3 fn · 4 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and… |
-| `src/store/mod.rs` | src | s | 8 re-export · 6 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 9 re-export · 6 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 20 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 29 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |
 | `src/store/open_gates/mod.rs` | src | s | 1 re-export · 9 crate-vis | — | `Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight… |
@@ -1879,7 +1880,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/edges.rs` | src | m | 13 fn · 7 crate-vis | — | Vault edge writes, adjacency queries and graph traversal |
 | `src/vault/entities.rs` | src | m | 1 struct · 17 fn · 12 crate-vis | HydratedShortId | Vault entity, vector, short-id and type-index reads and writes |
 | `src/vault/mod.rs` | src | s | 1 struct · 4 re-export · 4 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
-| `src/vault/open.rs` | src | m | 10 fn · 7 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
+| `src/vault/open.rs` | src | m | 11 fn · 7 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
 | `src/vault/search_retrieval.rs` | src | m | 21 fn · 5 crate-vis | — | Vault text and vector search, batch and query builders, and retrieval telemetry |
 | `src/vault/tests.rs` | test | L | — | — | — |
 | `src/vault/transactions.rs` | src | m | 17 fn | — | Vault maintenance, learned-at range scans, transaction helpers and sync state |
