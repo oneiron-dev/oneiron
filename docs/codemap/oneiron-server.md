@@ -167,7 +167,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/st_modules.rs` | src | s | 6 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
 | `src/embedder/local/tests.rs` | test | m | — | — | Local-provider rows |
 | `src/embedder/mod.rs` | src | s | 12 crate-vis | — | The embedder provider slot |
-| `src/embedder/tests.rs` | test | m | — | — | Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server |
+| `src/embedder/tests.rs` | test | L | — | — | Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server |
 | `src/error/mod.rs` | src | m | 4 struct · 2 enum · 25 fn · 1 const · 1 re-export | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
 | `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
 | `src/error/tests.rs` | test | s | — | — | — |
