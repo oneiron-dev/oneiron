@@ -215,7 +215,9 @@ fn the_fused_and_eager_attention_branches_agree() {
         &to_metal(&q),
         &to_metal(&k),
         &to_metal(&v),
-        &to_metal(&mask),
+        // The fused kernel masks causally itself, and the model builds no mask
+        // for this path at all.
+        None,
         1.0 / (head_dim as f32).sqrt(),
     )
     .and_then(|out| out.flatten_all()?.to_vec1())
@@ -228,6 +230,29 @@ fn the_fused_and_eager_attention_branches_agree() {
         .map(|(a, b)| (a - b).abs())
         .fold(0f32, f32::max);
     assert!(worst < 1e-2, "branches disagree by {worst}");
+}
+
+/// The cache is bounded and first-in-first-out, so a long-lived process holds
+/// at most [`qwen3_embedding::MASK_CACHE_CAPACITY`] masks however many distinct
+/// lengths it has embedded.
+#[test]
+fn the_mask_cache_holds_a_bounded_window_of_lengths() {
+    let mut cache = qwen3_embedding::MaskCache::new();
+    let capacity = qwen3_embedding::MASK_CACHE_CAPACITY;
+    let seen = capacity + 4;
+    for seq in 1..=seen {
+        let mask = cache.get_or_build(seq, &Device::Cpu).expect("mask");
+        assert_eq!(mask.dims4().expect("mask shape"), (1, 1, seq, seq));
+    }
+    assert_eq!(
+        cache.lengths(),
+        (seen - capacity + 1..=seen).collect::<Vec<usize>>(),
+        "the cache keeps the newest lengths and drops the oldest"
+    );
+    // Reading a length it still holds neither rebuilds nor reorders it.
+    let held = cache.lengths();
+    cache.get_or_build(seen, &Device::Cpu).expect("cached mask");
+    assert_eq!(cache.lengths(), held);
 }
 
 #[test]

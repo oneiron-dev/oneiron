@@ -6,8 +6,6 @@
 //! norms, RoPE, causal attention, SwiGLU MLP) → a final norm → per-token hidden
 //! states. No `lm_head` is loaded, because none is used.
 
-use std::collections::HashMap;
-
 use candle_core::{D, DType, Device, IndexOp, Module, Tensor};
 use candle_nn::{RmsNorm, VarBuilder};
 use serde::Deserialize;
@@ -170,7 +168,12 @@ impl Attention {
         })
     }
 
-    fn forward(&self, xs: &Tensor, rotary: &Rotary, mask: &Tensor) -> candle_core::Result<Tensor> {
+    fn forward(
+        &self,
+        xs: &Tensor,
+        rotary: &Rotary,
+        mask: Option<&Tensor>,
+    ) -> candle_core::Result<Tensor> {
         let (batch, seq, _) = xs.dims3()?;
         // Per-HEAD q/k norms, as the source applies them: reshape to heads
         // first, normalise inside each head, then rotate.
@@ -239,7 +242,12 @@ impl DecoderLayer {
         })
     }
 
-    fn forward(&self, xs: &Tensor, rotary: &Rotary, mask: &Tensor) -> candle_core::Result<Tensor> {
+    fn forward(
+        &self,
+        xs: &Tensor,
+        rotary: &Rotary,
+        mask: Option<&Tensor>,
+    ) -> candle_core::Result<Tensor> {
         let attended = self
             .self_attn
             .forward(&self.input_layernorm.forward(xs)?, rotary, mask)?;
@@ -347,6 +355,53 @@ fn load_layers(
         .collect()
 }
 
+/// Distinct sequence lengths the mask cache holds at once.
+///
+/// Inputs arrive grouped by equal length and a corpus settles on a handful of
+/// them, so a few entries carry nearly every pass. The bound is what keeps a
+/// long-lived process from holding one `s × s` tensor for every length it has
+/// ever been asked to embed.
+pub(super) const MASK_CACHE_CAPACITY: usize = 8;
+
+/// Additive causal masks, at most [`MASK_CACHE_CAPACITY`] of them.
+///
+/// Insertion-ordered, oldest first: a full cache drops its oldest entry before
+/// taking a new one, so what this holds is bounded by the eight lengths most
+/// recently first seen rather than by uptime.
+pub(super) struct MaskCache {
+    entries: Vec<(usize, Tensor)>,
+}
+
+impl MaskCache {
+    pub(super) const fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// The mask for one sequence length, built once per length.
+    pub(super) fn get_or_build(
+        &mut self,
+        seq: usize,
+        device: &Device,
+    ) -> candle_core::Result<Tensor> {
+        if let Some((_, mask)) = self.entries.iter().find(|(length, _)| *length == seq) {
+            return Ok(mask.clone());
+        }
+        let mask = causal_mask(seq, device)?;
+        if self.entries.len() >= MASK_CACHE_CAPACITY {
+            self.entries.remove(0);
+        }
+        self.entries.push((seq, mask.clone()));
+        Ok(mask)
+    }
+
+    /// The lengths held right now, oldest first.
+    pub(super) fn lengths(&self) -> Vec<usize> {
+        self.entries.iter().map(|(length, _)| *length).collect()
+    }
+}
+
 /// The body. `forward` returns post-norm hidden states, one row per token.
 pub(super) struct Model {
     /// Kept at bf16 whatever the run precision: 152k × 1024 values is the
@@ -355,10 +410,10 @@ pub(super) struct Model {
     layers: Vec<DecoderLayer>,
     norm: RmsNorm,
     rotary: Rotary,
-    /// One additive mask per distinct sequence length seen. Batches arrive
-    /// grouped by length, so this is a handful of entries, and rebuilding an
-    /// `s × s` mask per batch is the one avoidable cost in the eager path.
-    mask_cache: HashMap<usize, Tensor>,
+    /// One additive mask per distinct sequence length, bounded. Rebuilding an
+    /// `s × s` mask per batch is the one avoidable cost in the eager path;
+    /// keeping every length ever seen is the other.
+    mask_cache: MaskCache,
     device: Device,
     dtype: DType,
     hidden_size: usize,
@@ -408,7 +463,7 @@ impl Model {
             layers,
             norm,
             rotary,
-            mask_cache: HashMap::new(),
+            mask_cache: MaskCache::new(),
             device: device.clone(),
             dtype,
             hidden_size: cfg.hidden_size,
@@ -427,13 +482,12 @@ impl Model {
     /// so a second lock inside it would guard nothing.
     pub(super) fn forward(&mut self, ids: &Tensor) -> candle_core::Result<Tensor> {
         let seq = ids.dim(D::Minus1)?;
-        let mask = match self.mask_cache.get(&seq) {
-            Some(mask) => mask.clone(),
-            None => {
-                let mask = causal_mask(seq, &self.device)?;
-                self.mask_cache.insert(seq, mask.clone());
-                mask
-            }
+        // The fused Metal kernel masks causally on its own, so that path builds
+        // and caches nothing: an `s × s` tensor no kernel reads is pure cost.
+        let mask = if matches!(self.device, Device::Metal(_)) {
+            None
+        } else {
+            Some(self.mask_cache.get_or_build(seq, &self.device)?)
         };
         let mut xs = self
             .embed_tokens
@@ -441,7 +495,7 @@ impl Model {
             .reshape((ids.dim(0)?, seq, self.hidden_size))?
             .to_dtype(self.dtype)?;
         for layer in &self.layers {
-            xs = layer.forward(&xs, &self.rotary, &mask)?;
+            xs = layer.forward(&xs, &self.rotary, mask.as_ref())?;
         }
         self.norm.forward(&xs)
     }
