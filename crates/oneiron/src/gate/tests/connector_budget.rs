@@ -265,8 +265,11 @@ fn connector_key_exhaustion_and_suspension_increment_effector_budget_metrics() -
     let mut effect = external_effect_gate_input("sender", "send", "line");
     effect.send_ref = Some("intent:one".to_owned());
 
-    let before =
-        gate_metrics_snapshot().count(GateOutcome::Deny, GateMetricReasonClass::EffectorBudget);
+    let before = vault
+        .diagnostics()
+        .gate
+        .snapshot()
+        .count(GateOutcome::Deny, GateMetricReasonClass::EffectorBudget);
     let (allowed, _) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(allowed.outcome(), GateOutcome::Allow);
     // Exhaustion deny (flips the key Suspended) + status-wall deny.
@@ -280,8 +283,11 @@ fn connector_key_exhaustion_and_suspension_increment_effector_budget_metrics() -
         gate_reason_strs(&walled),
         vec!["gate.deny.connector_key_suspended"]
     );
-    let after =
-        gate_metrics_snapshot().count(GateOutcome::Deny, GateMetricReasonClass::EffectorBudget);
+    let after = vault
+        .diagnostics()
+        .gate
+        .snapshot()
+        .count(GateOutcome::Deny, GateMetricReasonClass::EffectorBudget);
     assert!(
         after >= before + 2,
         "expected >= 2 new EffectorBudget deny counts, before {before} after {after}"

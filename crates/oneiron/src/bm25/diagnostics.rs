@@ -1,14 +1,41 @@
-//! Process-local BM25 integrity diagnostics (counters, snapshot, record).
+//! Per-vault BM25 integrity diagnostics (counters, snapshot, record).
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use super::BM25_DIAGNOSTIC_COUNTER_COUNT;
 
-pub(super) static BM25_DIAGNOSTIC_COUNTERS: [AtomicU64; BM25_DIAGNOSTIC_COUNTER_COUNT] = [
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-];
+/// One vault's BM25 integrity counters.
+///
+/// Owned by that vault's store handle (`StoreCore::diagnostics`), so a second
+/// vault open in the same process counts separately and a reader's delta is
+/// exactly what its own vault recorded.
+pub(crate) struct Bm25Diagnostics {
+    counters: [AtomicU64; BM25_DIAGNOSTIC_COUNTER_COUNT],
+}
+
+impl Default for Bm25Diagnostics {
+    fn default() -> Self {
+        Self {
+            counters: [const { AtomicU64::new(0) }; BM25_DIAGNOSTIC_COUNTER_COUNT],
+        }
+    }
+}
+
+impl Bm25Diagnostics {
+    /// Returns this vault's BM25 integrity diagnostic counters.
+    #[must_use]
+    pub(crate) fn snapshot(&self) -> Bm25DiagnosticsSnapshot {
+        Bm25DiagnosticsSnapshot {
+            counters: Bm25DiagnosticKind::metric_values().map(|kind| Bm25DiagnosticCounter {
+                kind,
+                count: self.counters[kind.metric_index()].load(AtomicOrdering::Relaxed),
+            }),
+        }
+    }
+
+    pub(super) fn record(&self, kind: Bm25DiagnosticKind) {
+        self.counters[kind.metric_index()].fetch_add(1, AtomicOrdering::Relaxed);
+    }
+}
 
 /// Content-free BM25 integrity diagnostic class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +86,7 @@ pub struct Bm25DiagnosticCounter {
     pub count: u64,
 }
 
-/// Process-local BM25 integrity diagnostics with stable, content-free labels.
+/// One vault's BM25 integrity diagnostics with stable, content-free labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bm25DiagnosticsSnapshot {
     pub counters: [Bm25DiagnosticCounter; BM25_DIAGNOSTIC_COUNTER_COUNT],
@@ -70,19 +97,4 @@ impl Bm25DiagnosticsSnapshot {
     pub fn count(&self, kind: Bm25DiagnosticKind) -> u64 {
         self.counters[kind.metric_index()].count
     }
-}
-
-/// Returns process-local BM25 integrity diagnostic counters.
-#[must_use]
-pub fn bm25_diagnostics_snapshot() -> Bm25DiagnosticsSnapshot {
-    Bm25DiagnosticsSnapshot {
-        counters: Bm25DiagnosticKind::metric_values().map(|kind| Bm25DiagnosticCounter {
-            kind,
-            count: BM25_DIAGNOSTIC_COUNTERS[kind.metric_index()].load(AtomicOrdering::Relaxed),
-        }),
-    }
-}
-
-pub(super) fn record_bm25_diagnostic(kind: Bm25DiagnosticKind) {
-    BM25_DIAGNOSTIC_COUNTERS[kind.metric_index()].fetch_add(1, AtomicOrdering::Relaxed);
 }

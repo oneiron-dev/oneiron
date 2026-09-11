@@ -51,9 +51,8 @@ fn readonly_fold_matches_full_fold_and_writes_nothing() {
 fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    // Seed the untouched monotonic domain far behind real Unix time.
-    let domain = vault.store.authority_clock_domain;
-    let seeded_at = authority_observation_secs_for_domain(domain, 0, 1_000);
+    // Seed this vault's untouched monotonic clock far behind real Unix time.
+    let seeded_at = authority_observation_secs(&vault.store, 0, 1_000);
     assert!(seeded_at >= 1_000);
     assert!(seeded_at < 1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS);
 
@@ -129,9 +128,8 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     // Real Unix time is behind the injected local authority clock.
-    let domain = vault.store.authority_clock_domain;
     let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
-    let seeded_at = authority_observation_secs_for_domain(domain, 0, future);
+    let seeded_at = authority_observation_secs(&vault.store, 0, future);
     assert!(seeded_at >= future);
     assert!(seeded_at < future + DEFAULT_PENDING_WIDEN_DELAY_SECS);
 
@@ -190,7 +188,7 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
 
     // Advance only the local monotonic clock, not the wall clock.
     let elapsed_at = future + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    assert!(authority_observation_secs_for_domain(domain, elapsed_at, 0) >= elapsed_at);
+    assert!(authority_observation_secs(&vault.store, elapsed_at, 0) >= elapsed_at);
     let full = vault.authority_fold().unwrap();
     assert!(
         !full.pending_widens.contains_key(&rotate_hash),
@@ -217,7 +215,7 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
         "wall-clock rollback must not resurrect the retired key's owner binding",
     );
 
-    // Reopen removes the process-local clock; only the persisted floor remains.
+    // Reopen drops the old handle's clock; only the persisted floor remains.
     drop(vault);
     let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let rtxn = reopened.store.env.read_txn().unwrap();
@@ -571,10 +569,7 @@ fn locally_matured_enrollment_still_authorizes_its_child_bind() {
 
     // Advance the local monotonic clock past the locally observed delay.
     let matured_at = readonly_observation_secs(&vault) + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    assert!(
-        authority_observation_secs_for_domain(vault.store.authority_clock_domain, matured_at, 0)
-            >= matured_at,
-    );
+    assert!(authority_observation_secs(&vault.store, matured_at, 0) >= matured_at);
 
     let full = vault.authority_fold().unwrap();
     assert!(
@@ -606,11 +601,7 @@ fn readonly_observation_secs(vault: &crate::Vault) -> u64 {
         .and_then(|raw| decode_authority_first_seen_secs(&raw))
         .unwrap_or(0);
     drop(rtxn);
-    authority_observation_secs_for_domain(
-        vault.store.authority_clock_domain,
-        floor,
-        crate::unix_seconds_now(),
-    )
+    authority_observation_secs(&vault.store, floor, crate::unix_seconds_now())
 }
 
 /// A sidecar missing AFTER the one-shot migration ran is unrecoverable, so the

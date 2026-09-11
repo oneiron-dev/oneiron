@@ -44,9 +44,8 @@ use self::codec::{
 pub use self::config::Bm25Formula;
 use self::config::Bm25RecencyConfig;
 pub(crate) use self::config::{Bm25Config, FieldLengthPolicy};
-pub use self::diagnostics::{
-    Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, bm25_diagnostics_snapshot,
-};
+pub(crate) use self::diagnostics::Bm25Diagnostics;
+pub use self::diagnostics::{Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot};
 pub(crate) use self::index::{deindex_text, index_text};
 pub(crate) use self::query::{
     Bm25SearchOptions, PrefixExpansionPostingDecision, final_token_exact_posting_matches,
@@ -80,8 +79,6 @@ use self::config::BM25_FIELD_COUNT;
 #[cfg(test)]
 pub(crate) use self::config::FieldConfig;
 #[cfg(test)]
-use self::diagnostics::BM25_DIAGNOSTIC_COUNTERS;
-#[cfg(test)]
 use self::query::search_text_with_recency;
 #[cfg(test)]
 use self::query::{
@@ -92,8 +89,6 @@ use self::query::{
 use crate::analyzer::{Token, TokenKind};
 #[cfg(test)]
 use std::collections::BTreeMap;
-#[cfg(test)]
-use std::sync::atomic::Ordering as AtomicOrdering;
 
 // === Layout constants ===
 

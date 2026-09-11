@@ -238,7 +238,6 @@ pub use crate::batch::BatchBuilder;
 // `Bm25Formula` is signature-kept: public `Bm25RankProfile::with_formula` takes it.
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
-    bm25_diagnostics_snapshot,
 };
 pub use crate::build_cache::{
     ActionKey, ActionResult, ArtifactVersionRef, BUILD_CACHE_ACTION_DOMAIN_V1,

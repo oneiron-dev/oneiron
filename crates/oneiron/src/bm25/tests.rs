@@ -46,22 +46,6 @@ fn contains_id(results: &[ScoredEntity], id: &EntityId) -> bool {
     results.iter().any(|r| r.id == *id)
 }
 
-/// The BM25 diagnostic counters are process-global, and `cargo test` runs
-/// tests as threads of one process, so the tests that reset the counters and
-/// assert deltas must not interleave.
-static BM25_DIAGNOSTICS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Zero the counters and hold the lock until the caller drops the guard.
-fn reset_bm25_diagnostics() -> std::sync::MutexGuard<'static, ()> {
-    let guard = BM25_DIAGNOSTICS_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    for counter in &BM25_DIAGNOSTIC_COUNTERS {
-        counter.store(0, AtomicOrdering::Relaxed);
-    }
-    guard
-}
-
 fn put_text_doc(vault: &Vault, id: &EntityId, text: &str) -> Result<()> {
     put_text_doc_at(vault, id, text, 2)
 }
@@ -1589,7 +1573,7 @@ fn deindex_fails_closed_on_all_corruption_variants() -> Result<()> {
 
 #[test]
 fn bm25_diagnostics_snapshot_has_stable_privacy_preserving_labels() {
-    let snapshot = bm25_diagnostics_snapshot();
+    let snapshot = Bm25Diagnostics::default().snapshot();
     for (kind, label) in [
         (
             Bm25DiagnosticKind::MalformedPostingAlignment,
@@ -1630,14 +1614,15 @@ fn bm25_diagnostics_snapshot_has_stable_privacy_preserving_labels() {
 
 #[test]
 fn bm25_diagnostics_increment_for_targeted_search_corruption() -> Result<()> {
-    let _diagnostics = reset_bm25_diagnostics();
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let id = EntityId::now();
     put_text_doc(&vault, &id, "alpha")?;
 
-    let before_missing_metadata =
-        bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::MissingScoredDocumentMetadata);
+    let before_missing_metadata = vault
+        .diagnostics()
+        .bm25_snapshot()
+        .count(Bm25DiagnosticKind::MissingScoredDocumentMetadata);
     let mut wtxn = vault.store.env.write_txn()?;
     assert!(
         vault
@@ -1657,12 +1642,14 @@ fn bm25_diagnostics_increment_for_targeted_search_corruption() -> Result<()> {
     )
     .unwrap_err();
     assert_matches!(err, Error::CorruptedIndex(_));
-    // Sibling tests corrupt postings without holding the diagnostics lock, and
-    // `cargo test --lib` runs them as threads of this process, so the counter can
-    // move by more than this test's own increment; the law is that it moved.
-    assert!(
-        bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::MissingScoredDocumentMetadata)
-            > before_missing_metadata
+    // The counters belong to this vault, so the delta is exactly this test's
+    // own increment: a sibling test corrupting its own vault cannot move it.
+    assert_eq!(
+        vault
+            .diagnostics()
+            .bm25_snapshot()
+            .count(Bm25DiagnosticKind::MissingScoredDocumentMetadata),
+        before_missing_metadata + 1
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -1670,8 +1657,10 @@ fn bm25_diagnostics_increment_for_targeted_search_corruption() -> Result<()> {
     let id = EntityId::now();
     put_text_doc(&vault, &id, "alpha")?;
 
-    let before_malformed =
-        bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::MalformedPostingAlignment);
+    let before_malformed = vault
+        .diagnostics()
+        .bm25_snapshot()
+        .count(Bm25DiagnosticKind::MalformedPostingAlignment);
     let mut wtxn = vault.store.env.write_txn()?;
     let original = vault
         .store
@@ -1698,9 +1687,12 @@ fn bm25_diagnostics_increment_for_targeted_search_corruption() -> Result<()> {
     )
     .unwrap_err();
     assert_matches!(err, Error::CorruptedIndex(_));
-    assert!(
-        bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::MalformedPostingAlignment)
-            > before_malformed
+    assert_eq!(
+        vault
+            .diagnostics()
+            .bm25_snapshot()
+            .count(Bm25DiagnosticKind::MalformedPostingAlignment),
+        before_malformed + 1
     );
 
     Ok(())
@@ -1708,14 +1700,15 @@ fn bm25_diagnostics_increment_for_targeted_search_corruption() -> Result<()> {
 
 #[test]
 fn deindex_self_heals_missing_postings_and_records_diagnostics() -> Result<()> {
-    let _diagnostics = reset_bm25_diagnostics();
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let id = EntityId::now();
     put_text_doc(&vault, &id, "alpha")?;
 
-    let before_missing_row =
-        bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow);
+    let before_missing_row = vault
+        .diagnostics()
+        .bm25_snapshot()
+        .count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow);
     let mut wtxn = vault.store.env.write_txn()?;
     let entry = match find_posting_dup(&vault.store, &wtxn, "alpha", &id)? {
         PostingLookup::Found(entry) => entry,
@@ -1731,7 +1724,10 @@ fn deindex_self_heals_missing_postings_and_records_diagnostics() -> Result<()> {
     wtxn.commit()?;
     assert!(vault.search_text("alpha", 10)?.is_empty());
     assert_eq!(
-        bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow),
+        vault
+            .diagnostics()
+            .bm25_snapshot()
+            .count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow),
         before_missing_row + 1
     );
 
@@ -1742,7 +1738,9 @@ fn deindex_self_heals_missing_postings_and_records_diagnostics() -> Result<()> {
     put_text_doc(&vault, &id, "alpha")?;
     put_text_doc(&vault, &other, "alpha")?;
 
-    let before_missing_entity = bm25_diagnostics_snapshot()
+    let before_missing_entity = vault
+        .diagnostics()
+        .bm25_snapshot()
         .count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingEntity);
     let mut wtxn = vault.store.env.write_txn()?;
     let entry = match find_posting_dup(&vault.store, &wtxn, "alpha", &id)? {
@@ -1761,7 +1759,9 @@ fn deindex_self_heals_missing_postings_and_records_diagnostics() -> Result<()> {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, other);
     assert_eq!(
-        bm25_diagnostics_snapshot()
+        vault
+            .diagnostics()
+            .bm25_snapshot()
             .count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingEntity),
         before_missing_entity + 1
     );
@@ -1854,7 +1854,7 @@ fn posting_decode_rejects_zero_tf() {
     posting.push(1);
     posting.extend_from_slice(&AnalyzerChannel::Surface.field_id().to_be_bytes());
     posting.extend_from_slice(&0_u32.to_le_bytes());
-    let err = decode_posting_entry(&posting).unwrap_err();
+    let err = decode_posting_entry(&Bm25Diagnostics::default(), &posting).unwrap_err();
     assert_matches!(err, Error::CorruptedIndex(_));
 }
 
@@ -1863,7 +1863,7 @@ fn posting_decode_rejects_truncated_entry() {
     let id = EntityId::now();
     let mut posting = id.as_bytes().to_vec();
     posting.push(1); // claim one field but supply no bytes
-    let err = decode_posting_entry(&posting).unwrap_err();
+    let err = decode_posting_entry(&Bm25Diagnostics::default(), &posting).unwrap_err();
     assert_matches!(err, Error::CorruptedIndex(_));
 }
 
@@ -1877,7 +1877,7 @@ fn posting_decode_rejects_concatenated_entries() -> Result<()> {
     let mut blob = Vec::new();
     encode_posting_entry(&EntityId::now(), &fields, &mut blob)?;
     encode_posting_entry(&EntityId::now(), &fields, &mut blob)?;
-    let err = decode_posting_entry(&blob).unwrap_err();
+    let err = decode_posting_entry(&Bm25Diagnostics::default(), &blob).unwrap_err();
     assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
@@ -1885,7 +1885,7 @@ fn posting_decode_rejects_concatenated_entries() -> Result<()> {
 #[test]
 fn decode_rejects_empty_rows() {
     assert!(matches!(
-        decode_posting_entry(&[]),
+        decode_posting_entry(&Bm25Diagnostics::default(), &[]),
         Err(Error::CorruptedIndex(_)),
     ));
     assert!(matches!(decode_forward(&[]), Err(Error::CorruptedIndex(_)),));
@@ -1983,7 +1983,7 @@ fn postings_store_one_sorted_dup_item_per_entity() -> Result<()> {
             id.as_bytes(),
             "dup items must sort by entity-id prefix",
         );
-        let entry = decode_posting_entry(item)?;
+        let entry = decode_posting_entry(&vault.store.diagnostics.bm25, item)?;
         assert_eq!(entry.id, *id);
     }
     Ok(())

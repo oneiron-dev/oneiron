@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use crate::registry::short_id_prefix;
 use crate::store::ManifestDbs;
 
-use super::diagnostics::{Bm25DiagnosticKind, record_bm25_diagnostic};
+use super::diagnostics::{Bm25DiagnosticKind, Bm25Diagnostics};
 use super::{
     ENTITY_ID_LEN, FIELD_LENGTH_LEN, FIELD_STATS_LEN, FIELD_TF_LEN, FORWARD_FIELD_ID_LEN,
     TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY,
@@ -45,6 +45,7 @@ pub(super) fn find_posting_dup(
     term: &str,
     id: &EntityId,
 ) -> Result<PostingLookup> {
+    let diagnostics = &store.diagnostics().bm25;
     let Some(dups) = store.text_postings().get_duplicates(txn, term.as_bytes())? else {
         return Ok(PostingLookup::RowMissing);
     };
@@ -53,6 +54,7 @@ pub(super) fn find_posting_dup(
         let (_, dup) = item?;
         if dup.len() < ENTITY_ID_LEN + 1 {
             return Err(corrupted_with_diagnostic(
+                diagnostics,
                 "posting entry truncated at header",
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
@@ -62,6 +64,7 @@ pub(super) fn find_posting_dup(
             std::cmp::Ordering::Equal => {
                 if found.is_some() {
                     return Err(corrupted_with_diagnostic(
+                        diagnostics,
                         "duplicate posting entries for one entity",
                         Bm25DiagnosticKind::MalformedPostingAlignment,
                     ));
@@ -82,21 +85,27 @@ pub(super) fn find_posting_dup(
 /// Decodes ONE posting duplicate item. The length must match the declared
 /// `field_count` exactly — trailing bytes (e.g. a concatenated v1-style
 /// multi-entry blob) are corruption, not extra entries.
-pub(super) fn decode_posting_entry(raw: &[u8]) -> Result<PostingEntry> {
+pub(super) fn decode_posting_entry(
+    diagnostics: &Bm25Diagnostics,
+    raw: &[u8],
+) -> Result<PostingEntry> {
     if raw.len() < ENTITY_ID_LEN + 1 {
         return Err(corrupted_with_diagnostic(
+            diagnostics,
             "posting entry truncated at header",
             Bm25DiagnosticKind::MalformedPostingAlignment,
         ));
     }
     let id_bytes: [u8; ENTITY_ID_LEN] = raw[..ENTITY_ID_LEN].try_into().map_err(|_| {
         corrupted_with_diagnostic(
+            diagnostics,
             "posting entry id slice",
             Bm25DiagnosticKind::MalformedPostingAlignment,
         )
     })?;
     let id = EntityId::from_bytes(id_bytes).map_err(|_| {
         corrupted_with_diagnostic(
+            diagnostics,
             "posting entry has invalid id",
             Bm25DiagnosticKind::MalformedPostingAlignment,
         )
@@ -104,6 +113,7 @@ pub(super) fn decode_posting_entry(raw: &[u8]) -> Result<PostingEntry> {
     let field_count = raw[ENTITY_ID_LEN] as usize;
     if field_count == 0 {
         return Err(corrupted_with_diagnostic(
+            diagnostics,
             "posting entry has zero field count",
             Bm25DiagnosticKind::MalformedPostingAlignment,
         ));
@@ -114,6 +124,7 @@ pub(super) fn decode_posting_entry(raw: &[u8]) -> Result<PostingEntry> {
         .filter(|len| body_start + len == raw.len())
     else {
         return Err(corrupted_with_diagnostic(
+            diagnostics,
             "posting entry length mismatches field count",
             Bm25DiagnosticKind::MalformedPostingAlignment,
         ));
@@ -126,6 +137,7 @@ pub(super) fn decode_posting_entry(raw: &[u8]) -> Result<PostingEntry> {
         let tf = u32::from_le_bytes([b2, b3, b4, b5]);
         if tf == 0 {
             return Err(corrupted_with_diagnostic(
+                diagnostics,
                 "posting entry has zero term frequency",
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
@@ -304,8 +316,12 @@ pub(super) fn corrupted(message: &'static str) -> Error {
     Error::CorruptedIndex(message)
 }
 
-pub(super) fn corrupted_with_diagnostic(message: &'static str, kind: Bm25DiagnosticKind) -> Error {
-    record_bm25_diagnostic(kind);
+pub(super) fn corrupted_with_diagnostic(
+    diagnostics: &Bm25Diagnostics,
+    message: &'static str,
+    kind: Bm25DiagnosticKind,
+) -> Error {
+    diagnostics.record(kind);
     corrupted(message)
 }
 

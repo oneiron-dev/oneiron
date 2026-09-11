@@ -40,7 +40,7 @@ pub(crate) use peripheral::{
 // The record seam's `use super::*` glob resolves through this module: the
 // names below are the crate/super imports the pre-split doors.rs header
 // provided to it, kept here so `breaker_staging.rs` stays byte-identical.
-use super::decision::{GateDecision, GateOutcome, GateReasonCode, record_gate_decision_metrics};
+use super::decision::{GateDecision, GateOutcome, GateReasonCode};
 use super::input::GateEvaluatorInput;
 use super::resolution::{PolicyManifestResolution, check_claim_source_trust};
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
