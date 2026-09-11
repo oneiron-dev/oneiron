@@ -141,6 +141,11 @@ fn a_query_against_an_unready_slot_is_refused_as_not_ready() {
 
 const MODEL_KEY: &str = "test-embedding-model";
 
+/// A loopback port nothing listens on: every fetch against it fails on connect,
+/// which is the failure a row about an unreachable model source wants, without
+/// a packet leaving the machine.
+const UNREACHABLE_MODEL_SOURCE: &str = "http://127.0.0.1:1";
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum MockBehaviour {
     #[default]
@@ -808,9 +813,9 @@ fn a_provider_that_comes_up_later_fills_without_a_restart() {
 /// A local provider whose artifacts cannot be fetched does not stop the server.
 ///
 /// The vault is already open: writes land, lexical reads answer, and the worker
-/// keeps retrying. Only the semantic door refuses, and it says why. The
-/// repository here does not exist, so the fetch fails fast and this row needs no
-/// network artifact.
+/// keeps retrying. Only the semantic door refuses, and it says why. The source
+/// is a loopback port with nothing listening, so the fetch fails on connect and
+/// the row never leaves the host.
 #[test]
 fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
     use axum::body::{Body, to_bytes};
@@ -834,7 +839,8 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
     };
     let slot = EmbedderSlot::from_config(&config)
         .expect("slot resolves")
-        .expect("a local slot exists");
+        .expect("a local slot exists")
+        .with_model_source(UNREACHABLE_MODEL_SOURCE);
     assert!(slot.ready().is_none());
     let server = Arc::new(
         crate::server::SyncServer::new(
