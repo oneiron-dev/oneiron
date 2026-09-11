@@ -201,7 +201,7 @@ impl<'a> WitnessMessageAuthorization<'a> {
 ///
 /// # Errors
 ///
-/// [`Error::GateWriteRejected`] when the envelope is malformed, the author
+/// [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected) when the envelope is malformed, the author
 /// bucket exceeds the actor's authority, or the policy ceiling refuses.
 pub(crate) fn check_witness_message_ceiling<'a>(
     store: &Store,

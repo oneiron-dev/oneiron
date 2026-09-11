@@ -4,6 +4,7 @@ use super::consent_cards::{BundleApprovalScope, ConsentScopeEscalator};
 use super::protocol::{Of336ActionDescriptor, Of336ComponentKind};
 use crate::booking::DisclosureRung;
 use crate::consent::AuthenticatedOwner;
+use crate::error::GateError;
 use crate::lens::{
     ButtonControl, LensAtom, LensAtomId, LensNode, LensText, MetaLineAtom, SelfUiAction,
     SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
@@ -409,9 +410,9 @@ pub(super) fn ensure_authenticated_actor(
     {
         return Ok(());
     }
-    Err(Error::ConsentUnauthenticatedActor(
+    Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
         "the action actor is not bound to the card's store-authenticated principal",
-    ))
+    )))
 }
 
 pub(super) fn noop_policy_rejection(

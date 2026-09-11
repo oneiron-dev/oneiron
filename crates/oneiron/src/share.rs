@@ -15,6 +15,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ScopedReadActorKey, claim_surfaceable, decode_claim_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
+use crate::error::GateError;
 use crate::error::{Error, Result};
 use crate::gate::{GateOutcome, resolve_policy_manifest, scoped_read_claim_allowed};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM};
@@ -465,14 +466,14 @@ impl Vault {
         let (gate_id, decision) =
             crate::gate::check_share_create_policy(&self.store, &mut txn, share_id, issuer, share)?;
         if decision.outcome() != GateOutcome::Allow {
-            let error = Error::GateWriteRejected {
+            let error = Error::Gate(GateError::GateWriteRejected {
                 outcome: decision.outcome().as_str(),
                 reason_codes: decision
                     .reason_codes()
                     .iter()
                     .map(|code| code.as_str())
                     .collect(),
-            };
+            });
             txn.commit()?;
             return Err(error);
         }

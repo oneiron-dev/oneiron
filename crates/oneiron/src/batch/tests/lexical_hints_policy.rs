@@ -1,6 +1,7 @@
 //! Lexical-hint policy gates, replication deferral and BM25 indexing.
 
 use super::*;
+use crate::error::GateError;
 
 fn seed_stale_vector_state(vault: &Vault, id: &EntityId, vector: &[f32]) -> Result<()> {
     let mut bytes = Vec::with_capacity(vector.len() * 4);
@@ -68,7 +69,7 @@ fn raw_lexical_hint_put_does_not_bypass_policy_gate() -> Result<()> {
         .put(&hint, ENTITY_TYPE_CLAIM, test_time_range(20, 20), 21, &data)
         .commit()
         .expect_err("raw lexical hint puts must still pass ordinary policy");
-    assert_matches!(err, Error::GateWriteRejected { .. });
+    assert_matches!(err, Error::Gate(GateError::GateWriteRejected { .. }));
     assert!(vault.search_text(query, 10)?.is_empty());
     Ok(())
 }

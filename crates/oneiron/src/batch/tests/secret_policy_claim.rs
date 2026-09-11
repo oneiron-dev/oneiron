@@ -1,6 +1,7 @@
 //! Secret scan, policy consent and claim write-envelope gates.
 
 use super::*;
+use crate::error::GateError;
 
 fn first_party_connector_actor_id() -> Result<EntityId> {
     EntityId::from_bytes(crate::gate::FIRST_PARTY_CONNECTOR_ACTOR_ID)
@@ -213,10 +214,10 @@ fn fresh_default_policy_manifest_queues_unstamped_tool_output_for_consent() -> R
         .commit()
         .expect_err("unstamped ToolOutput must queue for consent, not auto-write");
     match &err {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => {
+        }) => {
             assert_eq!(*outcome, "pending");
             assert_eq!(reason_codes.as_slice(), ["gate.pending.source_trust"]);
         }
@@ -603,9 +604,9 @@ fn raw_public_put_rejects_legacy_generated_code_revision_without_auto_permit() -
         .expect_err("generated source requires explicit auto permit");
     assert!(matches!(
         err,
-        Error::SourceNotTrustedForAuto {
+        Error::Gate(GateError::SourceNotTrustedForAuto {
             claim_source: "generated"
-        }
+        })
     ));
     assert!(vault.get_claim(&claim)?.is_none());
     Ok(())

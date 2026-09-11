@@ -439,10 +439,10 @@ impl GrantBound {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidConsentBound`] when the subject, class, and
+    /// Returns [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the subject, class, and
     /// envelope do not all name the same domain.
     ///
-    /// [`Error::InvalidConsentBound`]: crate::error::Error::InvalidConsentBound
+    /// [`GateError::InvalidConsentBound`]: crate::error::GateError::InvalidConsentBound
     pub fn new(subject: BoundSubject, class: BoundClass, envelope: BoundEnvelope) -> Result<Self> {
         let domain = subject.domain();
         if class.domain() != domain || envelope.domain() != domain {

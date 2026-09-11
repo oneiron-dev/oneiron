@@ -601,6 +601,7 @@ pub(crate) mod test_util {
     use crate::config::VaultConfig;
     use crate::entity_id::EntityId;
     use crate::error::Error;
+    use crate::error::GateError;
     use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
     use crate::store::Store;
     use crate::temporal::TimeRange;
@@ -758,17 +759,17 @@ pub(crate) mod test_util {
         (dir, vault)
     }
 
-    /// Asserts `error` is the Gate secret-scan denial: [`Error::GateWriteRejected`]
+    /// Asserts `error` is the Gate secret-scan denial: [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected)
     /// with outcome `"deny"` and reason codes exactly
     /// `["gate.secret_scan.detected", expected_reason]`. Call sites pass the
     /// expected leaf reason explicitly (e.g. `"gate.secret_scan.github_token"`)
     /// so the asserted detector is visible at the test.
     pub(crate) fn assert_secret_scan_rejected(error: Error, expected_reason: &'static str) {
         match error {
-            Error::GateWriteRejected {
+            Error::Gate(GateError::GateWriteRejected {
                 outcome,
                 reason_codes,
-            } => {
+            }) => {
                 assert_eq!(outcome, "deny");
                 assert_eq!(
                     reason_codes.as_slice(),

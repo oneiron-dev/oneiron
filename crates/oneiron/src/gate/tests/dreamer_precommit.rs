@@ -1,6 +1,7 @@
 //! Dreamer precommit: evidence floor, shell and live rows, degeneracy, and denial codes.
 
 use super::*;
+use crate::error::GateError;
 use crate::gate::doors::dreamer_run_id_from_write_envelope;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -85,10 +86,10 @@ fn assert_precommit_denied(
     reason_code: &'static str,
 ) -> Result<()> {
     match err {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => {
+        }) => {
             assert_eq!(outcome, "deny", "validity failures deny, never downgrade");
             assert_eq!(reason_codes, vec![reason_code]);
         }
@@ -394,7 +395,7 @@ fn live_entity_rows_fail_closed_on_unreadable_deletion_metadata() -> Result<()> 
     let err = attempt_precommit_write(&vault, &claim_id, &body)
         .expect_err("unreadable deletion metadata must not support a Dreamer claim");
     match err {
-        Error::GateWriteRejected { outcome, .. } => {
+        Error::Gate(GateError::GateWriteRejected { outcome, .. }) => {
             assert_eq!(outcome, "deny", "unverifiable evidence must deny");
         }
         other => panic!("expected GateWriteRejected, got {other:?}"),
@@ -791,7 +792,7 @@ fn absent_manifest_cannot_bypass_dreamer_precommit() -> Result<()> {
     Ok(())
 }
 
-/// The three GATE-12 codes reach callers through `Error::GateWriteRejected`,
+/// The three GATE-12 codes reach callers through `crate::error::GateError::GateWriteRejected`,
 /// so they must parse back through the public typed taxonomy.
 ///
 /// `Error::gate_denial()` returns `None` for the WHOLE denial as soon as one
@@ -823,10 +824,10 @@ fn dreamer_precommit_codes_round_trip_through_the_typed_denial_taxonomy() {
             "validity failures deny, never pend"
         );
 
-        let err = Error::GateWriteRejected {
+        let err = Error::Gate(GateError::GateWriteRejected {
             outcome: GateDenialOutcome::Deny.as_str(),
             reason_codes: vec![emitted.as_str()],
-        };
+        });
         let denial = err
             .gate_denial()
             .expect("a Dreamer pre-commit denial must parse into the typed taxonomy");

@@ -8,6 +8,7 @@ use super::storage::{
 };
 use super::types::{EscalationTrigger, StandingPolicy, StandingPolicyStatus};
 use crate::entity_id::EntityId;
+use crate::error::GateError;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::vault::Vault;
@@ -33,7 +34,7 @@ use crate::vault::Vault;
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] on an unusable scope,
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) on an unusable scope,
 /// [`Error::CorruptedIndex`] on an unreadable row, plus storage failures.
 pub fn maybe_propose_standing_policy(
     vault: &Vault,
@@ -136,7 +137,7 @@ fn newest_agreeing_window(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] on an unusable scope,
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) on an unusable scope,
 /// [`Error::CorruptedIndex`] on an unreadable row, plus storage failures.
 pub fn standing_policy_for(
     vault: &Vault,
@@ -185,7 +186,7 @@ const fn policy_status(row: &StoredStandingPolicy) -> StandingPolicyStatus {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] when no row carries `row_ref`, plus
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when no row carries `row_ref`, plus
 /// [`Error::CorruptedIndex`] on an unreadable row and storage failures.
 pub fn accept_standing_policy(vault: &Vault, row_ref: &EntityId) -> Result<()> {
     accept_standing_policy_at(vault, row_ref, crate::unix_seconds_now())
@@ -197,9 +198,9 @@ pub(crate) fn accept_standing_policy_at(vault: &Vault, row_ref: &EntityId, at: u
     vault.with_write_txn(|wtxn| {
         let found = find_standing_policy_in_txn(&vault.store, &*wtxn, &wanted)?;
         let Some((key, mut row)) = found else {
-            return Err(Error::InvalidConsentBound(
+            return Err(Error::Gate(GateError::InvalidConsentBound(
                 "no standing escalation policy carries this row ref",
-            ));
+            )));
         };
         if row.accepted_at.is_some() {
             return Ok(());

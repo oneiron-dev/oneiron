@@ -5,7 +5,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 
 /// Current DisclosureScope body schema version.
 pub const DISCLOSURE_SCOPE_SCHEMA_VERSION: u64 = 1;
@@ -130,46 +130,46 @@ impl DisclosureScope {
     /// Validates the pinned scope invariants.
     pub fn validate(&self) -> Result<()> {
         if self.entities.len() > MAX_DISCLOSURE_SCOPE_ENTITIES {
-            return Err(Error::InvalidDisclosureScope(
+            return Err(Error::Gate(GateError::InvalidDisclosureScope(
                 "scope entities exceed the 256-entry allowlist cap",
-            ));
+            )));
         }
         if !self
             .entities
             .windows(2)
             .all(|pair| pair[0].as_bytes() < pair[1].as_bytes())
         {
-            return Err(Error::InvalidDisclosureScope(
+            return Err(Error::Gate(GateError::InvalidDisclosureScope(
                 "scope entities must be sorted and deduped",
-            ));
+            )));
         }
         if self.topics.len() > MAX_DISCLOSURE_SCOPE_TOPICS {
-            return Err(Error::InvalidDisclosureScope(
+            return Err(Error::Gate(GateError::InvalidDisclosureScope(
                 "scope topics exceed the 32-entry cap",
-            ));
+            )));
         }
         for topic in &self.topics {
             if topic.trim().is_empty()
                 || topic.trim() != topic
                 || topic.len() > MAX_DISCLOSURE_SCOPE_TOPIC_BYTES
             {
-                return Err(Error::InvalidDisclosureScope(
+                return Err(Error::Gate(GateError::InvalidDisclosureScope(
                     "scope topic must be trimmed, non-empty, and at most 128 bytes",
-                ));
+                )));
             }
         }
         if self.purpose.trim().is_empty()
             || self.purpose.trim() != self.purpose
             || self.purpose.len() > MAX_DISCLOSURE_SCOPE_PURPOSE_BYTES
         {
-            return Err(Error::InvalidDisclosureScope(
+            return Err(Error::Gate(GateError::InvalidDisclosureScope(
                 "scope purpose must be trimmed, non-empty, and at most 512 bytes",
-            ));
+            )));
         }
         if self.updated_at < self.created_at {
-            return Err(Error::InvalidDisclosureScope(
+            return Err(Error::Gate(GateError::InvalidDisclosureScope(
                 "scope updated_at must not precede created_at",
-            ));
+            )));
         }
         Ok(())
     }
@@ -371,5 +371,5 @@ pub(super) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Re
 }
 
 pub(super) fn invalid_scope() -> Error {
-    Error::InvalidDisclosureScope("body failed validation")
+    Error::Gate(GateError::InvalidDisclosureScope("body failed validation"))
 }

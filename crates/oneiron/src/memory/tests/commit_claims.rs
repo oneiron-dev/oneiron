@@ -1,6 +1,7 @@
 //! Commit gating and trust ceiling, claim upsert/supersede/retract, structural puts, blobs, and edge names.
 
 use super::*;
+use crate::error::GateError;
 
 /// The structural door is not a second MESSAGE ingress. It cannot bind an
 /// envelope, so it refuses the kind outright rather than letting a
@@ -1112,7 +1113,9 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
     let err = vault
         .put_claim(&unrelated_id, &drifted, test_time(101), 101)
         .expect_err("unrelated drifted consent remains stale");
-    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == unrelated_id));
+    assert!(
+        matches!(err, Error::Gate(GateError::GateConsentStale { claim_id }) if claim_id == unrelated_id)
+    );
     assert!(
         vault
             .pending_gate_consents(10)

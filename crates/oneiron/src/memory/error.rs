@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, ErrorKind, GateDenialOutcome, GateDenialReason};
+use crate::error::{Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError};
 
 /// Stable facade error codes, mirroring the `oneiron-server`
 /// `ApiErrorDetails` code vocabulary (S8).
@@ -84,7 +84,7 @@ pub struct MemoryError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub successor_short_id: Option<String>,
     /// The typed Gate denial behind a `FORBIDDEN` refusal, present only when
-    /// the engine error was [`Error::GateWriteRejected`] (ONE-1686).
+    /// the engine error was [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected) (ONE-1686).
     ///
     /// The facade's job is to render a stable code and message, but a caller
     /// INSIDE the engine — the off-record executor adapter — needs the denial
@@ -105,7 +105,7 @@ pub struct MemoryError {
 }
 
 /// The stable Gate rejection strings behind a [`MemoryError`] whose engine
-/// cause was [`Error::GateWriteRejected`]: the outcome (`pending`/`deny`) and
+/// cause was [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected): the outcome (`pending`/`deny`) and
 /// the `gate.*` reason codes, exactly as the engine spelled them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryGateDenial {
@@ -141,10 +141,10 @@ impl MemoryError {
         for reason_code in &denial.reason_codes {
             reason_codes.push(GateDenialReason::from_code(reason_code)?.as_str());
         }
-        Some(Error::GateWriteRejected {
+        Some(Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        })
+        }))
     }
 
     pub(crate) fn bad_request(message: impl Into<String>) -> Self {
@@ -249,10 +249,10 @@ impl From<Error> for MemoryError {
                 // FIELD. Everything above renders it for a client; an
                 // engine-internal adapter needs it back as the typed error.
                 match err {
-                    Error::GateWriteRejected {
+                    Error::Gate(GateError::GateWriteRejected {
                         outcome,
                         reason_codes,
-                    } => Self {
+                    }) => Self {
                         gate_denial: Some(Box::new(MemoryGateDenial {
                             outcome: outcome.to_owned(),
                             reason_codes: reason_codes

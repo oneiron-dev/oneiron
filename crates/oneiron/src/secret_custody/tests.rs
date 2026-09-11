@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::config::VaultConfig;
+use crate::error::GateError;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -837,7 +838,7 @@ fn credential_scan_still_rejects_other_entity_types() {
         .put_entity(&id, crate::registry::ENTITY_TYPE_TURN, occurred, 1, token)
         .expect_err("credential-shaped bytes on a non-custody type still reject");
     assert!(
-        matches!(err, Error::GateWriteRejected { .. }),
+        matches!(err, Error::Gate(GateError::GateWriteRejected { .. })),
         "got {err:?}"
     );
 }

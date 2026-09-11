@@ -2,6 +2,7 @@
 
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use crate::entity_id::ENTITY_ID_LEN;
+use crate::error::GateError;
 use crate::error::{Error, Result};
 use crate::identity_topology::{ProposalScope, is_identity_topology_op_kind};
 
@@ -49,7 +50,7 @@ impl RampScope {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when a field is empty or oversized.
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when a field is empty or oversized.
     pub fn new(
         op_kind: impl Into<String>,
         target_class: impl Into<String>,
@@ -76,7 +77,7 @@ impl RampScope {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when a field is empty, oversized, or
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when a field is empty, oversized, or
     /// carries surrounding whitespace.
     pub fn validate(&self) -> Result<()> {
         for (label, value) in [
@@ -85,7 +86,7 @@ impl RampScope {
             (SCOPE_ACTOR_LABEL, &self.actor),
         ] {
             if normalized_scope_field(label, value)? != value.as_str() {
-                return Err(Error::InvalidConsentBound(label));
+                return Err(Error::Gate(GateError::InvalidConsentBound(label)));
             }
         }
         Ok(())
@@ -114,7 +115,7 @@ impl RampScope {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when a field cannot be a bound axis.
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when a field cannot be a bound axis.
     pub fn to_grant_bound(&self) -> Result<GrantBound> {
         GrantBound::action(
             ActorBound::new(self.actor.clone())?,
@@ -174,7 +175,7 @@ const SCOPE_ACTOR_LABEL: &str = "ramp scope actor";
 fn normalized_scope_field<'a>(label: &'static str, value: &'a str) -> Result<&'a str> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_RAMP_SCOPE_FIELD_LEN {
-        return Err(Error::InvalidConsentBound(label));
+        return Err(Error::Gate(GateError::InvalidConsentBound(label)));
     }
     Ok(trimmed)
 }

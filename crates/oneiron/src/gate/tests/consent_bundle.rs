@@ -1,6 +1,7 @@
 //! Gate consent bundles: aggregate, review, approve and decline, and rollback.
 
 use super::*;
+use crate::error::GateError;
 
 /// Parks one Dreamer-authored proposal on `run_id`'s consent lane.
 pub(super) fn park_consent_bundle_member(
@@ -201,7 +202,10 @@ fn gate_consent_bundle_review_is_content_bound_and_goes_stale() -> Result<()> {
             9,
         )
         .expect_err("a stale review must not resolve");
-    assert!(matches!(err, Error::GateConsentStale { .. }));
+    assert!(matches!(
+        err,
+        Error::Gate(GateError::GateConsentStale { .. })
+    ));
     for id in [first, second] {
         assert!(has_pending_gate_consent(&vault, &id)?);
         assert_eq!(
@@ -372,7 +376,9 @@ fn gate_consent_bundle_rolls_back_when_one_member_is_stale() -> Result<()> {
             9,
         )
         .expect_err("one bad member must abort the whole bundle");
-    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == bad));
+    assert!(
+        matches!(err, Error::Gate(GateError::GateConsentStale { claim_id }) if claim_id == bad)
+    );
 
     for id in [good, bad] {
         assert_eq!(
@@ -419,13 +425,13 @@ fn gate_consent_bundle_resolution_is_owner_only() -> Result<()> {
     )?;
     assert!(matches!(
         vault.authenticate_owner(machine, &machine.to_hex(), true, GateDecisionId::now()),
-        Err(Error::ConsentOwnerNotAuthenticated(_))
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
     ));
     let owner_id = test_id(0x60);
     vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
     assert!(matches!(
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), false, GateDecisionId::now()),
-        Err(Error::ConsentOwnerNotAuthenticated(_))
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
     ));
 
     // Nothing resolved: the proposal is still parked and still proposed.

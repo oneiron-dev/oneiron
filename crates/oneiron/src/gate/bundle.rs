@@ -37,6 +37,7 @@ use super::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use super::resolution::{
     PolicyManifestResolution, check_claim_source_trust, resolve_policy_manifest,
 };
+use crate::error::GateError;
 
 /// Gate `content_kind` of the ONE durable receipt a bundle resolution appends.
 pub const GATE_BUNDLE_CONTENT_KIND: &str = "consent_bundle";
@@ -281,8 +282,8 @@ impl Vault {
     /// leaves every member exactly as it was:
     /// [`Error::InvalidClaimBody`] for an empty run id or an unusable member
     /// body, [`Error::EntityNotFound`] for an empty live group,
-    /// [`Error::GateConsentStale`] for digest or binding drift,
-    /// [`Error::GateWriteRejected`] for a member the live gate refuses, and
+    /// [`GateError::GateConsentStale`](crate::error::GateError::GateConsentStale) for digest or binding drift,
+    /// [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected) for a member the live gate refuses, and
     /// [`Error::CorruptedIndex`] for an unreadable pending row.
     ///
     /// Approve runs canonical claim VAD consolidation after the consent commit.
@@ -311,9 +312,9 @@ impl Vault {
             if bundle_id != expected_bundle_id {
                 // Reported against the lowest-sorted live member: the drift is
                 // the group's, and the group is never empty here.
-                return Err(Error::GateConsentStale {
+                return Err(Error::Gate(GateError::GateConsentStale {
                     claim_id: members[0].member.claim_id,
-                });
+                }));
             }
 
             // ONE-1453: the ONE door that clears a durable burst-breaker trip.
@@ -360,7 +361,7 @@ impl Vault {
                 if diff_handle != entry.member.diff_handle
                     || read_frontier_hash != entry.member.read_frontier_hash
                 {
-                    return Err(Error::GateConsentStale { claim_id: id });
+                    return Err(Error::Gate(GateError::GateConsentStale { claim_id: id }));
                 }
 
                 let mut resolved = body.clone();
