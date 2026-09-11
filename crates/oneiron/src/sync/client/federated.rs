@@ -1,9 +1,5 @@
 //! Federated admission and staged vault-import confirmation.
 
-#[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use std::sync::{Mutex, OnceLock};
-
 use super::base::SyncClient;
 use crate::batch::export::{
     StagedVaultImport, VaultImportConfirmation, VaultImportStageReceipt, VaultImportStageStatus,
@@ -16,24 +12,6 @@ use crate::sync::selector::{
 use crate::sync::transport;
 use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
 use crate::sync::types::WindowKey;
-
-// Serialize staged-import admission and terminal receipt transition within a process.
-// The durable reread remains the cross-process guard when a true CAS is unavailable.
-#[cfg(feature = "sync")]
-static STAGED_IMPORT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-#[cfg(test)]
-static STOP_AFTER_STAGED_IMPORT: AtomicBool = AtomicBool::new(false);
-
-#[cfg(test)]
-pub fn stop_after_staged_import_once() {
-    STOP_AFTER_STAGED_IMPORT.store(true, AtomicOrdering::SeqCst);
-}
-
-#[cfg(test)]
-pub fn clear_stop_after_staged_import() {
-    STOP_AFTER_STAGED_IMPORT.store(false, AtomicOrdering::SeqCst);
-}
 
 impl SyncClient {
     /// Builds a selector request frame for a selector-capable caller.
@@ -107,8 +85,16 @@ impl SyncClient {
         staged: StagedVaultImport,
         confirmation: VaultImportConfirmation,
     ) -> std::result::Result<VaultImportStageReceipt, TransportError> {
-        let _admission_guard = STAGED_IMPORT_LOCK
-            .get_or_init(|| Mutex::new(()))
+        // Serializes the staged-import admission and the terminal receipt
+        // transition for THIS vault; the durable reread remains the
+        // cross-process guard when a true CAS is unavailable. The lock lives on
+        // the vault's store handle, so a second vault in the same process is
+        // not held behind this one. The guard borrows a cloned handle rather
+        // than `self.vault`, because the body below needs `&mut self`.
+        let vault = std::sync::Arc::clone(&self.vault);
+        let _admission_guard = vault
+            .store
+            .staged_import_confirm_lock
             .lock()
             .map_err(|_| TransportError::Storage("staged import lock poisoned".into()))?;
         if confirmation.receipt_id != staged.receipt.receipt_id
@@ -199,12 +185,6 @@ impl SyncClient {
         .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(&durable.window_key)?;
         self.import_accepted_window_update(&durable.window_key, &window, &staged.admitted_update)?;
-        #[cfg(test)]
-        if STOP_AFTER_STAGED_IMPORT.swap(false, AtomicOrdering::SeqCst) {
-            return Err(TransportError::Storage(
-                "test stop after staged import".into(),
-            ));
-        }
         let expected_receipt = durable;
         let mut receipt = expected_receipt.clone();
         receipt.status = VaultImportStageStatus::Confirmed;

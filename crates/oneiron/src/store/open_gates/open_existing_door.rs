@@ -118,6 +118,12 @@ impl Store {
             retrieval_blend_tuning_lock: Mutex::new(()),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             diagnostics: Diagnostics::default(),
+            #[cfg(feature = "sync")]
+            staged_import_admission_lock: Mutex::new(()),
+            #[cfg(feature = "sync")]
+            staged_import_confirm_lock: Mutex::new(()),
+            #[cfg(test)]
+            test_hooks: crate::store::TestHooks::default(),
         });
         let owner = StoreOwner {
             core: Arc::downgrade(&core),
