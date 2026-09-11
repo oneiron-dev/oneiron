@@ -1,9 +1,6 @@
 //! Sync-gated foreign-import staging operations and test hooks.
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(test)]
-use std::sync::{Arc, Barrier};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -19,76 +16,44 @@ use super::export_foreign_receipt::{
 };
 use crate::error::{RecordError, RegistryError, SyncError};
 
-// Admission must be unique before helper effects occur within one process.
-static STAGED_IMPORT_ADMISSION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-#[cfg(test)]
-static STAGED_IMPORT_ADMISSION_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-static STAGED_IMPORT_FIRST_STAGE_BARRIER: OnceLock<Mutex<Option<Arc<Barrier>>>> = OnceLock::new();
-
-/// Test-only observation of real selector admissions; retries that reuse a
-/// durable Pending receipt never increment this counter.
-#[cfg(test)]
-pub fn staged_import_admission_count() -> usize {
-    STAGED_IMPORT_ADMISSION_COUNT.load(Ordering::SeqCst)
-}
-
-#[cfg(test)]
-pub fn reset_staged_import_admission_count() {
-    STAGED_IMPORT_ADMISSION_COUNT.store(0, Ordering::SeqCst);
-}
-
-/// Installs a barrier immediately before the process-wide admission lock.
-#[cfg(test)]
-pub fn install_staged_import_first_stage_barrier(barrier: Arc<Barrier>) {
-    *STAGED_IMPORT_FIRST_STAGE_BARRIER
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap() = Some(barrier);
-}
-
-#[cfg(test)]
-pub fn clear_staged_import_first_stage_barrier() {
-    *STAGED_IMPORT_FIRST_STAGE_BARRIER
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap() = None;
-}
-
-#[cfg(test)]
-type PreContentHook = Arc<dyn Fn(&Vault) + Send + Sync>;
-
 /// One-shot hook fired inside the staged-content read window, i.e. AFTER a
 /// Pending receipt has been observed and BEFORE its content row is read.
 /// Lets a test land a confirmation (and its same-txn GC) in exactly the
 /// interleaving a concurrent confirmer would otherwise hit by chance.
-///
-/// Keyed by `receipt_id` so a hook armed by one test can never be consumed
-/// by an unrelated staging on another test thread.
 #[cfg(test)]
-type ArmedPreContentHook = OnceLock<Mutex<Option<([u8; 32], PreContentHook)>>>;
+pub(crate) type PreContentHook = Arc<dyn Fn(&Vault) + Send + Sync>;
 
+/// The staged-foreign-import test seams of ONE open vault; a field on that
+/// vault's [`crate::store::TestHooks`].
 #[cfg(test)]
-static STAGED_IMPORT_PRE_CONTENT_HOOK: ArmedPreContentHook = OnceLock::new();
-
-#[cfg(test)]
-pub fn install_staged_import_pre_content_hook(receipt_id: [u8; 32], hook: PreContentHook) {
-    *STAGED_IMPORT_PRE_CONTENT_HOOK
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap() = Some((receipt_id, hook));
+#[derive(Default)]
+pub(crate) struct StagedImportHooks {
+    /// The armed pre-content hook and the receipt it waits for. Keyed by
+    /// `receipt_id` as well as by vault, because one vault stages many
+    /// receipts and only the armed one may fire.
+    pre_content_hook: Mutex<Option<([u8; 32], PreContentHook)>>,
 }
 
 #[cfg(test)]
-fn take_staged_import_pre_content_hook(receipt_id: &[u8; 32]) -> Option<PreContentHook> {
-    let cell = STAGED_IMPORT_PRE_CONTENT_HOOK.get_or_init(|| Mutex::new(None));
-    let mut slot = cell.lock().unwrap();
-    if slot.as_ref().is_some_and(|(armed, _)| armed == receipt_id) {
-        return slot.take().map(|(_, hook)| hook);
+impl StagedImportHooks {
+    /// Arms the pre-content hook for `receipt_id` on this vault.
+    pub(crate) fn install_pre_content_hook(&self, receipt_id: [u8; 32], hook: PreContentHook) {
+        *self
+            .pre_content_hook
+            .lock()
+            .expect("staged-import pre-content hook poisoned") = Some((receipt_id, hook));
     }
-    None
+
+    fn take_pre_content_hook(&self, receipt_id: &[u8; 32]) -> Option<PreContentHook> {
+        let mut slot = self
+            .pre_content_hook
+            .lock()
+            .expect("staged-import pre-content hook poisoned");
+        if slot.as_ref().is_some_and(|(armed, _)| armed == receipt_id) {
+            return slot.take().map(|(_, hook)| hook);
+        }
+        None
+    }
 }
 
 pub(crate) fn vault_import_confirm_if_pending(
@@ -153,7 +118,11 @@ fn staged_from_pending(
     receipt: VaultImportStageReceipt,
 ) -> Result<StagedVaultImport> {
     #[cfg(test)]
-    if let Some(hook) = take_staged_import_pre_content_hook(&receipt.receipt_id) {
+    if let Some(hook) = vault
+        .test_hooks()
+        .staged_import
+        .take_pre_content_hook(&receipt.receipt_id)
+    {
         hook(vault);
     }
     // The receipt was read in an EARLIER txn than the content row below, so
@@ -208,17 +177,13 @@ pub fn stage_foreign_vault_import(
     key: &WindowKey,
     remote: &[u8],
 ) -> Result<StagedVaultImport> {
-    #[cfg(test)]
-    if let Some(barrier) = STAGED_IMPORT_FIRST_STAGE_BARRIER
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()
-    {
-        barrier.wait();
-    }
-    let _admission_guard = STAGED_IMPORT_ADMISSION_LOCK
-        .get_or_init(|| Mutex::new(()))
+    // Admission must be unique before helper effects occur within this vault:
+    // the receipt read, the selector admission and the stage-if-absent write
+    // are one logical step. The lock lives on the vault's store handle, so two
+    // vaults open in one process no longer queue behind each other.
+    let _admission_guard = vault
+        .store
+        .staged_import_admission_lock
         .lock()
         .map_err(|_| Error::InvariantViolation("staged admission lock poisoned"))?;
     if remote.len() > MAX_DECODED_PAYLOAD_BYTES {
@@ -268,8 +233,6 @@ pub fn stage_foreign_vault_import(
             }
         };
     }
-    #[cfg(test)]
-    STAGED_IMPORT_ADMISSION_COUNT.fetch_add(1, Ordering::SeqCst);
     let admitted = match admit_federated_window_update(
         vault,
         key,
