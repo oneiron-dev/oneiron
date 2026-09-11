@@ -7,6 +7,10 @@ extend-exclude = [
     "docs/codemap/**",
     "target/**",
     "**/*.lock",
+    # Frozen excerpt of the spec corpus, used as embedder measurement input. Not
+    # prose this repo authors, and editing it would invalidate the reference
+    # vectors committed beside it.
+    "crates/oneiron-server/tests/fixtures/embed/**",
 ]
 
 [default.extend-words]
@@ -29,6 +33,10 @@ SINIC = "SINIC"
 unparseable = "unparseable"
 
 [default.extend-identifiers]
+# candle's own API names, reached verbatim: `Tensor::arange` and
+# `VarBuilder::from_mmaped_safetensors`.
+arange = "arange"
+from_mmaped_safetensors = "from_mmaped_safetensors"
 # Prose plural of the CODE_SYMBOL entity type; typos splits `…SYMBOLs` into `SYMBO` + `Ls`.
 CODE_SYMBOLs = "CODE_SYMBOLs"
 # Deliberately invalid relationship label in federation/tests.rs (digit inside the word).
