@@ -32,8 +32,35 @@ sys.path.insert(0, HERE)
 import assignment  # noqa: E402
 import errparse  # noqa: E402
 
+# Pre-split the root enum lives in `error.rs`; once a domain is carved out the
+# file becomes the directory module `error/mod.rs` and the domain enums sit
+# beside it. Both shapes are readable, so the manifest stays regenerable after
+# main moves mid-refactor.
+ERROR_DIR = os.path.join(REPO, "crates", "oneiron", "src", "error")
 ERROR_RS = os.path.join(REPO, "crates", "oneiron", "src", "error.rs")
-REF = re.compile(r"\bError::([A-Z][A-Za-z0-9_]*)")
+ERROR_MOD = os.path.join(ERROR_DIR, "mod.rs")
+
+
+def root_source() -> str:
+    return ERROR_RS if os.path.exists(ERROR_RS) else ERROR_MOD
+
+
+def error_sources() -> list[str]:
+    """The root file plus every already-split domain file, in read order."""
+    paths = [root_source()]
+    if os.path.isdir(ERROR_DIR):
+        paths += [
+            os.path.join(ERROR_DIR, fn)
+            for fn in sorted(os.listdir(ERROR_DIR))
+            if fn.endswith(".rs") and fn != "mod.rs"
+        ]
+    return paths
+
+# `Error::X` before the split, `<Domain>Error::X` after it: the census has to
+# see both, or a rebuild on a half-split tree reports every moved variant as
+# dead.
+_ENUMS = ["Error"] + sorted(e for e, _, _ in assignment.DOMAINS.values())
+REF = re.compile(r"\b(?:" + "|".join(_ENUMS) + r")::([A-Z][A-Za-z0-9_]*)")
 # `pkix_path::Error::X`, `heed::Error::X`, ... belong to other crates' enums.
 FOREIGN = re.compile(r"(?:^|[^A-Za-z0-9_:])((?:" + errparse.IDENT + r")(?:::" + errparse.IDENT + r")*)::Error::$")
 OURS = {"crate", "oneiron", "super", "self", "error", "crate::error", "oneiron::error"}
@@ -62,7 +89,8 @@ def census(variant_names: set[str]) -> dict:
             if not fn.endswith(".rs"):
                 continue
             path = os.path.join(dirpath, fn)
-            if os.path.realpath(path) == os.path.realpath(ERROR_RS):
+            if os.path.realpath(path).startswith(os.path.realpath(ERROR_DIR)) or \
+                    os.path.realpath(path) == os.path.realpath(ERROR_RS):
                 continue
             rel = os.path.relpath(path, REPO)
             try:
@@ -127,9 +155,21 @@ def main() -> int:
     ap.add_argument("--out", default=os.path.join(HERE, "manifest.json"))
     args = ap.parse_args()
 
-    text = open(ERROR_RS, encoding="utf-8").read()
-    variants = errparse.parse_enum(text, "Error")
+    root_rel = os.path.relpath(root_source(), REPO)
+    text = open(root_source(), encoding="utf-8").read()
     kinds = errparse.parse_enum(text, "ErrorKind")
+    wrappers = {w for _, _, w in assignment.DOMAINS.values()}
+    variants = [v for v in errparse.parse_enum(text, "Error") if v["name"] not in wrappers]
+    domain_files = {}
+    for path in error_sources()[1:]:
+        dtext = open(path, encoding="utf-8").read()
+        for domain, (enum_name, _, _) in assignment.DOMAINS.items():
+            try:
+                errparse.find_enum_span(dtext.split("\n"), enum_name)
+            except errparse.ParseError:
+                continue
+            domain_files[domain] = os.path.relpath(path, REPO)
+            variants += errparse.parse_enum(dtext, enum_name)
     by_name = {v["name"]: v for v in variants}
 
     domain_of: dict[str, str] = {n: "root" for n in assignment.ROOT}
@@ -168,8 +208,8 @@ def main() -> int:
                 "name": name,
                 "domain": domain,
                 "enum": "Error" if domain == "root" else assignment.DOMAINS[domain][0],
-                "file": "crates/oneiron/src/" + (assignment.ROOT_FILE if domain == "root"
-                                                 else assignment.DOMAINS[domain][1]),
+                "file": root_rel if domain == "root"
+                else "crates/oneiron/src/" + assignment.DOMAINS[domain][1],
                 "shape": v["shape"],
                 "payload": v["payload"],
                 "error_attr": v["error_attr"],
@@ -213,7 +253,7 @@ def main() -> int:
     manifest = {
         "schema": 1,
         "base_rev": rev,
-        "source": "crates/oneiron/src/error.rs",
+        "source": root_rel,
         "totals": {
             "variants": len(rows),
             "error_kind_variants": len(kinds),
@@ -222,7 +262,7 @@ def main() -> int:
             "cfg_gated": sum(1 for r in rows if r["cfg"]),
         },
         "domains": {
-            "root": {"enum": "Error", "file": "crates/oneiron/src/error.rs", "wrapper": None},
+            "root": {"enum": "Error", "file": root_rel, "wrapper": None},
             **{
                 d: {
                     "enum": e,
