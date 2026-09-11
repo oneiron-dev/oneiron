@@ -53,6 +53,7 @@ use super::window::{
     replay_pending_mirrors, replay_pending_tombstones, reverse_rematerialize,
 };
 use crate::Vault;
+use crate::error::SyncError;
 use crate::error::{Error, Result};
 
 /// Production registry + recovery orchestrator for window Docs.
@@ -215,7 +216,7 @@ impl WindowManager {
         // (first open, or sync_state lost), and reverse remat heals that.
         let doc = match load_window_from_state(&self.vault, &self.user_id, key) {
             Ok(doc) => doc,
-            Err(Error::WindowNotFound { .. }) => {
+            Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
                 // No d:w: snapshot — but pending u:w: rows can still exist
                 // (remote updates persisted before this window was ever
                 // unloaded). They MUST replay onto the fresh doc or accepted
@@ -348,7 +349,7 @@ impl WindowManager {
     /// # Refusal with outstanding handles (ONE-1150)
     ///
     /// If a caller still holds an `Arc<LoadedWindow>` clone, the unload is
-    /// REFUSED with [`Error::WindowBusy`] and has no effect: nothing is
+    /// REFUSED with [`SyncError::WindowBusy`] and has no effect: nothing is
     /// persisted, the window stays registered and discoverable via
     /// [`window`](Self::window), and its observers stay attached. The
     /// alternative — deregister-while-held, the pre-ONE-1150 behavior —
@@ -377,10 +378,10 @@ impl WindowManager {
         // caller can poll. strong_count includes the registry's own Arc.
         let outstanding_handles = Arc::strong_count(window) - 1;
         if outstanding_handles > 0 {
-            return Err(Error::WindowBusy {
+            return Err(Error::Sync(SyncError::WindowBusy {
                 window_key: key.to_string(),
                 outstanding_handles,
-            });
+            }));
         }
         // Persist BEFORE deregistering, while observers still cover the doc.
         window.persist_state(&self.vault)?;
@@ -410,7 +411,7 @@ impl WindowManager {
     /// # Forced eviction vs graceful unload (ONE-1150)
     ///
     /// Unlike [`unload_window`](Self::unload_window) — which REFUSES with
-    /// [`Error::WindowBusy`] while external `Arc` holders exist — discard
+    /// [`SyncError::WindowBusy`] while external `Arc` holders exist — discard
     /// deregisters UNCONDITIONALLY, outstanding holders or not, and that is
     /// deliberate: this path runs precisely when the doc's RAM state is
     /// WRONG (ahead of durable state), so keeping the stale doc registered
@@ -440,7 +441,7 @@ impl WindowManager {
     ///
     /// 1. Hold the registry mutex and preflight every registered window. If
     ///    any window still has an external `Arc` holder, return the existing
-    ///    [`Error::WindowBusy`] information BEFORE persisting or removing any
+    ///    [`SyncError::WindowBusy`] information BEFORE persisting or removing any
     ///    registry entry — a busy window refuses the shed for all of them.
     /// 2. Still under the pinned `registry → materializer` lock order, call
     ///    [`LoadedWindow::persist_state`] for every window. If any persist
@@ -467,10 +468,10 @@ impl WindowManager {
         for (key, window) in registry.iter() {
             let outstanding_handles = Arc::strong_count(window) - 1;
             if outstanding_handles > 0 {
-                return Err(Error::WindowBusy {
+                return Err(Error::Sync(SyncError::WindowBusy {
                     window_key: key.to_string(),
                     outstanding_handles,
-                });
+                }));
             }
         }
 
@@ -697,10 +698,10 @@ mod slim_drop_tests {
         let revision = manager.vault.store.env.info().last_txn_id;
         assert!(matches!(
             manager.drop_rebuildable_windows(),
-            Err(Error::WindowBusy {
+            Err(Error::Sync(SyncError::WindowBusy {
                 outstanding_handles: 1,
                 ..
-            })
+            }))
         ));
         assert_eq!(
             manager.vault.store.env.info().last_txn_id,

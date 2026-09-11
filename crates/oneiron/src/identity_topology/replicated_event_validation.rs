@@ -17,6 +17,7 @@ use super::proposal_resolution::{assert_amendment_in_scope, decode_identity_op_a
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::IdentityTopologyRejection;
 use super::{IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, IDENTITY_TOPOLOGY_SEQ_KEY};
+use crate::error::SyncError;
 
 impl Vault {
     /// Transaction-composable [`Vault::identity_topology_event`].
@@ -132,7 +133,7 @@ impl Vault {
                 if let IdentityTopologyParticipantValidation::Invalid(rejection) =
                     self.validate_identity_op_participants_in_txn(rtxn, &op)?
                 {
-                    return Err(Error::IdentityTopologyRejected(rejection));
+                    return Err(Error::Sync(SyncError::IdentityTopologyRejected(rejection)));
                 }
             }
             // An undo inherits the participant validity of the event it
@@ -153,7 +154,7 @@ impl Vault {
                     && let IdentityTopologyParticipantValidation::Invalid(rejection) =
                         self.validate_identity_op_participants_in_txn(rtxn, &op)?
                 {
-                    return Err(Error::IdentityTopologyRejected(rejection));
+                    return Err(Error::Sync(SyncError::IdentityTopologyRejected(rejection)));
                 }
             }
             IdentityTopologyAction::ResolveProposal { proposal, .. } => {
@@ -189,9 +190,9 @@ impl Vault {
                 )?;
                 if let Some(amended_body) = amended_body {
                     let amended_op = decode_identity_op_amendment(amended_body).map_err(|_| {
-                        Error::InvalidIdentityTopologyEventBody(
+                        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                             "identity topology proposal resolution amended body",
-                        )
+                        ))
                     })?;
                     assert_amendment_in_scope(&proposed_op, &amended_op)?;
                 }
@@ -260,9 +261,9 @@ impl Vault {
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("identity topology seq"))?;
         if next >= IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING {
-            return Err(Error::InvalidIdentityTopologyEventBody(
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event seq is in the reserved terminal range",
-            ));
+            )));
         }
         self.store
             .vault_meta

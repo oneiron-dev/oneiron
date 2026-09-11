@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1474 | 533 | 3 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1475 | 533 | 3 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 70 | 12 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
@@ -108,7 +108,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `embed` | file+dir | 4 | m | — | — |
 | `engine_executor` | dir | 10 | m | — | Engine-native JS code-mode executor |
 | `entity_id` | file | 1 | m | — | `EntityId` + world-id newtypes + id parsing/hex |
-| `error` | file | 1 | XL | — | — |
+| `error` | dir | 2 | XL | — | — |
 | `extraction_eval` | file+dir | 3 | m | — | — |
 | `failure_ladder` | dir | 9 | s | — | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
 | `fanout_auto` | file+dir | 2 | m | — | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |

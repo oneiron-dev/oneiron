@@ -94,6 +94,7 @@ fn commit_local_entity(
     export_updates_since(&window.doc, &vv_before.encode()).unwrap()
 }
 
+use crate::error::SyncError;
 use crate::test_util::{entity as test_entity_id, put_policy_manifest_bytes};
 
 fn encode_policy_manifest(extra_entries: Vec<(rmpv::Value, rmpv::Value)>) -> Vec<u8> {
@@ -1321,12 +1322,12 @@ fn client_rejects_non_positive_ephemeral_timeout() {
     );
 
     match result {
-        Err(Error::SyncProtocolError {
+        Err(Error::Sync(SyncError::SyncProtocolError {
             context:
                 SyncProtocolValidation::InvalidConfig {
                     field: SyncConfigField::EphemeralTimeoutMs,
                 },
-        }) => {}
+        })) => {}
         Ok(_) => panic!("client construction must reject non-positive ephemeral timeout"),
         Err(err) => panic!("unexpected error: {err}"),
     }

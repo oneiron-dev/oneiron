@@ -17,6 +17,7 @@ use super::export_foreign_receipt::{
     VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus, content_key,
     encode_vault_import_receipt, receipt_id, receipt_key, source_bytes, vault_import_stage_receipt,
 };
+use crate::error::SyncError;
 
 // Admission must be unique before helper effects occur within one process.
 static STAGED_IMPORT_ADMISSION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -321,8 +322,8 @@ pub fn stage_foreign_vault_import(
             // rejections fall through to the retryable `Err` path below and
             // leave no receipt behind.
             let terminal = matches!(error,
-                Error::SyncProtocolError { .. }
-                    | Error::CrdtDecodeError { .. }
+                Error::Sync(SyncError::SyncProtocolError { .. })
+                    | Error::Sync(SyncError::CrdtDecodeError { .. })
                     | Error::InvalidClaimBody(_)
                     | Error::InvalidKey
                     | Error::MaintenanceKindNotWritable(_)

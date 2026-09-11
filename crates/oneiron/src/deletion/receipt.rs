@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone::DeleteReason;
@@ -270,17 +270,20 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
     use rmpv::Value;
 
     let mut cursor = std::io::Cursor::new(body);
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidRedactionReceiptBody("body is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Sync(SyncError::InvalidRedactionReceiptBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
     if cursor.position() != body.len() as u64 {
-        return Err(Error::InvalidRedactionReceiptBody(
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "trailing bytes after body map",
-        ));
+        )));
     }
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidRedactionReceiptBody(
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "body must be a string-keyed MessagePack map",
-        ));
+        )));
     };
 
     // OD-6 tail-splice precondition: `verification` is the FINAL entry in
@@ -289,26 +292,28 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
     match entries.last() {
         Some((key, _)) if key.as_str() == Some("verification") => {}
         _ => {
-            return Err(Error::InvalidRedactionReceiptBody(
+            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                 "verification must be the final body map entry",
-            ));
+            )));
         }
     }
 
     let mut seen = [false; RECEIPT_BODY_KEYS.len()];
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidRedactionReceiptBody(
+            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                 "body keys must be strings",
-            ));
+            )));
         };
         let Some(index) = RECEIPT_BODY_KEYS.iter().position(|known| *known == key) else {
-            return Err(Error::InvalidRedactionReceiptBody(
+            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                 "body key is not in the pinned redactionAuditReceipt field set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidRedactionReceiptBody("duplicate body key"));
+            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
+                "duplicate body key",
+            )));
         }
         seen[index] = true;
 
@@ -320,23 +325,23 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
             "reason" => match value.as_str() {
                 Some("user_hard_delete" | "gdpr_delete" | "policy_delete") => {}
                 _ => {
-                    return Err(Error::InvalidRedactionReceiptBody(
+                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                         "reason must be user_hard_delete | gdpr_delete | policy_delete",
-                    ));
+                    )));
                 }
             },
             "requested_at" | "soft_complete_at" | "hard_purge_complete_at" => {
                 if value.as_u64().is_none() {
-                    return Err(Error::InvalidRedactionReceiptBody(
+                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                         "timestamps must be non-negative integers",
-                    ));
+                    )));
                 }
             }
             "sweep_queued_at" | "sweep_complete_at" => {
                 if !value.is_nil() && value.as_u64().is_none() {
-                    return Err(Error::InvalidRedactionReceiptBody(
+                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                         "optional sweep timestamps must be nil or non-negative integers",
-                    ));
+                    )));
                 }
             }
             "affected_revision_ids" => {
@@ -362,9 +367,9 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
     for (index, key) in RECEIPT_BODY_KEYS.iter().enumerate() {
         let optional = matches!(*key, "sweep_queued_at" | "sweep_complete_at");
         if !optional && !seen[index] {
-            return Err(Error::InvalidRedactionReceiptBody(
+            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                 "missing required receipt field",
-            ));
+            )));
         }
     }
     Ok(())
@@ -376,7 +381,9 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
 /// names or content").
 fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
     let rmpv::Value::Map(entries) = value else {
-        return Err(Error::InvalidRedactionReceiptBody("scope must be a map"));
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
+            "scope must be a map",
+        )));
     };
     let mut seen_entity_ids = false;
     let mut seen_revision_ids = false;
@@ -384,7 +391,9 @@ fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
         match key.as_str() {
             Some("entity_ids") => {
                 if seen_entity_ids {
-                    return Err(Error::InvalidRedactionReceiptBody("duplicate scope key"));
+                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
+                        "duplicate scope key",
+                    )));
                 }
                 seen_entity_ids = true;
                 validate_opaque_uuid_array(
@@ -394,7 +403,9 @@ fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
             }
             Some("revision_ids") => {
                 if seen_revision_ids {
-                    return Err(Error::InvalidRedactionReceiptBody("duplicate scope key"));
+                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
+                        "duplicate scope key",
+                    )));
                 }
                 seen_revision_ids = true;
                 validate_opaque_uuid_array(
@@ -403,16 +414,16 @@ fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
                 )?;
             }
             _ => {
-                return Err(Error::InvalidRedactionReceiptBody(
+                return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                     "scope key is not entity_ids | revision_ids",
-                ));
+                )));
             }
         }
     }
     if !(seen_entity_ids && seen_revision_ids) {
-        return Err(Error::InvalidRedactionReceiptBody(
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "scope must carry entity_ids and revision_ids",
-        ));
+        )));
     }
     Ok(())
 }
@@ -423,26 +434,26 @@ fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
 /// `att_v == "1"`. No duplicates, no unknown keys, no other shapes.
 fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
     let rmpv::Value::Map(fields) = value else {
-        return Err(Error::InvalidRedactionReceiptBody(
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "verification must be a map",
-        ));
+        )));
     };
     if fields.len() != 4 {
-        return Err(Error::InvalidRedactionReceiptBody(
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "verification must carry exactly the four att_ entries",
-        ));
+        )));
     }
     let mut seen = [false; 4];
     for (key, value) in fields {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidRedactionReceiptBody(
+            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                 "verification keys must be strings",
-            ));
+            )));
         };
         let Some(value) = value.as_str() else {
-            return Err(Error::InvalidRedactionReceiptBody(
+            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                 "verification values must be strings",
-            ));
+            )));
         };
         let index = match key {
             ATT_KEY_CLIENT => 0,
@@ -450,15 +461,15 @@ fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
             ATT_KEY_SIG => 2,
             ATT_KEY_V => 3,
             _ => {
-                return Err(Error::InvalidRedactionReceiptBody(
+                return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                     "verification key is not in the pinned att_ set",
-                ));
+                )));
             }
         };
         if seen[index] {
-            return Err(Error::InvalidRedactionReceiptBody(
+            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                 "duplicate verification key",
-            ));
+            )));
         }
         seen[index] = true;
         match key {
@@ -467,9 +478,9 @@ fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
             ATT_KEY_SIG if value.len() == 128 && is_lower_hex(value) => {}
             ATT_KEY_V if value == ATT_VERSION => {}
             _ => {
-                return Err(Error::InvalidRedactionReceiptBody(
+                return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                     "verification value fails the pinned att_ grammar",
-                ));
+                )));
             }
         }
     }
@@ -512,28 +523,34 @@ pub(crate) struct ReceiptAttestationParts {
 fn read_msgpack_map_len(cursor: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
     use std::io::Read;
     let mut first = [0u8; 1];
-    cursor
-        .read_exact(&mut first)
-        .map_err(|_| Error::InvalidRedactionReceiptBody("body is not valid MessagePack"))?;
+    cursor.read_exact(&mut first).map_err(|_| {
+        Error::Sync(SyncError::InvalidRedactionReceiptBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
     match first[0] {
         b @ 0x80..=0x8f => Ok(u64::from(b & 0x0f)),
         0xde => {
             let mut len = [0u8; 2];
-            cursor
-                .read_exact(&mut len)
-                .map_err(|_| Error::InvalidRedactionReceiptBody("body is not valid MessagePack"))?;
+            cursor.read_exact(&mut len).map_err(|_| {
+                Error::Sync(SyncError::InvalidRedactionReceiptBody(
+                    "body is not valid MessagePack",
+                ))
+            })?;
             Ok(u64::from(u16::from_be_bytes(len)))
         }
         0xdf => {
             let mut len = [0u8; 4];
-            cursor
-                .read_exact(&mut len)
-                .map_err(|_| Error::InvalidRedactionReceiptBody("body is not valid MessagePack"))?;
+            cursor.read_exact(&mut len).map_err(|_| {
+                Error::Sync(SyncError::InvalidRedactionReceiptBody(
+                    "body is not valid MessagePack",
+                ))
+            })?;
             Ok(u64::from(u32::from_be_bytes(len)))
         }
-        _ => Err(Error::InvalidRedactionReceiptBody(
+        _ => Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "body must be a string-keyed MessagePack map",
-        )),
+        ))),
     }
 }
 
@@ -546,8 +563,9 @@ fn read_msgpack_map_len(cursor: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
 /// signature (fail closed), never a false accept.
 #[cfg(feature = "sync")]
 pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestationParts> {
-    const MALFORMED: Error =
-        Error::InvalidRedactionReceiptBody("attestation fields failed re-parse");
+    const MALFORMED: Error = Error::Sync(SyncError::InvalidRedactionReceiptBody(
+        "attestation fields failed re-parse",
+    ));
 
     let mut cursor = std::io::Cursor::new(body);
     let entry_count = read_msgpack_map_len(&mut cursor)?;
@@ -609,14 +627,14 @@ fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()>
         .as_str()
         .is_some_and(|s| uuid::Uuid::parse_str(s).is_ok());
     if !valid {
-        return Err(Error::InvalidRedactionReceiptBody(reason));
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(reason)));
     }
     Ok(())
 }
 
 fn validate_opaque_uuid_array(value: &rmpv::Value, reason: &'static str) -> Result<()> {
     let Some(items) = value.as_array() else {
-        return Err(Error::InvalidRedactionReceiptBody(reason));
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(reason)));
     };
     for item in items {
         validate_opaque_uuid(item, reason)?;

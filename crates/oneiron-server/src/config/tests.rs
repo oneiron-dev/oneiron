@@ -73,11 +73,13 @@ fn serve_config_rejects_non_positive_ephemeral_timeout() {
     // sibling `SyncServerConfig::validate` returns for this exact rule.
     assert!(matches!(
         error.downcast_ref::<oneiron::Error>(),
-        Some(oneiron::Error::SyncProtocolError {
-            context: SyncProtocolValidation::InvalidConfig {
-                field: SyncConfigField::EphemeralTimeoutMs
+        Some(oneiron::Error::Sync(
+            oneiron::error::SyncError::SyncProtocolError {
+                context: SyncProtocolValidation::InvalidConfig {
+                    field: SyncConfigField::EphemeralTimeoutMs
+                }
             }
-        })
+        ))
     ));
 }
 
@@ -103,9 +105,9 @@ fn serve_config_rejects_zero_ephemeral_limits() {
         assert!(
             matches!(
                 error.downcast_ref::<oneiron::Error>(),
-                Some(oneiron::Error::SyncProtocolError {
+                Some(oneiron::Error::Sync(oneiron::error::SyncError::SyncProtocolError {
                     context: SyncProtocolValidation::InvalidConfig { field: got }
-                }) if *got == field
+                })) if *got == field
             ),
             "{key}: {error}"
         );

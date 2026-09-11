@@ -330,7 +330,7 @@ impl TestNode {
         let window_key = WindowKey::new(key);
         let doc = match window::load_window_from_state(&self.vault, self.name, &window_key) {
             Ok(doc) => doc,
-            Err(oneiron::Error::WindowNotFound { .. }) => {
+            Err(oneiron::Error::Sync(oneiron::error::SyncError::WindowNotFound { .. })) => {
                 oneiron::sync::schema::create_window_doc(self.name, &window_key)
             }
             Err(err) => panic!("{}: load window {key}: {err}", self.name),

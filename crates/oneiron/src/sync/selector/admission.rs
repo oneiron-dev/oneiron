@@ -25,6 +25,7 @@ use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
 use super::edge::copy_admitted_edges;
+use crate::error::SyncError;
 
 /// Role carried by a member/guest federation import path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,12 +60,12 @@ pub fn admit_federated_window_update(
     role: FederationAdmissionRole,
 ) -> Result<Vec<u8>> {
     let remote = create_window_doc("federation-remote", key);
-    remote
-        .import(update)
-        .map_err(|source| Error::CrdtDecodeError {
+    remote.import(update).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
             context: "import federated update",
             source,
-        })?;
+        })
+    })?;
 
     let admitted = create_admission_doc(key, update, role)?;
     let policy =
@@ -113,12 +114,12 @@ pub(in crate::sync) fn revalidate_admitted_federated_claims(
     role: FederationAdmissionRole,
 ) -> Result<()> {
     let admitted = create_window_doc(role.origin(), key);
-    admitted
-        .import(admitted_update)
-        .map_err(|source| Error::CrdtDecodeError {
+    admitted.import(admitted_update).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
             context: "import admitted update",
             source,
-        })?;
+        })
+    })?;
 
     let policy =
         vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;

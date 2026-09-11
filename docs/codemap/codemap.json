@@ -11455,23 +11455,39 @@
       "GateDenial",
       "GateDenialOutcome",
       "GateDenialReason",
-      "SyncConfigField",
-      "SyncEngineContext",
-      "SyncProtocolPruneScope",
-      "SyncProtocolValidation",
-      "SyncRollbackError",
-      "SyncSelectorValidation",
       "VaultRootEntry",
       "VaultRootProblem"
      ],
-     "path": "src/error.rs",
+     "path": "src/error/mod.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "enum": 12,
-      "fn": 19,
-      "struct": 2,
+      "enum": 7,
+      "fn": 13,
+      "re-export": 2,
+      "struct": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SyncConfigField",
+      "SyncEngineContext",
+      "SyncError",
+      "SyncProtocolPruneScope",
+      "SyncProtocolValidation",
+      "SyncRollbackError",
+      "SyncSelectorValidation"
+     ],
+     "path": "src/error/sync.rs",
+     "purpose": "Sync-domain errors: the CRDT window/protocol/engine failures behind `feature = \"sync\"`, plus the…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 6,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -25132,10 +25148,10 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex"
     },
     "error": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "XL",
-     "layout": "file",
+     "layout": "dir",
      "purpose": "—"
     },
     "extraction_eval": {
@@ -25841,7 +25857,7 @@
    },
    "over_bar": 3,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1474,
+   "source_files": 1475,
    "test_files": 533
   },
   "oneiron-bench": {

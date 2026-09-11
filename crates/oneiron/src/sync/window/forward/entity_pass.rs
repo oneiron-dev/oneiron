@@ -20,6 +20,7 @@ use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
 use crate::entity_id::EntityId;
+use crate::error::SyncError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
@@ -342,7 +343,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                             window_key.as_str(),
                             QuarantineContainer::Entities,
                             key,
-                            &Error::RedactionReceiptDivergence { id },
+                            &Error::Sync(SyncError::RedactionReceiptDivergence { id }),
                             blob,
                         )?;
                         terminal_quarantines.push(id);
@@ -500,7 +501,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         pending_subject_model_dependencies.insert(id);
                     }
                     let retryable = subject_pending
-                        || matches!(err, Error::MaintenanceIngestQuotaExceeded { .. });
+                        || matches!(
+                            err,
+                            Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })
+                        );
                     if let Err(q_err) = quarantine::quarantine_rejected_op(
                         vault,
                         window_key.as_str(),

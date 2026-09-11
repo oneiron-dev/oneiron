@@ -25,6 +25,7 @@ use super::transition_table::{
 use super::wire_keys::{
     BODY_KEY_KIND, EVENT_KIND_MERGE, EVENT_KIND_SPLIT, PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED,
 };
+use crate::error::SyncError;
 
 /// The op's primary target — the entity whose registry class names the
 /// ramp scope: the merge SURVIVOR (what the merged records become) and the
@@ -33,9 +34,9 @@ pub(super) fn proposal_scope_target(op: &IdentityTopologyOp) -> Result<EntityId>
     match op {
         IdentityTopologyOp::Merge(merge) => Ok(merge.survivor),
         IdentityTopologyOp::Split(split) => Ok(split.entity),
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
-            Err(Error::IdentityTopologyUnarmed("resolution of this op kind"))
-        }
+        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => Err(Error::Sync(
+            SyncError::IdentityTopologyUnarmed("resolution of this op kind"),
+        )),
     }
 }
 
@@ -59,16 +60,16 @@ pub(super) fn assert_amendment_in_scope(
     amended: &IdentityTopologyOp,
 ) -> Result<()> {
     if std::mem::discriminant(proposed) != std::mem::discriminant(amended) {
-        return Err(Error::IdentityProposalAmendmentOutOfScope(
+        return Err(Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(
             "amended body is a different op kind",
-        ));
+        )));
     }
     let proposed_subjects: BTreeSet<EntityId> = proposed.participants().into_iter().collect();
     let in_scope = |entity: &EntityId| proposed_subjects.contains(entity);
     if !amended.participants().iter().all(in_scope) {
-        return Err(Error::IdentityProposalAmendmentOutOfScope(
+        return Err(Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(
             "amended body names a subject outside the proposal",
-        ));
+        )));
     }
     if let IdentityTopologyOp::Split(split) = amended
         && split
@@ -77,9 +78,9 @@ pub(super) fn assert_amendment_in_scope(
             .iter()
             .any(|entry| !reassignment_entry_in_scope(entry, &proposed_subjects))
     {
-        return Err(Error::IdentityProposalAmendmentOutOfScope(
+        return Err(Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(
             "amended split map references an entity outside the proposal",
-        ));
+        )));
     }
     Ok(())
 }
@@ -135,9 +136,9 @@ pub(super) fn validate_resolution_scope_stateless(record: &StoredIdentityOpEvent
     };
     let proposal_is_op = matches!(scope.op_kind, EVENT_KIND_MERGE | EVENT_KIND_SPLIT);
     if !proposal_is_op {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology proposal resolution scope names a non-op kind",
-        ));
+        )));
     }
     Ok(())
 }
@@ -151,9 +152,9 @@ pub(super) fn decode_amendable_kind(value: &str) -> Result<&'static str> {
     match value {
         EVENT_KIND_MERGE => Ok(EVENT_KIND_MERGE),
         EVENT_KIND_SPLIT => Ok(EVENT_KIND_SPLIT),
-        _ => Err(Error::InvalidIdentityTopologyEventBody(
+        _ => Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology proposal scope op kind is unknown",
-        )),
+        ))),
     }
 }
 
@@ -183,14 +184,18 @@ pub fn encode_identity_op_amendment(op: &IdentityTopologyOp) -> Result<Vec<u8>> 
         // A facet op has no propose lane (see `apply_identity_topology_op`),
         // so it has no park to amend either.
         IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
-            return Err(Error::IdentityTopologyUnarmed("amendment of this op kind"));
+            return Err(Error::Sync(SyncError::IdentityTopologyUnarmed(
+                "amendment of this op kind",
+            )));
         }
     };
     let mut entries = vec![(Value::from(BODY_KEY_KIND), Value::from(action.kind_str()))];
     encode_action_entries(&action, &mut entries);
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries)).map_err(|_| {
-        Error::InvalidIdentityTopologyEventBody("identity topology amendment encode failed")
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "identity topology amendment encode failed",
+        ))
     })?;
     Ok(data)
 }
@@ -202,21 +207,26 @@ pub fn encode_identity_op_amendment(op: &IdentityTopologyOp) -> Result<Vec<u8>> 
 pub fn decode_identity_op_amendment(data: &[u8]) -> Result<IdentityTopologyOp> {
     const AMENDMENT_CONTEXT: &str = "identity topology amendment";
     if data.len() > MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology amendment exceeds the size limit",
-        ));
+        )));
     }
     let mut cursor = data;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidIdentityTopologyEventBody(AMENDMENT_CONTEXT))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            AMENDMENT_CONTEXT,
+        ))
+    })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology amendment carries trailing bytes",
-        ));
+        )));
     }
     let map = value
         .as_map()
-        .ok_or(Error::InvalidIdentityTopologyEventBody(AMENDMENT_CONTEXT))?;
+        .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            AMENDMENT_CONTEXT,
+        )))?;
     let kind = decode_str_field(map, BODY_KEY_KIND, AMENDMENT_CONTEXT)?;
     let action = decode_action(kind, map)?;
     let op = match action.to_fold_action() {
@@ -224,15 +234,15 @@ pub fn decode_identity_op_amendment(data: &[u8]) -> Result<IdentityTopologyOp> {
         // undo / resolution rows are not ops a proposal can name, so they
         // are not amendable shapes either.
         IdentityTopologyAction::Undo { .. } | IdentityTopologyAction::ResolveProposal { .. } => {
-            return Err(Error::InvalidIdentityTopologyEventBody(
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology amendment is not an op",
-            ));
+            )));
         }
     };
     if encode_identity_op_amendment(&op)? != data {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology amendment is not canonical",
-        ));
+        )));
     }
     Ok(op)
 }
@@ -255,7 +265,7 @@ impl Vault {
     /// An amendment may only NARROW what the decider reviewed: the amended
     /// body must decode to the same op kind and name a subset of the
     /// proposal's subjects, else
-    /// [`Error::IdentityProposalAmendmentOutOfScope`] and nothing is
+    /// [`SyncError::IdentityProposalAmendmentOutOfScope`](crate::error::SyncError::IdentityProposalAmendmentOutOfScope) and nothing is
     /// written. This is the pin that keeps amendment from being an
     /// op-substitution capability.
     ///
@@ -289,9 +299,9 @@ impl Vault {
         now: u64,
     ) -> Result<(ProposalOutcome, EntityId)> {
         if !write.is_effective() {
-            return Err(Error::IdentityTopologyRejected(
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                 IdentityTopologyRejection::ProposalRulingNotEffective,
-            ));
+            )));
         }
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
@@ -315,7 +325,9 @@ impl Vault {
         let amended = match ruling {
             ProposalRuling::AmendThenApprove(body) => {
                 let amended_op = decode_identity_op_amendment(body).map_err(|_| {
-                    Error::IdentityProposalAmendmentOutOfScope("amended body is malformed")
+                    Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(
+                        "amended body is malformed",
+                    ))
                 })?;
                 assert_amendment_in_scope(&proposed_op, &amended_op)?;
                 Some((amended_op, body.to_vec()))
@@ -482,23 +494,23 @@ impl Vault {
             ruling_approval,
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
         ) {
-            return Err(Error::IdentityTopologyRejected(
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                 IdentityTopologyRejection::ProposalRulingNotEffective,
-            ));
+            )));
         }
         if proposal_record.approval != ClaimApprovalStatus::Proposed {
-            return Err(Error::IdentityTopologyRejected(
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                 IdentityTopologyRejection::NotProposed { event: *proposal },
-            ));
+            )));
         }
         let IdentityTopologyAction::Apply(proposed_op) = proposal_record.action.to_fold_action()
         else {
             // Undo and resolution rows are never `Proposed`-parked ops a
             // ruling can act on; the approval check above already excludes
             // them, so this is defence at the type seam.
-            return Err(Error::IdentityTopologyRejected(
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                 IdentityTopologyRejection::NotProposed { event: *proposal },
-            ));
+            )));
         };
         // The fold a fresh resolution is judged against EXCLUDES the row
         // being admitted — a replicated event validates against history
@@ -506,11 +518,11 @@ impl Vault {
         let fold =
             fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(rtxn)?);
         if fold.resolved_proposals.contains_key(proposal) {
-            return Err(Error::IdentityTopologyRejected(
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                 IdentityTopologyRejection::ProposalAlreadyResolved {
                     proposal: *proposal,
                 },
-            ));
+            )));
         }
         if let Some(stamped) = stamped {
             let derived = self.proposal_scope_in_txn(rtxn, proposal_record, &proposed_op)?;
@@ -518,11 +530,11 @@ impl Vault {
                 || stamped.target_class != derived.target_class
                 || stamped.actor != derived.actor
             {
-                return Err(Error::IdentityTopologyRejected(
+                return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::ResolutionRuleMismatch {
                         reason: "stamped ramp scope is not the proposal's derived tuple",
                     },
-                ));
+                )));
             }
         }
         Ok(proposed_op)

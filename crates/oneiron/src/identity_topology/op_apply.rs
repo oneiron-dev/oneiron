@@ -24,6 +24,7 @@ use super::store_entity_helpers::topology_edge_weight;
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::{IdentityTopologyRejection, evaluate_transition};
 use super::{ReassignmentContext, apply_reassignment_in_txn};
+use crate::error::SyncError;
 
 /// Write metadata for one identity-topology op: the consent axes the ledger
 /// event record carries. AUTO is the family default (r3); the propose lane
@@ -169,9 +170,9 @@ impl Vault {
             && let IdentityTopologyOp::Merge(merge) = op
             && let Some((a, b)) = self.suppressed_merge_pair_in_txn(&*wtxn, merge)?
         {
-            return Err(Error::IdentityTopologyRejected(
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                 IdentityTopologyRejection::DistinctPairSuppressed { a, b },
-            ));
+            )));
         }
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
@@ -182,7 +183,7 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             }
             IdentityTopologyParticipantValidation::Invalid(rejection) => {
-                return Err(Error::IdentityTopologyRejected(rejection));
+                return Err(Error::Sync(SyncError::IdentityTopologyRejected(rejection)));
             }
         }
         // Folded ONCE for the whole op: the zero-head-shell witness is the
@@ -200,8 +201,8 @@ impl Vault {
                 )?,
             );
         }
-        let transitions =
-            evaluate_transition(&states, op).map_err(Error::IdentityTopologyRejected)?;
+        let transitions = evaluate_transition(&states, op)
+            .map_err(|e| Error::Sync(SyncError::IdentityTopologyRejected(e)))?;
 
         // Minted in the arm rather than at the write chokepoint: the
         // reassignment index files each row under the event that stated it,
@@ -293,12 +294,14 @@ impl Vault {
                 // recording an unresolvable one is the ledger corruption this
                 // door exists to prevent.
                 if !write.is_effective() {
-                    return Err(Error::IdentityTopologyUnarmed("facet proposal"));
+                    return Err(Error::Sync(SyncError::IdentityTopologyUnarmed(
+                        "facet proposal",
+                    )));
                 }
                 if facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS {
-                    return Err(Error::InvalidIdentityTopologyEventBody(
+                    return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                         "identity topology event mints too many facets",
-                    ));
+                    )));
                 }
                 let (minted, mut effects) = self.mint_facets_in_txn(facet, now)?;
                 let stats = apply_reassignment_in_txn(

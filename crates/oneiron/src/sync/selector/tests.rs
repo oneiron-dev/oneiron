@@ -568,11 +568,11 @@ fn selector_decode_rejects_foreign_world_id_range() {
 
     assert!(matches!(
         err,
-        Error::SyncProtocolError {
+        Error::Sync(SyncError::SyncProtocolError {
             context: SyncProtocolValidation::Selector {
                 reason: SelectorError::ForeignWorldId
             }
-        }
+        })
     ));
 }
 
@@ -3171,6 +3171,7 @@ use crate::authority::{
     AuthorityEntryHash, AuthorityVaultId, FederationLifecycleAction, FederationLifecycleKind,
     authority_entry_hash, federation_scope_digest, sign_federation_pact_gesture,
 };
+use crate::error::SyncError;
 use crate::federation::{
     FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
     FederationScopeWorlds, encode_federation_pact_scope,
@@ -3424,11 +3425,11 @@ fn selector_authorization_gates_on_pact_activation() {
         assert!(
             matches!(
                 err,
-                Error::SyncProtocolError {
+                Error::Sync(SyncError::SyncProtocolError {
                     context: SyncProtocolValidation::Selector {
                         reason: SelectorError::GrantInactive
                     }
-                }
+                })
             ),
             "{name}: wrong denial: {err:?}"
         );
@@ -3560,11 +3561,11 @@ fn assert_grant_scope_mismatch(err: &Error, label: &str) {
     assert!(
         matches!(
             err,
-            Error::SyncProtocolError {
+            Error::Sync(SyncError::SyncProtocolError {
                 context: SyncProtocolValidation::Selector {
                     reason: SelectorError::GrantScopeMismatch
                 }
-            }
+            })
         ),
         "{label}: expected a ceiling refusal, got {err:?}"
     );
@@ -4188,11 +4189,11 @@ fn activation_gate_precedes_the_ceiling_check() {
     assert!(
         matches!(
             err,
-            Error::SyncProtocolError {
+            Error::Sync(SyncError::SyncProtocolError {
                 context: SyncProtocolValidation::Selector {
                     reason: SelectorError::GrantInactive
                 }
-            }
+            })
         ),
         "activation must refuse before the ceiling runs, got {err:?}"
     );
@@ -4276,11 +4277,11 @@ fn assert_grant_expired(err: &Error, label: &str) {
     assert!(
         matches!(
             err,
-            Error::SyncProtocolError {
+            Error::Sync(SyncError::SyncProtocolError {
                 context: SyncProtocolValidation::Selector {
                     reason: SelectorError::GrantExpired
                 }
-            }
+            })
         ),
         "{label}: expected an expiry refusal, got {err:?}"
     );
@@ -4333,11 +4334,11 @@ fn delegate_expiry_is_the_last_arm_of_the_door() {
     assert!(
         matches!(
             err,
-            Error::SyncProtocolError {
+            Error::Sync(SyncError::SyncProtocolError {
                 context: SyncProtocolValidation::Selector {
                     reason: SelectorError::GrantInactive
                 }
-            }
+            })
         ),
         "activation must refuse before expiry, got {err:?}"
     );
