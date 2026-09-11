@@ -667,6 +667,39 @@ async fn discover_advertises_context_board_and_not_companion_resume() {
     handle.abort();
 }
 
+/// Discovery and health read the same capability list, and both must name every
+/// search channel the router mounts. A channel advertised by one and not the
+/// other is a door an agent either never finds or calls and cannot explain.
+#[tokio::test]
+async fn discover_and_health_advertise_every_mounted_search_channel() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+
+    let discover = http_get(addr, "/api/core/discover", Some("secret")).await;
+    assert_http_status(&discover, 200);
+    let discover_body = http_json(&discover);
+    let discovered = str_array_set(&discover_body["feature_flags"]["capabilities"]);
+
+    let health = http_get(addr, "/api/health", None).await;
+    assert_http_status(&health, 200);
+    let health_body = http_json(&health);
+    let advertised = str_array_set(&health_body["capabilities"]["capabilities"]);
+
+    for channel in ["search.vector", "search.semantic", "search.text"] {
+        assert!(
+            discovered.contains(channel),
+            "discovery must advertise {channel}: {discovered:?}"
+        );
+        assert!(
+            advertised.contains(channel),
+            "health must advertise {channel}: {advertised:?}"
+        );
+    }
+
+    handle.abort();
+}
+
 #[tokio::test]
 async fn skills_pack_requires_auth_and_serves_static_markdown() {
     let dir = tempfile::tempdir().unwrap();
