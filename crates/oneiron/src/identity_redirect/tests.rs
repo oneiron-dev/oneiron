@@ -217,12 +217,12 @@ fn zero_head_shell_is_not_a_live_merge_target() {
     assert!(
         matches!(
             err,
-            crate::error::Error::IdentityTopologyRejected(
+            crate::error::Error::Sync(crate::error::SyncError::IdentityTopologyRejected(
                 crate::identity_topology::IdentityTopologyRejection::NotActive {
                     entity,
                     state: crate::identity_topology::EntityLifecycleState::Split,
                 }
-            ) if entity == retired
+            )) if entity == retired
         ),
         "expected NotActive on the retired shell, got {err:?}"
     );

@@ -6,6 +6,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 
 use super::types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
+use crate::error::ArtifactError;
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";
 
@@ -84,12 +85,15 @@ pub fn encode_code_revision(revision: &CodeRevision) -> Result<Vec<u8>> {
 
 pub fn decode_code_revision(bytes: &[u8]) -> Result<CodeRevision> {
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidCodeArtifactBody("code revision is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "code revision is not valid MessagePack",
+        ))
+    })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "trailing bytes after code revision map",
-        ));
+        )));
     }
     decode_code_revision_value(&value)
 }
@@ -120,21 +124,23 @@ pub fn encode_code_revision_fork(fork: &CodeRevisionFork) -> Result<Vec<u8>> {
 pub fn decode_code_revision_fork(bytes: &[u8]) -> Result<CodeRevisionFork> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
-        Error::InvalidCodeArtifactBody("code revision fork is not valid MessagePack")
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "code revision fork is not valid MessagePack",
+        ))
     })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "trailing bytes after code revision fork map",
-        ));
+        )));
     }
     decode_code_revision_fork_value(&value)
 }
 
 fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision must be a MessagePack map",
-        ));
+        )));
     };
     let mut revision_id = None;
     let mut kind = None;
@@ -146,29 +152,33 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
     let mut seen = [false; CODE_REVISION_RECORD_KEYS.len()];
 
     for (key, value) in entries {
-        let key = key.as_str().ok_or(Error::InvalidCodeArtifactBody(
-            "code revision keys must be strings",
-        ))?;
+        let key = key
+            .as_str()
+            .ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "code revision keys must be strings",
+            )))?;
         let Some(index) = CODE_REVISION_RECORD_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision key is not in the pinned CODE_REVISION_RECORD_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "duplicate code revision key",
-            ));
+            )));
         }
         seen[index] = true;
 
         match CODE_REVISION_RECORD_KEYS[index] {
             KEY_REVISION_ID => revision_id = Some(entity_value(value, "revision_id")?),
             KEY_KIND => {
-                let text = value.as_str().ok_or(Error::InvalidCodeArtifactBody(
-                    "code revision kind must be a UTF-8 string",
+                let text = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidCodeArtifactBody(
+                        "code revision kind must be a UTF-8 string",
+                    ),
                 ))?;
                 kind = Some(CodeRevisionKind::parse(text)?);
             }
@@ -192,26 +202,34 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
     }
 
     let revision = CodeRevision {
-        revision_id: revision_id.ok_or(Error::InvalidCodeArtifactBody(
+        revision_id: revision_id.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision key revision_id",
-        ))?,
-        kind: kind.ok_or(Error::InvalidCodeArtifactBody(
+        )))?,
+        kind: kind.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision key kind",
-        ))?,
-        session_id: session_id.ok_or(Error::InvalidCodeArtifactBody(
+        )))?,
+        session_id: session_id.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision key session_id",
+        )))?,
+        parent_revision_id: parent_revision_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision key parent_revision_id",
+            ),
         ))?,
-        parent_revision_id: parent_revision_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision key parent_revision_id",
+        reverted_to_revision_id: reverted_to_revision_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision key reverted_to_revision_id",
+            ),
         ))?,
-        reverted_to_revision_id: reverted_to_revision_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision key reverted_to_revision_id",
+        provenance_claim_id: provenance_claim_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision key provenance_claim_id",
+            ),
         ))?,
-        provenance_claim_id: provenance_claim_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision key provenance_claim_id",
-        ))?,
-        finalized_at: finalized_at.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision key finalized_at",
+        finalized_at: finalized_at.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision key finalized_at",
+            ),
         ))?,
     };
     validate_code_revision_shape(&revision)?;
@@ -220,9 +238,9 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
 
 fn decode_code_revision_fork_value(value: &Value) -> Result<CodeRevisionFork> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision fork must be a MessagePack map",
-        ));
+        )));
     };
     let mut fork_session_id = None;
     let mut parent_session_id = None;
@@ -231,21 +249,23 @@ fn decode_code_revision_fork_value(value: &Value) -> Result<CodeRevisionFork> {
     let mut seen = [false; CODE_REVISION_FORK_KEYS.len()];
 
     for (key, value) in entries {
-        let key = key.as_str().ok_or(Error::InvalidCodeArtifactBody(
-            "code revision fork keys must be strings",
-        ))?;
+        let key = key
+            .as_str()
+            .ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "code revision fork keys must be strings",
+            )))?;
         let Some(index) = CODE_REVISION_FORK_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision fork key is not in the pinned CODE_REVISION_FORK_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "duplicate code revision fork key",
-            ));
+            )));
         }
         seen[index] = true;
 
@@ -265,18 +285,24 @@ fn decode_code_revision_fork_value(value: &Value) -> Result<CodeRevisionFork> {
     }
 
     let fork = CodeRevisionFork {
-        fork_session_id: fork_session_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision fork key fork_session_id",
+        fork_session_id: fork_session_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision fork key fork_session_id",
+            ),
         ))?,
-        parent_session_id: parent_session_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision fork key parent_session_id",
+        parent_session_id: parent_session_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision fork key parent_session_id",
+            ),
         ))?,
-        base_revision_id: base_revision_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision fork key base_revision_id",
+        base_revision_id: base_revision_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision fork key base_revision_id",
+            ),
         ))?,
-        forked_at: forked_at.ok_or(Error::InvalidCodeArtifactBody(
+        forked_at: forked_at.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision fork key forked_at",
-        ))?,
+        )))?,
     };
     validate_code_revision_fork_shape(&fork)?;
     Ok(fork)
@@ -286,28 +312,28 @@ pub(super) fn validate_code_revision_shape(revision: &CodeRevision) -> Result<()
     if revision.parent_revision_id == Some(revision.revision_id)
         || revision.reverted_to_revision_id == Some(revision.revision_id)
     {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision cannot point at itself",
-        ));
+        )));
     }
     match revision.kind {
         CodeRevisionKind::Commit => {
             if revision.reverted_to_revision_id.is_some() {
-                return Err(Error::InvalidCodeArtifactBody(
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                     "commit code revision must not carry reverted_to_revision_id",
-                ));
+                )));
             }
         }
         CodeRevisionKind::Revert => {
             if revision.parent_revision_id.is_none() || revision.reverted_to_revision_id.is_none() {
-                return Err(Error::InvalidCodeArtifactBody(
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                     "revert code revision requires parent and reverted_to revision ids",
-                ));
+                )));
             }
             if revision.parent_revision_id == revision.reverted_to_revision_id {
-                return Err(Error::InvalidCodeArtifactBody(
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                     "revert parent and restored revision must be distinct",
-                ));
+                )));
             }
         }
     }
@@ -316,9 +342,9 @@ pub(super) fn validate_code_revision_shape(revision: &CodeRevision) -> Result<()
 
 pub(super) fn validate_code_revision_fork_shape(fork: &CodeRevisionFork) -> Result<()> {
     if fork.fork_session_id == fork.parent_session_id {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision fork session cannot be its own parent",
-        ));
+        )));
     }
     Ok(())
 }
@@ -339,7 +365,9 @@ pub(super) fn optional_hash_value(hash: Option<[u8; CODE_REVISION_HASH_LEN]>) ->
 
 pub(super) fn entity_value(value: &Value, field: &'static str) -> Result<EntityId> {
     let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidCodeArtifactBody(field));
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            field,
+        )));
     };
     entity_from_bytes(bytes, field)
 }
@@ -351,15 +379,18 @@ pub(super) fn optional_entity_from_value(
     match value {
         Value::Nil => Ok(None),
         Value::Binary(bytes) => entity_from_bytes(bytes, field).map(Some),
-        _ => Err(Error::InvalidCodeArtifactBody(field)),
+        _ => Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            field,
+        ))),
     }
 }
 
 fn entity_from_bytes(bytes: &[u8], field: &'static str) -> Result<EntityId> {
     let raw: [u8; ENTITY_ID_LEN] = bytes
         .try_into()
-        .map_err(|_| Error::InvalidCodeArtifactBody(field))?;
-    EntityId::from_bytes(raw).map_err(|_| Error::InvalidCodeArtifactBody(field))
+        .map_err(|_| Error::Artifact(ArtifactError::InvalidCodeArtifactBody(field)))?;
+    EntityId::from_bytes(raw)
+        .map_err(|_| Error::Artifact(ArtifactError::InvalidCodeArtifactBody(field)))
 }
 
 pub(super) fn hash_from_value(
@@ -367,12 +398,14 @@ pub(super) fn hash_from_value(
     field: &'static str,
 ) -> Result<[u8; CODE_REVISION_HASH_LEN]> {
     let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidCodeArtifactBody(field));
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            field,
+        )));
     };
     bytes
         .as_slice()
         .try_into()
-        .map_err(|_| Error::InvalidCodeArtifactBody(field))
+        .map_err(|_| Error::Artifact(ArtifactError::InvalidCodeArtifactBody(field)))
 }
 
 pub(super) fn optional_hash_from_value(
@@ -382,10 +415,16 @@ pub(super) fn optional_hash_from_value(
     match value {
         Value::Nil => Ok(None),
         Value::Binary(_) => hash_from_value(value, field).map(Some),
-        _ => Err(Error::InvalidCodeArtifactBody(field)),
+        _ => Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            field,
+        ))),
     }
 }
 
 pub(super) fn u64_value(value: &Value, field: &'static str) -> Result<u64> {
-    value.as_u64().ok_or(Error::InvalidCodeArtifactBody(field))
+    value
+        .as_u64()
+        .ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            field,
+        )))
 }

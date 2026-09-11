@@ -1,6 +1,7 @@
 //! Gate evaluator core: fail-closed default, criticality matrix, reason codes, and metrics.
 
 use super::*;
+use crate::error::GateError;
 
 #[test]
 fn gate_metrics_snapshot_has_stable_privacy_preserving_labels() {
@@ -169,14 +170,14 @@ fn gate_evaluator_default_policy_fails_closed_with_typed_denial() {
         decision.reason_codes(),
         &[GateReasonCode::DenyPolicyFailClosed]
     );
-    let err = Error::GateWriteRejected {
+    let err = Error::Gate(GateError::GateWriteRejected {
         outcome: decision.outcome().as_str(),
         reason_codes: decision
             .reason_codes()
             .iter()
             .map(|reason| reason.as_str())
             .collect(),
-    };
+    });
     let typed = err
         .gate_denial()
         .expect("default fail-closed denial must be typed");

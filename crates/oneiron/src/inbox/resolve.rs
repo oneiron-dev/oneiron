@@ -23,6 +23,7 @@ use super::model::{
     InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution, InboxGroupReopen, InboxReviewDial,
 };
 use super::projection::explicit_inbox_group;
+use crate::error::GateError;
 
 impl Vault {
     /// Reads the persisted inbox review dial (default: exceptions-only).
@@ -185,7 +186,7 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::EntityNotFound`] when the claim has no open pending row,
-    /// [`Error::GateConsentStale`] when the reviewed content or policy floor
+    /// [`GateError::GateConsentStale`](crate::error::GateError::GateConsentStale) when the reviewed content or policy floor
     /// drifted, and [`Error::InvalidClaimBody`] when the amendment does not
     /// decode or leaves the reviewed claim's predicate/subject.
     ///
@@ -347,7 +348,7 @@ fn accept_member_with_amendment_in_txn(
     let (diff_handle, read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &reviewed)?;
     if diff_handle != pending.diff_handle || read_frontier_hash != pending.read_frontier_hash {
-        return Err(Error::GateConsentStale { claim_id: *id });
+        return Err(Error::Gate(GateError::GateConsentStale { claim_id: *id }));
     }
 
     let amended = amended_body

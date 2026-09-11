@@ -15,7 +15,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ScopedReadActorKey, claim_surfaceable, decode_claim_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, RecordError, Result};
 use crate::gate::{GateOutcome, resolve_policy_manifest, scoped_read_claim_allowed};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM};
 use crate::store::{GateDecisionId, Store};
@@ -221,9 +221,9 @@ pub(crate) fn check_generic_grant_write(
             .get(txn, &admission_key(id))?
             .is_some()
     {
-        return Err(Error::InvalidAccessGrantBody(
+        return Err(Error::Record(RecordError::InvalidAccessGrantBody(
             "shared briefs require the share door",
-        ));
+        )));
     }
     if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())?
         && EntityMetadataHeader::parse(&raw)
@@ -231,9 +231,9 @@ pub(crate) fn check_generic_grant_write(
     {
         let old = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if matches!(old.scope, AccessGrantScope::SharedBrief { .. }) {
-            return Err(Error::InvalidAccessGrantBody(
+            return Err(Error::Record(RecordError::InvalidAccessGrantBody(
                 "shared briefs require the share door",
-            ));
+            )));
         }
     }
     Ok(())
@@ -459,20 +459,20 @@ impl Vault {
                 .get(&txn, &admission_key(share_id))?
                 .is_some()
         {
-            return Err(Error::AccessGrantAlreadyExists);
+            return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
         verify_share_actor(&self.store, &txn, issuer)?;
         let (gate_id, decision) =
             crate::gate::check_share_create_policy(&self.store, &mut txn, share_id, issuer, share)?;
         if decision.outcome() != GateOutcome::Allow {
-            let error = Error::GateWriteRejected {
+            let error = Error::Gate(GateError::GateWriteRejected {
                 outcome: decision.outcome().as_str(),
                 reason_codes: decision
                     .reason_codes()
                     .iter()
                     .map(|code| code.as_str())
                     .collect(),
-            };
+            });
             txn.commit()?;
             return Err(error);
         }
@@ -510,9 +510,9 @@ impl Vault {
                 || fold.vault_root_is_conflicted()
                 || !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
             {
-                return Err(Error::InvalidAccessGrantBody(
+                return Err(Error::Record(RecordError::InvalidAccessGrantBody(
                     "share revocation requires issuer or owner",
-                ));
+                )));
             }
         }
         if share.status == AccessGrantStatus::Revoked {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::VaultConfig;
+use crate::error::SyncError;
 use ed25519_dalek::SigningKey;
 
 const TEST_RECEIPT_LEARNED_AT: u64 = 1_772_400_000;
@@ -241,7 +242,7 @@ fn receipt_door_uses_vault_scoped_claimed_lookup() {
 
     let err = verify_receipt_for_vault(&vault, vault_b, &receipt_id, &blob).unwrap_err();
     assert!(
-        matches!(err, Error::ReceiptLeaseUnknown { client_id } if client_id == client),
+        matches!(err, Error::Sync(SyncError::ReceiptLeaseUnknown { client_id }) if client_id == client),
         "another vault's binding must not satisfy the claimed lookup: {err:?}"
     );
     assert!(
@@ -289,7 +290,7 @@ fn receipt_door_scopes_pubkey_revocation_floor_to_vault_prefix() {
     );
     let err = verify_receipt_for_vault(&vault, vault_b, &receipt_id, &blob).unwrap_err();
     assert!(
-        matches!(err, Error::ReceiptLeaseRevoked { client_id } if client_id == active_client_b),
+        matches!(err, Error::Sync(SyncError::ReceiptLeaseRevoked { client_id }) if client_id == active_client_b),
         "same-vault revoked pubkey must still reject: {err:?}"
     );
 }
@@ -319,7 +320,7 @@ fn receipt_door_preserves_same_vault_expired_plus_revoked_floor() {
 
     let err = verify_receipt_for_vault(&vault, vault_id, &receipt_id, &blob).unwrap_err();
     assert!(
-        matches!(err, Error::ReceiptLeaseRevoked { client_id } if client_id == expired_client),
+        matches!(err, Error::Sync(SyncError::ReceiptLeaseRevoked { client_id }) if client_id == expired_client),
         "expired claimed rows still accept OD-7, but same-vault revoked pubkey floor rejects"
     );
 }
@@ -346,7 +347,7 @@ fn revoked_claimed_row_returns_claimed_client_id_before_scoped_floor_scan() {
     let err = verify_receipt_for_vault(&vault, vault_id, &receipt_id, &blob)
         .expect_err("revoked claimed row must reject before scanning corrupt siblings");
     assert!(
-        matches!(err, Error::ReceiptLeaseRevoked { client_id } if client_id == claimed_client),
+        matches!(err, Error::Sync(SyncError::ReceiptLeaseRevoked { client_id }) if client_id == claimed_client),
         "claimed-row revoked path must return the claimed client_id, got: {err:?}"
     );
 }

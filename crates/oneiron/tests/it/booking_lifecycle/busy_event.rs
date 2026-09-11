@@ -89,10 +89,10 @@ fn busy_event_requires_matching_imported_source_permit() {
             result.expect("the matching permit admits the busy-event fixture");
         } else {
             match result.expect_err(label) {
-                oneiron::Error::GateWriteRejected {
+                oneiron::Error::Gate(oneiron::error::GateError::GateWriteRejected {
                     outcome,
                     reason_codes,
-                } => {
+                }) => {
                     assert_eq!(outcome, "pending", "{label}");
                     assert_eq!(
                         reason_codes.as_slice(),

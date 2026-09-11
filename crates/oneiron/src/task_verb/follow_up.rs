@@ -8,6 +8,7 @@ use super::consts::{PEER_HANDLE_KEY_PREFIX, TASK_FOLLOW_UP_KEY_PREFIX, TASK_FOLL
 use super::consult_payload::ConsultRecovery;
 use super::wire_decode::{decode_entity_ref, task_body_field};
 use super::wire_encode::entity_ref_value;
+use crate::error::RecordError;
 
 /// Canonical outbound idempotency/dedupe key in the shared task-follow-up
 /// namespace. ONE-1708's human follow-up stages key the same way, so one task
@@ -122,18 +123,24 @@ pub(super) fn consult_expiry_artifact_value(
 pub fn decode_consult_expiry_recovery(artifact_body: &[u8]) -> Result<Vec<ConsultRecovery>> {
     let mut cursor = artifact_body;
     let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidTaskBody("tasks.consult.expiry"))?;
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.consult.expiry")))?;
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.consult.expiry"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.consult.expiry",
+        )))?;
     task_body_field(entries, "recovery")?
         .as_array()
-        .ok_or(Error::InvalidTaskBody("tasks.consult.expiry"))?
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.consult.expiry",
+        )))?
         .iter()
         .map(|entry| {
             let entry = entry
                 .as_map()
-                .ok_or(Error::InvalidTaskBody("tasks.consult.expiry"))?;
+                .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.consult.expiry",
+                )))?;
             match task_body_field(entry, "choice")?.as_str() {
                 Some("retry_assignee") => Ok(ConsultRecovery::RetryAssignee),
                 Some("nudge_assignee") => Ok(ConsultRecovery::NudgeAssignee),
@@ -141,7 +148,9 @@ pub fn decode_consult_expiry_recovery(artifact_body: &[u8]) -> Result<Vec<Consul
                     task_body_field(entry, "actor_ref")?,
                     "tasks.consult.expiry",
                 )?)),
-                _ => Err(Error::InvalidTaskBody("tasks.consult.expiry")),
+                _ => Err(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.consult.expiry",
+                ))),
             }
         })
         .collect()

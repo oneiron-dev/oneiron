@@ -228,7 +228,7 @@ impl<'a> PipelineBuilder<'a> {
     /// (ARCH-0031: Okapi default, `Plus { delta }` and per-channel
     /// weight / `b` are non-reindexing options). The profile is
     /// validated fail-closed when the pipeline runs; an invalid
-    /// parameter returns [`crate::Error::InvalidRankProfile`], even when
+    /// parameter returns [`StoreError::InvalidRankProfile`](crate::error::StoreError::InvalidRankProfile), even when
     /// no text search is configured.
     pub fn rank_profile(mut self, profile: crate::config::Bm25RankProfile) -> Self {
         self.rank_profile = Some(profile);

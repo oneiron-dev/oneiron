@@ -16,6 +16,7 @@ use super::validate_non_blank;
 use super::{
     InboundSurfaceEventInput, InboundSurfaceRouteReceipt, SurfaceEvent, SurfaceEventDispatchRoute,
 };
+use crate::error::{ArtifactError, RegistryError};
 
 /// Attempt-queue kind owning inbound surface-event dispatch.
 pub const SURFACE_EVENT_ATTEMPT_KIND: &str = "surface_event.dispatch.v1";
@@ -420,10 +421,12 @@ fn sole_surface_event_attempt(
         return Ok(None);
     };
     if record.kind != SURFACE_EVENT_ATTEMPT_KIND {
-        return Err(Error::SurfaceEventCorrelationKindCollision {
-            correlation_id: correlation_id.to_owned(),
-            holding_kind: record.kind,
-        });
+        return Err(Error::Registry(
+            RegistryError::SurfaceEventCorrelationKindCollision {
+                correlation_id: correlation_id.to_owned(),
+                holding_kind: record.kind,
+            },
+        ));
     }
     Ok(Some(record))
 }
@@ -469,8 +472,11 @@ pub fn encode_surface_event_attempt_payload(
 
 /// Decodes a durable attempt payload.
 pub fn decode_surface_event_attempt_payload(bytes: &[u8]) -> Result<SurfaceEventAttemptPayload> {
-    rmp_serde::from_slice(bytes)
-        .map_err(|_| Error::InvalidAttemptQueueRecord("surface event attempt payload"))
+    rmp_serde::from_slice(bytes).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            "surface event attempt payload",
+        ))
+    })
 }
 
 /// Longest provider correlation id carried into the queue verbatim.

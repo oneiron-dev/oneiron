@@ -28,6 +28,7 @@ use super::storage::{
     collect_code_revision_records_by_index_prefix, read_code_revision_record_in_txn,
 };
 use super::types::{CodeRevision, CodeRevisionIntegrityRecord, CodeRevisionKind};
+use crate::error::ArtifactError;
 
 const CODE_REVISION_INTEGRITY_KEYS: [&str; 10] = [
     "revision_id",
@@ -105,21 +106,23 @@ pub(super) fn decode_code_revision_integrity_record(
 ) -> Result<CodeRevisionIntegrityRecord> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
-        Error::InvalidCodeArtifactBody("code revision integrity is not valid MessagePack")
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "code revision integrity is not valid MessagePack",
+        ))
     })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "trailing bytes after code revision integrity map",
-        ));
+        )));
     }
     decode_code_revision_integrity_value(&value)
 }
 
 fn decode_code_revision_integrity_value(value: &Value) -> Result<CodeRevisionIntegrityRecord> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision integrity must be a MessagePack map",
-        ));
+        )));
     };
     let mut revision_id = None;
     let mut session_id = None;
@@ -134,21 +137,23 @@ fn decode_code_revision_integrity_value(value: &Value) -> Result<CodeRevisionInt
     let mut seen = [false; CODE_REVISION_INTEGRITY_KEYS.len()];
 
     for (key, value) in entries {
-        let key = key.as_str().ok_or(Error::InvalidCodeArtifactBody(
-            "code revision integrity keys must be strings",
-        ))?;
+        let key = key
+            .as_str()
+            .ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "code revision integrity keys must be strings",
+            )))?;
         let Some(index) = CODE_REVISION_INTEGRITY_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision integrity key is not in the pinned CODE_REVISION_INTEGRITY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "duplicate code revision integrity key",
-            ));
+            )));
         }
         seen[index] = true;
 
@@ -182,35 +187,49 @@ fn decode_code_revision_integrity_value(value: &Value) -> Result<CodeRevisionInt
     }
 
     Ok(CodeRevisionIntegrityRecord {
-        revision_id: revision_id.ok_or(Error::InvalidCodeArtifactBody(
+        revision_id: revision_id.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision integrity key revision_id",
-        ))?,
-        session_id: session_id.ok_or(Error::InvalidCodeArtifactBody(
+        )))?,
+        session_id: session_id.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision integrity key session_id",
+        )))?,
+        parent_revision_id: parent_revision_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision integrity key parent_revision_id",
+            ),
         ))?,
-        parent_revision_id: parent_revision_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision integrity key parent_revision_id",
+        reverted_to_revision_id: reverted_to_revision_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision integrity key reverted_to_revision_id",
+            ),
         ))?,
-        reverted_to_revision_id: reverted_to_revision_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision integrity key reverted_to_revision_id",
+        provenance_claim_id: provenance_claim_id.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision integrity key provenance_claim_id",
+            ),
         ))?,
-        provenance_claim_id: provenance_claim_id.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision integrity key provenance_claim_id",
+        artifact_hash: artifact_hash.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision integrity key artifact_hash",
+            ),
         ))?,
-        artifact_hash: artifact_hash.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision integrity key artifact_hash",
-        ))?,
-        parent_fold: parent_fold.ok_or(Error::InvalidCodeArtifactBody(
+        parent_fold: parent_fold.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision integrity key parent_fold",
+        )))?,
+        reverted_to_fold: reverted_to_fold.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision integrity key reverted_to_fold",
+            ),
         ))?,
-        reverted_to_fold: reverted_to_fold.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision integrity key reverted_to_fold",
+        revision_fold: revision_fold.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision integrity key revision_fold",
+            ),
         ))?,
-        revision_fold: revision_fold.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision integrity key revision_fold",
-        ))?,
-        finalized_at: finalized_at.ok_or(Error::InvalidCodeArtifactBody(
-            "missing required code revision integrity key finalized_at",
+        finalized_at: finalized_at.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody(
+                "missing required code revision integrity key finalized_at",
+            ),
         ))?,
     })
 }
@@ -236,9 +255,9 @@ pub(super) fn backfill_code_revision_integrity_for_session_in_txn(
     let existing_frontier = get_code_revision_frontier_in_txn(store, wtxn, session_id)?;
     if revisions.is_empty() {
         if existing_frontier.is_some() {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision frontier exists without session index rows",
-            ));
+            )));
         }
         return Ok(());
     }
@@ -266,13 +285,14 @@ pub(super) fn ensure_code_revision_integrity_record_in_txn(
     revision_id: &EntityId,
     visiting: &mut HashSet<EntityId>,
 ) -> Result<CodeRevisionIntegrityRecord> {
-    let revision = read_code_revision_record_in_txn(store, wtxn, revision_id)?.ok_or(
-        Error::InvalidCodeArtifactBody("code revision integrity parent record missing"),
-    )?;
+    let revision =
+        read_code_revision_record_in_txn(store, wtxn, revision_id)?.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("code revision integrity parent record missing"),
+        ))?;
     if !visiting.insert(*revision_id) {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision parent chain contains a cycle",
-        ));
+        )));
     }
 
     let parent_fold = revision
@@ -385,9 +405,9 @@ pub(super) fn verify_or_build_code_revision_integrity_record_in_txn(
         return Err(Error::IndexOverflow("code_revision_parent_chain"));
     }
     if !visiting.insert(revision.revision_id) {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision parent chain contains a cycle",
-        ));
+        )));
     }
 
     let result = (|| {
@@ -403,9 +423,9 @@ pub(super) fn verify_or_build_code_revision_integrity_record_in_txn(
                 || record.parent_fold.is_some() != revision.parent_revision_id.is_some()
                 || record.reverted_to_fold.is_some() != revision.reverted_to_revision_id.is_some())
         {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision integrity record does not match revision record",
-            ));
+            )));
         }
 
         let artifact_body = code_artifact_body_bytes(store, rtxn, &revision.revision_id)?;
@@ -413,9 +433,9 @@ pub(super) fn verify_or_build_code_revision_integrity_record_in_txn(
         if let Some(record) = &record
             && artifact_hash != record.artifact_hash
         {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision artifact hash mismatch",
-            ));
+            )));
         }
         if let Some(provenance_claim_id) = revision.provenance_claim_id {
             require_entity_type(
@@ -440,9 +460,9 @@ pub(super) fn verify_or_build_code_revision_integrity_record_in_txn(
                 if let Some(record) = &record
                     && record.parent_fold != Some(parent_fold)
                 {
-                    return Err(Error::InvalidCodeArtifactBody(
+                    return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                         "code revision parent fold mismatch",
-                    ));
+                    )));
                 }
                 Some(parent_fold)
             }
@@ -459,9 +479,9 @@ pub(super) fn verify_or_build_code_revision_integrity_record_in_txn(
                 if let Some(record) = &record
                     && record.reverted_to_fold != Some(reverted_to_fold)
                 {
-                    return Err(Error::InvalidCodeArtifactBody(
+                    return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                         "code revision reverted-to fold mismatch",
-                    ));
+                    )));
                 }
                 Some(reverted_to_fold)
             }
@@ -483,9 +503,9 @@ pub(super) fn verify_or_build_code_revision_integrity_record_in_txn(
         );
         if let Some(record) = record {
             if expected_fold != record.revision_fold {
-                return Err(Error::InvalidCodeArtifactBody(
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                     "code revision fold mismatch",
-                ));
+                )));
             }
             Ok(record)
         } else {
@@ -534,9 +554,10 @@ fn require_code_revision_with_fold_with_visited(
     revision_id: &EntityId,
     visiting: &mut HashSet<EntityId>,
 ) -> Result<(CodeRevision, [u8; CODE_REVISION_HASH_LEN])> {
-    let revision = read_code_revision_record_in_txn(store, rtxn, revision_id)?.ok_or(
-        Error::InvalidCodeArtifactBody("code revision integrity parent record missing"),
-    )?;
+    let revision =
+        read_code_revision_record_in_txn(store, rtxn, revision_id)?.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("code revision integrity parent record missing"),
+        ))?;
     let record =
         verify_or_build_code_revision_integrity_record_in_txn(store, rtxn, &revision, visiting)?;
     Ok((revision, record.revision_fold))

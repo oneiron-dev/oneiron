@@ -37,7 +37,7 @@
 //! and cannot trip it; the reopen spec test pins this. A derived envelope
 //! with `start > end` (e.g. `valid_to` earlier than `learned_at` with no
 //! `valid_from`) is rejected fail-closed with
-//! [`Error::InvalidProvenanceBody`] — never silently reordered.
+//! [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody) — never silently reordered.
 //!
 //! Flag writes (D10): `restamp_edge_flags` is the ONLY 26-byte stamp
 //! primitive and it stays `pub(crate)`. The single public door to provenance
@@ -57,7 +57,7 @@
 //!   ties among live Claims." Per D14, "newer" is the Claim ENTITY's
 //!   envelope `learned_at` (u64); `source_revision_ref` is opaque. Writing a
 //!   provenance Claim for an EdgeRef therefore:
-//!   - REJECTS (typed [`Error::ProvenancePrecedenceViolation`]) when the
+//!   - REJECTS (typed [`ClaimError::ProvenancePrecedenceViolation`](crate::error::ClaimError::ProvenancePrecedenceViolation)) when the
 //!     incoming `learned_at` is OLDER than the live frontier — an older
 //!     Claim can never take precedence, and the engine refuses to write a
 //!     dead-on-arrival assertion;
@@ -90,7 +90,7 @@
 //! * **Close-instant validation** — closing can never invert a validity
 //!   window: when the effective `valid_to` would precede `valid_from` (or
 //!   the derived envelope start), the operation fails typed
-//!   ([`Error::InvalidProvenanceBody`]) — never silently reordered.
+//!   ([`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody)) — never silently reordered.
 //!
 //! * **DELETE (ARCH-0038, D16)** — hard-deleting (any receipt-writing
 //!   reason) or SoftErasing a provenance Claim removes/scrubs the TRUTH the
@@ -127,7 +127,7 @@
 //! accepts the legacy evid form when the body key is absent. Going forward,
 //! writers write the BODY key ONLY and leave `evid` to evidence purity. A
 //! claim carrying the class in BOTH places is ambiguous and fails closed
-//! ([`Error::InvalidProvenanceBody`]); a claim carrying it in NEITHER fails
+//! ([`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody)); a claim carrying it in NEITHER fails
 //! the same way — never a defaulted class. See
 //! `resolve_persisted_actor_class`.
 

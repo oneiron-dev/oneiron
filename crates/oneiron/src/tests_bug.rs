@@ -1,4 +1,5 @@
 use crate::edge::EDGE_VALUE_STRUCTURAL_LEN;
+use crate::error::RegistryError;
 use crate::habit::TaskRole;
 use crate::habit::task_body_for_test;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
@@ -49,7 +50,7 @@ fn test_intra_batch_cycle() {
         .commit();
 
     assert!(
-        matches!(result, Err(Error::CycleDetected)),
+        matches!(result, Err(Error::Registry(RegistryError::CycleDetected))),
         "Intra-batch cycle should return CycleDetected, got {result:?}"
     );
 

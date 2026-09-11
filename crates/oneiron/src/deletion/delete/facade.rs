@@ -21,6 +21,7 @@ use super::super::tombstone::{
     DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
 };
 use super::DeleteEntityOutcome;
+use crate::error::RegistryError;
 
 impl Vault {
     /// Deletes an entity blob by ID using the destructive user-hard-delete
@@ -71,7 +72,9 @@ impl Vault {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
         };
         if crate::registry::is_delete_protected_engine_record(header.entity_type) {
-            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+            return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                header.entity_type,
+            )));
         }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
         // lock-free `read_entity_header` read_txn has completed and committed

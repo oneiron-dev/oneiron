@@ -1,6 +1,8 @@
 //! Trust boundary: manifest fail-closed behavior, federated admission, and replication quarantine.
 
 use super::*;
+#[cfg(feature = "sync")]
+use crate::error::RegistryError;
 
 #[test]
 fn policy_manifest_missing_fixture_fails_closed_where_required() -> Result<()> {
@@ -459,7 +461,7 @@ fn replicated_policy_manifest_is_rejected_and_cannot_relax_source_trust() -> Res
         .commit()
         .expect_err("replicated policy manifests must be rejected");
     assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(kind) if kind == ENTITY_TYPE_POLICY_MANIFEST),
+        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(kind)) if kind == ENTITY_TYPE_POLICY_MANIFEST),
         "expected policy manifest maintenance rejection, got {err:?}"
     );
     assert!(vault.get_raw(&batch_id)?.is_none());
@@ -474,7 +476,7 @@ fn replicated_policy_manifest_is_rejected_and_cannot_relax_source_trust() -> Res
         })
         .expect_err("txn replicated policy manifests must be rejected");
     assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(kind) if kind == ENTITY_TYPE_POLICY_MANIFEST),
+        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(kind)) if kind == ENTITY_TYPE_POLICY_MANIFEST),
         "expected policy manifest maintenance rejection, got {err:?}"
     );
     assert!(vault.get_raw(&txn_id)?.is_none());
@@ -501,7 +503,7 @@ fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<(
         .commit()
         .expect_err("replicated access grants must be rejected");
     assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(kind) if kind == ENTITY_TYPE_ACCESS_GRANT),
+        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(kind)) if kind == ENTITY_TYPE_ACCESS_GRANT),
         "expected access grant maintenance rejection, got {err:?}"
     );
     assert!(vault.get_raw(&batch_id)?.is_none());
@@ -520,7 +522,7 @@ fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<(
         })
         .expect_err("txn replicated access grants must be rejected");
     assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(kind) if kind == ENTITY_TYPE_ACCESS_GRANT),
+        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(kind)) if kind == ENTITY_TYPE_ACCESS_GRANT),
         "expected access grant maintenance rejection, got {err:?}"
     );
     assert!(vault.get_raw(&txn_id)?.is_none());

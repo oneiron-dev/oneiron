@@ -1,5 +1,6 @@
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, encode_claim_body};
+use crate::error::GateError;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
@@ -354,7 +355,7 @@ fn pending_never_creates_and_generic_grants_never_mint_shares() -> Result<()> {
     policy(&vault, &issuer, &share, false, None)?;
     assert!(matches!(
         vault.create_share(&id, &issuer, &share),
-        Err(Error::GateWriteRejected { .. })
+        Err(Error::Gate(GateError::GateWriteRejected { .. }))
     ));
     assert!(vault.get_access_grant(&id)?.is_none());
     assert!(

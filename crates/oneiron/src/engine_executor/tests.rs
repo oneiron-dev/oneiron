@@ -40,6 +40,7 @@ fn prompt_package_root() -> std::path::PathBuf {
     crate::prompt::workspace_prompt_package_root().expect("workspace prompt package")
 }
 
+use crate::error::{ArtifactError, GateError};
 use crate::test_util::{embedding_test_config, entity};
 
 fn range(at: u64) -> TimeRange {
@@ -427,7 +428,7 @@ fn executor_self_writes_route_through_gated_actor_write_trap() {
 
     assert!(matches!(
         err,
-        EngineExecutorError::Engine(Error::GateWriteRejected { .. })
+        EngineExecutorError::Engine(Error::Gate(GateError::GateWriteRejected { .. }))
     ));
     assert_eq!(gate_decision_count(&vault), before + 1);
     assert!(
@@ -677,7 +678,7 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
 
     assert!(matches!(
         err,
-        EngineExecutorError::Engine(Error::InvalidCodeArtifactBody(_))
+        EngineExecutorError::Engine(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_)))
     ));
     assert!(
         vault
@@ -2771,7 +2772,7 @@ fn denied_and_halted_error_responses_carry_budget() {
     let err = block_on_ready(executor.run(&config)).expect_err("denied write still fails the run");
     assert!(matches!(
         err,
-        EngineExecutorError::Engine(Error::GateWriteRejected { .. })
+        EngineExecutorError::Engine(Error::Gate(GateError::GateWriteRejected { .. }))
     ));
     assert_eq!(
         gate_decision_count(&vault),

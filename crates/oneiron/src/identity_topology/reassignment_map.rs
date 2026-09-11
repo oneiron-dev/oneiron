@@ -23,6 +23,7 @@ use super::store_entity_helpers::{
 };
 use super::stored_event::StoredIdentityOpAction;
 use super::wire_keys::{MAP_KEY_FACET, MAP_KEY_HEAD, MAP_KEY_ITEM};
+use crate::error::SyncError;
 
 /// One reassignment-map row: where an item of the split/facet entity goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,17 +202,18 @@ fn decode_reassignment_item(bytes: &[u8]) -> Result<ClaimSubject> {
     const ITEM_CONTEXT: &str = "identity topology event map item";
     match bytes.len() {
         ENTITY_ID_LEN => {
-            let arr: [u8; ENTITY_ID_LEN] = bytes
-                .try_into()
-                .map_err(|_| Error::InvalidIdentityTopologyEventBody(ITEM_CONTEXT))?;
+            let arr: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| {
+                Error::Sync(SyncError::InvalidIdentityTopologyEventBody(ITEM_CONTEXT))
+            })?;
             EntityId::from_bytes(arr)
                 .map(ClaimSubject::Entity)
-                .map_err(|_| Error::InvalidIdentityTopologyEventBody(ITEM_CONTEXT))
+                .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(ITEM_CONTEXT)))
         }
         len if len == ENTITY_ID_LEN * 2 + 1 => {
             let source = decode_id_bytes(&bytes[..ENTITY_ID_LEN], ITEM_CONTEXT)?;
-            let kind = EdgeKind::try_from_u8(bytes[ENTITY_ID_LEN])
-                .ok_or(Error::InvalidIdentityTopologyEventBody(ITEM_CONTEXT))?;
+            let kind = EdgeKind::try_from_u8(bytes[ENTITY_ID_LEN]).ok_or(Error::Sync(
+                SyncError::InvalidIdentityTopologyEventBody(ITEM_CONTEXT),
+            ))?;
             let target = decode_id_bytes(&bytes[ENTITY_ID_LEN + 1..], ITEM_CONTEXT)?;
             Ok(ClaimSubject::Edge {
                 source,
@@ -219,7 +221,9 @@ fn decode_reassignment_item(bytes: &[u8]) -> Result<ClaimSubject> {
                 target,
             })
         }
-        _ => Err(Error::InvalidIdentityTopologyEventBody(ITEM_CONTEXT)),
+        _ => Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            ITEM_CONTEXT,
+        ))),
     }
 }
 
@@ -252,17 +256,23 @@ pub(super) fn encode_reassignment_map(map: &ReassignmentMap) -> Value {
 pub(super) fn decode_reassignment_map(value: &Value) -> Result<ReassignmentMap> {
     const MAP_CONTEXT: &str = "identity topology event map";
     let Value::Array(rows) = value else {
-        return Err(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT));
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            MAP_CONTEXT,
+        )));
     };
     let mut entries = Vec::with_capacity(rows.len());
     let mut previous_item: Option<&[u8]> = None;
     for row in rows {
-        let fields = row
-            .as_map()
-            .ok_or(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT))?;
+        let fields =
+            row.as_map()
+                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    MAP_CONTEXT,
+                )))?;
         let item_bytes = map_field(fields, MAP_KEY_ITEM)
             .and_then(Value::as_slice)
-            .ok_or(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT))?;
+            .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                MAP_CONTEXT,
+            )))?;
         // The pinned wire order is STRICTLY ascending encoded item bytes
         // (the `canonicalized()` sort key): equal items are the duplicate-
         // assignment shape (one claim must not carry two assignments), and
@@ -270,7 +280,9 @@ pub(super) fn decode_reassignment_map(value: &Value) -> Result<ReassignmentMap> 
         // stored — breaking the on-disk == re-encoded identity the sync
         // divergence checks rely on. Fail closed on both.
         if previous_item.is_some_and(|previous| previous >= item_bytes) {
-            return Err(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT));
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                MAP_CONTEXT,
+            )));
         }
         previous_item = Some(item_bytes);
         let item = decode_reassignment_item(item_bytes)?;
@@ -283,10 +295,14 @@ pub(super) fn decode_reassignment_map(value: &Value) -> Result<ReassignmentMap> 
                 index: index
                     .as_u64()
                     .and_then(|index| u32::try_from(index).ok())
-                    .ok_or(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT))?,
+                    .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        MAP_CONTEXT,
+                    )))?,
             },
             (Some(_), Some(_)) => {
-                return Err(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT));
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    MAP_CONTEXT,
+                )));
             }
         };
         entries.push(ReassignmentEntry { item, target });

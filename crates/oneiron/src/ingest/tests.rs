@@ -53,6 +53,7 @@ fn meeting_transcript_json(overrides: &[(&str, &str)]) -> String {
     document
 }
 
+use crate::error::GateError;
 use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 
 fn test_time(ts: u64) -> TimeRange {
@@ -284,10 +285,10 @@ fn imported_evidence_auto_denial_leaves_no_candidate_claim() -> crate::Result<()
     assert!(
         matches!(
             err,
-            Error::GateWriteRejected {
+            Error::Gate(GateError::GateWriteRejected {
                 outcome: "pending",
                 ref reason_codes,
-            } if reason_codes == &["gate.pending.source_trust"]
+            }) if reason_codes == &["gate.pending.source_trust"]
         ),
         "expected imported write-gate source-trust pending, got {err:?}"
     );
@@ -334,10 +335,10 @@ fn imported_evidence_gate_denial_leaves_no_candidate_claim() -> crate::Result<()
     assert!(
         matches!(
             err,
-            Error::GateWriteRejected {
+            Error::Gate(GateError::GateWriteRejected {
                 outcome: "deny",
                 ref reason_codes
-            } if reason_codes.as_slice() == ["gate.deny.policy_fail_closed"]
+            }) if reason_codes.as_slice() == ["gate.deny.policy_fail_closed"]
         ),
         "expected Gate deny, got {err:?}"
     );

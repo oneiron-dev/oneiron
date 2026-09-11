@@ -38,6 +38,7 @@ use super::wire_decode::{
     decode_entity_ref, decode_task_assignee, task_body_field, task_body_optional, task_verb_body,
 };
 use super::wire_encode::{canonical_bytes, entity_ref_value, task_assignee_value};
+use crate::error::RecordError;
 
 /// Lifts one persisted terminal register back into the pure ladder terminal.
 ///
@@ -633,12 +634,12 @@ pub fn human_verdict_value(verdict: HumanVerdict) -> Value {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidTaskBody`] for an unknown token, a missing required ref, or
+/// [`RecordError::InvalidTaskBody`](crate::error::RecordError::InvalidTaskBody) for an unknown token, a missing required ref, or
 /// an assignee that is not exactly ONE-1699's `TaskAssignee`.
 pub fn decode_human_verdict(value: &Value) -> Result<HumanVerdict> {
     let entries = value
         .as_map()
-        .ok_or(Error::InvalidTaskBody("tasks.verdict"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody("tasks.verdict")))?;
     let required = |name| -> Result<EntityId> {
         decode_entity_ref(task_body_field(entries, name)?, "tasks.verdict")
     };
@@ -662,6 +663,6 @@ pub fn decode_human_verdict(value: &Value) -> Result<HumanVerdict> {
             assignee: decode_task_assignee(task_body_field(entries, "assignee")?)?,
             rationale_ref: required("rationale_ref")?,
         }),
-        _ => Err(Error::InvalidTaskBody("tasks.verdict")),
+        _ => Err(Error::Record(RecordError::InvalidTaskBody("tasks.verdict"))),
     }
 }

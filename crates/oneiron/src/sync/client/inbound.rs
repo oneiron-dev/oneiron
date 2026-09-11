@@ -5,7 +5,7 @@ use std::cmp::Ordering::{Equal, Less};
 use loro::VersionVector;
 
 use super::base::{SyncClient, load_root_doc};
-use crate::error::Error;
+use crate::error::{Error, SyncError};
 use crate::sync::SyncEvent;
 use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};
@@ -236,7 +236,7 @@ impl SyncClient {
         if window.doc.oplog_vv() == vv_before {
             let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
                 Ok(doc) => doc,
-                Err(Error::WindowNotFound { .. }) => {
+                Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
                     let doc = create_window_doc("local", &key);
                     if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
                         self.manager.discard_window(&key);
@@ -524,7 +524,9 @@ impl SyncClient {
 /// fail-closed variant; anything else is an export-side failure.
 fn map_delta_export_err(e: crate::error::Error) -> TransportError {
     match e {
-        crate::error::Error::CrdtDecodeError { .. } => TransportError::VersionVectorDecode,
+        crate::error::Error::Sync(crate::error::SyncError::CrdtDecodeError { .. }) => {
+            TransportError::VersionVectorDecode
+        }
         _ => TransportError::InvalidPayload("delta export failed"),
     }
 }

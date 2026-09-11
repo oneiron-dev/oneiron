@@ -10,6 +10,7 @@ use crate::vault::entity_id_from_type_index_key;
 
 use super::codec::{decode_access_grant_body, encode_access_grant_body, invalid_grant};
 use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
+use crate::error::RecordError;
 
 impl Vault {
     fn check_channel_identity_access_write(
@@ -56,7 +57,7 @@ impl Vault {
         self.check_channel_identity_access_write(&wtxn, id, grant)?;
         crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
-            return Err(Error::AccessGrantAlreadyExists);
+            return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
         self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
         wtxn.commit()?;
@@ -161,9 +162,9 @@ impl Vault {
             if matches!(grant.scope, AccessGrantScope::Calendar { .. }) {
                 Ok(())
             } else {
-                Err(Error::InvalidAccessGrantBody(
+                Err(Error::Record(RecordError::InvalidAccessGrantBody(
                     "grant is not a calendar disclosure grant",
-                ))
+                )))
             }
         })
     }

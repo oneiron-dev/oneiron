@@ -446,7 +446,9 @@ pub(super) fn materialize_entity_blob_in_txn(
                 );
                 return Ok(false);
             }
-            return Err(crate::Error::RedactionReceiptDivergence { id });
+            return Err(crate::Error::Sync(
+                crate::error::SyncError::RedactionReceiptDivergence { id },
+            ));
         }
         let pubkey = crate::sync::lease::verify_new_receipt_origin_for_vault_in_txn(
             vault,

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::kernel::ReceiptRecord;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 
 /// Session-local holder for emit-adjacent receipts (OF-326 interaction).
 ///
@@ -58,10 +58,10 @@ impl SessionLocalReceiptLog {
     /// substrates and must never become deletable via session close.
     pub fn record(&mut self, receipt: ReceiptRecord) -> Result<()> {
         if !receipt.receipt_kind.is_emit_adjacent() {
-            return Err(Error::EmitAdjacentReceiptRequired {
+            return Err(Error::Claim(ClaimError::EmitAdjacentReceiptRequired {
                 surface: "session-local receipt log",
                 kind: receipt.receipt_kind.as_str(),
-            });
+            }));
         }
         self.receipts.push(receipt);
         Ok(())

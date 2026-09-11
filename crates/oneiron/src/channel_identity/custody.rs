@@ -19,6 +19,7 @@ use crate::secret_custody::{
 use crate::store::Store;
 
 use super::address::{AssignmentAddress, ChannelKey};
+use crate::error::{RecordError, SecretError};
 
 const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
 const MAX_DELEGATED_GRANT_SCOPES: usize = 8;
@@ -85,25 +86,25 @@ impl DelegatedGrant {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidChannelIdentityBody`] for a blank or over-long custody
+    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody) for a blank or over-long custody
     /// record name, an empty or over-long scope set, or a repeated scope.
     pub fn validate(&self) -> Result<()> {
         let trimmed = self.custody_record_ref.trim();
         if trimmed.is_empty() || self.custody_record_ref.len() > MAX_DELEGATED_GRANT_REF_BYTES {
-            return Err(Error::InvalidChannelIdentityBody(
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "delegated_grant_ref must be a non-empty custody record name of at most 256 bytes",
-            ));
+            )));
         }
         if self.scopes.is_empty() || self.scopes.len() > MAX_DELEGATED_GRANT_SCOPES {
-            return Err(Error::InvalidChannelIdentityBody(
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "delegated grant must declare 1..=8 read scopes",
-            ));
+            )));
         }
         for (index, scope) in self.scopes.iter().enumerate() {
             if self.scopes[..index].contains(scope) {
-                return Err(Error::InvalidChannelIdentityBody(
+                return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                     "delegated grant scopes must not repeat",
-                ));
+                )));
             }
         }
         Ok(())
@@ -260,8 +261,8 @@ impl DelegatedCustodyProof<'_> {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidChannelIdentityBody`], [`Error::SecretRefNotFound`],
-/// [`Error::SecretCustodyNotActive`], or [`Error::SecretBindingDenied`].
+/// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody), [`SecretError::SecretRefNotFound`](crate::error::SecretError::SecretRefNotFound),
+/// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive), or [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied).
 pub(super) fn verify_delegated_custody_in_txn<'txn>(
     store: &Store,
     txn: &'txn heed::RoTxn<'_>,
@@ -270,19 +271,23 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
     grant: &DelegatedGrant,
 ) -> Result<DelegatedCustodyProof<'txn>> {
     grant.validate()?;
-    let effector = delegated_custody_effector(channel).ok_or(Error::InvalidChannelIdentityBody(
-        "channel admits no delegated_grant custody effector",
+    let effector = delegated_custody_effector(channel).ok_or(Error::Record(
+        RecordError::InvalidChannelIdentityBody(
+            "channel admits no delegated_grant custody effector",
+        ),
     ))?;
-    let missing = || Error::SecretRefNotFound {
-        name: grant.custody_record_ref.clone(),
+    let missing = || {
+        Error::Secret(SecretError::SecretRefNotFound {
+            name: grant.custody_record_ref.clone(),
+        })
     };
     let id =
         resolve_secret_ref_in_txn(store, txn, &grant.custody_record_ref)?.ok_or_else(missing)?;
     let admission = read_secret_custody_admission_in_txn(store, txn, &id)?.ok_or_else(missing)?;
     if admission.status != SecretCustodyStatus::Active {
-        return Err(Error::SecretCustodyNotActive {
+        return Err(Error::Secret(SecretError::SecretCustodyNotActive {
             name: admission.name,
-        });
+        }));
     }
     // The SELECTION rule has to be the token door's, not a looser one. The
     // door resolves `binding_for` — the FIRST binding naming the effector —
@@ -296,9 +301,11 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
     // door services a MAILBOX, and a binding that grants read of some other
     // member's mail is not custody of this one.
     let subject = delegated_custody_subject_scope(channel, address);
-    let denied = || Error::SecretBindingDenied {
-        effector: effector.to_owned(),
-        secret_ref: admission.name.clone(),
+    let denied = || {
+        Error::Secret(SecretError::SecretBindingDenied {
+            effector: effector.to_owned(),
+            secret_ref: admission.name.clone(),
+        })
     };
     let binding = admission.binding_for(effector).ok_or_else(denied)?;
     if !binding.grants_read() || !binding_names_subject(binding, &subject) {

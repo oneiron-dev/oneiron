@@ -38,7 +38,7 @@ impl GuestImage {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmBackendError`] when an artifact is missing. The
+    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when an artifact is missing. The
     /// message names the artifact class, never the host path.
     pub fn ensure_present(&self, backend: &'static str) -> Result<()> {
         for (class, path) in [
@@ -84,7 +84,7 @@ impl MicroVmHandle {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmBackendError`] when the VM id is blank or
+    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when the VM id is blank or
     /// contains control characters.
     pub fn new(
         id: impl Into<String>,

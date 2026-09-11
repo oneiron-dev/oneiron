@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::RecordError;
 
 fn sample_delegated_identity() -> ChannelIdentity {
     decode_channel_identity_body(&encode_entries(delegated_body_entries(
@@ -223,7 +224,7 @@ fn unsupported_schema_versions_are_rejected() -> Result<()> {
             unsupported[0].1 = Value::from(version);
             assert!(matches!(
                 decode_channel_identity_body(&encode_entries(unsupported)),
-                Err(Error::InvalidChannelIdentityBody(_))
+                Err(Error::Record(RecordError::InvalidChannelIdentityBody(_)))
             ));
         }
     }

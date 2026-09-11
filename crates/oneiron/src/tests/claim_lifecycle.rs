@@ -1,6 +1,7 @@
 //! Claim lifecycle: supersede/retract, temporal rehoming, origin-truth guards.
 
 use super::*;
+use crate::error::ClaimError;
 
 #[test]
 fn put_edge_provenance_atomic_write_restamps_and_indexes() -> Result<()> {
@@ -1005,10 +1006,10 @@ fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
     assert_matches!(
         err,
-        Error::WriteVerbTargetStale {
+        Error::Claim(ClaimError::WriteVerbTargetStale {
             lifecycle: ClaimLifecycleStatus::Superseded,
             ..
-        }
+        })
     );
     let a_read = vault.get_claim(&a)?.expect("a");
     assert_eq!(
@@ -1042,10 +1043,10 @@ fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
     assert_matches!(
         err,
-        Error::WriteVerbTargetStale {
+        Error::Claim(ClaimError::WriteVerbTargetStale {
             lifecycle: ClaimLifecycleStatus::Retracted,
             ..
-        }
+        })
     );
     assert_eq!(vault.get_claim(&c)?.expect("c").valid_to, Some(T1));
 

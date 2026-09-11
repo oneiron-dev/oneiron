@@ -20,7 +20,7 @@ use super::types::{
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::llm::ModelTierRef;
 use crate::skill::SkillDependency;
 use rmpv::Value;
@@ -126,10 +126,15 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
 /// Decodes a pinned-key MessagePack body into an `AgentDefinition`.
 pub fn decode_agent_definition(bytes: &[u8]) -> Result<AgentDefinition> {
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidAgentDefBody("body is not valid MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidAgentDefBody("trailing bytes after body map"));
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "trailing bytes after body map",
+        )));
     }
     decode_agent_definition_value(&value)
 }
@@ -154,39 +159,43 @@ pub(crate) fn validate_agent_definition_update(
         return Ok(());
     }
     if prior.agent_id != updated.agent_id {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "agentId cannot change on update",
-        ));
+        )));
     }
     if prior.forked_from != updated.forked_from {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "forkedFrom cannot change on update",
-        ));
+        )));
     }
     if prior.logical_id != updated.logical_id {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "logicalId cannot change on update",
-        ));
+        )));
     }
     if prior.generated != updated.generated || prior.human_authored != updated.human_authored {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "authorship flags cannot change on update",
-        ));
+        )));
     }
     if prior.source != updated.source {
-        return Err(Error::InvalidAgentDefBody("source cannot change on update"));
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "source cannot change on update",
+        )));
     }
     if prior.version == updated.version {
-        return Err(Error::InvalidAgentDefBody(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "version must change when updating agent definition body",
-        ));
+        )));
     }
     Ok(())
 }
 
 fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidAgentDefBody("body must be a MessagePack map"));
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "body must be a MessagePack map",
+        )));
     };
 
     let mut agent_id = None;
@@ -216,15 +225,19 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidAgentDefBody("body keys must be strings"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "body keys must be strings",
+            )));
         };
         let Some(index) = AGENT_DEF_BODY_KEYS.iter().position(|known| *known == key) else {
-            return Err(Error::InvalidAgentDefBody(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "body key is not in the pinned AGENT_DEF_BODY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidAgentDefBody("duplicate body key"));
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "duplicate body key",
+            )));
         }
         seen[index] = true;
 
@@ -269,73 +282,84 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
                 model_tier = Some(ModelTierRef(tier));
             }
             KEY_SCOPE => {
-                scope_discriminant = Some(
-                    value
-                        .as_str()
-                        .map(str::to_owned)
-                        .ok_or(Error::InvalidAgentDefBody("scope must be a string"))?,
-                );
+                scope_discriminant = Some(value.as_str().map(str::to_owned).ok_or(
+                    Error::Artifact(ArtifactError::InvalidAgentDefBody("scope must be a string")),
+                )?);
             }
             KEY_WORLD => {
-                let hex = value.as_str().ok_or(Error::InvalidAgentDefBody(
-                    "world must be a hex-encoded EntityId string",
-                ))?;
+                let hex =
+                    value
+                        .as_str()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                            "world must be a hex-encoded EntityId string",
+                        )))?;
                 world = Some(EntityId::from_hex(hex).map_err(|_| {
-                    Error::InvalidAgentDefBody("world must be a hex-encoded EntityId string")
+                    Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                        "world must be a hex-encoded EntityId string",
+                    ))
                 })?);
             }
             KEY_CEILING => {
                 ceiling = Some(value.as_str().and_then(AgentCeiling::parse).ok_or(
-                    Error::InvalidAgentDefBody("ceiling must be one of auto|proposed"),
+                    Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                        "ceiling must be one of auto|proposed",
+                    )),
                 )?);
             }
             KEY_FORKED_FROM => {
-                let text = value.as_str().ok_or(Error::InvalidAgentDefBody(
-                    "forkedFrom must be a hex-encoded EntityId string",
-                ))?;
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                            "forkedFrom must be a hex-encoded EntityId string",
+                        )))?;
                 forked_from = Some(decode_forked_from(text)?);
             }
             KEY_APPROVAL_STATUS => {
                 approval_status = Some(value.as_str().and_then(ClaimApprovalStatus::parse).ok_or(
-                    Error::InvalidAgentDefBody(
+                    Error::Artifact(ArtifactError::InvalidAgentDefBody(
                         "approvalStatus must be one of auto|proposed|approved|rejected",
-                    ),
+                    )),
                 )?);
             }
             KEY_LIFECYCLE_STATUS => {
                 lifecycle_status =
                     Some(value.as_str().and_then(ClaimLifecycleStatus::parse).ok_or(
-                        Error::InvalidAgentDefBody(
+                        Error::Artifact(ArtifactError::InvalidAgentDefBody(
                             "lifecycleStatus must be one of active|superseded|retracted",
-                        ),
+                        )),
                     )?);
             }
             KEY_SOURCE => {
                 source =
                     Some(
                         value.as_str().and_then(ClaimSource::parse).ok_or(
-                            Error::InvalidAgentDefBody(
+                            Error::Artifact(ArtifactError::InvalidAgentDefBody(
                                 "source must be one of user_stated|observed|inferred|imported|tool_output|generated",
-                            ),
+                            )),
                         )?,
                     );
             }
             KEY_CONFIDENCE => {
                 confidence = Some(crate::claim::unit_interval_f32(value).ok_or(
-                    Error::InvalidAgentDefBody("confidence must be finite in the unit interval"),
+                    Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                        "confidence must be finite in the unit interval",
+                    )),
                 )?);
             }
             KEY_GENERATED => {
                 let Value::Boolean(flag) = value else {
-                    return Err(Error::InvalidAgentDefBody("generated must be a boolean"));
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                        "generated must be a boolean",
+                    )));
                 };
                 generated = Some(*flag);
             }
             KEY_HUMAN_AUTHORED => {
                 let Value::Boolean(flag) = value else {
-                    return Err(Error::InvalidAgentDefBody(
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                         "humanAuthored must be a boolean",
-                    ));
+                    )));
                 };
                 human_authored = Some(*flag);
             }
@@ -349,7 +373,9 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
             }
             KEY_ENABLED => {
                 let Value::Boolean(flag) = value else {
-                    return Err(Error::InvalidAgentDefBody("enabled must be a boolean"));
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                        "enabled must be a boolean",
+                    )));
                 };
                 enabled = Some(*flag);
             }
@@ -368,38 +394,50 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
     let scope = resolve_scope(scope_discriminant.as_deref(), world)?;
 
     let definition = AgentDefinition {
-        agent_id: agent_id.ok_or(Error::InvalidAgentDefBody("missing required key agentId"))?,
-        desc: desc.ok_or(Error::InvalidAgentDefBody("missing required key desc"))?,
-        version: version.ok_or(Error::InvalidAgentDefBody("missing required key version"))?,
+        agent_id: agent_id.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "missing required key agentId",
+        )))?,
+        desc: desc.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "missing required key desc",
+        )))?,
+        version: version.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "missing required key version",
+        )))?,
         instructions,
-        skills: skills.ok_or(Error::InvalidAgentDefBody("missing required key skills"))?,
-        connectors: connectors.ok_or(Error::InvalidAgentDefBody(
+        skills: skills.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "missing required key skills",
+        )))?,
+        connectors: connectors.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required key connectors",
-        ))?,
-        code_mode_mcps: code_mode_mcps.ok_or(Error::InvalidAgentDefBody(
-            "missing required key codeModeMcps",
+        )))?,
+        code_mode_mcps: code_mode_mcps.ok_or(Error::Artifact(
+            ArtifactError::InvalidAgentDefBody("missing required key codeModeMcps"),
         ))?,
         model_tier,
         scope,
         ceiling: ceiling.unwrap_or(AgentCeiling::Proposed),
         forked_from,
-        approval_status: approval_status.ok_or(Error::InvalidAgentDefBody(
-            "missing required key approvalStatus",
+        approval_status: approval_status.ok_or(Error::Artifact(
+            ArtifactError::InvalidAgentDefBody("missing required key approvalStatus"),
         ))?,
-        lifecycle_status: lifecycle_status.ok_or(Error::InvalidAgentDefBody(
-            "missing required key lifecycleStatus",
+        lifecycle_status: lifecycle_status.ok_or(Error::Artifact(
+            ArtifactError::InvalidAgentDefBody("missing required key lifecycleStatus"),
         ))?,
-        source: source.ok_or(Error::InvalidAgentDefBody("missing required key source"))?,
-        confidence: confidence.ok_or(Error::InvalidAgentDefBody(
+        source: source.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "missing required key source",
+        )))?,
+        confidence: confidence.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required key confidence",
+        )))?,
+        generated: generated.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "missing required key generated",
+        )))?,
+        human_authored: human_authored.ok_or(Error::Artifact(
+            ArtifactError::InvalidAgentDefBody("missing required key humanAuthored"),
         ))?,
-        generated: generated.ok_or(Error::InvalidAgentDefBody("missing required key generated"))?,
-        human_authored: human_authored.ok_or(Error::InvalidAgentDefBody(
-            "missing required key humanAuthored",
-        ))?,
-        provenance: provenance.ok_or(Error::InvalidAgentDefBody(
+        provenance: provenance.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required key provenance",
-        ))?,
+        )))?,
         logical_id,
         // Missing decodes as enabled: pre-1890 bodies carried no key and were
         // dispatchable.
@@ -419,9 +457,9 @@ fn decode_forked_from(text: &str) -> Result<EntityId> {
     if let Ok(id) = EntityId::from_hex(text) {
         return Ok(id);
     }
-    legacy_logical_id_row(text)?.ok_or(Error::InvalidAgentDefBody(
+    legacy_logical_id_row(text)?.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
         "forkedFrom must be a hex-encoded EntityId string",
-    ))
+    )))
 }
 
 /// The pinned row id a legacy `sys.*` wire string maps to, or `None` when the
@@ -439,34 +477,35 @@ pub(crate) fn legacy_logical_id_row(logical_id: &str) -> Result<Option<EntityId>
 /// catch this case because `world` is itself a pinned key, so it needs its own
 /// arm.
 fn resolve_scope(discriminant: Option<&str>, world: Option<EntityId>) -> Result<AgentScope> {
-    let discriminant =
-        discriminant.ok_or(Error::InvalidAgentDefBody("missing required key scope"))?;
+    let discriminant = discriminant.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+        "missing required key scope",
+    )))?;
     match discriminant {
         SCOPE_ALL => {
             if world.is_some() {
-                return Err(Error::InvalidAgentDefBody(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                     "world key is only valid when scope is world",
-                ));
+                )));
             }
             Ok(AgentScope::All)
         }
         SCOPE_BASE => {
             if world.is_some() {
-                return Err(Error::InvalidAgentDefBody(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                     "world key is only valid when scope is world",
-                ));
+                )));
             }
             Ok(AgentScope::Base)
         }
         SCOPE_WORLD => {
-            let world = world.ok_or(Error::InvalidAgentDefBody(
+            let world = world.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "scope world requires a world key",
-            ))?;
+            )))?;
             Ok(AgentScope::World(world))
         }
-        _ => Err(Error::InvalidAgentDefBody(
+        _ => Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "scope must be one of all|base|world",
-        )),
+        ))),
     }
 }
 

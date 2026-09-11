@@ -34,6 +34,7 @@ use super::verdict::{
     PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit,
     PolicyVerdictCategory,
 };
+use crate::error::RelayError;
 
 /// The owner's policy document and the answer shape it asked for. Both or
 /// neither: a document nobody declared a contract for is an answer the engine
@@ -550,10 +551,10 @@ fn policy_model_context_for_policy(
 /// plane that is switched on.
 fn owner_compiled_patterns(policy: &PolicyManifestResolution) -> Result<CompiledPatternRules> {
     if policy.owner_policy_patterns_dropped() {
-        return Err(Error::PolicyManifestInvalid {
+        return Err(Error::Relay(RelayError::PolicyManifestInvalid {
             field: "owner_policy_patterns",
             reason: "were dropped by manifest decode",
-        });
+        }));
     }
     let known_row_ref = |category: &str| policy.owner_policy_row_refs().contains(&category);
     let rules: Vec<PolicyPatternRule> = policy
@@ -581,9 +582,11 @@ fn owner_compiled_patterns(policy: &PolicyManifestResolution) -> Result<Compiled
                 .to_owned(),
         ));
     }
-    compile_pattern_rules(&rules, &known_row_ref).map_err(|defect| Error::PolicyManifestInvalid {
-        field: defect.field,
-        reason: defect.reason,
+    compile_pattern_rules(&rules, &known_row_ref).map_err(|defect| {
+        Error::Relay(RelayError::PolicyManifestInvalid {
+            field: defect.field,
+            reason: defect.reason,
+        })
     })
 }
 
@@ -596,16 +599,17 @@ fn owner_policy_document(policy: &PolicyManifestResolution) -> Result<Option<Own
         policy.owner_policy_output_contract(),
     ) {
         (None, None) => Ok(None),
-        (Some(_), None) | (None, Some(_)) => Err(Error::PolicyManifestInvalid {
+        (Some(_), None) | (None, Some(_)) => Err(Error::Relay(RelayError::PolicyManifestInvalid {
             field: "owner_policy_output_contract",
             reason: "must be declared with the owner policy document",
-        }),
+        })),
         (Some(text), Some(contract)) => {
-            let contract =
-                PolicyOutputContract::parse(contract).ok_or(Error::PolicyManifestInvalid {
+            let contract = PolicyOutputContract::parse(contract).ok_or(Error::Relay(
+                RelayError::PolicyManifestInvalid {
                     field: "owner_policy_output_contract",
                     reason: "names a contract the engine does not have",
-                })?;
+                },
+            ))?;
             Ok(Some(OwnerPolicyDocument {
                 text: text.to_owned(),
                 contract,
@@ -670,8 +674,8 @@ pub(super) fn pass_audit(evaluation: &PatternEvaluation<'_>) -> PolicyPassAudit 
 }
 
 pub(super) fn dropped_owner_policy_rows_error() -> Error {
-    Error::PolicyManifestInvalid {
+    Error::Relay(RelayError::PolicyManifestInvalid {
         field: "owner_policy_rows",
         reason: "were dropped by manifest decode",
-    }
+    })
 }

@@ -103,7 +103,7 @@ pub struct SkillOptimizeOutcome {
 /// # Errors
 ///
 /// Storage and body errors; whatever the author returns; and
-/// [`Error::InvalidSkillBody`] when a draft is unusable (empty or oversized
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when a draft is unusable (empty or oversized
 /// text, or a "replacement" identical to the instructions it replaces), or when
 /// `attempt` names no stored queue row and so proves no drafting cycle.
 pub fn run_skill_optimize(
@@ -237,7 +237,7 @@ pub fn run_skill_optimize(
 ///
 /// # Errors
 ///
-/// Storage/decode errors from the queue; [`Error::InvalidSkillBody`] when no
+/// Storage/decode errors from the queue; [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when no
 /// row for `attempt` is stored.
 pub(crate) fn proven_cycle(vault: &Vault, attempt: AttemptId) -> Result<SkillEditCycle> {
     let Some(record) = AttemptQueue::new(vault).get(attempt)? else {

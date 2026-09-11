@@ -7,6 +7,7 @@ use crate::secret_lease::SecretTaintRef;
 use crate::secret_rotation::{taint_refs_from_value, taint_refs_to_value, validate_taint_refs};
 
 use super::store_keys::{encode_value, read_value};
+use crate::error::ArtifactError;
 
 /// The REQUIRED artifact-body keys. A body missing any of them fails closed
 /// — an artifact is complete on write.
@@ -123,9 +124,9 @@ pub(crate) fn validate_blob_artifact_body_bytes(bytes: &[u8]) -> Result<()> {
 
 fn decode_blob_artifact_body_value(value: &Value) -> Result<BlobArtifactBody> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidBlobArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "body must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut name: Option<String> = None;
@@ -135,51 +136,55 @@ fn decode_blob_artifact_body_value(value: &Value) -> Result<BlobArtifactBody> {
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidBlobArtifactBody("body keys must be strings"));
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "body keys must be strings",
+            )));
         };
         let Some(index) = BLOB_ARTIFACT_KNOWN_BODY_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidBlobArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "body key is not in the pinned BLOB_ARTIFACT_BODY_KEYS / BLOB_ARTIFACT_OPTIONAL_BODY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidBlobArtifactBody("duplicate body key"));
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "duplicate body key",
+            )));
         }
         seen[index] = true;
 
         match BLOB_ARTIFACT_KNOWN_BODY_KEYS[index] {
             KEY_NAME => {
-                let text = value.as_str().ok_or(Error::InvalidBlobArtifactBody(
-                    "name must be a UTF-8 string",
+                let text = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidBlobArtifactBody("name must be a UTF-8 string"),
                 ))?;
                 name = Some(text.to_owned());
             }
             KEY_MEDIA_TYPE => {
-                let text = value.as_str().ok_or(Error::InvalidBlobArtifactBody(
-                    "media_type must be a UTF-8 string",
+                let text = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidBlobArtifactBody("media_type must be a UTF-8 string"),
                 ))?;
                 media_type = Some(text.to_owned());
             }
             KEY_SECRET_TAINT_REFS => {
                 secret_taint_refs =
-                    taint_refs_from_value(value).ok_or(Error::InvalidBlobArtifactBody(
+                    taint_refs_from_value(value).ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                         "secret_taint.refs must be an array of {secret_ref, generation} maps with bounded, non-duplicated names",
-                    ))?;
+                    )))?;
             }
             _ => unreachable!("index resolved from BLOB_ARTIFACT_KNOWN_BODY_KEYS"),
         }
     }
 
     let body = BlobArtifactBody {
-        name: name.ok_or(Error::InvalidBlobArtifactBody(
+        name: name.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required body key name",
-        ))?,
-        media_type: media_type.ok_or(Error::InvalidBlobArtifactBody(
+        )))?,
+        media_type: media_type.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required body key media_type",
-        ))?,
+        )))?,
         // OPTIONAL by contract: an absent key is an artifact that consumed
         // no secret, which reads Clean.
         secret_taint_refs,
@@ -200,9 +205,9 @@ fn validate_blob_artifact_body(body: &BlobArtifactBody) -> Result<()> {
         "media_type must be non-empty and at most 256 bytes",
     )?;
     validate_taint_refs(&body.secret_taint_refs).map_err(|_| {
-        Error::InvalidBlobArtifactBody(
+        Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "secret_taint.refs entries must carry bounded, non-empty, non-duplicated secret names",
-        )
+        ))
     })?;
     Ok(())
 }
@@ -213,7 +218,9 @@ pub(super) fn validate_text_field(
     context: &'static str,
 ) -> Result<()> {
     if text.is_empty() || text.len() > max_bytes {
-        return Err(Error::InvalidBlobArtifactBody(context));
+        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+            context,
+        )));
     }
     Ok(())
 }

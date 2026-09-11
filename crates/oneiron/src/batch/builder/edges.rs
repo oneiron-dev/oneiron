@@ -184,7 +184,7 @@ impl BatchBuilder<'_> {
     /// [`crate::Error::InvalidEdgeWeight`] outside the contract \[0, 1\].
     ///
     /// Reserved redirect-shell kinds (`merged_into` / `split_into`) reject
-    /// typed at the API boundary ([`crate::Error::ReservedEdgeKind`]): a
+    /// typed at the API boundary ([`RegistryError::ReservedEdgeKind`](crate::error::RegistryError::ReservedEdgeKind)): a
     /// weight rewrite IS a topology-effect mutation — PPR drops a
     /// zero-weight shell edge, severing the shell's mass from its
     /// canonical head with no type-76 ledger event — so shell edges stay
@@ -219,7 +219,7 @@ impl BatchBuilder<'_> {
     /// and a typed rejection on structural 12-byte edges (they carry no
     /// VAD). Reserved redirect-shell kinds (`merged_into` / `split_into`)
     /// reject typed at the API boundary
-    /// ([`crate::Error::ReservedEdgeKind`]), same as every other public
+    /// ([`RegistryError::ReservedEdgeKind`](crate::error::RegistryError::ReservedEdgeKind)), same as every other public
     /// edge write (ARCH-0055).
     pub fn set_edge_vad(
         mut self,

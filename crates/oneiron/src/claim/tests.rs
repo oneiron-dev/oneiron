@@ -2,7 +2,7 @@ use super::*;
 use crate::Vault;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{ClaimError, Error, ErrorKind, GateError, Result};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
 use core::assert_matches;
@@ -68,31 +68,31 @@ fn predicate_grammar_rejects_violations_typed() {
     // Single segment.
     assert_matches!(
         validate_predicate("profile", false),
-        Err(Error::InvalidPredicate { .. })
+        Err(Error::Claim(ClaimError::InvalidPredicate { .. }))
     );
     // Uppercase.
     assert_matches!(
         validate_predicate("Edge.Provenance", false),
-        Err(Error::InvalidPredicate { .. })
+        Err(Error::Claim(ClaimError::InvalidPredicate { .. }))
     );
     // Empty segment.
     assert_matches!(
         validate_predicate("profile.", false),
-        Err(Error::InvalidPredicate { .. })
+        Err(Error::Claim(ClaimError::InvalidPredicate { .. }))
     );
     // Segment starting with digit / underscore.
     assert_matches!(
         validate_predicate("profile.9lives", false),
-        Err(Error::InvalidPredicate { .. })
+        Err(Error::Claim(ClaimError::InvalidPredicate { .. }))
     );
     assert_matches!(
         validate_predicate("profile._hidden", false),
-        Err(Error::InvalidPredicate { .. })
+        Err(Error::Claim(ClaimError::InvalidPredicate { .. }))
     );
     // Non-ASCII.
     assert_matches!(
         validate_predicate("profilé.name", false),
-        Err(Error::InvalidPredicate { .. })
+        Err(Error::Claim(ClaimError::InvalidPredicate { .. }))
     );
 }
 
@@ -107,7 +107,7 @@ fn predicate_length_gate_is_128_bytes_inclusive() {
     assert_eq!(over_limit.len(), 129);
     assert_matches!(
         validate_predicate(&over_limit, false),
-        Err(Error::InvalidPredicate { .. })
+        Err(Error::Claim(ClaimError::InvalidPredicate { .. }))
     );
 }
 
@@ -508,15 +508,15 @@ fn conflict_predicates_validate_as_ordinary_claims() -> Result<()> {
 fn reserved_namespace_rejected_public_allowed_internal() {
     assert_matches!(
         validate_predicate("edge.provenance", false),
-        Err(Error::ReservedPredicate { .. })
+        Err(Error::Claim(ClaimError::ReservedPredicate { .. }))
     );
     assert_matches!(
         validate_predicate("edge.anything_else", false),
-        Err(Error::ReservedPredicate { .. })
+        Err(Error::Claim(ClaimError::ReservedPredicate { .. }))
     );
     assert_matches!(
         validate_predicate("skill.scan_verdict", false),
-        Err(Error::ReservedPredicate { .. })
+        Err(Error::Claim(ClaimError::ReservedPredicate { .. }))
     );
     // The internal door allows the reserved namespace…
     validate_predicate("edge.provenance", true).expect("door must allow edge.*");
@@ -524,7 +524,7 @@ fn reserved_namespace_rejected_public_allowed_internal() {
     // …but grammar still applies through the door.
     assert_matches!(
         validate_predicate("Edge.Provenance", true),
-        Err(Error::InvalidPredicate { .. })
+        Err(Error::Claim(ClaimError::InvalidPredicate { .. }))
     );
     // "edgework.x" is NOT in the reserved namespace (prefix is segment-exact).
     validate_predicate("edgework.tools", false).expect("edgework.* is not reserved");
@@ -559,7 +559,7 @@ fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() ->
             TimeRange { start: 2, end: 2 },
             2,
         ),
-        Err(Error::ReservedPredicate { .. })
+        Err(Error::Claim(ClaimError::ReservedPredicate { .. }))
     );
 
     let old_skill_id = EntityId::now();
@@ -583,11 +583,11 @@ fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() ->
 
     assert_matches!(
         vault.supersede_claim(&new_skill_id, &old_skill_id, 4),
-        Err(Error::ProvenanceClaimLifecycle { .. })
+        Err(Error::Claim(ClaimError::ProvenanceClaimLifecycle { .. }))
     );
     assert_matches!(
         vault.retract_claim(&old_skill_id, 4),
-        Err(Error::ProvenanceClaimLifecycle { .. })
+        Err(Error::Claim(ClaimError::ProvenanceClaimLifecycle { .. }))
     );
 
     let mut edge_body = ClaimBody::new(
@@ -618,7 +618,7 @@ fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() ->
     )?;
     assert_matches!(
         vault.supersede_reserved_claim_in_txn(&mut wtxn, &new_edge_id, &old_edge_id, 7),
-        Err(Error::ProvenanceClaimLifecycle { .. })
+        Err(Error::Claim(ClaimError::ProvenanceClaimLifecycle { .. }))
     );
     Ok(())
 }
@@ -737,7 +737,7 @@ fn write_door_validates_edge_provenance_claim_structure() {
         assert!(
             matches!(
                 validate_claim_body_bytes(&data, true),
-                Err(Error::InvalidProvenanceBody(_))
+                Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
             ),
             "{name}: must reject typed (InvalidProvenanceBody) at the write door"
         );
@@ -1197,7 +1197,7 @@ fn provenance_door_accepts_approved_and_rejects_proposed_wrappers() {
     // `Proposed` is outside {auto, approved} → typed reject.
     assert_matches!(
         validate_edge_provenance_claim_structure(&wrapper(ClaimApprovalStatus::Proposed)),
-        Err(Error::InvalidProvenanceBody(_))
+        Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
     );
 }
 
@@ -1564,11 +1564,11 @@ fn stale_supersede_returns_successor_short_id() -> Result<()> {
         .supersede_claim(&latecomer, &old, 200)
         .expect_err("the named target is no longer the head");
     assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
-    let Error::WriteVerbTargetStale {
+    let Error::Claim(ClaimError::WriteVerbTargetStale {
         target,
         lifecycle,
         successor_short_id,
-    } = err
+    }) = err
     else {
         panic!("expected a typed stale-target refusal");
     };
@@ -1618,9 +1618,9 @@ fn supersession_chain_head_returned() -> Result<()> {
     let err = vault
         .supersede_claim(&latecomer, &first, 300)
         .expect_err("the two-hop chain head is reported");
-    let Error::WriteVerbTargetStale {
+    let Error::Claim(ClaimError::WriteVerbTargetStale {
         successor_short_id, ..
-    } = err
+    }) = err
     else {
         panic!("expected a typed stale-target refusal");
     };
@@ -1641,11 +1641,11 @@ fn stale_retract_never_retargets_successor() -> Result<()> {
         .retract_claim(&old, 200)
         .expect_err("retracting a replaced head is stale, not a retarget");
     assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
-    let Error::WriteVerbTargetStale {
+    let Error::Claim(ClaimError::WriteVerbTargetStale {
         target,
         lifecycle,
         successor_short_id,
-    } = err
+    }) = err
     else {
         panic!("expected a typed stale-target refusal");
     };
@@ -1670,11 +1670,11 @@ fn stale_retract_never_retargets_successor() -> Result<()> {
     let err = vault
         .retract_claim(&solo, 400)
         .expect_err("a retracted target is its own head");
-    let Error::WriteVerbTargetStale {
+    let Error::Claim(ClaimError::WriteVerbTargetStale {
         target,
         lifecycle,
         successor_short_id,
-    } = err
+    }) = err
     else {
         panic!("expected a typed stale-target refusal");
     };
@@ -2619,7 +2619,7 @@ fn expression_preference_retract_refuses_non_author_agent() -> Result<()> {
     // the claim it named.
     assert_matches!(
         vault.retract_expression_preference(&other, &claim_id, 3),
-        Err(Error::ActorLacksClaimAuthority { .. })
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }))
     );
     assert_eq!(
         vault.get_claim(&claim_id)?.expect("claim").lifecycle,
@@ -3500,7 +3500,7 @@ fn an_unrelated_gate_denial_is_not_rewritten_as_a_consent_refusal() {
         return;
     };
     assert!(
-        !matches!(err, Error::FamilyRequiresAutoGrant { .. }),
+        !matches!(err, Error::Gate(GateError::FamilyRequiresAutoGrant { .. })),
         "a non-consent denial must not be relabelled as a consent refusal: {err:?}"
     );
 }

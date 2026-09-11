@@ -1,6 +1,7 @@
 //! Per-sequence answers, receipt-cap settlement, reserve dial math, and projections.
 
 use super::*;
+use crate::error::ArtifactError;
 
 /// Proof 9: with several asks outstanding, each answer consumes exactly the
 /// request it names — not the newest one.
@@ -149,7 +150,7 @@ fn a_full_receipt_history_still_settles_every_terminal_door() -> Result<()> {
                 now: 15,
             })
             .expect_err("a full history refuses non-terminal rows"),
-        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_CANCEL_RECEIPTS_FULL
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_CANCEL_RECEIPTS_FULL
     ));
     let FinishLandingOutcome::Landed(landed) = queue.finish_landing(FinishAttemptLanding {
         id: landing.id,
@@ -606,7 +607,7 @@ fn a_persisted_cancel_receipt_must_agree_with_its_own_kind() -> Result<()> {
         raw.extend(encoded);
         let err = decode_record(&raw, malformed.id).expect_err("a contradictory row fails closed");
         assert!(
-            matches!(&err, Error::InvalidAttemptQueueRecord(reason) if *reason == expected),
+            matches!(&err, Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if *reason == expected),
             "expected {expected}, got {err:?}"
         );
     };
@@ -690,7 +691,7 @@ fn a_persisted_cancel_receipt_must_agree_with_its_own_kind() -> Result<()> {
     .expect_err("a refusal without a reason is refused at the door");
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_CANCEL_RECEIPT_MISSING_REASON
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_CANCEL_RECEIPT_MISSING_REASON
     ));
     assert_eq!(
         draft_target.cancel_state.receipts.len(),

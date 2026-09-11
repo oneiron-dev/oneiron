@@ -21,6 +21,7 @@ use super::types::{
     RepoMutationRequest, RepoMutationStatus,
 };
 use super::worktree::prune_queue_owned_worktrees;
+use crate::error::CodeError;
 
 pub const REPO_MUTATION_OPLOG_SCHEMA_VERSION: u8 = 1;
 
@@ -236,14 +237,14 @@ impl Vault {
             }
 
             if actual_fork_hash != stale.pre_action_fork_hash {
-                return Err(Error::RepoMutationRecoveryDiverged {
+                return Err(Error::Code(CodeError::RepoMutationRecoveryDiverged {
                     seq: stale.seq,
                     pre_action_fork_hash: Box::new(stale.pre_action_fork_hash),
                     expected_post_action_fork_hash: stale
                         .expected_post_action_fork_hash
                         .map(Box::new),
                     actual_fork_hash: Box::new(actual_fork_hash),
-                });
+                }));
             }
 
             let request = RepoMutationRequest {
@@ -313,12 +314,9 @@ fn finish_repo_mutation_roll_forward(
         stale.operation_kind.as_str(),
         "commit_file" | "resolve_conflict_file"
     ) {
-        let path = stale
-            .operation_subject
-            .as_deref()
-            .ok_or(Error::InvalidRepoMutationRecord(
-                "prepared commit mutation is missing its path",
-            ))?;
+        let path = stale.operation_subject.as_deref().ok_or(Error::Code(
+            CodeError::InvalidRepoMutationRecord("prepared commit mutation is missing its path"),
+        ))?;
         validate_relative_repo_path(path)?;
         run_git(
             repo_root,
@@ -329,18 +327,26 @@ fn finish_repo_mutation_roll_forward(
     if stale.operation_kind != "resolve_conflict_file" {
         return Ok(None);
     }
-    let stored = stored_resolution.ok_or(Error::InvalidRepoMutationRecord(
+    let stored = stored_resolution.ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
         "prepared conflict resolution is missing recovery intent",
-    ))?;
+    )))?;
     let prepared = PreparedConflictResolution {
         resolution_claim_id: EntityId::from_bytes(stored.resolution_claim_id).map_err(|_| {
-            Error::InvalidRepoMutationRecord("invalid prepared resolution claim id")
+            Error::Code(CodeError::InvalidRepoMutationRecord(
+                "invalid prepared resolution claim id",
+            ))
         })?,
         branch_subject: EntityId::from_bytes(stored.branch_subject).map_err(|_| {
-            Error::InvalidRepoMutationRecord("invalid prepared resolution branch subject")
+            Error::Code(CodeError::InvalidRepoMutationRecord(
+                "invalid prepared resolution branch subject",
+            ))
         })?,
         open_conflict_claim_id: EntityId::from_bytes(stored.open_conflict_claim_id).map_err(
-            |_| Error::InvalidRepoMutationRecord("invalid prepared open conflict claim id"),
+            |_| {
+                Error::Code(CodeError::InvalidRepoMutationRecord(
+                    "invalid prepared open conflict claim id",
+                ))
+            },
         )?,
         branch_name: stored.branch_name.clone(),
         path: stored.path.clone(),
@@ -353,9 +359,9 @@ pub(super) fn public_oplog_entry(
     stored: StoredRepoMutationOplogEntry,
 ) -> Result<RepoMutationOplogEntry> {
     if stored.schema_version != REPO_MUTATION_OPLOG_SCHEMA_VERSION {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "unsupported repo mutation oplog schema version",
-        ));
+        )));
     }
     let repo_ref = RepoRef::parse(&stored.repo_ref)?;
     Ok(RepoMutationOplogEntry {
@@ -367,12 +373,20 @@ pub(super) fn public_oplog_entry(
             .actor_id
             .map(EntityId::from_bytes)
             .transpose()
-            .map_err(|_| Error::InvalidRepoMutationRecord("invalid repo mutation actor id"))?,
+            .map_err(|_| {
+                Error::Code(CodeError::InvalidRepoMutationRecord(
+                    "invalid repo mutation actor id",
+                ))
+            })?,
         session_id: stored
             .session_id
             .map(EntityId::from_bytes)
             .transpose()
-            .map_err(|_| Error::InvalidRepoMutationRecord("invalid repo mutation session id"))?,
+            .map_err(|_| {
+                Error::Code(CodeError::InvalidRepoMutationRecord(
+                    "invalid repo mutation session id",
+                ))
+            })?,
         started_at_ms: stored.started_at_ms,
         finished_at_ms: stored.finished_at_ms,
         pre_action_fork_hash: stored.pre_action_fork_hash,
@@ -388,8 +402,11 @@ pub(super) fn encode_oplog_entry(entry: &StoredRepoMutationOplogEntry) -> Result
 }
 
 pub(super) fn decode_stored_oplog_entry(bytes: &[u8]) -> Result<StoredRepoMutationOplogEntry> {
-    rmp_serde::from_slice(bytes)
-        .map_err(|_| Error::InvalidRepoMutationRecord("repo mutation oplog is not MessagePack"))
+    rmp_serde::from_slice(bytes).map_err(|_| {
+        Error::Code(CodeError::InvalidRepoMutationRecord(
+            "repo mutation oplog is not MessagePack",
+        ))
+    })
 }
 
 fn repo_key_hash(repo_key: &str) -> String {

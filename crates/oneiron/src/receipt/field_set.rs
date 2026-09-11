@@ -13,7 +13,7 @@ use super::kernel::{
 use super::kernel::ReceiptKind;
 use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::context_board::MemoriesSection;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::prompt::PromptRecompileStamp;
 
 const BOARD_STATE_REF_PREFIX: &str = "board:";
@@ -231,10 +231,10 @@ pub fn append_context_receipt_fields(
     context: &ContextReceiptFields,
 ) -> Result<()> {
     if !receipt.receipt_kind.is_emit_adjacent() {
-        return Err(Error::EmitAdjacentReceiptRequired {
+        return Err(Error::Claim(ClaimError::EmitAdjacentReceiptRequired {
             surface: "context receipt field-set",
             kind: receipt.receipt_kind.as_str(),
-        });
+        }));
     }
     context.append_to_fields(&mut receipt.fields);
     Ok(())

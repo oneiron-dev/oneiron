@@ -5,10 +5,7 @@ use super::require_entity_type;
 use super::unix_seconds_now;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
-use crate::error::ApiError;
-use crate::error::ApiErrorDetails;
-use crate::error::ApiErrorEnvelope;
-use crate::error::EnvelopedApiError;
+use crate::error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::extract::Query;
 use axum::extract::State;
@@ -386,10 +383,10 @@ pub(crate) fn require_message_in_turn(
 
 pub(crate) fn vad_annotation_core_error(error: oneiron::Error) -> ApiError {
     match error {
-        oneiron::Error::GateWriteRejected {
+        oneiron::Error::Gate(oneiron::error::GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => {
+        }) => {
             let reason_codes = reason_codes.join(",");
             ApiError::new(
                 format!(

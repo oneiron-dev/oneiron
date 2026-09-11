@@ -9,7 +9,7 @@ use rmpv::Value;
 use super::*;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 
 /// Pinned companion-expression predicate for the relationship/persona layer.
 pub const PREDICATE_COMPANION_EXPRESSION: &str = "companion.expression";
@@ -450,7 +450,7 @@ fn conflict_value_uses_repo_schema(value: &Value) -> bool {
 ///   `to == valid_to`, so the precedence/display wrapper can never lie about
 ///   the value record the writer mirrored it from.
 ///
-/// Typed rejections only (the [`Error::InvalidProvenanceBody`] family) — at
+/// Typed rejections only (the [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody) family) — at
 /// the sync replay door the caller quarantines them (`x:` row, hash-only
 /// per ONE-1124), never drops.
 pub(super) fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Result<()> {
@@ -474,9 +474,9 @@ pub(super) fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Resu
     );
     match (value_has_actor_class, body.evidence.as_ref()) {
         (true, Some(_)) => {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "actor_class present in both the value record and the wrapper evid (ambiguous)",
-            ));
+            )));
         }
         (true, None) => {}
         (false, evidence) => {
@@ -496,14 +496,14 @@ pub(super) fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Resu
         body.approval,
         ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
     ) {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "edge.provenance wrapper appr must be auto|approved",
-        ));
+        )));
     }
     if body.stale {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "edge.provenance wrapper must not be stale",
-        ));
+        )));
     }
 
     // ONE-1159 fix-wave (BLOCKER #2) — the wrapper's `conf`/`from`/`to` MUST
@@ -515,19 +515,19 @@ pub(super) fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Resu
     // equality the contract pins; `from`/`to` are optional on both sides and
     // compared as `Option` equality (both-present-equal or both-absent).
     if record.confidence != body.confidence {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "edge.provenance wrapper conf does not mirror value-record confidence",
-        ));
+        )));
     }
     if record.valid_from != body.valid_from {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "edge.provenance wrapper from does not mirror value-record valid_from",
-        ));
+        )));
     }
     if record.valid_to != body.valid_to {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "edge.provenance wrapper to does not mirror value-record valid_to",
-        ));
+        )));
     }
 
     Ok(())

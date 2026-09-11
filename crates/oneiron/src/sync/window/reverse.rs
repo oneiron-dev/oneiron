@@ -18,7 +18,7 @@ use crate::companion::{
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::registry::{
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
 };
@@ -79,7 +79,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
+        let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            header.entity_type,
+        ));
         quarantine::quarantine_rejected_op(
             vault,
             window_key.as_str(),
@@ -321,7 +323,9 @@ pub(super) fn quarantine_outbound_protected_tombstones(
         return Ok(false);
     }
 
-    let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
+    let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
+        header.entity_type,
+    ));
     for tombstone in &tombstones {
         quarantine::quarantine_rejected_op(
             vault,

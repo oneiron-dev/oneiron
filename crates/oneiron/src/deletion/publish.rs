@@ -24,6 +24,8 @@ use super::tombstone::TombstoneValueV2;
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
 #[cfg(feature = "sync")]
 use super::tombstone::pending_tombstone_key;
+#[cfg(feature = "sync")]
+use crate::error::SyncError;
 
 /// Inputs committed together by the sync tombstone persistence transaction.
 /// Grouping these values makes the TXN1 contract explicit: the request-keyed
@@ -198,7 +200,9 @@ impl Vault {
         let merged_update_keys = self.sync_state_keys_with_prefix(&format!("u:w:{window_key}:"))?;
         let doc = match load_window_from_state(self, "local", &window_key) {
             Ok(doc) => doc,
-            Err(Error::WindowNotFound { .. }) => create_window_doc("local", &window_key),
+            Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                create_window_doc("local", &window_key)
+            }
             Err(err) => return Err(err),
         };
         let history_free = self.resolve_window_snapshot_mode(&window_key, &doc)?;

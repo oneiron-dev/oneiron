@@ -1,6 +1,7 @@
 //! Embedding-model identity gates, HNSW compat records, embedding-space migration.
 
 use super::*;
+use crate::error::StoreError;
 
 #[test]
 fn opens_empty_vault_without_embedding_model() -> Result<()> {
@@ -138,10 +139,10 @@ fn detects_embedding_model_mismatch_on_populated_open() -> Result<()> {
     let Err(err) = Vault::open(temp_dir.path(), cfg) else {
         panic!("expected mismatch");
     };
-    assert_matches!(err, Error::EmbeddingModelChanged {
+    assert_matches!(err, Error::Store(StoreError::EmbeddingModelChanged {
             ref stored,
             ref requested
-        } if stored == "test/model-a@v1" && requested == "test/model-b@v1");
+        }) if stored == "test/model-a@v1" && requested == "test/model-b@v1");
 
     Ok(())
 }
@@ -218,7 +219,7 @@ fn rejects_populated_vault_with_legacy_hnsw_compatibility_record() -> Result<()>
     let Err(err) = Vault::open(path, cfg) else {
         panic!("expected legacy hnsw compatibility rejection");
     };
-    assert_matches!(err, Error::HnswConfigChanged { .. });
+    assert_matches!(err, Error::Store(StoreError::HnswConfigChanged { .. }));
     Ok(())
 }
 
@@ -235,7 +236,7 @@ fn detects_hnsw_metric_and_structure_mismatch_on_open() -> Result<()> {
     let Err(err) = Vault::open(temp_dir.path(), test_config()) else {
         panic!("expected hnsw metric/structure mismatch");
     };
-    assert_matches!(err, Error::HnswConfigChanged { .. });
+    assert_matches!(err, Error::Store(StoreError::HnswConfigChanged { .. }));
     Ok(())
 }
 
@@ -268,7 +269,7 @@ fn detects_hnsw_config_and_dimension_mismatch_on_open() {
             panic!("case {case_name}: expected hnsw config mismatch");
         };
         match err {
-            Error::HnswConfigChanged { stored, requested } => {
+            Error::Store(StoreError::HnswConfigChanged { stored, requested }) => {
                 assert_eq!(
                     stored,
                     "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw,fast_dims=none",
@@ -611,7 +612,7 @@ fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Resu
     let old_reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), old);
     assert_matches!(
         old_reconciler.reconcile_once(),
-        Err(Error::EmbeddingModelChanged { .. })
+        Err(Error::Store(StoreError::EmbeddingModelChanged { .. }))
     );
     let new = Arc::new(MigrationEmbedder {
         model_id: "test/new@v2".to_owned(),
@@ -831,7 +832,7 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     drop(reopened);
     assert!(matches!(
         Vault::open(temp_dir.path(), cfg),
-        Err(Error::EmbeddingModelChanged { .. })
+        Err(Error::Store(StoreError::EmbeddingModelChanged { .. }))
     ));
     assert!(
         Vault::open(
@@ -940,7 +941,7 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
     let Err(err) = Vault::open(temp_dir.path(), cfg2) else {
         panic!("expected embedding model change rejection");
     };
-    assert_matches!(err, Error::EmbeddingModelChanged { .. });
+    assert_matches!(err, Error::Store(StoreError::EmbeddingModelChanged { .. }));
 
     Ok(())
 }

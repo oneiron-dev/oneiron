@@ -6,7 +6,7 @@ use crate::claim::ClaimBody;
 use crate::claim::claim_sensitivity_band;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::gate::constants::LOCAL_WRITE_ACTOR_ENTITY_REF;
 use crate::gate::decision::record_gate_decision_metrics;
 #[cfg(feature = "sync")]
@@ -204,9 +204,9 @@ pub(crate) fn standing_outbound_grant_binding_parts(
     hash_opt_str(&mut hasher, intent.origin_receipt_ref.as_deref());
     match &intent.scope {
         GrantMintIntentScope::JustOnce { .. } => {
-            return Err(Error::InvalidOutboundGrantBody(
+            return Err(Error::Record(RecordError::InvalidOutboundGrantBody(
                 "non-standing grant scope is not supported",
-            ));
+            )));
         }
         GrantMintIntentScope::Contact { contact_ref } => {
             hash_str(&mut hasher, "contact");
@@ -221,9 +221,9 @@ pub(crate) fn standing_outbound_grant_binding_parts(
             hash_str(&mut hasher, channel.trim());
         }
         GrantMintIntentScope::BundleExactSends { .. } => {
-            return Err(Error::InvalidOutboundGrantBody(
+            return Err(Error::Record(RecordError::InvalidOutboundGrantBody(
                 "non-standing grant scope is not supported",
-            ));
+            )));
         }
         GrantMintIntentScope::BriefVerbClass {
             brief_ref,
@@ -234,9 +234,9 @@ pub(crate) fn standing_outbound_grant_binding_parts(
             hash_str(&mut hasher, verb_class.trim());
         }
         GrantMintIntentScope::Calendar { .. } => {
-            return Err(Error::InvalidOutboundGrantBody(
+            return Err(Error::Record(RecordError::InvalidOutboundGrantBody(
                 "calendar disclosure scope is a read grant, not an outbound grant scope",
-            ));
+            )));
         }
     }
     Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))

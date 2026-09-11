@@ -22,6 +22,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::default())
 }
 
+use crate::error::GateError;
 use crate::test_util::entity;
 
 fn time(ts: u64) -> TimeRange {
@@ -415,7 +416,7 @@ fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> R
     );
     assert!(matches!(
         vault.resolve_inbox_group_at(run_id, InboxBulkVerb::AcceptAll, None, 50),
-        Err(Error::GateConsentStale { claim_id: stale }) if stale == claim_id
+        Err(Error::Gate(GateError::GateConsentStale { claim_id: stale })) if stale == claim_id
     ));
     let rejected = vault.resolve_inbox_group_at(run_id, InboxBulkVerb::RejectAll, None, 51)?;
     assert_eq!(rejected.item_receipts.len(), 1);

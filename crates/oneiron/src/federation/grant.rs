@@ -10,7 +10,7 @@ use super::codec::{
 };
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 
 /// Current FederationGrant body schema version.
 ///
@@ -538,5 +538,7 @@ fn validate_scope_keys(entries: &[(Value, Value)]) -> Result<()> {
 }
 
 pub(super) fn invalid_grant() -> Error {
-    Error::InvalidFederationGrantBody("body failed validation")
+    Error::Record(RecordError::InvalidFederationGrantBody(
+        "body failed validation",
+    ))
 }

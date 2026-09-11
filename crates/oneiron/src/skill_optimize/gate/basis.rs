@@ -355,7 +355,7 @@ impl SkillEditCycle {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidSkillBody`] on an empty or oversized label.
+    /// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) on an empty or oversized label.
     pub(in crate::skill_optimize) fn new(label: impl Into<String>) -> Result<Self> {
         let label = label.into();
         if label.trim().is_empty() || label.len() > SKILL_EDIT_CYCLE_MAX_BYTES {
@@ -395,7 +395,7 @@ impl SkillEditCycle {
     /// # Errors
     ///
     /// Storage errors; [`Error::EntityNotFound`] when `proposal` is not stored;
-    /// [`Error::InvalidSkillBody`] when it carries no drafting cycle.
+    /// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when it carries no drafting cycle.
     pub fn of_proposal(vault: &Vault, proposal: &EntityId) -> Result<Self> {
         let record = vault
             .get_skill_record(proposal)?
@@ -436,7 +436,7 @@ pub(super) fn cycle_cap_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<
 ///
 /// # Errors
 ///
-/// [`Error::InvalidSkillBody`] when `cap` is zero: a cap of nothing is a
+/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when `cap` is zero: a cap of nothing is a
 /// disabled loop expressed as a dial, and the honest way to stop the loop is to
 /// stop scheduling it.
 pub fn set_skill_edit_cycle_cap(vault: &Vault, cap: u32) -> Result<()> {

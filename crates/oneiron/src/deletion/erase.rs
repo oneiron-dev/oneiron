@@ -37,6 +37,7 @@ use crate::unix_seconds_now;
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone::{ReplayedTombstoneOutcome, decode_tombstone_value, local_hard_delete_key};
+use crate::error::{ClaimError, RegistryError};
 
 /// ARCH-0038 delete-interplay refs captured from an `edge.provenance` Claim
 /// BEFORE its body is purged or SoftErased: the subject EdgeRef whose cached
@@ -152,9 +153,9 @@ impl Vault {
             target,
         } = wrapper.subject
         else {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "edge.provenance claim subject is not a 33-byte EdgeRef",
-            ));
+            )));
         };
         let record = decode_edge_provenance_body(&wrapper.value)?;
         Ok(Some(CapturedProvenanceDelete {
@@ -529,7 +530,9 @@ impl Vault {
         if let Some(header) = self.read_entity_header_in_txn(wtxn, id)?
             && crate::registry::is_delete_protected_engine_record(header.entity_type)
         {
-            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+            return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                header.entity_type,
+            )));
         }
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub.

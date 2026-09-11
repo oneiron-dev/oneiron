@@ -7,6 +7,7 @@ use crate::companion::{
 };
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
+use crate::error::SyncError;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
@@ -301,12 +302,12 @@ fn over_quota_peer_rejected() -> Result<()> {
 
     assert!(matches!(
         err,
-        Error::MaintenanceIngestQuotaExceeded {
+        Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
             accepted_count: 1,
             max_ops_per_peer_window: 1,
             quota_window_secs: 3_600,
             ..
-        }
+        })
     ));
     assert!(
         vault.get_raw(&second_id)?.is_none(),
@@ -3153,7 +3154,10 @@ fn identity_topology_ingest_door_replays_diverges_and_validates() {
         &divergent_body,
     );
     let err = ingest(&divergent_blob).unwrap_err();
-    assert_matches!(err, Error::IdentityTopologyEventDivergence { .. });
+    assert_matches!(
+        err,
+        Error::Sync(SyncError::IdentityTopologyEventDivergence { .. })
+    );
     assert_eq!(
         vault
             .identity_topology_event(&event_id)
@@ -3186,19 +3190,24 @@ fn identity_topology_ingest_door_replays_diverges_and_validates() {
             )
         })
         .unwrap_err();
-    assert_matches!(err, Error::InvalidIdentityTopologyEventBody(_));
+    assert_matches!(
+        err,
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(_))
+    );
 
     // Both reject shapes classify as REMOTE rejections
     // (quarantine-and-continue), so one bad row cannot abort a batch.
     assert!(
-        crate::sync::quarantine::remote_rejection_reason(&Error::IdentityTopologyEventDivergence {
-            id: event_id
-        })
+        crate::sync::quarantine::remote_rejection_reason(&Error::Sync(
+            SyncError::IdentityTopologyEventDivergence { id: event_id }
+        ))
         .is_some()
     );
     assert!(
-        crate::sync::quarantine::remote_rejection_reason(&Error::InvalidIdentityTopologyEventBody(
-            "identity topology event bytes are malformed"
+        crate::sync::quarantine::remote_rejection_reason(&Error::Sync(
+            SyncError::InvalidIdentityTopologyEventBody(
+                "identity topology event bytes are malformed"
+            )
         ))
         .is_some()
     );

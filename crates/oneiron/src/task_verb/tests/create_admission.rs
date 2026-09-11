@@ -158,7 +158,9 @@ fn a_raw_put_refuses_an_incoherent_countered_terminal() {
         assert!(
             matches!(
                 refused,
-                crate::error::Error::InvalidTaskBody("tasks.terminal.ladder")
+                crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(
+                    "tasks.terminal.ladder"
+                ))
             ),
             "unexpected error from {door}: {refused}"
         );
@@ -189,7 +191,10 @@ fn a_public_raw_put_refuses_a_task_born_expired() {
         )
         .expect_err("the public raw door refuses a task born expired");
     assert!(
-        matches!(refused, crate::error::Error::InvalidTaskBody(_)),
+        matches!(
+            refused,
+            crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(_))
+        ),
         "unexpected error: {refused}",
     );
 }
@@ -225,7 +230,10 @@ fn the_transactional_public_raw_put_refuses_a_task_born_expired() {
         })
         .expect_err("the transactional public door refuses a task born expired");
     assert!(
-        matches!(refused, crate::error::Error::InvalidTaskBody(_)),
+        matches!(
+            refused,
+            crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(_))
+        ),
         "unexpected error: {refused}",
     );
 }

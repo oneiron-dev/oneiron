@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::ArtifactError;
 
 const ARTIFACT_TYPE_FIXTURE: u16 = 42;
 
@@ -285,6 +286,9 @@ fn decode_error_exposes_recovery_reason() -> Result<()> {
     let err = decode_recovery_artifact(&corrupt, ARTIFACT_TYPE_FIXTURE)
         .expect_err("bad checksum must fail closed");
 
-    assert!(matches!(err, Error::InvalidRecoveryArtifact(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidRecoveryArtifact(_))
+    ));
     Ok(())
 }

@@ -18,6 +18,7 @@ use super::super::txn::{
     connector_key_index_entity_id, connector_key_index_key, connector_key_index_prefix,
     read_connector_key_in_txn, write_connector_key_generation_in_txn,
 };
+use crate::error::RecordError;
 
 /// Normalizes every `channel_class` narrowing in place: row matching compares
 /// against the already-normalized effect channel, so a non-canonical stored
@@ -127,7 +128,7 @@ impl Vault {
 
         let data = encode_connector_key_body(record)?;
         if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
-            return Err(Error::ConnectorKeyAlreadyExists);
+            return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));
         }
         let prefix = connector_key_index_prefix(&record.connector)?;
         let mut sibling_ids = Vec::new();
@@ -141,7 +142,7 @@ impl Vault {
             if sibling.status != ConnectorKeyStatus::Revoked
                 && sibling.actor_entity_ref == record.actor_entity_ref
             {
-                return Err(Error::ConnectorKeyAlreadyExists);
+                return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));
             }
         }
         // The custody reference must NAME a live record before anything is
@@ -159,7 +160,7 @@ impl Vault {
         if let Some(catalog) = record.catalog.as_ref() {
             let name_key = connector_catalog_name_index_key(&catalog.name);
             if self.store.vault_meta.get(&*wtxn, &name_key)?.is_some() {
-                return Err(Error::ConnectorKeyAlreadyExists);
+                return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));
             }
             self.store.vault_meta.put(wtxn, &name_key, id.as_bytes())?;
         }

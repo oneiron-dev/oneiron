@@ -37,6 +37,7 @@ fn test_config() -> VaultConfig {
     }
 }
 
+use crate::error::{RegistryError, StoreError};
 use crate::test_util::entity;
 
 fn range(start: u64, end: u64) -> TimeRange {
@@ -67,7 +68,9 @@ fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
         .expect_err("public hard delete must reject the default policy manifest");
     assert_matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_POLICY_MANIFEST
+        ))
     );
     assert!(vault.get_raw(&id)?.is_some());
 
@@ -78,7 +81,9 @@ fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
         .expect_err("batch delete must reject the default policy manifest");
     assert_matches!(
         err,
-        Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            ENTITY_TYPE_POLICY_MANIFEST
+        ))
     );
     assert!(vault.get_raw(&id)?.is_some());
     Ok(())
@@ -558,9 +563,11 @@ fn handshake_rejects_corrupted_manifest() -> Result<()> {
         };
         let ok = match expect {
             Expect::IncompatibleAnalyzer => {
-                matches!(err, Error::IncompatibleAnalyzer { .. })
+                matches!(err, Error::Store(StoreError::IncompatibleAnalyzer { .. }))
             }
-            Expect::Bm25FieldSchemaChanged => matches!(err, Error::Bm25FieldSchemaChanged),
+            Expect::Bm25FieldSchemaChanged => {
+                matches!(err, Error::Store(StoreError::Bm25FieldSchemaChanged))
+            }
             Expect::CorruptedIndex => matches!(err, Error::CorruptedIndex(_)),
         };
         assert!(ok, "case {case_name}: unexpected error {err:?}");
@@ -732,7 +739,7 @@ fn skip_manifest_check_unblocks_clear_text_index_recovery() -> Result<()> {
     let Err(err) = Vault::open(tmp.path(), test_config()) else {
         panic!("expected incompatible analyzer rejection");
     };
-    assert_matches!(err, Error::IncompatibleAnalyzer { .. });
+    assert_matches!(err, Error::Store(StoreError::IncompatibleAnalyzer { .. }));
 
     // Bypass the handshake just long enough to rebuild.
     {
@@ -841,7 +848,7 @@ fn text_write_fails_closed_when_stored_manifest_diverged() -> Result<()> {
         .commit()
         .expect_err("text write must refuse manifest divergence");
     assert!(
-        matches!(err, Error::IncompatibleAnalyzer { .. }),
+        matches!(err, Error::Store(StoreError::IncompatibleAnalyzer { .. })),
         "expected IncompatibleAnalyzer, got {err:?}",
     );
     Ok(())
@@ -1018,7 +1025,10 @@ fn existing_root_missing_storage_abi_is_not_cleaned_up() -> Result<()> {
     assert!(lock.is_file());
     assert!(matches!(
         Vault::open(tmp.path(), test_config()),
-        Err(Error::StorageAbiVersionChanged { stored: None, .. })
+        Err(Error::Store(StoreError::StorageAbiVersionChanged {
+            stored: None,
+            ..
+        }))
     ));
     assert!(data.is_file());
     assert!(lock.is_file());

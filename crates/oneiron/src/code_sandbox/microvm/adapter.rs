@@ -16,6 +16,7 @@ use super::credential::{
 };
 use super::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};
 use super::overlay::{MAX_OVERLAY_FILE_BYTES, overlay_error};
+use crate::error::CodeError;
 
 /// [`SandboxBoundaryAdapter`] whose guarantees are backed by a microVM.
 ///
@@ -37,7 +38,7 @@ impl MicroVmSandboxAdapter {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmBackendError`] when `tier` is not a propose-only
+    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when `tier` is not a propose-only
     /// tier, or when the backend fails to prepare the VM or bind the egress
     /// transport.
     pub fn new(
@@ -101,7 +102,7 @@ impl MicroVmSandboxAdapter {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MicroVmOverlayError`] after overlay export is sealed;
+    /// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) after overlay export is sealed;
     /// otherwise propagates the backend's run failure.
     pub fn run(&mut self, image: &GuestImage, budget: ExecutionBudget) -> Result<MicroVmExit> {
         if self.overlay_collected {
@@ -119,7 +120,7 @@ impl MicroVmSandboxAdapter {
     ///
     /// # Errors
     ///
-    /// Propagates [`Error::MicroVmOverlayError`] from the overlay diff, or the
+    /// Propagates [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) from the overlay diff, or the
     /// proposal-channel refusal for a tier without one.
     pub fn collect_overlay_proposals(&mut self) -> Result<Vec<SandboxProposalDelta>> {
         if self.overlay_collected {
@@ -158,19 +159,19 @@ impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
             }
             let metadata = fs::symlink_metadata(&walked).map_err(|_| Error::EntityNotFound)?;
             if metadata.is_symlink() {
-                return Err(Error::MicroVmOverlayError {
+                return Err(Error::Code(CodeError::MicroVmOverlayError {
                     detail: format!(
                         "base mount entry {} crosses a symlinked directory",
                         call.path.as_str()
                     ),
-                });
+                }));
             }
         }
         let metadata = fs::symlink_metadata(&host_path).map_err(|_| Error::EntityNotFound)?;
         if metadata.is_symlink() {
-            return Err(Error::MicroVmOverlayError {
+            return Err(Error::Code(CodeError::MicroVmOverlayError {
                 detail: format!("base mount entry {} is a symlink", call.path.as_str()),
-            });
+            }));
         }
         let file_bytes = metadata.len();
         if file_bytes > MAX_OVERLAY_FILE_BYTES {
@@ -188,19 +189,21 @@ impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
 
         let file = fs::File::open(&host_path).map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => Error::EntityNotFound,
-            _ => Error::MicroVmOverlayError {
+            _ => Error::Code(CodeError::MicroVmOverlayError {
                 detail: format!("base mount read failed for {}", call.path.as_str()),
-            },
+            }),
         })?;
         let mut bytes = Vec::new();
         file.take(MAX_OVERLAY_FILE_BYTES + 1)
             .read_to_end(&mut bytes)
-            .map_err(|error| Error::MicroVmOverlayError {
-                detail: format!(
-                    "base mount read failed for {}: {}",
-                    call.path.as_str(),
-                    error.kind()
-                ),
+            .map_err(|error| {
+                Error::Code(CodeError::MicroVmOverlayError {
+                    detail: format!(
+                        "base mount read failed for {}: {}",
+                        call.path.as_str(),
+                        error.kind()
+                    ),
+                })
             })?;
         let actual_bytes = u64::try_from(bytes.len()).map_err(|_| {
             overlay_error(format!(

@@ -6,6 +6,7 @@ use super::*;
 use crate::VaultConfig;
 use crate::checkout::lease::{CheckoutId, CheckoutLeaseState, CheckoutTaskClass};
 use crate::entity_id::EntityId;
+use crate::error::CodeError;
 use crate::test_util::source_scan::SourceTree;
 
 // ---------------------------------------------------------------------------
@@ -400,7 +401,7 @@ fn git_wire_effect_classes_are_total_and_enforced_in_both_directions() {
             ("read", wire.run_read(&bound, &argv))
         };
         match refused {
-            Err(Error::InvalidRepoMutationRecord(message)) => {
+            Err(Error::Code(CodeError::InvalidRepoMutationRecord(message))) => {
                 assert!(
                     message.contains("refuses"),
                     "{name} was rejected by the {phase} phase for the wrong reason"
@@ -1130,7 +1131,10 @@ fn git_wire_does_not_skip_availability_when_a_ref_already_advanced() {
     let error = wire
         .commit_prepared(&bound, &prepared, 20)
         .expect_err("an advanced ref is not a licence to skip availability");
-    assert!(matches!(error, Error::RepoMutationFailed(_)));
+    assert!(matches!(
+        error,
+        Error::Code(CodeError::RepoMutationFailed(_))
+    ));
     assert!(
         wire.receipt(&bound, prepared.record_key())
             .expect("record")

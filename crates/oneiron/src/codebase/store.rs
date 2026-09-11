@@ -16,7 +16,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::{CodeArtifactBody, decode_code_artifact_body};
 use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, CodeError, Error, Result};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
 use crate::secret_snapshot::{SnapshotCustodyReport, custody_key, encode_report};
 use crate::store::Store;
@@ -168,29 +168,41 @@ impl Vault {
         let project_id = project_id.into();
         validate_project_id(&project_id)?;
         if commit_ref.trim().is_empty() || commit_ref.chars().any(char::is_control) {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "commit_ref must be non-empty and cannot contain control characters",
-            ));
+            )));
         }
 
         let repo = gix::discover(&config.repo_path).map_err(|_| {
-            Error::InvalidCodebaseSnapshotBody("repo_path must point inside a local Git repository")
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "repo_path must point inside a local Git repository",
+            ))
         })?;
-        let commit_id = repo
-            .rev_parse_single(commit_ref)
-            .map_err(|_| Error::InvalidCodebaseSnapshotBody("commit_ref did not resolve"))?;
+        let commit_id = repo.rev_parse_single(commit_ref).map_err(|_| {
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "commit_ref did not resolve",
+            ))
+        })?;
         let commit_object = commit_id.object().map_err(|_| {
-            Error::InvalidCodebaseSnapshotBody("commit_ref object could not be read")
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "commit_ref object could not be read",
+            ))
         })?;
         let commit = commit_object.try_into_commit().map_err(|_| {
-            Error::InvalidCodebaseSnapshotBody("commit_ref must resolve to a commit")
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "commit_ref must resolve to a commit",
+            ))
         })?;
         let commit_hash = commit.id().to_string();
-        let tree = commit
-            .tree()
-            .map_err(|_| Error::InvalidCodebaseSnapshotBody("commit tree could not be read"))?;
+        let tree = commit.tree().map_err(|_| {
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "commit tree could not be read",
+            ))
+        })?;
         let repo_path = std::fs::canonicalize(&config.repo_path).map_err(|_| {
-            Error::InvalidCodebaseSnapshotBody("repo_path must be a canonicalizable local path")
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "repo_path must be a canonicalizable local path",
+            ))
         })?;
         let repo_ref = RepoRef::LocalFolder {
             path: repo_path.to_string_lossy().into_owned(),
@@ -346,16 +358,16 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "snapshot target is not a CODE_ARTIFACT",
-            ));
+            )));
         }
         let artifact = decode_code_artifact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         let artifact_repo_ref = RepoRef::parse(&artifact.repo_ref)?;
         if artifact_repo_ref != filtered_snapshot.repo_ref {
-            return Err(Error::InvalidCodebaseSnapshotBody(
+            return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "snapshot repo_ref must match CODE artifact repo_ref",
-            ));
+            )));
         }
 
         delete_codebase_snapshot_in_txn(&self.store, wtxn, code_artifact_id)?;
@@ -410,9 +422,11 @@ impl Vault {
         let Some(raw) = self.store.vault_meta.get(&rtxn, &custody_key(fork_hash))? else {
             return Ok(None);
         };
-        rmp_serde::from_slice(&raw)
-            .map(Some)
-            .map_err(|_| Error::InvalidCodebaseSnapshotBody("decode custody report"))
+        rmp_serde::from_slice(&raw).map(Some).map_err(|_| {
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "decode custody report",
+            ))
+        })
     }
 
     pub fn codebase_snapshots_by_repo_ref(&self, repo_ref: &RepoRef) -> Result<Vec<EntityId>> {
@@ -530,8 +544,11 @@ fn codebase_scope_index_key(scope_key: &CodebaseScopeKey, id: &EntityId) -> Vec<
 
 fn code_artifact_repo_ref_from_body(bytes: &[u8]) -> Result<RepoRef> {
     let artifact = decode_code_artifact_body(bytes)?;
-    RepoRef::parse(&artifact.repo_ref)
-        .map_err(|_| Error::InvalidCodeArtifactBody("repo_ref must be a valid v1 repo_ref"))
+    RepoRef::parse(&artifact.repo_ref).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "repo_ref must be a valid v1 repo_ref",
+        ))
+    })
 }
 
 fn fork_has_other_snapshot(

@@ -19,6 +19,7 @@ use super::{
         MicroVmHandle, collect_overlay_writes, prepare_overlay_handle,
     },
 };
+use crate::error::CodeError;
 use crate::{Error, Result};
 
 /// Stable backend label.
@@ -69,10 +70,10 @@ impl FirecrackerBackend {
     }
 
     fn not_configured(detail: &'static str) -> Error {
-        Error::MicroVmBackendError {
+        Error::Code(CodeError::MicroVmBackendError {
             backend: FIRECRACKER_BACKEND_NAME,
             detail: detail.to_owned(),
-        }
+        })
     }
 }
 
@@ -101,9 +102,9 @@ impl MicroVmBackend for FirecrackerBackend {
             ));
         }
         if !self.binary.is_file() {
-            return Err(Error::MicroVmBackendUnavailable {
+            return Err(Error::Code(CodeError::MicroVmBackendUnavailable {
                 tier: "foreign_or_untrusted",
-            });
+            }));
         }
         image.ensure_present(FIRECRACKER_BACKEND_NAME)?;
 

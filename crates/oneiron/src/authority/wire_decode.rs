@@ -14,6 +14,7 @@ use crate::federation::{
 };
 
 use super::*;
+use crate::error::RecordError;
 
 pub(super) fn decode_entry_value(value: &Value) -> Result<AuthorityLogEntry> {
     let entries = map_entries(value)?;
@@ -519,7 +520,9 @@ fn bytes(value: &Value) -> Result<&[u8]> {
 }
 
 pub(super) fn invalid_authority() -> Error {
-    Error::InvalidAuthorityLogBody("body failed validation")
+    Error::Record(RecordError::InvalidAuthorityLogBody(
+        "body failed validation",
+    ))
 }
 
 /// Whether `entry` carries a federation lifecycle op with a TERMINAL kind.

@@ -33,6 +33,7 @@ use super::{
     IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES,
     MAX_IDENTITY_TOPOLOGY_EVENT_FACETS, MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS,
 };
+use crate::error::SyncError;
 
 /// Appends one action's pinned wire entries. Shared by the ledger event
 /// body and the amendment codec so an amended op can only ever carry a
@@ -139,11 +140,13 @@ fn encode_applied_counts(assigned: u64, residue: u64, entries: &mut Vec<(Value, 
 fn decode_applied_counts(map: &[(Value, Value)]) -> Result<(u64, u64)> {
     let count = |key: &'static str| match map_field(map, key) {
         None => Ok(0),
-        Some(value) => value
-            .as_u64()
-            .ok_or(Error::InvalidIdentityTopologyEventBody(
-                "identity topology event applied count",
-            )),
+        Some(value) => {
+            value
+                .as_u64()
+                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology event applied count",
+                )))
+        }
     };
     Ok((
         count(BODY_KEY_APPLIED_ASSIGNED)?,
@@ -158,9 +161,9 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
         EVENT_KIND_MERGE => {
             let plan = decode_str_field(map, BODY_KEY_PLAN, "identity topology event plan")?;
             if plan != PLAN_READ_THROUGH {
-                return Err(Error::InvalidIdentityTopologyEventBody(
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                     "identity topology event plan is unknown",
-                ));
+                )));
             }
             Ok(StoredIdentityOpAction::Merge {
                 sources: decode_ids_field(
@@ -181,7 +184,9 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
                 entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
                 heads: decode_ids_field(map, BODY_KEY_HEADS, "identity topology event heads")?,
                 reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
-                    Error::InvalidIdentityTopologyEventBody("identity topology event map"),
+                    Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "identity topology event map",
+                    )),
                 )?)?,
                 applied_assigned,
                 applied_residue,
@@ -193,7 +198,9 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
                 entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
                 facets: decode_ids_field(map, BODY_KEY_FACETS, "identity topology event facets")?,
                 reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
-                    Error::InvalidIdentityTopologyEventBody("identity topology event map"),
+                    Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "identity topology event map",
+                    )),
                 )?)?,
                 applied_assigned,
                 applied_residue,
@@ -206,7 +213,9 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
             // The stored pair is NORMALIZED, so a descending or self-paired
             // row is malformed rather than a second spelling of one pair.
             if a >= b {
-                return Err(Error::InvalidIdentityTopologyEventBody(PAIR_CONTEXT));
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    PAIR_CONTEXT,
+                )));
             }
             Ok(StoredIdentityOpAction::AssertDistinct {
                 a,
@@ -228,15 +237,17 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
                 BODY_KEY_OUTCOME,
                 "identity topology event outcome",
             )?)
-            .ok_or(Error::InvalidIdentityTopologyEventBody(
+            .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event outcome",
-            ))?;
+            )))?;
             let amended_body = match map_field(map, BODY_KEY_AMENDED) {
                 None => None,
                 Some(value) => Some(
                     value
                         .as_slice()
-                        .ok_or(Error::InvalidIdentityTopologyEventBody(RESOLUTION_CONTEXT))?
+                        .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                            RESOLUTION_CONTEXT,
+                        )))?
                         .to_vec(),
                 ),
             };
@@ -246,10 +257,10 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
             // outcome without them would lose the producer artifact ED-01
             // reads.
             if amended_body.is_some() != (outcome == ProposalOutcome::ApprovedAmended) {
-                return Err(Error::InvalidIdentityTopologyEventBody(
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                     "identity topology proposal resolution amended body must accompany \
                      exactly the amended outcome",
-                ));
+                )));
             }
             Ok(StoredIdentityOpAction::ProposalResolution {
                 proposal: decode_id_field(map, BODY_KEY_PROPOSAL, RESOLUTION_CONTEXT)?,
@@ -272,9 +283,9 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
                 amended_body,
             })
         }
-        _ => Err(Error::InvalidIdentityTopologyEventBody(
+        _ => Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event kind is unknown",
-        )),
+        ))),
     }
 }
 
@@ -284,7 +295,9 @@ pub(crate) fn encode_identity_topology_event_body(
 ) -> Result<Vec<u8>> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &record.encode_value()).map_err(|_| {
-        Error::InvalidIdentityTopologyEventBody("identity topology event encode failed")
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "identity topology event encode failed",
+        ))
     })?;
     Ok(data)
 }
@@ -293,24 +306,26 @@ pub(crate) fn encode_identity_topology_event_body(
 /// fail-closed on trailing bytes or any malformed field.
 pub(crate) fn decode_identity_topology_event_body(data: &[u8]) -> Result<StoredIdentityOpEvent> {
     if data.len() > MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event body exceeds the size limit",
-        ));
+        )));
     }
     let mut cursor = data;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
-        Error::InvalidIdentityTopologyEventBody("identity topology event bytes are malformed")
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "identity topology event bytes are malformed",
+        ))
     })?;
     if !cursor.is_empty() {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event carries trailing bytes",
-        ));
+        )));
     }
     let record = StoredIdentityOpEvent::decode_value(&value)?;
     if encode_identity_topology_event_body(&record)? != data {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event body is not canonical",
-        ));
+        )));
     }
     validate_identity_topology_event_stateless(&record)?;
     Ok(record)
@@ -322,19 +337,19 @@ pub(crate) fn decode_identity_topology_event_body(data: &[u8]) -> Result<StoredI
 /// during body decode, before quota, storage, clock join, or reconciliation.
 fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) -> Result<()> {
     if record.seq == 0 {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event seq must be nonzero",
-        ));
+        )));
     }
     if record.seq >= IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event seq is in the reserved terminal range",
-        ));
+        )));
     }
     if record.approval == ClaimApprovalStatus::Rejected {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "rejected identity topology decisions are not stored",
-        ));
+        )));
     }
     validate_resolution_scope_stateless(record)?;
     let effective = is_effective_approval(record.approval);
@@ -352,16 +367,16 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
         record.action.reassignment_map(),
     ) {
         if !effective && (applied.assigned != 0 || applied.residue != 0) {
-            return Err(Error::InvalidIdentityTopologyEventBody(
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "parked identity topology event declares applied reassignment rows",
-            ));
+            )));
         }
         let (declared_assigned, declared_residue) = map.assigned_and_residue_counts();
         if applied.assigned as u64 > declared_assigned || applied.residue as u64 > declared_residue
         {
-            return Err(Error::InvalidIdentityTopologyEventBody(
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event applied counts exceed its reassignment map",
-            ));
+            )));
         }
     }
 
@@ -369,18 +384,18 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
         return Ok(());
     };
     if op.participants().len() > MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event has too many participants",
-        ));
+        )));
     }
     if let IdentityTopologyOp::Facet(facet) = &op {
         // A facet op names ONE participant however many masks it mints, so
         // the participant bound above does not reach its fan-out. Bound it
         // here, on the same stateless path every admitting door runs.
         if facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS {
-            return Err(Error::InvalidIdentityTopologyEventBody(
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event mints too many facets",
-            ));
+            )));
         }
         // A facet op has NO propose lane, and the SAME rule has to hold at
         // both doors. The local door refuses to record a park
@@ -391,24 +406,24 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
         // from a peer would persist exactly the unresolvable orphan the
         // local path calls corruption.
         if !effective {
-            return Err(Error::InvalidIdentityTopologyEventBody(
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "facet identity topology decisions have no propose lane",
-            ));
+            )));
         }
     }
     evaluate_transition(&BTreeMap::new(), &op).map_err(|_| {
-        Error::InvalidIdentityTopologyEventBody(
+        Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event operation shape is invalid",
-        )
+        ))
     })?;
     Ok(())
 }
 
 pub(super) fn validate_replicated_identity_topology_seq(seq: u64) -> Result<()> {
     if seq >= IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT {
-        return Err(Error::InvalidIdentityTopologyEventBody(
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event seq is in the reserved terminal range",
-        ));
+        )));
     }
     Ok(())
 }
@@ -444,7 +459,9 @@ pub(super) fn decode_evidence(value: &Value) -> Result<IdentityOpEvidence> {
     const EVIDENCE_CONTEXT: &str = "identity topology event evidence";
     let map = value
         .as_map()
-        .ok_or(Error::InvalidIdentityTopologyEventBody(EVIDENCE_CONTEXT))?;
+        .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            EVIDENCE_CONTEXT,
+        )))?;
     let refs = decode_ids_field(map, EVIDENCE_KEY_REFS, EVIDENCE_CONTEXT)?;
     let rationale = decode_str_field(map, EVIDENCE_KEY_RATIONALE, EVIDENCE_CONTEXT)?.to_owned();
     Ok(IdentityOpEvidence { refs, rationale })
@@ -463,7 +480,9 @@ pub(super) fn decode_str_field<'a>(
 ) -> Result<&'a str> {
     map_field(map, key)
         .and_then(Value::as_str)
-        .ok_or(Error::InvalidIdentityTopologyEventBody(context))
+        .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            context,
+        )))
 }
 
 pub(super) fn decode_u64_field(
@@ -473,28 +492,35 @@ pub(super) fn decode_u64_field(
 ) -> Result<u64> {
     map_field(map, key)
         .and_then(Value::as_u64)
-        .ok_or(Error::InvalidIdentityTopologyEventBody(context))
+        .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            context,
+        )))
 }
 
 pub(super) fn decode_id_bytes(bytes: &[u8], context: &'static str) -> Result<EntityId> {
     let arr: [u8; ENTITY_ID_LEN] = bytes
         .try_into()
-        .map_err(|_| Error::InvalidIdentityTopologyEventBody(context))?;
-    EntityId::from_bytes(arr).map_err(|_| Error::InvalidIdentityTopologyEventBody(context))
+        .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(context)))?;
+    EntityId::from_bytes(arr)
+        .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(context)))
 }
 
 pub(super) fn decode_id_value(value: &Value, context: &'static str) -> Result<EntityId> {
     decode_id_bytes(
         value
             .as_slice()
-            .ok_or(Error::InvalidIdentityTopologyEventBody(context))?,
+            .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                context,
+            )))?,
         context,
     )
 }
 
 fn decode_id_field(map: &[(Value, Value)], key: &str, context: &'static str) -> Result<EntityId> {
     decode_id_value(
-        map_field(map, key).ok_or(Error::InvalidIdentityTopologyEventBody(context))?,
+        map_field(map, key).ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            context,
+        )))?,
         context,
     )
 }
@@ -505,7 +531,9 @@ fn decode_ids_field(
     context: &'static str,
 ) -> Result<Vec<EntityId>> {
     let Some(Value::Array(items)) = map_field(map, key) else {
-        return Err(Error::InvalidIdentityTopologyEventBody(context));
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            context,
+        )));
     };
     items
         .iter()
@@ -520,14 +548,17 @@ pub(super) fn decode_actor(map: &[(Value, Value)]) -> Result<Option<WriteActor>>
         (None, None) => Ok(None),
         (Some(entity), Some(class)) => {
             let entity_ref = decode_id_value(entity, "identity topology event actor")?;
-            let class = class.as_str().and_then(parse_actor_class).ok_or(
-                Error::InvalidIdentityTopologyEventBody("identity topology event actor class"),
-            )?;
+            let class = class
+                .as_str()
+                .and_then(parse_actor_class)
+                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology event actor class",
+                )))?;
             Ok(Some(WriteActor::new(entity_ref, class)))
         }
-        _ => Err(Error::InvalidIdentityTopologyEventBody(
+        _ => Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event actor requires both entity and class",
-        )),
+        ))),
     }
 }
 

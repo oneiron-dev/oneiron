@@ -19,6 +19,7 @@ use super::types::{
     KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_PRESET, KEY_SCHEMA_VERSION,
     KEY_TARGET, TARGET_CUSTOM, TARGET_SYSTEM,
 };
+use crate::error::ArtifactError;
 
 /// Encodes a dispatch input into its pinned-key MessagePack `Value` map.
 pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> {
@@ -33,14 +34,18 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         }
     }
     let definition = encode_agent_definition(&input.definition).map_err(|_| {
-        Error::InvalidAgentDispatchInput("definition must encode as a valid AGENT_DEF body")
+        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "definition must encode as a valid AGENT_DEF body",
+        ))
     })?;
     entries.push((Value::from(KEY_DEFINITION), Value::Binary(definition)));
     // Additive keys are ELIDED when absent, so a dispatch carrying none encodes
     // byte-identically to a pre-ONE-1709 row.
     if let Some(spec) = &input.context_spec {
         let json = serde_json::to_string(spec).map_err(|_| {
-            Error::InvalidAgentDispatchInput("context_spec must encode as a descriptor")
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "context_spec must encode as a descriptor",
+            ))
         })?;
         entries.push((Value::from(KEY_CONTEXT_SPEC), Value::from(json.as_str())));
     }
@@ -71,9 +76,9 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
 /// structurally).
 pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidAgentDispatchInput(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "agent dispatch input must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut schema_version = None;
@@ -88,29 +93,31 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
 
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "agent dispatch input keys must be strings",
-            ));
+            )));
         };
         let Some(index) = AGENT_DISPATCH_INPUT_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "agent dispatch input key is not in the pinned AGENT_DISPATCH_INPUT_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidAgentDispatchInput(
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "duplicate agent dispatch input key",
-            ));
+            )));
         }
         seen[index] = true;
 
         match AGENT_DISPATCH_INPUT_KEYS[index] {
             KEY_SCHEMA_VERSION => {
-                schema_version = Some(value.as_u64().ok_or(Error::InvalidAgentDispatchInput(
-                    "agent dispatch input schema_version must be an integer",
+                schema_version = Some(value.as_u64().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "agent dispatch input schema_version must be an integer",
+                    ),
                 ))?);
             }
             KEY_TARGET => {
@@ -118,112 +125,126 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     Some(TARGET_CUSTOM) => TARGET_CUSTOM,
                     Some(TARGET_SYSTEM) => TARGET_SYSTEM,
                     _ => {
-                        return Err(Error::InvalidAgentDispatchInput(
+                        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                             "agent dispatch target must be one of custom|system",
-                        ));
+                        )));
                     }
                 });
             }
             KEY_AGENT_DEF => {
-                let hex = value.as_str().ok_or(Error::InvalidAgentDispatchInput(
-                    "agent_def must be a hex-encoded EntityId string",
+                let hex = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "agent_def must be a hex-encoded EntityId string",
+                    ),
                 ))?;
                 agent_def = Some(EntityId::from_hex(hex).map_err(|_| {
-                    Error::InvalidAgentDispatchInput(
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "agent_def must be a hex-encoded EntityId string",
-                    )
+                    ))
                 })?);
             }
             KEY_PRESET => {
-                let logical_id = value.as_str().ok_or(Error::InvalidAgentDispatchInput(
-                    "preset must name a known system agent preset",
+                let logical_id = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "preset must name a known system agent preset",
+                    ),
                 ))?;
                 preset = Some(
                     crate::agent_def::legacy_logical_id_row(logical_id)
                         .ok()
                         .flatten()
-                        .ok_or(Error::InvalidAgentDispatchInput(
+                        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                             "preset must name a known system agent preset",
-                        ))?,
+                        )))?,
                 );
             }
             KEY_DEFINITION => {
                 let Value::Binary(bytes) = value else {
-                    return Err(Error::InvalidAgentDispatchInput(
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "definition must be a binary AGENT_DEF body",
-                    ));
+                    )));
                 };
                 definition = Some(decode_agent_definition(bytes).map_err(|_| {
-                    Error::InvalidAgentDispatchInput(
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "definition must decode as a valid AGENT_DEF body",
-                    )
+                    ))
                 })?);
             }
             KEY_CONTEXT_SPEC => {
-                let json = value.as_str().ok_or(Error::InvalidAgentDispatchInput(
-                    "context_spec must be a serialized descriptor",
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "context_spec must be a serialized descriptor",
+                    ),
                 ))?;
                 let spec: ContextSpec = serde_json::from_str(json).map_err(|_| {
-                    Error::InvalidAgentDispatchInput("context_spec must be a serialized descriptor")
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "context_spec must be a serialized descriptor",
+                    ))
                 })?;
                 validate_context_spec(&spec)?;
                 context_spec = Some(spec);
             }
             KEY_CONTEXT_FROM => {
                 let Value::Array(refs) = value else {
-                    return Err(Error::InvalidAgentDispatchInput(
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "context_from must be an array of hex EntityId strings",
-                    ));
+                    )));
                 };
                 for entry in refs {
-                    let hex = entry.as_str().ok_or(Error::InvalidAgentDispatchInput(
-                        "context_from must be an array of hex EntityId strings",
+                    let hex = entry.as_str().ok_or(Error::Artifact(
+                        ArtifactError::InvalidAgentDispatchInput(
+                            "context_from must be an array of hex EntityId strings",
+                        ),
                     ))?;
                     context_from.push(EntityId::from_hex(hex).map_err(|_| {
-                        Error::InvalidAgentDispatchInput(
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                             "context_from must be an array of hex EntityId strings",
-                        )
+                        ))
                     })?);
                 }
             }
             KEY_DEPTH_REMAINING => {
-                let depth = value.as_u64().ok_or(Error::InvalidAgentDispatchInput(
-                    "depth_remaining must be an integer",
+                let depth = value.as_u64().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
                 ))?;
                 depth_remaining = Some(u8::try_from(depth).map_err(|_| {
-                    Error::InvalidAgentDispatchInput("depth_remaining must fit in a u8")
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "depth_remaining must fit in a u8",
+                    ))
                 })?);
             }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
 
-    let schema_version = schema_version.ok_or(Error::InvalidAgentDispatchInput(
-        "missing required agent dispatch input key schema_version",
-    ))?;
+    let schema_version =
+        schema_version.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "missing required agent dispatch input key schema_version",
+        )))?;
     if schema_version != AGENT_DISPATCH_INPUT_SCHEMA_VERSION {
-        return Err(Error::InvalidAgentDispatchInput(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "agent dispatch input schema_version must be 1",
-        ));
+        )));
     }
-    let target = target.ok_or(Error::InvalidAgentDispatchInput(
+    let target = target.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
         "missing required agent dispatch input key target",
-    ))?;
-    let definition = definition.ok_or(Error::InvalidAgentDispatchInput(
-        "missing required agent dispatch input key definition",
-    ))?;
+    )))?;
+    let definition =
+        definition.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "missing required agent dispatch input key definition",
+        )))?;
 
     // Cross-field target invariant (mirrors `resolve_scope` in agent_def.rs):
     // the id/preset key is present iff the target discriminant selects it.
     let target = match target {
         TARGET_CUSTOM => {
             if preset.is_some() {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "preset key is only valid when target is system",
-                ));
+                )));
             }
-            AgentDispatchTarget::Custom(agent_def.ok_or(Error::InvalidAgentDispatchInput(
-                "target custom requires an agent_def key",
+            AgentDispatchTarget::Custom(agent_def.ok_or(Error::Artifact(
+                ArtifactError::InvalidAgentDispatchInput("target custom requires an agent_def key"),
             ))?)
         }
         // Compat-only legacy arm: a persisted pre-1890 `target="system"` row
@@ -231,12 +252,12 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         // never produces this shape again.
         TARGET_SYSTEM => {
             if agent_def.is_some() {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "agent_def key is only valid when target is custom",
-                ));
+                )));
             }
-            AgentDispatchTarget::Custom(preset.ok_or(Error::InvalidAgentDispatchInput(
-                "target system requires a preset key",
+            AgentDispatchTarget::Custom(preset.ok_or(Error::Artifact(
+                ArtifactError::InvalidAgentDispatchInput("target system requires a preset key"),
             ))?)
         }
         _ => unreachable!("target parsed from the pinned discriminants"),
@@ -294,9 +315,9 @@ pub(super) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispa
 
 pub(super) fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchStatus> {
     if status.payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
-        return Err(Error::InvalidAgentDispatchInput(
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "existing dedupe row does not carry an agent dispatch payload",
-        ));
+        )));
     }
     let input = decode_agent_dispatch_input(&status.payload.input)?;
     Ok(AgentDispatchStatus {

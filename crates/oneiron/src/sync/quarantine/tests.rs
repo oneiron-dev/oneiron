@@ -5,6 +5,7 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::error::{ArtifactError, GateError, RecordError};
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::bridge::{Materializer, format_edge_key};
@@ -98,18 +99,18 @@ fn quarantine_key_encoding_is_x_prefix_with_8be_seq() {
 
 #[test]
 fn remote_rejection_reason_classifies_secret_scan_denials_only() {
-    let secret_scan = Error::GateWriteRejected {
+    let secret_scan = Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
         reason_codes: vec!["gate.secret_scan.detected", "gate.secret_scan.github_token"],
-    };
-    let other_gate = Error::GateWriteRejected {
+    });
+    let other_gate = Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
         reason_codes: vec!["gate.policy.denied"],
-    };
-    let pending_secret_scan = Error::GateWriteRejected {
+    });
+    let pending_secret_scan = Error::Gate(GateError::GateWriteRejected {
         outcome: "pending",
         reason_codes: vec!["gate.secret_scan.detected"],
-    };
+    });
 
     assert_eq!(
         remote_rejection_reason(&secret_scan).as_deref(),
@@ -118,29 +119,45 @@ fn remote_rejection_reason_classifies_secret_scan_denials_only() {
     assert_eq!(remote_rejection_reason(&other_gate), None);
     assert_eq!(remote_rejection_reason(&pending_secret_scan), None);
     assert_eq!(
-        remote_rejection_reason(&Error::CompanionRecordAlreadyExists).as_deref(),
+        remote_rejection_reason(&Error::Record(RecordError::CompanionRecordAlreadyExists))
+            .as_deref(),
         Some("CompanionRecordAlreadyExists")
     );
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidPsychProfileBody("bad profile")).as_deref(),
+        remote_rejection_reason(&Error::Record(RecordError::InvalidPsychProfileBody(
+            "bad profile"
+        )))
+        .as_deref(),
         Some("InvalidPsychProfileBody")
     );
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidSkillBody("bad skill")).as_deref(),
+        remote_rejection_reason(&Error::Artifact(ArtifactError::InvalidSkillBody(
+            "bad skill"
+        )))
+        .as_deref(),
         Some("InvalidSkillBody")
     );
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidAgentDefBody("bad agent def")).as_deref(),
+        remote_rejection_reason(&Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "bad agent def"
+        )))
+        .as_deref(),
         Some("InvalidAgentDefBody")
     );
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidTaskBody("missing task role")).as_deref(),
+        remote_rejection_reason(&Error::Record(RecordError::InvalidTaskBody(
+            "missing task role"
+        )))
+        .as_deref(),
         Some("InvalidTaskBody")
     );
     // ONE-1394: a malformed replicated DIAGNOSTIC row quarantines and the
     // window continues, instead of aborting the batch as a LOCAL failure.
     assert_eq!(
-        remote_rejection_reason(&Error::InvalidDiagnosticBody("unknown body key")).as_deref(),
+        remote_rejection_reason(&Error::Record(RecordError::InvalidDiagnosticBody(
+            "unknown body key"
+        )))
+        .as_deref(),
         Some("InvalidDiagnosticBody")
     );
 }

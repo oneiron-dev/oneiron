@@ -49,7 +49,7 @@ use loro::LoroDoc;
 use crate::Vault;
 use crate::deletion::{ATT_EMPTY_MAP_BYTE, RECEIPT_ATT_DOMAIN, receipt_attestation_parts};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 use crate::sync::quarantine::{self, QuarantineContainer};
 
 /// LMDB `sync_state` key prefix for lease-registry mirror rows.
@@ -281,19 +281,19 @@ fn parse_hex_component(component: &str) -> Result<u64> {
 /// immutability/divergence gate — run in the caller, in that order):
 ///
 /// 3. Ed25519-verify the attestation transcript against the embedded
-///    `att_pk` → fail = [`Error::ReceiptAttestationInvalid`].
+///    `att_pk` → fail = [`SyncError::ReceiptAttestationInvalid`](crate::error::SyncError::ReceiptAttestationInvalid).
 /// 4. Claimed-row lookup in the CALLER's txn over the v2
 ///    `ls:{vault_id_hex}:{att_client}` keyspace: row absent →
-///    [`Error::ReceiptLeaseUnknown`]; decoded row `vault_id` ≠ caller's
+///    [`SyncError::ReceiptLeaseUnknown`](crate::error::SyncError::ReceiptLeaseUnknown); decoded row `vault_id` ≠ caller's
 ///    trusted vault scope → local [`Error::CorruptedIndex`]; registry pubkey ≠
-///    `att_pk` → [`Error::ReceiptAttestationInvalid`]; the CLAIMED row's
-///    status revoked → [`Error::ReceiptLeaseRevoked`] (checked FIRST,
+///    `att_pk` → [`SyncError::ReceiptAttestationInvalid`](crate::error::SyncError::ReceiptAttestationInvalid); the CLAIMED row's
+///    status revoked → [`SyncError::ReceiptLeaseRevoked`](crate::error::SyncError::ReceiptLeaseRevoked) (checked FIRST,
 ///    preserving its precedence); active | expired → fall through to step 5
 ///    (OD-7).
 /// 5. Pubkey-bound revocation FLOOR (OD-8 amended, RULING C; ONE-1190). The
 ///    kill switch binds to the Ed25519 PUBKEY, not the mintable `att_client`:
 ///    scan every row under the caller's trusted `ls:{vault_id_hex}:` prefix
-///    and reject with [`Error::ReceiptLeaseRevoked`] if this signing pubkey
+///    and reject with [`SyncError::ReceiptLeaseRevoked`](crate::error::SyncError::ReceiptLeaseRevoked) if this signing pubkey
 ///    appears in any same-vault revoked binding — so a revoked pubkey is
 ///    terminal across all client_ids in that vault, while an independently
 ///    leased identical key in another vault is not poisoned. Runs on BOTH
@@ -323,16 +323,16 @@ pub(super) fn verify_new_receipt_origin_for_vault_in_txn(
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
 
     if blob.len() < ENTITY_METADATA_HEADER_LEN {
-        return Err(Error::InvalidRedactionReceiptBody(
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "envelope shorter than the pinned header",
-        ));
+        )));
     }
     let (header, body) = blob.split_at(ENTITY_METADATA_HEADER_LEN);
     let parts = receipt_attestation_parts(body)?;
 
     // Step 3 — transcript verification (OD-6 tail-splice).
     let verifying_key = VerifyingKey::from_bytes(&parts.pubkey)
-        .map_err(|_| Error::ReceiptAttestationInvalid { id: *id })?;
+        .map_err(|_| Error::Sync(SyncError::ReceiptAttestationInvalid { id: *id }))?;
     let mut msg = Vec::with_capacity(
         RECEIPT_ATT_DOMAIN.len() + 16 + header.len() + parts.verification_value_offset + 1,
     );
@@ -343,23 +343,25 @@ pub(super) fn verify_new_receipt_origin_for_vault_in_txn(
     msg.push(ATT_EMPTY_MAP_BYTE);
     verifying_key
         .verify(&msg, &Signature::from_bytes(&parts.signature))
-        .map_err(|_| Error::ReceiptAttestationInvalid { id: *id })?;
+        .map_err(|_| Error::Sync(SyncError::ReceiptAttestationInvalid { id: *id }))?;
 
     // Step 4 — claimed-row lease binding (OD-7: status only, never time).
     let Some(record) = claimed_lease_record_in_txn(vault, txn, vault_id, parts.client_id)? else {
-        return Err(Error::ReceiptLeaseUnknown {
+        return Err(Error::Sync(SyncError::ReceiptLeaseUnknown {
             client_id: parts.client_id,
-        });
+        }));
     };
     if record.pubkey != parts.pubkey {
-        return Err(Error::ReceiptAttestationInvalid { id: *id });
+        return Err(Error::Sync(SyncError::ReceiptAttestationInvalid {
+            id: *id,
+        }));
     }
     // Claimed-row status FIRST — preserves ReceiptLeaseRevoked precedence
     // when the att_client row is itself the revoked binding.
     if record.status == LeaseStatus::Revoked {
-        return Err(Error::ReceiptLeaseRevoked {
+        return Err(Error::Sync(SyncError::ReceiptLeaseRevoked {
             client_id: parts.client_id,
-        });
+        }));
     }
 
     // Step 5 — pubkey-bound revocation FLOOR (OD-8 amended, RULING C;
@@ -383,9 +385,9 @@ pub(super) fn verify_new_receipt_origin_for_vault_in_txn(
         let (_key, sibling_raw) = entry?;
         let sibling = decode_scoped_lease_record(&sibling_raw, vault_id)?;
         if sibling.pubkey == parts.pubkey && sibling.status == LeaseStatus::Revoked {
-            return Err(Error::ReceiptLeaseRevoked {
+            return Err(Error::Sync(SyncError::ReceiptLeaseRevoked {
                 client_id: parts.client_id,
-            });
+            }));
         }
     }
     Ok(parts.pubkey)

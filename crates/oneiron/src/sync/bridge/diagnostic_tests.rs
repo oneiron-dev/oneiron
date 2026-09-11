@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::VaultConfig;
+use crate::error::{RecordError, SyncError};
 use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_PERSON};
 use crate::self_heal::{
     ConsentDeniedDetector, DeterministicDetector, DiagnosticObservation, DiagnosticWorkingSet,
@@ -96,21 +97,24 @@ fn diagnostic_observer_b_quota_exhaustion_and_rejection_preserves_budget() -> Re
         malformed.push(0x80);
         assert!(matches!(
             ingest(id(9), &malformed),
-            Err(Error::InvalidDiagnosticBody(_))
+            Err(Error::Record(RecordError::InvalidDiagnosticBody(_)))
         ));
         assert!(ingest(first, &first_blob)?);
         let err = ingest(collision, &collision_blob).unwrap_err();
-        assert!(matches!(err, Error::InvalidDiagnosticBody(_)));
+        assert!(matches!(
+            err,
+            Error::Record(RecordError::InvalidDiagnosticBody(_))
+        ));
         assert!(remote_rejection_reason(&err).is_some());
         // Observer B continues after a remote rejection in the SAME txn.
         // Rejection must preserve the first debit and leave room for a sibling.
         assert!(ingest(second, &second_blob)?);
         assert!(matches!(
             ingest(excess, &excess_blob),
-            Err(Error::MaintenanceIngestQuotaExceeded {
+            Err(Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
                 accepted_count: 2,
                 ..
-            })
+            }))
         ));
         assert!(!ingest(first, &first_blob)?, "echo must not consume quota");
         Ok(())
@@ -221,7 +225,10 @@ fn diagnostic_forward_remat_quota_exhaustion_and_rejection_preserves_budget() ->
             crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::MaintenanceIngestQuotaExceeded { .. }));
+        assert!(matches!(
+            err,
+            Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })
+        ));
         Ok(())
     })?;
     Ok(())

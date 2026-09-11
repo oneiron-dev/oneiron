@@ -8,7 +8,7 @@ use super::door_window::printable_ref_name;
 use super::evidence::RefUpdate;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWireRepo};
 use crate::origin::lfs::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPointerIntent, LfsPushedPointer,
@@ -64,12 +64,12 @@ pub(super) fn admit_landing_lfs_pointers(
             LfsAdmission::KeepInGit => continue,
             LfsAdmission::StoreInLfs => {
                 if !vault.has_lfs_object(intent.oid, intent.size_bytes)? {
-                    return Err(Error::ReceivePackLandingRefused {
+                    return Err(Error::Code(CodeError::ReceivePackLandingRefused {
                         reason: format!(
                             "lfs object for {} is not stored in this vault",
                             printable_ref_name(&intent.path)
                         ),
-                    });
+                    }));
                 }
                 admitted.push(intent);
             }

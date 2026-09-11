@@ -1,6 +1,7 @@
 //! Provenanced and timestamped edge builders, replay and delete-edge guards.
 
 use super::*;
+use crate::error::{ClaimError, RegistryError};
 
 struct EdgeFixture {
     _dir: tempfile::TempDir,
@@ -30,7 +31,7 @@ fn raw_edge_values(vault: &Vault, edge: &EdgeRef) -> Result<RawEdgeValuePair> {
 
 fn assert_edge_is_provenanced_reject(err: Error, expected_kind: EdgeKind, context: &str) {
     match err {
-        Error::EdgeIsProvenanced { kind } => {
+        Error::Claim(ClaimError::EdgeIsProvenanced { kind }) => {
             assert_eq!(kind, expected_kind as u8, "{context}: kind byte");
         }
         other => panic!("{context}: expected EdgeIsProvenanced, got {other:?}"),
@@ -359,7 +360,10 @@ fn apply_delete_edge_refuses_blocks_and_leaves_both_index_rows_intact() -> Resul
         .expect_err("a blocks delete must never apply");
     // The EXISTING typed variant carries the refusal — no new error shape.
     assert_eq!(err.kind(), ErrorKind::ReservedEdgeKind);
-    assert_matches!(err, Error::ReservedEdgeKind("blocks"));
+    assert_matches!(
+        err,
+        Error::Registry(RegistryError::ReservedEdgeKind("blocks"))
+    );
 
     assert_raw_edge_unchanged(&vault, &edge, &before_out, "refused blocks delete")?;
     assert_eq!(

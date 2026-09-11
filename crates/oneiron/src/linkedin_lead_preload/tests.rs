@@ -6,6 +6,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
+use crate::error::{ClaimError, GateError};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
 };
@@ -545,9 +546,9 @@ fn linkedin_preload_gate_failure_and_claim_id_collision_do_not_bypass_admission(
     )?;
     assert!(matches!(
         apply_linkedin_lead_corpus(&other, fixture(), other_actor),
-        Err(LinkedInLeadPreloadError::Vault(
-            Error::GateWriteRejected { .. }
-        ))
+        Err(LinkedInLeadPreloadError::Vault(Error::Gate(
+            GateError::GateWriteRejected { .. }
+        )))
     ));
     assert_eq!(other.count_entities_by_type(ENTITY_TYPE_CLAIM)?, 0);
     assert_eq!(
@@ -606,9 +607,9 @@ fn linkedin_preload_actor_class_mismatch_rejects_empty_fresh_and_reused_without_
         let invalid = WriteActor::new(actor.entity_ref(), EdgeActorClass::System);
         let error = apply_linkedin_lead_corpus(&vault, corpus, invalid).expect_err("must reject");
         assert!(
-            matches!(error, LinkedInLeadPreloadError::Vault(Error::ActorClassMismatch {
+            matches!(error, LinkedInLeadPreloadError::Vault(Error::Claim(ClaimError::ActorClassMismatch {
             actor_entity_type: ENTITY_TYPE_PERSON, actor_class,
-        }) if actor_class == EdgeActorClass::System as u8)
+        })) if actor_class == EdgeActorClass::System as u8)
         );
         assert_eq!(snapshot(&vault), before, "{state}");
     }

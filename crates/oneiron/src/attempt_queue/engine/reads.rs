@@ -16,6 +16,7 @@ use crate::store::Store;
 
 use super::AttemptQueue;
 use super::ERR_DEDUPE_ACTOR_MISMATCH;
+use crate::error::ArtifactError;
 const DREAMER_RUN_ROOT_CLIMB_LIMIT: usize = 64;
 /// Point reads one [`AttemptQueue::retry_chain_depth`] walk may spend. A
 /// lineage this long is already past every backoff ceiling that reads it, so
@@ -47,7 +48,7 @@ impl AttemptQueue<'_> {
     /// read the depth here rather than infer one from a per-row lease counter.
     ///
     /// Missing rows, cycles, and content-inconsistent hops encountered during
-    /// the bounded walk fail CLOSED with [`Error::InvalidAttemptQueueRecord`],
+    /// the bounded walk fail CLOSED with [`ArtifactError::InvalidAttemptQueueRecord`](crate::error::ArtifactError::InvalidAttemptQueueRecord),
     /// never a silently short depth that would collapse a long backoff onto
     /// its first rung. Every visited hop compares six fields: `kind`, `payload`,
     /// `task_ref`, `run_id`, `dedupe_key`, and `dedupe_actor_ref`. This checks
@@ -72,11 +73,15 @@ impl AttemptQueue<'_> {
             // the walk trivially matches itself on identity, so the field
             // compare below could never be the one to stop an endless loop.
             if !visited.insert(parent_id) {
-                return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE));
+                return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                    ERR_RETRY_CHAIN_CYCLE,
+                )));
             }
             let parent = self.retry_chain_record_in_txn(&rtxn, parent_id)?;
             if !retries_the_same_attempt(&child, &parent) {
-                return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH));
+                return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                    ERR_RETRY_CHAIN_MISMATCH,
+                )));
             }
             depth = depth.saturating_add(1);
             if depth >= RETRY_CHAIN_DEPTH_LIMIT {
@@ -98,9 +103,9 @@ impl AttemptQueue<'_> {
         id: AttemptId,
     ) -> Result<AttemptRecord> {
         let Some(raw) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
-            return Err(Error::InvalidAttemptQueueRecord(
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_RETRY_CHAIN_MISSING_ROW,
-            ));
+            )));
         };
         decode_record(&raw, id)
     }
@@ -199,7 +204,9 @@ impl AttemptQueue<'_> {
         let record = decode_record(&raw, id)?;
         validate_dedupe_record(&record, kind, dedupe_key)?;
         if record.dedupe_actor_ref.as_deref() != expected_dedupe_actor_ref {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_ACTOR_MISMATCH));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_DEDUPE_ACTOR_MISMATCH,
+            )));
         }
         if !record.state.is_pending() {
             return Ok(None);
@@ -307,7 +314,9 @@ impl AttemptQueue<'_> {
         let record = decode_record(&raw, id)?;
         validate_dedupe_record(&record, kind, dedupe_key)?;
         if record.dedupe_actor_ref.as_deref() != expected_dedupe_actor_ref {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_ACTOR_MISMATCH));
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_DEDUPE_ACTOR_MISMATCH,
+            )));
         }
         if !record.state.is_pending() {
             self.store.attempt_dedupe.delete(txn, index_key)?;

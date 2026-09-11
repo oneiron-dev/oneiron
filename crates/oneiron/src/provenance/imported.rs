@@ -4,6 +4,7 @@ use super::writes::EdgeProvenanceWrite;
 use super::*;
 use crate::WriteActor;
 use crate::claim::ClaimSource;
+use crate::error::ClaimError;
 
 /// Provider identity belongs to the imported relationship's scope. The canonical
 /// provenance wrapper leaves `evid` absent: any value there conflicts with the
@@ -38,9 +39,9 @@ impl Vault {
         import: ImportedEdgeProvenance,
     ) -> Result<bool> {
         if import.evidence.is_nil() {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "imported evidence is required",
-            ));
+            )));
         }
         self.with_write_txn(|wtxn| {
             let subject = &import.subject;
@@ -59,9 +60,9 @@ impl Vault {
                     || stored.record.actor_entity_ref != import.actor.entity_ref()
                     || stored.actor_class != import.actor.actor_class()
                 {
-                    return Err(Error::InvalidProvenanceBody(
+                    return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                         "imported edge identity mismatch",
-                    ));
+                    )));
                 }
                 let actor_raw = self
                     .store
@@ -87,9 +88,9 @@ impl Vault {
                 if !verified
                     || parse_edge_record(&edge_key, &raw)?.provenance != Some(stored.flags())
                 {
-                    return Err(Error::InvalidProvenanceBody(
+                    return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                         "imported edge provenance is not authoritative",
-                    ));
+                    )));
                 }
                 let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
                 crate::gate::check_edge_provenance_claim_policy(

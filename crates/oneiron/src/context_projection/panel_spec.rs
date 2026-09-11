@@ -6,7 +6,7 @@ use super::spec::{ContextSpec, validate_context_spec, validate_panel_text};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::task_verb::{ConsultPayload, ConsultPayloadRef, TaskAssignee};
 use crate::temporal::TimeRange;
@@ -59,14 +59,20 @@ pub struct PanelSynthesisSpec {
 /// Structural validation of a panel spec, independent of any vault.
 pub fn validate_lead_panel_spec(spec: &LeadPanelSpec) -> Result<()> {
     if spec.members.is_empty() {
-        return Err(Error::InvalidTaskBody("panel spec must name a member"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec must name a member",
+        )));
     }
     if spec.members.len() > LEAD_PANEL_MAX_MEMBERS {
-        return Err(Error::InvalidTaskBody("panel spec names too many members"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec names too many members",
+        )));
     }
     for (index, member) in spec.members.iter().enumerate() {
         if !matches!(member.responder, TaskAssignee::Peer { .. }) {
-            return Err(Error::InvalidTaskBody("panel responders must be Peer"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "panel responders must be Peer",
+            )));
         }
         validate_panel_text(&member.instructions, "panel member instructions")?;
         validate_context_spec(&member.context_spec)?;
@@ -76,15 +82,17 @@ pub fn validate_lead_panel_spec(spec: &LeadPanelSpec) -> Result<()> {
             .iter()
             .any(|prior| prior.responder == member.responder)
         {
-            return Err(Error::InvalidTaskBody(
+            return Err(Error::Record(RecordError::InvalidTaskBody(
                 "panel spec names one responder twice",
-            ));
+            )));
         }
     }
     if !matches!(spec.judge.responder, TaskAssignee::Peer { .. })
         || !matches!(spec.synthesis.responder, TaskAssignee::Peer { .. })
     {
-        return Err(Error::InvalidTaskBody("panel responders must be Peer"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel responders must be Peer",
+        )));
     }
     validate_panel_text(&spec.judge.rubric, "panel judge rubric")?;
     validate_context_spec(&spec.judge.context_spec)?;
@@ -119,17 +127,22 @@ pub fn persist_lead_panel_spec(
 /// Loads and validates the panel spec a consult ref points at.
 pub fn load_lead_panel_spec(vault: &Vault, spec_ref: ConsultPayloadRef) -> Result<LeadPanelSpec> {
     let ConsultPayloadRef::Turn(entity_ref) = spec_ref else {
-        return Err(Error::InvalidTaskBody(
+        return Err(Error::Record(RecordError::InvalidTaskBody(
             "panel spec ref must name the durable spec turn",
-        ));
+        )));
     };
     let raw = vault
         .get_raw(&entity_ref)?
-        .ok_or(Error::InvalidTaskBody("panel spec ref does not resolve"))?;
-    let header = EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::InvalidTaskBody("panel spec row header is malformed"))?;
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec ref does not resolve",
+        )))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::Record(
+        RecordError::InvalidTaskBody("panel spec row header is malformed"),
+    ))?;
     if header.entity_type != ENTITY_TYPE_TURN {
-        return Err(Error::InvalidTaskBody("panel spec ref is not a turn row"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec ref is not a turn row",
+        )));
     }
     let spec = decode_lead_panel_spec(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     validate_lead_panel_spec(&spec)?;
@@ -139,7 +152,7 @@ pub fn load_lead_panel_spec(vault: &Vault, spec_ref: ConsultPayloadRef) -> Resul
 /// Encodes a panel spec into its pinned-key entity body.
 pub fn encode_lead_panel_spec(spec: &LeadPanelSpec) -> Result<Vec<u8>> {
     let json = serde_json::to_string(spec)
-        .map_err(|_| Error::InvalidTaskBody("panel spec does not encode"))?;
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("panel spec does not encode")))?;
     let value = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("role"),
@@ -152,18 +165,26 @@ pub fn encode_lead_panel_spec(spec: &LeadPanelSpec) -> Result<Vec<u8>> {
         (rmpv::Value::from("spec"), rmpv::Value::from(json.as_str())),
     ]);
     let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value)
-        .map_err(|_| Error::InvalidTaskBody("panel spec body does not encode"))?;
+    rmpv::encode::write_value(&mut out, &value).map_err(|_| {
+        Error::Record(RecordError::InvalidTaskBody(
+            "panel spec body does not encode",
+        ))
+    })?;
     Ok(out)
 }
 
 /// Decodes a pinned-key panel-spec entity body.
 pub fn decode_lead_panel_spec(bytes: &[u8]) -> Result<LeadPanelSpec> {
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidTaskBody("panel spec body is not MessagePack"))?;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::Record(RecordError::InvalidTaskBody(
+            "panel spec body is not MessagePack",
+        ))
+    })?;
     let rmpv::Value::Map(entries) = value else {
-        return Err(Error::InvalidTaskBody("panel spec body must be a map"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec body must be a map",
+        )));
     };
     let field = |name: &str| {
         entries
@@ -172,20 +193,23 @@ pub fn decode_lead_panel_spec(bytes: &[u8]) -> Result<LeadPanelSpec> {
             .map(|(_, value)| value)
     };
     if field("role").and_then(rmpv::Value::as_str) != Some(LEAD_PANEL_SPEC_ROLE) {
-        return Err(Error::InvalidTaskBody(
+        return Err(Error::Record(RecordError::InvalidTaskBody(
             "panel spec body role is not a panel",
-        ));
+        )));
     }
     if field("schema_version").and_then(rmpv::Value::as_u64) != Some(LEAD_PANEL_SPEC_SCHEMA_VERSION)
     {
-        return Err(Error::InvalidTaskBody(
+        return Err(Error::Record(RecordError::InvalidTaskBody(
             "panel spec schema version must be 1",
-        ));
+        )));
     }
     let json = field("spec")
         .and_then(rmpv::Value::as_str)
-        .ok_or(Error::InvalidTaskBody("panel spec body carries no spec"))?;
-    serde_json::from_str(json).map_err(|_| Error::InvalidTaskBody("panel spec does not decode"))
+        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec body carries no spec",
+        )))?;
+    serde_json::from_str(json)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("panel spec does not decode")))
 }
 
 /// Which settled results a planned TASK must wait for before it is mintable.
@@ -224,7 +248,7 @@ pub struct LeadPanelExecutionPlan {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidTaskBody`] when the spec is malformed or when the question
+/// [`RecordError::InvalidTaskBody`](crate::error::RecordError::InvalidTaskBody) when the spec is malformed or when the question
 /// and panel-spec refs collide (a consult refuses duplicate refs).
 pub fn plan_lead_panel_tasks(
     question_ref: ConsultPayloadRef,
@@ -234,9 +258,9 @@ pub fn plan_lead_panel_tasks(
 ) -> Result<LeadPanelExecutionPlan> {
     validate_lead_panel_spec(spec)?;
     if question_ref == panel_spec_ref {
-        return Err(Error::InvalidTaskBody(
+        return Err(Error::Record(RecordError::InvalidTaskBody(
             "panel question and spec must be distinct refs",
-        ));
+        )));
     }
     let consult = || ConsultPayload::question(question_ref, vec![panel_spec_ref], correlation_ref);
     Ok(LeadPanelExecutionPlan {

@@ -13,6 +13,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 
 use super::provenance::source_message_refs;
+use crate::error::ArtifactError;
 
 // ─── the stale fold (ONE-1447) ──────────────────────────────────────────
 //
@@ -338,8 +339,11 @@ fn encode_stale_note(note: &SkillStaleNote) -> Result<Vec<u8>> {
         ),
     ]);
     let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &value)
-        .map_err(|_| Error::InvalidSkillBody("stale note MessagePack encode failed"))?;
+    rmpv::encode::write_value(&mut bytes, &value).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidSkillBody(
+            "stale note MessagePack encode failed",
+        ))
+    })?;
     Ok(bytes)
 }
 

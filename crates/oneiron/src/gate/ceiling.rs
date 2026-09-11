@@ -11,6 +11,7 @@ use crate::write_envelope::SourceLineage;
 
 use super::constants::MAX_DELEGATION_DEPTH;
 use super::decision::{GateDecision, GateOutcome};
+use crate::error::GateError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyApprovalCeiling {
@@ -434,9 +435,9 @@ pub(super) fn check_source_trust(
         // Source omission remains compatible only without restricted history.
         // An absent declaration cannot authorize even a permitted lineage.
         return match restricted_members.next() {
-            Some(member) => Err(Error::SourceNotTrustedForAuto {
+            Some(member) => Err(Error::Gate(GateError::SourceNotTrustedForAuto {
                 claim_source: member.as_str(),
-            }),
+            })),
             None => Ok(()),
         };
     };
@@ -455,15 +456,15 @@ fn check_source_trust_member(
     ceiling: &SourceTrustCeiling,
 ) -> Result<()> {
     if ceiling.malformed_manifest_seen {
-        return Err(Error::SourceNotTrustedForAuto {
+        return Err(Error::Gate(GateError::SourceNotTrustedForAuto {
             claim_source: source.as_str(),
-        });
+        }));
     }
 
     let Some(sensitivity) = sensitivity else {
-        return Err(Error::SourceNotTrustedForAuto {
+        return Err(Error::Gate(GateError::SourceNotTrustedForAuto {
             claim_source: source.as_str(),
-        });
+        }));
     };
 
     // An actor-bound row is invisible to every other actor, so the source
@@ -472,30 +473,30 @@ fn check_source_trust_member(
         Some(row) if row.binds_actor(actor_ref) => row,
         _ => {
             if source.requires_explicit_auto_permit() {
-                return Err(Error::SourceNotTrustedForAuto {
+                return Err(Error::Gate(GateError::SourceNotTrustedForAuto {
                     claim_source: source.as_str(),
-                });
+                }));
             }
             return Ok(());
         }
     };
 
     let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
-        return Err(Error::SourceNotTrustedForAuto {
+        return Err(Error::Gate(GateError::SourceNotTrustedForAuto {
             claim_source: source.as_str(),
-        });
+        }));
     };
 
     if sensitivity > max_auto_sensitivity {
-        return Err(Error::SourceNotTrustedForAuto {
+        return Err(Error::Gate(GateError::SourceNotTrustedForAuto {
             claim_source: source.as_str(),
-        });
+        }));
     }
 
     if source.requires_explicit_auto_permit() && (!row.receipted || !row.warned) {
-        return Err(Error::SourceNotTrustedForAuto {
+        return Err(Error::Gate(GateError::SourceNotTrustedForAuto {
             claim_source: source.as_str(),
-        });
+        }));
     }
 
     Ok(())

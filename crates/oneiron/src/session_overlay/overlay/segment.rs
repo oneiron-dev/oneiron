@@ -10,6 +10,7 @@ use super::super::journal::JournalEntry;
 use super::super::keyspace::{OverlayMutation, OverlayState, project_mutation};
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::{Lease, OverlayLifecycleState, SessionOverlay};
+use crate::error::OffRecordError;
 
 pub(in crate::session_overlay) struct TxnSegment {
     pub(super) overlay: Arc<SessionOverlay>,
@@ -138,9 +139,11 @@ impl SessionOverlay {
             .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
         while lifecycle.segment_active {
             if lifecycle.state != OverlayLifecycleState::Live {
-                return Err(Error::OffRecordOverlayLeaseClosed {
-                    generation: lifecycle.generation,
-                });
+                return Err(Error::OffRecord(
+                    OffRecordError::OffRecordOverlayLeaseClosed {
+                        generation: lifecycle.generation,
+                    },
+                ));
             }
             // Base writers are acquired before this permit (base -> segment). Commit
             // releases the base writer before applying/releasing this permit and never
@@ -150,9 +153,11 @@ impl SessionOverlay {
             })?;
         }
         if lifecycle.state != OverlayLifecycleState::Live {
-            return Err(Error::OffRecordOverlayLeaseClosed {
-                generation: lifecycle.generation,
-            });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordOverlayLeaseClosed {
+                    generation: lifecycle.generation,
+                },
+            ));
         }
         lifecycle.leases = lifecycle
             .leases
@@ -188,9 +193,11 @@ impl SessionOverlay {
         if lifecycle.state == OverlayLifecycleState::Gone
             || lifecycle.generation != segment.generation
         {
-            return Err(Error::OffRecordOverlayLeaseClosed {
-                generation: segment.generation,
-            });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordOverlayLeaseClosed {
+                    generation: segment.generation,
+                },
+            ));
         }
         let state = self.state.load_full();
         let next = Self::apply_preflighted_to_state(state, &segment.mutations, &segment.journal)?;

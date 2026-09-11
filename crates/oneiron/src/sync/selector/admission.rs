@@ -25,6 +25,7 @@ use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
 use super::edge::copy_admitted_edges;
+use crate::error::{RecordError, RegistryError, SyncError};
 
 /// Role carried by a member/guest federation import path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,12 +60,12 @@ pub fn admit_federated_window_update(
     role: FederationAdmissionRole,
 ) -> Result<Vec<u8>> {
     let remote = create_window_doc("federation-remote", key);
-    remote
-        .import(update)
-        .map_err(|source| Error::CrdtDecodeError {
+    remote.import(update).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
             context: "import federated update",
             source,
-        })?;
+        })
+    })?;
 
     let admitted = create_admission_doc(key, update, role)?;
     let policy =
@@ -113,12 +114,12 @@ pub(in crate::sync) fn revalidate_admitted_federated_claims(
     role: FederationAdmissionRole,
 ) -> Result<()> {
     let admitted = create_window_doc(role.origin(), key);
-    admitted
-        .import(admitted_update)
-        .map_err(|source| Error::CrdtDecodeError {
+    admitted.import(admitted_update).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
             context: "import admitted update",
             source,
-        })?;
+        })
+    })?;
 
     let policy =
         vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
@@ -277,7 +278,9 @@ fn admit_federated_entity_blob(
             |entry| entry.classification == EntityClassification::Maintenance,
         );
         if engine_authored {
-            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+            return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                header.entity_type,
+            )));
         }
         validate_admitted_replicated_body(
             &id,
@@ -370,7 +373,9 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             // TERMINAL; the verdict text and every other decoder error (already
             // non-terminal) pass through unchanged. See the note above.
             crate::companion::decode_companion_record_body(body).map_err(|error| match error {
-                Error::InvalidClaimBody(reason) => Error::InvalidCompanionRecordBody(reason),
+                Error::InvalidClaimBody(reason) => {
+                    Error::Record(RecordError::InvalidCompanionRecordBody(reason))
+                }
                 other => other,
             })?;
         }
@@ -402,24 +407,25 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
     validate_authority_log_entry_body_bytes(body)?;
     let entry = decode_authority_log_entry_body(body)?;
     if authority_log_entity_id(&entry)? != *id {
-        return Err(Error::AuthorityLogStoreKeyMismatch { id: *id });
+        return Err(Error::Record(RecordError::AuthorityLogStoreKeyMismatch {
+            id: *id,
+        }));
     }
     let entry_vault_id = match &entry.op {
         AuthorityOp::Genesis { .. } => genesis_vault_id(&entry)?,
         _ => entry
             .vault_id
-            .ok_or(Error::InvalidAuthorityLogBody("missing authority vault id"))?,
+            .ok_or(Error::Record(RecordError::InvalidAuthorityLogBody(
+                "missing authority vault id",
+            )))?,
     };
-    let local_vault_id = vault
-        .authority_fold()?
-        .vault_id
-        .ok_or(Error::InvalidAuthorityLogBody(
-            "missing local authority root",
-        ))?;
+    let local_vault_id = vault.authority_fold()?.vault_id.ok_or(Error::Record(
+        RecordError::InvalidAuthorityLogBody("missing local authority root"),
+    ))?;
     if entry_vault_id != local_vault_id {
-        return Err(Error::InvalidAuthorityLogBody(
+        return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "foreign authority log vault id",
-        ));
+        )));
     }
     Ok(())
 }

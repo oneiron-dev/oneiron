@@ -5,7 +5,7 @@ use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, Multiling
 use crate::bm25;
 use crate::config::VaultConfig;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
     STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
@@ -343,7 +343,7 @@ pub(super) fn text_index_is_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Resul
 /// trusted dictionary roots only.
 pub(super) fn discover_analyzer(config: &VaultConfig) -> Result<MultilingualAnalyzer> {
     MultilingualAnalyzer::discover(&config.dict_search_paths)
-        .map_err(|e| Error::AnalyzerError(e.to_string()))
+        .map_err(|e| Error::Store(StoreError::AnalyzerError(e.to_string())))
 }
 
 /// The EXISTING-ONLY analyzer gate: compare the stored analyzer identity with
@@ -356,7 +356,7 @@ pub(super) fn discover_analyzer(config: &VaultConfig) -> Result<MultilingualAnal
 /// identity has not been compared yet, and it silently replaces the identity
 /// a reopening operator claimed to be naming. So this gate compares in every
 /// state: an empty index is still an existing vault, and an absent stored
-/// manifest on one is [`Error::IncompatibleAnalyzer`], not a blank slate.
+/// manifest on one is [`StoreError::IncompatibleAnalyzer`](crate::error::StoreError::IncompatibleAnalyzer), not a blank slate.
 ///
 /// The residual-rows corruption check is kept: a zeroed `total_docs` sentinel
 /// coexisting with rows in any text DB is corruption in both doors.
@@ -367,7 +367,7 @@ pub(crate) fn verify_text_index_manifest(
     let current_manifest = analyzer.manifest();
     let current_manifest_hash = current_manifest
         .canonical_hash()
-        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+        .map_err(|e| Error::Store(StoreError::AnalyzerError(format!("manifest hash: {e}"))))?;
     let current_field_schema_hash = bm25_field_schema_hash();
 
     let rtxn = store.env.read_txn()?;
@@ -411,7 +411,7 @@ pub(super) fn handshake_text_index_manifest(
     let current_manifest = analyzer.manifest();
     let current_manifest_hash = current_manifest
         .canonical_hash()
-        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+        .map_err(|e| Error::Store(StoreError::AnalyzerError(format!("manifest hash: {e}"))))?;
     let current_field_schema_hash = bm25_field_schema_hash();
 
     // Hash-match is the common path on Vault::open and is read-only; only
@@ -470,24 +470,24 @@ fn validate_stored_manifest_hashes(
 ) -> Result<()> {
     let Some(stored_hash) = stored_manifest_hash else {
         // Pre-ONE-317 vault with docs in it: fail closed.
-        return Err(Error::IncompatibleAnalyzer {
+        return Err(Error::Store(StoreError::IncompatibleAnalyzer {
             lang: "*".to_owned(),
             stored_mode: "unknown",
             current_mode: AnalyzerMode::Portable.as_str(),
-        });
+        }));
     };
 
     // A present manifest with a missing field-schema hash signals partial
     // corruption, not schema evolution — route it to IncompatibleAnalyzer.
     match stored_field_schema_hash {
         Some(hash) if hash == current_field_schema_hash => {}
-        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
+        Some(_) => return Err(Error::Store(StoreError::Bm25FieldSchemaChanged)),
         None => {
-            return Err(Error::IncompatibleAnalyzer {
+            return Err(Error::Store(StoreError::IncompatibleAnalyzer {
                 lang: "*".to_owned(),
                 stored_mode: "corrupt",
                 current_mode: "any",
-            });
+            }));
         }
     }
 
@@ -514,20 +514,20 @@ fn manifest_mismatch_error(
             if let Some(stored_policy) = stored.langs.get(lang)
                 && stored_policy.mode != current_policy.mode
             {
-                return Error::IncompatibleAnalyzer {
+                return Error::Store(StoreError::IncompatibleAnalyzer {
                     lang: lang.clone(),
                     stored_mode: stored_policy.mode.as_str(),
                     current_mode: current_policy.mode.as_str(),
-                };
+                });
             }
         }
     }
 
-    Error::IncompatibleAnalyzer {
+    Error::Store(StoreError::IncompatibleAnalyzer {
         lang: "*".to_owned(),
         stored_mode: "mismatched",
         current_mode: "mismatched",
-    }
+    })
 }
 
 /// Validate that a text-index write can append rows compatible with the
@@ -546,20 +546,20 @@ pub(crate) fn ensure_text_index_manifest_matches_wtxn(
 
     match read_text_schema_version(store, &*wtxn)? {
         Some(TEXT_INDEX_SCHEMA_VERSION) => {}
-        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
+        Some(_) => return Err(Error::Store(StoreError::Bm25FieldSchemaChanged)),
         None => {
-            return Err(Error::IncompatibleAnalyzer {
+            return Err(Error::Store(StoreError::IncompatibleAnalyzer {
                 lang: "*".to_owned(),
                 stored_mode: "corrupt",
                 current_mode: "any",
-            });
+            }));
         }
     }
 
     let current_manifest = analyzer.manifest();
     let current_manifest_hash = current_manifest
         .canonical_hash()
-        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+        .map_err(|e| Error::Store(StoreError::AnalyzerError(format!("manifest hash: {e}"))))?;
     let current_field_schema_hash = bm25_field_schema_hash();
     let stored_manifest_hash = read_hash_32(store, &*wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
     let stored_field_schema_hash = read_hash_32(store, &*wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
@@ -602,10 +602,10 @@ pub(crate) fn write_text_index_manifest(
     let manifest = analyzer.manifest();
     let manifest_json = manifest
         .canonical_json()
-        .map_err(|e| Error::AnalyzerError(format!("manifest json: {e}")))?;
+        .map_err(|e| Error::Store(StoreError::AnalyzerError(format!("manifest json: {e}"))))?;
     let manifest_hash = manifest
         .canonical_hash()
-        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+        .map_err(|e| Error::Store(StoreError::AnalyzerError(format!("manifest hash: {e}"))))?;
     let field_schema_hash = bm25_field_schema_hash();
 
     store.vault_meta.put(

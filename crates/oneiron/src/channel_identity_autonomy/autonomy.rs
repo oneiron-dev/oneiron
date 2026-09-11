@@ -26,6 +26,7 @@ use super::types::{
     ChannelIdentityAutonomyState, MailboxReadCandidate, PREDICATE_ACTION_ENVELOPE,
     PREDICATE_AUTONOMY_MODE, PREDICATE_MAILBOX_READ_ENVELOPE,
 };
+use crate::error::GateError;
 
 impl Vault {
     /// Read authorization is disjoint from action reservation. Populated
@@ -76,7 +77,7 @@ impl Vault {
             .require_autonomy_bound(&txn, &read_bound(*actor_ref, identity_ref, envelope_ref)?)
         {
             Ok(()) => {}
-            Err(Error::InvalidConsentBound(_)) => return Ok(false),
+            Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(false),
             Err(error) => return Err(error),
         }
         Ok((envelope.label_allowlist.is_empty()

@@ -15,6 +15,7 @@ use super::types::{
     OFF_RECORD_SESSION_RECORD_VERSION, OFF_RECORD_SESSION_REF_MAX_LEN, OffRecordBackendClass,
     OffRecordMode, OffRecordSessionRecord,
 };
+use crate::error::OffRecordError;
 
 /// Vault-scoped, in-process source of truth for live off-record sessions.
 /// No registry row is ever serialized into the base vault.
@@ -88,9 +89,11 @@ impl OffRecordSessionRegistry {
     ) -> Result<Arc<OffRecordSessionEntry>> {
         let mut sessions = self.sessions()?;
         if sessions.contains_key(session_ref) {
-            return Err(Error::OffRecordSessionAlreadyExists {
-                session_ref: session_ref.to_owned(),
-            });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordSessionAlreadyExists {
+                    session_ref: session_ref.to_owned(),
+                },
+            ));
         }
         let record = OffRecordSessionRecord {
             version: OFF_RECORD_SESSION_RECORD_VERSION,
@@ -200,9 +203,9 @@ impl OffRecordSessionRegistry {
             Some(_) => Err(Error::InvariantViolation(
                 "off-record session registry entry changed during close",
             )),
-            None => Err(Error::OffRecordSessionNotFound {
+            None => Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
                 session_ref: session_ref.to_owned(),
-            }),
+            })),
         }
     }
 }
@@ -233,7 +236,9 @@ pub(super) fn live_session_entry(
     store
         .off_record_sessions
         .entry(session_ref)?
-        .ok_or_else(|| Error::OffRecordSessionNotFound {
-            session_ref: session_ref.to_owned(),
+        .ok_or_else(|| {
+            Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
+                session_ref: session_ref.to_owned(),
+            })
         })
 }

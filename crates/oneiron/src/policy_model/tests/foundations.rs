@@ -1,6 +1,7 @@
 //! Engine ships no policy: defaults, inactive planes, manifest compat, warn byte-identity.
 
 use super::*;
+use crate::error::RelayError;
 
 #[test]
 fn decision_vocabulary_is_exactly_four_arms() {
@@ -157,10 +158,10 @@ fn an_owner_document_without_its_output_contract_is_a_configuration_error() -> R
     assert!(
         matches!(
             err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "owner_policy_output_contract",
                 reason
-            } if reason.contains("document")
+            }) if reason.contains("document")
         ),
         "unexpected error: {err}"
     );
@@ -186,10 +187,10 @@ fn an_unknown_owner_output_contract_fails_closed() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "owner_policy_output_contract",
                 reason: "names a contract the engine does not have"
-            }
+            })
         ),
         "unexpected error: {err}"
     );

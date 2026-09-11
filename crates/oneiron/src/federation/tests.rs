@@ -1607,6 +1607,7 @@ use crate::authority::{
     federation_scope_digest, fold_authority_log_with_peer_consent_roots,
     sign_federation_pact_gesture,
 };
+use crate::error::{ClaimError, RecordError, RegistryError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 fn auth_key(seed: u8) -> SigningKey {
@@ -2061,14 +2062,14 @@ fn peer_entry_from_another_vault_is_refused_under_the_claimed_peer() {
         let err = admit_peer_authority_log_entry(&vault, &peer.vault_id, &body)
             .expect_err("a foreign-vault entry must not be admitted under this peer");
         assert!(
-            matches!(err, Error::InvalidAuthorityLogBody(_)),
+            matches!(err, Error::Record(RecordError::InvalidAuthorityLogBody(_))),
             "unexpected error: {err:?}",
         );
     }
     assert!(
         matches!(
             peer_authority_roster(&vault, &peer.vault_id),
-            Err(Error::InvalidAuthorityLogBody(_)),
+            Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))),
         ),
         "with nothing admitted there is no rooted peer log to report",
     );
@@ -2085,7 +2086,7 @@ fn peer_log_without_its_genesis_reports_a_fold_root_mismatch() {
     }
     assert!(matches!(
         peer_authority_roster(&vault, &peer.vault_id),
-        Err(Error::InvalidAuthorityLogBody(_)),
+        Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))),
     ));
 }
 
@@ -2114,7 +2115,7 @@ fn peer_admission_rejects_the_four_thousand_ninety_seventh_distinct_hash() {
     let err = admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[1])
         .expect_err("a new distinct hash past the ceiling must be refused");
     assert!(
-        matches!(err, Error::InvalidAuthorityLogBody(_)),
+        matches!(err, Error::Record(RecordError::InvalidAuthorityLogBody(_))),
         "unexpected error: {err:?}",
     );
     admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[0])
@@ -2516,7 +2517,7 @@ fn coreference_write_doors_reject_unattributed_and_wrong_principal_actors() {
             coreference_time(),
             1,
         ),
-        Err(Error::ActorClassMismatch { .. })
+        Err(Error::Claim(ClaimError::ActorClassMismatch { .. }))
     ));
     assert!(
         !vault.edge_exists(&local, EdgeKind::SameAs, &other).unwrap(),
@@ -2559,7 +2560,7 @@ fn coreference_write_doors_reject_unattributed_and_wrong_principal_actors() {
             coreference_time(),
             1,
         ),
-        Err(Error::ActorClassMismatch { .. })
+        Err(Error::Claim(ClaimError::ActorClassMismatch { .. }))
     ));
     assert!(
         !coreference_shared_for_pact(&vault, local, other, &pact(0x63)).unwrap(),
@@ -2764,21 +2765,21 @@ fn raw_edge_writers_cannot_mint_a_coreference_link() {
 
     assert!(matches!(
         vault.put_edge(&local, EdgeKind::SameAs, &other, 1.0),
-        Err(Error::ReservedEdgeKind("same_as"))
+        Err(Error::Registry(RegistryError::ReservedEdgeKind("same_as")))
     ));
     assert!(matches!(
         vault
             .batch()
             .edge(&local, EdgeKind::SameAs, &other, 0.0)
             .commit(),
-        Err(Error::ReservedEdgeKind("same_as"))
+        Err(Error::Registry(RegistryError::ReservedEdgeKind("same_as")))
     ));
     assert!(matches!(
         vault
             .batch()
             .edge_with_created_at(&local, EdgeKind::SameAs, &other, 0.0, 7)
             .commit(),
-        Err(Error::ReservedEdgeKind("same_as"))
+        Err(Error::Registry(RegistryError::ReservedEdgeKind("same_as")))
     ));
     assert!(
         !vault.edge_exists(&local, EdgeKind::SameAs, &other).unwrap(),

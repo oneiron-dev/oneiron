@@ -11,9 +11,10 @@ use super::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SecretBinding, SecretCustodyFloor,
     SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
+use crate::error::SecretError;
 
 pub(super) fn invalid_body(reason: &'static str) -> Error {
-    Error::InvalidSecretCustodyBody(reason)
+    Error::Secret(SecretError::InvalidSecretCustodyBody(reason))
 }
 
 /// ONE-1865 arms the replication and export posture for SECRET_CUSTODY; until

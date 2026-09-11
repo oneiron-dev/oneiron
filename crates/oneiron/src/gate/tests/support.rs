@@ -1,6 +1,7 @@
 //! Shared fixtures and assertion helpers for the gate test modules.
 
 use super::*;
+use crate::error::GateError;
 
 pub(super) fn test_time(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -850,7 +851,7 @@ pub(super) fn assert_auto_source_rejected(
         .commit()
         .expect_err("manifest must reject risky auto source");
     assert!(
-        matches!(err, Error::SourceNotTrustedForAuto { claim_source: got } if got == source.as_str()),
+        matches!(err, Error::Gate(GateError::SourceNotTrustedForAuto { claim_source: got }) if got == source.as_str()),
         "expected source trust error for {}, got {err:?}",
         source.as_str()
     );
@@ -895,10 +896,10 @@ pub(super) fn assert_gate_rejected(
     assert_eq!(typed_reason_codes, reason_codes);
 
     match err {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome: got_outcome,
             reason_codes: got_reasons,
-        } => {
+        }) => {
             assert_eq!(got_outcome, outcome);
             assert_eq!(got_reasons, reason_codes);
         }

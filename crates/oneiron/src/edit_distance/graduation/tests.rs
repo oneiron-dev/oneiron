@@ -5,6 +5,7 @@
 
 use super::*;
 
+use crate::error::GateError;
 use crate::identity_topology::ProposalOutcome;
 use crate::store::GateDecisionId;
 
@@ -363,7 +364,7 @@ fn the_write_door_re_validates_a_row_the_caller_assembled_by_hand() {
         assert!(
             matches!(
                 set_graduation_policy(&vault, &illegal).expect_err("hand-assembled row"),
-                Error::InvalidConsentBound(_)
+                Error::Gate(GateError::InvalidConsentBound(_))
             ),
             "{illegal:?} must be refused at the write door, not on every later read"
         );

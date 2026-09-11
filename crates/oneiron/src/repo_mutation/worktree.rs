@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 use super::git::{git_common_dir, run_git, validate_relative_repo_path};
 use super::queue::PreparedCommitFile;
 use super::support::{hex_bytes, now_millis, path_arg, sha256_bytes, utf8_trimmed};
+use crate::error::CodeError;
 
 const REPO_MUTATION_WORKTREE_PREFIX: &str = "oneiron-repo-mutation-";
 
@@ -201,9 +202,9 @@ fn queue_owned_worktree_path(repo_root: &Path) -> Result<PathBuf> {
             return Ok(path);
         }
     }
-    Err(Error::InvalidRepoMutationRecord(
+    Err(Error::Code(CodeError::InvalidRepoMutationRecord(
         "unable to allocate queue-owned worktree path",
-    ))
+    )))
 }
 
 pub(super) fn write_repo_file_no_symlink(
@@ -218,13 +219,13 @@ pub(super) fn write_repo_file_no_symlink(
 fn safe_repo_file_target(repo_root: &Path, path: &str) -> Result<PathBuf> {
     let target = ensure_repo_parent_dirs_no_symlink(repo_root, path)?;
     match fs::symlink_metadata(&target) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::InvalidRepoMutationRecord(
-            "repo mutation path must not traverse symlinks",
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::Code(
+            CodeError::InvalidRepoMutationRecord("repo mutation path must not traverse symlinks"),
         )),
         Ok(metadata) if metadata.file_type().is_file() => Ok(target),
-        Ok(_) => Err(Error::InvalidRepoMutationRecord(
+        Ok(_) => Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo mutation target must be a regular file or absent",
-        )),
+        ))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(target),
         Err(error) => Err(error.into()),
     }
@@ -236,9 +237,9 @@ pub(super) fn ensure_repo_parent_dirs_no_symlink(repo_root: &Path, path: &str) -
     let mut components = Path::new(path).components().peekable();
     while let Some(component) = components.next() {
         let Component::Normal(part) = component else {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo mutation path must contain only normal components",
-            ));
+            )));
         };
         current.push(part);
         let is_leaf = components.peek().is_none();
@@ -247,15 +248,15 @@ pub(super) fn ensure_repo_parent_dirs_no_symlink(repo_root: &Path, path: &str) -
         }
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(Error::InvalidRepoMutationRecord(
+                return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                     "repo mutation path must not traverse symlinks",
-                ));
+                )));
             }
             Ok(metadata) if metadata.file_type().is_dir() => {}
             Ok(_) => {
-                return Err(Error::InvalidRepoMutationRecord(
+                return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                     "repo mutation parent path must be a directory",
-                ));
+                )));
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 fs::create_dir(&current)?;

@@ -1,6 +1,7 @@
 //! Owner manifest trust: world scoping, forgery/misspelling fail-closed, bindings, generation params, staleness, owner model.
 
 use super::*;
+use crate::error::RelayError;
 
 #[test]
 fn reads_vault_manifest_not_caller_config() -> Result<()> {
@@ -89,10 +90,10 @@ fn unknown_owner_manifest_action_drops_the_rows() -> Result<()> {
     assert!(
         matches!(
             classify_err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "owner_policy_rows",
                 ..
-            }
+            })
         ),
         "unexpected error: {classify_err}"
     );
@@ -122,10 +123,10 @@ fn forged_owner_rows_reject_classify_on_an_enabled_plane() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "owner_policy_rows",
                 ..
-            }
+            })
         ),
         "unexpected error: {err}"
     );
@@ -156,10 +157,10 @@ fn a_misspelled_owner_row_key_fails_the_plane_closed() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "owner_policy_rows",
                 ..
-            }
+            })
         ),
         "unexpected error: {err}"
     );
@@ -192,10 +193,10 @@ fn a_misspelled_owner_pattern_key_fails_the_plane_closed() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "owner_policy_patterns",
                 ..
-            }
+            })
         ),
         "unexpected error: {err}"
     );
@@ -224,10 +225,10 @@ fn an_owner_pattern_naming_no_row_is_a_configuration_error() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "pattern_rule_category",
                 reason: "names a category this plane does not publish"
-            }
+            })
         ),
         "unexpected error: {err}"
     );
@@ -256,10 +257,10 @@ fn an_owner_pattern_that_does_not_compile_is_a_configuration_error() -> Result<(
     assert!(
         matches!(
             err,
-            Error::PolicyManifestInvalid {
+            Error::Relay(RelayError::PolicyManifestInvalid {
                 field: "pattern_rule_pattern",
                 reason: "is not a valid regular expression"
-            }
+            })
         ),
         "unexpected error: {err}"
     );

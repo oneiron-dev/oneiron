@@ -15,6 +15,7 @@ use oneiron::deletion::DeleteReason;
 use oneiron::dreamer_consolidation::{
     ConsolidationEvidenceEnvelope, decode_consolidation_evidence, encode_consolidation_evidence,
 };
+use oneiron::error::{CodeError, GateError};
 use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind,
@@ -364,7 +365,10 @@ fn missing_run_id_never_reaches_gate() {
             2,
         )))
         .unwrap_err();
-    assert!(matches!(error, Error::CodeEmissionMissingDreamerRunId));
+    assert!(matches!(
+        error,
+        Error::Code(CodeError::CodeEmissionMissingDreamerRunId)
+    ));
     assert_eq!(vault.gate_decisions(100).unwrap(), before_rows);
     assert_eq!(vault.pending_gate_consents(10).unwrap(), before_pending);
     assert!(vault.get_claim(&id(0x43)).unwrap().is_none());
@@ -391,7 +395,10 @@ fn review_context_authoring_id_must_match_emission() {
             2,
         )))
         .unwrap_err();
-    assert!(matches!(error, Error::CodeReviewAuthoringRunIdMismatch));
+    assert!(matches!(
+        error,
+        Error::Code(CodeError::CodeReviewAuthoringRunIdMismatch)
+    ));
     assert_eq!(vault.gate_decisions(100).unwrap(), rows);
     assert!(vault.get_claim(&id(0x54)).unwrap().is_none());
 }
@@ -506,7 +513,10 @@ fn per_operation_rows_free_supersede_appends_two() {
             SelfMemorySupersedeClaimCall::new(id(0x84), id(0x83), 4),
         ))
         .unwrap_err();
-    assert!(matches!(err, Error::GateWriteRejected { .. }));
+    assert!(matches!(
+        err,
+        Error::Gate(GateError::GateWriteRejected { .. })
+    ));
     // Under the default manifest the supersede pends at the first gate body
     // (claim), so only that one decision is recorded before the error short-
     // circuits the edge write. The landed +2 holds after a test-policy install
@@ -650,10 +660,10 @@ fn codeconsent_review_pends_with_blast_envelope() {
 fn assert_lawful_operation_outcome<T>(result: oneiron::Result<T>) -> bool {
     match result {
         Ok(_) => true,
-        Err(Error::GateWriteRejected {
+        Err(Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        }) => {
+        })) => {
             assert!(
                 !reason_codes
                     .iter()
@@ -813,10 +823,10 @@ fn codeconsent_floor_still_denies_candidate() {
 
 fn assert_precommit_no_evidence(error: Error) {
     match error {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => {
+        }) => {
             assert_eq!(outcome, "deny");
             assert_eq!(reason_codes, ["gate.deny.dreamer_precommit.no_evidence"]);
         }
@@ -1078,7 +1088,10 @@ fn review_lane_rejects_non_candidate_operations() {
         )),
     ] {
         let error = dispatch.dispatch(call).unwrap_err();
-        assert!(matches!(error, Error::CodeReviewUnsupportedOperation));
+        assert!(matches!(
+            error,
+            Error::Code(CodeError::CodeReviewUnsupportedOperation)
+        ));
     }
     assert_eq!(vault.gate_decisions(100).unwrap(), rows);
     assert_eq!(vault.pending_gate_consents(10).unwrap(), pending);

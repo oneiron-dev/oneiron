@@ -5,6 +5,7 @@ use rmpv::Value;
 use crate::claim::ClaimLifecycleStatus;
 use crate::config::VaultConfig;
 use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
+use crate::error::ClaimError;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 
@@ -772,7 +773,7 @@ fn public_writes_of_both_cost_predicates_are_reserved() -> Result<()> {
             .put_claim(&EntityId::now(), &body, t(80), 80)
             .expect_err("the generic claim API must refuse a reserved predicate");
         assert!(
-            matches!(error, Error::ReservedPredicate { .. }),
+            matches!(error, Error::Claim(ClaimError::ReservedPredicate { .. })),
             "typed reserved-namespace rejection, got {error:?}"
         );
     }

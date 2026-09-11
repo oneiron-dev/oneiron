@@ -5,7 +5,7 @@
 //! contract.
 
 use super::*;
-use crate::error::ErrorKind;
+use crate::error::{ArtifactError, ErrorKind, RegistryError};
 use crate::registry::{
     ENTITY_TYPE_SKILL, EntityClassification, TypeByteZone, entity_type_registry_entry,
     is_structural_kind, short_id_prefix, zone_of,
@@ -570,7 +570,10 @@ fn registry_row_and_type_byte_immutability() -> Result<()> {
             &encode_skill_record(&skill)?,
         )
         .expect_err("type byte is immutable");
-    assert!(matches!(err, Error::EntityTypeImmutable { .. }));
+    assert!(matches!(
+        err,
+        Error::Registry(RegistryError::EntityTypeImmutable { .. })
+    ));
     Ok(())
 }
 
@@ -981,7 +984,7 @@ fn legacy_foreign_occupant_is_conflict_not_adopted() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::SeededAgentDefinitionConflict);
     assert!(matches!(
         err,
-        Error::SeededAgentDefinitionConflict { id } if id == scout_id
+        Error::Artifact(ArtifactError::SeededAgentDefinitionConflict { id }) if id == scout_id
     ));
 
     // No overwrite, no adoption, and the resolver never returns it.
@@ -1293,7 +1296,10 @@ fn logical_id_cannot_change_on_update() {
         let err = validate_agent_definition_update(&prior, &updated)
             .expect_err("logicalId is frozen once set");
         assert_eq!(err.kind(), ErrorKind::InvalidAgentDefBody);
-        assert!(matches!(err, Error::InvalidAgentDefBody(_)));
+        assert!(matches!(
+            err,
+            Error::Artifact(ArtifactError::InvalidAgentDefBody(_))
+        ));
     }
 }
 
@@ -1309,7 +1315,10 @@ fn ordinary_put_cannot_claim_sys_logical_id() -> Result<()> {
         .put_agent_definition(&id, &squatter, TimeRange { start: 10, end: 10 }, 11)
         .expect_err("sys.* logical ids are reserved for seeded rows");
     assert_eq!(err.kind(), ErrorKind::InvalidAgentDefBody);
-    assert!(matches!(err, Error::InvalidAgentDefBody(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidAgentDefBody(_))
+    ));
     assert!(vault.get_agent_definition(&id)?.is_none());
 
     // A non-`sys.` logical id is ordinary data.

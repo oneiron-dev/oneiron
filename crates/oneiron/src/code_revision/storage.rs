@@ -40,22 +40,23 @@ use super::keys::{
     code_revision_session_index_prefix, id_from_index_key,
 };
 use super::types::{CodeRevision, CodeRevisionFork, CodeRevisionFrontierRecord, CodeRevisionKind};
+use crate::error::ArtifactError;
 
 impl Vault {
     pub fn commit_code_revision(&self, revision: &CodeRevision) -> Result<()> {
         if revision.kind != CodeRevisionKind::Commit {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "commit_code_revision requires kind commit",
-            ));
+            )));
         }
         write_code_revision(&self.store, revision)
     }
 
     pub fn revert_code_revision(&self, revision: &CodeRevision) -> Result<()> {
         if revision.kind != CodeRevisionKind::Revert {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "revert_code_revision requires kind revert",
-            ));
+            )));
         }
         write_code_revision(&self.store, revision)
     }
@@ -92,9 +93,9 @@ impl Vault {
         )?;
         let key = code_revision_fork_key(&fork.fork_session_id);
         if self.store.vault_meta.get(&wtxn, &key)?.is_some() {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision fork already recorded for session",
-            ));
+            )));
         }
         validate_child_of_insert(
             &self.store,
@@ -146,9 +147,9 @@ impl Vault {
         let revisions = collect_code_revisions_by_index_prefix(&self.store, &rtxn, &prefix)?;
         if revisions.is_empty() {
             if get_code_revision_frontier_in_txn(&self.store, &rtxn, session_id)?.is_some() {
-                return Err(Error::InvalidCodeArtifactBody(
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                     "code revision frontier exists without session index rows",
-                ));
+                )));
             }
         } else {
             if get_code_revision_frontier_in_txn(&self.store, &rtxn, session_id)?.is_some() {
@@ -273,9 +274,9 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<()> {
     }
     let key = code_revision_record_key(&revision.revision_id);
     if store.vault_meta.get(&wtxn, &key)?.is_some() {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision is already finalized",
-        ));
+        )));
     }
     let integrity = build_code_revision_integrity_record(store, &wtxn, revision, &artifact_body)?;
     let update_frontier =
@@ -433,9 +434,9 @@ fn sort_code_revisions_topologically(
     let mut index_by_id = HashMap::with_capacity(revisions.len());
     for (index, revision) in revisions.iter().enumerate() {
         if index_by_id.insert(revision.revision_id, index).is_some() {
-            return Err(Error::InvalidCodeArtifactBody(
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "duplicate code revision id in trace",
-            ));
+            )));
         }
     }
 
@@ -469,9 +470,9 @@ fn sort_code_revisions_topologically(
     }
 
     if ordered.len() != revisions.len() {
-        return Err(Error::InvalidCodeArtifactBody(
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision parent chain contains a cycle",
-        ));
+        )));
     }
     Ok(ordered)
 }

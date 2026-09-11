@@ -1,6 +1,7 @@
 //! Edge-provenance lifecycle: winner election, surgical weight/VAD rewrites, write-once IDs.
 
 use super::*;
+use crate::error::ClaimError;
 
 #[test]
 fn retract_edge_provenance_keeps_edge_and_closes_claim() -> Result<()> {
@@ -706,7 +707,7 @@ fn as_actor_bound_write_carries_bound_actor_and_rejects_conflicts() -> Result<()
         .put_edge_provenance(&stray, &subject, &conflicting, 3_000)
         .expect_err("conflicting body actor must reject");
     assert!(
-        matches!(&err, Error::InvalidProvenanceBody(_)),
+        matches!(&err, Error::Claim(ClaimError::InvalidProvenanceBody(_))),
         "got {err:?}"
     );
     assert!(
@@ -968,10 +969,10 @@ fn provenance_lifecycle_negative_paths_fail_closed() -> Result<()> {
     let err = vault
         .put_edge_provenance(&new_id, &subject, &fresh_body, EdgeActorClass::Human, 5_000)
         .expect_err("older-than-frontier put must be rejected");
-    let Error::ProvenancePrecedenceViolation {
+    let Error::Claim(ClaimError::ProvenancePrecedenceViolation {
         incoming_learned_at,
         frontier_learned_at,
-    } = err
+    }) = err
     else {
         panic!("expected ProvenancePrecedenceViolation, got {err:?}");
     };

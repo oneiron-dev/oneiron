@@ -11,7 +11,7 @@ use super::scope::{
     StandingOutboundGrantScope,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::outbound_consent::DataClass;
 
 /// Current StandingOutboundGrant body schema version.
@@ -537,5 +537,7 @@ pub(super) fn is_mcp_channel(channel: &str) -> bool {
 }
 
 pub(super) fn invalid_grant() -> Error {
-    Error::InvalidOutboundGrantBody("body failed validation")
+    Error::Record(RecordError::InvalidOutboundGrantBody(
+        "body failed validation",
+    ))
 }

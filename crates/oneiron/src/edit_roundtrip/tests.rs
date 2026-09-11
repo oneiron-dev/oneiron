@@ -3,6 +3,7 @@
 
 use super::opc::{self, OpcPackage, OpcPart};
 use super::*;
+use crate::error::ArtifactError;
 
 const SHEET_PART: &str = "xl/worksheets/sheet1.xml";
 const UNKNOWN_PART: &str = "customXml/item1.xml";
@@ -298,7 +299,10 @@ fn recalc_stage_updates_cached_values_via_seam() {
         "run:no-recalc",
     )
     .expect_err("recalc-incapable session must refuse a value-affecting edit");
-    assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
+    ));
 
     // But when nothing needs recalc, the same session proposes normally.
     let add_sheet = EditPlan::new(vec![EditOp::AddSheet {
@@ -472,7 +476,10 @@ fn empty_run_ref_is_rejected() {
         "   ",
     )
     .expect_err("blank run_ref must fail");
-    assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
+    ));
 }
 
 #[test]
@@ -504,7 +511,7 @@ fn docx_and_pptx_are_refused_at_the_pipeline() {
         )
         .expect_err("non-spreadsheet formats are unsupported");
         assert!(
-            matches!(err, Error::InvalidEditManifest(_)),
+            matches!(err, Error::Artifact(ArtifactError::InvalidEditManifest(_))),
             "expected InvalidEditManifest, got {err:?}"
         );
     }
@@ -529,7 +536,10 @@ fn zero_index_cell_is_rejected() {
         "run:badcell",
     )
     .expect_err("a 0 column must be rejected");
-    assert!(matches!(err, Error::InvalidEditManifest(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidEditManifest(_))
+    ));
 }
 
 #[test]
@@ -548,7 +558,10 @@ fn inverted_range_is_rejected() {
         "run:inverted",
     )
     .expect_err("an inverted range must be rejected");
-    assert!(matches!(err, Error::InvalidEditManifest(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidEditManifest(_))
+    ));
 }
 
 // -- Cross-sheet scan: rels-resolved names + shared formulas ----------------
@@ -699,7 +712,10 @@ fn minimal_mutation_mode_refuses_structural_ops() {
         "run:struct",
     )
     .expect_err("structural op in minimal mode must be refused");
-    assert!(matches!(err, Error::InvalidEditManifest(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidEditManifest(_))
+    ));
 
     // A cell-level op on the same pivot workbook is still allowed.
     let cell = EditPlan::new(vec![set_a1(10.0)]);

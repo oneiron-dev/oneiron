@@ -8,6 +8,7 @@ use crate::attempt_queue::{
     ForceCancelAuthority, ForceCancelOutcome, LandingOutcome, LandingTrigger, ManifestEntry,
     ManifestKind, RequestAttemptCancel,
 };
+use crate::error::ArtifactError;
 
 fn claimed_with_manifest(
     vault: &Vault,
@@ -352,7 +353,9 @@ fn generic_result_attachment_cannot_authorize_a_running_canonical_retry() {
         .expect_err("only an atomically settled capture authorizes canonical retry");
     assert!(matches!(
         error,
-        ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_CAPTURE_CONFLICT))
+        ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            ERR_CAPTURE_CONFLICT
+        )))
     ));
     assert_eq!(custody_snapshot(&vault), before);
     assert_eq!(attached.state, AttemptState::Leased);
@@ -571,9 +574,9 @@ fn compatible_person_collision_rejects_capture_without_overwrite_or_settlement()
                 .expect_err("an agent-compatible person is not necessarily the runtime");
             assert!(matches!(
                 error,
-                ByoaError::Store(Error::InvalidAgentDispatchInput(
+                ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     ERR_RUNTIME_ACTOR_COLLISION
-                ))
+                )))
             ));
             assert_eq!(custody_snapshot(&vault), before);
             assert_eq!(

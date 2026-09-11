@@ -294,7 +294,8 @@ fn raw_note_put_is_refused_at_the_batch_door() {
         .put(&batch_note, ENTITY_TYPE_NOTE, test_time(900), 900, &forged)
         .commit()
         .expect_err("raw batch NOTE put must be refused");
-    let crate::error::Error::InvalidNoteBody(message) = err else {
+    let crate::error::Error::Record(crate::error::RecordError::InvalidNoteBody(message)) = err
+    else {
         panic!("raw NOTE put must fail as an invalid NOTE body");
     };
     assert!(
@@ -311,7 +312,10 @@ fn raw_note_put_is_refused_at_the_batch_door() {
                 .apply(wtxn)
         })
         .expect_err("raw transaction-batch NOTE put must be refused");
-    assert!(matches!(err, crate::error::Error::InvalidNoteBody(_)));
+    assert!(matches!(
+        err,
+        crate::error::Error::Record(crate::error::RecordError::InvalidNoteBody(_))
+    ));
 
     // The typed door does not inherit the bypass blindly. Handed the forged
     // body and the real actor, it refuses: the stored `author_ref` must be
@@ -325,7 +329,10 @@ fn raw_note_put_is_refused_at_the_batch_door() {
                 .apply(wtxn)
         })
         .expect_err("the typed door must refuse a body attributed to another actor");
-    assert!(matches!(err, crate::error::Error::InvalidNoteBody(_)));
+    assert!(matches!(
+        err,
+        crate::error::Error::Record(crate::error::RecordError::InvalidNoteBody(_))
+    ));
 
     assert!(
         vault

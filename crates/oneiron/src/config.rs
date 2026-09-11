@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::StoreError;
 pub use crate::ppr_community::PprCommunityConfig;
 
 /// Validates the opt-in community prior without relaxing its safety bounds.
@@ -286,7 +287,7 @@ pub struct VaultConfig {
     ///
     /// Turning `fast_dims` on (or changing it) for an existing POPULATED
     /// vault is a graph-shape change and is not supported online: the open
-    /// fails with [`crate::Error::HnswConfigChanged`]. Re-create the vault,
+    /// fails with [`StoreError::HnswConfigChanged`]. Re-create the vault,
     /// or ride EMB-4's `begin_embedding_migration` re-embed once that lands.
     pub fast_dims: Option<u16>,
     /// Embedding model identifier used for vector compatibility checks.
@@ -327,8 +328,8 @@ pub struct VaultConfig {
     /// Skip the text-index manifest handshake at [`crate::Vault::open`] so the
     /// caller can reach [`crate::maintain::MaintenanceBuilder::clear_text_index`]
     /// after a dict swap or BM25 field-schema change. Without this escape
-    /// hatch, [`crate::Error::IncompatibleAnalyzer`] and
-    /// [`crate::Error::Bm25FieldSchemaChanged`] trap the user before any
+    /// hatch, [`StoreError::IncompatibleAnalyzer`] and
+    /// [`StoreError::Bm25FieldSchemaChanged`] trap the user before any
     /// `Vault` exists to call `.maintain()` on.
     ///
     /// Only use this to immediately run `clear_text_index`. On a populated
@@ -403,7 +404,7 @@ pub struct TextIndexOptions {
 /// weights, `b` outside `[0.0, 1.0]`, a non-finite or non-positive
 /// BM25+ `delta`, and overrides on reserved channels (`Shingle`,
 /// `Synonym`, `Phonetic` — never emitted in v1) are rejected with
-/// [`crate::Error::InvalidRankProfile`].
+/// [`StoreError::InvalidRankProfile`].
 #[derive(Debug, Clone, PartialEq)]
 #[must_use = "a rank profile only affects scoring when passed to a query"]
 pub struct Bm25RankProfile {
@@ -457,7 +458,7 @@ impl Bm25RankProfile {
 
     /// Validates the profile and lowers it onto the internal scoring
     /// config. Fail-closed: any invalid parameter is a typed
-    /// [`Error::InvalidRankProfile`], never a clamp or a silent skip.
+    /// [`StoreError::InvalidRankProfile`], never a clamp or a silent skip.
     pub(crate) fn to_bm25_config(&self) -> Result<crate::bm25::Bm25Config, crate::error::Error> {
         use crate::analyzer::AnalyzerChannel;
         use crate::bm25::{Bm25Config, Bm25Formula};
@@ -470,10 +471,10 @@ impl Bm25RankProfile {
             // Only the four v1 channels are scoreable; reserved channels
             // are never emitted, so an override there is a caller bug.
             if !AnalyzerChannel::ALL_V1.contains(&channel) {
-                return Err(Error::InvalidRankProfile {
+                return Err(Error::Store(StoreError::InvalidRankProfile {
                     parameter,
                     value: f64::from(channel.field_id()),
-                });
+                }));
             }
             Ok(channel.field_id() as usize)
         }
@@ -481,10 +482,10 @@ impl Bm25RankProfile {
         if let Bm25Formula::Plus { delta } = self.formula
             && (!delta.is_finite() || delta <= 0.0)
         {
-            return Err(Error::InvalidRankProfile {
+            return Err(Error::Store(StoreError::InvalidRankProfile {
                 parameter: "formula.delta",
                 value: delta,
-            });
+            }));
         }
 
         let mut config = Bm25Config {
@@ -495,10 +496,10 @@ impl Bm25RankProfile {
         for &(channel, weight) in &self.weight_overrides {
             let slot = scored_slot(channel, "weight.reserved_channel")?;
             if !weight.is_finite() || weight < 0.0 {
-                return Err(Error::InvalidRankProfile {
+                return Err(Error::Store(StoreError::InvalidRankProfile {
                     parameter: "channel.weight",
                     value: weight,
-                });
+                }));
             }
             config.fields[slot].weight = weight;
         }
@@ -506,10 +507,10 @@ impl Bm25RankProfile {
         for &(channel, b) in &self.b_overrides {
             let slot = scored_slot(channel, "b.reserved_channel")?;
             if !b.is_finite() || !(0.0..=1.0).contains(&b) {
-                return Err(Error::InvalidRankProfile {
+                return Err(Error::Store(StoreError::InvalidRankProfile {
                     parameter: "channel.b",
                     value: b,
-                });
+                }));
             }
             config.fields[slot].b = b;
         }

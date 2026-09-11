@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::federation::encode_federation_pact_scope;
 
 use super::*;
+use crate::error::RecordError;
 
 /// Pinned operation vocabulary for AUTHORITY_LOG.
 // The FederationLifecycle payload (scope pair + gesture) dominates the enum
@@ -227,7 +228,9 @@ pub fn authority_log_entity_id_from_hash(hash: &AuthorityEntryHash) -> Result<En
     let mut bytes = [0u8; crate::entity_id::ENTITY_ID_LEN];
     bytes.copy_from_slice(&hash[..crate::entity_id::ENTITY_ID_LEN]);
     EntityId::from_bytes(bytes).map_err(|_| {
-        Error::InvalidAuthorityLogBody("authority entry hash collides with a reserved entity id")
+        Error::Record(RecordError::InvalidAuthorityLogBody(
+            "authority entry hash collides with a reserved entity id",
+        ))
     })
 }
 

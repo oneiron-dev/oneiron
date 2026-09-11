@@ -445,6 +445,7 @@ fn inbound_vault_bound_identity_rejects_as_non_agent_bound() -> Result<()> {
 // ─── Ack-first handoff ───────────────────────────────────────────────────────
 
 use crate::attempt_queue::AttemptQueue;
+use crate::error::RegistryError;
 use std::cell::RefCell;
 
 /// Test dispatcher: records every request it saw and replies with a scripted
@@ -1079,10 +1080,10 @@ fn foreign_correlation_kind_collision_is_typed_not_silent() -> Result<()> {
     assert!(
         matches!(
             error,
-            Error::SurfaceEventCorrelationKindCollision {
+            Error::Registry(RegistryError::SurfaceEventCorrelationKindCollision {
                 ref correlation_id,
                 ref holding_kind
-            } if correlation_id == "evt-collide@example.com" && holding_kind == "some.other.kind.v1"
+            }) if correlation_id == "evt-collide@example.com" && holding_kind == "some.other.kind.v1"
         ),
         "collision must name the cause: {error}"
     );
@@ -1096,10 +1097,10 @@ fn foreign_correlation_kind_collision_is_typed_not_silent() -> Result<()> {
     assert!(
         matches!(
             status_error,
-            Error::SurfaceEventCorrelationKindCollision {
+            Error::Registry(RegistryError::SurfaceEventCorrelationKindCollision {
                 ref correlation_id,
                 ref holding_kind
-            } if correlation_id == "evt-collide@example.com" && holding_kind == "some.other.kind.v1"
+            }) if correlation_id == "evt-collide@example.com" && holding_kind == "some.other.kind.v1"
         ),
         "status read must name the same collision: {status_error}"
     );

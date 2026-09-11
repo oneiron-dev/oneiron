@@ -1,4 +1,6 @@
 use crate::entity_id::EntityId;
+#[cfg(feature = "sync")]
+use crate::error::StoreError;
 use crate::error::{Error, Result};
 
 /// Highest priority: a pending claim surfaced in user-visible retrieval.
@@ -377,10 +379,10 @@ impl PendingEmbeddingReconciler {
             ));
         };
         if config_model != embedder.model_id() {
-            return Err(Error::EmbeddingModelChanged {
+            return Err(Error::Store(StoreError::EmbeddingModelChanged {
                 stored: config_model.to_owned(),
                 requested: embedder.model_id().to_owned(),
-            });
+            }));
         }
         Ok(())
     }

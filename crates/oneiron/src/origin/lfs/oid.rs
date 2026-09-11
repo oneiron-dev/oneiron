@@ -2,7 +2,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 /// Raw byte length of a Git-LFS object id (SHA-256).
 pub const VAULT_LFS_OID_LEN: usize = 32;
@@ -35,7 +35,9 @@ impl LfsOid {
     /// path, because a mis-parsed object id would address the wrong bytes.
     pub fn parse_hex(value: &str) -> Result<Self> {
         if value.len() != VAULT_LFS_OID_HEX_LEN {
-            return Err(Error::InvalidLfsObject("lfs oid must be 64 hex characters"));
+            return Err(Error::Artifact(ArtifactError::InvalidLfsObject(
+                "lfs oid must be 64 hex characters",
+            )));
         }
         let mut bytes = [0_u8; VAULT_LFS_OID_LEN];
         for (slot, pair) in bytes.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
@@ -88,6 +90,8 @@ fn hex_nibble(byte: u8) -> Result<u8> {
         b'0'..=b'9' => Ok(byte - b'0'),
         b'a'..=b'f' => Ok(byte - b'a' + 10),
         b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(Error::InvalidLfsObject("lfs oid is not hex")),
+        _ => Err(Error::Artifact(ArtifactError::InvalidLfsObject(
+            "lfs oid is not hex",
+        ))),
     }
 }

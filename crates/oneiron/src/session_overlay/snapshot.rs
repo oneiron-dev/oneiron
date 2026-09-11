@@ -15,6 +15,7 @@ use super::keyspace::{
 };
 use super::overlay::Lease;
 use super::short_id::parse_session_short_id_value;
+use crate::error::OffRecordError;
 
 /// A generation-stamped, structurally shared overlay read view.
 pub(crate) struct OverlaySnapshot {
@@ -265,8 +266,10 @@ impl OverlaySnapshot {
                     && matches!(&entry.op, BatchOp::Put { id, .. } if *id == turn)
             })
             .map(|entry| entry.scope.conversation())
-            .ok_or_else(|| Error::OffRecordTurnNotInJournal {
-                turn_ref: turn.to_hex(),
+            .ok_or_else(|| {
+                Error::OffRecord(OffRecordError::OffRecordTurnNotInJournal {
+                    turn_ref: turn.to_hex(),
+                })
             })?;
 
         let mut ops = Vec::new();

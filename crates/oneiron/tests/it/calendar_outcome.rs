@@ -36,6 +36,7 @@ use oneiron::calendar::outcome::{
     plan_outcome_check_in, project_event_outcome, read_event_outcome, record_event_outcome,
     resolve_owner_check_in,
 };
+use oneiron::error::GateError;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -525,7 +526,7 @@ fn pre_start_cancel_records_cancelled_pre_start_and_skips_grace_card() {
     // CAL-02's importer inherits this seam.
     assert!(matches!(
         record_event_outcome(&vault, event_ref, &pre_start, ClaimSource::Imported),
-        Err(Error::SourceNotTrustedForAuto { .. })
+        Err(Error::Gate(GateError::SourceNotTrustedForAuto { .. }))
     ));
     record_event_outcome(&vault, event_ref, &pre_start, ClaimSource::Observed).expect("record");
     // The grace card is skipped: the recheck finds the outcome already there.

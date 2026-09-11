@@ -14,6 +14,7 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
 use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage};
+use crate::error::OffRecordError;
 
 /// Pinned body keys for an epoch summary, in encode order.
 ///
@@ -509,7 +510,7 @@ pub(super) fn mint_epoch_summary(
 /// (ONE-1731/ONE-1732 removed the durable off-record contract outright). So
 /// "fenced at creation" reads, at this head, as REFUSED at creation: the
 /// engine will not mint a base keyframe derived from room content, and the
-/// refusal is the landed [`Error::OffRecordTaintedBaseWrite`] the K4 taint
+/// refusal is the landed [`OffRecordError::OffRecordTaintedBaseWrite`](crate::error::OffRecordError::OffRecordTaintedBaseWrite) the K4 taint
 /// guard already raises for the same class of write.
 ///
 /// The probe covers EVERY covered turn, so it is independent of
@@ -527,9 +528,11 @@ fn refuse_overlay_derived_mint(store: &Store, window: &[CompactionWindowMessage]
             .off_record_sessions
             .contains_entity(&message.turn_id)?
         {
-            return Err(Error::OffRecordTaintedBaseWrite {
-                entity_ref: message.turn_id.to_hex(),
-            });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordTaintedBaseWrite {
+                    entity_ref: message.turn_id.to_hex(),
+                },
+            ));
         }
     }
     Ok(())

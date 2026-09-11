@@ -1,13 +1,15 @@
 //! Error enum, literal refusal reasons, result alias, and the invalid() constructor.
 
 use crate::code_sandbox::SandboxCredentialHandle;
-use crate::error::Error;
+use crate::error::{ArtifactError, Error};
 // ---------------------------------------------------------------------------
 // Door validators
 // ---------------------------------------------------------------------------
 
 pub(super) fn invalid(message: &'static str) -> ByoaError {
-    ByoaError::Store(Error::InvalidAgentDispatchInput(message))
+    ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+        message,
+    )))
 }
 
 pub(super) const ERR_UNKNOWN_MODEL_SLUG: &str =

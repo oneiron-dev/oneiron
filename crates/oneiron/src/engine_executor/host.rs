@@ -13,6 +13,7 @@ use crate::code_sandbox::{
 };
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
 use crate::entity_id::EntityId;
+use crate::error::GateError;
 use crate::{Error, Result};
 
 pub(super) struct RecordingJsHost<'a> {
@@ -139,10 +140,10 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
 
 fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOutcome> {
     match err {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => Some(SelfDispatchOutcome::Denied(SelfDeniedResult {
+        }) => Some(SelfDispatchOutcome::Denied(SelfDeniedResult {
             effect: call.effect(),
             outcome: (*outcome).to_owned(),
             reason_codes: reason_codes

@@ -1,6 +1,7 @@
 //! Quiet-window delivery, timezone fields, host refresh, human-explicit-instant override and APNS mapping.
 
 use super::*;
+use crate::error::RecordError;
 
 /// ONE-1768 done-means `ambient_email_and_plain_chat_deliver_inside_window`.
 ///
@@ -671,7 +672,7 @@ fn host_refresh_rearms_a_held_task() -> crate::Result<()> {
         .refresh_connector_send_task_timezone(task_ref, 0, Some("UTC"), edge + 1)
         .expect_err("terminal refresh is rejected");
     assert!(
-        matches!(err, Error::InvalidTaskBody(_)),
+        matches!(err, Error::Record(RecordError::InvalidTaskBody(_))),
         "unexpected error: {err:?}"
     );
     let unchanged = fixture

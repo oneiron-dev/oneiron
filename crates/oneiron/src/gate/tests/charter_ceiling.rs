@@ -1,6 +1,7 @@
 //! Definition ceiling and charter never-key and never-channel enforcement.
 
 use super::*;
+use crate::error::RecordError;
 
 #[test]
 fn definition_ceiling_clamps_manifest_auto() -> Result<()> {
@@ -62,7 +63,7 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
     // unchanged.
     assert!(matches!(
         vault.approve_connector_charter(&key_id, [0xEE; 32], "owner", 1_002),
-        Err(Error::ConnectorCharterApprovalMismatch)
+        Err(Error::Record(RecordError::ConnectorCharterApprovalMismatch))
     ));
     let (decision, _) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);

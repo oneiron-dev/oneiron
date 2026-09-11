@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use super::types::WindowKey;
 use crate::authority::{AuthorityKey, AuthorityVaultId};
 use crate::entity_id::bytes_to_hex_lower;
+use crate::error::SyncError;
 use crate::{Error, Result, Vault};
 
 const MAINTENANCE_INGEST_QUOTA_PREFIX: &[u8] = b"m:maintenance_ingest_quota:v1:";
@@ -253,13 +254,13 @@ pub(super) fn try_accept_maintenance_ingest_peer_in_txn(
     };
 
     if accepted_count >= max_ops {
-        return Err(Error::MaintenanceIngestQuotaExceeded {
+        return Err(Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
             peer_key_hex: bytes_to_hex_lower(&peer_key.0),
             accepted_count,
             max_ops_per_peer_window: max_ops,
             window_start_secs,
             quota_window_secs,
-        });
+        }));
     }
 
     let next_count = accepted_count

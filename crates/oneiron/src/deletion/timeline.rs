@@ -6,6 +6,8 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+#[cfg(feature = "sync")]
+use crate::error::SyncError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
@@ -293,7 +295,7 @@ impl Vault {
                         )
                     }),
                 ),
-                Err(Error::WindowNotFound { .. }) => Ok(None),
+                Err(Error::Sync(SyncError::WindowNotFound { .. })) => Ok(None),
                 Err(error) => Err(error),
             }
         }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::GateError;
 
 #[test]
 fn breaker_window_boundary_is_strict() {
@@ -413,7 +414,7 @@ fn breaker_dial_changes_policy_frontier_and_stales_bundle() -> Result<()> {
             GateConsentBundleAction::Approve,
             9,
         ),
-        Err(Error::GateConsentStale { .. })
+        Err(Error::Gate(GateError::GateConsentStale { .. }))
     ));
     Ok(())
 }

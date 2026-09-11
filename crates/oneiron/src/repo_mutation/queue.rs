@@ -34,6 +34,7 @@ use super::worktree::{
     apply_prepared_commit_file, prepare_commit_file_through_queue_worktree,
     prune_queue_owned_worktrees, remove_queue_worktree,
 };
+use crate::error::CodeError;
 
 /// The repo-mutation writer lock is GitWire's repository coordinator: one
 /// advisory lock file in the canonical git common directory, shared by every
@@ -354,13 +355,11 @@ impl Vault {
     ) -> Result<RepoMutationOplogEntry> {
         let key = repo_mutation_oplog_key(&prepared.repo_key_hash, prepared.seq);
         let mut wtxn = self.store.env.write_txn()?;
-        let raw =
-            self.store
-                .vault_meta
-                .get(&wtxn, &key)?
-                .ok_or(Error::InvalidRepoMutationRecord(
-                    "repo mutation oplog row disappeared before completion",
-                ))?;
+        let raw = self.store.vault_meta.get(&wtxn, &key)?.ok_or(Error::Code(
+            CodeError::InvalidRepoMutationRecord(
+                "repo mutation oplog row disappeared before completion",
+            ),
+        ))?;
         let mut stored = decode_stored_oplog_entry(&raw)?;
         stored.status = status.as_str().to_owned();
         stored.failure = failure;
@@ -445,9 +444,9 @@ fn require_staged_objects_available(
     if git_commit_object_available(repo_root, &commit.new_head, &commit.base_head)? {
         return Ok(());
     }
-    Err(Error::RepoMutationFailed(
+    Err(Error::Code(CodeError::RepoMutationFailed(
         "staged commit object is unavailable; refusing to prepare a ref advance".to_owned(),
-    ))
+    )))
 }
 
 fn expected_post_action_fork_hash(
@@ -553,9 +552,9 @@ pub(super) fn execute_repo_mutation(
             let repo = wire.open_repo(repo_ref.clone(), repo_root)?;
             let removed = wire.remove_worktree(&repo, worktree_path, now_millis())?;
             if removed.is_none() {
-                return Err(Error::RepoMutationFailed(
+                return Err(Error::Code(CodeError::RepoMutationFailed(
                     "worktree is not registered with this repository".to_owned(),
-                ));
+                )));
             }
             Ok(None)
         }
@@ -652,7 +651,9 @@ fn allocate_next_repo_mutation_seq(
     let current = match vault.store.vault_meta.get(wtxn, &key)? {
         Some(bytes) => {
             let bytes: [u8; 8] = bytes.as_ref().try_into().map_err(|_| {
-                Error::InvalidRepoMutationRecord("repo mutation seq row must be 8 bytes")
+                Error::Code(CodeError::InvalidRepoMutationRecord(
+                    "repo mutation seq row must be 8 bytes",
+                ))
             })?;
             u64::from_be_bytes(bytes)
         }

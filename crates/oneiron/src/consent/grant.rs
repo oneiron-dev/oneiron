@@ -25,9 +25,9 @@ impl DisclosureGrant {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidConsentBound`] when the bound is an action bound.
+    /// Returns [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the bound is an action bound.
     ///
-    /// [`Error::InvalidConsentBound`]: crate::error::Error::InvalidConsentBound
+    /// [`GateError::InvalidConsentBound`]: crate::error::GateError::InvalidConsentBound
     pub fn new(bound: GrantBound) -> Result<Self> {
         if bound.domain() != ConsentDomain::Disclosure {
             return Err(invalid_bound(
@@ -58,10 +58,10 @@ impl ActionGrant {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidConsentBound`] when the bound is a disclosure
+    /// Returns [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the bound is a disclosure
     /// bound.
     ///
-    /// [`Error::InvalidConsentBound`]: crate::error::Error::InvalidConsentBound
+    /// [`GateError::InvalidConsentBound`]: crate::error::GateError::InvalidConsentBound
     pub fn new(bound: GrantBound) -> Result<Self> {
         if bound.domain() != ConsentDomain::Action {
             return Err(invalid_bound(

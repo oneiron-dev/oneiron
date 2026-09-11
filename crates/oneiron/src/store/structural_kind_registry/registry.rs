@@ -9,7 +9,7 @@ use crate::batch::secret_scan;
 use crate::companion::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
 };
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::overlay_db::OverlayDb;
 use crate::registry::{
     StructuralKindRegistration, TypeByteZone, entity_type_registry_entry, short_id_prefix,
@@ -130,11 +130,13 @@ impl Store {
         vet_structural_kind_registration_zone(&registration)?;
         secret_scan::scan_metadata_field(&registration.pack)?;
         if entity_type_registry_entry(type_byte).is_some() {
-            return Err(Error::StructuralKindTypeByteCollision(type_byte));
+            return Err(Error::Registry(
+                RegistryError::StructuralKindTypeByteCollision(type_byte),
+            ));
         }
         if static_short_id_prefix_collision(&registration.short_id_prefix) {
-            return Err(Error::StructuralKindPrefixCollision(
-                registration.short_id_prefix,
+            return Err(Error::Registry(
+                RegistryError::StructuralKindPrefixCollision(registration.short_id_prefix),
             ));
         }
 
@@ -147,7 +149,9 @@ impl Store {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         if registry.contains_key(&type_byte) || self.vault_meta.get(&wtxn, &key)?.is_some() {
-            return Err(Error::StructuralKindTypeByteCollision(type_byte));
+            return Err(Error::Registry(
+                RegistryError::StructuralKindTypeByteCollision(type_byte),
+            ));
         }
         if registry
             .values()
@@ -158,8 +162,8 @@ impl Store {
                 &registration.short_id_prefix,
             )?
         {
-            return Err(Error::StructuralKindPrefixCollision(
-                registration.short_id_prefix,
+            return Err(Error::Registry(
+                RegistryError::StructuralKindPrefixCollision(registration.short_id_prefix),
             ));
         }
 
@@ -276,18 +280,20 @@ fn vault_meta_has_structural_kind_prefix(
 fn vet_structural_kind_registration_shape(registration: &StructuralKindRegistration) -> Result<()> {
     let prefix = registration.short_id_prefix.as_bytes();
     if prefix.len() != 2 || !prefix.iter().all(u8::is_ascii_lowercase) {
-        return Err(Error::InvalidStructuralKindRegistration(
-            "short_id_prefix must be exactly two lowercase ASCII letters",
+        return Err(Error::Registry(
+            RegistryError::InvalidStructuralKindRegistration(
+                "short_id_prefix must be exactly two lowercase ASCII letters",
+            ),
         ));
     }
     if registration.pack.is_empty() {
-        return Err(Error::InvalidStructuralKindRegistration(
-            "pack must not be empty",
+        return Err(Error::Registry(
+            RegistryError::InvalidStructuralKindRegistration("pack must not be empty"),
         ));
     }
     if registration.pack.len() > u16::MAX as usize {
-        return Err(Error::InvalidStructuralKindRegistration(
-            "pack must fit in u16 bytes",
+        return Err(Error::Registry(
+            RegistryError::InvalidStructuralKindRegistration("pack must fit in u16 bytes"),
         ));
     }
     Ok(())
@@ -315,12 +321,14 @@ fn vet_structural_kind_registration_zone_consistency(
 ) -> Result<()> {
     let actual_zone = zone_of(registration.type_byte);
     if actual_zone != registration.zone {
-        return Err(Error::StructuralKindZoneViolation {
-            type_byte: registration.type_byte,
-            declared_zone: registration.zone,
-            actual_zone,
-            reason: "type byte is outside the declared zone",
-        });
+        return Err(Error::Registry(
+            RegistryError::StructuralKindZoneViolation {
+                type_byte: registration.type_byte,
+                declared_zone: registration.zone,
+                actual_zone,
+                reason: "type byte is outside the declared zone",
+            },
+        ));
     }
     Ok(())
 }
@@ -328,11 +336,13 @@ fn vet_structural_kind_registration_zone_consistency(
 fn vet_structural_kind_registration_zone(registration: &StructuralKindRegistration) -> Result<()> {
     vet_structural_kind_registration_zone_consistency(registration)?;
     let actual_zone = zone_of(registration.type_byte);
-    let violation = |reason: &'static str| Error::StructuralKindZoneViolation {
-        type_byte: registration.type_byte,
-        declared_zone: registration.zone,
-        actual_zone,
-        reason,
+    let violation = |reason: &'static str| {
+        Error::Registry(RegistryError::StructuralKindZoneViolation {
+            type_byte: registration.type_byte,
+            declared_zone: registration.zone,
+            actual_zone,
+            reason,
+        })
     };
     match actual_zone {
         TypeByteZone::CompiledProduct => Ok(()),
@@ -364,8 +374,11 @@ pub(super) fn encode_structural_kind_registration(
 ) -> Result<Vec<u8>> {
     let prefix = registration.short_id_prefix.as_bytes();
     let pack = registration.pack.as_bytes();
-    let pack_len = u16::try_from(pack.len())
-        .map_err(|_| Error::InvalidStructuralKindRegistration("pack must fit in u16 bytes"))?;
+    let pack_len = u16::try_from(pack.len()).map_err(|_| {
+        Error::Registry(RegistryError::InvalidStructuralKindRegistration(
+            "pack must fit in u16 bytes",
+        ))
+    })?;
 
     let mut encoded =
         Vec::with_capacity(STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN + prefix.len() + pack.len());

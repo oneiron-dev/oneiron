@@ -1,7 +1,7 @@
 //! Edit manifest and warnings.
 
 use super::{AnchorEffect, EditOp, OfficeFormat};
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -77,18 +77,24 @@ impl EditManifest {
 
     /// Field-name-tagged MessagePack encoding for durable storage (ARTL-4).
     pub fn to_msgpack(&self) -> Result<Vec<u8>> {
-        rmp_serde::to_vec_named(self)
-            .map_err(|_| Error::InvalidEditManifest("edit manifest failed to encode"))
+        rmp_serde::to_vec_named(self).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidEditManifest(
+                "edit manifest failed to encode",
+            ))
+        })
     }
 
     /// Decodes a manifest from [`EditManifest::to_msgpack`] bytes.
     pub fn from_msgpack(bytes: &[u8]) -> Result<Self> {
-        let manifest: Self = rmp_serde::from_slice(bytes)
-            .map_err(|_| Error::InvalidEditManifest("edit manifest failed to decode"))?;
+        let manifest: Self = rmp_serde::from_slice(bytes).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidEditManifest(
+                "edit manifest failed to decode",
+            ))
+        })?;
         if manifest.schema_version != EDIT_MANIFEST_SCHEMA_VERSION {
-            return Err(Error::InvalidEditManifest(
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
                 "edit manifest schema version is unsupported",
-            ));
+            )));
         }
         Ok(manifest)
     }

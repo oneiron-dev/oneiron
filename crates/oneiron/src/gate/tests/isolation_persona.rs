@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::claim::PREDICATE_COMPANION_EXPRESSION;
+use crate::error::GateError;
 use crate::inbox::{InboxExceptionClass, InboxGroupMember, InboxQuery, InboxReviewDial};
 
 const ISOLATION_RUN_ID: &str = "gate13-isolation-run";
@@ -123,10 +124,10 @@ fn attempt_isolation_write(
 /// rejection and the assertion reads the exact stable strings off the error.
 fn assert_isolation_rejected(err: Error, outcome: &'static str, reason_codes: &[&'static str]) {
     match err {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome: got_outcome,
             reason_codes: got_reason_codes,
-        } => {
+        }) => {
             assert_eq!(got_outcome, outcome);
             assert_eq!(got_reason_codes, reason_codes);
         }

@@ -8,6 +8,7 @@ use super::tests::{
 };
 use super::*;
 use crate::config::VaultConfig;
+use crate::error::CodeError;
 use crate::store::Store;
 
 fn sync_plane_rows(vault: &Vault) -> BTreeMap<String, Vec<u8>> {
@@ -91,7 +92,7 @@ fn smart_http_production_push_rejects_before_git_without_admission() {
             &mut UnreadBody,
             &mut sink
         ),
-        Err(Error::ReceivePackDoorRejected { .. })
+        Err(Error::Code(CodeError::ReceivePackDoorRejected { .. }))
     ));
     assert_eq!(sink.status, 0);
     assert_eq!(git(&repo_dir, &["rev-parse", "refs/heads/main"]), before);

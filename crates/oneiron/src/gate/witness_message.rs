@@ -43,6 +43,7 @@ use super::definition_ceiling::agent_definition_ceiling_for_actor;
 use super::doors::{edge_actor_class_str, enforce_gate_decision};
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
 use super::resolution::PolicyManifestResolution;
+use crate::error::RecordError;
 
 /// The vault owner's own words.
 pub(crate) const WITNESS_AUTHOR_USER: &str = "user";
@@ -201,7 +202,7 @@ impl<'a> WitnessMessageAuthorization<'a> {
 ///
 /// # Errors
 ///
-/// [`Error::GateWriteRejected`] when the envelope is malformed, the author
+/// [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected) when the envelope is malformed, the author
 /// bucket exceeds the actor's authority, or the policy ceiling refuses.
 pub(crate) fn check_witness_message_ceiling<'a>(
     store: &Store,
@@ -399,14 +400,18 @@ pub(crate) enum WitnessMessageBodyAuthor {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidWitnessMessageBody`] when the bytes are not decodable, are
+/// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody) when the bytes are not decodable, are
 /// not the canonical key set in canonical order, carry an unknown author or
 /// type token, exceed the order ceiling, hide a `user` row, carry malformed
 /// metadata, or do not re-encode byte-identically.
 pub(crate) fn validate_canonical_witness_message_body(
     body: &[u8],
 ) -> Result<WitnessMessageBodyAuthor> {
-    let malformed = || Error::InvalidWitnessMessageBody("MESSAGE body is not a canonical envelope");
+    let malformed = || {
+        Error::Record(RecordError::InvalidWitnessMessageBody(
+            "MESSAGE body is not a canonical envelope",
+        ))
+    };
     let mut cursor = body;
     let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
         return Err(malformed());
@@ -560,7 +565,7 @@ pub(crate) fn canonical_witness_message_body_for_test(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidWitnessMessageBody`], always. `sync::quarantine` classifies
+/// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody), always. `sync::quarantine` classifies
 /// the kind as a remote-op rejection, so the row is quarantined with its
 /// payload and the window continues; nothing partial is written, because the
 /// refusal precedes every store mutation in `apply_put`.
@@ -572,13 +577,13 @@ pub(crate) fn validate_replicated_witness_message_body(body: &[u8]) -> Result<()
     // author". It also keeps the floor where it belongs if a future protocol
     // revision ever does carry a verified source actor here.
     Err(match validate_canonical_witness_message_body(body)? {
-        WitnessMessageBodyAuthor::System => Error::InvalidWitnessMessageBody(
+        WitnessMessageBodyAuthor::System => Error::Record(RecordError::InvalidWitnessMessageBody(
             "a replicated MESSAGE may not claim the unattributed system author",
-        ),
+        )),
         WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Companion => {
-            Error::InvalidWitnessMessageBody(
+            Error::Record(RecordError::InvalidWitnessMessageBody(
                 "a replicated MESSAGE carries no local actor binding for its author",
-            )
+            ))
         }
     })
 }

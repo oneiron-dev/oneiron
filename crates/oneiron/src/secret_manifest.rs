@@ -9,7 +9,7 @@
 //! [`SecretCustodyFloor`] band for its class, and every binding's tier
 //! ceiling must be ≤ the floor's max. A manifest that asks for more exposure
 //! than the floor allows fails with
-//! [`Error::ManifestWidensFloor`]; a narrower manifest is stored with its
+//! [`SecretError::ManifestWidensFloor`]; a narrower manifest is stored with its
 //! narrow binding.
 //!
 //! The merge rule is `manifest ∧ vault_floor` — most-restrictive wins. At
@@ -20,7 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{CustodyClass, CustodyTier, SecretBinding, SecretCustodyFloor};
 
 /// The repo-side secret manifest: a schema-versioned list of declared
@@ -99,9 +99,9 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         }
         if line == "[[secrets.bindings]]" {
             let Some(entry) = secrets.last_mut() else {
-                return Err(Error::InvalidSecretCustodyBody(
+                return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
                     "[[secrets.bindings]] before any [[secrets]]",
-                ));
+                )));
             };
             entry.bindings.push(ScratchBinding::default());
             scope = Scope::Binding;
@@ -130,7 +130,9 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                         // CustodyClass is canon-wire kebab-case in the manifest text.
                         let class_str = parse_string(value)?;
                         entry.class = Some(CustodyClass::parse(&class_str).ok_or(
-                            Error::InvalidSecretCustodyBody("unknown custody class in manifest"),
+                            Error::Secret(SecretError::InvalidSecretCustodyBody(
+                                "unknown custody class in manifest",
+                            )),
                         )?);
                     }
                     "declared_paths" => entry.declared_paths = parse_string_array(value)?,
@@ -146,7 +148,9 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                     "tier_ceiling" => {
                         let n = parse_u8(value)?;
                         binding.tier_ceiling = Some(CustodyTier::from_u8(n).ok_or(
-                            Error::InvalidSecretCustodyBody("unknown tier_ceiling in manifest"),
+                            Error::Secret(SecretError::InvalidSecretCustodyBody(
+                                "unknown tier_ceiling in manifest",
+                            )),
                         )?);
                     }
                     "scopes" => binding.scopes = parse_string_array(value)?,
@@ -156,28 +160,32 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         }
     }
 
-    let schema_version = schema_version.ok_or(Error::InvalidSecretCustodyBody(
-        "manifest missing schema_version",
+    let schema_version = schema_version.ok_or(Error::Secret(
+        SecretError::InvalidSecretCustodyBody("manifest missing schema_version"),
     ))?;
     if schema_version != SECRET_MANIFEST_SCHEMA_VERSION {
-        return Err(Error::InvalidSecretCustodyBody(
+        return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
             "unsupported secret manifest schema version",
-        ));
+        )));
     }
     let secrets = secrets
         .into_iter()
         .map(|entry| {
-            let class = entry.class.ok_or(Error::InvalidSecretCustodyBody(
-                "manifest entry missing class",
-            ))?;
+            let class = entry
+                .class
+                .ok_or(Error::Secret(SecretError::InvalidSecretCustodyBody(
+                    "manifest entry missing class",
+                )))?;
             let bindings = entry
                 .bindings
                 .into_iter()
                 .map(|b| {
                     Ok(SecretBinding {
                         effector: b.effector,
-                        tier_ceiling: b.tier_ceiling.ok_or(Error::InvalidSecretCustodyBody(
-                            "manifest binding missing tier_ceiling",
+                        tier_ceiling: b.tier_ceiling.ok_or(Error::Secret(
+                            SecretError::InvalidSecretCustodyBody(
+                                "manifest binding missing tier_ceiling",
+                            ),
                         ))?,
                         scopes: b.scopes,
                     })
@@ -198,7 +206,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
 }
 
 fn invalid_manifest(msg: &'static str) -> Error {
-    Error::InvalidSecretCustodyBody(msg)
+    Error::Secret(SecretError::InvalidSecretCustodyBody(msg))
 }
 
 fn parse_string(value: &str) -> Result<String> {
@@ -236,35 +244,35 @@ fn parse_string_array(value: &str) -> Result<Vec<String>> {
 /// entry's class must admit an allowed band inside the floor's band for that
 /// class, and every binding's `tier_ceiling` must not exceed the floor's max
 /// for the entry's class. A wider ask fails
-/// [`Error::ManifestWidensFloor`]; a narrower ask is accepted (and the narrow
+/// [`SecretError::ManifestWidensFloor`]; a narrower ask is accepted (and the narrow
 /// binding is what gets stored).
 pub fn validate_secret_manifest(m: &SecretManifest, floor: &SecretCustodyFloor) -> Result<()> {
     if m.schema_version != SECRET_MANIFEST_SCHEMA_VERSION {
-        return Err(Error::InvalidSecretCustodyBody(
+        return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
             "unsupported secret manifest schema version",
-        ));
+        )));
     }
     let mut seen_names = std::collections::BTreeSet::new();
     for entry in &m.secrets {
         if entry.name.is_empty() {
-            return Err(Error::InvalidSecretCustodyBody(
+            return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
                 "secret manifest entry name must not be empty",
-            ));
+            )));
         }
         if !seen_names.insert(&entry.name) {
-            return Err(Error::InvalidSecretCustodyBody(
+            return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
                 "duplicate secret manifest entry name",
-            ));
+            )));
         }
         let band = floor.band_for(entry.class);
         for binding in &entry.bindings {
             if binding.tier_ceiling > band.max {
-                return Err(Error::ManifestWidensFloor {
+                return Err(Error::Secret(SecretError::ManifestWidensFloor {
                     secret_ref: entry.name.clone(),
                     class: entry.class,
                     requested: binding.tier_ceiling,
                     floor_max: band.max,
-                });
+                }));
             }
         }
     }

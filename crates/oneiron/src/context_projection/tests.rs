@@ -2,6 +2,7 @@
 
 use self::test_support::*;
 use super::*;
+use crate::error::ArtifactError;
 
 mod panel;
 mod resolution;
@@ -130,7 +131,10 @@ fn one_1709_t3_child_scoped_memory_must_be_a_strict_parent_subset() {
         },
     )
     .expect_err("child must not request a domain absent from the parent projection");
-    assert!(matches!(error, Error::InvalidAgentDispatchInput(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(_))
+    ));
 
     let standalone = resolve_context_spec(
         &vault,

@@ -16,6 +16,7 @@ use super::types::{
     AGENT_DISPATCH_COMPAT_DEPTH_CAP, ATTENUATED_FORK_ID_DOMAIN, AgentDispatchInput,
     AgentDispatchTarget, AttenuatedDispatchTarget, restrict_agent_ceiling,
 };
+use crate::error::ArtifactError;
 
 impl AgentDispatcher<'_> {
     /// Clamps the requested child row to the parent's LIVE ceiling, minting a
@@ -28,9 +29,9 @@ impl AgentDispatcher<'_> {
     ///
     /// # Errors
     ///
-    /// [`Error::AgentDefinitionNotFound`] / [`Error::AgentNotDispatchable`] /
-    /// [`Error::AgentDefinitionDisabled`] when the parent's own target row does
-    /// not resolve, and [`Error::InvalidAgentDispatchInput`] when the
+    /// [`ArtifactError::AgentDefinitionNotFound`](crate::error::ArtifactError::AgentDefinitionNotFound) / [`ArtifactError::AgentNotDispatchable`](crate::error::ArtifactError::AgentNotDispatchable) /
+    /// [`ArtifactError::AgentDefinitionDisabled`](crate::error::ArtifactError::AgentDefinitionDisabled) when the parent's own target row does
+    /// not resolve, and [`ArtifactError::InvalidAgentDispatchInput`](crate::error::ArtifactError::InvalidAgentDispatchInput) when the
     /// attenuated fork cannot be registered. Never falls back to the wider row.
     pub(super) fn attenuate_child_target(
         &self,
@@ -154,30 +155,34 @@ impl AgentDispatcher<'_> {
             // Deterministic id: a retried spawn finds its own fork. Anything
             // else occupying the id is a typed failure, never a silent reuse of
             // a row with foreign composition (ceiling, provenance, body).
-            let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
-                Error::InvalidAgentDispatchInput("attenuated fork row header is malformed"),
-            )?;
+            let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(Error::Artifact(
+                ArtifactError::InvalidAgentDispatchInput("attenuated fork row header is malformed"),
+            ))?;
             if header.entity_type != ENTITY_TYPE_AGENT_DEF {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "attenuated fork id is occupied by a foreign row",
-                ));
+                )));
             }
             let stored = decode_agent_definition(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
                 .map_err(|_| {
-                    Error::InvalidAgentDispatchInput("attenuated fork row does not decode")
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "attenuated fork row does not decode",
+                    ))
                 })?;
             // Idempotent reuse requires the full expected composition — matching
             // ceiling + forked_from alone must not accept a foreign body.
             if stored != fork {
-                return Err(Error::InvalidAgentDispatchInput(
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "attenuated fork id is occupied by a foreign row",
-                ));
+                )));
             }
             return Ok(stored);
         }
 
         let body = encode_agent_definition(&fork).map_err(|_| {
-            Error::InvalidAgentDispatchInput("attenuated fork does not encode as an AGENT_DEF body")
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "attenuated fork does not encode as an AGENT_DEF body",
+            ))
         })?;
         self.vault
             .batch_in()
@@ -193,7 +198,9 @@ impl AgentDispatcher<'_> {
             )
             .apply(wtxn)
             .map_err(|_| {
-                Error::InvalidAgentDispatchInput("attenuated fork row could not be registered")
+                Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "attenuated fork row could not be registered",
+                ))
             })?;
         Ok(fork)
     }
@@ -219,7 +226,9 @@ pub(super) fn attenuated_fork_id(
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&digest.as_bytes()[..16]);
     EntityId::from_bytes(bytes).map_err(|_| {
-        Error::InvalidAgentDispatchInput("attenuated fork id collided with a reserved id")
+        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "attenuated fork id collided with a reserved id",
+        ))
     })
 }
 
@@ -228,7 +237,9 @@ pub(super) fn attenuated_fork_id(
 /// so the revision a fork was minted from is always auditable.
 pub(super) fn source_content_fingerprint(source: &AgentDefinition) -> Result<blake3::Hash> {
     let encoded = encode_agent_definition(source).map_err(|_| {
-        Error::InvalidAgentDispatchInput("source definition does not encode as an AGENT_DEF body")
+        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "source definition does not encode as an AGENT_DEF body",
+        ))
     })?;
     Ok(blake3::hash(&encoded))
 }
@@ -242,7 +253,7 @@ pub(super) fn child_depth_from(parent: Option<AgentDispatchInput>) -> Result<u8>
         .and_then(|input| input.depth_remaining)
         .unwrap_or(AGENT_DISPATCH_COMPAT_DEPTH_CAP)
         .checked_sub(1)
-        .ok_or(Error::InvalidAgentDispatchInput(
+        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "agent dispatch recursion depth is exhausted",
-        ))
+        )))
 }

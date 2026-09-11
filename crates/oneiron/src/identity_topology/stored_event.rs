@@ -25,6 +25,7 @@ use super::wire_keys::{
     EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
     EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
 };
+use crate::error::SyncError;
 
 /// Action payload of one stored ledger event. The split map is carried
 /// CANONICALLY (never discarded) so ONE-1745 replays exactly what the
@@ -328,11 +329,12 @@ impl StoredIdentityOpEvent {
 
     /// Decodes a stored record value, fail-closed on any malformed field.
     pub fn decode_value(value: &Value) -> Result<Self> {
-        let map = value
-            .as_map()
-            .ok_or(Error::InvalidIdentityTopologyEventBody(
-                "identity topology event must be a map",
-            ))?;
+        let map =
+            value
+                .as_map()
+                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology event must be a map",
+                )))?;
         let kind = decode_str_field(map, BODY_KEY_KIND, "identity topology event kind")?;
         let seq = decode_u64_field(map, BODY_KEY_SEQ, "identity topology event seq")?;
         let at = decode_u64_field(map, BODY_KEY_AT, "identity topology event at")?;
@@ -340,24 +342,24 @@ impl StoredIdentityOpEvent {
         let source = map_field(map, BODY_KEY_SOURCE)
             .and_then(Value::as_str)
             .and_then(ClaimSource::parse)
-            .ok_or(Error::InvalidIdentityTopologyEventBody(
+            .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event source",
-            ))?;
+            )))?;
         let approval = map_field(map, BODY_KEY_APPROVAL)
             .and_then(Value::as_str)
             .and_then(ClaimApprovalStatus::parse)
-            .ok_or(Error::InvalidIdentityTopologyEventBody(
+            .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event approval",
-            ))?;
+            )))?;
         let confidence = map_field(map, BODY_KEY_CONFIDENCE)
             .and_then(Value::as_f64)
-            .ok_or(Error::InvalidIdentityTopologyEventBody(
+            .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event confidence",
-            ))? as f32;
+            )))? as f32;
         if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
-            return Err(Error::InvalidIdentityTopologyEventBody(
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event confidence",
-            ));
+            )));
         }
         let evidence = match map_field(map, BODY_KEY_EVIDENCE) {
             None => None,

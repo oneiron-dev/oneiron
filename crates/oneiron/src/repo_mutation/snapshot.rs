@@ -14,6 +14,7 @@ use super::oplog::{REPO_MUTATION_OPLOG_SCHEMA_VERSION, repo_mutation_snapshot_ke
 use super::support::{path_arg, sha256_bytes, utf8_trimmed};
 use super::types::RepoForkHash;
 use super::worktree::{ensure_repo_parent_dirs_no_symlink, write_repo_file_no_symlink};
+use crate::error::CodeError;
 
 const MAX_REPO_MUTATION_SNAPSHOT_FILES: usize = 100_000;
 const MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
@@ -105,9 +106,9 @@ fn collect_snapshot_entries(
             });
         } else if metadata.file_type().is_file() {
             if metadata.len() > MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES {
-                return Err(Error::InvalidRepoMutationRecord(
+                return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                     "repo mutation snapshot file exceeds max bytes",
-                ));
+                )));
             }
             record_snapshot_entry_size(stats, metadata.len())?;
             entries.push(StoredRepoSnapshotEntry {
@@ -118,9 +119,9 @@ fn collect_snapshot_entries(
                 symlink_target: None,
             });
         } else {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo snapshot supports only files, directories, and symlinks",
-            ));
+            )));
         }
     }
     Ok(())
@@ -133,9 +134,9 @@ pub(super) fn restore_repo_snapshot(
     fork_hash: RepoForkHash,
 ) -> Result<()> {
     if !snapshot_recorded_for_repo(vault, repo_ref, fork_hash)? {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "requested repo snapshot forkHash is not recorded for this repo",
-        ));
+        )));
     }
     let key = repo_mutation_snapshot_key(fork_hash);
     let rtxn = vault.store.env.read_txn()?;
@@ -143,9 +144,9 @@ pub(super) fn restore_repo_snapshot(
         .store
         .vault_meta
         .get(&rtxn, &key)?
-        .ok_or(Error::InvalidRepoMutationRecord(
+        .ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
             "requested repo snapshot forkHash is unknown",
-        ))?
+        )))?
         .to_vec();
     drop(rtxn);
     if sha256_bytes(&raw) != fork_hash {
@@ -181,11 +182,9 @@ pub(super) fn restore_repo_snapshot(
                 set_executable(&target, entry.executable)?;
             }
             StoredRepoSnapshotEntryKind::Symlink => {
-                let target_path = entry
-                    .symlink_target
-                    .ok_or(Error::InvalidRepoMutationRecord(
-                        "symlink snapshot entry missing target",
-                    ))?;
+                let target_path = entry.symlink_target.ok_or(Error::Code(
+                    CodeError::InvalidRepoMutationRecord("symlink snapshot entry missing target"),
+                ))?;
                 let target = ensure_repo_parent_dirs_no_symlink(repo_root, &entry.path)?;
                 create_symlink(Path::new(&target_path), &target)?;
             }
@@ -214,18 +213,18 @@ fn record_snapshot_entry_size(stats: &mut SnapshotStats, bytes: u64) -> Result<(
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("repo_mutation_snapshot_files"))?;
     if stats.files > MAX_REPO_MUTATION_SNAPSHOT_FILES {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo mutation snapshot exceeds max file count",
-        ));
+        )));
     }
     stats.total_bytes = stats
         .total_bytes
         .checked_add(bytes)
         .ok_or(Error::ArithmeticOverflow("repo_mutation_snapshot_bytes"))?;
     if stats.total_bytes > MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo mutation snapshot exceeds max total bytes",
-        ));
+        )));
     }
     Ok(())
 }
@@ -261,9 +260,9 @@ fn collect_restore_inventory(
         } else if metadata.file_type().is_file() || metadata.file_type().is_symlink() {
             files.insert(repo_relative_path(repo_root, &path)?);
         } else {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo restore supports only files, directories, and symlinks",
-            ));
+            )));
         }
     }
     Ok(())
@@ -296,12 +295,14 @@ pub(super) fn encode_snapshot(snapshot: &StoredRepoSnapshot) -> Result<Vec<u8>> 
 
 pub(super) fn decode_snapshot(bytes: &[u8]) -> Result<StoredRepoSnapshot> {
     let snapshot: StoredRepoSnapshot = rmp_serde::from_slice(bytes).map_err(|_| {
-        Error::InvalidRepoMutationRecord("repo mutation snapshot is not MessagePack")
+        Error::Code(CodeError::InvalidRepoMutationRecord(
+            "repo mutation snapshot is not MessagePack",
+        ))
     })?;
     if snapshot.schema_version != REPO_MUTATION_OPLOG_SCHEMA_VERSION {
-        return Err(Error::InvalidRepoMutationRecord(
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "unsupported repo mutation snapshot schema version",
-        ));
+        )));
     }
     Ok(snapshot)
 }
@@ -313,13 +314,15 @@ fn repo_relative_path(repo_root: &Path, path: &Path) -> Result<String> {
     let mut out = String::new();
     for component in relative.components() {
         let Component::Normal(part) = component else {
-            return Err(Error::InvalidRepoMutationRecord(
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo snapshot path must be normal",
-            ));
+            )));
         };
-        let part = part.to_str().ok_or(Error::InvalidRepoMutationRecord(
-            "repo snapshot path must be UTF-8",
-        ))?;
+        let part = part
+            .to_str()
+            .ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
+                "repo snapshot path must be UTF-8",
+            )))?;
         if !out.is_empty() {
             out.push('/');
         }
@@ -365,8 +368,8 @@ fn create_symlink(target: &Path, link: &Path) -> Result<()> {
     #[cfg(not(unix))]
     {
         let _ = (target, link);
-        Err(Error::InvalidRepoMutationRecord(
+        Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "symlink repo snapshots are unsupported on this platform",
-        ))
+        )))
     }
 }

@@ -4,6 +4,7 @@ use std::thread;
 use tempfile::TempDir;
 
 use super::*;
+use crate::error::CodeError;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::{ErrorKind, VaultConfig};
 
@@ -785,12 +786,12 @@ fn repo_mutation_prepared_recovery_halts_on_diverged_repo_state() {
         .recover_prepared_repo_mutations(&input_ref)
         .expect_err("diverged state must halt recovery");
     assert_eq!(error.kind(), ErrorKind::RepoMutationRecoveryDiverged);
-    let Error::RepoMutationRecoveryDiverged {
+    let Error::Code(CodeError::RepoMutationRecoveryDiverged {
         pre_action_fork_hash,
         expected_post_action_fork_hash,
         actual_fork_hash,
         ..
-    } = error
+    }) = error
     else {
         unreachable!("error kind checked above")
     };

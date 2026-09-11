@@ -1,6 +1,7 @@
 //! Write-door chokepoint: consent lifecycle, session bundles, batch atomicity, and edge provenance.
 
 use super::*;
+use crate::error::GateError;
 
 #[test]
 fn policy_manifest_signature_frontier_covers_first_party_auto_grant() -> Result<()> {
@@ -320,7 +321,7 @@ fn approved_gate_consent_rejects_drifted_diff() -> Result<()> {
         .claim_candidate(&id, candidate, &envelope, test_time(4), 4)
         .commit()
         .expect_err("approval must bind to original pending diff");
-    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == id));
+    assert!(matches!(err, Error::Gate(GateError::GateConsentStale { claim_id }) if claim_id == id));
 
     let pending = vault.with_write_txn(|wtxn| {
         vault
@@ -372,7 +373,7 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
     let err = vault
         .put_claim(&id, &drifted, test_time(4), 4)
         .expect_err("allow-path approval must bind to original pending diff");
-    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == id));
+    assert!(matches!(err, Error::Gate(GateError::GateConsentStale { claim_id }) if claim_id == id));
     assert!(has_pending_gate_consent(&vault, &id)?);
 
     let mut approved = stored;
@@ -739,7 +740,9 @@ fn atomic_bundle_commit() -> Result<()> {
     let err = vault
         .merge_session_bundle(&reviewer, &producer, session_tag)
         .expect_err("a stale member must abort the whole session bundle");
-    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == second));
+    assert!(
+        matches!(err, Error::Gate(GateError::GateConsentStale { claim_id }) if claim_id == second)
+    );
     assert_eq!(
         vault.get_claim(&first)?.expect("first proposal").approval,
         ClaimApprovalStatus::Proposed

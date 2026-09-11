@@ -12,6 +12,7 @@ use crate::edit_distance::{
     FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef,
     put_finalized_proposal_text,
 };
+use crate::error::GateError;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 
@@ -1330,10 +1331,10 @@ fn miner_floor_still_denies() -> Result<()> {
         })
         .expect_err("a mined candidate whose record is absent cites nothing that resolves");
     match err {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => {
+        }) => {
             assert_eq!(outcome, "deny");
             assert_eq!(reason_codes, ["gate.deny.dreamer_precommit.no_evidence"]);
         }

@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use crate::sync_harness::make_entity_blob;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use oneiron::error::SyncError;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
@@ -440,7 +441,7 @@ fn unload_persists_state_and_drops_observer_subscriptions() {
 }
 
 /// ONE-1150 — unload with an outstanding external handle is REFUSED with
-/// the typed [`Error::WindowBusy`], side-effect-free (nothing persisted,
+/// the typed [`SyncError::WindowBusy`](oneiron::error::SyncError::WindowBusy), side-effect-free (nothing persisted,
 /// nothing deregistered), and the second-live-doc trap stays closed: the
 /// window remains discoverable via `window()` and `Vault::delete_entity`
 /// still commits its tombstone through the LIVE doc. The pre-ONE-1150
@@ -473,12 +474,12 @@ fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
 
     // Refused: typed variant, exact fields, stable kind, retryable.
     let err = manager.unload_window(&key).unwrap_err();
-    let Error::WindowBusy {
+    let Error::Sync(SyncError::WindowBusy {
         window_key,
         outstanding_handles,
-    } = &err
+    }) = &err
     else {
-        panic!("expected Error::WindowBusy, got {err:?}");
+        panic!("expected Error::Sync(SyncError::WindowBusy), got {err:?}");
     };
     assert_eq!(window_key.as_str(), "2026-03");
     assert_eq!(
@@ -528,7 +529,10 @@ fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
     );
 
     // Still held → still refused: the refusal is a stable, pollable state.
-    assert_matches!(manager.unload_window(&key), Err(Error::WindowBusy { .. }));
+    assert_matches!(
+        manager.unload_window(&key),
+        Err(Error::Sync(SyncError::WindowBusy { .. }))
+    );
 }
 
 /// ONE-1150 — once the last external handle drops, the previously refused
@@ -558,7 +562,10 @@ fn unload_succeeds_after_last_external_handle_drops() {
     win.doc.commit();
 
     // Held → refused. Dropped → the retry succeeds and deregisters.
-    assert_matches!(manager.unload_window(&key), Err(Error::WindowBusy { .. }));
+    assert_matches!(
+        manager.unload_window(&key),
+        Err(Error::Sync(SyncError::WindowBusy { .. }))
+    );
     drop(win);
     assert!(manager.unload_window(&key).unwrap());
     assert!(

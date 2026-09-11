@@ -15,7 +15,7 @@ use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::habit::TaskRole;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::temporal::TimeRange;
@@ -112,7 +112,7 @@ impl Vault {
         validate_comment_text(text)?;
         // Fail closed if the thread does not exist for this artifact.
         self.get_annotation_thread(artifact_id, thread_id)?
-            .ok_or(Error::AnnotationThreadNotFound)?;
+            .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
 
         let claim_id = EntityId::now();
         let envelope = annotation_envelope(author, "comment")?;
@@ -162,7 +162,7 @@ impl Vault {
     ) -> Result<AnnotationThread> {
         let thread = self
             .get_annotation_thread(artifact_id, thread_id)?
-            .ok_or(Error::AnnotationThreadNotFound)?;
+            .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
         let head = ThreadHead {
             thread_id: *thread_id,
             origin_version: thread.origin_version,
@@ -298,7 +298,7 @@ impl Vault {
     ) -> Result<TaskBrief> {
         let thread = self
             .get_annotation_thread(artifact_id, thread_id)?
-            .ok_or(Error::AnnotationThreadNotFound)?;
+            .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
         let comments = self.annotation_thread_comments(artifact_id, thread_id)?;
         let thread_text = comments
             .iter()
@@ -449,15 +449,19 @@ impl Vault {
         version: u64,
     ) -> Result<()> {
         if version == 0 {
-            return Err(Error::InvalidAnchor("anchor version must be at least 1"));
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "anchor version must be at least 1",
+            )));
         }
         let head =
             crate::blob_artifact::read_blob_artifact_head_in_txn(&self.store, rtxn, artifact_id)?
-                .ok_or(Error::InvalidAnchor("anchor artifact has no versions"))?;
+                .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(
+                "anchor artifact has no versions",
+            )))?;
         if version > head.version {
-            return Err(Error::InvalidAnchor(
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                 "anchor version is beyond the artifact head",
-            ));
+            )));
         }
         Ok(())
     }
@@ -559,10 +563,14 @@ pub(super) fn thread_from_head(
 
 fn validate_comment_text(text: &str) -> Result<()> {
     if text.is_empty() {
-        return Err(Error::InvalidAnchor("comment text must be non-empty"));
+        return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+            "comment text must be non-empty",
+        )));
     }
     if text.len() > ANNOTATION_COMMENT_TEXT_MAX_BYTES {
-        return Err(Error::InvalidAnchor("comment text is too long"));
+        return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+            "comment text is too long",
+        )));
     }
     Ok(())
 }

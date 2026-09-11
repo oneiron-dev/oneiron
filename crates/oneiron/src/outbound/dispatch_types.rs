@@ -107,7 +107,7 @@ pub struct OutboundDispatchRequest {
     pub counterparty_ref: Option<String>,
     pub window_decision: OutboundDeliveryWindowDecision,
     /// Session ref of the in-session trigger, when known. OF-326 talk-only:
-    /// dispatch rejects the intent with [`Error::OffRecordTalkOnly`] while
+    /// dispatch rejects the intent with [`OffRecordError::OffRecordTalkOnly`](crate::error::OffRecordError::OffRecordTalkOnly) while
     /// the referenced session is in off-record mode.
     pub originating_session_ref: Option<String>,
     /// Granted ambient conditions active at the send-time door, such as a

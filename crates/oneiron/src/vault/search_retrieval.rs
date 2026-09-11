@@ -125,7 +125,7 @@ impl Vault {
     /// per-channel weight / `b`). The profile never touches the on-disk
     /// index or the open-time manifest handshake — changing it does not
     /// require a reindex. Invalid profiles fail closed with
-    /// [`crate::Error::InvalidRankProfile`].
+    /// [`StoreError::InvalidRankProfile`](crate::error::StoreError::InvalidRankProfile).
     pub fn search_text_with_profile(
         &self,
         query: &str,

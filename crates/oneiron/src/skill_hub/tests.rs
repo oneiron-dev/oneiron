@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::{ArtifactError, ClaimError, RegistryError};
 use crate::skill::SkillGovernanceTier;
 use crate::skill_optimize::{SkillTierVerdict, skill_governance_tier};
 
@@ -791,7 +792,10 @@ fn import_refuses_hash_collision_across_skill_ids() -> Result<()> {
         .import_skill_from_hub(&second_ref, &second, t(3), 4)
         .expect_err("matching content must not dedup across skill ids");
 
-    assert!(matches!(error, Error::InvalidSkillBody(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidSkillBody(_))
+    ));
     assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
     assert_eq!(
         vault
@@ -822,7 +826,10 @@ fn import_refuses_conflicting_capabilities_on_dedup() -> Result<()> {
         .import_skill_from_hub(&second_ref, &second, t(3), 4)
         .expect_err("matching content must not dedup conflicting capabilities");
 
-    assert!(matches!(error, Error::InvalidSkillBody(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidSkillBody(_))
+    ));
     assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
     Ok(())
 }
@@ -1155,7 +1162,10 @@ fn sync_enforces_content_hash_pin_under_any_policy() -> Result<()> {
             4,
         )
         .expect_err("content-hash pin must bind every sync policy");
-    assert!(matches!(error, Error::InvalidSkillBody(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidSkillBody(_))
+    ));
     assert_eq!(
         vault
             .get_skill_record(&entity)?
@@ -1243,7 +1253,10 @@ fn content_hash_frozen_requires_pin() -> Result<()> {
             4,
         )
         .expect_err("content-hash-frozen policy requires a content_hash pin");
-    assert!(matches!(error, Error::InvalidSkillBody(_)));
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::InvalidSkillBody(_))
+    ));
     Ok(())
 }
 
@@ -1816,9 +1829,9 @@ fn a_non_anchor_entity_squatting_the_anchor_id_is_refused() -> Result<()> {
     assert!(
         matches!(
             error,
-            Error::SkillContentAnchorTypeMismatch {
+            Error::Artifact(ArtifactError::SkillContentAnchorTypeMismatch {
                 existing: crate::registry::ENTITY_TYPE_PERSON
-            }
+            })
         ),
         "expected a typed anchor mismatch, got {error:?}"
     );
@@ -1968,7 +1981,9 @@ fn content_anchor_is_delete_protected_on_every_door() -> Result<()> {
     assert!(
         matches!(
             vault.delete_entity(&anchor_id),
-            Err(Error::MaintenanceKindNotWritable(_))
+            Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                _
+            )))
         ),
         "targeted delete of the content anchor must be refused"
     );
@@ -1982,7 +1997,9 @@ fn content_anchor_is_delete_protected_on_every_door() -> Result<()> {
     assert!(
         matches!(
             vault.batch().delete(&anchor_id).commit(),
-            Err(Error::MaintenanceKindNotWritable(_))
+            Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                _
+            )))
         ),
         "batch delete of the content anchor must be refused"
     );
@@ -2004,7 +2021,7 @@ fn anchor_subjected_verdict_stays_unforgeable_via_public_door() -> Result<()> {
     let body = scan_verdict_body(anchor, "forged", 1);
     assert!(matches!(
         vault.put_claim(&EntityId::now(), &body, t(1), 2),
-        Err(Error::ReservedPredicate { .. })
+        Err(Error::Claim(ClaimError::ReservedPredicate { .. }))
     ));
     Ok(())
 }

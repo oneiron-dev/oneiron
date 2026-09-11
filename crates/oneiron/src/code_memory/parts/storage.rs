@@ -8,14 +8,14 @@ fn record_error() -> Error {
 
 fn validate_slot_name(value: &str) -> Result<()> {
     if value.is_empty() || value.len() > CODE_MEMORY_SLOT_NAME_MAX_BYTES {
-        return Err(Error::CodeMemoryInvalidAnchor {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
             reason: "slot name must be non-empty and within the pinned length bound",
-        });
+        }));
     }
     if value.trim() != value || value.chars().any(char::is_control) {
-        return Err(Error::CodeMemoryInvalidAnchor {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
             reason: "slot name must be trimmed and free of control characters",
-        });
+        }));
     }
     Ok(())
 }
@@ -28,29 +28,31 @@ fn validate_locator_path(path: &str) -> Result<()> {
         || path.trim() != path
         || path.chars().any(char::is_control)
     {
-        return Err(Error::CodeMemoryInvalidAnchor {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
             reason: "locator path must be non-empty, trimmed, bounded, and free of control characters",
-        });
+        }));
     }
     if path.starts_with('/') || path.contains('\\') {
-        return Err(Error::CodeMemoryInvalidAnchor {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
             reason: "locator path must be repository-relative",
-        });
+        }));
     }
     if path
         .split('/')
         .any(|part| part.is_empty() || part == "." || part == "..")
     {
-        return Err(Error::CodeMemoryInvalidAnchor {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
             reason: "locator path must be normalized and cannot contain . or .. segments",
-        });
+        }));
     }
     Ok(())
 }
 
 fn validate_time_range(range: TimeRange, field: &'static str) -> Result<()> {
     if range.start > range.end {
-        return Err(Error::CodeMemoryInvalidAnchor { reason: field });
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
+            reason: field,
+        }));
     }
     Ok(())
 }
@@ -69,9 +71,9 @@ fn validate_code_symbol_anchor(store: &Store, txn: &RoTxn<'_>, symbol_id: &Entit
     if entity_type_in_txn(store, txn, symbol_id)? == Some(ENTITY_TYPE_CODE_SYMBOL) {
         return Ok(());
     }
-    Err(Error::CodeMemoryInvalidAnchor {
+    Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
         reason: "code-memory anchors must name a live CODE_SYMBOL entity",
-    })
+    }))
 }
 
 fn key_with_symbol(prefix: &[u8], symbol_id: &EntityId) -> Vec<u8> {
@@ -702,4 +704,3 @@ pub(crate) fn read_attachments_for_symbol(
     }
     Ok(attachments)
 }
-

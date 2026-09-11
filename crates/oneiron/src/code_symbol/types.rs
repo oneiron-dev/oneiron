@@ -10,6 +10,7 @@ use super::validate::{
     compare_code_symbol_graph_edges, compare_symbols, normalize_commit_hash,
     sort_chunks_with_index_remap, validate_code_symbol_graph_edge, validate_code_symbol_manifest,
 };
+use crate::error::CodeError;
 
 pub const CODE_SYMBOL_TEXT_HASH_LEN: usize = 32;
 
@@ -178,15 +179,15 @@ impl CodeSymbolManifest {
         for symbol in &mut symbols {
             for index in &mut symbol.chunk_indexes {
                 let old_index = usize::try_from(*index).map_err(|_| {
-                    Error::InvalidCodeSymbolManifestBody(
+                    Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                         "symbol revision chunk index exceeds usize",
-                    )
+                    ))
                 })?;
-                *index = *remapped_indexes.get(old_index).ok_or(
-                    Error::InvalidCodeSymbolManifestBody(
+                *index = *remapped_indexes.get(old_index).ok_or(Error::Code(
+                    CodeError::InvalidCodeSymbolManifestBody(
                         "symbol revision chunk index is out of bounds",
                     ),
-                )?;
+                ))?;
             }
             symbol.chunk_indexes.sort_unstable();
             symbol.chunk_indexes.dedup();

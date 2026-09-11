@@ -2,7 +2,7 @@
 
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::llm::ModelTierRef;
 use crate::pipeline::WorldScope;
 use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
@@ -319,9 +319,9 @@ impl CompactionOwnership {
         match value {
             Self::ENGINE => Ok(Self::Engine),
             Self::BYOA => Ok(Self::Byoa),
-            _ => Err(Error::InvalidAgentDefBody(
+            _ => Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "memory_profile compaction must be one of engine|byoa",
-            )),
+            ))),
         }
     }
 }

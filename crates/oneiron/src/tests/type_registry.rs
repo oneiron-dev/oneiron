@@ -1,6 +1,7 @@
 //! Type-byte zones, structural-kind registry, entity-type validation on every write path.
 
 use super::*;
+use crate::error::RegistryError;
 
 /// Every presentation prefix names exactly one thing, across all three tables.
 ///
@@ -299,7 +300,7 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
         )
         .expect_err("TASK_LIST's byte is statically reserved");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindTypeByteCollision(byte) if byte == ENTITY_TYPE_TASK_LIST);
+    assert_matches!(err, Error::Registry(RegistryError::StructuralKindTypeByteCollision(byte)) if byte == ENTITY_TYPE_TASK_LIST);
     assert!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
         "static-byte rejection must not persist registry rows"
@@ -325,7 +326,10 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
         .register_structural_kind(110, "nx", TypeByteZone::CompiledProduct, "duplicate-byte")
         .expect_err("duplicate type byte must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindTypeByteCollision(110));
+    assert_matches!(
+        err,
+        Error::Registry(RegistryError::StructuralKindTypeByteCollision(110))
+    );
     assert_eq!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
         before,
@@ -336,7 +340,7 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
         .register_structural_kind(113, "np", TypeByteZone::CompiledProduct, "duplicate-prefix")
         .expect_err("duplicate dynamic prefix must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "np");
+    assert_matches!(err, Error::Registry(RegistryError::StructuralKindPrefixCollision(ref prefix)) if prefix == "np");
     assert_eq!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
         before,
@@ -355,7 +359,7 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
         assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
         assert_matches!(
             err,
-            Error::StructuralKindPrefixCollision(ref prefix) if prefix == static_prefix
+            Error::Registry(RegistryError::StructuralKindPrefixCollision(ref prefix)) if prefix == static_prefix
         );
         assert_eq!(
             vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
@@ -700,7 +704,7 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
             .put_entity(&id, kind_byte, test_time_range(1, 1), 2, payload)
             .expect_err("public put of a maintenance kind must fail");
         assert!(
-            matches!(err, Error::MaintenanceKindNotWritable(byte) if byte == kind_byte),
+            matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(byte)) if byte == kind_byte),
             "expected MaintenanceKindNotWritable({kind_byte}), got {err:?}"
         );
         assert_eq!(err.kind(), ErrorKind::MaintenanceKindNotWritable);
@@ -716,7 +720,7 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
             })
             .expect_err("txn batch put of a maintenance kind must fail");
         assert!(
-            matches!(err, Error::MaintenanceKindNotWritable(byte) if byte == kind_byte),
+            matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(byte)) if byte == kind_byte),
             "expected MaintenanceKindNotWritable({kind_byte}), got {err:?}"
         );
 
@@ -806,11 +810,11 @@ fn reput_with_different_type_byte_is_rejected_with_no_index_residue() -> Result<
     assert!(
         matches!(
             err,
-            Error::EntityTypeImmutable {
+            Error::Registry(RegistryError::EntityTypeImmutable {
                 id: err_id,
                 existing: 1,
                 attempted: 2,
-            } if err_id == id
+            }) if err_id == id
         ),
         "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
     );
@@ -903,11 +907,11 @@ fn txn_batch_reput_with_different_type_byte_rejects_before_staging_writes() -> R
     assert!(
         matches!(
             err,
-            Error::EntityTypeImmutable {
+            Error::Registry(RegistryError::EntityTypeImmutable {
                 id: err_id,
                 existing: 1,
                 attempted: 2,
-            } if err_id == id
+            }) if err_id == id
         ),
         "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
     );
@@ -991,11 +995,11 @@ fn txn_batch_reput_with_different_type_byte_preserves_long_interval_row() -> Res
     assert!(
         matches!(
             err,
-            Error::EntityTypeImmutable {
+            Error::Registry(RegistryError::EntityTypeImmutable {
                 id: err_id,
                 existing: 1,
                 attempted: 2,
-            } if err_id == id
+            }) if err_id == id
         ),
         "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
     );
@@ -1031,11 +1035,11 @@ fn batch_double_put_same_id_different_type_rejects_and_writes_nothing() -> Resul
     assert!(
         matches!(
             err,
-            Error::EntityTypeImmutable {
+            Error::Registry(RegistryError::EntityTypeImmutable {
                 id: err_id,
                 existing: 1,
                 attempted: 2,
-            } if err_id == id
+            }) if err_id == id
         ),
         "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
     );

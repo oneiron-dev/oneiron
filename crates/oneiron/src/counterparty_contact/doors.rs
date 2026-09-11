@@ -20,7 +20,7 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
 use crate::temporal::TimeRange;
 use crate::vault::entity_id_from_type_index_key;
@@ -43,7 +43,7 @@ impl Vault {
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some()
             || self.counterparty_contact_assignment_conflict_in_txn(&wtxn, id, record)?
         {
-            return Err(Error::CounterpartyContactAlreadyExists);
+            return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
         }
         // Claims first, cache second, one transaction (ONE-1752): the heads are
         // the truth and the row is derived from them. The claim_of edges point
@@ -433,7 +433,7 @@ impl Vault {
         if let Some(raw_id) = self.store.vault_meta.get(&*wtxn, &new_index_key)? {
             let existing_id = decode_counterparty_contact_index_value(&raw_id)?;
             if existing_id != *id {
-                return Err(Error::CounterpartyContactAlreadyExists);
+                return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
             }
         }
 

@@ -1,6 +1,7 @@
 //! Abandon gates and terminal idempotence, write-once set_result, and result refs.
 
 use super::*;
+use crate::error::ArtifactError;
 
 #[test]
 fn abandon_requires_a_lease_a_reason_and_a_result_reference() -> Result<()> {
@@ -53,7 +54,9 @@ fn abandon_requires_a_lease_a_reason_and_a_result_reference() -> Result<()> {
         .expect_err("an abandonment must say why it stopped");
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueRecord(ERR_FAILURE_REASON_EMPTY)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_FAILURE_REASON_EMPTY
+        ))
     ));
     assert!(
         AttemptResultRef::new("").is_err(),
@@ -343,7 +346,9 @@ fn set_result_is_fenced_write_once_and_idempotent() -> Result<()> {
         .expect_err("a result reference is write-once");
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_REBOUND)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RESULT_REF_REBOUND
+        ))
     ));
 
     // The reference survives settling, so a completed row still names its
@@ -427,7 +432,9 @@ fn a_malformed_abandoned_row_fails_closed_on_decode() -> Result<()> {
     let err = decode_record(&encoded, record.id).expect_err("an abandonment needs its artifact");
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueRecord(ERR_ABANDONED_WITHOUT_RESULT)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_ABANDONED_WITHOUT_RESULT
+        ))
     ));
 
     // No reason: the stop would not be explainable.
@@ -437,7 +444,9 @@ fn a_malformed_abandoned_row_fails_closed_on_decode() -> Result<()> {
     let err = decode_record(&encoded, record.id).expect_err("an abandonment needs its reason");
     assert!(matches!(
         err,
-        Error::InvalidAttemptQueueRecord(ERR_ABANDONED_WITHOUT_REASON)
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_ABANDONED_WITHOUT_REASON
+        ))
     ));
 
     // A lease owner: a settled row holds no lease.

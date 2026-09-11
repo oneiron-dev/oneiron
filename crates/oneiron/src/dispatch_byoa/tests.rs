@@ -5,6 +5,7 @@ use super::*;
 use crate::attempt_queue::{
     AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome,
 };
+use crate::error::{ArtifactError, ClaimError};
 use crate::llm::{
     BudgetDenied, BudgetLease, LlmBackend, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId,
 };
@@ -607,7 +608,7 @@ fn capture_refuses_an_incompatible_runtime_actor_without_overwriting_it() {
         .expect_err("an incompatible actor must not be replaced");
     assert!(matches!(
         refused,
-        ByoaError::Store(Error::ActorClassMismatch { .. })
+        ByoaError::Store(Error::Claim(ClaimError::ActorClassMismatch { .. }))
     ));
     assert_eq!(
         custody_snapshot(&vault),
@@ -733,10 +734,12 @@ fn capture_refuses_an_empty_exhaust_and_an_unclaimed_row() {
     assert!(
         matches!(
             refused,
-            ByoaError::Store(Error::InvalidAttemptQueueTransition {
-                action: "abandon",
-                state: "queued",
-            })
+            ByoaError::Store(Error::Artifact(
+                ArtifactError::InvalidAttemptQueueTransition {
+                    action: "abandon",
+                    state: "queued",
+                }
+            ))
         ),
         "capture must reach the queue fence, not fail on a missing blob writer: {refused:?}"
     );
@@ -1054,7 +1057,9 @@ fn capture_rejects_precreated_artifacts_even_with_canonical_metadata() {
             .expect_err("collision");
         assert!(matches!(
             error,
-            ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_ARTIFACT_COLLISION))
+            ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                ERR_ARTIFACT_COLLISION
+            )))
         ));
         assert_eq!(custody_snapshot(&vault), before);
     }
@@ -1268,8 +1273,8 @@ fn exhaust_stream_and_aggregate_limits_apply_before_capture_and_on_decode() {
     at_limit.checkpoint_frontier.push("x".to_owned());
     assert!(matches!(
         validate_exhaust(&at_limit),
-        Err(ByoaError::Store(Error::InvalidAgentDispatchInput(
-            ERR_EXHAUST_TOO_LARGE
+        Err(ByoaError::Store(Error::Artifact(
+            ArtifactError::InvalidAgentDispatchInput(ERR_EXHAUST_TOO_LARGE)
         )))
     ));
     let before = custody_snapshot(&vault);

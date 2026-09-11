@@ -1,6 +1,7 @@
 //! Classifier dial and pattern roles: verdict reuse per dial/mode, model-call economy, strictest-role-wins.
 
 use super::*;
+use crate::error::RelayError;
 
 #[test]
 fn a_verdict_minted_under_pattern_gated_goes_stale_when_the_dial_says_classify_all() -> Result<()> {
@@ -96,7 +97,10 @@ fn the_enforce_door_refuses_a_verdict_whose_dial_moved() -> Result<()> {
         false,
     );
 
-    assert!(matches!(refused, Err(Error::PolicyVerdictNotInForce)));
+    assert!(matches!(
+        refused,
+        Err(Error::Relay(RelayError::PolicyVerdictNotInForce))
+    ));
     Ok(())
 }
 

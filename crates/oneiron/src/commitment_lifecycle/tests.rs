@@ -19,6 +19,7 @@ use crate::commitment_schedule::{
 };
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
+use crate::error::{ClaimError, RegistryError};
 use crate::habit::{TaskRole, task_body_for_test};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
@@ -390,18 +391,18 @@ fn reserved_fulfills_cannot_be_forged_publicly() -> Result<()> {
     ] {
         assert!(matches!(
             vault.batch().edge(&src, kind, &tgt, 1.0).commit(),
-            Err(Error::ReservedEdgeKind(got)) if got == reason
+            Err(Error::Registry(RegistryError::ReservedEdgeKind(got))) if got == reason
         ));
         assert!(matches!(
             vault
                 .batch()
                 .edge_with_created_at(&src, kind, &tgt, 1.0, 300)
                 .commit(),
-            Err(Error::ReservedEdgeKind(got)) if got == reason
+            Err(Error::Registry(RegistryError::ReservedEdgeKind(got))) if got == reason
         ));
         assert!(matches!(
             vault.batch().delete_edge(&src, kind, &tgt).commit(),
-            Err(Error::ReservedEdgeKind(got)) if got == reason
+            Err(Error::Registry(RegistryError::ReservedEdgeKind(got))) if got == reason
         ));
         assert!(!vault.edge_exists(&src, kind, &tgt)?);
     }
@@ -688,9 +689,9 @@ fn lapse_batch_is_all_or_nothing() -> Result<()> {
             .batch()
             .commitment_gap_decay(&[open, stale], &parties.envelope, 400)
             .commit(),
-        Err(Error::ClaimAlreadyClosed {
+        Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
             status: ClaimLifecycleStatus::Superseded,
-        })
+        }))
     ));
     assert_eq!(status(&vault, &open)?, CommitmentStatus::Open);
     Ok(())

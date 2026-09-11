@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::Vault;
 use crate::consult_ladder::{ConsultLineage, ConsultPurpose, EntityDeltaArtifact};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 
 /// The only ref kinds a consult payload may carry. A consult asks ABOUT
 /// durable state; it never transports the state itself.
@@ -48,18 +48,27 @@ impl ConsultPayloadRef {
     /// guarantee established before persistence, not a scrubber run over
     /// arbitrary JSON afterwards.
     pub fn parse(vault: &Vault, value: &str) -> Result<Self> {
-        let (prefix, hex) = value
-            .split_once('_')
-            .ok_or(Error::InvalidTaskBody("tasks.consult.ref"))?;
-        let entity_ref =
-            EntityId::from_hex(hex).map_err(|_| Error::InvalidTaskBody("tasks.consult.ref"))?;
+        let (prefix, hex) =
+            value
+                .split_once('_')
+                .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.consult.ref",
+                )))?;
+        let entity_ref = EntityId::from_hex(hex)
+            .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.consult.ref")))?;
         let parsed = match prefix {
             "cl" => Self::Claim(entity_ref),
             "tn" => Self::Turn(entity_ref),
-            _ => return Err(Error::InvalidTaskBody("tasks.consult.ref")),
+            _ => {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.consult.ref",
+                )));
+            }
         };
         if vault.get_entity_type(&entity_ref)? != Some(parsed.entity_type()) {
-            return Err(Error::InvalidTaskBody("tasks.consult.ref"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.consult.ref",
+            )));
         }
         Ok(parsed)
     }
@@ -138,7 +147,9 @@ impl ConsultPayload {
         seen.insert(self.question_ref);
         for context_ref in &self.context_refs {
             if !seen.insert(*context_ref) {
-                return Err(Error::InvalidTaskBody("tasks.consult.duplicate_ref"));
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.consult.duplicate_ref",
+                )));
             }
         }
         self.validate_purpose()
@@ -153,7 +164,9 @@ impl ConsultPayload {
             ConsultPurpose::EntityDelta => self.entity_delta.is_some(),
         };
         if !agrees {
-            return Err(Error::InvalidTaskBody("tasks.consult.purpose"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.consult.purpose",
+            )));
         }
         // Chatter never enters the state machine: the artifact carries refs,
         // and a thread pointer is the ONLY door to the discussion itself.
@@ -162,7 +175,9 @@ impl ConsultPayload {
         {
             // A cross-actor consult whose proposer IS the owner is the
             // auto-apply path taking the wrong door.
-            return Err(Error::InvalidTaskBody("tasks.consult.same_actor"));
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.consult.same_actor",
+            )));
         }
         Ok(())
     }

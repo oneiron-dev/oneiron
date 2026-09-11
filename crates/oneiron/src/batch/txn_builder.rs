@@ -518,7 +518,7 @@ impl<'a> TxnBatchBuilder<'a> {
     ///
     /// Mirrors [`BatchBuilder::set_edge_vad`] for callers composing writes in
     /// an externally-owned transaction, including its reserved-kind
-    /// rejection ([`crate::Error::ReservedEdgeKind`], ARCH-0055).
+    /// rejection ([`RegistryError::ReservedEdgeKind`](crate::error::RegistryError::ReservedEdgeKind), ARCH-0055).
     pub fn set_edge_vad(
         mut self,
         src: &EntityId,

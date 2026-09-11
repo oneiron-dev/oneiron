@@ -12,7 +12,7 @@ use crate::edit_roundtrip::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditProposal, MutationMode, OfficeFormat,
     RecalcStatus, StructureSummary, ValidationReport,
 };
-use crate::error::Error;
+use crate::error::{ArtifactError, Error};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::embedding_test_config;
@@ -161,9 +161,9 @@ fn double_settle_is_refused_across_all_paths() -> Result<()> {
         .expect_err("second select must refuse");
     assert!(matches!(
         err,
-        Error::EditProposalAlreadySettled {
+        Error::Artifact(ArtifactError::EditProposalAlreadySettled {
             outcome: "selected"
-        }
+        })
     ));
 
     // select then discard.
@@ -175,9 +175,9 @@ fn double_settle_is_refused_across_all_paths() -> Result<()> {
         .expect_err("discard after select must refuse");
     assert!(matches!(
         err,
-        Error::EditProposalAlreadySettled {
+        Error::Artifact(ArtifactError::EditProposalAlreadySettled {
             outcome: "selected"
-        }
+        })
     ));
 
     // discard then select — and the refused select appends no version.
@@ -189,9 +189,9 @@ fn double_settle_is_refused_across_all_paths() -> Result<()> {
         .expect_err("select after discard must refuse");
     assert!(matches!(
         err,
-        Error::EditProposalAlreadySettled {
+        Error::Artifact(ArtifactError::EditProposalAlreadySettled {
             outcome: "discarded"
-        }
+        })
     ));
     assert_eq!(
         vault.blob_artifact_versions(&artifact)?.len(),
@@ -415,7 +415,10 @@ fn standing_grant_consent_fails_closed_without_a_covering_grant() -> Result<()> 
     let err = vault
         .settle_select_edit_proposal(&artifact, &prop, &consent, actor, test_time(11), 11)
         .expect_err("standing-grant consent has no covering grant");
-    assert!(matches!(err, Error::SettleNotAuthorized(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::SettleNotAuthorized(_))
+    ));
     // The refused settle committed nothing.
     assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
     assert!(
@@ -515,7 +518,10 @@ fn settle_standing_grant_requires_the_exact_actor_verb_class_and_brief() -> Resu
     let err = vault
         .settle_select_edit_proposal(&artifact, &prop2, &consent, actor, test_time(12), 12)
         .expect_err("revoked grant authorizes nothing");
-    assert!(matches!(err, Error::SettleNotAuthorized(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::SettleNotAuthorized(_))
+    ));
 
     // A CATASTROPHE class can never become a settle grant in the first place.
     for catastrophe in CATASTROPHE_FLOOR_V1 {
@@ -720,6 +726,9 @@ fn settle_standing_grant_revocation_is_atomic_with_the_settle_txn() -> Result<()
     let err = vault
         .settle_select_edit_proposal(&artifact, &proposal, &consent, actor, test_time(22), 22)
         .expect_err("revoked standing grant authorizes no settle");
-    assert!(matches!(err, Error::SettleNotAuthorized(_)));
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::SettleNotAuthorized(_))
+    ));
     Ok(())
 }

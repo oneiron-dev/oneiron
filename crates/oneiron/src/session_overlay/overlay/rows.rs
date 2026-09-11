@@ -11,6 +11,7 @@ use super::super::keyspace::{
 use super::super::snapshot::OverlaySnapshot;
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::SessionOverlay;
+use crate::error::OffRecordError;
 
 impl SessionOverlay {
     // Budget failures belong exclusively to preflight, before the base commit.
@@ -189,10 +190,10 @@ impl SessionOverlay {
             .checked_add(value.len())
             .ok_or(Error::ArithmeticOverflow("overlay payload byte count"))?;
         if payload_bytes > self.budget_bytes {
-            return Err(Error::OffRecordOverlayFull {
+            return Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
                 budget_bytes: self.budget_bytes,
                 attempted_bytes: payload_bytes,
-            });
+            }));
         }
         Ok(())
     }
@@ -202,10 +203,10 @@ impl SessionOverlay {
             .checked_add(incoming_bytes)
             .ok_or(Error::ArithmeticOverflow("overlay attempted byte count"))?;
         if attempted_bytes > self.budget_bytes {
-            return Err(Error::OffRecordOverlayFull {
+            return Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
                 budget_bytes: self.budget_bytes,
                 attempted_bytes,
-            });
+            }));
         }
         Ok(())
     }

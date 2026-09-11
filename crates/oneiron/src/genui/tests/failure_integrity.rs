@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::RegistryError;
 use crate::run_tree::RunTreeStatus;
 
 #[test]
@@ -432,7 +433,7 @@ fn surfaced_failure_card_rejects_extra_canonical_membership_edges() -> Result<()
             // through the raw store so the card reader still faces both bindings.
             assert!(matches!(
                 vault.put_edge(&source, kind, &extra, 1.0),
-                Err(Error::ChildOfCardinality)
+                Err(Error::Registry(RegistryError::ChildOfCardinality))
             ));
             assert_eq!(vault.targets(&source, kind, None)?, vec![conversation]);
             let key_out = Store::encode_edge_key(&source, kind, &extra);

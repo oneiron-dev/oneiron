@@ -13,6 +13,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
+use crate::error::{RecordError, RegistryError};
 use crate::test_util::entity as test_id;
 
 fn all_dimension_budgets() -> Vec<EffectorBudget> {
@@ -155,7 +156,7 @@ fn connector_key_codec_rejects_an_unsupported_version() -> Result<()> {
 
     assert!(matches!(
         decode_connector_key_body(&unsupported_body),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -175,7 +176,7 @@ fn connector_key_codec_rejects_missing_required_body_key() -> Result<()> {
 
     assert!(matches!(
         decode_connector_key_body(&missing_connector),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -194,13 +195,13 @@ fn unbudgeted_mint_normalizes_and_owner_add_enforces() -> Result<()> {
     let invalid_limit = EffectorBudget::rate(0, 3_600);
     assert!(matches!(
         vault.add_connector_key_budget(&id, invalid_limit, 1_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     let mut invalid_unit = EffectorBudget::rate(10, 3_600);
     invalid_unit.unit = Some("USD".to_owned());
     assert!(matches!(
         vault.add_connector_key_budget(&id, invalid_unit, 1_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 
     let mut row = EffectorBudget::rate(2, 3_600);
@@ -238,7 +239,7 @@ fn unbudgeted_mint_normalizes_and_owner_add_enforces() -> Result<()> {
     )?;
     assert!(matches!(
         vault.add_connector_key_budget(&full_id, EffectorBudget::rate(1, 60), 1_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -292,7 +293,7 @@ fn oversized_dispatch_batch_is_rejected() -> Result<()> {
             CONNECTOR_KEY_MAX_DISPATCH_BATCH + 1,
             ConnectorDispatchTelemetry::default(),
         ),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -344,7 +345,7 @@ fn suggested_budget_is_inactive_until_acceptance() -> Result<()> {
     );
     assert!(matches!(
         vault.suggest_connector_key_budget(&id, suspend, 1_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     let spend = EffectorBudget::spend(
         100,
@@ -354,7 +355,7 @@ fn suggested_budget_is_inactive_until_acceptance() -> Result<()> {
     );
     assert!(matches!(
         vault.suggest_connector_key_budget(&id, spend, 1_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -380,7 +381,7 @@ fn suggestion_accept_respects_active_row_cap() -> Result<()> {
     assert_eq!(staged.suggested_budgets, vec![EffectorBudget::rate(2, 60)]);
     assert!(matches!(
         vault.accept_connector_key_budget_suggestion(&id, 0, 1_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     let unchanged = vault.get_connector_key(&id)?.expect("stored key");
     assert_eq!(unchanged.budgets, staged.budgets);
@@ -751,7 +752,9 @@ fn connector_key_registry_entry_is_pinned() -> Result<()> {
     assert_eq!(short_id_prefix(ENTITY_TYPE_CONNECTOR_KEY)?, "ck");
     assert!(matches!(
         validate_public_entity_type(ENTITY_TYPE_CONNECTOR_KEY),
-        Err(Error::MaintenanceKindNotWritable(70))
+        Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            70
+        )))
     ));
     Ok(())
 }
@@ -815,7 +818,7 @@ fn register_enforces_tuple_uniqueness_until_revoked() -> Result<()> {
             &test_id(0xD3),
             ConnectorKeyRecord::active("line", Some(actor), Vec::new(), 1_001),
         ),
-        Err(Error::ConnectorKeyAlreadyExists)
+        Err(Error::Record(RecordError::ConnectorKeyAlreadyExists))
     ));
     // Reusing the same entity id: rejected.
     assert!(matches!(
@@ -823,7 +826,7 @@ fn register_enforces_tuple_uniqueness_until_revoked() -> Result<()> {
             &test_id(0xD2),
             ConnectorKeyRecord::active("email", Some(actor), Vec::new(), 1_001),
         ),
-        Err(Error::ConnectorKeyAlreadyExists)
+        Err(Error::Record(RecordError::ConnectorKeyAlreadyExists))
     ));
     // Same connector, different actor: fine.
     vault
@@ -863,7 +866,7 @@ fn register_rejects_non_active_status_and_prestamped_charter() {
     };
     assert!(matches!(
         vault.register_connector_key(&test_id(0x5E), suspended),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 
     let pre_stamped = ConnectorKeyRecord {
@@ -881,7 +884,7 @@ fn register_rejects_non_active_status_and_prestamped_charter() {
     };
     assert!(matches!(
         vault.register_connector_key(&test_id(0xE2), pre_stamped),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 }
 
@@ -899,7 +902,7 @@ fn validation_rejects_malformed_budget_rows() {
     spend_without_unit.unit = None;
     assert!(matches!(
         encode_connector_key_body(&record(vec![spend_without_unit])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert!(matches!(
         encode_connector_key_body(&record(vec![EffectorBudget::spend(
@@ -908,7 +911,7 @@ fn validation_rejects_malformed_budget_rows() {
             day(),
             EffectorBudgetOnExhaust::Refuse,
         )])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 
     let encoded = encode_connector_key_body(&record(vec![EffectorBudget::spend(
@@ -928,11 +931,11 @@ fn validation_rejects_malformed_budget_rows() {
             day(),
             EffectorBudgetOnExhaust::Refuse,
         )])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert!(matches!(
         encode_connector_key_body(&record(vec![EffectorBudget::rate(5, 0)])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert!(matches!(
         encode_connector_key_body(&record(vec![EffectorBudget::sends(
@@ -943,14 +946,14 @@ fn validation_rejects_malformed_budget_rows() {
             },
             EffectorBudgetOnExhaust::Refuse,
         )])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     let seventeen = (0..17)
         .map(|_| EffectorBudget::rate(5, 60))
         .collect::<Vec<_>>();
     assert!(matches!(
         encode_connector_key_body(&record(seventeen)),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 }
 
@@ -1136,11 +1139,11 @@ fn spend_settle_accumulates_and_suspends_on_crossing() -> Result<()> {
 
     assert!(matches!(
         vault.settle_connector_spend(&id, 0, 1, 1_300, "settle:three"),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert!(matches!(
         vault.settle_connector_spend(&id, 7, 1, 1_300, "settle:four"),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -1161,7 +1164,7 @@ fn lifecycle_transitions_are_enforced() -> Result<()> {
     // Suspend requires Active.
     assert!(matches!(
         vault.suspend_connector_key(&id, "owner", 1_011),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 
     let resumed = vault.resume_connector_key(&id, 1_020)?;
@@ -1170,7 +1173,7 @@ fn lifecycle_transitions_are_enforced() -> Result<()> {
     // Resume requires Suspended.
     assert!(matches!(
         vault.resume_connector_key(&id, 1_021),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 
     let revoked = vault.revoke_connector_key(&id, 1_030)?;
@@ -1178,11 +1181,11 @@ fn lifecycle_transitions_are_enforced() -> Result<()> {
     // Revoked is terminal.
     assert!(matches!(
         vault.revoke_connector_key(&id, 1_031),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert!(matches!(
         vault.resume_connector_key(&id, 1_032),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -1299,20 +1302,22 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
     // usage entry log bounded by the row limit).
     assert!(matches!(
         vault.settle_connector_spend(&id, 0, 0, 2_000, "settle:zero"),
-        Err(Error::InvalidConnectorKeyBody(
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(
             "settle amount must be at least 1"
-        ))
+        )))
     ));
     // Event identity is required and shape-checked.
     assert!(matches!(
         vault.settle_connector_spend(&id, 0, 10, 2_000, "  "),
-        Err(Error::InvalidConnectorKeyBody(
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(
             "settle event_ref must not be blank"
-        ))
+        )))
     ));
     assert!(matches!(
         vault.settle_connector_spend(&id, 0, 10, 2_000, "x".repeat(129).as_str()),
-        Err(Error::InvalidConnectorKeyBody("settle event_ref too long"))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(
+            "settle event_ref too long"
+        )))
     ));
 
     // cost_occurred_at is a DECLARED fact, never a window selector: a
@@ -1376,9 +1381,9 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
         assert!(
             matches!(
                 vault.settle_connector_spend(&id, row, amount, 5, "settle:first-touch-ancient"),
-                Err(Error::InvalidConnectorKeyBody(
+                Err(Error::Record(RecordError::InvalidConnectorKeyBody(
                     "settle event replay with different settlement"
-                ))
+                )))
             ),
             "content-mismatched replay (row {row}, amount {amount}) must fail closed"
         );
@@ -1393,7 +1398,7 @@ fn stored_form_must_be_canonical() -> Result<()> {
         ConnectorKeyRecord::active(" Slack-Chat ", None, Vec::new(), 1_000);
     assert!(matches!(
         encode_connector_key_body(&non_canonical_connector),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 
     let mut non_canonical_class = EffectorBudget::rate(5, 60);
@@ -1401,7 +1406,7 @@ fn stored_form_must_be_canonical() -> Result<()> {
     let record = ConnectorKeyRecord::active("slack", None, vec![non_canonical_class], 1_000);
     assert!(matches!(
         encode_connector_key_body(&record),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 
     // The public write door normalizes messy owner input before validation.
@@ -1851,11 +1856,11 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
     // Approve/discard without a staged proposal fail closed.
     assert!(matches!(
         vault.approve_connector_charter(&id, [0; 32], "owner", 1_001),
-        Err(Error::ConnectorCharterMissing)
+        Err(Error::Record(RecordError::ConnectorCharterMissing))
     ));
     assert!(matches!(
         vault.discard_connector_charter(&id, 1_001),
-        Err(Error::ConnectorCharterMissing)
+        Err(Error::Record(RecordError::ConnectorCharterMissing))
     ));
 
     // Propose stages the compile and NEVER changes enforcement state.
@@ -1874,7 +1879,10 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
     // A malformed charter does not clobber the staged proposal.
     assert!(matches!(
         vault.propose_connector_charter(&id, "cap 0 sends per day on slack", 1_003),
-        Err(Error::ConnectorCharterCompile { line_number: 1, .. })
+        Err(Error::Record(RecordError::ConnectorCharterCompile {
+            line_number: 1,
+            ..
+        }))
     ));
     let record = vault.get_connector_key(&id)?.expect("record");
     assert!(record.charter.is_none());
@@ -1890,11 +1898,11 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
     // The human gate demands the out-of-band re-presented hash.
     assert!(matches!(
         vault.approve_connector_charter(&id, [0xAB; 32], "owner", 1_004),
-        Err(Error::ConnectorCharterApprovalMismatch)
+        Err(Error::Record(RecordError::ConnectorCharterApprovalMismatch))
     ));
     assert!(matches!(
         vault.approve_connector_charter(&id, pending.compiled_hash, "  ", 1_004),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     let stamped =
         vault.approve_connector_charter(&id, pending.compiled_hash, "owner:olety", 1_005)?;
@@ -1944,7 +1952,7 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
     vault.revoke_connector_key(&id, 1_010)?;
     assert!(matches!(
         vault.propose_connector_charter(&id, "never call", 1_011),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -2019,12 +2027,12 @@ fn revoked_key_charter_ops_fail_closed_and_revoke_clears_pending() -> Result<()>
     // Approve on a revoked key now errors (propose -> revoke -> approve).
     assert!(matches!(
         vault.approve_connector_charter(&id, pending.compiled_hash, "owner", 1_003),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     // Discard on a revoked key errors too.
     assert!(matches!(
         vault.discard_connector_charter(&id, 1_004),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())
 }
@@ -2050,7 +2058,7 @@ fn malformed_never_list_entry_fails_closed_at_validation() {
     // Missing separators must fail closed at encoding.
     assert!(matches!(
         encode_connector_key_body(&charter(vec!["delete".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     // Colons inside an ordinary channel are data; the last segment is the verb.
     let bytes = encode_connector_key_body(&charter(vec!["slack:call:x".to_owned()]))
@@ -2063,22 +2071,22 @@ fn malformed_never_list_entry_fails_closed_at_validation() {
     // Partial capability wildcards fail closed.
     assert!(matches!(
         encode_connector_key_body(&charter(vec!["capability-key:mcp:acme:grant:*".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     // Same on the channel side of an ordinary rule.
     assert!(matches!(
         encode_connector_key_body(&charter(vec!["mcp*:acme:grant:ab12".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     // Empty channel part.
     assert!(matches!(
         encode_connector_key_body(&charter(vec![":delete".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     // Verb part carries a byte outside `[a-z0-9_]`.
     assert!(matches!(
         encode_connector_key_body(&charter(vec!["slack:call!".to_owned()])),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     // Both well-formed wildcard forms survive encoding and enforce their rules.
     let bytes =
@@ -2120,7 +2128,7 @@ fn never_list_entry_must_be_canonical_form() {
         assert!(
             matches!(
                 validate_compiled_policy(&policy(entry)),
-                Err(Error::InvalidConnectorKeyBody(_))
+                Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
             ),
             "non-canonical never_list entry {entry:?} must fail closed"
         );
@@ -2176,7 +2184,7 @@ fn never_list_entry_must_be_canonical_form() {
         assert!(
             matches!(
                 validate_compiled_policy(&policy(entry)),
-                Err(Error::InvalidConnectorKeyBody(_))
+                Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
             ),
             "malformed never_list entry {entry:?} must fail closed"
         );
@@ -2808,7 +2816,7 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
                 ..ConnectorKeyRecord::active("slack", None, Vec::new(), 1_000)
             },
         ),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert!(vault.get_connector_key(&id)?.is_none());
     assert!(vault.connector_key_for("slack", None)?.is_none());
@@ -2823,7 +2831,7 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
             },
             1_000,
         ),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert!(vault.describe_connector("herald_slack")?.is_none());
     assert!(catalog_name_index_row(&vault, "herald_slack")?.is_none());
@@ -2906,7 +2914,7 @@ fn register_connector_is_atomic() -> Result<()> {
             ConnectorKeySpec::new("other"),
             1_010,
         ),
-        Err(Error::ConnectorKeyAlreadyExists)
+        Err(Error::Record(RecordError::ConnectorKeyAlreadyExists))
     ));
 
     // Blank / NUL names fail pre-write.
@@ -2917,7 +2925,7 @@ fn register_connector_is_atomic() -> Result<()> {
                 ConnectorKeySpec::new("line"),
                 1_011,
             ),
-            Err(Error::InvalidConnectorKeyBody(_))
+            Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
         ));
     }
     assert!(vault.connector_key_for("line", None)?.is_none());
@@ -2929,7 +2937,7 @@ fn register_connector_is_atomic() -> Result<()> {
             ConnectorKeySpec::new("my_connector"),
             1_020,
         ),
-        Err(Error::ConnectorKeyAlreadyExists)
+        Err(Error::Record(RecordError::ConnectorKeyAlreadyExists))
     ));
     assert!(catalog_name_index_row(&vault, "second_name")?.is_none());
     assert!(vault.describe_connector("second_name")?.is_none());
@@ -2944,7 +2952,7 @@ fn register_connector_is_atomic() -> Result<()> {
                 ..ConnectorKeyRecord::active("line", None, Vec::new(), 1_030)
             },
         ),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert!(vault.get_connector_key(&legacy_id)?.is_none());
     assert!(catalog_name_index_row(&vault, "legacy")?.is_none());
@@ -3012,7 +3020,7 @@ fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
     // An unresolved reference is a ruled error and writes nothing.
     assert!(matches!(
         vault.rotate_connector_key(&id, "ghost_token", 3_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     let stored = vault.get_connector_key(&id)?.expect("stored key");
     assert_eq!(stored.secret_ref.as_deref(), Some("token_v2"));
@@ -3065,7 +3073,7 @@ fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
     vault.revoke_connector_key(&legacy_id, 3_500)?;
     assert!(matches!(
         vault.rotate_connector_key(&legacy_id, "token_v1", 3_600),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     let stored = vault.get_connector_key(&legacy_id)?.expect("revoked key");
     assert_eq!(stored.status, ConnectorKeyStatus::Revoked);
@@ -3124,13 +3132,13 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
             ConnectorKeySpec::new("line"),
             3_000,
         ),
-        Err(Error::ConnectorKeyAlreadyExists)
+        Err(Error::Record(RecordError::ConnectorKeyAlreadyExists))
     ));
 
     // Removing an already-terminal key inherits the illegal-transition error.
     assert!(matches!(
         vault.remove_connector_key(&id, 4_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
 
     // The public revoke path still appends its own revoke record.
@@ -3379,7 +3387,7 @@ fn logical_send_ref_is_validated() -> Result<()> {
     for bad in ["   ", too_long.as_str(), "task\u{0}alpha"] {
         assert!(matches!(
             vault.admit_connector_key_send_at(&id, "peer", bad, 1_000),
-            Err(Error::InvalidConnectorKeyBody(_))
+            Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
         ));
     }
     // Rejected BEFORE any charge or dedupe write.
@@ -3389,7 +3397,7 @@ fn logical_send_ref_is_validated() -> Result<()> {
     // The effect channel is checked on the same pre-write pass.
     assert!(matches!(
         vault.admit_connector_key_send_at(&id, "  ", "task:alpha", 1_000),
-        Err(Error::InvalidConnectorKeyBody(_))
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     assert_eq!(dispatch_usage_row(&vault, &id, 0)?.used(), 0);
     assert_eq!(send_admit_row_count(&vault, &id)?, 0);

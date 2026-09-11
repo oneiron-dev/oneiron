@@ -9,6 +9,7 @@ use crate::companion::{
 };
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::error::SyncError;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
@@ -822,9 +823,9 @@ fn prune_refuses_keys_outside_the_window_family() {
     assert!(
         matches!(
             err,
-            Error::SyncProtocolError {
+            Error::Sync(SyncError::SyncProtocolError {
                 context: SyncProtocolValidation::ScopedPrune { .. }
-            }
+            })
         ),
         "typed error, got: {err:?}"
     );

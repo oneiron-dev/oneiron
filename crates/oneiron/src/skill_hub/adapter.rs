@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 
 use super::package::{HubIndexEntry, HubPackage};
 use super::record::{HubPin, HubRef, SkillHubKind};
@@ -37,7 +37,9 @@ impl AdapterPackageStore {
         self.packages
             .get(&(hub_ref.ref_string.clone(), hub_ref.pin.clone()))
             .cloned()
-            .ok_or(Error::InvalidSkillBody("hub ref package was not found"))
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "hub ref package was not found",
+            )))
     }
 }
 
@@ -82,9 +84,9 @@ macro_rules! package_adapter {
 
             fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage> {
                 if hub_ref.hub_id != self.hub_id {
-                    return Err(Error::InvalidSkillBody(
+                    return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                         "adapter cannot fetch a ref from another hub",
-                    ));
+                    )));
                 }
                 self.store.fetch(hub_ref)
             }
@@ -136,9 +138,9 @@ impl SkillHubAdapter for HttpIndexSkillHubAdapter {
 
     fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage> {
         if hub_ref.hub_id != self.hub_id {
-            return Err(Error::InvalidSkillBody(
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "adapter cannot fetch a ref from another hub",
-            ));
+            )));
         }
         self.store.fetch(hub_ref)
     }

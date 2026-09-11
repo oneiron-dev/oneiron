@@ -7,7 +7,7 @@ use super::{RematCtx, RematLedger};
 
 use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, RegistryError};
 
 /// Outcome of the tombstone pass. The error is DEFERRED past the marker
 /// bookkeeping txn (Trap 2): the caller runs that txn first and only then
@@ -81,7 +81,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
             && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
             && let Some(header) = bridge::admitted_concurrent_delete_protected_header(&entity_blob)
         {
-            let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
+            let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                header.entity_type,
+            ));
             if let Err(quarantine_err) = quarantine::quarantine_rejected_op(
                 vault,
                 window_key.as_str(),

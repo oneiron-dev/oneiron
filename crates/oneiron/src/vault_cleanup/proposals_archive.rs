@@ -12,7 +12,7 @@ use crate::deletion::{
     ARCHIVE_TOMBSTONE_PREFIX, TombstoneReason, entity_id_from_archive_tombstone_key,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, MaintenanceError, Result};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ pub fn cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<Option<Cle
 ///
 /// # Errors
 ///
-/// [`Error::VaultCleanupProposalNotFound`] when no such proposal is open;
+/// [`MaintenanceError::VaultCleanupProposalNotFound`](crate::error::MaintenanceError::VaultCleanupProposalNotFound) when no such proposal is open;
 /// storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn accept_cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<CleanupAcceptOutcome> {
     vault.with_write_txn(|wtxn| accept_cleanup_proposal_in_txn(vault, wtxn, proposal))
@@ -70,9 +70,11 @@ pub(super) fn accept_cleanup_proposal_in_txn(
 ) -> Result<CleanupAcceptOutcome> {
     let key = proposal_key(proposal);
     let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? else {
-        return Err(Error::VaultCleanupProposalNotFound {
-            proposal: proposal.to_hex(),
-        });
+        return Err(Error::Maintenance(
+            MaintenanceError::VaultCleanupProposalNotFound {
+                proposal: proposal.to_hex(),
+            },
+        ));
     };
     let row = decode_proposal(&key, &raw)?;
     let applied = apply_archives_in_txn(vault, wtxn, &row.candidates)?;
@@ -102,7 +104,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
 ///
 /// # Errors
 ///
-/// [`Error::VaultCleanupProposalNotFound`] when no such proposal is open;
+/// [`MaintenanceError::VaultCleanupProposalNotFound`](crate::error::MaintenanceError::VaultCleanupProposalNotFound) when no such proposal is open;
 /// storage errors.
 pub fn reject_cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<()> {
     vault.with_write_txn(|wtxn| {
@@ -111,9 +113,11 @@ pub fn reject_cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<()>
             .vault_meta
             .delete(wtxn, &proposal_key(proposal))?
         {
-            return Err(Error::VaultCleanupProposalNotFound {
-                proposal: proposal.to_hex(),
-            });
+            return Err(Error::Maintenance(
+                MaintenanceError::VaultCleanupProposalNotFound {
+                    proposal: proposal.to_hex(),
+                },
+            ));
         }
         Ok(())
     })
@@ -191,9 +195,9 @@ impl Vault {
     ///
     /// This is not an un-delete. An entity with no archive marker — a
     /// `user_delete` shell, a hard-purged id, a live row — is refused with
-    /// [`Error::VaultCleanupRestoreNotArchived`], and a marker whose bytes do
+    /// [`MaintenanceError::VaultCleanupRestoreNotArchived`](crate::error::MaintenanceError::VaultCleanupRestoreNotArchived), and a marker whose bytes do
     /// not read as an archive is refused with
-    /// [`Error::VaultCleanupArchiveMarkerUndecodable`]. There is no path
+    /// [`MaintenanceError::VaultCleanupArchiveMarkerUndecodable`](crate::error::MaintenanceError::VaultCleanupArchiveMarkerUndecodable). There is no path
     /// through this door to a tombstone the owner or a regulator asked for.
     ///
     /// It restores rather than withdraws because the archive published
@@ -219,28 +223,34 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::VaultCleanupRestoreNotArchived`],
-    /// [`Error::VaultCleanupArchiveMarkerUndecodable`], storage errors.
+    /// [`MaintenanceError::VaultCleanupRestoreNotArchived`](crate::error::MaintenanceError::VaultCleanupRestoreNotArchived),
+    /// [`MaintenanceError::VaultCleanupArchiveMarkerUndecodable`](crate::error::MaintenanceError::VaultCleanupArchiveMarkerUndecodable), storage errors.
     pub fn restore_archived(&self, entity: &EntityId) -> Result<()> {
         self.with_write_txn(|wtxn| {
             let Some(decoded) = self.archive_tombstone_in_txn(wtxn, entity)? else {
-                return Err(Error::VaultCleanupRestoreNotArchived {
-                    entity: entity.to_hex(),
-                });
+                return Err(Error::Maintenance(
+                    MaintenanceError::VaultCleanupRestoreNotArchived {
+                        entity: entity.to_hex(),
+                    },
+                ));
             };
             match decoded.reason {
                 Some(TombstoneReason::ArchivedByCleanup) => {}
                 Some(_) => {
-                    return Err(Error::VaultCleanupArchiveMarkerUndecodable {
-                        entity: entity.to_hex(),
-                        reason: "marker carries a non-archive tombstone reason",
-                    });
+                    return Err(Error::Maintenance(
+                        MaintenanceError::VaultCleanupArchiveMarkerUndecodable {
+                            entity: entity.to_hex(),
+                            reason: "marker carries a non-archive tombstone reason",
+                        },
+                    ));
                 }
                 None => {
-                    return Err(Error::VaultCleanupArchiveMarkerUndecodable {
-                        entity: entity.to_hex(),
-                        reason: "marker is legacy, reserved, unknown or malformed",
-                    });
+                    return Err(Error::Maintenance(
+                        MaintenanceError::VaultCleanupArchiveMarkerUndecodable {
+                            entity: entity.to_hex(),
+                            reason: "marker is legacy, reserved, unknown or malformed",
+                        },
+                    ));
                 }
             }
             self.clear_archive_tombstone_in_txn(wtxn, entity)?;
@@ -248,8 +258,10 @@ impl Vault {
                 .store
                 .entities
                 .get(wtxn, entity.as_bytes())?
-                .ok_or_else(|| Error::VaultCleanupRestoreNotArchived {
-                    entity: entity.to_hex(),
+                .ok_or_else(|| {
+                    Error::Maintenance(MaintenanceError::VaultCleanupRestoreNotArchived {
+                        entity: entity.to_hex(),
+                    })
                 })?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("archived entity header"))?;
@@ -259,9 +271,11 @@ impl Vault {
                     .entity_deletion_present_in_txn(wtxn, entity, header.learned_at)?
             {
                 // The failed transaction restores the archive marker too.
-                return Err(Error::VaultCleanupRestoreNotArchived {
-                    entity: entity.to_hex(),
-                });
+                return Err(Error::Maintenance(
+                    MaintenanceError::VaultCleanupRestoreNotArchived {
+                        entity: entity.to_hex(),
+                    },
+                ));
             }
             person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
             Ok(())
