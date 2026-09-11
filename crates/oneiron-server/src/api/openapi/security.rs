@@ -60,6 +60,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/api/skills/oneiron.skills.md", "get"),
         ("/api/core/discover", "get"),
         ("/api/search/vector", "get"),
+        ("/api/search/semantic", "post"),
         ("/api/search/text", "get"),
         ("/api/entity/{id}", "get"),
         ("/api/edges/{id}", "get"),
