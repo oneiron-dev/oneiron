@@ -608,7 +608,8 @@ fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
 /// Fully deterministic, using the rendezvous slot TWICE: the deleter parks
 /// before its scrub txn while the harness races the scope away, then parks again
 /// at `BeforeHardPurge` while the harness commits the revocation and the re-put.
-/// No `AFTER_HEADER_READ` contention with the other raced tests, and no retry
+/// No post-header-read hook contention with the other raced tests (each
+/// arms its own vault), and no retry
 /// loop — LMDB's single writer does the ordering.
 ///
 /// MUTATION PROBE: latch unconditionally again (`authority_settled = true;`) and
