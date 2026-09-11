@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
 use std::sync::{LazyLock, Mutex};
 
 use crate::config::VaultConfig;
@@ -437,5 +436,3 @@ pub(crate) enum DefaultPolicySeedMode {
     #[cfg(feature = "test-support")]
     TestUnseeded,
 }
-
-pub(super) static NEXT_AUTHORITY_CLOCK_DOMAIN: AtomicUsize = AtomicUsize::new(1);

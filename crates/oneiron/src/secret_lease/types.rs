@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::authority::{
-    authority_first_seen_clock_sync_key, authority_observation_secs_for_domain,
+    authority_first_seen_clock_sync_key, authority_observation_secs,
     decode_authority_first_seen_secs,
 };
 use crate::entity_id::EntityId;
@@ -93,13 +93,13 @@ impl Vault {
     /// against. It is deliberately NOT the raw wall clock: it is the authority
     /// plane's monotone observation clock — the persisted first-seen clock
     /// floor read through `txn`, raised through
-    /// [`authority_observation_secs_for_domain`] — i.e. the same reading
+    /// [`authority_observation_secs`] — i.e. the same reading
     /// [`Vault::authority_fold`] and [`Vault::authority_fold_readonly_in_txn`]
     /// already make widen-maturity decisions on. Two vault answers that both
     /// turn on "has this window closed" therefore cannot disagree about what
     /// time it is.
     ///
-    /// The observation is monotone within a clock domain and never sits below
+    /// The observation is monotone within one vault handle and never sits below
     /// the persisted floor, so a wall clock stepped backwards cannot drag a
     /// door reading below a second this vault has already observed, and the
     /// anchor only ever advances by time it actually measured.
@@ -115,8 +115,8 @@ impl Vault {
             .get(txn, authority_first_seen_clock_sync_key())?
             .and_then(|raw| decode_authority_first_seen_secs(&raw))
             .unwrap_or(0);
-        Ok(VaultInstant(authority_observation_secs_for_domain(
-            self.store.authority_clock_domain,
+        Ok(VaultInstant(authority_observation_secs(
+            &self.store,
             persisted_floor,
             unix_seconds_now(),
         )))

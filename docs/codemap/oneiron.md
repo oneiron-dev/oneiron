@@ -112,7 +112,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/device.rs` | src | s | 1 struct · 6 crate-vis | DeviceAuthority | Device authority material and the folded-device consent predicates |
 | `src/authority/entry_transition.rs` | src | m | 4 crate-vis | — | Per-entry state transition and the consent / quorum / widen-delay predicates |
 | `src/authority/federation_pact.rs` | src | m | 3 struct · 4 enum · 5 fn · 2 crate-vis | FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus | Federation lifecycle and pact types |
-| `src/authority/first_seen_clock.rs` | src | s | 12 crate-vis | — | First-seen sidecar keys and the process-local logical clock domains |
+| `src/authority/first_seen_clock.rs` | src | s | 12 crate-vis | — | First-seen sidecar keys and the per-vault logical observation clock |
 | `src/authority/fold_engine.rs` | src | m | 3 fn · 4 crate-vis | — | Top-level fold orchestration |
 | `src/authority/fold_state.rs` | src | m | 7 struct · 4 enum · 3 fn · 1 const · 6 crate-vis | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFold, AuthorityFoldIssue, AuthorityFork, AuthorityForkAlarm, AuthorityForkStatus +3 | Folded-state data model and the two-state merge |
 | `src/authority/fork_resolution/ancestry_bypass.rs` | src | m | 5 crate-vis | — | Scheduling gates, stalled-revocation bypass with freeze classifier, and chain probe |
@@ -1692,7 +1692,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/open_gates/mod.rs` | src | s | 1 re-export · 9 crate-vis | — | `Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight… |
 | `src/store/open_gates/open_create_door.rs` | src | m | 1 fn · 4 crate-vis | — | Create-capable open door: `Store::open` and its helpers |
 | `src/store/open_gates/open_existing_door.rs` | src | m | 7 crate-vis | — | Existing-only open door: `Store::open_existing` and its helpers |
-| `src/store/open_gates/open_version_keys.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 const · 43 crate-vis | DbManifestEntry, StorageMigrationPlan | Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and… |
+| `src/store/open_gates/open_version_keys.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 const · 42 crate-vis | DbManifestEntry, StorageMigrationPlan | Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and… |
 | `src/store/open_gates/vault_root_bind.rs` | src | m | 45 crate-vis | — | Vault-root preflight pair classifier plus descriptor-bound root and LMDB header validators |
 | `src/store/outbound_send_receipt.rs` | src | s | 11 crate-vis | — | Outbound gate bindings, durable send receipts, and the delivered-send idempotency index |
 | `src/store/pending_embedding.rs` | src | s | 10 crate-vis | — | Pending-embedding marker rows gating vector writes: encode/decode, mark/clear, and token checks |

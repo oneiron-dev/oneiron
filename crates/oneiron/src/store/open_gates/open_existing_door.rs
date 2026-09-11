@@ -1,12 +1,12 @@
 //! Existing-only open door: `Store::open_existing` and its helpers.
 
 use std::path::Path;
-use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::{Arc, Mutex, RwLock};
 
 use heed::{Env, RoTxn};
 
 use crate::analyzer::MultilingualAnalyzer;
+use crate::authority::AuthorityLocalClock;
 use crate::config::VaultConfig;
 use crate::error::{Error, Result};
 use crate::off_record::OffRecordSessionRegistry;
@@ -28,8 +28,7 @@ use super::manifest_storage_gates::{
     validate_fast_dims, verify_existing_embedding_model, verify_existing_hnsw_config,
 };
 use super::open_version_keys::{
-    ERR_EXISTING_NO_ANALYZER_BYPASS, NEXT_AUTHORITY_CLOCK_DOMAIN, RECEIPT_FAMILY_INDEX_VERSION,
-    RECEIPT_FAMILY_INDEX_VERSION_KEY,
+    ERR_EXISTING_NO_ANALYZER_BYPASS, RECEIPT_FAMILY_INDEX_VERSION, RECEIPT_FAMILY_INDEX_VERSION_KEY,
 };
 use super::vault_root_bind::open_existing_environment;
 
@@ -110,8 +109,6 @@ impl Store {
         let vault_meta_view = OverlayDb::canonical(raw.vault_meta);
         let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
 
-        let authority_clock_domain =
-            NEXT_AUTHORITY_CLOCK_DOMAIN.fetch_add(1, AtomicOrdering::Relaxed);
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
             env: shared_env,
@@ -119,13 +116,12 @@ impl Store {
             kind_registry,
             off_record_sessions: OffRecordSessionRegistry::default(),
             retrieval_blend_tuning_lock: Mutex::new(()),
-            authority_clock_domain,
+            authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             diagnostics: Diagnostics::default(),
         });
         let owner = StoreOwner {
             core: Arc::downgrade(&core),
             env,
-            authority_clock_domain,
             _registered_path: registered_path,
         };
         Ok(Self {
