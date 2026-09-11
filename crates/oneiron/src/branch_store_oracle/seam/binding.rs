@@ -6,22 +6,30 @@ use crate::error::{Error, Result};
 use crate::vault::Vault;
 
 use super::session::{SeamError, SeamResult, SessionVault};
-use crate::error::StoreError;
+use crate::error::{OffRecordError, StoreError};
 
 pub(super) fn map_overlay_error(error: Error) -> SeamError {
     match error {
-        Error::OffRecordOverlayFull { .. } => SeamError::OverlayFull,
-        Error::OffRecordOverlayLeaseClosed { .. } => SeamError::LeaseClosed,
+        Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. }) => SeamError::OverlayFull,
+        Error::OffRecord(OffRecordError::OffRecordOverlayLeaseClosed { .. }) => {
+            SeamError::LeaseClosed
+        }
         other => panic!("unexpected overlay error: {other}"),
     }
 }
 
 pub(super) fn map_session_error(error: Error) -> SeamError {
     match error {
-        Error::KillSwitchDisabled => SeamError::KillSwitchDisabled,
-        Error::OffRecordSessionAlreadyExists { .. } => SeamError::SessionRefLive,
-        Error::OffRecordSessionNotFound { .. } => SeamError::SessionNotFound,
-        Error::OffRecordSessionClosing { .. } => SeamError::SessionClosing,
+        Error::OffRecord(OffRecordError::KillSwitchDisabled) => SeamError::KillSwitchDisabled,
+        Error::OffRecord(OffRecordError::OffRecordSessionAlreadyExists { .. }) => {
+            SeamError::SessionRefLive
+        }
+        Error::OffRecord(OffRecordError::OffRecordSessionNotFound { .. }) => {
+            SeamError::SessionNotFound
+        }
+        Error::OffRecord(OffRecordError::OffRecordSessionClosing { .. }) => {
+            SeamError::SessionClosing
+        }
         other => panic!("unexpected session error: {other}"),
     }
 }
@@ -32,11 +40,19 @@ pub(super) fn map_session_error(error: Error) -> SeamError {
 /// exact variants, so a many-to-one fold here would silently weaken them.
 pub(super) fn map_executor_error(error: Error) -> SeamError {
     match error {
-        Error::OffRecordTalkOnly { .. } => SeamError::PolicyMemoryWrite,
-        Error::OffRecordGuestTurnRefRejected { .. } => SeamError::GuestTurnRef,
-        Error::OffRecordSessionNotFound { .. } => SeamError::SessionNotFound,
-        Error::OffRecordSessionClosing { .. } => SeamError::SessionClosing,
-        Error::OffRecordOverlayLeaseClosed { .. } => SeamError::LeaseClosed,
+        Error::OffRecord(OffRecordError::OffRecordTalkOnly { .. }) => SeamError::PolicyMemoryWrite,
+        Error::OffRecord(OffRecordError::OffRecordGuestTurnRefRejected { .. }) => {
+            SeamError::GuestTurnRef
+        }
+        Error::OffRecord(OffRecordError::OffRecordSessionNotFound { .. }) => {
+            SeamError::SessionNotFound
+        }
+        Error::OffRecord(OffRecordError::OffRecordSessionClosing { .. }) => {
+            SeamError::SessionClosing
+        }
+        Error::OffRecord(OffRecordError::OffRecordOverlayLeaseClosed { .. }) => {
+            SeamError::LeaseClosed
+        }
         other => panic!("unexpected executor error: {other}"),
     }
 }
@@ -141,7 +157,9 @@ pub(in crate::branch_store_oracle) fn base_batch_referencing_overlay_id(
 
 fn map_taint_error(error: Error) -> SeamError {
     match error {
-        Error::OffRecordTaintedBaseWrite { .. } => SeamError::TaintedBaseWrite,
+        Error::OffRecord(OffRecordError::OffRecordTaintedBaseWrite { .. }) => {
+            SeamError::TaintedBaseWrite
+        }
         other => panic!("unexpected base-write error: {other}"),
     }
 }

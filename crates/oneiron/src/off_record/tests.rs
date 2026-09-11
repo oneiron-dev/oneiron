@@ -2,6 +2,7 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::edge::EdgeKind;
+use crate::error::OffRecordError;
 use crate::error::{Error, ErrorKind};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -194,7 +195,7 @@ fn entity_put_guard_rejects_live_overlay_membership() -> Result<()> {
     assert_eq!(error.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     assert!(matches!(
         error,
-        Error::OffRecordTaintedBaseWrite { entity_ref } if entity_ref == id.to_hex()
+        Error::OffRecord(OffRecordError::OffRecordTaintedBaseWrite { entity_ref }) if entity_ref == id.to_hex()
     ));
     assert_eq!(
         vault.get_raw(&id)?,
@@ -269,7 +270,9 @@ fn off_record_outbound_rejected_in_mode_with_typed_error() {
         .dispatch(&vault, talk_only_request("sess-talk"), &mut PanicSink)
         .expect_err("in-mode outbound must be rejected");
     match error {
-        OutboundDispatchError::Engine(Error::OffRecordTalkOnly { session_ref }) => {
+        OutboundDispatchError::Engine(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
+            session_ref,
+        })) => {
             assert_eq!(session_ref, "sess-talk");
         }
         other => panic!("expected OffRecordTalkOnly, got {other:?}"),

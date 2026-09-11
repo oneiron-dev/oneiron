@@ -14,6 +14,7 @@ use crate::{ClaimSubject, EdgeKind};
 
 use super::HostSelfDispatcher;
 use super::envelope::edge_operation_gate_id;
+use crate::error::OffRecordError;
 
 /// Maximum results a first-party `self.memory.search` call can request.
 pub const SELF_MEMORY_SEARCH_MAX_RESULTS: usize = 16;
@@ -48,9 +49,11 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::MemoryWriteFixture
-            | SelfEffect::TaskDelegate => Err(Error::OffRecordTalkOnly {
-                session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
-            }),
+            | SelfEffect::TaskDelegate => {
+                Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
+                    session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
+                }))
+            }
             // `self.context` stores nothing and reads nothing — a descriptor
             // round-trip has no durable-record side for the talk-only line to
             // protect.

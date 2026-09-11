@@ -8,6 +8,7 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::companion::{ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body};
 use crate::edge::{encode_edge_value, validate_edge_weight};
 use crate::entity_id::EntityId;
+use crate::error::OffRecordError;
 use crate::error::{Error, Result};
 use crate::off_record::PromoteReplayGrant;
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
@@ -107,9 +108,11 @@ pub(super) fn reject_overlay_member_base_write(
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
     if store.off_record_sessions.contains_entity(id)? && !origin.exempts(id) {
-        return Err(Error::OffRecordTaintedBaseWrite {
-            entity_ref: id.to_hex(),
-        });
+        return Err(Error::OffRecord(
+            OffRecordError::OffRecordTaintedBaseWrite {
+                entity_ref: id.to_hex(),
+            },
+        ));
     }
     Ok(())
 }
@@ -129,8 +132,10 @@ pub(super) fn check_decode_point_taint_guard(
     if !store.off_record_sessions.has_overlay_entities()? {
         return Ok(());
     }
-    let tainted = |id: &EntityId| Error::OffRecordTaintedBaseWrite {
-        entity_ref: id.to_hex(),
+    let tainted = |id: &EntityId| {
+        Error::OffRecord(OffRecordError::OffRecordTaintedBaseWrite {
+            entity_ref: id.to_hex(),
+        })
     };
     let check = |id: &EntityId| -> Result<()> {
         if !store.off_record_sessions.contains_entity(id)? {

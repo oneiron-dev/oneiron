@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use super::super::keyspace::OverlayState;
 use super::ACTIVE_SEGMENT;
 use super::segment::NEXT_OVERLAY_GENERATION;
+use crate::error::OffRecordError;
 
 /// Write-transaction entry points that a session write path must wrap.
 ///
@@ -140,9 +141,11 @@ impl SessionOverlay {
             OverlayLifecycleState::Sealing
             | OverlayLifecycleState::Closing
             | OverlayLifecycleState::Gone => {
-                return Err(Error::OffRecordOverlayLeaseClosed {
-                    generation: lifecycle.generation,
-                });
+                return Err(Error::OffRecord(
+                    OffRecordError::OffRecordOverlayLeaseClosed {
+                        generation: lifecycle.generation,
+                    },
+                ));
             }
         }
         while lifecycle.segment_active {
@@ -173,9 +176,11 @@ impl SessionOverlay {
             .lock()
             .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
         if lifecycle.state != OverlayLifecycleState::Sealed {
-            return Err(Error::OffRecordOverlayLeaseClosed {
-                generation: lifecycle.generation,
-            });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordOverlayLeaseClosed {
+                    generation: lifecycle.generation,
+                },
+            ));
         }
         lifecycle.state = OverlayLifecycleState::Live;
         lifecycle.mode_generation = next_mode_generation(lifecycle.mode_generation)?;
@@ -213,9 +218,11 @@ impl SessionOverlay {
             OverlayLifecycleState::Sealing
             | OverlayLifecycleState::Closing
             | OverlayLifecycleState::Gone => {
-                return Err(Error::OffRecordOverlayLeaseClosed {
-                    generation: lifecycle.generation,
-                });
+                return Err(Error::OffRecord(
+                    OffRecordError::OffRecordOverlayLeaseClosed {
+                        generation: lifecycle.generation,
+                    },
+                ));
             }
         }
         while lifecycle.leases != 0 {
@@ -243,9 +250,11 @@ impl SessionOverlay {
             lifecycle.state,
             OverlayLifecycleState::Live | OverlayLifecycleState::Sealed
         ) {
-            return Err(Error::OffRecordOverlayLeaseClosed {
-                generation: lifecycle.generation,
-            });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordOverlayLeaseClosed {
+                    generation: lifecycle.generation,
+                },
+            ));
         }
         lifecycle.leases = lifecycle
             .leases
@@ -263,7 +272,9 @@ impl SessionOverlay {
             .lock()
             .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
         if lifecycle.state == OverlayLifecycleState::Gone || lifecycle.generation != generation {
-            return Err(Error::OffRecordOverlayLeaseClosed { generation });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordOverlayLeaseClosed { generation },
+            ));
         }
         lifecycle.leases = lifecycle
             .leases

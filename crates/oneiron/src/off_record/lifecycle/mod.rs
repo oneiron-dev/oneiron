@@ -41,7 +41,7 @@
 //!
 //! * **Talk-only** — an outbound intent whose originating session is
 //!   currently in off-record mode is rejected by the dispatch spine with
-//!   the typed [`crate::Error::OffRecordTalkOnly`] (exit-prompt semantics).
+//!   the typed [`OffRecordError::OffRecordTalkOnly`](crate::error::OffRecordError::OffRecordTalkOnly) (exit-prompt semantics).
 //!   The OF-333 floor still classifies real egress; its gate-decision
 //!   receipts are floor receipts and survive close untouched.
 //! * **RECEIPTS-FOLLOW-TRANSCRIPT** — session-local receipts ride two

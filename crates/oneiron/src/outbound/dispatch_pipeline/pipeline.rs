@@ -12,6 +12,7 @@ use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::error::OffRecordError;
 use crate::gate::{self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateOutcome};
 use crate::linkedin_connector::LinkedInSeatPolicyAction;
 use crate::outbound::OutboundDeliveryWindowDecision;
@@ -74,9 +75,11 @@ impl OutboundDispatchPipeline {
             && let Some(session) = vault.off_record_session(session_ref)?
             && session.mode == crate::off_record::OffRecordMode::OffRecord
         {
-            return Err(OutboundDispatchError::Engine(Error::OffRecordTalkOnly {
-                session_ref: session_ref.to_owned(),
-            }));
+            return Err(OutboundDispatchError::Engine(Error::OffRecord(
+                OffRecordError::OffRecordTalkOnly {
+                    session_ref: session_ref.to_owned(),
+                },
+            )));
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
