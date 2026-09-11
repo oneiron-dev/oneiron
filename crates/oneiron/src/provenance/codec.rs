@@ -10,6 +10,7 @@ use super::{
 use crate::claim::unit_interval_f32;
 use crate::edge::{EdgeActorClass, EdgeConfirmationStatus};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::ClaimError;
 use crate::error::{Error, Result};
 use rmpv::Value;
 
@@ -163,9 +164,9 @@ pub(crate) fn encode_edge_provenance_value(body: &EdgeProvenanceClaimBody) -> Va
 ///   level by `resolve_persisted_actor_class`.
 pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimBody> {
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "value must be a MessagePack map",
-        ));
+        )));
     };
 
     let mut actor_entity_ref: Option<EntityId> = None;
@@ -182,18 +183,22 @@ pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimB
     let mut seen = [false; EDGE_PROVENANCE_BODY_KEYS.len()];
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidProvenanceBody("keys must be strings"));
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "keys must be strings",
+            )));
         };
         let Some(index) = EDGE_PROVENANCE_BODY_KEYS
             .iter()
             .position(|known| *known == key)
         else {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "key is not in the pinned EDGE_PROVENANCE_BODY_KEYS set",
-            ));
+            )));
         };
         if seen[index] {
-            return Err(Error::InvalidProvenanceBody("duplicate key"));
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "duplicate key",
+            )));
         }
         seen[index] = true;
 
@@ -217,8 +222,8 @@ pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimB
                 )?);
             }
             "confidence" => {
-                confidence = Some(unit_interval_f32(value).ok_or(Error::InvalidProvenanceBody(
-                    "confidence must be finite in [0, 1]",
+                confidence = Some(unit_interval_f32(value).ok_or(Error::Claim(
+                    ClaimError::InvalidProvenanceBody("confidence must be finite in [0, 1]"),
                 ))?);
             }
             "supersession_status" => {
@@ -226,19 +231,19 @@ pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimB
                     .as_u64()
                     .and_then(|raw| u8::try_from(raw).ok())
                     .and_then(SupersessionStatus::try_from_u8)
-                    .ok_or(Error::InvalidProvenanceBody(
+                    .ok_or(Error::Claim(ClaimError::InvalidProvenanceBody(
                         "supersession_status must be an integer u8 <= 3",
-                    ))?;
+                    )))?;
                 supersession_status = Some(status);
             }
             "valid_from" => {
-                valid_from = Some(value.as_u64().ok_or(Error::InvalidProvenanceBody(
-                    "valid_from must be a non-negative integer",
+                valid_from = Some(value.as_u64().ok_or(Error::Claim(
+                    ClaimError::InvalidProvenanceBody("valid_from must be a non-negative integer"),
                 ))?);
             }
             "valid_to" => {
-                valid_to = Some(value.as_u64().ok_or(Error::InvalidProvenanceBody(
-                    "valid_to must be a non-negative integer",
+                valid_to = Some(value.as_u64().ok_or(Error::Claim(
+                    ClaimError::InvalidProvenanceBody("valid_to must be a non-negative integer"),
                 ))?);
             }
             "substrate_ref" => {
@@ -248,13 +253,16 @@ pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimB
                 )?);
             }
             "reasoning_effort" => {
-                let effort = value.as_str().ok_or(Error::InvalidProvenanceBody(
-                    "reasoning_effort must be a UTF-8 string",
-                ))?;
+                let effort =
+                    value
+                        .as_str()
+                        .ok_or(Error::Claim(ClaimError::InvalidProvenanceBody(
+                            "reasoning_effort must be a UTF-8 string",
+                        )))?;
                 if effort.is_empty() || effort.len() > REASONING_EFFORT_MAX_BYTES {
-                    return Err(Error::InvalidProvenanceBody(
+                    return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                         "reasoning_effort must be non-empty and at most 32 bytes",
-                    ));
+                    )));
                 }
                 reasoning_effort = Some(effort.to_owned());
             }
@@ -263,28 +271,30 @@ pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimB
                     .as_u64()
                     .and_then(|raw| u8::try_from(raw).ok())
                     .and_then(actor_class_from_u8)
-                    .ok_or(Error::InvalidProvenanceBody(
+                    .ok_or(Error::Claim(ClaimError::InvalidProvenanceBody(
                         "actor_class must be an integer u8 <= 2",
-                    ))?;
+                    )))?;
                 actor_class = Some(class);
             }
             _ => unreachable!("index resolved from EDGE_PROVENANCE_BODY_KEYS"),
         }
     }
 
-    let actor_entity_ref = actor_entity_ref.ok_or(Error::InvalidProvenanceBody(
-        "missing required field actor_entity_ref",
+    let actor_entity_ref = actor_entity_ref.ok_or(Error::Claim(
+        ClaimError::InvalidProvenanceBody("missing required field actor_entity_ref"),
     ))?;
-    let confidence = confidence.ok_or(Error::InvalidProvenanceBody(
+    let confidence = confidence.ok_or(Error::Claim(ClaimError::InvalidProvenanceBody(
         "missing required field confidence",
-    ))?;
-    let supersession_status = supersession_status.ok_or(Error::InvalidProvenanceBody(
-        "missing required field supersession_status",
+    )))?;
+    let supersession_status = supersession_status.ok_or(Error::Claim(
+        ClaimError::InvalidProvenanceBody("missing required field supersession_status"),
     ))?;
     if let (Some(from), Some(to)) = (valid_from, valid_to)
         && from > to
     {
-        return Err(Error::InvalidProvenanceBody("valid_from exceeds valid_to"));
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+            "valid_from exceeds valid_to",
+        )));
     }
 
     Ok(EdgeProvenanceClaimBody {
@@ -309,23 +319,23 @@ pub(crate) fn validate_edge_provenance_value(value: &Value) -> Result<()> {
 
 fn entity_ref_from(value: &Value, context: &'static str) -> Result<EntityId> {
     let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidProvenanceBody(context));
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(context)));
     };
     let arr: [u8; ENTITY_ID_LEN] = bytes
         .as_slice()
         .try_into()
-        .map_err(|_| Error::InvalidProvenanceBody(context))?;
-    EntityId::from_bytes(arr).map_err(|_| Error::InvalidProvenanceBody(context))
+        .map_err(|_| Error::Claim(ClaimError::InvalidProvenanceBody(context)))?;
+    EntityId::from_bytes(arr).map_err(|_| Error::Claim(ClaimError::InvalidProvenanceBody(context)))
 }
 
 fn opaque_ref_from(value: &Value, context: &'static str) -> Result<[u8; 16]> {
     let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidProvenanceBody(context));
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(context)));
     };
     bytes
         .as_slice()
         .try_into()
-        .map_err(|_| Error::InvalidProvenanceBody(context))
+        .map_err(|_| Error::Claim(ClaimError::InvalidProvenanceBody(context)))
 }
 
 /// Derives the edge's cached `confirmation_status` flag from the Claim's

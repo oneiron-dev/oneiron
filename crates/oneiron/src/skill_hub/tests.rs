@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::ClaimError;
 use crate::error::RegistryError;
 use crate::skill::SkillGovernanceTier;
 use crate::skill_optimize::{SkillTierVerdict, skill_governance_tier};
@@ -2009,7 +2010,7 @@ fn anchor_subjected_verdict_stays_unforgeable_via_public_door() -> Result<()> {
     let body = scan_verdict_body(anchor, "forged", 1);
     assert!(matches!(
         vault.put_claim(&EntityId::now(), &body, t(1), 2),
-        Err(Error::ReservedPredicate { .. })
+        Err(Error::Claim(ClaimError::ReservedPredicate { .. }))
     ));
     Ok(())
 }

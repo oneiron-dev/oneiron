@@ -17,8 +17,8 @@ use crate::claim::{
 };
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, Result, SyncError};
+use crate::error::ClaimError;
+use crate::error::{Error, RegistryError, Result, SyncError};
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
 use crate::temporal::TimeRange;
 use crate::test_util::embedding_test_config;
@@ -1135,7 +1135,10 @@ fn actor_is_validated_at_the_door() {
             200,
         )
         .expect_err("class mismatch must reject");
-    assert!(matches!(err, Error::ActorClassMismatch { .. }));
+    assert!(matches!(
+        err,
+        Error::Claim(ClaimError::ActorClassMismatch { .. })
+    ));
 
     // Nothing recorded, nothing shelled.
     assert_eq!(event_count(&vault), 0);

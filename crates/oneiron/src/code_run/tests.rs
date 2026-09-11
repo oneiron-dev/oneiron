@@ -1,8 +1,8 @@
 use rmpv::Value;
 
 use super::*;
-use crate::error::ErrorKind;
-use crate::error::GateError;
+use crate::error::ClaimError;
+use crate::error::{ErrorKind, GateError};
 use crate::test_util::{embedding_test_config, entity, entity_record};
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY;
@@ -1274,11 +1274,11 @@ fn code_run_stale_supersede_fails_loudly() -> Result<()> {
         .expect_err("the named target is no longer the head");
 
     assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
-    let Error::WriteVerbTargetStale {
+    let Error::Claim(ClaimError::WriteVerbTargetStale {
         target,
         lifecycle,
         successor_short_id,
-    } = err
+    }) = err
     else {
         panic!("expected a typed stale-target refusal");
     };

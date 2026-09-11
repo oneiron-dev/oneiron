@@ -9,6 +9,7 @@ use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
 use super::codec::commitment_claim_candidate_from_body;
 use super::{CommitmentStatus, PREDICATE_COMMITMENT_RECORD, decode_commitment_value};
+use crate::error::ClaimError;
 
 /// One grounded Open→Lapsed transition, derived but not yet written.
 ///
@@ -53,9 +54,9 @@ pub(crate) fn pending_commitment_lapses_in_txn(
             true,
         )?;
         if body.lifecycle != ClaimLifecycleStatus::Active {
-            return Err(Error::ClaimAlreadyClosed {
+            return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
                 status: body.lifecycle,
-            });
+            }));
         }
         if body.predicate != PREDICATE_COMMITMENT_RECORD {
             return Err(Error::InvalidClaimBody(

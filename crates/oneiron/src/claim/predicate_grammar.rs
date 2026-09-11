@@ -3,7 +3,7 @@
 //! the validators every predicate string passes through.
 
 use super::*;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 
 /// Predicate namespace for productizable memory-API records.
 pub const PREDICATE_NAMESPACE_CORE: &str = "core";
@@ -171,7 +171,7 @@ pub fn predicate_root(predicate: &str) -> &str {
 ///
 /// When `allow_reserved` is `false` (every public write path), well-formed
 /// predicates in the reserved `edge.*` namespace are rejected with
-/// [`Error::ReservedPredicate`]. The provenance unit writes through the
+/// [`ClaimError::ReservedPredicate`](crate::error::ClaimError::ReservedPredicate). The provenance unit writes through the
 /// `pub(crate)` door which sets `allow_reserved` to `true`, as does the
 /// sync-replay door (`put_replicated`) so replicated provenance Claims
 /// rematerialize; reads always allow reserved predicates so stored
@@ -179,33 +179,33 @@ pub fn predicate_root(predicate: &str) -> &str {
 /// reserved-namespace arm — the grammar checks above run unconditionally.
 pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Result<()> {
     if predicate.len() > MAX_PREDICATE_BYTES {
-        return Err(Error::InvalidPredicate {
+        return Err(Error::Claim(ClaimError::InvalidPredicate {
             predicate: predicate.to_owned(),
             reason: "exceeds 128 bytes",
-        });
+        }));
     }
 
     let mut segments = 0_usize;
     for segment in predicate.split('.') {
         if !valid_predicate_segment(segment) {
-            return Err(Error::InvalidPredicate {
+            return Err(Error::Claim(ClaimError::InvalidPredicate {
                 predicate: predicate.to_owned(),
                 reason: "segments must match [a-z][a-z0-9_]*",
-            });
+            }));
         }
         segments += 1;
     }
     if segments < 2 {
-        return Err(Error::InvalidPredicate {
+        return Err(Error::Claim(ClaimError::InvalidPredicate {
             predicate: predicate.to_owned(),
             reason: "requires at least 2 dot-joined segments",
-        });
+        }));
     }
 
     if !allow_reserved && is_reserved_predicate(predicate) {
-        return Err(Error::ReservedPredicate {
+        return Err(Error::Claim(ClaimError::ReservedPredicate {
             predicate: predicate.to_owned(),
-        });
+        }));
     }
 
     Ok(())

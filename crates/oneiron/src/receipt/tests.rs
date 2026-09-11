@@ -23,6 +23,7 @@ fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     Ok((dir, vault))
 }
 
+use crate::error::ClaimError;
 use crate::test_util::{embedding_test_config, entity};
 
 fn field_map(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
@@ -1273,7 +1274,10 @@ fn context_receipt_field_set_is_rejected_on_non_emit_receipts() {
         let fields_before = receipt.fields.clone();
         let error = append_context_receipt_fields(&mut receipt, &context)
             .expect_err("non-emit receipts never carry emit context");
-        assert!(matches!(error, Error::EmitAdjacentReceiptRequired { .. }));
+        assert!(matches!(
+            error,
+            Error::Claim(ClaimError::EmitAdjacentReceiptRequired { .. })
+        ));
         assert_eq!(receipt.fields, fields_before, "rejection must not write");
     }
 
@@ -1364,7 +1368,10 @@ fn session_local_receipt_log_deletes_off_record_emit_receipts_at_close() {
             &[],
         ))
         .expect_err("floor receipts never ride the session log");
-    assert!(matches!(error, Error::EmitAdjacentReceiptRequired { .. }));
+    assert!(matches!(
+        error,
+        Error::Claim(ClaimError::EmitAdjacentReceiptRequired { .. })
+    ));
     assert!(log.receipts().is_empty());
 }
 

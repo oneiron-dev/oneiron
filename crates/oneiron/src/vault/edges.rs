@@ -163,7 +163,7 @@ impl Vault {
     /// provenance Claim asserts the relation, never the weight — so this
     /// setter works on bare AND provenanced edges alike, preserves the
     /// 26-byte hot-flag bytes verbatim, and never touches provenance Claims.
-    /// Exempt from the [`Error::EdgeIsProvenanced`] reject gate by
+    /// Exempt from the [`ClaimError::EdgeIsProvenanced`](crate::error::ClaimError::EdgeIsProvenanced) reject gate by
     /// construction.
     ///
     /// For decay / retrieval-feedback loops use the batch form
@@ -195,7 +195,7 @@ impl Vault {
     /// directions. Weight, `created_at`, the value LENGTH (a 24-byte bare
     /// value stays 24 B; a 26-byte provenanced value keeps its hot-flag
     /// bytes verbatim), and provenance Claims are untouched. Exempt from the
-    /// [`Error::EdgeIsProvenanced`] reject gate by construction.
+    /// [`ClaimError::EdgeIsProvenanced`](crate::error::ClaimError::EdgeIsProvenanced) reject gate by construction.
     ///
     /// For batched feedback loops use [`BatchBuilder::set_edge_vad`].
     ///

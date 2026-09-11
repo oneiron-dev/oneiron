@@ -17,6 +17,7 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
+use crate::error::ClaimError;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use rmpv::Value;
@@ -42,7 +43,7 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
     now: u64,
 ) -> Result<()> {
     if new_id == old_id {
-        return Err(Error::ClaimSelfSupersession);
+        return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
     }
     let raw = vault
         .store

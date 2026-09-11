@@ -13,6 +13,7 @@ use crate::edge::{
     EdgeActorClass, EdgeProvenanceFlags,
 };
 use crate::entity_id::EntityId;
+use crate::error::ClaimError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
@@ -150,9 +151,9 @@ fn ensure_record_window(record: &EdgeProvenanceClaimBody) -> Result<()> {
     if let (Some(from), Some(to)) = (record.valid_from, record.valid_to)
         && from > to
     {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "closing valid_to precedes valid_from",
-        ));
+        )));
     }
     Ok(())
 }
@@ -186,9 +187,9 @@ pub(crate) fn restamp_edge_flags(
             value
         }
         EDGE_VALUE_STRUCTURAL_LEN => {
-            return Err(Error::ProvenanceOnStructuralEdge {
+            return Err(Error::Claim(ClaimError::ProvenanceOnStructuralEdge {
                 kind: subject.kind as u8,
-            });
+            }));
         }
         _ => return Err(Error::CorruptedIndex("edge value")),
     };
@@ -234,9 +235,9 @@ pub(crate) fn downgrade_edge_to_bare(
         }
         EDGE_VALUE_SEMANTIC_LEN => return Ok(false),
         EDGE_VALUE_STRUCTURAL_LEN => {
-            return Err(Error::ProvenanceOnStructuralEdge {
+            return Err(Error::Claim(ClaimError::ProvenanceOnStructuralEdge {
                 kind: subject.kind as u8,
-            });
+            }));
         }
         _ => return Err(Error::CorruptedIndex("edge value")),
     };
@@ -307,9 +308,9 @@ pub(super) fn closed_claim_put_payload(
         end: valid_to,
     };
     if occurred.start > occurred.end {
-        return Err(Error::InvalidProvenanceBody(
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
             "closing valid_to precedes the claim's occurred start",
-        ));
+        )));
     }
     let mut wrapper = claim.wrapper.clone();
     wrapper.value = encode_edge_provenance_value(closed_record);
@@ -341,9 +342,9 @@ impl ProvenanceMaterialization {
     ) -> Result<Self> {
         let body = crate::claim::validate_claim_body_and_decode(&data, true)?;
         if body.predicate != PREDICATE_EDGE_PROVENANCE {
-            return Err(Error::NotAProvenanceClaim(
+            return Err(Error::Claim(ClaimError::NotAProvenanceClaim(
                 "materialization requires edge.provenance",
-            ));
+            )));
         }
         let record = decode_edge_provenance_body(&body.value)?;
         let class = resolve_persisted_actor_class(&record, body.evidence.as_ref())?;

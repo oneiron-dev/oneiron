@@ -4,8 +4,8 @@ use super::Vault;
 use super::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::ClaimError;
+use crate::error::{Error, RegistryError, Result};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{StructuralKindRegistration, TypeByteZone};
 use crate::temporal::TimeRange;
@@ -66,7 +66,7 @@ impl ActorBound<'_> {
     ///
     /// Fail-closed binding check: a `body.actor_entity_ref` that names a
     /// DIFFERENT entity than the bound actor is rejected typed
-    /// ([`Error::InvalidProvenanceBody`]) — the handle injects the actor, it
+    /// ([`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody)) — the handle injects the actor, it
     /// never silently rewrites a conflicting one. Construct the record via
     /// [`ActorBound::provenance_body`] to avoid the mismatch entirely.
     pub fn put_edge_provenance(
@@ -77,9 +77,9 @@ impl ActorBound<'_> {
         learned_at: u64,
     ) -> Result<()> {
         if body.actor_entity_ref != self.actor {
-            return Err(Error::InvalidProvenanceBody(
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                 "body actor_entity_ref conflicts with the session-bound actor",
-            ));
+            )));
         }
         self.vault
             .put_edge_provenance(claim_id, subject, body, self.actor_class, learned_at)

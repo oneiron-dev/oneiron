@@ -5,6 +5,7 @@ use super::*;
 use crate::attempt_queue::{
     AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome,
 };
+use crate::error::ClaimError;
 use crate::llm::{
     BudgetDenied, BudgetLease, LlmBackend, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId,
 };
@@ -607,7 +608,7 @@ fn capture_refuses_an_incompatible_runtime_actor_without_overwriting_it() {
         .expect_err("an incompatible actor must not be replaced");
     assert!(matches!(
         refused,
-        ByoaError::Store(Error::ActorClassMismatch { .. })
+        ByoaError::Store(Error::Claim(ClaimError::ActorClassMismatch { .. }))
     ));
     assert_eq!(
         custody_snapshot(&vault),
