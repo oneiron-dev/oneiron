@@ -561,6 +561,16 @@ impl Vault {
         self.privacy.host_readable()
     }
 
+    /// This vault's content-free diagnostic counters.
+    ///
+    /// The counters belong to the vault, not to the process, so a delta read
+    /// here is exactly what this vault recorded — a second vault open in the
+    /// same process cannot move it.
+    #[must_use]
+    pub fn diagnostics(&self) -> &crate::store::Diagnostics {
+        &self.store.diagnostics
+    }
+
     /// Registers the production window manager as the live-window delete
     /// router (M4-10 / ONE-1135). Called by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`].

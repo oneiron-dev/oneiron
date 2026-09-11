@@ -16,7 +16,7 @@
 //! | `device` | device authority material and consent-role predicates |
 //! | `log_entry_op` | op vocabulary, signed entry envelope, hashing, ids |
 //! | `fold_state` | folded-state data model and the two-state merge |
-//! | `first_seen_clock` | first-seen sidecar keys and process-local clocks |
+//! | `first_seen_clock` | first-seen sidecar keys and the per-vault clock |
 //! | `fold_engine` | top-level fold orchestration |
 //! | `fork_resolution` | equivocation/fork detection, ranking, quarantine |
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
@@ -62,7 +62,7 @@ pub use fold_engine::*;
 pub use fold_state::*;
 pub use log_entry_op::*;
 
-// Crate-internal doors (first-seen sidecars and clock domains) consumed by
+// Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
 pub(crate) use first_seen_clock::*;
 

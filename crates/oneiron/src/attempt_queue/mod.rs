@@ -9,8 +9,8 @@
 //! `cancel` holds the ONE-1896 two-rung graceful-cancel/landing concern — its
 //! own durable rows, verbs, and doors — as inherent methods on that same
 //! handle; `validate` holds the door validators; `encoding` holds storage key
-//! derivation and row encode/decode; `telemetry` holds the process-local
-//! cleanup counters and span emission.
+//! derivation and row encode/decode; `telemetry` holds the per-vault cleanup
+//! counters and span emission.
 
 mod cancel;
 mod completion;
@@ -40,7 +40,8 @@ pub use cancel::{
     WarnExpiringAttemptLeases,
 };
 pub use engine::AttemptQueue;
-pub use telemetry::{AttemptQueueCleanupMetricsSnapshot, attempt_queue_cleanup_metrics_snapshot};
+pub(crate) use telemetry::AttemptQueueCleanupMetrics;
+pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
 pub use types::{
     AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
     AttemptInterventionKind, AttemptQueueCleanupReport, AttemptQueueRetryReason,

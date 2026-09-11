@@ -618,7 +618,6 @@ approved_commitment_wake
 artifact_hex
 auto_check_llm_request
 blocked_by_edge_write
-bm25_diagnostics_snapshot
 build_campaign_held_out_decision
 build_campaign_split_report
 canonical_message_id

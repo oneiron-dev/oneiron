@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::batch::StagedClaimGateOutcome;
+use crate::gate::GateMetrics;
 use crate::gate::breaker::{GateBreakerCandidate, GateBreakerUndo, apply_gate_breaker_in_txn};
 
 /// The record seam at the ONE site the ONE-1453 burst breaker books: the batch
@@ -311,8 +312,8 @@ impl RecordedClaimGateDecision {
         self.breaker_undo.as_ref()
     }
 
-    pub(crate) fn record_metrics(&self) {
-        record_gate_decision_metrics(&self.decision);
+    pub(crate) fn record_metrics(&self, metrics: &GateMetrics) {
+        metrics.record_decision(&self.decision);
     }
 
     pub(crate) fn into_record(self) -> GateDecisionRecord {

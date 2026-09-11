@@ -8,9 +8,7 @@ use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, encode_record, lease_expired, ready_at, ready_key,
     waiting_on_backoff,
 };
-use crate::attempt_queue::telemetry::{
-    emit_attempt_queue_cleanup_span, invalid_transition, record_attempt_queue_cleanup_metrics,
-};
+use crate::attempt_queue::telemetry::{emit_attempt_queue_cleanup_span, invalid_transition};
 use crate::attempt_queue::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport,
     AttemptQueueRetryReason, AttemptRecord, AttemptState, CleanupAttemptLeases, InterveneAttempt,
@@ -496,7 +494,7 @@ impl AttemptQueue<'_> {
             wtxn.commit()?;
         }
 
-        record_attempt_queue_cleanup_metrics(&report);
+        self.store.diagnostics.attempt_queue.record(&report);
         emit_attempt_queue_cleanup_span(&input, &report);
         Ok(report)
     }
