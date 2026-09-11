@@ -112,8 +112,10 @@ struct AuthorityClockAnchor {
 
 impl AuthorityLocalClock {
     /// The monotone observation this vault reports for `candidate_wall_secs`,
-    /// measured from `now` on the monotonic clock.
-    pub(crate) fn observation_secs_at(
+    /// measured from `now` on the monotonic clock. Reachable from `authority`
+    /// only: the store path goes through `authority_observation_secs`, and the
+    /// tests that supply an exact monotonic instant live under this module.
+    pub(super) fn observation_secs_at(
         &mut self,
         previous_floor: u64,
         candidate_wall_secs: u64,
