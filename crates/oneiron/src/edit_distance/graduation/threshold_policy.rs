@@ -12,6 +12,7 @@ use super::{
 };
 use crate::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope};
 use crate::entity_id::ENTITY_ID_LEN;
+use crate::error::GateError;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::vault::Vault;
@@ -57,7 +58,7 @@ impl ThresholdRow {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when the pattern is not three non-empty
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the pattern is not three non-empty
     /// `/`-separated axes with well-formed escapes, when the streak is zero (a
     /// threshold nothing has to clear), or when the guard is not a real number
     /// in `[0, 1]`.
@@ -68,19 +69,19 @@ impl ThresholdRow {
     ) -> Result<Self> {
         let scope_pattern = scope_pattern.into();
         if pattern_axes(&scope_pattern).is_none() {
-            return Err(Error::InvalidConsentBound(
+            return Err(Error::Gate(GateError::InvalidConsentBound(
                 "graduation scope pattern must be op_kind/target_class/actor, each a literal or *",
-            ));
+            )));
         }
         if required_streak == 0 {
-            return Err(Error::InvalidConsentBound(
+            return Err(Error::Gate(GateError::InvalidConsentBound(
                 "a graduation threshold of zero clean rulings is not a threshold",
-            ));
+            )));
         }
         if !(0.0..=1.0).contains(&posterior_guard) {
-            return Err(Error::InvalidConsentBound(
+            return Err(Error::Gate(GateError::InvalidConsentBound(
                 "graduation posterior guard must be a probability in [0, 1]",
-            ));
+            )));
         }
         Ok(Self {
             scope_pattern,
@@ -306,7 +307,7 @@ pub fn graduation_policy_rows(vault: &Vault) -> Result<Vec<ThresholdRow>> {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConsentBound`] when the row's fields are not a legal
+/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the row's fields are not a legal
 /// threshold, plus storage failures.
 pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
     let row = ThresholdRow::new(

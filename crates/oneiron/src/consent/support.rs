@@ -5,6 +5,7 @@ use crate::store::GateDecisionId;
 
 use super::bound::{MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS};
 use super::effect::{EffectDigest, UndoFidelity};
+use crate::error::GateError;
 
 // ---------------------------------------------------------------------------
 // Storage identity — no entity type, no type byte
@@ -72,10 +73,10 @@ pub(super) fn consent_grant_key(grant_ref: &str) -> Vec<u8> {
 pub(super) fn normalized_ref(label: &'static str, value: String) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(Error::InvalidConsentBound(label));
+        return Err(Error::Gate(GateError::InvalidConsentBound(label)));
     }
     if trimmed.len() > MAX_CONSENT_REF_LEN {
-        return Err(Error::InvalidConsentBound(label));
+        return Err(Error::Gate(GateError::InvalidConsentBound(label)));
     }
     Ok(trimmed.to_owned())
 }
@@ -161,9 +162,9 @@ pub(super) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Re
 }
 
 pub(super) const fn invalid_bound(message: &'static str) -> Error {
-    Error::InvalidConsentBound(message)
+    Error::Gate(GateError::InvalidConsentBound(message))
 }
 
 pub(super) const fn invalid_row() -> Error {
-    Error::InvalidConsentGrantRow("body failed validation")
+    Error::Gate(GateError::InvalidConsentGrantRow("body failed validation"))
 }

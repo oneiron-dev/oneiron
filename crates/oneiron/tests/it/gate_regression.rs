@@ -1,4 +1,5 @@
 use crate::common::entity as test_id;
+use oneiron::error::GateError;
 use oneiron::error::{GateDenialOutcome, GateDenialReason};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::{
@@ -88,10 +89,10 @@ fn assert_expected_error(err: Error, expected: ExpectedError) {
             assert!(
                 matches!(
                     err,
-                    Error::GateWriteRejected {
+                    Error::Gate(GateError::GateWriteRejected {
                         outcome: got_outcome,
                         reason_codes: ref got
-                    } if got_outcome == outcome && got == reason_codes
+                    }) if got_outcome == outcome && got == reason_codes
                 ),
                 "expected GateWriteRejected({outcome}, {reason_codes:?}), got {err:?}",
             );
@@ -207,20 +208,20 @@ fn gate_regression_denial_taxonomy_is_typed_and_stable() {
         assert_eq!(reason.outcome(), outcome);
         assert_eq!(GateDenialReason::from_code(code), Some(reason));
 
-        let err = Error::GateWriteRejected {
+        let err = Error::Gate(GateError::GateWriteRejected {
             outcome: outcome.as_str(),
             reason_codes: vec![code],
-        };
+        });
         let typed = err.gate_denial().expect("stable Gate code must parse");
         assert_eq!(typed.outcome(), outcome);
         assert_eq!(typed.reason_codes(), &[reason]);
     }
 
     assert_eq!(GateDenialReason::from_code("gate.allow"), None);
-    let inconsistent = Error::GateWriteRejected {
+    let inconsistent = Error::Gate(GateError::GateWriteRejected {
         outcome: "pending",
         reason_codes: vec!["gate.deny.policy_fail_closed"],
-    };
+    });
     assert!(inconsistent.gate_denial().is_none());
 }
 

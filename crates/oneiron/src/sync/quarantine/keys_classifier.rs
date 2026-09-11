@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
 
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{Error, ErrorKind, GateError, Result};
 
 /// Prefix for quarantine rows in `sync_queue` (db #25).
 ///
@@ -271,10 +271,10 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
 }
 
 fn is_remote_secret_scan_rejection(error: &Error) -> bool {
-    let Error::GateWriteRejected {
+    let Error::Gate(GateError::GateWriteRejected {
         outcome,
         reason_codes,
-    } = error
+    }) = error
     else {
         return false;
     };

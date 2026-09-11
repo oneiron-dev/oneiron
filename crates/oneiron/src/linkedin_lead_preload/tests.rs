@@ -6,6 +6,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
+use crate::error::GateError;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
 };
@@ -545,9 +546,9 @@ fn linkedin_preload_gate_failure_and_claim_id_collision_do_not_bypass_admission(
     )?;
     assert!(matches!(
         apply_linkedin_lead_corpus(&other, fixture(), other_actor),
-        Err(LinkedInLeadPreloadError::Vault(
-            Error::GateWriteRejected { .. }
-        ))
+        Err(LinkedInLeadPreloadError::Vault(Error::Gate(
+            GateError::GateWriteRejected { .. }
+        )))
     ));
     assert_eq!(other.count_entities_by_type(ENTITY_TYPE_CLAIM)?, 0);
     assert_eq!(

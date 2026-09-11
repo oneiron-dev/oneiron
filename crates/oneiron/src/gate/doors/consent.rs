@@ -3,6 +3,7 @@
 use super::peripheral::GateWriteMode;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_sensitivity_band};
 use crate::entity_id::EntityId;
+use crate::error::GateError;
 use crate::error::{Error, Result};
 use crate::gate::ceiling::PolicyApprovalCeiling;
 use crate::gate::constants::POLICY_SCHEMA_VERSION;
@@ -201,20 +202,20 @@ fn require_pending_gate_consent_binding(
     if pending.diff_handle != binding.diff_handle
         || pending.read_frontier_hash != binding.read_frontier_hash
     {
-        return Err(Error::GateConsentStale { claim_id: *id });
+        return Err(Error::Gate(GateError::GateConsentStale { claim_id: *id }));
     }
     Ok(())
 }
 
 pub(super) fn reject_gate_decision(decision: GateDecision) -> Result<()> {
-    Err(Error::GateWriteRejected {
+    Err(Error::Gate(GateError::GateWriteRejected {
         outcome: decision.outcome().as_str(),
         reason_codes: decision
             .reason_codes()
             .iter()
             .map(|code| code.as_str())
             .collect(),
-    })
+    }))
 }
 
 /// Computes the content-addressed consent binding parts for a claim body

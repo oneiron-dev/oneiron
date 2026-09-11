@@ -308,10 +308,12 @@ async fn turn_vad_annotate_route_rejects_invalid_vad() {
 
 #[test]
 fn vad_annotation_core_error_maps_gate_rejection_to_invalid_state() {
-    let error = vad_annotation_core_error(oneiron::Error::GateWriteRejected {
-        outcome: "pending",
-        reason_codes: vec!["gate.pending.source_trust"],
-    });
+    let error = vad_annotation_core_error(oneiron::Error::Gate(
+        oneiron::error::GateError::GateWriteRejected {
+            outcome: "pending",
+            reason_codes: vec!["gate.pending.source_trust"],
+        },
+    ));
 
     assert_eq!(error.status(), StatusCode::CONFLICT);
     assert_eq!(error.code(), ErrorCode::InvalidState);

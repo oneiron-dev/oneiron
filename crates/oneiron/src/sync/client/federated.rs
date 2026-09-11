@@ -251,10 +251,10 @@ pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportEr
         }
         // Reached only when a code is outside the typed taxonomy above, so the
         // raw codes stay auditable instead of being dropped.
-        crate::error::Error::GateWriteRejected {
+        crate::error::Error::Gate(crate::error::GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => TransportError::Storage(format!(
+        }) => TransportError::Storage(format!(
             "federated admission rejected: outcome={outcome}, reasons={reason_codes:?}"
         )),
         crate::error::Error::Sync(crate::error::SyncError::SyncProtocolError {

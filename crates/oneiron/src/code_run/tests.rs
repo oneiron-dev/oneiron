@@ -2,6 +2,7 @@ use rmpv::Value;
 
 use super::*;
 use crate::error::ErrorKind;
+use crate::error::GateError;
 use crate::test_util::{embedding_test_config, entity, entity_record};
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY;
@@ -309,10 +310,10 @@ fn assert_latest_gate_decision_reasons(
 
 fn assert_source_trust_gate_rejection(err: Error) {
     match err {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => {
+        }) => {
             assert_eq!(outcome, "pending");
             assert_eq!(reason_codes, vec!["gate.pending.source_trust"]);
         }
@@ -466,10 +467,10 @@ fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
         .expect_err("denied trap replay must throw");
     assert!(matches!(
         err,
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome: "pending",
             ref reason_codes
-        } if reason_codes == &vec!["gate.pending.actor_ceiling"]
+        }) if reason_codes == &vec!["gate.pending.actor_ceiling"]
     ));
     assert_eq!(denied_replay.consumed(), 1);
 
@@ -2154,10 +2155,10 @@ fn session_speech_preserves_typed_actor_ceiling_denial() -> Result<()> {
         .expect_err("exact Proposed ceiling clamps transcript writes");
     assert!(matches!(
         error,
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome: "pending",
             ref reason_codes,
-        } if reason_codes == &vec!["gate.pending.actor_ceiling"]
+        }) if reason_codes == &vec!["gate.pending.actor_ceiling"]
     ));
     assert!(
         session

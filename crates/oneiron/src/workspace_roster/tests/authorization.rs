@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::GateError;
 use crate::subject_model::tests::authorization::root_owner;
 
 type Mutation = fn(&Vault, &MemberOnboardingIntent, &WriteActor) -> Result<()>;
@@ -464,7 +465,7 @@ fn mailbox_consent_owner_cannot_be_inferred_from_admin_write_actor() -> Result<(
     for authentication in [None, Some(&admin_owner)] {
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), authentication),
-            Err(Error::ConsentOwnerNotAuthenticated(_))
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
         ));
         assert_eq!(durable_rows(&vault)?, before);
     }
@@ -475,7 +476,7 @@ fn mailbox_consent_owner_cannot_be_inferred_from_admin_write_actor() -> Result<(
             false,
             crate::store::GateDecisionId::now()
         ),
-        Err(Error::ConsentOwnerNotAuthenticated(_))
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
     ));
     assert!(
         vault
@@ -757,7 +758,7 @@ fn invalid_owner_api_bounds_leave_journal_incomplete_without_grants() -> Result<
         let before = durable_rows(&vault)?;
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
-            Err(Error::InvalidConsentBound(_))
+            Err(Error::Gate(GateError::InvalidConsentBound(_)))
         ));
         assert_eq!(
             durable_rows(&vault)?,

@@ -66,9 +66,9 @@ fn es03_production_open_seeds_the_default_policy_gate() {
     assert!(
         matches!(
             oneiron::comm::run_comm_projector(&vault),
-            Err(oneiron::comm::CommError::Engine(
-                oneiron::Error::GateWriteRejected { .. }
-            ))
+            Err(oneiron::comm::CommError::Engine(oneiron::Error::Gate(
+                oneiron::error::GateError::GateWriteRejected { .. }
+            )))
         ),
         "production Vault::open must seed the default policy gate (comm claim write must be gate-rejected)"
     );

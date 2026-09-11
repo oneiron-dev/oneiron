@@ -11,6 +11,7 @@ use crate::Vault;
 use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_with_gate_mode};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::GateError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
@@ -175,9 +176,9 @@ impl Vault {
                         denial.outcome() == crate::error::GateDenialOutcome::Pending
                     }) =>
             {
-                Err(Error::FamilyRequiresAutoGrant {
+                Err(Error::Gate(GateError::FamilyRequiresAutoGrant {
                     family: "expression preference",
-                })
+                }))
             }
             other => other,
         }

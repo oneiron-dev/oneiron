@@ -1,6 +1,7 @@
 //! Roster reads, journal records, and canonical onboarding encodings.
 
 use super::*;
+use crate::error::GateError;
 
 // ---------------------------------------------------------------------------
 // Roster reads
@@ -548,9 +549,9 @@ pub(super) fn validate_mailbox_request(mailbox: &DelegatedMailboxOnboarding) -> 
                 )
         )
     {
-        return Err(Error::InvalidConsentBound(
+        return Err(Error::Gate(GateError::InvalidConsentBound(
             "delegated onboarding requires exact read/draft bounds; send authority is not admitted",
-        ));
+        )));
     }
     Ok(())
 }
@@ -561,9 +562,9 @@ pub(super) fn require_mailbox_owner<'a>(
 ) -> Result<&'a AuthenticatedOwner> {
     owner
         .filter(|owner| owner.actor() == intent.person_ref)
-        .ok_or(Error::ConsentOwnerNotAuthenticated(
+        .ok_or(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
             "mailbox onboarding requires its member's authenticated consent owner",
-        ))
+        )))
 }
 
 pub(super) fn require_active_mailbox(
@@ -605,9 +606,9 @@ pub(super) fn verify_mailbox_revision(
 /// Called only after acquiring the publication writer lock, before any write.
 pub(super) fn require_mailbox_revision(vault: &Vault, revision: Option<usize>) -> Result<()> {
     if revision.is_some_and(|revision| vault.store.env.info().last_txn_id != revision) {
-        return Err(Error::InvalidConsentBound(
+        return Err(Error::Gate(GateError::InvalidConsentBound(
             "mailbox proof changed before publication; retry",
-        ));
+        )));
     }
     Ok(())
 }

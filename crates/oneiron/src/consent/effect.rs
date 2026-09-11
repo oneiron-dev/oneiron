@@ -3,6 +3,7 @@ use crate::error::{Error, Result};
 use super::bound::{ConsentDomain, GrantBound, covers};
 use super::grant::StandingConsentGrant;
 use super::support::{hash_field, invalid_bound, normalized_ref, undo_fidelity_byte};
+use crate::error::GateError;
 
 /// Domain-separated BLAKE3 label for [`EffectDigest`].
 const EFFECT_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.effect_digest.v1\0";
@@ -244,14 +245,14 @@ pub const BULK_BLAST_RADIUS_FLOOR: u64 = 100;
 ///
 /// # Errors
 ///
-/// Returns [`Error::InvalidConsentEffectFacts`] when a required write fact is
+/// Returns [`GateError::InvalidConsentEffectFacts`](crate::error::GateError::InvalidConsentEffectFacts) when a required write fact is
 /// malformed (an empty operation kind), so the caller takes the invariant-8
 /// domain fail-safe rather than a fabricated verdict.
 pub(crate) fn classify_composed_effect(facts: &EffectFacts) -> Result<ReversibilityClass> {
     if facts.operation_kind.trim().is_empty() {
-        return Err(Error::InvalidConsentEffectFacts(
+        return Err(Error::Gate(GateError::InvalidConsentEffectFacts(
             "composed effect has no operation kind",
-        ));
+        )));
     }
     // A catastrophe-shaped effect is irreversible regardless of undo claims;
     // the floor check runs before this in the evaluator either way.
@@ -305,7 +306,7 @@ impl ComposedEffect {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidConsentBound`] when the bound is not a
+    /// Returns [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the bound is not a
     /// disclosure bound.
     pub fn with_disclosure_requirement(mut self, bound: GrantBound) -> Result<Self> {
         if bound.domain() != ConsentDomain::Disclosure {
@@ -321,7 +322,7 @@ impl ComposedEffect {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidConsentBound`] when the bound is not an action
+    /// Returns [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the bound is not an action
     /// bound.
     pub fn with_action_requirement(mut self, bound: GrantBound) -> Result<Self> {
         if bound.domain() != ConsentDomain::Action {

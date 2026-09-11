@@ -1,6 +1,7 @@
 //! Seeded and pinned actors, agent ceilings and fork gating.
 
 use super::*;
+use crate::error::GateError;
 
 /// A minimal valid policy manifest carrying only the supplied `actor_ceilings`
 /// rows (mirrors the gate/dispatch test fixture shape).
@@ -177,7 +178,7 @@ fn seeded_actor_uses_normal_authority_path() -> Result<()> {
         .commit()
         .expect_err("a Proposed-ceiling actor must be held, not auto-written");
     assert!(
-        matches!(err, Error::GateWriteRejected { outcome, .. } if outcome == "pending"),
+        matches!(err, Error::Gate(GateError::GateWriteRejected { outcome, .. }) if outcome == "pending"),
         "expected the ordinary gate rejection, got {err:?}"
     );
     assert!(vault.get_claim(&held_claim)?.is_none());

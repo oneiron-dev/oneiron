@@ -1,5 +1,6 @@
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
+use crate::error::GateError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 
@@ -79,10 +80,10 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
 }
 
 fn secret_scan_error(reason: &'static str) -> Error {
-    Error::GateWriteRejected {
+    Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
         reason_codes: vec![REASON_DETECTED, reason],
-    }
+    })
 }
 
 fn has_redaction_marker(haystack: &str) -> bool {
@@ -211,6 +212,7 @@ fn is_ascii_token_body(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::GateError;
 
     #[test]
     fn scan_payload_rejects_known_secret_fixture() {
@@ -218,10 +220,10 @@ mod tests {
             .expect_err("known GitHub token fixture must reject");
 
         match err {
-            Error::GateWriteRejected {
+            Error::Gate(GateError::GateWriteRejected {
                 outcome,
                 reason_codes,
-            } => {
+            }) => {
                 assert_eq!(outcome, "deny");
                 assert_eq!(
                     reason_codes.as_slice(),
@@ -254,7 +256,7 @@ mod tests {
                 .expect_err("exact-length secret prefix with suffix label must reject");
 
             match err {
-                Error::GateWriteRejected { reason_codes, .. } => {
+                Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
                     assert_eq!(reason_codes.as_slice(), &[REASON_DETECTED, expected_reason]);
                 }
                 other => panic!("expected GateWriteRejected, got {other:?}"),
@@ -283,7 +285,7 @@ mod tests {
         .expect_err("PGP private key armor must reject");
 
         match err {
-            Error::GateWriteRejected { reason_codes, .. } => {
+            Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
                 assert_eq!(
                     reason_codes.as_slice(),
                     &[REASON_DETECTED, REASON_PRIVATE_KEY]
@@ -302,7 +304,7 @@ mod tests {
         .expect_err("known GitHub token fixture in phonetic payload must reject");
 
         match err {
-            Error::GateWriteRejected { reason_codes, .. } => {
+            Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
                 assert_eq!(
                     reason_codes.as_slice(),
                     &[REASON_DETECTED, REASON_GITHUB_TOKEN]

@@ -2,6 +2,7 @@ use super::*;
 use crate::Vault;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
+use crate::error::GateError;
 use crate::error::{Error, ErrorKind, Result};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
@@ -3500,7 +3501,7 @@ fn an_unrelated_gate_denial_is_not_rewritten_as_a_consent_refusal() {
         return;
     };
     assert!(
-        !matches!(err, Error::FamilyRequiresAutoGrant { .. }),
+        !matches!(err, Error::Gate(GateError::FamilyRequiresAutoGrant { .. })),
         "a non-consent denial must not be relabelled as a consent refusal: {err:?}"
     );
 }

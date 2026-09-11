@@ -5,6 +5,7 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::error::GateError;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::bridge::{Materializer, format_edge_key};
@@ -98,18 +99,18 @@ fn quarantine_key_encoding_is_x_prefix_with_8be_seq() {
 
 #[test]
 fn remote_rejection_reason_classifies_secret_scan_denials_only() {
-    let secret_scan = Error::GateWriteRejected {
+    let secret_scan = Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
         reason_codes: vec!["gate.secret_scan.detected", "gate.secret_scan.github_token"],
-    };
-    let other_gate = Error::GateWriteRejected {
+    });
+    let other_gate = Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
         reason_codes: vec!["gate.policy.denied"],
-    };
-    let pending_secret_scan = Error::GateWriteRejected {
+    });
+    let pending_secret_scan = Error::Gate(GateError::GateWriteRejected {
         outcome: "pending",
         reason_codes: vec!["gate.secret_scan.detected"],
-    };
+    });
 
     assert_eq!(
         remote_rejection_reason(&secret_scan).as_deref(),

@@ -11,6 +11,7 @@ use super::storage::{
     RAMP_STATS_KEY_PREFIX, StoredScopeStats, decode_row, floor_key, stats_key, stats_row_parts,
 };
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
+use crate::error::GateError;
 use crate::error::{Error, Result};
 use crate::identity_topology::ProposalOutcome;
 use crate::vault::Vault;
@@ -23,7 +24,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when a tuple field is empty or oversized.
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when a tuple field is empty or oversized.
     pub fn ramp_scope(&self, op_kind: &str, target_class: &str, actor: &str) -> Result<RampScope> {
         RampScope::new(op_kind, target_class, actor)
     }
@@ -38,7 +39,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when the scope tuple is unbuildable
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable
     /// (checked before the first write), plus storage failures.
     pub fn record_proposal_outcome_for_ramp(
         &self,
@@ -140,7 +141,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when the scope is not on the ramp at all,
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope is not on the ramp at all,
     /// when its tuple is unbuildable, or when it is not currently offering
     /// graduation; plus whatever `create_standing_grant` rejects (the
     /// catastrophe floor).
@@ -165,7 +166,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when the scope tuple is unbuildable,
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable,
     /// plus storage failures.
     pub fn demote_scope_to_propose(&self, scope: &RampScope, reason: DemotionReason) -> Result<()> {
         scope.validate()?;
@@ -178,7 +179,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConsentBound`] when the scope tuple is unbuildable,
+    /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable,
     /// plus storage failures.
     pub fn set_ramp_streak_floor(&self, scope: &RampScope, floor: u32) -> Result<()> {
         scope.validate()?;
@@ -274,15 +275,15 @@ pub(crate) fn accept_graduation_offer_in_txn(
 ) -> Result<ConsentReceipt> {
     scope.validate()?;
     if !scope.is_graduatable() {
-        return Err(Error::InvalidConsentBound(
+        return Err(Error::Gate(GateError::InvalidConsentBound(
             "op kind does not ride the propose lane; there is nothing to graduate",
-        ));
+        )));
     }
     let bound = scope.to_grant_bound()?;
     if !offer_is_standing_in_txn(vault, &*wtxn, scope)? {
-        return Err(Error::InvalidConsentBound(
+        return Err(Error::Gate(GateError::InvalidConsentBound(
             "this scope is not offering graduation; a retracted offer cannot be accepted",
-        ));
+        )));
     }
     crate::edit_distance::graduation::record_go_auto_answer_in_txn(vault, wtxn, scope, at)?;
     vault.create_standing_grant_in_txn(wtxn, owner, bound)

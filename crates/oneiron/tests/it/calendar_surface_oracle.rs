@@ -230,10 +230,10 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
             .commit()
             .expect_err("Imported + Approved needs source permission on a default vault");
         match error {
-            oneiron::Error::GateWriteRejected {
+            oneiron::Error::Gate(oneiron::error::GateError::GateWriteRejected {
                 outcome,
                 reason_codes,
-            } => {
+            }) => {
                 assert_eq!(outcome, "pending", "{predicate}");
                 assert_eq!(
                     reason_codes.as_slice(),
@@ -433,10 +433,10 @@ fn calendar_imported_source_permit_is_actor_bound() {
             result.expect("the matching actor permit admits Imported + Approved");
         } else {
             match result.expect_err(label) {
-                oneiron::Error::GateWriteRejected {
+                oneiron::Error::Gate(oneiron::error::GateError::GateWriteRejected {
                     outcome,
                     reason_codes,
-                } => {
+                }) => {
                     assert_eq!(outcome, "pending", "{label}");
                     assert_eq!(
                         reason_codes.as_slice(),

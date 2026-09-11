@@ -2107,7 +2107,12 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
         &update,
     );
     assert!(
-        matches!(rejected, Err(crate::Error::GateWriteRejected { .. })),
+        matches!(
+            rejected,
+            Err(crate::Error::Gate(
+                crate::error::GateError::GateWriteRejected { .. }
+            ))
+        ),
         "gate refusal must surface as a retryable Err, got {rejected:?}",
     );
     assert!(
@@ -2127,7 +2132,12 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
         &update,
     );
     assert!(
-        matches!(again, Err(crate::Error::GateWriteRejected { .. })),
+        matches!(
+            again,
+            Err(crate::Error::Gate(
+                crate::error::GateError::GateWriteRejected { .. }
+            ))
+        ),
         "retry must re-run admission, got {again:?}",
     );
     assert!(
@@ -2162,7 +2172,9 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     );
     assert!(matches!(
         rejected,
-        Err(crate::Error::GateWriteRejected { .. })
+        Err(crate::Error::Gate(
+            crate::error::GateError::GateWriteRejected { .. }
+        ))
     ));
 
     // Heal: the operator installs the missing Imported permit. Nothing about the

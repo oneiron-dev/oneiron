@@ -18,6 +18,7 @@ use super::types::{
     SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfMemoryEdgeWriteResult,
     SelfMemorySearchResult, SelfMemoryWriteResult, SelfSpeechResult,
 };
+use crate::error::GateError;
 
 const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
 
@@ -300,10 +301,10 @@ pub(super) fn replay_denied_trap_error(result: &SelfDeniedResult) -> Error {
         .filter_map(|reason| GateDenialReason::from_code(reason))
         .map(GateDenialReason::as_str)
         .collect::<Vec<_>>();
-    Error::GateWriteRejected {
+    Error::Gate(GateError::GateWriteRejected {
         outcome,
         reason_codes,
-    }
+    })
 }
 
 pub(super) fn replay_failed_trap_error(_result: &SelfFailedResult) -> Error {

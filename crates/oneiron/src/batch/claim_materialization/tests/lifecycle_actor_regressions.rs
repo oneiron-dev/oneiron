@@ -6,6 +6,7 @@ mod timestamp_guards;
 use super::*;
 use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, claim_demotion_rung};
 use crate::edge::EdgeKind;
+use crate::error::GateError;
 use crate::gate::gate_metric_emission_count_for_test;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG};
 
@@ -426,19 +427,19 @@ fn copied_unbound_evidence_cannot_borrow_actor_only_lifecycle_authority() -> Res
     let error = vault
         .retract_claim(&unbound, 30)
         .expect_err("no actor authority");
-    assert!(matches!(error, Error::GateWriteRejected {
+    assert!(matches!(error, Error::Gate(GateError::GateWriteRejected {
         outcome: "pending",
         reason_codes,
-    } if reason_codes == vec!["gate.pending.actor_ceiling"]));
+    }) if reason_codes == vec!["gate.pending.actor_ceiling"]));
     assert_eq!(vault.get_raw(&unbound)?.expect("unchanged"), raw);
     assert_eq!(vault.store.gate_decisions(128)?, before);
     let error = vault
         .supersede_claim(&control, &unbound, 30)
         .expect_err("same unbound policy on supersession");
-    assert!(matches!(error, Error::GateWriteRejected {
+    assert!(matches!(error, Error::Gate(GateError::GateWriteRejected {
         outcome: "pending",
         reason_codes,
-    } if reason_codes == vec!["gate.pending.actor_ceiling"]));
+    }) if reason_codes == vec!["gate.pending.actor_ceiling"]));
     assert_eq!(vault.get_raw(&unbound)?.expect("unchanged"), raw);
     assert!(
         vault
@@ -516,7 +517,7 @@ fn replayed_copy_invalidates_binding_and_cannot_use_actor_bound_source_permits()
     assert!(
         matches!(
             &error,
-            Error::GateWriteRejected { outcome: "pending", reason_codes }
+            Error::Gate(GateError::GateWriteRejected { outcome: "pending", reason_codes })
                 if reason_codes == &vec!["gate.pending.source_trust"]
         ),
         "unexpected replay lifecycle refusal: {error:?}"

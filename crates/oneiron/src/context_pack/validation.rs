@@ -18,6 +18,7 @@ use crate::store::Store;
 
 use super::quarantine::PackQuarantineIndex;
 use super::types::ContextEntity;
+use crate::error::GateError;
 
 pub(super) const PACK_VALIDATION_DUPLICATE_ID: &str = "conflicting duplicate id";
 pub(super) const PACK_VALIDATION_MISSING_PAYLOAD: &str = "missing referenced payload";
@@ -90,18 +91,18 @@ pub(super) fn validate_pack_disclosure(
     }
     for entity in results.iter().chain(neighbors.iter()) {
         if !ctx.admits(store, rtxn, &entity.id, entity.entity_type, None)? {
-            return Err(Error::DisclosureClampViolation(
+            return Err(Error::Gate(GateError::DisclosureClampViolation(
                 "non-admitted entity survived pack assembly",
-            ));
+            )));
         }
         let Some(edges) = &entity.edges else {
             continue;
         };
         for edge in edges {
             if !disclosure_admits_target(store, rtxn, Some(ctx), &edge.target)? {
-                return Err(Error::DisclosureClampViolation(
+                return Err(Error::Gate(GateError::DisclosureClampViolation(
                     "non-admitted edge target survived pack assembly",
-                ));
+                )));
             }
         }
     }

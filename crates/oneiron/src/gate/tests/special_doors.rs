@@ -1,6 +1,7 @@
 //! Specialized doors: operation effect, fenced listing, and commitment projection.
 
 use super::*;
+use crate::error::GateError;
 
 /// The manifest these two pins run under: the Dreamer's `agent` actor is
 /// granted `auto`, and the manifest carries NO signature block — so
@@ -100,10 +101,10 @@ fn attempt_operation_effect_write(
 
 pub(super) fn gate_rejection_parts(err: Error) -> (&'static str, Vec<&'static str>) {
     match err {
-        Error::GateWriteRejected {
+        Error::Gate(GateError::GateWriteRejected {
             outcome,
             reason_codes,
-        } => (outcome, reason_codes),
+        }) => (outcome, reason_codes),
         other => panic!("expected GateWriteRejected, got {other:?}"),
     }
 }

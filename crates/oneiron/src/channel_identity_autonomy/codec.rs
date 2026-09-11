@@ -16,9 +16,12 @@ use super::types::{
     ChannelIdentityActionEnvelope, ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRung,
     MailboxReadEnvelope, PREDICATE_AUTONOMY_MODE,
 };
+use crate::error::GateError;
 
 pub(super) fn invalid_autonomy() -> Error {
-    Error::InvalidConsentBound("channel identity autonomy is absent, mismatched, or unauthorized")
+    Error::Gate(GateError::InvalidConsentBound(
+        "channel identity autonomy is absent, mismatched, or unauthorized",
+    ))
 }
 
 pub(super) fn text(value: &Value) -> Result<&str> {
