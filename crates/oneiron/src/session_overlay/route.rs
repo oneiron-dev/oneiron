@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::error::{Error, Result};
 
 use super::overlay::SessionOverlay;
+use crate::error::OffRecordError;
 
 /// Which store a session write lands in for the session's CURRENT mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +49,7 @@ impl SessionWriteRoute {
     /// freshly published state, so a route that survives this check is the
     /// route the current mode authorizes.
     ///
-    /// The refusal reuses [`Error::OffRecordOverlayLeaseClosed`], carrying the
+    /// The refusal reuses [`OffRecordError::OffRecordOverlayLeaseClosed`](crate::error::OffRecordError::OffRecordOverlayLeaseClosed), carrying the
     /// route's recorded mode generation: a stale route names a mode epoch that
     /// no longer accepts writes, exactly as a stale lease names a closed
     /// overlay generation.
@@ -56,9 +57,11 @@ impl SessionWriteRoute {
         if self.overlay.mode_generation()? == self.mode_generation {
             return Ok(());
         }
-        Err(Error::OffRecordOverlayLeaseClosed {
-            generation: self.mode_generation,
-        })
+        Err(Error::OffRecord(
+            OffRecordError::OffRecordOverlayLeaseClosed {
+                generation: self.mode_generation,
+            },
+        ))
     }
 
     /// Narrow query arm: which store this route resolves to. `batch.rs` may

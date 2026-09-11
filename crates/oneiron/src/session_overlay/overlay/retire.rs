@@ -8,6 +8,7 @@ use crate::store::Store;
 use super::super::journal::{PromotePlan, journal_entry_in_closure};
 use super::super::keyspace::{KeyspaceState, OverlayKeyspace, OverlayValue, drop_overlay_row};
 use super::lifecycle::{OverlayLifecycleState, SessionOverlay};
+use crate::error::OffRecordError;
 
 impl SessionOverlay {
     // Budget failures belong exclusively to preflight, before the base commit.
@@ -37,9 +38,11 @@ impl SessionOverlay {
             .lock()
             .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
         if lifecycle.state == OverlayLifecycleState::Gone {
-            return Err(Error::OffRecordOverlayLeaseClosed {
-                generation: lifecycle.generation,
-            });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordOverlayLeaseClosed {
+                    generation: lifecycle.generation,
+                },
+            ));
         }
         let mut next = self.state.load_full().as_ref().clone();
 

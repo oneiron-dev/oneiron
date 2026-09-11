@@ -20,6 +20,7 @@ use super::telemetry::SessionRetrievalTelemetry;
 #[cfg(test)]
 use super::types::VaultMetaCounterComponents;
 use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
+use crate::error::OffRecordError;
 
 /// Vault-bound factory for explicit off-record session entry.
 pub struct OffRecordSessionVault<'vault> {
@@ -97,8 +98,8 @@ impl<'vault> OffRecordSessionVault<'vault> {
     ///
     /// # Errors
     ///
-    /// [`Error::OffRecordSessionNotFound`] for an unknown ref and
-    /// [`Error::OffRecordSessionClosing`] for one whose close pass has begun
+    /// [`OffRecordError::OffRecordSessionNotFound`](crate::error::OffRecordError::OffRecordSessionNotFound) for an unknown ref and
+    /// [`OffRecordError::OffRecordSessionClosing`](crate::error::OffRecordError::OffRecordSessionClosing) for one whose close pass has begun
     /// or finished — the same typed refusals every other session mutator
     /// raises, so a binder cannot tell a closing room from a live one by
     /// error shape alone.
@@ -107,9 +108,9 @@ impl<'vault> OffRecordSessionVault<'vault> {
         let entry = live_session_entry(&self.vault.store, session_ref)?;
         let state = session_entry_state(&entry)?;
         if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
                 session_ref: session_ref.to_owned(),
-            });
+            }));
         }
         drop(state);
         Ok(OffRecordSession {
@@ -177,9 +178,9 @@ impl OffRecordSession<'_> {
     pub(crate) fn write_route(&self) -> Result<SessionWriteRoute> {
         let state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
                 session_ref: self.session_ref.clone(),
-            });
+            }));
         }
         let target = match state.record.mode {
             OffRecordMode::OffRecord => RouteTarget::Overlay,
@@ -197,9 +198,9 @@ impl OffRecordSession<'_> {
     pub(crate) fn overlay_conversation_shell(&self) -> Result<EntityId> {
         let state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
                 session_ref: self.session_ref.clone(),
-            });
+            }));
         }
         Ok(state.overlay_shell)
     }
@@ -229,9 +230,9 @@ impl OffRecordSession<'_> {
     ) -> Result<Option<OverlayShellReservation>> {
         let mut state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
                 session_ref: self.session_ref.clone(),
-            });
+            }));
         }
         if std::mem::replace(&mut state.overlay_shell_staged, true) {
             return Ok(None);
@@ -255,9 +256,9 @@ impl OffRecordSession<'_> {
     pub(crate) fn on_record_continuation_shell(&self) -> Result<EntityId> {
         let mut state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
                 session_ref: self.session_ref.clone(),
-            });
+            }));
         }
         if state.record.mode != OffRecordMode::OnRecord {
             return Err(Error::InvariantViolation(
@@ -639,9 +640,9 @@ impl OffRecordSession<'_> {
     pub fn record_emit_receipt(&self, receipt: ReceiptRecord) -> Result<()> {
         let mut state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
                 session_ref: self.session_ref.clone(),
-            });
+            }));
         }
         match state.record.mode {
             OffRecordMode::OffRecord => state
@@ -687,9 +688,9 @@ impl OffRecordSession<'_> {
         let outcome = {
             let mut state = session_entry_state(&self.entry)?;
             if state.record.closing || state.gone {
-                return Err(Error::OffRecordSessionClosing {
+                return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
                     session_ref: self.session_ref.clone(),
-                });
+                }));
             }
             // RETRY, ahead of the journal: a promoted turn's closure has
             // already been retired from the overlay, so planning it again would

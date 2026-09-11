@@ -19,6 +19,7 @@ use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, ap
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::error::OffRecordError;
 use crate::gate::{check_witness_message_ceiling, resolve_policy_manifest};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::session_overlay::SessionWriteRoute;
@@ -110,11 +111,13 @@ impl Memory<'_> {
             .off_record_sessions
             .owning_session_ref(&conversation_id)?
         {
-            return Err(Error::OffRecordWitnessDoorRejected {
-                session_ref,
-                conversation_ref: conversation_id.to_hex(),
-            }
-            .into());
+            return Err(
+                Error::OffRecord(OffRecordError::OffRecordWitnessDoorRejected {
+                    session_ref,
+                    conversation_ref: conversation_id.to_hex(),
+                })
+                .into(),
+            );
         }
         let (turn_id, turn_is_new) = match &turn.turn_ref {
             Some(reference) => self.resolve_or_new_container(reference, ENTITY_TYPE_TURN)?,

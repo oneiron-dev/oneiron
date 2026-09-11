@@ -494,7 +494,9 @@ fn off_record_turns_stay_unextractable_after_mode_flip() -> Result<()> {
     assert!(
         matches!(
             stale_route.revalidate(),
-            Err(crate::error::Error::OffRecordOverlayLeaseClosed { .. })
+            Err(crate::error::Error::OffRecord(
+                crate::error::OffRecordError::OffRecordOverlayLeaseClosed { .. }
+            ))
         ),
         "a route minted before the flip must be refused by revalidate"
     );

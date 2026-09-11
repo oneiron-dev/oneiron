@@ -51,7 +51,7 @@ pub struct OffRecordSessionRecord {
     pub promoted_turns: Vec<[u8; 16]>,
     /// Set by the first close transaction. While `true`, every mutator
     /// (promote, mode flip, emit-receipt record) rejects with
-    /// [`Error::OffRecordSessionClosing`] — close drains leases and drops the
+    /// [`OffRecordError::OffRecordSessionClosing`](crate::error::OffRecordError::OffRecordSessionClosing) — close drains leases and drops the
     /// overlay across several steps, and a mutation landing in that window
     /// would write into a room that is already going away.
     #[serde(default)]

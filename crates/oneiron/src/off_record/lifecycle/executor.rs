@@ -7,6 +7,7 @@ use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
 use super::session::OffRecordSession;
 use super::types::ExecutorUtterance;
+use crate::error::OffRecordError;
 
 /// Session-bound EXECUTOR surfaces (ONE-1729/P4b).
 ///
@@ -22,7 +23,7 @@ impl OffRecordSession<'_> {
     ///
     /// Guest-supplied turn identity meets a TYPED PRE-CONSTRUCTION REFUSAL
     /// (owner ruling R-20260807-02): `turn_ref` `Some(_)` returns
-    /// [`Error::OffRecordGuestTurnRefRejected`] before a `WitnessTurn` is
+    /// [`OffRecordError::OffRecordGuestTurnRefRejected`](crate::error::OffRecordError::OffRecordGuestTurnRefRejected) before a `WitnessTurn` is
     /// formed — zero overlay/base delta, zero gate decisions — and the rule
     /// holds in BOTH modes, because a room that flipped on record is still
     /// not a place where a guest names turns. `None` is the only passing
@@ -67,9 +68,11 @@ impl OffRecordSession<'_> {
         actor: crate::WriteActor,
     ) -> Result<crate::memory::WitnessReceipt> {
         if turn_ref.is_some() {
-            return Err(Error::OffRecordGuestTurnRefRejected {
-                session_ref: self.session_ref.clone(),
-            });
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordGuestTurnRefRejected {
+                    session_ref: self.session_ref.clone(),
+                },
+            ));
         }
         self.witness_bound_executor_turn(
             container,
@@ -204,9 +207,9 @@ impl OffRecordSession<'_> {
         route.revalidate()?;
         match route.target() {
             RouteTarget::Base => Ok(self.vault),
-            RouteTarget::Overlay => Err(Error::OffRecordTalkOnly {
+            RouteTarget::Overlay => Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                 session_ref: self.session_ref.clone(),
-            }),
+            })),
         }
     }
 

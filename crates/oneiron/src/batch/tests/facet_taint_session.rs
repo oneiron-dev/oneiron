@@ -1,6 +1,7 @@
 //! Facet-of validation, taint guard, session apply and live-overlay exclusion.
 
 use super::*;
+use crate::error::OffRecordError;
 
 /// The gate preflight runs the entity write door's verdict in its OWN
 /// transaction, so a standalone claim preflight cannot leave a decision receipt
@@ -426,7 +427,7 @@ fn taint_guard_rejects_edge_targeting_a_live_overlay_id() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     assert_matches!(
         err,
-        Error::OffRecordTaintedBaseWrite { entity_ref } if entity_ref == overlay_id.to_hex()
+        Error::OffRecord(OffRecordError::OffRecordTaintedBaseWrite { entity_ref }) if entity_ref == overlay_id.to_hex()
     );
     assert!(!vault.edge_exists(&source, EdgeKind::Mentions, &overlay_id)?);
     session.close()?;
