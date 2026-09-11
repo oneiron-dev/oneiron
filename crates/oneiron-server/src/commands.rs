@@ -512,11 +512,24 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     }
     let cors_layer = build_cors_layer(&server_config)?;
 
+    // Built before the listener binds: a reachable endpoint that serves the
+    // wrong embedding space must stop serve rather than fill a vault from two
+    // spaces. The local provider downloads nothing here — that is the worker's.
+    //
+    // On a blocking thread because the endpoint probe is a blocking HTTP call,
+    // which must not run on a runtime worker.
+    let embedder_config = config.embedder.clone();
+    let embedder =
+        tokio::task::spawn_blocking(move || crate::embedder::build_slot(embedder_config.as_ref()))
+            .await
+            .map_err(|e| anyhow::anyhow!("embedder slot task failed: {e}"))??;
+
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
     let sync_server = Arc::new(
         SyncServer::new(Arc::new(vault), server_config)
-            .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?,
+            .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
+            .with_embedder(embedder),
     );
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!(%addr, "listening");
@@ -529,6 +542,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         anyhow::bail!("unmanaged serve requires a TCP listener");
     };
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
+    let embedding_handle = sync_server.spawn_embedding_worker();
     let app = build_app(sync_server).layer(cors_layer);
     let result = axum::serve(
         listener,
@@ -537,6 +551,10 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     .await;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
+    if let Some(handle) = embedding_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
     result?;
 
     Ok(())

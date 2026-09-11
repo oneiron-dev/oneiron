@@ -19,6 +19,7 @@ use tokio::sync::{Mutex, broadcast};
 
 use crate::api::DeepRetrievalHost;
 use crate::config::SyncServerConfig;
+use crate::embedder::EmbedderSlot;
 use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
 use crate::usage::UsageLedger;
 
@@ -68,6 +69,13 @@ pub struct SyncServer {
     /// `DEEP_RETRIEVAL_UNAVAILABLE` rather than quietly served at standard
     /// effort, so "deep" never names a read that was not deep.
     pub(crate) deep_retrieval: Option<Arc<DeepRetrievalHost>>,
+    /// ONE-1979: the embedder slot, `None` at rung 0.
+    ///
+    /// Holds the resolved `[embedder]` section and, once the provider is
+    /// serving, the provider itself. A slot is attached by the serve path after
+    /// construction, the same way the deep-retrieval host is: `Self::new` pins
+    /// no model and downloads nothing.
+    pub(crate) embedder: Option<EmbedderSlot>,
 }
 
 impl SyncServer {
@@ -169,6 +177,7 @@ impl SyncServer {
             config,
             mcp_registry,
             deep_retrieval: None,
+            embedder: None,
         })
     }
 
@@ -181,6 +190,16 @@ impl SyncServer {
     #[allow(dead_code)] // No in-tree production host yet; the tests are its only caller.
     pub(crate) fn with_deep_retrieval_host(mut self, host: Arc<DeepRetrievalHost>) -> Self {
         self.deep_retrieval = Some(host);
+        self
+    }
+
+    /// Attaches the embedder slot resolved from configuration.
+    ///
+    /// Separate from [`Self::new`] because an embedder is a model decision and
+    /// a possible download: a server built without one runs at rung 0 forever,
+    /// which is what every deployment did before this ticket.
+    pub(crate) fn with_embedder(mut self, embedder: Option<EmbedderSlot>) -> Self {
+        self.embedder = embedder;
         self
     }
 
