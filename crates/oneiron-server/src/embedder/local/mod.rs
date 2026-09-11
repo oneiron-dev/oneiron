@@ -61,6 +61,7 @@ impl LocalEmbedder {
         let model_config = Config::parse(&raw_config)?;
         let modules = StModules::load(&dir)?;
         check_dimensions(config, &model_config, &modules)?;
+        check_input_window(config, &model_config)?;
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model tokenizer.json: {e}"))
         })?;
@@ -205,6 +206,23 @@ fn check_dimensions(
                 config.dimensions
             )));
         }
+    }
+    Ok(())
+}
+
+/// The input cap must fit the window the model itself declares.
+///
+/// Config resolution already refuses a cap above the default model's window.
+/// This is the same refusal for a repository this build has never measured,
+/// read from the `config.json` that repository ships: without it the rotary
+/// tables come up short and the failure surfaces as an out-of-range narrow in
+/// the middle of a forward pass.
+fn check_input_window(config: &EmbedderConfig, model_config: &Config) -> oneiron::Result<()> {
+    if config.max_input_tokens > model_config.max_position_embeddings {
+        return Err(oneiron::Error::InvalidConfig(format!(
+            "embedder max_input_tokens is {}, above the model's context window of {}",
+            config.max_input_tokens, model_config.max_position_embeddings
+        )));
     }
     Ok(())
 }
