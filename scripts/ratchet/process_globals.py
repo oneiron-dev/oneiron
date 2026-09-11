@@ -20,8 +20,11 @@ A type ALIAS or a named wrapper STRUCT hides none of this: `type Slot =
 LazyLock<Mutex<..>>` and `struct Registry { entries: LazyLock<Mutex<..>> }` are
 resolved when they are declared in the SAME file as the static, so a global
 cannot duck the metric by being given a name. Resolution is same-file only and
-purely textual — a real type resolver is out of scope, and cross-file naming is
-rare enough that stating the gap beats guessing.
+purely textual — a real type resolver is out of scope. Stated gaps, none live in
+this tree: a name declared in ANOTHER file; a generic struct header
+(`struct Foo<T> { inner: Mutex<T> }`, whose body is not scanned); an `enum`
+wrapper; and an alias chain longer than MAX_RESOLVE_DEPTH. Stating them beats
+guessing.
 
 Output: ONE integer on stdout, exit 0. With --list: one `path:line NAME: type`
 line per hit, sorted by path then line, for humans reading the number; a hit

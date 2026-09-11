@@ -616,7 +616,7 @@ where
 
 /// ONE-1149 rendezvous variant: forces the deleter's lock-free
 /// `read_entity_header` read to complete BEFORE the eraser commits, via the
-/// `#[cfg(test)]` `AFTER_HEADER_READ` seam in `vault.rs`. The eraser `recv()`s
+/// vault's `#[cfg(test)]` post-header-read hook on `StoreCore::test_hooks`. The eraser `recv()`s
 /// the deleter's post-header-read signal immediately before `commit()`, so the
 /// HEADERFUL leg is exercised every run (the bare-barrier variant can rarely
 /// lose the read-vs-commit race and divert to the headerless path). Only valid

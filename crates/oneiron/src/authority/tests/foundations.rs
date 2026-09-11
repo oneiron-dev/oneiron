@@ -14,8 +14,9 @@ use super::*;
 /// observable.
 ///
 /// MUTATION PROBE: share one `AuthorityLocalClock` across handles and this test
-/// fails at the last assertion — the second vault inherits the first's
-/// far-future anchor and reports a reading ten days ahead of anything it saw.
+/// fails at the second assertion — the behind vault inherits the first's
+/// far-future anchor and reports that instead of its own reading, ten days
+/// ahead of anything it saw.
 #[test]
 fn two_open_vaults_observe_on_independent_authority_clocks() {
     let ahead_dir = tempfile::tempdir().unwrap();
