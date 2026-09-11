@@ -56,5 +56,3 @@ use crate::connector_key::ScopedCapabilityProvenance;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 #[cfg(test)]
 use rmpv::Value;
-#[cfg(test)]
-use std::sync::atomic::Ordering as AtomicOrdering;
