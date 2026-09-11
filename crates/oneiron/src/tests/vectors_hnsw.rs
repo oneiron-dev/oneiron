@@ -1,6 +1,8 @@
 //! Vector writes, HNSW search/recall, validation and sync-protocol error taxonomy.
 
 use super::*;
+#[cfg(feature = "sync")]
+use crate::error::SyncError;
 
 #[test]
 fn put_get_vectors_and_validate_dimensions() -> Result<()> {
@@ -252,11 +254,11 @@ fn sync_protocol_errors_carry_typed_context_and_engine_source() {
     assert_eq!(protocol.kind(), ErrorKind::SyncProtocolError);
     assert_matches!(
         protocol,
-        Error::SyncProtocolError {
+        Error::Sync(SyncError::SyncProtocolError {
             context: SyncProtocolValidation::Selector {
                 reason: SyncSelectorValidation::ForeignWorldId
             }
-        }
+        })
     );
 
     let source = std::io::Error::from(std::io::ErrorKind::TimedOut);
@@ -264,10 +266,10 @@ fn sync_protocol_errors_carry_typed_context_and_engine_source() {
     assert_eq!(engine.kind(), ErrorKind::SyncEngineError);
     assert_matches!(
         &engine,
-        Error::SyncEngineError {
+        Error::Sync(SyncError::SyncEngineError {
             context: SyncEngineContext::LoroExportUpdates,
             source
-        } if source.downcast_ref::<std::io::Error>().is_some()
+        }) if source.downcast_ref::<std::io::Error>().is_some()
     );
 
     let operation_source = std::io::Error::from(std::io::ErrorKind::TimedOut);
@@ -281,10 +283,10 @@ fn sync_protocol_errors_carry_typed_context_and_engine_source() {
         rollback_source,
     );
     assert_eq!(rollback.kind(), ErrorKind::SyncEngineError);
-    let Error::SyncEngineError {
+    let Error::Sync(SyncError::SyncEngineError {
         context: SyncEngineContext::LoroRevert,
         source,
-    } = &rollback
+    }) = &rollback
     else {
         panic!("expected revert engine error, got {rollback:?}");
     };

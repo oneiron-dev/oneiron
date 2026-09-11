@@ -11,7 +11,9 @@ use super::types::{
     ROOT_UPDATE_PREFIX, SVF_FRESH, SyncClientConfig, SyncEvent, SyncStatus,
 };
 use crate::Vault;
-use crate::error::{Error, Result, SyncConfigField, SyncEngineContext, SyncProtocolValidation};
+use crate::error::{
+    Error, Result, SyncConfigField, SyncEngineContext, SyncError, SyncProtocolValidation,
+};
 use crate::sync::loro_support::{doc_from_snapshot, doc_version_vector, export_snapshot};
 use crate::sync::manager::WindowManager;
 use crate::sync::schema::read_window_list;
@@ -280,9 +282,11 @@ pub(super) fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
         .prefix_iter(&rtxn, ROOT_UPDATE_PREFIX)?;
     for entry in iter {
         let (_k, v) = entry?;
-        doc.import(&v).map_err(|source| Error::CrdtDecodeError {
-            context: "import pending root update",
-            source,
+        doc.import(&v).map_err(|source| {
+            Error::Sync(SyncError::CrdtDecodeError {
+                context: "import pending root update",
+                source,
+            })
         })?;
     }
     Ok(doc)

@@ -18,7 +18,7 @@ use super::reassignment_map::{ReassignmentTarget, encode_reassignment_item};
 /// the outcome receipt preserves verbatim. The amendment NARROWS what the
 /// owner reviewed: it can never become a different op kind nor reach an
 /// entity the proposal did not name
-/// ([`Error::IdentityProposalAmendmentOutOfScope`](crate::error::Error::IdentityProposalAmendmentOutOfScope)).
+/// ([`SyncError::IdentityProposalAmendmentOutOfScope`](crate::error::SyncError::IdentityProposalAmendmentOutOfScope)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProposalRuling<'a> {
     /// Apply exactly as proposed.

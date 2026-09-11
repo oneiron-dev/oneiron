@@ -245,7 +245,10 @@ fn decode_and_authorize_selector_request(
 /// fail-closed `VvDecode` variant (the connection loop closes on it);
 /// anything else is an export-side failure.
 fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
-    if matches!(e, oneiron::Error::CrdtDecodeError { .. }) {
+    if matches!(
+        e,
+        oneiron::Error::Sync(oneiron::error::SyncError::CrdtDecodeError { .. })
+    ) {
         ProtocolError::VvDecode(e.to_string())
     } else {
         ProtocolError::LoroImport(e.to_string())
@@ -255,7 +258,8 @@ fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
 fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
     if matches!(
         e,
-        oneiron::Error::SyncProtocolError { .. } | oneiron::Error::InvalidFederationGrantBody(_)
+        oneiron::Error::Sync(oneiron::error::SyncError::SyncProtocolError { .. })
+            | oneiron::Error::InvalidFederationGrantBody(_)
     ) {
         ProtocolError::InvalidPayload("sync selector rejected")
     } else {

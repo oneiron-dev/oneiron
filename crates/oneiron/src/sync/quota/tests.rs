@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::config::VaultConfig;
+use crate::error::SyncError;
 
 fn key(value: &str) -> WindowKey {
     WindowKey::new(value)
@@ -117,13 +118,13 @@ fn other_peer_unaffected() -> Result<()> {
 
     assert!(matches!(
         err,
-        Error::MaintenanceIngestQuotaExceeded {
+        Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
             peer_key_hex,
             accepted_count: 1,
             max_ops_per_peer_window: 1,
             window_start_secs: 180,
             quota_window_secs: 60,
-        } if peer_key_hex == bytes_to_hex_lower(&peer_a.0)
+        }) if peer_key_hex == bytes_to_hex_lower(&peer_a.0)
     ));
 
     accept_maintenance_peer_at(&vault, peer_b, 182)?;
@@ -147,13 +148,13 @@ fn quota_resets_per_window() -> Result<()> {
         .expect_err("same window must remain capped");
     assert!(matches!(
         same_window_err,
-        Error::MaintenanceIngestQuotaExceeded {
+        Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
             peer_key_hex,
             accepted_count: 1,
             max_ops_per_peer_window: 1,
             window_start_secs: 10,
             quota_window_secs: 10,
-        } if peer_key_hex == bytes_to_hex_lower(&peer_key.0)
+        }) if peer_key_hex == bytes_to_hex_lower(&peer_key.0)
     ));
 
     accept_maintenance_peer_at(&vault, peer_key, 20)?;
@@ -161,13 +162,13 @@ fn quota_resets_per_window() -> Result<()> {
         .expect_err("new window must allow one ingest before capping again");
     assert!(matches!(
         next_window_err,
-        Error::MaintenanceIngestQuotaExceeded {
+        Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
             peer_key_hex,
             accepted_count: 1,
             max_ops_per_peer_window: 1,
             window_start_secs: 20,
             quota_window_secs: 10,
-        } if peer_key_hex == bytes_to_hex_lower(&peer_key.0)
+        }) if peer_key_hex == bytes_to_hex_lower(&peer_key.0)
     ));
     Ok(())
 }

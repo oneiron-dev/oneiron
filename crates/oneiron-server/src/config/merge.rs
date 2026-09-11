@@ -178,7 +178,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     // SAME typed error rather than a second, stringly copy of it: this door and
     // that one must not drift when a field is added, and a caller reading the
     // merge failure gets the field back as `SyncConfigField`, not as prose.
-    // Display text is unchanged — `Error::SyncProtocolError` renders
+    // Display text is unchanged — `oneiron::error::SyncError::SyncProtocolError` renders
     // "sync protocol error: <field> must be positive".
     if config.ephemeral_timeout_ms <= 0 {
         return Err(invalid_sync_config(SyncConfigField::EphemeralTimeoutMs));

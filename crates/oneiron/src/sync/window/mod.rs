@@ -348,8 +348,10 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
         .store
         .sync_state
         .get(&rtxn, &doc_key)?
-        .ok_or_else(|| Error::WindowNotFound {
-            window_key: key.as_str().to_string(),
+        .ok_or_else(|| {
+            Error::Sync(SyncError::WindowNotFound {
+                window_key: key.as_str().to_string(),
+            })
         })?;
 
     // Load from snapshot
@@ -417,6 +419,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 #[cfg(test)]
 use crate::entity_id::EntityId;
+use crate::error::SyncError;
 #[cfg(test)]
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY};
 #[cfg(test)]

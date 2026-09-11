@@ -23,6 +23,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+#[cfg(feature = "sync")]
+use crate::error::SyncError;
 use crate::error::{Error, Result};
 use crate::outbound_intent_ledger::{
     IntentId, IntentLedgerError, IntentState, intent_ledger_records,
@@ -420,10 +422,10 @@ impl Vault {
         };
         match manager.drop_rebuildable_windows() {
             Ok(report) => Ok(Ok(report)),
-            Err(Error::WindowBusy {
+            Err(Error::Sync(SyncError::WindowBusy {
                 window_key,
                 outstanding_handles,
-            }) => Ok(Err(ShedBlocker::SyncWindowBusy {
+            })) => Ok(Err(ShedBlocker::SyncWindowBusy {
                 window_key,
                 outstanding_handles,
             })),
