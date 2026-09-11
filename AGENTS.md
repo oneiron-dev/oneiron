@@ -254,7 +254,7 @@ constructors are `pub(crate)`, with public forwarders on `Error`.
 
 `scripts/ratchet/check.sh` ratchets four counters over non-test code — files at or over 800
 lines, `#[allow(` attributes, `println!`/`eprintln!`/`dbg!` calls, and process-global mutable
-statics (baseline 2 / 98 / 91 / 38, `scripts/ratchet/baseline.json`) — and
+statics (baseline 2 / 98 / 91 / 33, `scripts/ratchet/baseline.json`) — and
 `scripts/ratchet/root-surface-check.sh` pins the crate root at exactly the 701 names in
 `scripts/ratchet/root-surface.txt`. A change may lower a
 counter; raising one, or moving the pin, is a reviewed decision stated in the PR, never a
@@ -264,7 +264,11 @@ that a private item became dead — delete the item instead.
 Engine state belongs to a vault or to a thread, never to the process: a new `static` holding a
 `Mutex`, `RwLock`, `Atomic`, `OnceLock`/`OnceCell`, `LazyLock`/`Lazy` or `Cell`/`RefCell` is a
 stated decision in the PR, and a `thread_local!` or a field on the owning object is the default.
-`scripts/ratchet/process_globals.py --list` names every one it counts.
+A `#[cfg(test)]` static is the worst case, not an exemption: `cargo test --lib` runs the suite as
+parallel threads of ONE process, so a test-only global is shared by every sibling test — that is
+what #922 and #923 were. Test seams belong on the vault's `#[cfg(test)] StoreCore.test_hooks`,
+reached as `vault.test_hooks()`. `scripts/ratchet/process_globals.py --list` names every one it
+counts, resolving same-file `type` aliases and named wrapper structs so a name cannot hide one.
 
 ## Module style
 
