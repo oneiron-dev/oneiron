@@ -1,0 +1,310 @@
+//! Where the local model's files live, and how they get there.
+//!
+//! Six files, one repository, one commit, one sha256 each. The digests are
+//! pinned in this file because the Hugging Face tree API exposes no LFS oid at
+//! a revision: the only way to know the bytes are the bytes we measured is to
+//! measure them once and refuse anything else afterwards.
+//!
+//! Nothing here runs at boot. The worker calls it on its first pass, so a vault
+//! whose model has never been fetched still opens and still answers BM25 while
+//! the download runs (OF-022, the two-tier write rule).
+
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use sha2::{Digest, Sha256};
+
+use crate::config::LocalEmbedderConfig;
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Refuse a file larger than this before writing it: a redirect to the wrong
+/// place must not fill the disk.
+const MAX_ARTIFACT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// One file of the model, with the digest that makes it that file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PinnedArtifact {
+    /// Path within the repository, also the path under the model directory.
+    pub(crate) file: &'static str,
+    pub(crate) sha256: &'static str,
+    /// Size in bytes at the pinned revision, checked before the digest so an
+    /// obviously wrong download fails without hashing a gigabyte.
+    pub(crate) bytes: u64,
+}
+
+/// The default local model's files at the pinned revision.
+///
+/// Digests measured on the first verified download, 2026-09-11. `model.safetensors`
+/// carries the official bf16 weights; the Q8_0 the provider runs is produced at
+/// load time and never stored.
+pub(crate) const HARRIER_06_FILES: [PinnedArtifact; 6] = [
+    PinnedArtifact {
+        file: "config.json",
+        sha256: "eb15983a1c7f53ecf3d3f1880e676a56967650b0c3c4ed2387c3851133f2d7ef",
+        bytes: 1_355,
+    },
+    PinnedArtifact {
+        file: "modules.json",
+        sha256: "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf",
+        bytes: 349,
+    },
+    PinnedArtifact {
+        file: "config_sentence_transformers.json",
+        sha256: "ad2096929147368b5d0ba5322ea394d50911be4d348091c9f3b0ad06c3763d91",
+        bytes: 351,
+    },
+    PinnedArtifact {
+        file: "1_Pooling/config.json",
+        sha256: "7652a48b1c8ceb3f7d1c96e4b53d50b79231be6876f40e37534ecccdffbd5551",
+        bytes: 297,
+    },
+    PinnedArtifact {
+        file: "tokenizer.json",
+        sha256: "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+        bytes: 11_423_705,
+    },
+    PinnedArtifact {
+        file: "model.safetensors",
+        sha256: "6bb124227f33c3dbf7fbbd38119b2afa8be959e93666d3c9be7142b66708b66c",
+        bytes: 1_192_133_232,
+    },
+];
+
+/// The files the local provider needs, for the configured repository.
+///
+/// Only the default repository has pinned digests. A host that points `repo` at
+/// something else is telling the server it knows better, so the same six names
+/// are required and the digest check is skipped rather than failed.
+pub(crate) fn model_files(config: &LocalEmbedderConfig) -> Vec<PinnedArtifact> {
+    if config.repo == crate::config::embedder::DEFAULT_LOCAL_REPO
+        && config.revision == crate::config::embedder::DEFAULT_LOCAL_REVISION
+    {
+        return HARRIER_06_FILES.to_vec();
+    }
+    HARRIER_06_FILES
+        .iter()
+        .map(|artifact| PinnedArtifact {
+            file: artifact.file,
+            sha256: UNPINNED,
+            bytes: 0,
+        })
+        .collect()
+}
+
+/// Digest placeholder for a repository this build has never measured.
+pub(crate) const UNPINNED: &str = "unpinned";
+
+/// Root the downloaded models live under: `<root>/<org>/<name>/<rev>/<file>`.
+///
+/// Follows the CJK-dictionary convention already in this crate — the XDG data
+/// directory first, then the platform's own application-support path — so a
+/// host has one place to look for everything the server downloads.
+pub(crate) fn models_root(config: &LocalEmbedderConfig) -> PathBuf {
+    if let Some(configured) = config.models_dir.as_ref() {
+        return configured.clone();
+    }
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(xdg).join("oneiron").join("models");
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("oneiron")
+            .join("models");
+    }
+    PathBuf::from(".").join("oneiron-models")
+}
+
+/// The directory the six files sit in.
+pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> PathBuf {
+    if let Some(configured) = config.model_dir.as_ref() {
+        return configured.clone();
+    }
+    let mut dir = models_root(config);
+    for segment in config.repo.split('/') {
+        dir.push(segment);
+    }
+    dir.push(&config.revision);
+    dir
+}
+
+/// Makes every file present and verified, downloading what is missing.
+///
+/// Returns the directory holding them. `model_dir` set in config short-circuits
+/// the download entirely: the operator supplied the files, so the server checks
+/// they exist and nothing else.
+pub(crate) fn ensure_all(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf> {
+    let dir = model_dir(config);
+    let files = model_files(config);
+    if config.model_dir.is_some() {
+        for artifact in &files {
+            let path = dir.join(artifact.file);
+            if !path.is_file() {
+                return Err(missing_file(&path));
+            }
+        }
+        return Ok(dir);
+    }
+    let mut fetched = 0usize;
+    for artifact in &files {
+        if ensure_one(config, &dir, artifact)? {
+            fetched += 1;
+        }
+    }
+    if fetched > 0 {
+        tracing::info!(dir = %dir.display(), fetched, "embedder model artifacts ready");
+    }
+    Ok(dir)
+}
+
+/// Returns whether the file had to be downloaded.
+fn ensure_one(
+    config: &LocalEmbedderConfig,
+    dir: &Path,
+    artifact: &PinnedArtifact,
+) -> oneiron::Result<bool> {
+    let path = dir.join(artifact.file);
+    if path.is_file() {
+        match verify(&path, artifact) {
+            Ok(()) => return Ok(false),
+            Err(error) => {
+                // A file that does not match its digest is not a file we can
+                // use, and leaving it in place would fail the same way on every
+                // restart. Remove it and fetch it again.
+                tracing::warn!(path = %path.display(), ?error, "embedder artifact failed verification; refetching");
+                std::fs::remove_file(&path).map_err(oneiron::Error::Io)?;
+            }
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(oneiron::Error::Io)?;
+    }
+    let url = format!(
+        "https://huggingface.co/{}/resolve/{}/{}",
+        config.repo, config.revision, artifact.file
+    );
+    tracing::info!(file = artifact.file, "downloading embedder model artifact");
+    download(&url, &path, artifact)?;
+    verify(&path, artifact).inspect_err(|_| {
+        // Never leave a bad artifact on disk: the next start would load it.
+        let _ = std::fs::remove_file(&path);
+    })?;
+    Ok(true)
+}
+
+/// Fetches one file to a temporary sibling, then renames it into place.
+///
+/// The rename is what makes a killed download safe: a partial file never
+/// carries the final name, so the next start refetches rather than loading a
+/// truncated tensor file.
+fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Result<()> {
+    // Redirects ARE followed here, unlike the rest of this crate's transports:
+    // Hugging Face answers a large-file `resolve` URL with a redirect to its
+    // CDN, and the digest check below is what makes following one safe.
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(DOWNLOAD_TIMEOUT)
+        .build()
+        .map_err(|e| download_failed(artifact.file, &format!("client: {e}")))?;
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|e| download_failed(artifact.file, &transport_class(&e)))?;
+    if !response.status().is_success() {
+        return Err(download_failed(
+            artifact.file,
+            &format!("HTTP {}", response.status()),
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_ARTIFACT_BYTES)
+    {
+        return Err(download_failed(artifact.file, "exceeds the artifact cap"));
+    }
+    let temp = path.with_extension("partial");
+    let mut file = std::fs::File::create(&temp).map_err(oneiron::Error::Io)?;
+    let written = std::io::copy(&mut response.take(MAX_ARTIFACT_BYTES + 1), &mut file)
+        .map_err(oneiron::Error::Io)?;
+    drop(file);
+    if written > MAX_ARTIFACT_BYTES {
+        let _ = std::fs::remove_file(&temp);
+        return Err(download_failed(artifact.file, "exceeds the artifact cap"));
+    }
+    std::fs::rename(&temp, path).map_err(oneiron::Error::Io)
+}
+
+/// Size first, then digest.
+pub(crate) fn verify(path: &Path, artifact: &PinnedArtifact) -> oneiron::Result<()> {
+    let metadata = std::fs::metadata(path).map_err(oneiron::Error::Io)?;
+    if artifact.bytes != 0 && metadata.len() != artifact.bytes {
+        return Err(oneiron::Error::InvalidConfig(format!(
+            "embedder artifact {} is {} bytes, expected {}",
+            artifact.file,
+            metadata.len(),
+            artifact.bytes
+        )));
+    }
+    if artifact.sha256 == UNPINNED {
+        return Ok(());
+    }
+    let digest = sha256_file(path)?;
+    if digest != artifact.sha256 {
+        return Err(oneiron::Error::InvalidConfig(format!(
+            "embedder artifact {} has sha256 {digest}, expected {}",
+            artifact.file, artifact.sha256
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn sha256_file(path: &Path) -> oneiron::Result<String> {
+    let mut file = std::fs::File::open(path).map_err(oneiron::Error::Io)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        let read = file.read(&mut buffer).map_err(oneiron::Error::Io)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex(&hasher.finalize()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(DIGITS[(byte >> 4) as usize] as char);
+        out.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn transport_class(error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        "timed out".to_owned()
+    } else if error.is_connect() {
+        "connection failed".to_owned()
+    } else {
+        "failed".to_owned()
+    }
+}
+
+fn download_failed(file: &str, reason: &str) -> oneiron::Error {
+    oneiron::Error::UpstreamToolFailure {
+        tool: "embedder-model-download",
+        code: format!("{file}: {reason}"),
+    }
+}
+
+fn missing_file(path: &Path) -> oneiron::Error {
+    oneiron::Error::InvalidConfig(format!(
+        "embedder model_dir is missing {}; the directory must hold every model file",
+        path.display()
+    ))
+}
