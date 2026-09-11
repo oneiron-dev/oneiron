@@ -145,6 +145,10 @@ pub(crate) struct EmbedderSlot {
     /// the fetch succeeds. A `OnceLock` FIELD, never a process static — the
     /// slot belongs to the server that owns the vault.
     ready: OnceLock<Arc<dyn QueryEmbedder>>,
+    /// Fetches and verifies the local provider's artifacts. A field for the
+    /// same reason `ready` is one: it belongs to this server, and it has to
+    /// outlive the individual load attempts the worker makes.
+    models: local::model_manager::ModelManager,
 }
 
 impl EmbedderSlot {
@@ -159,6 +163,7 @@ impl EmbedderSlot {
         let slot = Self {
             config: config.clone(),
             ready: OnceLock::new(),
+            models: local::model_manager::ModelManager::default(),
         };
         if config.provider == EmbedderProvider::Endpoint {
             let embedder = endpoint::HttpEmbedder::from_config(config)?;
@@ -180,6 +185,15 @@ impl EmbedderSlot {
         self.ready.get()
     }
 
+    /// Fetches the local model's artifacts from somewhere other than Hugging
+    /// Face. Test-only: it is how a row exercises the fetch path without
+    /// leaving the host.
+    #[cfg(test)]
+    pub(crate) fn with_model_source(mut self, base_url: &str) -> Self {
+        self.models = local::model_manager::ModelManager::with_base_url(base_url);
+        self
+    }
+
     /// Truncations the serving provider has counted, or `None` before it serves.
     pub(crate) fn truncations(&self) -> Option<u64> {
         self.ready.get().map(|embedder| embedder.truncations())
@@ -195,7 +209,8 @@ impl EmbedderSlot {
         if let Some(ready) = self.ready.get() {
             return Ok(Arc::clone(ready));
         }
-        let embedder = local::LocalEmbedder::load(&self.config)? as Arc<dyn QueryEmbedder>;
+        let embedder =
+            local::LocalEmbedder::load(&self.config, &self.models)? as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
         // `set` loses a race; the winner is the one every caller must see.
         Ok(self.ready.get().map_or(embedder, Arc::clone))

@@ -471,7 +471,9 @@ fn an_incomplete_model_dir_names_the_missing_file_and_never_downloads() {
         model_dir: Some(dir.path().to_path_buf()),
         ..crate::config::LocalEmbedderConfig::default()
     };
-    let error = model_manager::ensure_all(&config).expect_err("an incomplete directory is refused");
+    let error = model_manager::ModelManager::default()
+        .ensure_all(&config)
+        .expect_err("an incomplete directory is refused");
     assert!(
         matches!(error, oneiron::Error::InvalidConfig(ref message) if message.contains("config.json")),
         "{error:?}"
@@ -526,6 +528,119 @@ fn an_unpinned_repository_keeps_the_file_list_without_digests() {
     );
 }
 
+// ─── the artifact source, stubbed on loopback ────────────────────────────
+
+/// The bytes the stub serves, and the pin that makes them the right bytes.
+const STUB_BODY: &str = "harrier stub artifact\n";
+const STUB_ARTIFACT: model_manager::PinnedArtifact = model_manager::PinnedArtifact {
+    file: "config.json",
+    sha256: "a7f696052a04543b70eb9211a5af7430d87d38d753c0e1c0c8a3655d6a2fe671",
+    bytes: STUB_BODY.len() as u64,
+};
+
+/// A one-file artifact source on loopback.
+///
+/// The fetch path is not reachable otherwise without the network, and a row
+/// that asserts what the manager does with a bad file on disk has to be able to
+/// watch it fetch a good one.
+struct StubSource {
+    base: String,
+    paths: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    // Dropping the runtime stops the server; the field keeps it alive for the
+    // length of the test.
+    runtime: Option<tokio::runtime::Runtime>,
+}
+
+impl Drop for StubSource {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
+impl StubSource {
+    fn start() -> Self {
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let app = axum::Router::new()
+            .route(
+                "/{*path}",
+                axum::routing::get(
+                    |axum::extract::State(paths): axum::extract::State<
+                        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+                    >,
+                     uri: axum::http::Uri| async move {
+                        paths
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(uri.path().to_owned());
+                        STUB_BODY
+                    },
+                ),
+            )
+            .with_state(std::sync::Arc::clone(&paths));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("stub runtime");
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .expect("stub listener");
+        let addr = listener.local_addr().expect("stub addr");
+        runtime.spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Self {
+            base: format!("http://{addr}"),
+            paths,
+            runtime: Some(runtime),
+        }
+    }
+
+    fn paths(&self) -> Vec<String> {
+        self.paths
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// A file on disk whose digest does not match is removed and fetched again.
+/// Leaving it in place would fail the same way on every restart, and a fetch is
+/// the only thing that can repair it.
+#[test]
+fn an_artifact_with_a_wrong_digest_is_removed_and_fetched_again() {
+    let source = StubSource::start();
+    let models = tempfile::tempdir().expect("models dir");
+    let config = local_config(models.path());
+    let dir = model_manager::model_dir(&config).expect("a configured root");
+    std::fs::create_dir_all(&dir).expect("create the model dir");
+    let path = dir.join(STUB_ARTIFACT.file);
+    // The right size and the wrong bytes, so the size check passes and the
+    // digest is what refuses it.
+    std::fs::write(&path, "x".repeat(STUB_BODY.len())).expect("write a wrong file");
+
+    let manager = model_manager::ModelManager::with_base_url(&source.base);
+    let fetched = manager
+        .ensure_one(&config, &dir, &STUB_ARTIFACT)
+        .expect("a refused file is fetched again");
+
+    assert!(fetched, "the manager reports that it fetched the artifact");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the refetched artifact"),
+        STUB_BODY,
+        "the bad bytes are gone and the source's bytes are in their place"
+    );
+    assert_eq!(
+        source.paths(),
+        vec![format!(
+            "/{}/resolve/{}/{}",
+            config.repo, config.revision, STUB_ARTIFACT.file
+        )],
+        "the manager asks the source for exactly the pinned path, once"
+    );
+}
+
 // ─── rows that need the checkpoint ───────────────────────────────────────
 
 mod with_model {
@@ -544,6 +659,12 @@ mod with_model {
             },
             ..EmbedderConfig::default()
         }
+    }
+
+    /// Artifacts are already on this host for every row here, so the manager
+    /// only verifies them.
+    fn manager() -> model_manager::ModelManager {
+        model_manager::ModelManager::default()
     }
 
     fn reference_vectors() -> Vec<Vec<f32>> {
@@ -583,7 +704,7 @@ mod with_model {
     #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
     fn the_committed_subset_matches_the_reference_runtime() {
         let embedder =
-            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto)).expect("model loads");
+            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager()).expect("model loads");
         let chunks = reference_chunks();
         let reference = reference_vectors();
         assert_eq!(chunks.len(), reference.len());
@@ -606,7 +727,7 @@ mod with_model {
     #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
     fn a_batched_input_embeds_exactly_as_it_does_alone() {
         let embedder =
-            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto)).expect("model loads");
+            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager()).expect("model loads");
         let texts: Vec<String> = reference_chunks().into_iter().take(8).collect();
         let batched = embedder.embed_texts(&texts).expect("batched");
         for (index, text) in texts.iter().enumerate() {
@@ -626,7 +747,8 @@ mod with_model {
     #[test]
     #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
     fn the_tokenizer_appends_one_end_of_text_token_and_truncation_keeps_it() {
-        let dir = model_manager::ensure_all(&ready_config(EmbedderDevice::Auto).local)
+        let dir = manager()
+            .ensure_all(&ready_config(EmbedderDevice::Auto).local)
             .expect("artifacts present");
         let tokenizer =
             tokenizers::Tokenizer::from_file(dir.join("tokenizer.json")).expect("tokenizer loads");
@@ -660,11 +782,11 @@ mod with_model {
             return;
         }
         let texts: Vec<String> = reference_chunks().into_iter().take(4).collect();
-        let on_metal = LocalEmbedder::load(&ready_config(EmbedderDevice::Metal))
+        let on_metal = LocalEmbedder::load(&ready_config(EmbedderDevice::Metal), &manager())
             .expect("metal model")
             .embed_texts(&texts)
             .expect("metal vectors");
-        let on_cpu = LocalEmbedder::load(&ready_config(EmbedderDevice::Cpu))
+        let on_cpu = LocalEmbedder::load(&ready_config(EmbedderDevice::Cpu), &manager())
             .expect("cpu model")
             .embed_texts(&texts)
             .expect("cpu vectors");
@@ -702,7 +824,7 @@ mod with_model {
 
         let load_started = std::time::Instant::now();
         let embedder =
-            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto)).expect("model loads");
+            LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager()).expect("model loads");
         let load_ms = load_started.elapsed().as_millis();
 
         let embed_started = std::time::Instant::now();
