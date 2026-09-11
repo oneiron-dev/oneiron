@@ -124,6 +124,9 @@ pub struct StoreCore {
     /// Process-local clock domain for monotonic authority first-seen windows.
     /// Read-only mirror; release-on-drop responsibility is the owner's.
     pub(crate) authority_clock_domain: usize,
+    /// This vault's content-free diagnostic counters. Per-vault, not
+    /// per-process: see [`Diagnostics`] for why the three families moved here.
+    pub(crate) diagnostics: Diagnostics,
 }
 
 /// Drop-sensitive singletons of an open vault; exactly one per open path
@@ -236,6 +239,10 @@ pub struct Store {
 )]
 pub(crate) struct SessionStoreView<'store> {
     _owner: &'store StoreOwner,
+    /// The shared substrate this view's writes belong to. Held so a writer
+    /// generic over [`ManifestDbs`] records a diagnostic into the vault it is
+    /// writing rather than into a process-wide counter.
+    core: &'store StoreCore,
     /// The overlay every accessor above stages into. Held so a staging site
     /// inside a base write transaction can install its segment (see
     /// [`SessionStoreView::install_txn_segment`]) without the caller having to
@@ -359,14 +366,24 @@ macro_rules! manifest_dbs {
         )]
         pub(crate) trait ManifestDbs {
             $(fn $name(&self) -> &$ty;)+
+
+            /// The diagnostic counters of the vault this write target belongs
+            /// to. Not a database: it is here because an index writer generic
+            /// over `&impl ManifestDbs` must record into the vault it is
+            /// writing, and the write target is the only handle it holds.
+            fn diagnostics(&self) -> &Diagnostics;
         }
 
         impl ManifestDbs for Store {
             $(fn $name(&self) -> &$ty { &self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
             $(fn $name(&self) -> &$ty { &self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
         }
     };
 }
@@ -468,6 +485,7 @@ impl Store {
             |base, keyspace| OverlayDb::composed(base, overlay.clone(), snapshot.clone(), keyspace);
         Ok(SessionStoreView {
             _owner: &self.owner,
+            core: &self.core,
             overlay: overlay.clone(),
             entities: db(self.core.raw.entities, OverlayKeyspace::Entities),
             edges_out: db(self.core.raw.edges_out, OverlayKeyspace::EdgesOut),

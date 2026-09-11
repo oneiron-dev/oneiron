@@ -1,4 +1,4 @@
-//! Process-local cleanup counters, cleanup span emission, and the shared
+//! Per-vault cleanup counters, cleanup span emission, and the shared
 //! invalid-transition error constructor.
 //!
 //! The counters carry stable, content-free labels only: a reason class never
@@ -14,12 +14,54 @@ use super::types::{
 };
 use crate::error::ArtifactError;
 
-static ATTEMPT_QUEUE_CLEANUP_RUNS: AtomicU64 = AtomicU64::new(0);
-static ATTEMPT_QUEUE_CLEANUP_STALE_REQUEUED: AtomicU64 = AtomicU64::new(0);
-static ATTEMPT_QUEUE_CLEANUP_RETRY_REASON_COUNTERS: [AtomicU64; ATTEMPT_QUEUE_RETRY_REASON_COUNT] =
-    [AtomicU64::new(0), AtomicU64::new(0)];
+/// One vault's attempt-queue cleanup counters.
+///
+/// Owned by that vault's store handle (`StoreCore::diagnostics`), so a cleanup
+/// run on one vault never moves the number a reader of another vault sees.
+pub(crate) struct AttemptQueueCleanupMetrics {
+    runs: AtomicU64,
+    stale_requeued: AtomicU64,
+    retry_reasons: [AtomicU64; ATTEMPT_QUEUE_RETRY_REASON_COUNT],
+}
 
-/// In-process cleanup counters with stable, content-free labels.
+impl Default for AttemptQueueCleanupMetrics {
+    fn default() -> Self {
+        Self {
+            runs: AtomicU64::new(0),
+            stale_requeued: AtomicU64::new(0),
+            retry_reasons: [const { AtomicU64::new(0) }; ATTEMPT_QUEUE_RETRY_REASON_COUNT],
+        }
+    }
+}
+
+impl AttemptQueueCleanupMetrics {
+    /// Returns this vault's attempt-queue cleanup counters.
+    #[must_use]
+    pub(crate) fn snapshot(&self) -> AttemptQueueCleanupMetricsSnapshot {
+        AttemptQueueCleanupMetricsSnapshot {
+            runs: self.runs.load(AtomicOrdering::Relaxed),
+            stale_requeued: self.stale_requeued.load(AtomicOrdering::Relaxed),
+            retry_reasons: AttemptQueueRetryReason::metric_values().map(|reason| {
+                AttemptQueueRetryReasonCount {
+                    reason,
+                    count: self.retry_reasons[reason.metric_index()].load(AtomicOrdering::Relaxed),
+                }
+            }),
+        }
+    }
+
+    pub(super) fn record(&self, report: &AttemptQueueCleanupReport) {
+        self.runs.fetch_add(1, AtomicOrdering::Relaxed);
+        self.stale_requeued
+            .fetch_add(report.stale_requeued, AtomicOrdering::Relaxed);
+        for counter in report.retry_reasons {
+            self.retry_reasons[counter.reason.metric_index()]
+                .fetch_add(counter.count, AtomicOrdering::Relaxed);
+        }
+    }
+}
+
+/// One vault's cleanup counters with stable, content-free labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttemptQueueCleanupMetricsSnapshot {
     pub runs: u64,
@@ -27,33 +69,8 @@ pub struct AttemptQueueCleanupMetricsSnapshot {
     pub retry_reasons: [AttemptQueueRetryReasonCount; ATTEMPT_QUEUE_RETRY_REASON_COUNT],
 }
 
-/// Returns process-local attempt-queue cleanup counters.
-#[must_use]
-pub fn attempt_queue_cleanup_metrics_snapshot() -> AttemptQueueCleanupMetricsSnapshot {
-    AttemptQueueCleanupMetricsSnapshot {
-        runs: ATTEMPT_QUEUE_CLEANUP_RUNS.load(AtomicOrdering::Relaxed),
-        stale_requeued: ATTEMPT_QUEUE_CLEANUP_STALE_REQUEUED.load(AtomicOrdering::Relaxed),
-        retry_reasons: AttemptQueueRetryReason::metric_values().map(|reason| {
-            AttemptQueueRetryReasonCount {
-                reason,
-                count: ATTEMPT_QUEUE_CLEANUP_RETRY_REASON_COUNTERS[reason.metric_index()]
-                    .load(AtomicOrdering::Relaxed),
-            }
-        }),
-    }
-}
-
 pub(super) fn invalid_transition(action: &'static str, state: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidAttemptQueueTransition { action, state })
-}
-
-pub(super) fn record_attempt_queue_cleanup_metrics(report: &AttemptQueueCleanupReport) {
-    ATTEMPT_QUEUE_CLEANUP_RUNS.fetch_add(1, AtomicOrdering::Relaxed);
-    ATTEMPT_QUEUE_CLEANUP_STALE_REQUEUED.fetch_add(report.stale_requeued, AtomicOrdering::Relaxed);
-    for counter in report.retry_reasons {
-        ATTEMPT_QUEUE_CLEANUP_RETRY_REASON_COUNTERS[counter.reason.metric_index()]
-            .fetch_add(counter.count, AtomicOrdering::Relaxed);
-    }
 }
 
 pub(super) fn emit_attempt_queue_cleanup_span(

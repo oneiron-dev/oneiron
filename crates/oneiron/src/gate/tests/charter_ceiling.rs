@@ -71,8 +71,11 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
     // (c) The stamped charter binds: the same dispatch now denies on the
     // never-list and consumes no budget (charge None).
     vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_003)?;
-    let deny_before =
-        gate_metrics_snapshot().count(GateOutcome::Deny, GateMetricReasonClass::CharterPolicy);
+    let deny_before = vault
+        .diagnostics()
+        .gate
+        .snapshot()
+        .count(GateOutcome::Deny, GateMetricReasonClass::CharterPolicy);
     let (decision, charge) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
     assert_eq!(
@@ -81,8 +84,11 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
     );
     assert!(decision.receipt_reasons().contains(&"charter_never_list"));
     assert!(charge.is_none(), "a never-list deny never reaches budgets");
-    let deny_after =
-        gate_metrics_snapshot().count(GateOutcome::Deny, GateMetricReasonClass::CharterPolicy);
+    let deny_after = vault
+        .diagnostics()
+        .gate
+        .snapshot()
+        .count(GateOutcome::Deny, GateMetricReasonClass::CharterPolicy);
     assert!(deny_after > deny_before, "CharterPolicy deny metric counts");
 
     Ok(())

@@ -38,7 +38,7 @@ use crate::write_envelope::WriteActor;
 
 use super::ceiling::{PolicyApprovalCeiling, PolicyCriticality};
 use super::constants::POLICY_SCHEMA_VERSION;
-use super::decision::{GateDecision, GateReasonCode, record_gate_decision_metrics};
+use super::decision::{GateDecision, GateReasonCode};
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
 use super::doors::{edge_actor_class_str, enforce_gate_decision};
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
@@ -228,7 +228,7 @@ pub(crate) fn check_witness_message_ceiling<'a>(
             None if policy.enforces_write_gate() => policy.evaluate_gate(&input),
             None => GateDecision::allow(),
         };
-    record_gate_decision_metrics(&decision);
+    store.diagnostics.gate.record_decision(&decision);
     enforce_gate_decision(decision)?;
 
     Ok(WitnessMessageAuthorization {

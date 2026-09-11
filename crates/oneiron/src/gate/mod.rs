@@ -52,7 +52,7 @@ pub(crate) use self::constants::{
 pub(crate) use self::constants::{POLICY_SCHEMA_VERSION, SCOPED_READ_EFFECTOR_CORE_READ};
 #[cfg(test)]
 pub(crate) use self::decision::gate_metric_emission_count_for_test;
-pub(crate) use self::decision::{GateDecision, GateOutcome, GateReasonCode};
+pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReasonCode};
 pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_policy_manifest, default_policy_manifest_id,
 };
