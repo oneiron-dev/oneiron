@@ -55,6 +55,36 @@ jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"]
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 thiserror = { workspace = true }
 utoipa = "5.5.0"
+# EMB-7/EMB-8 local embedder (ONE-1979/ONE-1980). Pinned exact: the quantise
+# path calls `candle_core::quantized::QTensor::quantize` and the Metal SDPA
+# branch calls `candle_nn::ops::sdpa`, both 0.11.0 public API, and a minor bump
+# has moved either before. crates.io only — never a git candle and never a
+# `mistralrs-*` crate (BLUEPRINT-EMB-5-v3 §Fork policy).
+candle-core = "=0.11.0"
+candle-nn = "=0.11.0"
+# The pre-tokenizer's regex engine named explicitly, and nothing else: no
+# progress bars in a daemon. `onig` rather than the pure-Rust alternative
+# because `candle-core` depends on `tokenizers` with its own defaults, so the C
+# engine is in this tree whichever we ask for, and it is the engine the
+# reference runtime tokenized with — the parity row would find any difference.
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+# Model-artifact download rides the `reqwest` blocking client already in this
+# file. `hf-hub` 1.0 was the blueprint's choice, but its sync handle drives an
+# owned tokio runtime through `block_on`, which the embedding worker cannot call
+# from inside the server's runtime, and it pulls the whole Xet CAS client for a
+# job that is six pinned GETs against `/resolve/<sha>/`.
+sha2 = "0.10"
+# Already in the tree through the engine's f16 vector rows; named explicitly
+# because the numerics guard rounds every component through `f16` itself.
+half = "2"
+
+# Metal is the default embedder device on Apple silicon, expressed as a
+# target-gated feature activation rather than a cargo feature: a cargo feature
+# would be switched on by `--all-features` on every host, including the Linux
+# reference runner where the Metal kernels do not build.
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+candle-core = { version = "=0.11.0", features = ["metal"] }
+candle-nn = { version = "=0.11.0", features = ["metal"] }
 
 [dev-dependencies]
 # Parse memory-reason YAML in quoted-scalar control-character regressions.
