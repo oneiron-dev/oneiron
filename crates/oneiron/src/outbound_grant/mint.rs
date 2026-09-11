@@ -10,6 +10,7 @@ use super::standing_outbound_grant_principal_index_key;
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
+use crate::error::RecordError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 use crate::store::Store;
@@ -38,7 +39,7 @@ impl Vault {
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
-            return Err(Error::OutboundGrantAlreadyExists);
+            return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
         wtxn.commit()?;
@@ -67,7 +68,7 @@ impl Vault {
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
-            return Err(Error::OutboundGrantAlreadyExists);
+            return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
         wtxn.commit()?;
@@ -82,12 +83,12 @@ impl Vault {
     /// one-live-grant-per-page: `booking::mint_publish_page_invite_grant`
     /// looks up the principal index before it ever reaches this door, and
     /// derives `id` from the page so a second publish lands on
-    /// [`Error::OutboundGrantAlreadyExists`] rather than on a second grant.
+    /// [`RecordError::OutboundGrantAlreadyExists`](crate::error::RecordError::OutboundGrantAlreadyExists) rather than on a second grant.
     ///
     /// # Errors
     ///
-    /// [`Error::OutboundGrantAlreadyExists`] when `id` is already stored;
-    /// [`Error::InvalidOutboundGrantBody`] when the grant fails validation;
+    /// [`RecordError::OutboundGrantAlreadyExists`](crate::error::RecordError::OutboundGrantAlreadyExists) when `id` is already stored;
+    /// [`RecordError::InvalidOutboundGrantBody`](crate::error::RecordError::InvalidOutboundGrantBody) when the grant fails validation;
     /// storage errors propagate.
     pub fn mint_booking_page_invite_outbound_grant(
         &self,
@@ -118,7 +119,7 @@ impl Vault {
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
-            return Err(Error::OutboundGrantAlreadyExists);
+            return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
         wtxn.commit()?;

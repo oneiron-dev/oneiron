@@ -16,6 +16,7 @@ use super::types::{
 };
 use crate::claim::{ClaimBody, ClaimSubject, MAX_PREDICATE_BYTES};
 use crate::entity_id::EntityId;
+use crate::error::RecordError;
 use crate::error::{Error, Result};
 use rmpv::Value;
 use std::io::Cursor;
@@ -360,7 +361,9 @@ fn validate_claim_string(value: &Value, max_bytes: usize, reason: &'static str) 
 
 fn validate_non_empty_bounded(value: &str, max: usize, reason: &'static str) -> Result<()> {
     if value.trim().is_empty() || value.trim() != value || value.len() > max {
-        Err(Error::InvalidCounterpartyContactBody(reason))
+        Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
+            reason,
+        )))
     } else {
         Ok(())
     }
@@ -410,5 +413,7 @@ fn encode_msgpack_value(value: &Value, reason: &'static str) -> Result<Vec<u8>> 
 }
 
 pub(super) fn invalid_contact() -> Error {
-    Error::InvalidCounterpartyContactBody("body failed validation")
+    Error::Record(RecordError::InvalidCounterpartyContactBody(
+        "body failed validation",
+    ))
 }

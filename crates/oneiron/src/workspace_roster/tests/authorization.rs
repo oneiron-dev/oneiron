@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::GateError;
+use crate::error::RecordError;
 use crate::subject_model::tests::authorization::root_owner;
 
 type Mutation = fn(&Vault, &MemberOnboardingIntent, &WriteActor) -> Result<()>;
@@ -539,7 +540,9 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
             let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
             assert!(matches!(
                 vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
-                Err(Error::WorkspaceMailboxAutonomyNotReady { .. })
+                Err(Error::Record(
+                    RecordError::WorkspaceMailboxAutonomyNotReady { .. }
+                ))
             ));
             activate_mailbox(&vault, requested.identity_ref)?;
             let state = vault.apply_channel_identity_autonomy(&requested.autonomy, &owner)?;
@@ -643,7 +646,9 @@ fn mailbox_publication_fence_rejects_a_mutation_after_successful_verification() 
     let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
     assert!(matches!(
         vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
-        Err(Error::WorkspaceMailboxAutonomyNotReady { .. })
+        Err(Error::Record(
+            RecordError::WorkspaceMailboxAutonomyNotReady { .. }
+        ))
     ));
     activate_mailbox(&vault, requested.identity_ref)?;
     let state = vault.apply_channel_identity_autonomy(&requested.autonomy, &owner)?;
@@ -679,7 +684,9 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
         let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
-            Err(Error::WorkspaceMailboxAutonomyNotReady { .. })
+            Err(Error::Record(
+                RecordError::WorkspaceMailboxAutonomyNotReady { .. }
+            ))
         ));
         if future_lifecycle {
             vault.transition_channel_identity(
@@ -752,7 +759,9 @@ fn invalid_owner_api_bounds_leave_journal_incomplete_without_grants() -> Result<
         }
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
-            Err(Error::WorkspaceMailboxAutonomyNotReady { .. })
+            Err(Error::Record(
+                RecordError::WorkspaceMailboxAutonomyNotReady { .. }
+            ))
         ));
         activate_mailbox(&vault, entity(MAILBOX_IDENTITY))?;
         let before = durable_rows(&vault)?;

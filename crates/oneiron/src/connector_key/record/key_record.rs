@@ -7,6 +7,7 @@ use super::{
     CONNECTOR_KEY_MAX_BUDGET_ROWS, EffectorBudget, normalize_connector_key, validate_budget_row,
     validate_never_list_entry, validate_suggested_budget_row,
 };
+use crate::error::RecordError;
 
 /// ConnectorKeyRecord lifecycle status.
 ///
@@ -423,5 +424,5 @@ pub(in crate::connector_key) fn validate_compiled_policy(
 }
 
 pub(crate) fn invalid_body(reason: &'static str) -> Error {
-    Error::InvalidConnectorKeyBody(reason)
+    Error::Record(RecordError::InvalidConnectorKeyBody(reason))
 }

@@ -4,6 +4,7 @@ use super::quota;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
+use crate::error::RecordError;
 use crate::error::{Error, Result};
 use crate::self_heal::validate_diagnostic_event_admission;
 use crate::temporal::TimeRange;
@@ -29,9 +30,9 @@ pub(super) fn ingest_diagnostic_in_txn(
         }
         // Content addresses are immutable, not LWW update handles. Reject
         // even envelope-only divergence and keep the accepted local bytes.
-        return Err(Error::InvalidDiagnosticBody(
+        return Err(Error::Record(RecordError::InvalidDiagnosticBody(
             "diagnostic id already stores different bytes",
-        ));
+        )));
     }
     let debit = quota::try_accept_maintenance_ingest_peer_in_txn(
         vault,

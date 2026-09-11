@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{ArtifactError, Error, RecordError, Result};
 
 /// Most layer names one projection may name.
 pub const CONTEXT_SPEC_MAX_LAYERS: usize = 32;
@@ -239,10 +239,14 @@ pub(super) fn validate_optional_text(text: Option<&str>, reason: &'static str) -
 
 pub(super) fn validate_panel_text(text: &str, _field: &'static str) -> Result<()> {
     if text.trim().is_empty() {
-        return Err(Error::InvalidTaskBody("panel spec text must be non-empty"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec text must be non-empty",
+        )));
     }
     if text.len() > CONTEXT_SPEC_MAX_TEXT_BYTES {
-        return Err(Error::InvalidTaskBody("panel spec text is too long"));
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "panel spec text is too long",
+        )));
     }
     Ok(())
 }

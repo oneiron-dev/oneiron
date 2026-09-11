@@ -1,6 +1,6 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 
 /// Exact agent-visible TASKS verb family in protocol sort order.
 pub const TASKS_VERBS: [&str; 5] = [
@@ -66,7 +66,9 @@ impl TaskKind {
         match token {
             "standard" => Ok(Self::Standard),
             "consult" => Ok(Self::Consult),
-            _ => Err(Error::InvalidTaskBody("tasks.body.kind")),
+            _ => Err(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.body.kind",
+            ))),
         }
     }
 }

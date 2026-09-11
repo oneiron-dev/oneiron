@@ -6,6 +6,7 @@ use crate::Vault;
 use crate::booking::constraint::BookingError;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::error::RecordError;
 use crate::outbound_grant::{
     BookingPageInviteGrantMintIntent, StandingOutboundGrant, StandingOutboundGrantScope,
     StandingOutboundGrantStatus, standing_outbound_grant_principal_index_entity_id,
@@ -14,7 +15,7 @@ use crate::outbound_grant::{
 
 /// Domain tag for the deterministic page-grant entity id. Deriving the id from
 /// the page is what makes a second publish land on
-/// [`Error::OutboundGrantAlreadyExists`] instead of on a second live grant.
+/// [`RecordError::OutboundGrantAlreadyExists`](crate::error::RecordError::OutboundGrantAlreadyExists) instead of on a second live grant.
 pub(super) const PAGE_INVITE_GRANT_ID_DOMAIN: &[u8] = b"oneiron.booking.page_invite_grant.v1\0";
 
 /// Mints — or returns — the ONE live invite grant for a published page.
@@ -43,7 +44,7 @@ pub fn mint_publish_page_invite_grant(
     };
     match vault.mint_booking_page_invite_outbound_grant(&id, &intent, request.issued_at) {
         Ok(grant) => Ok(grant),
-        Err(Error::OutboundGrantAlreadyExists) => vault
+        Err(Error::Record(RecordError::OutboundGrantAlreadyExists)) => vault
             .get_standing_outbound_grant(&id)
             .map_err(|error| engine_failure("page invite grant read", error))?
             .ok_or_else(|| refused("the existing booking page invite grant did not read back")),

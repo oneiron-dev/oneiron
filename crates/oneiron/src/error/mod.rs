@@ -10,6 +10,7 @@ mod claim;
 mod gate;
 mod maintenance;
 mod off_record;
+mod record;
 mod registry;
 mod relay;
 mod secret;
@@ -21,6 +22,7 @@ pub use self::claim::ClaimError;
 pub use self::gate::{GateDenial, GateDenialOutcome, GateDenialReason, GateError};
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
+pub use self::record::RecordError;
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
 pub use self::secret::SecretError;
@@ -306,26 +308,6 @@ pub enum Error {
     /// Requested entity does not exist.
     #[error("entity not found")]
     EntityNotFound,
-    /// AccessGrant creation attempted to reuse an existing entity id.
-    #[error("access grant already exists")]
-    AccessGrantAlreadyExists,
-    /// StandingOutboundGrant creation attempted to reuse an existing entity id.
-    #[error("outbound grant already exists")]
-    OutboundGrantAlreadyExists,
-    /// ConnectorKey registration attempted to reuse an existing entity id or
-    /// an existing non-revoked `(connector, actor_entity_ref)` tuple.
-    #[error("connector key already exists")]
-    ConnectorKeyAlreadyExists,
-    /// ChannelIdentity creation attempted to reuse an existing id or assignment key.
-    #[error("channel identity already exists")]
-    ChannelIdentityAlreadyExists,
-    /// CounterpartyContact creation attempted to reuse an existing id or
-    /// (identity_ref, counterparty) key.
-    #[error("counterparty contact already exists")]
-    CounterpartyContactAlreadyExists,
-    /// Companion register creation attempted to reuse an existing id or key.
-    #[error("companion record already exists")]
-    CompanionRecordAlreadyExists,
     /// A concurrent write invalidated an operation that relied on a stable snapshot.
     #[error("concurrent write detected: {0}")]
     ConcurrentWrite(&'static str),
@@ -338,17 +320,9 @@ pub enum Error {
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
-    /// A FEDERATION_GRANT (type 124) body failed structural validation.
-    #[error("invalid federation grant body: {0}")]
-    InvalidFederationGrantBody(&'static str),
-    #[error("invalid authority log body: {0}")]
-    InvalidAuthorityLogBody(&'static str),
     /// Index metadata or neighbor storage is internally inconsistent.
     #[error("corrupted index: {0}")]
     CorruptedIndex(&'static str),
-    /// Context-pack assembly found a cross-record anomaly before surfacing output.
-    #[error("context pack validation failed for entity {}: {reason}", id.to_hex())]
-    ContextPackValidation { id: EntityId, reason: &'static str },
     /// Index bookkeeping overflowed its supported range.
     #[error("index overflow: {0}")]
     IndexOverflow(&'static str),
@@ -359,106 +333,6 @@ pub enum Error {
     /// (D11 key set / D18 fail-closed gate). Nothing was written.
     #[error("invalid claim body: {0}")]
     InvalidClaimBody(&'static str),
-    /// A COMPANION_REGISTER body failed the pinned STATELESS structural
-    /// validation at the FEDERATION ADMISSION door. Nothing was written, and
-    /// nothing was staged.
-    ///
-    /// FED-1380: `companion::decode_companion_record_body` reports every body
-    /// fault as [`Error::InvalidClaimBody`], which `stage_foreign_vault_import`
-    /// classifies TERMINAL. Returning that variant from admission would mint a
-    /// permanently `Failed` receipt for a kind materialization merely
-    /// quarantines — the retry-semantics flip that door deliberately avoids. So
-    /// the admission arm re-labels the fault with this variant: same verdict
-    /// text, same coarse [`ErrorKind::InvalidClaimBody`] for anything reading
-    /// `kind()`, but a distinct variant that the staging classifier does not
-    /// list, leaving the refusal RETRYABLE — no receipt, no import, and no
-    /// staged bytes for a confirmation to GC.
-    ///
-    /// It must NEVER be added to that terminal list. As with the other
-    /// pinned-body refusals there (`InvalidTaskBody`, `InvalidSkillBody`), the
-    /// operator re-presenting the same malformed artifact is expected to be
-    /// refused again rather than handed a receipt that outlives the row.
-    #[error("invalid companion record body: {0}")]
-    InvalidCompanionRecordBody(&'static str),
-    /// A PSYCH_PROFILE entity body failed pinned structural validation.
-    /// Nothing was written.
-    #[error("invalid psych profile body: {0}")]
-    InvalidPsychProfileBody(&'static str),
-    /// A persona snapshot compile/export input (OF-325) failed pinned
-    /// validation — malformed export record body, blank consent grantor,
-    /// blank agent-take attribution, or a strike-list that names unknown
-    /// rows. Nothing was written.
-    #[error("invalid persona snapshot: {0}")]
-    InvalidPersonaSnapshot(&'static str),
-    /// A NOTE entity body failed the pinned three-key ABI validation
-    /// (`crate::note::NOTE_BODY_KEYS`). Nothing was written.
-    #[error("invalid NOTE body: {0}")]
-    InvalidNoteBody(&'static str),
-    /// A MESSAGE entity body is not the canonical six-axis witness envelope
-    /// `gate::witness_message` authorizes, or it arrived at a door that cannot
-    /// authorize one (a public raw put, or a replicated carry of an
-    /// engine-voice `system` row). Nothing was written.
-    ///
-    /// ONE-1686 (RT-04). Distinct from [`GateError::GateWriteRejected`]: that is a
-    /// policy verdict on a well-formed envelope presented by an authenticated
-    /// actor; this says the bytes are not an envelope this vault's write
-    /// boundary can bind to an actor at all.
-    #[error("invalid MESSAGE witness envelope: {0}")]
-    InvalidWitnessMessageBody(&'static str),
-    /// An AccessGrant control-plane record failed pinned structural
-    /// validation. Nothing was written.
-    #[error("invalid access grant body: {0}")]
-    InvalidAccessGrantBody(&'static str),
-    /// A StandingOutboundGrant record failed pinned structural validation.
-    /// Nothing was written.
-    #[error("invalid outbound grant body: {0}")]
-    InvalidOutboundGrantBody(&'static str),
-    /// A CONNECTOR_KEY record (or one of its budget rows / lifecycle
-    /// transitions) failed pinned structural validation. Nothing was written.
-    #[error("invalid connector key body: {0}")]
-    InvalidConnectorKeyBody(&'static str),
-    /// A connector charter failed deterministic compilation (GOV-10).
-    /// Fail-closed: nothing was staged.
-    #[error("connector charter compile failed at line {line_number}: {message}")]
-    ConnectorCharterCompile { line_number: u32, message: String },
-    /// A charter approve re-presented a compiled hash that does not match
-    /// the staged proposal. Enforcement is unchanged.
-    #[error("connector charter approval hash mismatch")]
-    ConnectorCharterApprovalMismatch,
-    /// A charter approve/discard found no staged proposal on the key.
-    #[error("connector charter proposal not found")]
-    ConnectorCharterMissing,
-    /// A ChannelIdentity record failed pinned structural validation.
-    /// Nothing was written.
-    #[error("invalid channel identity body: {0}")]
-    InvalidChannelIdentityBody(&'static str),
-    /// Custody is bound, but the ONE-1829 starting-mode door is not available.
-    /// The workspace onboarding journal remains resumable and incomplete.
-    #[error(
-        "workspace mailbox autonomy is not ready for {identity_ref:?} (requested {requested_mode})"
-    )]
-    WorkspaceMailboxAutonomyNotReady {
-        identity_ref: EntityId,
-        requested_mode: String,
-    },
-    /// A CounterpartyContact record failed pinned structural validation.
-    /// Nothing was written.
-    #[error("invalid counterparty contact body: {0}")]
-    InvalidCounterpartyContactBody(&'static str),
-    /// A COMM_RECORD body failed pinned structural validation. Nothing was
-    /// written.
-    #[error("invalid comm record body: {0}")]
-    InvalidCommRecordBody(&'static str),
-    /// A DIAGNOSTIC body failed the pinned closed grammar (GATE-14,
-    /// ONE-1394): an unknown/missing/duplicate `DIAGNOSTIC_BODY_KEYS` key,
-    /// trailing bytes, an invalid enum string, a malformed ref or content
-    /// hash, non-monotonic bitemporal validity, or control data smuggled
-    /// through the untrusted-detail leaf. Nothing was written.
-    #[error("invalid diagnostic body: {0}")]
-    InvalidDiagnosticBody(&'static str),
-    /// A TASK record failed pinned role-field validation. Nothing was written.
-    #[error("invalid TASK body: {0}")]
-    InvalidTaskBody(&'static str),
     /// A CODE_ARTIFACT codebase snapshot sidecar failed pinned structural
     /// validation. Nothing was written.
     #[error("invalid codebase snapshot body: {0}")]
@@ -512,25 +386,6 @@ pub enum Error {
     /// validation. The code is caller-safe and pre-sanitized by the adapter.
     #[error("upstream tool failure: tool={tool}, code={code}")]
     UpstreamToolFailure { tool: &'static str, code: String },
-    /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
-    /// write carried body-divergent bytes for an existing AUTHORITY_LOG id. Local
-    /// callers get this as a hard error; replicated doors classify it as a
-    /// remote rejection — the payload is quarantined and local bytes are kept
-    /// (never silent LWW on the authority substrate).
-    #[error(
-        "authority log row {} is append-only: body-divergent overwrite rejected",
-        id.to_hex()
-    )]
-    AuthorityLogAppendOnlyViolation { id: EntityId },
-    /// An AUTHORITY_LOG row's entity id does not equal the id derived from
-    /// the BLAKE3 hash of its canonical signed body (ONE-1604-D1 content
-    /// address). Raised at every import/replay door; replicated instances
-    /// are quarantined.
-    #[error(
-        "authority log row {} does not match its content-derived store key",
-        id.to_hex()
-    )]
-    AuthorityLogStoreKeyMismatch { id: EntityId },
     /// A guest tier that must run isolated has no microVM backend available
     /// (CODE-01 — the fail-closed release path; never a silent no-sandbox run).
     #[error("no microVM backend is available for guest tier `{tier}`")]
@@ -685,6 +540,10 @@ pub enum Error {
     /// Transparent, so Display and `source()` are the leaf's.
     #[error(transparent)]
     OffRecord(#[from] OffRecordError),
+    /// Record-domain failure, see [`RecordError`].
+    /// Transparent, so Display and `source()` are the leaf's.
+    #[error(transparent)]
+    Record(#[from] RecordError),
     /// Registry-domain failure, see [`RegistryError`].
     /// Transparent, so Display and `source()` are the leaf's.
     #[error(transparent)]
@@ -785,47 +644,14 @@ impl Error {
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
-            Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
-            Self::OutboundGrantAlreadyExists => ErrorKind::OutboundGrantAlreadyExists,
-            Self::ConnectorKeyAlreadyExists => ErrorKind::ConnectorKeyAlreadyExists,
-            Self::ChannelIdentityAlreadyExists => ErrorKind::ChannelIdentityAlreadyExists,
-            Self::CounterpartyContactAlreadyExists => ErrorKind::CounterpartyContactAlreadyExists,
-            Self::CompanionRecordAlreadyExists => ErrorKind::CompanionRecordAlreadyExists,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
             Self::InvalidKey => ErrorKind::InvalidKey,
-            Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
-            Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
-            Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
-            Self::InvalidOutboundGrantBody(_) => ErrorKind::InvalidOutboundGrantBody,
-            Self::InvalidConnectorKeyBody(_) => ErrorKind::InvalidConnectorKeyBody,
-            Self::ConnectorCharterCompile { .. } => ErrorKind::ConnectorCharterCompile,
-            Self::ConnectorCharterApprovalMismatch => ErrorKind::ConnectorCharterApprovalMismatch,
-            Self::ConnectorCharterMissing => ErrorKind::ConnectorCharterMissing,
-            Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
-            Self::WorkspaceMailboxAutonomyNotReady { .. } => {
-                ErrorKind::WorkspaceMailboxAutonomyNotReady
-            }
-            Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
-            Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
-            Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,
-            Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
-            Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
-            // Deliberately the SAME coarse kind a companion body fault has
-            // always reported: only the variant is distinct, so the staging
-            // terminal classifier can tell them apart without changing what
-            // `kind()`-based callers (quarantine classification, API error
-            // codes) observe.
-            Self::InvalidCompanionRecordBody(_) => ErrorKind::InvalidClaimBody,
-            Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
-            Self::InvalidPersonaSnapshot(_) => ErrorKind::InvalidPersonaSnapshot,
-            Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,
-            Self::InvalidWitnessMessageBody(_) => ErrorKind::InvalidWitnessMessageBody,
             Self::InvalidCodebaseSnapshotBody(_) => ErrorKind::InvalidCodebaseSnapshotBody,
             Self::HostedMediaHashMatchKnownMatch { .. } => {
                 ErrorKind::HostedMediaHashMatchKnownMatch
@@ -837,10 +663,6 @@ impl Error {
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
-            Self::AuthorityLogAppendOnlyViolation { .. } => {
-                ErrorKind::AuthorityLogAppendOnlyViolation
-            }
-            Self::AuthorityLogStoreKeyMismatch { .. } => ErrorKind::AuthorityLogStoreKeyMismatch,
             Self::MicroVmBackendUnavailable { .. } => ErrorKind::MicroVmBackendUnavailable,
             Self::MicroVmBackendError { .. } => ErrorKind::MicroVmBackendError,
             Self::MicroVmOverlayError { .. } => ErrorKind::MicroVmOverlayError,
@@ -880,6 +702,7 @@ impl Error {
             Self::Gate(inner) => inner.kind(),
             Self::Maintenance(inner) => inner.kind(),
             Self::OffRecord(inner) => inner.kind(),
+            Self::Record(inner) => inner.kind(),
             Self::Registry(inner) => inner.kind(),
             Self::Relay(inner) => inner.kind(),
             Self::Secret(inner) => inner.kind(),

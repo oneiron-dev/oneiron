@@ -29,6 +29,7 @@ use super::record::ChannelIdentity;
 use super::transition::{IdentityTransition, admit_channel_identity_transition_in_txn};
 
 use super::transition::DelegatedProvisionRequest;
+use crate::error::RecordError;
 
 impl Vault {
     /// Creates a ChannelIdentity record through the engine maintenance door.
@@ -41,7 +42,7 @@ impl Vault {
         let data = encode_channel_identity_body(identity)?;
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
-            return Err(Error::ChannelIdentityAlreadyExists);
+            return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         admit_channel_identity_transition_in_txn(
             &self.store,
@@ -82,12 +83,12 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::ChannelIdentityAlreadyExists`] when `id` is taken or the mailbox
+    /// [`RecordError::ChannelIdentityAlreadyExists`](crate::error::RecordError::ChannelIdentityAlreadyExists) when `id` is taken or the mailbox
     /// already has an occupant; [`SecretError::SecretRefNotFound`](crate::error::SecretError::SecretRefNotFound),
     /// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive) or [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied) when
     /// the named custody record is missing, inactive, unbound for the channel's
     /// effector, or does not name this mailbox as its subject; and
-    /// [`Error::InvalidChannelIdentityBody`] when the resulting row fails
+    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody) when the resulting row fails
     /// validation.
     pub fn provision_delegated_identity(
         &self,
@@ -112,7 +113,7 @@ impl Vault {
         requested_at: u64,
     ) -> Result<ChannelIdentity> {
         if self.store.entities.get(wtxn, id.as_bytes())?.is_some() {
-            return Err(Error::ChannelIdentityAlreadyExists);
+            return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         // The proof borrows `wtxn`; the block ends the borrow before the write
         // takes it mutably, and the row it produced outlives it because a row

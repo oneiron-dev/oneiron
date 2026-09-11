@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
 
 use super::consult_payload::ConsultPayloadRef;
 use super::wire_encode::{canonical_bytes, task_terminal_record_value};
+use crate::error::RecordError;
 
 /// Terminal outcomes for ANY executor. `Expired` (deadline passed) and
 /// `Abandoned` (lease reclaimed / executor gone) stay distinct causes even
@@ -41,7 +42,9 @@ impl TaskTerminalDisposition {
             "expired" => Ok(Self::Expired),
             "abandoned" => Ok(Self::Abandoned),
             "cancelled" => Ok(Self::Cancelled),
-            _ => Err(Error::InvalidTaskBody("tasks.terminal.disposition")),
+            _ => Err(Error::Record(RecordError::InvalidTaskBody(
+                "tasks.terminal.disposition",
+            ))),
         }
     }
 }

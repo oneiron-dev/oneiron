@@ -1,7 +1,7 @@
 //! Roster reads, journal records, and canonical onboarding encodings.
 
 use super::*;
-use crate::error::GateError;
+use crate::error::{GateError, RecordError};
 
 // ---------------------------------------------------------------------------
 // Roster reads
@@ -574,10 +574,12 @@ pub(super) fn require_active_mailbox(
     if state != ChannelIdentityState::Active {
         // The landed autonomy door requires Active. Only the lifecycle owner
         // may move Requested/PendingFulfillment; onboarding never does so.
-        return Err(Error::WorkspaceMailboxAutonomyNotReady {
-            identity_ref: mailbox.identity_ref,
-            requested_mode: mailbox.autonomy.rung.as_str().to_owned(),
-        });
+        return Err(Error::Record(
+            RecordError::WorkspaceMailboxAutonomyNotReady {
+                identity_ref: mailbox.identity_ref,
+                requested_mode: mailbox.autonomy.rung.as_str().to_owned(),
+            },
+        ));
     }
     Ok(())
 }

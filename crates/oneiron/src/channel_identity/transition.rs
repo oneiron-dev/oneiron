@@ -21,6 +21,7 @@ use super::custody::{DelegatedGrant, verify_delegated_custody_in_txn};
 use super::lifecycle::ChannelIdentityState;
 
 use super::record::ChannelIdentity;
+use crate::error::RecordError;
 
 /// What an adapter hands the delegated door: NAMES, never evidence.
 ///
@@ -105,11 +106,11 @@ impl IdentityTransition<'_> {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidChannelIdentityBody`] for a delegated birth outside
+/// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody) for a delegated birth outside
 /// `Requested` or a step that moves the key; [`SecretError::SecretRefNotFound`](crate::error::SecretError::SecretRefNotFound) /
 /// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive) / [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied) when a
 /// live delegated row cannot re-prove custody for its own mailbox; and
-/// [`Error::ChannelIdentityAlreadyExists`] when the write would put a second
+/// [`RecordError::ChannelIdentityAlreadyExists`](crate::error::RecordError::ChannelIdentityAlreadyExists) when the write would put a second
 /// occupant on a key.
 pub(crate) fn admit_channel_identity_transition_in_txn(
     store: &Store,
@@ -125,30 +126,30 @@ pub(crate) fn admit_channel_identity_transition_in_txn(
             .get(txn, facet_ref.as_bytes())?
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
         if facet_type != Some(crate::registry::ENTITY_TYPE_FACET) {
-            return Err(Error::InvalidChannelIdentityBody(
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "channel identity binding facet_ref must name a FACET",
-            ));
+            )));
         }
     }
     match transition {
         IdentityTransition::Birth { next } => {
             if next.is_delegated() && next.state != ChannelIdentityState::Requested {
-                return Err(Error::InvalidChannelIdentityBody(
+                return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                     "a delegated_grant identity is born Requested; every later state is a \
                      checked lifecycle step from a row that already exists",
-                ));
+                )));
             }
         }
         IdentityTransition::Step { prior, next } => {
             if prior.assignment_key() != next.assignment_key() {
-                return Err(Error::InvalidChannelIdentityBody(
+                return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                     "a stored channel identity's assignment key is immutable",
-                ));
+                )));
             }
         }
     }
     if channel_identity_assignment_conflict_in_txn(store, txn, id, next)? {
-        return Err(Error::ChannelIdentityAlreadyExists);
+        return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
     }
     reprove_delegated_custody_in_txn(store, txn, next)
 }

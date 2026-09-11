@@ -10,6 +10,7 @@ use super::record::{
     ScopedCapabilityProvenance, is_canonical_scoped_channel, normalize_connector_key,
     validate_budget_row, validate_never_list_entry, validate_spend_unit,
 };
+use crate::error::RecordError;
 
 // --- Charter compiler (GOV-10, ONE-1417) --------------------------------------
 
@@ -33,7 +34,7 @@ pub struct CompiledCharter {
 }
 
 /// A fail-closed charter compile error: 1-based line number over the
-/// CRLF-normalized text. Maps into [`Error::ConnectorCharterCompile`].
+/// CRLF-normalized text. Maps into [`RecordError::ConnectorCharterCompile`](crate::error::RecordError::ConnectorCharterCompile).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorCharterCompileIssue {
     pub line_number: u32,
@@ -42,10 +43,10 @@ pub struct ConnectorCharterCompileIssue {
 
 impl From<ConnectorCharterCompileIssue> for Error {
     fn from(issue: ConnectorCharterCompileIssue) -> Self {
-        Error::ConnectorCharterCompile {
+        Error::Record(RecordError::ConnectorCharterCompile {
             line_number: issue.line_number,
             message: issue.message,
-        }
+        })
     }
 }
 
@@ -222,7 +223,9 @@ pub fn compile_connector_charter(
                     // would reject: such a line used to compile and only fail later
                     // at the propose/approve write, with no line number to fix.
                     validate_never_list_entry(&entry).map_err(|error| match error {
-                        Error::InvalidConnectorKeyBody(reason) => issue(reason),
+                        Error::Record(RecordError::InvalidConnectorKeyBody(reason)) => {
+                            issue(reason)
+                        }
                         _ => issue("invalid charter never-list entry"),
                     })?;
                     never_list.push(entry);
@@ -233,7 +236,7 @@ pub fn compile_connector_charter(
                     return Err(issue("too many charter channel caps"));
                 }
                 validate_budget_row(&budget).map_err(|error| match error {
-                    Error::InvalidConnectorKeyBody(reason) => issue(reason),
+                    Error::Record(RecordError::InvalidConnectorKeyBody(reason)) => issue(reason),
                     _ => issue("invalid charter cap"),
                 })?;
                 channel_caps.push(budget);
@@ -487,7 +490,7 @@ fn parse_charter_window(token: &str) -> std::result::Result<EffectorBudgetWindow
 /// opaque integers.
 fn charter_spend_limit(major_units: u64, unit: &str) -> std::result::Result<u64, String> {
     validate_spend_unit(unit).map_err(|error| match error {
-        Error::InvalidConnectorKeyBody(reason) => reason.to_owned(),
+        Error::Record(RecordError::InvalidConnectorKeyBody(reason)) => reason.to_owned(),
         _ => "invalid spend unit".to_owned(),
     })?;
     let bytes = unit.as_bytes();

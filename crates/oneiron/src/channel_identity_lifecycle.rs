@@ -8,6 +8,7 @@ use crate::channel_identity::{
     encode_channel_identity_body,
 };
 use crate::entity_id::EntityId;
+use crate::error::RecordError;
 use crate::error::{Error, Result};
 use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
@@ -359,9 +360,9 @@ impl Vault {
                 current.transition(ChannelIdentityState::Active, None, input.fulfilled_at, None)?
             }
             _ => {
-                return Err(Error::InvalidChannelIdentityBody(
+                return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                     "identity is not awaiting fulfillment",
-                ));
+                )));
             }
         };
         self.write_existing_channel_identity_in_txn(
@@ -538,7 +539,7 @@ impl Vault {
     ) -> Result<()> {
         let data = encode_channel_identity_body(identity)?;
         if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
-            return Err(Error::ChannelIdentityAlreadyExists);
+            return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         admit_channel_identity_transition_in_txn(
             &self.store,

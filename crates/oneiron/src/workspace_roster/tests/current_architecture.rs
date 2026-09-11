@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::RecordError;
 use crate::secret_custody::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
     SecretCustodyRecord, SecretCustodyStatus,
@@ -495,7 +496,9 @@ fn every_autonomy_request_axis_is_digest_pinned_on_incomplete_and_complete_repla
         let (_dir, vault, intent, owner) = mailbox_fixture()?;
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
-            Err(Error::WorkspaceMailboxAutonomyNotReady { .. })
+            Err(Error::Record(
+                RecordError::WorkspaceMailboxAutonomyNotReady { .. }
+            ))
         ));
         if complete {
             activate_mailbox(&vault, entity(MAILBOX_IDENTITY))?;

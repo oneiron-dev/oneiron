@@ -17,7 +17,7 @@ use super::export_foreign_receipt::{
     VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus, content_key,
     encode_vault_import_receipt, receipt_id, receipt_key, source_bytes, vault_import_stage_receipt,
 };
-use crate::error::{RegistryError, SyncError};
+use crate::error::{RecordError, RegistryError, SyncError};
 
 // Admission must be unique before helper effects occur within one process.
 static STAGED_IMPORT_ADMISSION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -328,9 +328,9 @@ pub fn stage_foreign_vault_import(
                     | Error::InvalidKey
                     | Error::Registry(RegistryError::MaintenanceKindNotWritable(_))
                     | Error::Registry(RegistryError::ReservedEdgeKind(_))
-                    | Error::AuthorityLogStoreKeyMismatch { .. })
+                    | Error::Record(RecordError::AuthorityLogStoreKeyMismatch { .. }))
                 // Only this selector-produced local-root fault is retryable.
-                || matches!(&error, Error::InvalidAuthorityLogBody(message) if *message != "missing local authority root")
+                || matches!(&error, Error::Record(RecordError::InvalidAuthorityLogBody(message)) if *message != "missing local authority root")
                 // A remote entity blob too short to carry its metadata
                 // header is a DEFECT IN THE FOREIGN ARTIFACT, exactly like
                 // the invalid key / invalid claim body / unwritable kind

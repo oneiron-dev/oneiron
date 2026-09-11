@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::validate_non_blank;
+use crate::error::RecordError;
 
 /// Current inbound SurfaceEvent schema version.
 pub const SURFACE_EVENT_SCHEMA_VERSION: u64 = 2;
@@ -472,9 +473,9 @@ impl ActorStamps {
             && vault.get_entity_type_in_txn(&rtxn, &facet)?
                 != Some(crate::registry::ENTITY_TYPE_FACET)
         {
-            return Err(Error::InvalidChannelIdentityBody(
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "channel identity binding facet_ref must name a FACET",
-            ));
+            )));
         }
         let subject_ref =
             crate::subject_model::actor_subject_anchor_in_txn(vault, &rtxn, &actor_ref, at)?

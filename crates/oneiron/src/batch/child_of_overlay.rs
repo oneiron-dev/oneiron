@@ -6,8 +6,8 @@ use heed::RwTxn;
 
 use crate::edge::{EdgeKind, encode_edge_value, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::RecordError;
+use crate::error::{Error, RegistryError, Result};
 use crate::habit::TaskRole;
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::registry::ENTITY_TYPE_TASK;
@@ -637,9 +637,9 @@ pub(super) fn validate_task_checkin_immutable(
     {
         return Ok(());
     }
-    Err(Error::InvalidTaskBody(
+    Err(Error::Record(RecordError::InvalidTaskBody(
         "habit check-in records are immutable",
-    ))
+    )))
 }
 
 pub(super) fn would_create_child_of_cycle(
