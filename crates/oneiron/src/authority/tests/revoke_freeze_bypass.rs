@@ -611,7 +611,7 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
 ///
 /// The grant direction fails the opposite way and needs its own row. An
 /// `EnrollDevice` matured on this vault's monotonic clock authorizes its child
-/// bind; if the floor is not persisted, a restart drops the process-local clock,
+/// bind; if the floor is not persisted, a restart drops the in-memory clock,
 /// the fold falls back to a wall clock sitting far BELOW the observation, and the
 /// enrollment reverts to pending — so a legitimately matured owner enrollment
 /// silently loses its authority. That is fail-CLOSED but wrong, and it is
@@ -627,9 +627,8 @@ fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
     // Park the authority clock far ahead of real Unix time, so every later
     // observation is written from a future reading and `unix_seconds_now()` is
     // the BACKWARD-skewed clock a reopen would otherwise trust.
-    let domain = vault.store.authority_clock_domain;
     let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
-    assert!(authority_observation_secs_for_domain(domain, 0, future) >= future);
+    assert!(authority_observation_secs(&vault.store, 0, future) >= future);
 
     let owner = ed_key(231);
     let owner_key = authority_key_from_ed(&owner);
@@ -684,7 +683,7 @@ fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
     // Run the local monotonic clock past the delay, then let a WRITE fold record
     // the observation — this is the commit whose floor must outlive the process.
     let matured_at = future + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    assert!(authority_observation_secs_for_domain(domain, matured_at, 0) >= matured_at);
+    assert!(authority_observation_secs(&vault.store, matured_at, 0) >= matured_at);
     let full = vault.authority_fold().unwrap();
     assert!(
         !full.pending_widens.contains_key(&enroll_hash),
@@ -695,7 +694,7 @@ fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
         "the matured enrollment must authorize its child bind"
     );
 
-    // Restart. The process-local clock dies with the vault, so the rolled-back
+    // Restart. The in-memory clock dies with the vault, so the rolled-back
     // wall clock is the only other candidate reading — the persisted floor is
     // the sole thing keeping the enrollment matured.
     drop(vault);

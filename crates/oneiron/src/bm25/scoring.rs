@@ -9,6 +9,7 @@ pub(super) fn score_query_terms(
     recency: Option<Bm25RecencyConfig>,
     mut accept: impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<Vec<(EntityId, f64)>> {
+    let diagnostics = &store.diagnostics().bm25;
     let total_docs = read_total_docs(store, rtxn)?;
     if total_docs == 0 {
         return Ok(Vec::new());
@@ -37,9 +38,10 @@ pub(super) fn score_query_terms(
         let mut count = 0u64;
         for item in dups {
             let (_, dup) = item?;
-            let entry = decode_posting_entry(&dup)?;
+            let entry = decode_posting_entry(diagnostics, &dup)?;
             if previous.is_some_and(|id: EntityId| id.as_bytes() >= entry.id.as_bytes()) {
                 return Err(corrupted_with_diagnostic(
+                    diagnostics,
                     "duplicate posting entries for one entity",
                     Bm25DiagnosticKind::MalformedPostingAlignment,
                 ));
@@ -53,6 +55,7 @@ pub(super) fn score_query_terms(
         let df = count as f64;
         if df > n {
             return Err(corrupted_with_diagnostic(
+                diagnostics,
                 "posting list length exceeds total_docs",
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
@@ -66,7 +69,7 @@ pub(super) fn score_query_terms(
         };
         for item in dups {
             let (_, dup) = item?;
-            let entry = decode_posting_entry(&dup)?;
+            let entry = decode_posting_entry(diagnostics, &dup)?;
             let id = entry.id;
             if !accept(&id)? {
                 continue;
@@ -79,6 +82,7 @@ pub(super) fn score_query_terms(
                 let raw = store.text_doc_field_lengths().get(rtxn, id.as_bytes())?;
                 let Some(bytes) = raw else {
                     return Err(corrupted_with_diagnostic(
+                        diagnostics,
                         "missing field lengths for scored doc",
                         Bm25DiagnosticKind::MissingScoredDocumentMetadata,
                     ));
@@ -111,6 +115,7 @@ pub(super) fn score_query_terms(
                 let stored_len = match lens.get(fid).copied() {
                     None => {
                         return Err(corrupted_with_diagnostic(
+                            diagnostics,
                             "posting field missing from per-doc field lengths",
                             Bm25DiagnosticKind::MissingScoredDocumentMetadata,
                         ));
@@ -122,6 +127,7 @@ pub(super) fn score_query_terms(
                     FieldLengthPolicy::CountLengthIncrement => {
                         if stored_len == 0 {
                             return Err(corrupted_with_diagnostic(
+                                diagnostics,
                                 "zero length for scored CountLengthIncrement field",
                                 Bm25DiagnosticKind::MissingScoredDocumentMetadata,
                             ));

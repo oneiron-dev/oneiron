@@ -77,7 +77,7 @@ impl BatchBuilder<'_> {
             // later phase-2 failures drop this transaction and its receipt.
             wtxn.commit()?;
             for decision in staged_gate_decisions {
-                decision.record_metrics();
+                decision.record_metrics(&self.vault.store.diagnostics.gate);
             }
             return Err(err);
         }
@@ -114,7 +114,7 @@ impl BatchBuilder<'_> {
             .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit()?;
         for decision in staged_gate_decisions {
-            decision.record_metrics();
+            decision.record_metrics(&self.vault.store.diagnostics.gate);
         }
         // The canonical wrapper starts a separate write transaction. Never run
         // it during apply or preflight, and never turn a population error into

@@ -157,87 +157,51 @@ fn genesis_rejects_pending_widen_delay_outside_ceremony_band() {
 
 #[test]
 fn persisted_seen_time_ignores_forward_wall_clock_jumps_after_first_observation() {
-    let domain = 0x1325_0001;
+    let mut clock = AuthorityLocalClock::default();
     let now = Instant::now();
-    let first = authority_observation_secs_for_domain_at(domain, 0, 1_000, now);
-    let jumped = authority_observation_secs_for_domain_at(domain, first, 1_000_000, now);
+    let first = clock.observation_secs_at(0, 1_000, now);
+    let jumped = clock.observation_secs_at(first, 1_000_000, now);
 
     assert_eq!(first, 1_000);
     assert_eq!(
         jumped, first,
         "wall-clock jumps after first observation must not skip the local delay"
     );
-    release_authority_clock_domain(domain);
 }
 
 #[test]
 fn reopened_authority_clock_advances_wall_time_past_stored_floor() {
-    let domain = 0x1325_0002;
+    let mut clock = AuthorityLocalClock::default();
     let now = Instant::now();
-    let observed = authority_observation_secs_for_domain_at(domain, 1_000, 2_500, now);
+    let observed = clock.observation_secs_at(1_000, 2_500, now);
     // Hold monotonic time fixed: rollback must not change the observation, but
     // elapsed monotonic seconds may legitimately advance it past this floor.
-    let backward = authority_observation_secs_for_domain_at(domain, observed, 10, now);
+    let backward = clock.observation_secs_at(observed, 10, now);
 
     assert_eq!(observed, 2_500);
     assert_eq!(
         backward, observed,
         "wall-clock rollback after reopening must not move the floor backward"
     );
-    release_authority_clock_domain(domain);
 }
 
 #[test]
 fn reopened_authority_clock_rollback_does_not_freeze_elapsed_time() {
-    let domain = 0x1325_0006;
+    let mut clock = AuthorityLocalClock::default();
     let now = Instant::now();
-    let observed = authority_observation_secs_for_domain_at(domain, 1_000, 2_500, now);
+    let observed = clock.observation_secs_at(1_000, 2_500, now);
     assert_eq!(observed, 2_500);
 
     assert_eq!(
-        authority_observation_secs_for_domain_at(
-            domain,
-            observed,
-            10,
-            now + Duration::from_millis(999),
-        ),
+        clock.observation_secs_at(observed, 10, now + Duration::from_millis(999)),
         2_500,
         "rollback must not advance the observation before a whole second elapses"
     );
     assert_eq!(
-        authority_observation_secs_for_domain_at(
-            domain,
-            observed,
-            10,
-            now + Duration::from_secs(1),
-        ),
+        clock.observation_secs_at(observed, 10, now + Duration::from_secs(1)),
         2_501,
         "rollback must not freeze monotonic progress at the persisted floor"
     );
-    release_authority_clock_domain(domain);
-}
-
-#[test]
-fn authority_clock_domain_release_drops_process_local_state() {
-    let domain = 0x1325_0003;
-    let now = Instant::now();
-    let first = authority_observation_secs_for_domain_at(domain, 0, 5_000, now);
-    let clamped = authority_observation_secs_for_domain_at(domain, 0, 10, now);
-
-    assert_eq!(first, 5_000);
-    assert_eq!(
-        clamped, first,
-        "active clock domains must keep their monotonic local floor"
-    );
-
-    release_authority_clock_domain(domain);
-    let reset = authority_observation_secs_for_domain_at(domain, 0, 10, now);
-
-    assert_eq!(
-        reset, 10,
-        "released clock domains must not keep process-local state"
-    );
-    release_authority_clock_domain(domain);
 }
 
 /// fix-leg 5 item 2: sub-second remainders must NOT be discarded.
@@ -248,21 +212,16 @@ fn authority_clock_domain_release_drops_process_local_state() {
 /// every veto delay. The anchor is stable, so elapsed time crosses the boundary.
 #[test]
 fn sub_second_readonly_folds_still_advance_the_observed_clock() {
-    let domain = 0x1325_0004;
+    let mut clock = AuthorityLocalClock::default();
     let now = Instant::now();
-    let first = authority_observation_secs_for_domain_at(domain, 0, 1_000, now);
+    let first = clock.observation_secs_at(0, 1_000, now);
     assert_eq!(first, 1_000);
 
     // Six sub-second calls inside one 0.6 s window: each measures a truncated
     // ZERO elapsed second and must leave the anchor alone.
     for step in 1..=6 {
         assert_eq!(
-            authority_observation_secs_for_domain_at(
-                domain,
-                first,
-                1_000,
-                now + Duration::from_millis(step * 100),
-            ),
+            clock.observation_secs_at(first, 1_000, now + Duration::from_millis(step * 100)),
             first,
             "a sub-second call must not advance the whole-second observation"
         );
@@ -271,16 +230,10 @@ fn sub_second_readonly_folds_still_advance_the_observed_clock() {
     // per-call reset every one of those 100 ms gaps truncated to zero and this
     // assert reads 1_000; with a stable anchor it reads 1_001.
     assert_eq!(
-        authority_observation_secs_for_domain_at(
-            domain,
-            first,
-            1_000,
-            now + Duration::from_millis(1_100),
-        ),
+        clock.observation_secs_at(first, 1_000, now + Duration::from_millis(1_100)),
         first + 1,
         "sub-second remainders must accumulate: 1.1 s of elapsed time crosses a second boundary"
     );
-    release_authority_clock_domain(domain);
 }
 
 /// The rebase half of the same anchor: a persisted floor ABOVE the
@@ -288,39 +241,28 @@ fn sub_second_readonly_folds_still_advance_the_observed_clock() {
 /// call then advances from the NEW origin rather than from the stale one.
 #[test]
 fn persisted_floor_lift_rebases_the_authority_clock_anchor() {
-    let domain = 0x1325_0005;
+    let mut clock = AuthorityLocalClock::default();
     let now = Instant::now();
-    let first = authority_observation_secs_for_domain_at(domain, 0, 1_000, now);
+    let first = clock.observation_secs_at(0, 1_000, now);
     assert_eq!(first, 1_000);
 
     // Another writer advanced the persisted floor well past this anchor.
     let lifted_at = now + Duration::from_millis(1_500);
-    let lifted = authority_observation_secs_for_domain_at(domain, 5_000, 1_000, lifted_at);
+    let lifted = clock.observation_secs_at(5_000, 1_000, lifted_at);
     assert_eq!(lifted, 5_000, "a floor above the anchor must lift it");
 
     // The lifted value is now the origin: a lower floor cannot pull it back,
     // and elapsed time counts from the lift, not from the original anchor.
-    let held = authority_observation_secs_for_domain_at(
-        domain,
-        0,
-        1_000,
-        lifted_at + Duration::from_millis(500),
-    );
+    let held = clock.observation_secs_at(0, 1_000, lifted_at + Duration::from_millis(500));
     assert_eq!(
         held, lifted,
         "the rebased anchor is monotone: a lower floor never moves it backward"
     );
     assert_eq!(
-        authority_observation_secs_for_domain_at(
-            domain,
-            0,
-            1_000,
-            lifted_at + Duration::from_secs(1),
-        ),
+        clock.observation_secs_at(0, 1_000, lifted_at + Duration::from_secs(1)),
         lifted + 1,
         "elapsed seconds must advance from the rebased anchor"
     );
-    release_authority_clock_domain(domain);
 }
 
 #[test]

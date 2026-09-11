@@ -166,7 +166,7 @@ where
         };
         for item in dups {
             let (_, dup) = item?;
-            let entry = decode_posting_entry(&dup)?;
+            let entry = decode_posting_entry(&store.diagnostics().bm25, &dup)?;
             let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
                 continue;
             };
@@ -269,7 +269,7 @@ fn exact_term_has_scoped_posting(
     };
     for item in dups {
         let (_, dup) = item?;
-        let entry = decode_posting_entry(&dup)?;
+        let entry = decode_posting_entry(&store.diagnostics().bm25, &dup)?;
         let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
             continue;
         };
@@ -303,7 +303,7 @@ fn term_posting_decisions(
     let mut decisions = TermPostingDecisions::default();
     for item in dups {
         let (_, dup) = item?;
-        let entry = decode_posting_entry(&dup)?;
+        let entry = decode_posting_entry(&store.diagnostics().bm25, &dup)?;
         if !posting_has_enabled_channel(config, &entry)? {
             continue;
         }

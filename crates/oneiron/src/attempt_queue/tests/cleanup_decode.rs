@@ -490,7 +490,8 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
 fn attempt_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Result<()> {
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
-    let before = attempt_queue_cleanup_metrics_snapshot();
+    let (_untouched_dir, untouched_vault) = open_queue();
+    let before = vault.diagnostics().attempt_queue_cleanup_snapshot();
 
     let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:metrics"), 10))?
@@ -511,9 +512,10 @@ fn attempt_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Resu
         lease_timeout_secs: 10,
     })?;
 
-    let after = attempt_queue_cleanup_metrics_snapshot();
-    assert!(after.runs > before.runs);
-    assert!(after.stale_requeued > before.stale_requeued);
+    let after = vault.diagnostics().attempt_queue_cleanup_snapshot();
+    // The counters belong to this vault, so the delta is exactly this run's.
+    assert_eq!(after.runs, before.runs + 1);
+    assert_eq!(after.stale_requeued, before.stale_requeued + 1);
     assert!(
         after
             .retry_reasons
@@ -540,7 +542,15 @@ fn attempt_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Resu
         .iter()
         .find(|counter| counter.reason.as_str() == "lease_timeout")
         .expect("expected exported lease timeout counter");
-    assert!(after_timeout.count > before_timeout.count);
+    assert_eq!(after_timeout.count, before_timeout.count + 1);
+
+    // A vault that cleaned nothing keeps its own zeros: a cleanup run on one
+    // vault cannot move the number a reader of another vault sees.
+    let untouched = untouched_vault
+        .diagnostics()
+        .attempt_queue_cleanup_snapshot();
+    assert_eq!(untouched.runs, 0);
+    assert_eq!(untouched.stale_requeued, 0);
 
     Ok(())
 }

@@ -988,7 +988,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -1021,10 +1021,9 @@
       "AttemptQueueCleanupMetricsSnapshot"
      ],
      "path": "src/attempt_queue/telemetry.rs",
-     "purpose": "Process-local cleanup counters, cleanup span emission, and the shared invalid-transition error constructor",
+     "purpose": "Per-vault cleanup counters, cleanup span emission, and the shared invalid-transition error constructor",
      "surface": {
-      "crate-vis": 3,
-      "fn": 1,
+      "crate-vis": 5,
       "struct": 1
      }
     },
@@ -1299,7 +1298,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/first_seen_clock.rs",
-     "purpose": "First-seen sidecar keys and the process-local logical clock domains",
+     "purpose": "First-seen sidecar keys and the per-vault logical observation clock",
      "surface": {
       "crate-vis": 12
      }
@@ -2421,11 +2420,11 @@
       "Bm25DiagnosticsSnapshot"
      ],
      "path": "src/bm25/diagnostics.rs",
-     "purpose": "Process-local BM25 integrity diagnostics (counters, snapshot, record)",
+     "purpose": "Per-vault BM25 integrity diagnostics (counters, snapshot, record)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 3,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -2446,7 +2445,7 @@
      "path": "src/bm25/mod.rs",
      "purpose": "Analyzer-driven fielded inverted index + BM25F scorer",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 2
      }
     },
@@ -12171,7 +12170,7 @@
      "path": "src/gate/decision.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -20952,6 +20951,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "Diagnostics"
+     ],
+     "path": "src/store/diagnostics.rs",
+     "purpose": "The content-free counters one open vault owns",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/keys.rs",
      "purpose": "Gate-decision ledger key prefixes, key constructors, and the id successor",
@@ -21063,7 +21075,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 6,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -21129,7 +21141,7 @@
      "purpose": "Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and…",
      "surface": {
       "const": 5,
-      "crate-vis": 43,
+      "crate-vis": 42,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -23239,7 +23251,7 @@
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
       "crate-vis": 7,
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -25838,7 +25850,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 44,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26001,7 +26013,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1486,
+   "source_files": 1487,
    "test_files": 533
   },
   "oneiron-bench": {

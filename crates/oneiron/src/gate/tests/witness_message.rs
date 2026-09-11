@@ -414,7 +414,7 @@ fn witness_message_refusals_meter_under_their_own_reason_class() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let rtxn = vault.store.env.read_txn()?;
     let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
-    let before = gate_metrics_snapshot();
+    let before = vault.diagnostics().gate.snapshot();
 
     let malformed = WitnessMessageEnvelope {
         message_type: "not a token",
@@ -431,7 +431,7 @@ fn witness_message_refusals_meter_under_their_own_reason_class() -> Result<()> {
     )
     .expect_err("an out-of-shape message type is refused");
 
-    let after = gate_metrics_snapshot();
+    let after = vault.diagnostics().gate.snapshot();
     assert_metric_counter_advanced(
         &before,
         &after,
