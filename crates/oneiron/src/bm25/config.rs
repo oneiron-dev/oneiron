@@ -50,7 +50,7 @@ impl FieldConfig {
 /// The formula is scoring-only — switching it never requires a reindex.
 /// `delta` must be finite and strictly positive; it is validated
 /// fail-closed when a [`crate::config::Bm25RankProfile`] is used and rejected
-/// with [`crate::Error::InvalidRankProfile`] otherwise.
+/// with [`StoreError::InvalidRankProfile`](crate::error::StoreError::InvalidRankProfile) otherwise.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum Bm25Formula {

@@ -34,6 +34,7 @@ use super::manifest_storage_gates::vault_root_open_guard;
 use super::manifest_storage_gates::{OwnedEnv, RegisteredPath};
 #[cfg(target_os = "linux")]
 use super::open_version_keys::MAX_DBS;
+use crate::error::StoreError;
 
 #[derive(Clone, Debug)]
 pub(super) struct VaultRootPreflight {
@@ -673,10 +674,10 @@ pub(super) fn file_info(path: &Path) -> Result<VaultRootFile> {
 }
 
 pub(super) fn vault_root_preflight_error(root: &Path, problem: VaultRootProblem) -> Error {
-    Error::VaultRootPreflight {
+    Error::Store(StoreError::VaultRootPreflight {
         path: root.to_path_buf(),
         problem,
-    }
+    })
 }
 
 /// Whether a post-`Env::open` preflight refusal says this root's LMDB files are
@@ -690,11 +691,11 @@ pub(super) fn vault_root_preflight_error(root: &Path, problem: VaultRootProblem)
 pub(super) fn preflight_rejected_aliased_root(error: &Error) -> bool {
     matches!(
         error,
-        Error::VaultRootPreflight {
+        Error::Store(StoreError::VaultRootPreflight {
             problem: VaultRootProblem::MultipleHardLinks { .. }
                 | VaultRootProblem::AliasedLmdbFiles { .. },
             ..
-        }
+        })
     )
 }
 

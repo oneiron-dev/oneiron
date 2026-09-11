@@ -1,6 +1,7 @@
 //! Short-ID allocation/layout plus per-version storage-ABI rejection gates.
 
 use super::*;
+use crate::error::StoreError;
 
 #[test]
 fn batch_put_assigns_short_id() -> Result<()> {
@@ -250,10 +251,10 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::StorageAbiVersionChanged {
+            Error::Store(StoreError::StorageAbiVersionChanged {
                 stored: Some(2),
                 current: STORAGE_ABI_VERSION,
-            }
+            })
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(2), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
@@ -286,10 +287,10 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
     assert!(
         matches!(
             err,
-            Error::StorageAbiVersionChanged {
+            Error::Store(StoreError::StorageAbiVersionChanged {
                 stored: Some(4),
                 current: STORAGE_ABI_VERSION,
-            }
+            })
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(4), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
@@ -321,10 +322,10 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
     assert!(
         matches!(
             err,
-            Error::StorageAbiVersionChanged {
+            Error::Store(StoreError::StorageAbiVersionChanged {
                 stored: Some(5),
                 current: STORAGE_ABI_VERSION,
-            }
+            })
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(5), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
@@ -356,10 +357,10 @@ fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<(
     assert!(
         matches!(
             err,
-            Error::StorageAbiVersionChanged {
+            Error::Store(StoreError::StorageAbiVersionChanged {
                 stored: Some(6),
                 current: STORAGE_ABI_VERSION,
-            }
+            })
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(6), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
@@ -391,10 +392,10 @@ fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()>
     assert!(
         matches!(
             err,
-            Error::StorageAbiVersionChanged {
+            Error::Store(StoreError::StorageAbiVersionChanged {
                 stored: Some(7),
                 current: STORAGE_ABI_VERSION,
-            }
+            })
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(7), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
@@ -426,10 +427,10 @@ fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<
     assert!(
         matches!(
             err,
-            Error::StorageAbiVersionChanged {
+            Error::Store(StoreError::StorageAbiVersionChanged {
                 stored: Some(8),
                 current: STORAGE_ABI_VERSION,
-            }
+            })
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(8), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
@@ -461,10 +462,10 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::StorageAbiVersionChanged {
+            Error::Store(StoreError::StorageAbiVersionChanged {
                 stored: Some(9),
                 current: STORAGE_ABI_VERSION,
-            }
+            })
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(9), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
@@ -496,10 +497,10 @@ fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     };
     assert!(matches!(
         store_err,
-        Error::StorageAbiVersionChanged {
+        Error::Store(StoreError::StorageAbiVersionChanged {
             stored: Some(stored),
             current: STORAGE_ABI_VERSION,
-        } if stored == newer_abi
+        }) if stored == newer_abi
     ));
 
     let vault_err = match Vault::open(path, test_config()) {
@@ -508,10 +509,10 @@ fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     };
     assert!(matches!(
         vault_err,
-        Error::StorageAbiVersionChanged {
+        Error::Store(StoreError::StorageAbiVersionChanged {
             stored: Some(stored),
             current: STORAGE_ABI_VERSION,
-        } if stored == newer_abi
+        }) if stored == newer_abi
     ));
     Ok(())
 }

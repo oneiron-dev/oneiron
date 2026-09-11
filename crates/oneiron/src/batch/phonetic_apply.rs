@@ -4,6 +4,7 @@ use std::str;
 use heed::RwTxn;
 
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::StoreError;
 use crate::error::{Error, Result};
 use crate::store::{ManifestDbs, Store};
 
@@ -91,7 +92,7 @@ pub(crate) fn delete_from_phonetic_postings(
                     store.phonetic_forward.delete(wtxn, id.as_bytes())?;
                     return Ok(());
                 }
-                Err(Error::MissingPostingEntry) => {
+                Err(Error::Store(StoreError::MissingPostingEntry)) => {
                     log_phonetic_forward_fallback(id, "missing_posting_entry");
                 }
                 Err(err) => return Err(err),
@@ -165,8 +166,9 @@ pub(super) fn delete_from_known_phonetic_codes(
         let posting = store
             .phonetic_index
             .get(wtxn, code.as_bytes())?
-            .ok_or(Error::MissingPostingEntry)?;
-        let updated = posting_without_entity(&posting, id)?.ok_or(Error::MissingPostingEntry)?;
+            .ok_or(Error::Store(StoreError::MissingPostingEntry))?;
+        let updated = posting_without_entity(&posting, id)?
+            .ok_or(Error::Store(StoreError::MissingPostingEntry))?;
 
         if updated.is_empty() {
             store.phonetic_index.delete(wtxn, code.as_bytes())?;

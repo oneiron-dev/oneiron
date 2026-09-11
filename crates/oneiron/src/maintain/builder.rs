@@ -171,15 +171,15 @@ impl<'a> MaintenanceBuilder<'a> {
 
     /// Drop every text-index row and rewrite the analyzer manifest from
     /// the currently-discovered dict set. Use after
-    /// [`Error::IncompatibleAnalyzer`] or [`Error::Bm25FieldSchemaChanged`]
+    /// [`StoreError::IncompatibleAnalyzer`](crate::error::StoreError::IncompatibleAnalyzer) or [`StoreError::Bm25FieldSchemaChanged`](crate::error::StoreError::Bm25FieldSchemaChanged)
     /// to rebuild under the current analyzer. Leaves entities, vectors,
     /// edges, and PPR cache untouched — only text-index state is cleared.
     ///
     /// After `clear_text_index` commits, callers must re-run their
     /// indexing pipeline (`batch.text(...)`) to repopulate the index.
     ///
-    /// [`Error::IncompatibleAnalyzer`]: crate::Error::IncompatibleAnalyzer
-    /// [`Error::Bm25FieldSchemaChanged`]: crate::Error::Bm25FieldSchemaChanged
+    /// [`StoreError::IncompatibleAnalyzer`]: crate::error::StoreError::IncompatibleAnalyzer
+    /// [`StoreError::Bm25FieldSchemaChanged`]: crate::error::StoreError::Bm25FieldSchemaChanged
     pub fn clear_text_index(mut self) -> Self {
         self.do_clear_text_index = true;
         self

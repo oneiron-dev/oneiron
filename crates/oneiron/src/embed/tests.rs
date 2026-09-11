@@ -16,6 +16,7 @@ use crate::temporal::TimeRange;
 
 #[path = "warn_capture.rs"]
 mod warn_capture;
+use crate::error::StoreError;
 use warn_capture::WarnCapture;
 
 #[derive(Debug)]
@@ -700,7 +701,7 @@ fn remote_rung_dims_and_model_gates() -> Result<()> {
     let err = reconciler.reconcile_once_at(10).unwrap_err();
     assert!(matches!(
         err,
-        Error::EmbeddingModelChanged { ref stored, ref requested }
+        Error::Store(StoreError::EmbeddingModelChanged { ref stored, ref requested })
             if stored == "test/embedder@v1" && requested == "other/embedder@v2"
     ));
     assert!(wrong_model.seen().is_empty());

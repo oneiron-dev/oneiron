@@ -2,6 +2,7 @@ use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
+use crate::error::StoreError;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -1024,7 +1025,7 @@ fn disabled_channel_exact_hit_does_not_suppress_enabled_prefix() -> Result<()> {
 }
 
 /// AC6: invalid rank-profile inputs are rejected fail-closed with the
-/// typed `Error::InvalidRankProfile` through both public paths —
+/// typed `crate::error::StoreError::InvalidRankProfile` through both public paths —
 /// never clamped, skipped, or silently defaulted. Boundary-legal
 /// values stay accepted.
 #[test]
@@ -1108,7 +1109,7 @@ fn rank_profile_validation_fails_closed() -> Result<()> {
         assert!(
             matches!(
                 err,
-                Error::InvalidRankProfile { parameter, .. } if parameter == expected_parameter
+                Error::Store(StoreError::InvalidRankProfile { parameter, .. }) if parameter == expected_parameter
             ),
             "case {case_name}: expected InvalidRankProfile({expected_parameter}), got {err:?}",
         );
@@ -1117,7 +1118,7 @@ fn rank_profile_validation_fails_closed() -> Result<()> {
         // attached, an invalid profile is a caller bug.
         let err = vault.query().rank_profile(profile).run().unwrap_err();
         assert!(
-            matches!(err, Error::InvalidRankProfile { .. }),
+            matches!(err, Error::Store(StoreError::InvalidRankProfile { .. })),
             "case {case_name} (pipeline): expected InvalidRankProfile, got {err:?}",
         );
         assert_eq!(err.kind(), crate::error::ErrorKind::InvalidRankProfile);

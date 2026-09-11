@@ -28,6 +28,7 @@ use super::open_version_keys::{
     STORAGE_SCHEMA_VERSION_KEY, StorageMigrationPlan, VAULT_ROOT_OPEN_LOCK,
 };
 use super::vault_root_bind::{VaultRootIdentity, duplicate_open_root, vault_root_preflight_error};
+use crate::error::StoreError;
 
 pub(in crate::store) struct RegisteredPath {
     pub(in crate::store) path: PathBuf,
@@ -269,10 +270,10 @@ pub(super) fn validate_db_manifest_set(env: &Env, txn: &RoTxn<'_>) -> Result<()>
     if missing.is_empty() && unexpected.is_empty() {
         Ok(())
     } else {
-        Err(Error::DbManifestMismatch {
+        Err(Error::Store(StoreError::DbManifestMismatch {
             missing,
             unexpected,
-        })
+        }))
     }
 }
 
@@ -302,7 +303,7 @@ pub(crate) fn materialized_database_names(env: &Env, txn: &heed::RoTxn<'_>) -> R
 ///
 /// `mdb_dbi_open` never creates here: a database the ARCH-0019 manifest
 /// requires but the environment does not hold comes back `None` and becomes
-/// the existing [`Error::DbManifestMismatch`].
+/// the existing [`StoreError::DbManifestMismatch`](crate::error::StoreError::DbManifestMismatch).
 pub(super) fn open_existing_databases(env: &Env, rtxn: &RoTxn<'_>) -> Result<RawDatabases> {
     Ok(RawDatabases {
         entities: open_manifest_db(env, rtxn, 0)?,
@@ -337,10 +338,10 @@ pub(super) fn open_existing_databases(env: &Env, rtxn: &RoTxn<'_>) -> Result<Raw
 }
 
 pub(super) fn missing_manifest_db(manifest_index: usize) -> Error {
-    Error::DbManifestMismatch {
+    Error::Store(StoreError::DbManifestMismatch {
         missing: vec![DB_MANIFEST[manifest_index].name.to_owned()],
         unexpected: Vec::new(),
-    }
+    })
 }
 
 pub(super) fn open_manifest_db(
@@ -398,10 +399,10 @@ pub(super) fn gate_existing_storage_versions(
         "storage ABI version",
     )?;
     if stored_abi != Some(STORAGE_ABI_VERSION) {
-        return Err(Error::StorageAbiVersionChanged {
+        return Err(Error::Store(StoreError::StorageAbiVersionChanged {
             stored: stored_abi,
             current: STORAGE_ABI_VERSION,
-        });
+        }));
     }
 
     let stored_schema = read_vault_meta_u16(
@@ -411,10 +412,10 @@ pub(super) fn gate_existing_storage_versions(
         "storage schema version",
     )?;
     if stored_schema != Some(STORAGE_SCHEMA_VERSION) {
-        return Err(Error::StorageSchemaVersionChanged {
+        return Err(Error::Store(StoreError::StorageSchemaVersionChanged {
             stored: stored_schema,
             current: STORAGE_SCHEMA_VERSION,
-        });
+        }));
     }
     Ok(())
 }
@@ -448,10 +449,10 @@ pub(super) fn verify_existing_hnsw_config(store: &Store, config: &VaultConfig) -
     match stored {
         HnswCompatibilityState::Current(stored) if stored == requested => Ok(()),
         HnswCompatibilityState::Current(stored) | HnswCompatibilityState::Legacy(stored) => {
-            Err(Error::HnswConfigChanged {
+            Err(Error::Store(StoreError::HnswConfigChanged {
                 stored: format_hnsw_compatibility(&stored),
                 requested: format_hnsw_compatibility(&requested),
-            })
+            }))
         }
         HnswCompatibilityState::Missing => Err(Error::InvalidConfig(
             ERR_EXISTING_MISSING_HNSW_CONFIG.to_owned(),
@@ -483,10 +484,10 @@ pub(super) fn verify_existing_embedding_model(
     if stored.as_deref() == requested {
         return Ok(());
     }
-    Err(Error::EmbeddingModelChanged {
+    Err(Error::Store(StoreError::EmbeddingModelChanged {
         stored: stored.unwrap_or_else(|| MODEL_ID_NONE.to_owned()),
         requested: requested.unwrap_or(MODEL_ID_NONE).to_owned(),
-    })
+    }))
 }
 
 /// ONE-1930's presentation-prefix re-key, gated on its own `vault_meta` marker
@@ -568,10 +569,10 @@ pub(super) fn gate_storage_versions(
         }
         StorageMigrationPlan::Current => {}
         StorageMigrationPlan::Required { from, to } => {
-            return Err(Error::StorageSchemaVersionChanged {
+            return Err(Error::Store(StoreError::StorageSchemaVersionChanged {
                 stored: from,
                 current: to,
-            });
+            }));
         }
     }
 
@@ -615,14 +616,14 @@ pub(in crate::store) fn gate_storage_abi_value(
         {
             Ok(StorageAbiGate::RekeyByteSpaceV3)
         }
-        Some(stored) => Err(Error::StorageAbiVersionChanged {
+        Some(stored) => Err(Error::Store(StoreError::StorageAbiVersionChanged {
             stored: Some(stored),
             current,
-        }),
+        })),
         None if new_vault => Ok(StorageAbiGate::StampCurrent),
-        None => Err(Error::StorageAbiVersionChanged {
+        None => Err(Error::Store(StoreError::StorageAbiVersionChanged {
             stored: None,
             current,
-        }),
+        })),
     }
 }

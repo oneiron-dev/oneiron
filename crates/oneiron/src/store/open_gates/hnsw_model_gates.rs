@@ -16,6 +16,7 @@ use super::open_version_keys::{
     HnswCompatibilityState, MODEL_ID_KEY, PersistedHnswCompatibility,
     TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
 };
+use crate::error::StoreError;
 
 pub(crate) fn read_vault_meta_u16(
     vault_meta: &OverlayDb,
@@ -76,10 +77,12 @@ pub(super) fn preflight_embedding_model(
         Some(raw) => {
             let stored = parse_utf8_bytes(&raw)?;
             match requested {
-                Some(requested) if stored != requested => Err(Error::EmbeddingModelChanged {
-                    stored,
-                    requested: requested.to_owned(),
-                }),
+                Some(requested) if stored != requested => {
+                    Err(Error::Store(StoreError::EmbeddingModelChanged {
+                        stored,
+                        requested: requested.to_owned(),
+                    }))
+                }
                 Some(_) => Ok(false),
                 None if has_persisted_vector_or_hnsw_data(
                     hnsw_meta,
@@ -116,10 +119,10 @@ pub(super) fn preflight_hnsw_config(
         HnswCompatibilityState::Current(stored) => {
             let requested = PersistedHnswCompatibility::from_config(requested);
             if stored != requested {
-                return Err(Error::HnswConfigChanged {
+                return Err(Error::Store(StoreError::HnswConfigChanged {
                     stored: format_hnsw_compatibility(&stored),
                     requested: format_hnsw_compatibility(&requested),
-                });
+                }));
             }
             Ok(false)
         }
@@ -134,10 +137,10 @@ pub(super) fn preflight_hnsw_config(
         HnswCompatibilityState::Legacy(stored) => {
             let requested = PersistedHnswCompatibility::from_config(requested);
             if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? {
-                return Err(Error::HnswConfigChanged {
+                return Err(Error::Store(StoreError::HnswConfigChanged {
                     stored: format_hnsw_compatibility(&stored),
                     requested: format_hnsw_compatibility(&requested),
-                });
+                }));
             }
             Ok(true)
         }
@@ -157,10 +160,10 @@ pub(super) fn persist_hnsw_config_if_missing(
     match read_hnsw_compatibility(hnsw_meta, &wtxn)? {
         HnswCompatibilityState::Current(stored) => {
             if stored != requested {
-                return Err(Error::HnswConfigChanged {
+                return Err(Error::Store(StoreError::HnswConfigChanged {
                     stored: format_hnsw_compatibility(&stored),
                     requested: format_hnsw_compatibility(&requested),
-                });
+                }));
             }
         }
         HnswCompatibilityState::Missing => {
@@ -174,10 +177,10 @@ pub(super) fn persist_hnsw_config_if_missing(
         }
         HnswCompatibilityState::Legacy(stored) => {
             if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &wtxn)? {
-                return Err(Error::HnswConfigChanged {
+                return Err(Error::Store(StoreError::HnswConfigChanged {
                     stored: format_hnsw_compatibility(&stored),
                     requested: format_hnsw_compatibility(&requested),
-                });
+                }));
             }
             hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
             wtxn.commit()?;
@@ -199,10 +202,10 @@ pub(super) fn persist_model_id_if_missing(
         Some(raw) => {
             let stored = parse_utf8_bytes(&raw)?;
             if stored != requested {
-                return Err(Error::EmbeddingModelChanged {
+                return Err(Error::Store(StoreError::EmbeddingModelChanged {
                     stored,
                     requested: requested.to_owned(),
-                });
+                }));
             }
         }
         None => {
@@ -231,10 +234,10 @@ pub(crate) fn ensure_model_id_for_vector_write(
         Some(raw) => {
             let stored = parse_utf8_bytes(&raw)?;
             if stored != requested {
-                return Err(Error::EmbeddingModelChanged {
+                return Err(Error::Store(StoreError::EmbeddingModelChanged {
                     stored,
                     requested: requested.to_owned(),
-                });
+                }));
             }
         }
         None => {
