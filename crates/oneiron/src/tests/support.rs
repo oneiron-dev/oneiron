@@ -648,8 +648,8 @@ where
     // ONE-1149 rendezvous: a rendezvous (`sync_channel(0)`) sender installed
     // into the production `#[cfg(test)]` seam. The deleter sends after it
     // proves the header `Some` (still holding no write lock); the eraser
-    // recv()s just before its commit. The seam is thread-local, so the deleter
-    // thread arms it itself before it is released.
+    // recv()s just before its commit. The seam belongs to this vault, so the
+    // deleter thread arms it there before it is released.
     let (rendezvous_tx, rendezvous_rx) = if rendezvous {
         let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
         (Some(tx), Some(rx))
@@ -665,7 +665,7 @@ where
         let deleter_gate = std::sync::Arc::clone(&gate);
         let deleter = scope.spawn(move || {
             if let Some(tx) = rendezvous_tx {
-                crate::deletion::install_after_header_read_signal(tx);
+                vault.test_hooks().install_after_header_read_signal(tx);
             }
             deleter_gate.wait();
             vault.delete_entity_with_reason(id, reason)

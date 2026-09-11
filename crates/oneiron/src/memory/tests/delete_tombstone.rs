@@ -554,8 +554,8 @@ fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
                 let deleter_barrier = std::sync::Arc::clone(&barrier);
                 let vault_ref = &vault;
                 let deleter = scope.spawn(move || {
-                    // Thread-local seam: armed on the thread that will fire it.
-                    crate::deletion::install_after_header_read_signal(tx);
+                    // Per-vault seam: armed on the vault that will fire it.
+                    vault_ref.test_hooks().install_after_header_read_signal(tx);
                     deleter_barrier.wait();
                     vault_ref.delete_entity_with_reason(&id, reason)
                 });
@@ -619,7 +619,6 @@ fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
 #[test]
 fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
     const REPLACEMENT: &[u8] = b"state re-put after the empty scrub";
-    let _serial = lock_delete_rendezvous();
 
     for reason in [SafeDeleteReason::GdprDelete, SafeDeleteReason::PolicyDelete] {
         let case = format!("{reason:?}");
@@ -635,7 +634,7 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
         // txn opens — the deleter holds no write lock here.
         let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
         let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
-        crate::deletion::install_delete_rendezvous(
+        vault.test_hooks().install_delete_rendezvous(
             crate::deletion::DeleteRendezvous::AfterTombstonePublish,
             subject,
             arrived_tx,
@@ -666,7 +665,7 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
             // slot was `take`n when it fired, so this is the next one it hits.
             let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
             let (resume_purge_tx, resume_purge_rx) = std::sync::mpsc::sync_channel::<()>(0);
-            crate::deletion::install_delete_rendezvous(
+            vault.test_hooks().install_delete_rendezvous(
                 crate::deletion::DeleteRendezvous::BeforeHardPurge,
                 subject,
                 arrived_tx,

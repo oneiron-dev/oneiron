@@ -197,27 +197,13 @@ impl PublishBoundaryHarness {
     }
 }
 
-/// The delete rendezvous is ONE process-global slot, and `cargo test` runs these
-/// in parallel threads of a single process. Two tests installing concurrently
-/// would clobber each other's channels — one delete parks on a receiver the
-/// other test owns, the other gets a `RecvError` from a dropped sender. Every
-/// test that installs a rendezvous holds this lock for the whole install→join
-/// window. Poison is ignored deliberately: a panicking test has already failed
-/// and must not cascade into unrelated ones.
-pub(super) static DELETE_RENDEZVOUS_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-pub(super) fn lock_delete_rendezvous() -> std::sync::MutexGuard<'static, ()> {
-    DELETE_RENDEZVOUS_TESTS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 /// Parks a gated delete at `step`, commits `revoke` while it waits, and returns
 /// the delete's result. The two-phase shape is forced: the steps around these
 /// seams take the LMDB write lock themselves, so the revocation cannot be
 /// pre-staged in a held txn — the deleter must announce while holding nothing.
 ///
-/// Caller must hold [`lock_delete_rendezvous`].
+/// The rendezvous belongs to `vault`, so this needs no serial lock: a sibling
+/// test running in the same binary armed a different vault.
 pub(super) fn safe_delete_with_revocation_at(
     vault: &std::sync::Arc<crate::Vault>,
     owner: EntityId,
@@ -228,7 +214,9 @@ pub(super) fn safe_delete_with_revocation_at(
 ) -> MemoryResult<DeleteReceipt> {
     let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
     let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
-    crate::deletion::install_delete_rendezvous(step, target, arrived_tx, resume_rx);
+    vault
+        .test_hooks()
+        .install_delete_rendezvous(step, target, arrived_tx, resume_rx);
 
     std::thread::scope(|scope| {
         let vault_ref = vault.as_ref();

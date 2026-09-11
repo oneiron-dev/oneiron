@@ -571,6 +571,16 @@ impl Vault {
         &self.store.diagnostics
     }
 
+    /// This vault's test seams.
+    ///
+    /// Same ownership rule as [`Self::diagnostics`]: a test arms the vault it
+    /// opened, so a sibling test in the same `cargo test --lib` binary cannot
+    /// reach it and neither of them needs a serial lock.
+    #[cfg(test)]
+    pub(crate) fn test_hooks(&self) -> &crate::store::TestHooks {
+        &self.store.test_hooks
+    }
+
     /// Registers the production window manager as the live-window delete
     /// router (M4-10 / ONE-1135). Called by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`].
