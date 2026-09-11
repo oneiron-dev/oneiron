@@ -82,7 +82,7 @@ impl Vault {
         // raced-delete harness recv()s here so the eraser commits AFTER this
         // header read, forcing the headerful leg every run. No-op in
         // production.
-        signal_after_header_read();
+        signal_after_header_read(self);
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is
@@ -187,7 +187,7 @@ impl Vault {
                     None,
                     gate.as_ref(),
                 )?;
-                signal_delete_rendezvous(DeleteRendezvous::AfterTombstonePublish, id, None);
+                signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
                 if crdt_persisted {
                     self.clear_pending_tombstone(&window_label, id)?;
                 }
@@ -220,6 +220,7 @@ impl Vault {
         // lets the regression commit a revocation HERE and prove the delete
         // still completes.
         signal_delete_rendezvous(
+            self,
             DeleteRendezvous::AfterTombstonePublish,
             id,
             gate_decision.as_ref().map(|decision| decision.decision_id),
@@ -326,6 +327,7 @@ impl Vault {
         // The second post-publication window: soft-erase committed, purge not
         // yet open. Same law, separately pinned.
         signal_delete_rendezvous(
+            self,
             DeleteRendezvous::BeforeHardPurge,
             id,
             gate_decision.as_ref().map(|decision| decision.decision_id),

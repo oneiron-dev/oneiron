@@ -16,8 +16,19 @@ Non-test file: the same definition scripts/ratchet/check.sh uses — no `tests/`
 path component, filename is not `tests.rs`, does not end `_tests.rs` and does
 not start `tests_`. `vendor/` and `target/` are excluded.
 
+A type ALIAS or a named wrapper STRUCT hides none of this: `type Slot =
+LazyLock<Mutex<..>>` and `struct Registry { entries: LazyLock<Mutex<..>> }` are
+resolved when they are declared in the SAME file as the static, so a global
+cannot duck the metric by being given a name. Resolution is same-file only and
+purely textual — a real type resolver is out of scope. Stated gaps, none live in
+this tree: a name declared in ANOTHER file; a generic struct header
+(`struct Foo<T> { inner: Mutex<T> }`, whose body is not scanned); an `enum`
+wrapper; and an alias chain longer than MAX_RESOLVE_DEPTH. Stating them beats
+guessing.
+
 Output: ONE integer on stdout, exit 0. With --list: one `path:line NAME: type`
-line per hit, sorted by path then line, for humans reading the number.
+line per hit, sorted by path then line, for humans reading the number; a hit
+resolved through a local name carries ` [via NAME]` naming it.
 
 Fails CLOSED like check.sh: an unreadable file or a scan that finds no source
 files at all prints `RATCHET-ERROR: …` on stderr and exits 1, never a silent 0.
@@ -58,6 +69,22 @@ STATIC_RE = re.compile(
 )
 
 THREAD_LOCAL_RE = re.compile(r"\bthread_local\s*!")
+
+# `type Name<..> = ..;` — a same-file alias the static's declared type may name.
+TYPE_ALIAS_RE = re.compile(
+    r"(?m)^[ \t]*(?:pub[ \t]*(?:\([^)]*\)[ \t]*)?)?type[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+)
+
+# `struct Name` — a same-file wrapper whose fields may hold the mutability.
+STRUCT_RE = re.compile(
+    r"(?m)^[ \t]*(?:pub[ \t]*(?:\([^)]*\)[ \t]*)?)?struct[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+)
+
+IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# Depth cap for local-name resolution: deep enough for any real wrapper chain,
+# and a hard stop so a cyclic alias cannot hang the scan.
+MAX_RESOLVE_DEPTH = 8
 
 OPENERS = {"{": "}", "(": ")", "[": "]"}
 CLOSERS = {"}", ")", "]"}
@@ -178,8 +205,12 @@ def thread_local_spans(src: str) -> list[tuple[int, int]]:
     return spans
 
 
-def declared_type(src: str, start: int) -> str | None:
-    """Read the type between a static's `:` and its `=` (or `;`).
+def declared_type(src: str, start: int, terminators: str = "=;") -> str | None:
+    """Read a type from `start` up to the first top-level terminator.
+
+    `terminators` is `"=;"` for a static's declared type (between its `:` and
+    its initializer) and `";"` for a type alias's right-hand side, which may
+    itself contain a top-level `=` in an associated-type binding.
 
     Depth-aware, so an associated-type binding (`Iterator<Item = u8>`) does not
     end the type early; `->` is stepped over whole so a function type's arrow is
@@ -195,9 +226,88 @@ def declared_type(src: str, start: int) -> str | None:
             depth += 1
         elif ch in CLOSERS or ch == ">":
             depth -= 1
-        elif depth == 0 and ch in "=;":
+        elif depth == 0 and ch in terminators:
             return src[start:j]
         j += 1
+    return None
+
+
+def balanced_body(src: str, start: int) -> tuple[str, int]:
+    """Text of the `{…}`/`(…)`/`[…]` group opening at `start`, and its end offset.
+
+    Depth is counted over all three delimiter kinds, so a nested group cannot
+    close the outer one early.
+    """
+    depth, j, n = 0, start, len(src)
+    while j < n:
+        if src[j] in OPENERS:
+            depth += 1
+        elif src[j] in CLOSERS:
+            depth -= 1
+            if depth == 0:
+                return src[start : j + 1], j + 1
+        j += 1
+    return src[start:], n
+
+
+def local_names(src: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Same-file `type` aliases and `struct` bodies, each as name -> type text.
+
+    Both maps are keyed by the declared name and valued by the text a hit is
+    then searched for: an alias's right-hand side, a struct's field list. A
+    later declaration of the same name overwrites an earlier one; duplicate
+    top-level names do not occur in a compiling crate.
+    """
+    aliases: dict[str, str] = {}
+    for m in TYPE_ALIAS_RE.finditer(src):
+        eq = src.find("=", m.end())
+        if eq == -1:
+            continue
+        rhs = declared_type(src, eq + 1, terminators=";")
+        if rhs is not None:
+            aliases[m.group(1)] = rhs
+
+    structs: dict[str, str] = {}
+    for m in STRUCT_RE.finditer(src):
+        i, n = m.end(), len(src)
+        while i < n and (src[i].isspace() or src[i] in "<>,'&:+="):
+            # Step over generics and bounds without parsing them; a delimiter
+            # below ends the header either way.
+            if src[i] in OPENERS:
+                break
+            i += 1
+        if i < n and src[i] in ("{", "("):
+            structs[m.group(1)] = balanced_body(src, i)[0]
+        else:
+            structs[m.group(1)] = ""
+    return aliases, structs
+
+
+def holds_shared_mutability(
+    ty: str,
+    aliases: dict[str, str],
+    structs: dict[str, str],
+    seen: set[str],
+    depth: int = 0,
+) -> str | None:
+    """The local name a type reaches shared mutability through, or `None`.
+
+    Returns "" when the declared type names a wrapper directly, so a caller can
+    tell a direct hit from one resolved through a local alias or struct.
+    """
+    if any(tok in ty for tok in TYPE_TOKENS):
+        return ""
+    if depth >= MAX_RESOLVE_DEPTH:
+        return None
+    for ident in IDENT_RE.findall(ty):
+        if ident in seen:
+            continue
+        body = aliases.get(ident, structs.get(ident))
+        if body is None:
+            continue
+        seen.add(ident)
+        if holds_shared_mutability(body, aliases, structs, seen, depth + 1) is not None:
+            return ident
     return None
 
 
@@ -224,6 +334,7 @@ def scan(path: Path) -> list[tuple[int, str, str]]:
 
     src = strip_noise(raw)
     skip = thread_local_spans(src)
+    aliases, structs = local_names(src)
     hits: list[tuple[int, str, str]] = []
     for m in STATIC_RE.finditer(src):
         if any(lo <= m.start() < hi for lo, hi in skip):
@@ -235,8 +346,11 @@ def scan(path: Path) -> list[tuple[int, str, str]]:
         # still meet the `Lazy<` / `Cell<` tokens.
         ty = re.sub(r"\s+", " ", ty).strip()
         ty = re.sub(r"\s+<", "<", ty)
-        if any(tok in ty for tok in TYPE_TOKENS):
-            hits.append((src.count("\n", 0, m.start()) + 1, m.group(1), ty))
+        via = holds_shared_mutability(ty, aliases, structs, set())
+        if via is None:
+            continue
+        shown = ty if via == "" else f"{ty} [via {via}]"
+        hits.append((src.count("\n", 0, m.start()) + 1, m.group(1), shown))
     return hits
 
 

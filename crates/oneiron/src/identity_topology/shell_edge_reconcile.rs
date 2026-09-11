@@ -36,8 +36,6 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
     text_index_trusted: bool,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
-    #[cfg(test)]
-    test_hooks::note_full_reconciliation();
     let touched = shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
     reconcile_shell_edges_for_sources_in_txn(
         store,
@@ -425,16 +423,5 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             wtxn,
         )
-    }
-}
-
-#[cfg(test)]
-pub(crate) mod test_hooks {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static FULL_RECONCILIATIONS: AtomicUsize = AtomicUsize::new(0);
-
-    pub(super) fn note_full_reconciliation() {
-        FULL_RECONCILIATIONS.fetch_add(1, Ordering::SeqCst);
     }
 }

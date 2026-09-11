@@ -1,8 +1,5 @@
 //! Storage-transaction reads, inserts, transitions, and the admission-gate validator.
 
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-
 use super::codec::{
     INTENT_LEDGER_PRIVATE_PREFIX, decode_record, encode_record, id_from_ledger_key,
     intent_ledger_key,
@@ -21,9 +18,6 @@ use crate::error::Error;
 pub(super) const INTENT_ATTEMPT_PREFIX: &[u8] = b"outbound:intent_attempt:v1:"; // + attempt(16) + seq(8)
 
 pub(super) const INTENT_ATTEMPT_FORMAT_KEY: &[u8] = b"outbound:intent_attempt_format";
-
-#[cfg(test)]
-pub(super) static FORCE_SYNC_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
 pub(crate) fn read_intent_record(
@@ -344,7 +338,7 @@ fn transition_record_with_outcome(
 
 pub(crate) fn force_sync(vault: &Vault) -> IntentLedgerResult<()> {
     #[cfg(test)]
-    FORCE_SYNC_CALLS.fetch_add(1, AtomicOrdering::SeqCst);
+    vault.test_hooks().note_force_sync();
     vault.store.env.force_sync().map_err(Error::from)?;
     Ok(())
 }
