@@ -20,8 +20,7 @@ use super::{
 use crate::claim::ClaimApprovalStatus;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
-use crate::error::RecordError;
-use crate::error::{ArtifactError, Error, ErrorKind, RegistryError, Result};
+use crate::error::{ArtifactError, Error, ErrorKind, RecordError, RegistryError, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,

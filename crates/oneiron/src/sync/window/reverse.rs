@@ -18,8 +18,7 @@ use crate::companion::{
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::registry::{
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
 };

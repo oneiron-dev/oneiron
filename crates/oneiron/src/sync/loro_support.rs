@@ -7,8 +7,7 @@
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 
 use crate::entity_id::EntityId;
-use crate::error::SyncError;
-use crate::error::{Error, Result, SyncEngineContext};
+use crate::error::{Error, Result, SyncEngineContext, SyncError};
 
 pub(crate) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result<()> {
     map.insert(key, value)

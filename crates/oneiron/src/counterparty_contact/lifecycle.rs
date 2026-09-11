@@ -17,8 +17,7 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::error::RecordError;
-use crate::error::{ClaimError, Error, Result};
+use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::temporal::TimeRange;
 use rmpv::Value;
 

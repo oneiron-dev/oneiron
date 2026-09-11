@@ -12,8 +12,7 @@ use super::{
 };
 use crate::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope};
 use crate::entity_id::ENTITY_ID_LEN;
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::store::Store;
 use crate::vault::Vault;
 

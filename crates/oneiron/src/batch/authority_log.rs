@@ -10,8 +10,7 @@ use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::RecordError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::store::Store;

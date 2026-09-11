@@ -2,8 +2,7 @@
 
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use crate::entity_id::ENTITY_ID_LEN;
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::identity_topology::{ProposalScope, is_identity_topology_op_kind};
 
 /// Domain separator for the scope handle digest.

@@ -49,8 +49,7 @@ use loro::LoroDoc;
 use crate::Vault;
 use crate::deletion::{ATT_EMPTY_MAP_BYTE, RECEIPT_ATT_DOMAIN, receipt_attestation_parts};
 use crate::entity_id::EntityId;
-use crate::error::SyncError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 use crate::sync::quarantine::{self, QuarantineContainer};
 
 /// LMDB `sync_state` key prefix for lease-registry mirror rows.

@@ -16,8 +16,7 @@ use super::types::{
 };
 use crate::claim::{ClaimBody, ClaimSubject, MAX_PREDICATE_BYTES};
 use crate::entity_id::EntityId;
-use crate::error::RecordError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use rmpv::Value;
 use std::io::Cursor;
 

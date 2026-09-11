@@ -127,7 +127,7 @@ fn dangling_parent_reject() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
     match err {
         Error::Registry(RegistryError::ChildOfParentMissing { parent }) => {
-            assert_eq!(parent, absent)
+            assert_eq!(parent, absent);
         }
         other => panic!("expected a dangling-parent rejection, got {other:?}"),
     }
@@ -167,7 +167,7 @@ fn child_of_existence_reads_final_batch_state() -> Result<()> {
         .expect_err("a parent deleted by this batch cannot receive a new child");
     match err {
         Error::Registry(RegistryError::ChildOfParentMissing { parent }) => {
-            assert_eq!(parent, doomed_parent)
+            assert_eq!(parent, doomed_parent);
         }
         other => panic!("expected a dangling-parent rejection, got {other:?}"),
     }
@@ -398,7 +398,7 @@ fn non_task_child_of_keeps_tree_guarantees_without_role_rules() -> Result<()> {
         .expect_err("a non-TASK dangling parent is rejected");
     match dangling_err {
         Error::Registry(RegistryError::ChildOfParentMissing { parent }) => {
-            assert_eq!(parent, absent)
+            assert_eq!(parent, absent);
         }
         other => panic!("expected a dangling-parent rejection, got {other:?}"),
     }

@@ -20,8 +20,7 @@ use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
 use crate::entity_id::EntityId;
-use crate::error::SyncError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 /// Run the entity pass: iterate the window `entities` map, replay each blob

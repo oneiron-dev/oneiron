@@ -1607,8 +1607,7 @@ use crate::authority::{
     federation_scope_digest, fold_authority_log_with_peer_consent_roots,
     sign_federation_pact_gesture,
 };
-use crate::error::RecordError;
-use crate::error::{ClaimError, RegistryError};
+use crate::error::{ClaimError, RecordError, RegistryError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 fn auth_key(seed: u8) -> SigningKey {

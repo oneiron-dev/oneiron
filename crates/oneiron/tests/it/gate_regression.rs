@@ -1,6 +1,5 @@
 use crate::common::entity as test_id;
-use oneiron::error::RegistryError;
-use oneiron::error::{GateDenialOutcome, GateDenialReason, GateError};
+use oneiron::error::{GateDenialOutcome, GateDenialReason, GateError, RegistryError};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,

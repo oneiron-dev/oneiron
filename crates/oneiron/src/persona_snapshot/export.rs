@@ -15,8 +15,7 @@ use super::types::{
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT;
 use crate::temporal::TimeRange;
 

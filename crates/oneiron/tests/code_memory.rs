@@ -16,8 +16,7 @@ use oneiron::code_memory::{
     CodeMemorySlotName, CodeMemorySlotValue, ProvenanceMaterialKind, SlotInsertOutcome,
 };
 use oneiron::deletion::DeleteReason;
-use oneiron::error::CodeError;
-use oneiron::error::RegistryError;
+use oneiron::error::{CodeError, RegistryError};
 use oneiron::note::TakeTarget;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,

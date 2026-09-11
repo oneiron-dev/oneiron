@@ -5,8 +5,7 @@
 //! contract.
 
 use super::*;
-use crate::error::ArtifactError;
-use crate::error::{ErrorKind, RegistryError};
+use crate::error::{ArtifactError, ErrorKind, RegistryError};
 use crate::registry::{
     ENTITY_TYPE_SKILL, EntityClassification, TypeByteZone, entity_type_registry_entry,
     is_structural_kind, short_id_prefix, zone_of,

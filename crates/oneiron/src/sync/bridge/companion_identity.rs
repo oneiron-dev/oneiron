@@ -16,8 +16,7 @@ use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
 };
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::SyncError;
+use crate::error::{ClaimError, SyncError};
 use crate::sync::loro_support::{
     map_delete, map_for_each_bytes, map_get_bytes, tombstone_map_contains_id,
 };

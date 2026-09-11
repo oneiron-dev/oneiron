@@ -20,8 +20,7 @@ use super::types::{
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::llm::ModelTierRef;
 use crate::skill::SkillDependency;
 use rmpv::Value;

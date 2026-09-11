@@ -5,8 +5,7 @@ use super::*;
 use crate::attempt_queue::{
     AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome,
 };
-use crate::error::ArtifactError;
-use crate::error::ClaimError;
+use crate::error::{ArtifactError, ClaimError};
 use crate::llm::{
     BudgetDenied, BudgetLease, LlmBackend, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId,
 };

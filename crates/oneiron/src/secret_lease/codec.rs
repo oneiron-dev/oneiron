@@ -10,8 +10,7 @@ use super::types::{
     SecretLeaseStatus, SecretMaterializationReceipt, StoredLocalRegistration,
 };
 use crate::entity_id::EntityId;
-use crate::error::SecretError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::CustodyTier;
 
 // ---------------------------------------------------------------------------

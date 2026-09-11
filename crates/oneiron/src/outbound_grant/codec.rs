@@ -11,8 +11,7 @@ use super::scope::{
     StandingOutboundGrantScope,
 };
 use crate::entity_id::EntityId;
-use crate::error::RecordError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::outbound_consent::DataClass;
 
 /// Current StandingOutboundGrant body schema version.

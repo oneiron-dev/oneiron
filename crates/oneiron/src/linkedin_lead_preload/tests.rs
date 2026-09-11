@@ -6,8 +6,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
-use crate::error::ClaimError;
-use crate::error::GateError;
+use crate::error::{ClaimError, GateError};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
 };

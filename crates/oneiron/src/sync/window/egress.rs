@@ -19,8 +19,7 @@ use super::types::WindowKey;
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::SyncError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 
 /// THE SYNC WINDOW-PACKING EGRESS DOOR (ARCH-0052 P6, owner ruling

@@ -600,8 +600,7 @@ pub(crate) mod test_util {
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::config::VaultConfig;
     use crate::entity_id::EntityId;
-    use crate::error::Error;
-    use crate::error::GateError;
+    use crate::error::{Error, GateError};
     use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
     use crate::store::Store;
     use crate::temporal::TimeRange;

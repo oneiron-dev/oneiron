@@ -4,8 +4,7 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::sync::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 #[cfg(feature = "sync")]
 use crate::sync::quarantine::{self, QuarantineContainer};

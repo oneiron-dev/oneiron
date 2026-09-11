@@ -10,8 +10,7 @@ use super::{
 use crate::claim::unit_interval_f32;
 use crate::edge::{EdgeActorClass, EdgeConfirmationStatus};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use rmpv::Value;
 
 /// Decoded `edge.provenance` value record — EXACTLY the ten pinned fields

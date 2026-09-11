@@ -9,8 +9,7 @@ use crate::edge::{
     validate_edge_weight,
 };
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::{Error, RegistryError, Result};
+use crate::error::{ClaimError, Error, RegistryError, Result};
 use crate::store::Store;
 
 /// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind

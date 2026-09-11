@@ -6,8 +6,7 @@ mod timestamp_guards;
 use super::*;
 use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, claim_demotion_rung};
 use crate::edge::EdgeKind;
-use crate::error::ClaimError;
-use crate::error::{GateError, RegistryError};
+use crate::error::{ClaimError, GateError, RegistryError};
 use crate::gate::gate_metric_emission_count_for_test;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG};
 

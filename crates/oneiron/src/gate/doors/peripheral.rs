@@ -6,8 +6,7 @@ use crate::claim::ClaimBody;
 use crate::claim::claim_sensitivity_band;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::RecordError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::gate::constants::LOCAL_WRITE_ACTOR_ENTITY_REF;
 use crate::gate::decision::record_gate_decision_metrics;
 #[cfg(feature = "sync")]

@@ -9,8 +9,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, parse_edge_record};
 

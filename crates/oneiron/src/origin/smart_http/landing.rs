@@ -14,8 +14,7 @@ use super::paths::{now_secs, serve_failed};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
-use crate::error::CodeError;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
     GitOid, GitRefName, GitWire, GitWireCommitOutcome, GitWireReceipt, GitWireRepo, lock_repository,
 };

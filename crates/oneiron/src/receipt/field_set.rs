@@ -13,8 +13,7 @@ use super::kernel::{
 use super::kernel::ReceiptKind;
 use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::context_board::MemoriesSection;
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::prompt::PromptRecompileStamp;
 
 const BOARD_STATE_REF_PREFIX: &str = "board:";

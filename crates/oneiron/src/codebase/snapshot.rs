@@ -4,8 +4,7 @@ use super::ingest::{read_asset_blob, validate_manifest_path, validate_project_id
 use super::repo_ref::{RepoRef, normalize_commit_hash, validate_normalized_commit_hash};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::CodeError;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use rmpv::Value;
 
 pub const CODEBASE_PROJECT_ID_MAX_BYTES: usize = 256;

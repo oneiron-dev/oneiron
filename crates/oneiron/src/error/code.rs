@@ -118,7 +118,8 @@ pub enum CodeError {
     /// A `blocks` readiness edge would close a cycle (ONE-1608): either
     /// `from == to`, or a `blocks`-only path already reaches `from` from
     /// `to`. Fail-closed — nothing is written, and a bounded-walk overflow
-    /// raises [`Self::IndexOverflow`] rather than a partial acyclicity proof.
+    /// raises [`Error::IndexOverflow`](crate::error::Error::IndexOverflow)
+    /// rather than a partial acyclicity proof.
     #[error("blocks edge {} -> {} would close a readiness cycle", from.to_hex(), to.to_hex())]
     CodeMemoryBlocksCycle { from: EntityId, to: EntityId },
     /// The `blocks` door refused the write actor (ONE-1608): the actor entity

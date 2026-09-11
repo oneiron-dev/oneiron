@@ -5,8 +5,7 @@ use super::types::PublishBookingPageGrantRequest;
 use crate::Vault;
 use crate::booking::constraint::BookingError;
 use crate::entity_id::EntityId;
-use crate::error::Error;
-use crate::error::RecordError;
+use crate::error::{Error, RecordError};
 use crate::outbound_grant::{
     BookingPageInviteGrantMintIntent, StandingOutboundGrant, StandingOutboundGrantScope,
     StandingOutboundGrantStatus, standing_outbound_grant_principal_index_entity_id,

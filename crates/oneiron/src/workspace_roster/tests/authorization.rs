@@ -1,6 +1,5 @@
 use super::*;
-use crate::error::GateError;
-use crate::error::RecordError;
+use crate::error::{GateError, RecordError};
 use crate::subject_model::tests::authorization::root_owner;
 
 type Mutation = fn(&Vault, &MemberOnboardingIntent, &WriteActor) -> Result<()>;

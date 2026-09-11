@@ -53,8 +53,7 @@ use super::window::{
     replay_pending_mirrors, replay_pending_tombstones, reverse_rematerialize,
 };
 use crate::Vault;
-use crate::error::SyncError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 
 /// Production registry + recovery orchestrator for window Docs.
 ///

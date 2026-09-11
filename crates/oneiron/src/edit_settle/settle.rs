@@ -18,8 +18,7 @@ use crate::blob_artifact::{
 };
 use crate::edit_roundtrip::{EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;

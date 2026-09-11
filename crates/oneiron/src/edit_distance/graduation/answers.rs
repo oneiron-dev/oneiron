@@ -6,8 +6,7 @@ use super::{ANSWER_KEY_PREFIX, ANSWER_ROW_LABEL, ROW_VERSION, decode_row, encode
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::consent_graduation::RampScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::store::Store;
 use crate::vault::Vault;
 

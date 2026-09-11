@@ -11,8 +11,7 @@ use super::storage::{
     RAMP_STATS_KEY_PREFIX, StoredScopeStats, decode_row, floor_key, stats_key, stats_row_parts,
 };
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::identity_topology::ProposalOutcome;
 use crate::vault::Vault;
 

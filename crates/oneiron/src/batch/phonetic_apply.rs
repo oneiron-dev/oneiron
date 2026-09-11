@@ -4,8 +4,7 @@ use std::str;
 use heed::RwTxn;
 
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::StoreError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::store::{ManifestDbs, Store};
 
 /// Stages one entity's phonetic postings and its forward code row.

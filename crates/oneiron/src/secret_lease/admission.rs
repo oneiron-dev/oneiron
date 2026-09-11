@@ -1,7 +1,6 @@
 //! The one cap-only admission rule, pure + door-side halves.
 
-use crate::error::SecretError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{
     CustodyClass, CustodyTier, SecretBinding, SecretCustodyAdmission, SecretCustodyFloor,
     SecretCustodyStatus,

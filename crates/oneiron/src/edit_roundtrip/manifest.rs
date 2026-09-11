@@ -1,8 +1,7 @@
 //! Edit manifest and warnings.
 
 use super::{AnchorEffect, EditOp, OfficeFormat};
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

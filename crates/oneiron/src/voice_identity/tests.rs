@@ -1,8 +1,7 @@
 use super::*;
 
 use crate::counterparty_contact::CounterpartyContactRecord;
-use crate::error::ErrorKind;
-use crate::error::RegistryError;
+use crate::error::{ErrorKind, RegistryError};
 use crate::temporal::TimeRange;
 use crate::test_util::entity as test_id;
 

@@ -3178,8 +3178,7 @@ use crate::authority::{
     AuthorityEntryHash, AuthorityVaultId, FederationLifecycleAction, FederationLifecycleKind,
     authority_entry_hash, federation_scope_digest, sign_federation_pact_gesture,
 };
-use crate::error::RegistryError;
-use crate::error::SyncError;
+use crate::error::{RegistryError, SyncError};
 use crate::federation::{
     FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
     FederationScopeWorlds, encode_federation_pact_scope,

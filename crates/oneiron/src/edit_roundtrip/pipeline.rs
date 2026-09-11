@@ -10,8 +10,7 @@ use super::{
 };
 use crate::blob_artifact::BlobVersionProvenance;
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use serde::{Deserialize, Serialize};
 
 /// Whether a recalc stage ran, and why not when it did not.

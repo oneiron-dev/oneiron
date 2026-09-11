@@ -37,8 +37,7 @@ fn test_config() -> VaultConfig {
     }
 }
 
-use crate::error::RegistryError;
-use crate::error::StoreError;
+use crate::error::{RegistryError, StoreError};
 use crate::test_util::entity;
 
 fn range(start: u64, end: u64) -> TimeRange {
