@@ -15,19 +15,24 @@ use candle_core::{D, Device, Tensor};
 /// reaches the matmul.
 ///
 /// `mask` is the additive causal mask the eager branch needs, shaped
-/// `[1, 1, seq, seq]`. The Metal branch ignores it and asks the kernel for
-/// causal masking instead, which is the same mask without materialising
-/// `heads × seq × seq` values.
+/// `[1, 1, seq, seq]`. The Metal branch asks the kernel for causal masking
+/// instead — the same mask without materialising `heads × seq × seq` values —
+/// so it takes `None` and the caller builds nothing for it.
 pub(super) fn grouped_causal_attention(
     q: &Tensor,
     k: &Tensor,
     v: &Tensor,
-    mask: &Tensor,
+    mask: Option<&Tensor>,
     scale: f32,
 ) -> candle_core::Result<Tensor> {
     if matches!(q.device(), Device::Metal(_)) {
         return candle_nn::ops::sdpa(q, k, v, None, true, scale, 1.0);
     }
+    let Some(mask) = mask else {
+        return Err(candle_core::Error::msg(
+            "eager attention needs an explicit causal mask",
+        ));
+    };
     eager_attention(q, k, v, mask, scale)
 }
 
