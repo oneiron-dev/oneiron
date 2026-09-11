@@ -641,6 +641,83 @@ fn an_artifact_with_a_wrong_digest_is_removed_and_fetched_again() {
     );
 }
 
+/// A verified artifact is not hashed again until it changes.
+///
+/// The worker retries a failed load on a backoff that tops out at a minute, and
+/// the checkpoint is 1.19 GB: re-reading it on every pass is most of that
+/// minute spent proving what the last pass proved. What the manager remembers
+/// is its own, not the process's, so a second manager repeats the work.
+#[test]
+fn a_verified_artifact_is_not_hashed_again_until_it_changes() {
+    fn overwrite_keeping_the_stamp(path: &std::path::Path, bytes: &str) {
+        let modified = std::fs::metadata(path)
+            .expect("metadata")
+            .modified()
+            .expect("modification time");
+        std::fs::write(path, bytes).expect("overwrite");
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("reopen")
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .expect("restore the modification time");
+    }
+
+    let source = StubSource::start();
+    let models = tempfile::tempdir().expect("models dir");
+    let config = local_config(models.path());
+    let dir = model_manager::model_dir(&config).expect("a configured root");
+    std::fs::create_dir_all(&dir).expect("create the model dir");
+    let path = dir.join(STUB_ARTIFACT.file);
+
+    let manager = model_manager::ModelManager::with_base_url(&source.base);
+    assert!(
+        manager
+            .ensure_one(&config, &dir, &STUB_ARTIFACT)
+            .expect("first pass"),
+        "the first pass fetches the artifact"
+    );
+
+    // Different bytes, same size and same modification time. Nothing the
+    // manager reads on a repeat pass has changed, so it does not read the file.
+    overwrite_keeping_the_stamp(&path, &"y".repeat(STUB_BODY.len()));
+    assert!(
+        !manager
+            .ensure_one(&config, &dir, &STUB_ARTIFACT)
+            .expect("repeat pass"),
+        "an unchanged file is taken as verified"
+    );
+    assert_eq!(source.paths().len(), 1, "and is not fetched again");
+
+    // A manager that verified nothing hashes the same file and catches it.
+    let fresh = model_manager::ModelManager::with_base_url(&source.base);
+    assert!(
+        fresh
+            .ensure_one(&config, &dir, &STUB_ARTIFACT)
+            .expect("a fresh manager"),
+        "what one manager verified is not what another knows"
+    );
+    assert_eq!(source.paths().len(), 2);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the refetched artifact"),
+        STUB_BODY
+    );
+
+    // A file of a different size is a different file whatever was remembered.
+    std::fs::write(&path, "truncated").expect("shrink the file");
+    assert!(
+        fresh
+            .ensure_one(&config, &dir, &STUB_ARTIFACT)
+            .expect("a changed file"),
+        "a file whose size changed is verified again, refused and refetched"
+    );
+    assert_eq!(source.paths().len(), 3);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the refetched artifact"),
+        STUB_BODY
+    );
+}
+
 // ─── rows that need the checkpoint ───────────────────────────────────────
 
 mod with_model {

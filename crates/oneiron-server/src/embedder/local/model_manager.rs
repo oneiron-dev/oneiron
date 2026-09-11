@@ -9,9 +9,11 @@
 //! whose model has never been fetched still opens and still answers BM25 while
 //! the download runs (OF-022, the two-tier write rule).
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
@@ -175,6 +177,18 @@ pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf
 pub(in crate::embedder) struct ModelManager {
     /// Host the artifacts are fetched from, without a trailing slash.
     base_url: String,
+    /// Artifacts verified in this process, as they looked when they passed.
+    ///
+    /// A load that fails for a reason that is not the artifacts — a device this
+    /// build cannot reach, a width the vault disagrees with — sends the worker
+    /// round a backoff that tops out at a minute, and every pass used to hash
+    /// 1.19 GB again before reaching the same failure. A file that has not
+    /// changed since it was verified is not hashed again.
+    ///
+    /// A field on the manager the slot owns, never a process static: two vaults
+    /// in one process keep their own answers, and nothing here outlives the
+    /// server that asked.
+    verified: Mutex<HashMap<PathBuf, FileStamp>>,
 }
 
 impl Default for ModelManager {
@@ -182,7 +196,28 @@ impl Default for ModelManager {
     fn default() -> Self {
         Self {
             base_url: HUGGINGFACE_BASE_URL.to_owned(),
+            verified: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+/// What a file looked like when it was verified.
+///
+/// Size and modification time: enough to notice the file being replaced, and
+/// cheap enough to read on every pass, which a gigabyte of sha256 is not.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileStamp {
+    bytes: u64,
+    modified: Option<SystemTime>,
+}
+
+impl FileStamp {
+    fn read(path: &Path) -> oneiron::Result<Self> {
+        let metadata = std::fs::metadata(path).map_err(oneiron::Error::Io)?;
+        Ok(Self {
+            bytes: metadata.len(),
+            modified: metadata.modified().ok(),
+        })
     }
 }
 
@@ -196,6 +231,7 @@ impl ModelManager {
     pub(in crate::embedder) fn with_base_url(base_url: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
+            ..Self::default()
         }
     }
 
@@ -240,13 +276,14 @@ impl ModelManager {
     ) -> oneiron::Result<bool> {
         let path = dir.join(artifact.file);
         if path.is_file() {
-            match verify(&path, artifact) {
+            match self.verify_unless_unchanged(&path, artifact) {
                 Ok(()) => return Ok(false),
                 Err(error) => {
                     // A file that does not match its digest is not a file we can
                     // use, and leaving it in place would fail the same way on every
                     // restart. Remove it and fetch it again.
                     tracing::warn!(path = %path.display(), ?error, "embedder artifact failed verification; refetching");
+                    self.forget(&path);
                     std::fs::remove_file(&path).map_err(oneiron::Error::Io)?;
                 }
             }
@@ -260,11 +297,44 @@ impl ModelManager {
         );
         tracing::info!(file = artifact.file, "downloading embedder model artifact");
         download(&url, &path, artifact)?;
-        verify(&path, artifact).inspect_err(|_| {
-            // Never leave a bad artifact on disk: the next start would load it.
-            let _ = std::fs::remove_file(&path);
-        })?;
+        self.verify_unless_unchanged(&path, artifact)
+            .inspect_err(|_| {
+                // Never leave a bad artifact on disk: the next start would load it.
+                let _ = std::fs::remove_file(&path);
+            })?;
         Ok(true)
+    }
+
+    /// Verifies a file, unless it is the one this process already verified.
+    fn verify_unless_unchanged(
+        &self,
+        path: &Path,
+        artifact: &PinnedArtifact,
+    ) -> oneiron::Result<()> {
+        let stamp = FileStamp::read(path)?;
+        if self
+            .verified
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(path)
+            == Some(&stamp)
+        {
+            return Ok(());
+        }
+        verify(path, artifact)?;
+        self.verified
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.to_path_buf(), stamp);
+        Ok(())
+    }
+
+    /// Drops what this process remembers about a file it is about to remove.
+    fn forget(&self, path: &Path) {
+        self.verified
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(path);
     }
 }
 
