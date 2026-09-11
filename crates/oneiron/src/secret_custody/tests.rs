@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::config::VaultConfig;
-use crate::error::{GateError, RegistryError};
+use crate::error::{GateError, RegistryError, SecretError};
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -508,7 +508,7 @@ fn malformed_floor_row_errors_instead_of_defaulting_open() {
     let err = SecretCustodyFloor::resolve(&vault.store, &rtxn)
         .expect_err("a present-but-malformed floor row must not default open");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
     drop(rtxn);
@@ -525,7 +525,7 @@ fn malformed_floor_row_errors_instead_of_defaulting_open() {
         .register_secret(rec)
         .expect_err("registration must not proceed on an unreadable floor");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
     assert_eq!(
@@ -551,7 +551,7 @@ fn duplicated_floor_row_errors_because_the_intended_value_is_ambiguous() {
     let err = SecretCustodyFloor::resolve(&vault.store, &rtxn)
         .expect_err("a duplicated floor row must not resolve");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
 }
@@ -612,7 +612,10 @@ fn duplicate_live_name_is_denied() {
     let err = vault
         .register_secret(b)
         .expect_err("duplicate live name denied");
-    assert!(matches!(err, Error::SecretNameInUse { .. }), "got {err:?}");
+    assert!(
+        matches!(err, Error::Secret(SecretError::SecretNameInUse { .. })),
+        "got {err:?}"
+    );
 }
 
 #[test]
@@ -686,7 +689,7 @@ fn replicated_put_door_rejects_secret_custody_byte() {
         .commit()
         .expect_err("replicated custody put must be denied");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
     assert!(
@@ -704,7 +707,7 @@ fn replicated_put_door_rejects_secret_custody_byte() {
         })
         .expect_err("in-txn replicated custody put must be denied");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
     assert!(
@@ -754,7 +757,7 @@ fn decode_rejects_missing_required_body_keys() {
         let err = decode_secret_custody_body(&body)
             .expect_err(&format!("missing required key {key} must reject"));
         assert!(
-            matches!(err, Error::InvalidSecretCustodyBody(_)),
+            matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
             "key {key}: got {err:?}"
         );
     }
@@ -790,7 +793,7 @@ fn register_rejects_binding_wider_than_live_floor() {
         .register_secret(rec)
         .expect_err("CrossVault + T2 binding exceeds live floor");
     assert!(
-        matches!(err, Error::ManifestWidensFloor { .. }),
+        matches!(err, Error::Secret(SecretError::ManifestWidensFloor { .. })),
         "got {err:?}"
     );
     // The rejected registration must not hold the name.
@@ -875,7 +878,7 @@ fn value_read_goes_through_get_secret_value_in_txn_door() {
         .get_secret_value_in_txn(&wtxn, &id, "connector:evil")
         .expect_err("unbound effector must be denied at the door");
     assert!(
-        matches!(err, Error::SecretBindingDenied { .. }),
+        matches!(err, Error::Secret(SecretError::SecretBindingDenied { .. })),
         "got {err:?}"
     );
     // Bound effector reads the value — this is the sanctioned plaintext path.
@@ -894,14 +897,14 @@ fn value_read_goes_through_get_secret_value_in_txn_door() {
         .get(&id)
         .expect_err("generic Vault::get must deny a custody body");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
     let err = vault
         .get_raw(&id)
         .expect_err("generic Vault::get_raw must deny a custody row");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
 
@@ -930,7 +933,7 @@ fn value_read_requires_binding() {
         .get_secret_value_in_txn(&wtxn, &id, "connector:other")
         .expect_err("unbound effector denied");
     assert!(
-        matches!(err, Error::SecretBindingDenied { .. }),
+        matches!(err, Error::Secret(SecretError::SecretBindingDenied { .. })),
         "got {err:?}"
     );
     // Bound effector reads the value.
@@ -975,7 +978,7 @@ fn value_read_requires_a_read_scope_on_the_matched_binding() {
             .get_secret_value_in_txn(&wtxn, &id, effector)
             .expect_err("a binding without a read scope must be denied");
         assert!(
-            matches!(err, Error::SecretBindingDenied { .. }),
+            matches!(err, Error::Secret(SecretError::SecretBindingDenied { .. })),
             "{effector}: got {err:?}"
         );
     }

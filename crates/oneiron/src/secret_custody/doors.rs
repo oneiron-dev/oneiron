@@ -16,6 +16,7 @@ use super::types::{
     SECRET_NAME_INDEX_PREFIX, SecretBinding, SecretCustodyFloor, SecretCustodyMetadata,
     SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
+use crate::error::SecretError;
 
 // ---------------------------------------------------------------------------
 // Name index
@@ -307,12 +308,12 @@ pub(crate) fn refuse_bindings_wider_than_live_floor(
     let live_band = SecretCustodyFloor::resolve(store, txn)?.band_for(rec.class);
     for b in &rec.bindings {
         if b.tier_ceiling > live_band.max {
-            return Err(Error::ManifestWidensFloor {
+            return Err(Error::Secret(SecretError::ManifestWidensFloor {
                 secret_ref: rec.name.clone(),
                 class: rec.class,
                 requested: b.tier_ceiling,
                 floor_max: live_band.max,
-            });
+            }));
         }
     }
     Ok(live_band)
@@ -403,12 +404,12 @@ impl Vault {
         // snapshot equal to or narrower than live is accepted as-is.
         let snap_band = rec.policy_floor_snapshot.band_for(rec.class);
         if snap_band.max > live_band.max {
-            return Err(Error::ManifestWidensFloor {
+            return Err(Error::Secret(SecretError::ManifestWidensFloor {
                 secret_ref: rec.name.clone(),
                 class: rec.class,
                 requested: snap_band.max,
                 floor_max: live_band.max,
-            });
+            }));
         }
 
         if let Some(existing_bytes) = self.store.vault_meta.get(&wtxn, &index_key)? {
@@ -421,7 +422,9 @@ impl Vault {
             // A live name denies; a revoked or missing record frees the index.
             if let Some(existing) = read_secret_custody_in_txn(&self.store, &wtxn, &existing_id)? {
                 if existing.status != SecretCustodyStatus::Revoked {
-                    return Err(Error::SecretNameInUse { name: rec.name });
+                    return Err(Error::Secret(SecretError::SecretNameInUse {
+                        name: rec.name,
+                    }));
                 }
                 // NAME RECLAIM. The dead record's generation is this name's
                 // HIGH-WATER, and the new life must start strictly above it.
@@ -485,7 +488,7 @@ impl Vault {
     /// Door/lease paths only (SECRET-02). Reads the raw value bytes for a
     /// record within a write txn, requiring a binding that covers `effector`
     /// AND declares the [`SECRET_SCOPE_READ`] grant: anything else ⇒
-    /// [`Error::SecretBindingDenied`]. Naming the effector is not by itself a
+    /// [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied). Naming the effector is not by itself a
     /// read grant — the binding's declared scope is what admits plaintext, and
     /// an empty scope list is no grant at all.
     /// The value never escapes into claims/CRDT/export/receipts/logs; this
@@ -502,16 +505,18 @@ impl Vault {
             return Ok(None);
         };
         if rec.status != SecretCustodyStatus::Active {
-            return Err(Error::SecretCustodyNotActive { name: rec.name });
+            return Err(Error::Secret(SecretError::SecretCustodyNotActive {
+                name: rec.name,
+            }));
         }
         if !rec
             .binding_for(effector)
             .is_some_and(SecretBinding::grants_read)
         {
-            return Err(Error::SecretBindingDenied {
+            return Err(Error::Secret(SecretError::SecretBindingDenied {
                 effector: effector.to_owned(),
                 secret_ref: rec.name,
-            });
+            }));
         }
         Ok(Some(rec.value_bytes))
     }

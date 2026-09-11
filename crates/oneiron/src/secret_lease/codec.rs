@@ -10,6 +10,7 @@ use super::types::{
     SecretLeaseStatus, SecretMaterializationReceipt, StoredLocalRegistration,
 };
 use crate::entity_id::EntityId;
+use crate::error::SecretError;
 use crate::error::{Error, Result};
 use crate::secret_custody::CustodyTier;
 
@@ -18,7 +19,7 @@ use crate::secret_custody::CustodyTier;
 // ---------------------------------------------------------------------------
 
 pub(super) fn invalid_body(reason: &'static str) -> Error {
-    Error::InvalidSecretLeaseBody(reason)
+    Error::Secret(SecretError::InvalidSecretLeaseBody(reason))
 }
 
 pub(super) fn lease_key(lease_id: &EntityId) -> Vec<u8> {

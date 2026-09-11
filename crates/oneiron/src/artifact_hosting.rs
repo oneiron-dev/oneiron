@@ -13,6 +13,7 @@ use crate::codebase::{
     CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot,
 };
 use crate::entity_id::EntityId;
+use crate::error::SecretError;
 use crate::error::{Error, Result};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
@@ -174,7 +175,7 @@ impl Vault {
     /// records' CURRENT generations right here, at the check — read-time
     /// invalidation (ARCH-0069 S7, amended 2026-08-05). An artifact whose
     /// secrets have rotated or been revoked reads `TaintedStale` and the
-    /// publish refuses with [`Error::TaintedArtifactStale`].
+    /// publish refuses with [`SecretError::TaintedArtifactStale`](crate::error::SecretError::TaintedArtifactStale).
     ///
     /// It is a DIAL, not a wall. When the resolved policy key
     /// `secret.taint.allow_stale_publish` is on, the publish proceeds and
@@ -202,9 +203,9 @@ impl Vault {
             ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
             ArtifactTaintState::TaintedStale => {
                 if !allow_stale_publish_in_txn(&self.store, &wtxn)? {
-                    return Err(Error::TaintedArtifactStale {
+                    return Err(Error::Secret(SecretError::TaintedArtifactStale {
                         artifact: artifact.to_owned(),
-                    });
+                    }));
                 }
                 true
             }
