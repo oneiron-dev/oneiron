@@ -9,7 +9,7 @@
 //! [`SecretCustodyFloor`] band for its class, and every binding's tier
 //! ceiling must be ≤ the floor's max. A manifest that asks for more exposure
 //! than the floor allows fails with
-//! [`SecretError::ManifestWidensFloor`](crate::error::SecretError::ManifestWidensFloor); a narrower manifest is stored with its
+//! [`SecretError::ManifestWidensFloor`]; a narrower manifest is stored with its
 //! narrow binding.
 //!
 //! The merge rule is `manifest ∧ vault_floor` — most-restrictive wins. At
@@ -20,8 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::SecretError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{CustodyClass, CustodyTier, SecretBinding, SecretCustodyFloor};
 
 /// The repo-side secret manifest: a schema-versioned list of declared
@@ -245,7 +244,7 @@ fn parse_string_array(value: &str) -> Result<Vec<String>> {
 /// entry's class must admit an allowed band inside the floor's band for that
 /// class, and every binding's `tier_ceiling` must not exceed the floor's max
 /// for the entry's class. A wider ask fails
-/// [`SecretError::ManifestWidensFloor`](crate::error::SecretError::ManifestWidensFloor); a narrower ask is accepted (and the narrow
+/// [`SecretError::ManifestWidensFloor`]; a narrower ask is accepted (and the narrow
 /// binding is what gets stored).
 pub fn validate_secret_manifest(m: &SecretManifest, floor: &SecretCustodyFloor) -> Result<()> {
     if m.schema_version != SECRET_MANIFEST_SCHEMA_VERSION {

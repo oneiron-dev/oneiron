@@ -17,8 +17,7 @@ use crate::claim::{
 };
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::{Error, RegistryError, Result, SyncError};
+use crate::error::{ClaimError, Error, RegistryError, Result, SyncError};
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
 use crate::temporal::TimeRange;
 use crate::test_util::embedding_test_config;

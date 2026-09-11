@@ -5,8 +5,7 @@ use std::collections::HashSet;
 use heed::RwTxn;
 
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{Error, ErrorKind, RegistryError, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;

@@ -12,8 +12,7 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
-use crate::error::ErrorKind;
-use crate::error::RegistryError;
+use crate::error::{ErrorKind, RegistryError};
 use crate::registry::{
     ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteZone,
     entity_type_registry_entry,

@@ -2,8 +2,7 @@ use super::*;
 
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use crate::store::Store;
 

@@ -2,8 +2,7 @@
 
 use super::EdgeProvenanceClaimBody;
 use crate::edge::EdgeActorClass;
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use rmpv::Value;
 

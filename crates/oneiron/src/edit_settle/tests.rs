@@ -12,8 +12,7 @@ use crate::edit_roundtrip::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditProposal, MutationMode, OfficeFormat,
     RecalcStatus, StructureSummary, ValidationReport,
 };
-use crate::error::ArtifactError;
-use crate::error::Error;
+use crate::error::{ArtifactError, Error};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::embedding_test_config;

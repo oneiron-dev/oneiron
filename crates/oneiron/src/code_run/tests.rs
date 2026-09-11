@@ -1,8 +1,7 @@
 use rmpv::Value;
 
 use super::*;
-use crate::error::ClaimError;
-use crate::error::{ErrorKind, GateError};
+use crate::error::{ClaimError, ErrorKind, GateError};
 use crate::test_util::{embedding_test_config, entity, entity_record};
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY;

@@ -8,8 +8,7 @@ use super::storage::{
 };
 use super::types::{EscalationTrigger, StandingPolicy, StandingPolicyStatus};
 use crate::entity_id::EntityId;
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::store::Store;
 use crate::vault::Vault;
 

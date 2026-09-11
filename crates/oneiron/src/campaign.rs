@@ -15,8 +15,7 @@
 //! structural kind and stops there.
 
 use crate::Vault;
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::registry::{
     StructuralKindRegistration, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
     TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteZone,

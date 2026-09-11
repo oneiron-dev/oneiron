@@ -2,8 +2,7 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::edge::EdgeKind;
-use crate::error::OffRecordError;
-use crate::error::{Error, ErrorKind};
+use crate::error::{Error, ErrorKind, OffRecordError};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchPipeline, OutboundDispatchRequest,

@@ -10,8 +10,7 @@ use crate::batch::{
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;

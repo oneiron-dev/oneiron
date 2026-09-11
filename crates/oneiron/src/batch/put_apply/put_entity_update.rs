@@ -4,8 +4,7 @@ use heed::RwTxn;
 
 use super::EntityMetadataHeader;
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{ArtifactError, Error, ErrorKind, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
 

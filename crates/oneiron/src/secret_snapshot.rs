@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::batch::secret_scan;
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
-use crate::error::CodeError;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_custody::read_secret_custody_in_txn;
 use crate::secret_lease::{SECRET_LOCAL_REGISTRATION_PREFIX, decode_local_registration_body};

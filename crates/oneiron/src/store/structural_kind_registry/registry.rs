@@ -9,8 +9,7 @@ use crate::batch::secret_scan;
 use crate::companion::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
 };
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::overlay_db::OverlayDb;
 use crate::registry::{
     StructuralKindRegistration, TypeByteZone, entity_type_registry_entry, short_id_prefix,

@@ -3,8 +3,7 @@
 use super::peripheral::GateWriteMode;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_sensitivity_band};
 use crate::entity_id::EntityId;
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::gate::ceiling::PolicyApprovalCeiling;
 use crate::gate::constants::POLICY_SCHEMA_VERSION;
 use crate::gate::decision::{GateDecision, GateOutcome};

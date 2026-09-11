@@ -8,8 +8,7 @@ use super::types::AgentDefinition;
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::temporal::TimeRange;
 

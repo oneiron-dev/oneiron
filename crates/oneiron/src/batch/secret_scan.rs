@@ -1,7 +1,6 @@
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";

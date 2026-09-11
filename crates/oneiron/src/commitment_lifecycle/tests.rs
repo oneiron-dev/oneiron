@@ -19,8 +19,7 @@ use crate::commitment_schedule::{
 };
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
-use crate::error::ClaimError;
-use crate::error::RegistryError;
+use crate::error::{ClaimError, RegistryError};
 use crate::habit::{TaskRole, task_body_for_test};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};

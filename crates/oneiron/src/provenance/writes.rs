@@ -20,8 +20,7 @@ use crate::edge::{
     edge_value_layout_for_kind,
 };
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_MODEL;
 use crate::store::Store;

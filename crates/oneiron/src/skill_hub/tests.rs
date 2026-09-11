@@ -1,6 +1,5 @@
 use super::*;
-use crate::error::ArtifactError;
-use crate::error::{ClaimError, RegistryError};
+use crate::error::{ArtifactError, ClaimError, RegistryError};
 use crate::skill::SkillGovernanceTier;
 use crate::skill_optimize::{SkillTierVerdict, skill_governance_tier};
 

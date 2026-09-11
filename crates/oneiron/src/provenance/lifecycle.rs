@@ -13,8 +13,7 @@ use crate::edge::{
     EdgeActorClass, EdgeProvenanceFlags,
 };
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 use crate::temporal::TimeRange;

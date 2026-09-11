@@ -4,8 +4,7 @@ use crate::code_artifact::{CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody};
 use crate::code_revision::{CODE_REVISION_CLAIM_PREDICATE, CodeRevision};
 use crate::context_pack::PackFormat;
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::error::CodeError;
-use crate::error::{Error, ErrorKind};
+use crate::error::{CodeError, Error, ErrorKind};
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::secret_custody::{

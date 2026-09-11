@@ -5,8 +5,7 @@ use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, Multiling
 use crate::bm25;
 use crate::config::VaultConfig;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::StoreError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
     STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,

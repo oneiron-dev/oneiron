@@ -7,8 +7,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::temporal::TimeRange;
 

@@ -15,8 +15,7 @@ use super::types::{
     StoredLocalRegistration, VaultInstant,
 };
 use crate::entity_id::EntityId;
-use crate::error::SecretError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{
     CustodyTier, SecretCustodyAdmission, SecretCustodyFloor, read_secret_custody_admission_in_txn,
     resolve_secret_ref_in_txn,

@@ -14,8 +14,7 @@ use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::edit_roundtrip::EditManifest;
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 
 /// Projects the settlement ledger into OF-367 family receipts matching `query`.

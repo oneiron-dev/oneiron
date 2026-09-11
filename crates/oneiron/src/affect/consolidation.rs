@@ -17,8 +17,7 @@ use crate::claim::{
 };
 use crate::edge::{EdgeKind, EdgeValueLayout, edge_value_layout_for_kind};
 use crate::entity_id::EntityId;
-use crate::error::ClaimError;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::provenance::EdgeRef;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;

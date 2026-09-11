@@ -13,8 +13,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
-use crate::error::RecordError;
-use crate::error::RegistryError;
+use crate::error::{RecordError, RegistryError};
 use crate::test_util::entity as test_id;
 
 fn all_dimension_budgets() -> Vec<EffectorBudget> {

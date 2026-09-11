@@ -3,8 +3,7 @@
 use std::sync::Arc;
 
 use crate::Vault;
-use crate::error::SyncError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncError};
 use crate::sync::types::{WindowKey, parse_window_key_str};
 
 // ─── ra: tombstone re-assertion markers (ONE-1156c) ──────────────────────────

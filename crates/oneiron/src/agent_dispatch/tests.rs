@@ -15,8 +15,7 @@ use crate::dreamer_runner::{
     DreamerMilestoneClaim, DreamerMilestoneKind, decode_dreamer_attempt_payload,
     dreamer_milestone_value,
 };
-use crate::error::ArtifactError;
-use crate::error::ErrorKind;
+use crate::error::{ArtifactError, ErrorKind};
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::task_verb::{TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition};
 use crate::temporal::TimeRange;

@@ -12,8 +12,7 @@ use crate::deletion::{
     ARCHIVE_TOMBSTONE_PREFIX, TombstoneReason, entity_id_from_archive_tombstone_key,
 };
 use crate::entity_id::EntityId;
-use crate::error::MaintenanceError;
-use crate::error::{Error, Result};
+use crate::error::{Error, MaintenanceError, Result};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------

@@ -40,8 +40,7 @@ fn prompt_package_root() -> std::path::PathBuf {
     crate::prompt::workspace_prompt_package_root().expect("workspace prompt package")
 }
 
-use crate::error::ArtifactError;
-use crate::error::GateError;
+use crate::error::{ArtifactError, GateError};
 use crate::test_util::{embedding_test_config, entity};
 
 fn range(at: u64) -> TimeRange {

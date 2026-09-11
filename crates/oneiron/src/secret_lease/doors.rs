@@ -17,8 +17,7 @@ use super::types::{
 };
 use crate::credential_door::{AdmittedLease, DoorResult};
 use crate::entity_id::EntityId;
-use crate::error::SecretError;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{CustodyTier, SecretCustodyFloor};
 use crate::unix_seconds_now;
 use crate::vault::Vault;

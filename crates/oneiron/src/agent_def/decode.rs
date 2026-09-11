@@ -10,8 +10,7 @@ use super::types::{
     MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
 };
 use crate::claim::ClaimSource;
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::llm::ModelTierRef;
 use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
 use rmpv::Value;

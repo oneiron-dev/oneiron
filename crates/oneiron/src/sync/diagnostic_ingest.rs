@@ -4,8 +4,7 @@ use super::quota;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
-use crate::error::RecordError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::self_heal::validate_diagnostic_event_admission;
 use crate::temporal::TimeRange;
 

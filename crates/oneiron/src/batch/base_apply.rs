@@ -6,8 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use heed::RwTxn;
 
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
 use crate::store::Store;

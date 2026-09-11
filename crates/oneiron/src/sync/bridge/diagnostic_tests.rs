@@ -1,7 +1,6 @@
 use super::*;
 use crate::config::VaultConfig;
-use crate::error::RecordError;
-use crate::error::SyncError;
+use crate::error::{RecordError, SyncError};
 use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_PERSON};
 use crate::self_heal::{
     ConsentDeniedDetector, DeterministicDetector, DiagnosticObservation, DiagnosticWorkingSet,

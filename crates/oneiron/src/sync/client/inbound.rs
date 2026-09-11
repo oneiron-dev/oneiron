@@ -5,8 +5,7 @@ use std::cmp::Ordering::{Equal, Less};
 use loro::VersionVector;
 
 use super::base::{SyncClient, load_root_doc};
-use crate::error::Error;
-use crate::error::SyncError;
+use crate::error::{Error, SyncError};
 use crate::sync::SyncEvent;
 use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};

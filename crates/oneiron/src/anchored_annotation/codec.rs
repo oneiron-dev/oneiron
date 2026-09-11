@@ -9,8 +9,7 @@ use super::model::{
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::habit::TaskRole;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;

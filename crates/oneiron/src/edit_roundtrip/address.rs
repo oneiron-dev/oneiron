@@ -1,8 +1,7 @@
 //! Cell addressing, ranges and op validation.
 
 use super::EditOp;
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use serde::{Deserialize, Serialize};
 
 const XLSX_MEDIA_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";

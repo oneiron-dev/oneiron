@@ -13,8 +13,7 @@ use super::model::{
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::ArtifactError;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use rmpv::Value;
 use serde_json::Value as JsonValue;
 use std::io::Cursor;

@@ -8,8 +8,7 @@ use crate::channel_identity::{
     encode_channel_identity_body,
 };
 use crate::entity_id::EntityId;
-use crate::error::RecordError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles,

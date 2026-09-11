@@ -13,8 +13,7 @@ use crate::codebase::{
     CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot,
 };
 use crate::entity_id::EntityId;
-use crate::error::CodeError;
-use crate::error::{Error, Result, SecretError};
+use crate::error::{CodeError, Error, Result, SecretError};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,

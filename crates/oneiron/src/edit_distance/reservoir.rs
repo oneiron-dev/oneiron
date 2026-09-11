@@ -119,8 +119,7 @@ use crate::edit_distance::attribution::amendment_evidence_in_txn;
 use crate::edit_distance::delta::amendment_recorded_in_txn;
 use crate::edit_distance::routing::folded_model_version_in_txn;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::GateError;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 
 // ---------------------------------------------------------------------------
@@ -301,12 +300,12 @@ pub struct ExportManifest {
 ///
 /// # Errors
 ///
-/// * [`GateError::ConsentGrantNotFound`](crate::error::GateError::ConsentGrantNotFound) when the consent evaluator does not clear
+/// * [`GateError::ConsentGrantNotFound`] when the consent evaluator does not clear
 ///   the export — fail-closed, and revocation is immediate.
 /// * [`Error::InvariantViolation`] when a candidate's `source_turn_ref` is
 ///   off-record fenced. That is an upstream inertness bug, and it aborts the
 ///   export rather than skipping the row.
-/// * [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) on an unusable task-class filter.
+/// * [`GateError::InvalidConsentBound`] on an unusable task-class filter.
 /// * [`Error::CorruptedIndex`] on an undecodable row; storage and I/O errors.
 pub fn export_reservoir(
     vault: &Vault,

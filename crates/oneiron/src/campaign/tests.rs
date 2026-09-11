@@ -1,7 +1,6 @@
 use super::*;
 use crate::config::VaultConfig;
-use crate::error::RegistryError;
-use crate::error::{Error, ErrorKind};
+use crate::error::{Error, ErrorKind, RegistryError};
 use crate::registry::{
     TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START,
     TYPE_BYTE_ZONE_SYSTEM_START, entity_type_registry_entry, zone_of,

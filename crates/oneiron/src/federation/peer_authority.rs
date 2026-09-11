@@ -8,8 +8,7 @@ use crate::authority::{
     folded_peer_device_is_consent_root, genesis_vault_id,
 };
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::RecordError;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::vault::Vault;
 
 // ---------------------------------------------------------------------------

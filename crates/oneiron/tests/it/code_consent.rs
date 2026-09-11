@@ -15,8 +15,7 @@ use oneiron::deletion::DeleteReason;
 use oneiron::dreamer_consolidation::{
     ConsolidationEvidenceEnvelope, decode_consolidation_evidence, encode_consolidation_evidence,
 };
-use oneiron::error::CodeError;
-use oneiron::error::GateError;
+use oneiron::error::{CodeError, GateError};
 use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind,

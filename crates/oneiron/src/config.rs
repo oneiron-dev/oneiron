@@ -287,7 +287,7 @@ pub struct VaultConfig {
     ///
     /// Turning `fast_dims` on (or changing it) for an existing POPULATED
     /// vault is a graph-shape change and is not supported online: the open
-    /// fails with [`StoreError::HnswConfigChanged`](crate::error::StoreError::HnswConfigChanged). Re-create the vault,
+    /// fails with [`StoreError::HnswConfigChanged`]. Re-create the vault,
     /// or ride EMB-4's `begin_embedding_migration` re-embed once that lands.
     pub fast_dims: Option<u16>,
     /// Embedding model identifier used for vector compatibility checks.
@@ -328,8 +328,8 @@ pub struct VaultConfig {
     /// Skip the text-index manifest handshake at [`crate::Vault::open`] so the
     /// caller can reach [`crate::maintain::MaintenanceBuilder::clear_text_index`]
     /// after a dict swap or BM25 field-schema change. Without this escape
-    /// hatch, [`StoreError::IncompatibleAnalyzer`](crate::error::StoreError::IncompatibleAnalyzer) and
-    /// [`StoreError::Bm25FieldSchemaChanged`](crate::error::StoreError::Bm25FieldSchemaChanged) trap the user before any
+    /// hatch, [`StoreError::IncompatibleAnalyzer`] and
+    /// [`StoreError::Bm25FieldSchemaChanged`] trap the user before any
     /// `Vault` exists to call `.maintain()` on.
     ///
     /// Only use this to immediately run `clear_text_index`. On a populated
@@ -404,7 +404,7 @@ pub struct TextIndexOptions {
 /// weights, `b` outside `[0.0, 1.0]`, a non-finite or non-positive
 /// BM25+ `delta`, and overrides on reserved channels (`Shingle`,
 /// `Synonym`, `Phonetic` — never emitted in v1) are rejected with
-/// [`StoreError::InvalidRankProfile`](crate::error::StoreError::InvalidRankProfile).
+/// [`StoreError::InvalidRankProfile`].
 #[derive(Debug, Clone, PartialEq)]
 #[must_use = "a rank profile only affects scoring when passed to a query"]
 pub struct Bm25RankProfile {
@@ -458,7 +458,7 @@ impl Bm25RankProfile {
 
     /// Validates the profile and lowers it onto the internal scoring
     /// config. Fail-closed: any invalid parameter is a typed
-    /// [`StoreError::InvalidRankProfile`](crate::error::StoreError::InvalidRankProfile), never a clamp or a silent skip.
+    /// [`StoreError::InvalidRankProfile`], never a clamp or a silent skip.
     pub(crate) fn to_bm25_config(&self) -> Result<crate::bm25::Bm25Config, crate::error::Error> {
         use crate::analyzer::AnalyzerChannel;
         use crate::bm25::{Bm25Config, Bm25Formula};

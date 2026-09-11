@@ -8,8 +8,7 @@ use super::door_window::printable_ref_name;
 use super::evidence::RefUpdate;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::CodeError;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWireRepo};
 use crate::origin::lfs::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPointerIntent, LfsPushedPointer,
