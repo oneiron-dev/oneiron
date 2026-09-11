@@ -291,6 +291,15 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "search using this vector"
 - safety: Read-only; defaults to compact summary projection.
 
+#### search-semantic - `POST /api/search/semantic`
+
+- when-to-use: Retrieve nearest entities from natural-language text when the caller holds no embedding of its own and the server is running an embedder.
+- trigger phrases:
+  - "semantic search this vault"
+  - "find memories about"
+  - "search by meaning"
+- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` above 8 KB of query text.
+
 #### search-text - `GET /api/search/text`
 
 - when-to-use: Retrieve entities by BM25 text search when the caller has a natural-language query, phrase, name, or keyword.
@@ -698,6 +707,58 @@ Example response:
     }
   ],
   "meta": { "total": 1, "countMode": "estimate" }
+}
+```
+
+### Semantic Search
+
+Method: `POST`
+
+Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
+
+Request body:
+
+- `text` required: the natural-language question, at most 8 KB. The server prepends the model's query instruction and embeds it; the caller sends no vector.
+- `limit` optional: max returned items, default `10`.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`.
+- `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `depth` optional: `minimal`, `standard`, or `deep`; default `minimal`.
+
+Response:
+
+- The same paginated envelope and projection profiles as vector search.
+- `embedder`: the provider that produced the probe, as `provider`, `modelId`, and `dimensions`.
+
+Refusals:
+
+- `BAD_REQUEST` (400): `text` is empty, or the body does not parse.
+- `PAYLOAD_TOO_LARGE` (413): `text` is over 8 KB. A query is a question; a document belongs on the write path.
+- `EMBEDDER_UNAVAILABLE` (503): no embedder is configured, or the configured one is not serving yet. Writes still land and text search still answers; retry later, or send your own vector to `GET /api/search/vector`.
+
+Example request:
+
+```json
+{ "text": "what did we decide about the embedder slot", "limit": 10 }
+```
+
+Example response:
+
+```json
+{
+  "items": [
+    {
+      "id": "0123456789abcdef0123456789abcdef",
+      "kind": "CLAIM",
+      "label": "the embedder slot is a selection",
+      "updatedAt": 1770000000
+    }
+  ],
+  "meta": { "total": 1, "countMode": "estimate" },
+  "embedder": {
+    "provider": "local",
+    "modelId": "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+    "dimensions": 1024
+  }
 }
 ```
 
@@ -1322,6 +1383,8 @@ Closed code catalog currently emitted by server API code:
 - `UNSUPPORTED_FORMAT`
 - `NOT_ACCEPTABLE`
 - `INVALID_HEADER`
+- `EMBEDDER_UNAVAILABLE`
+- `PAYLOAD_TOO_LARGE`
 - `4001`
 - `4002`
 - `4003`
