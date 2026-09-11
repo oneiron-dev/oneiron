@@ -29876,7 +29876,7 @@
      "path": "src/config/embedder.rs",
      "purpose": "The `[embedder]` section: provider selection and the keys each provider reads",
      "surface": {
-      "const": 5,
+      "const": 6,
       "crate-vis": 2,
       "enum": 4,
       "fn": 7,
@@ -30043,7 +30043,7 @@
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -30053,7 +30053,7 @@
      "path": "src/embedder/local/qwen3_embedding.rs",
      "purpose": "The embedding model body: a Qwen3 decoder stack with no language head",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 13
      }
     },
     {
@@ -30067,7 +30067,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/embedder/local/tests.rs",
@@ -30081,7 +30081,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
