@@ -137,7 +137,7 @@ pub fn dequantize_int8_embedding(codes: &[i8], scale: f32) -> Vec<f32> {
 /// claim decoder, never by a second MessagePack parser over the same bytes.
 ///
 /// A claim whose value is a string embeds that string. Any other value embeds
-/// its canonical MessagePack rendering, which is deterministic for identical
+/// the decoded value's `Display` form, which is the same text for the same
 /// bytes and therefore still one space — it is not an attempt at prose.
 pub fn payload_text(payload: &PendingEmbeddingPayload) -> Result<Cow<'_, str>> {
     match payload {
