@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 use crate::vault::Vault;
 
 use super::session::{SeamError, SeamResult, SessionVault};
+use crate::error::StoreError;
 
 pub(super) fn map_overlay_error(error: Error) -> SeamError {
     match error {
@@ -559,7 +560,7 @@ pub(in crate::branch_store_oracle) fn open_with_abi_pair(
     let engine_abi = if creating { stored } else { engine };
     Vault::open_with_storage_abi_version_for_test(dir, VaultConfig::default(), engine_abi).map_err(
         |error| match error {
-            Error::StorageAbiVersionChanged { .. } => SeamError::AbiFailClosed,
+            Error::Store(StoreError::StorageAbiVersionChanged { .. }) => SeamError::AbiFailClosed,
             // Only the ABI mismatch is the fail-closed verdict this oracle
             // measures: folding any other open failure into `AbiFailClosed`
             // would let an unrelated gate satisfy the assertion.

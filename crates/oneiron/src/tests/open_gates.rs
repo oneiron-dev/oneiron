@@ -1,6 +1,7 @@
 //! Vault open path: LMDB env exclusivity, manifest set, doctor, ABI gate matrix.
 
 use super::*;
+use crate::error::StoreError;
 
 #[test]
 fn vault_open_rejects_second_live_env_for_same_path() -> Result<()> {
@@ -13,10 +14,10 @@ fn vault_open_rejects_second_live_env_for_same_path() -> Result<()> {
     };
     assert_matches!(
         err,
-        Error::VaultRootPreflight {
+        Error::Store(StoreError::VaultRootPreflight {
             problem: VaultRootProblem::DuplicateOpenRoot { .. },
             ..
-        }
+        })
     );
 
     drop(first_vault);
@@ -40,10 +41,10 @@ fn vault_open_rejects_second_live_env_for_symlinked_path() -> Result<()> {
     };
     assert_matches!(
         err,
-        Error::VaultRootPreflight {
+        Error::Store(StoreError::VaultRootPreflight {
             problem: VaultRootProblem::DuplicateOpenRoot { .. },
             ..
-        }
+        })
     );
 
     drop(first_vault);
@@ -96,13 +97,13 @@ fn vault_open_rejects_partial_lmdb_root_before_open() -> Result<()> {
     };
     assert_matches!(
         err,
-        Error::VaultRootPreflight {
+        Error::Store(StoreError::VaultRootPreflight {
             ref path,
             problem: VaultRootProblem::IncompleteLmdbPair {
                 present: VaultRootEntry::Lock,
                 missing: VaultRootEntry::Data,
             },
-        } if path == &canonical
+        }) if path == &canonical
     );
     assert!(
         !temp_dir.path().join("data.mdb").exists(),
@@ -128,13 +129,13 @@ fn vault_open_rejects_hardlinked_lmdb_root_before_open() -> Result<()> {
     };
     assert_matches!(
         err,
-        Error::VaultRootPreflight {
+        Error::Store(StoreError::VaultRootPreflight {
             ref path,
             problem: VaultRootProblem::MultipleHardLinks {
                 entry: VaultRootEntry::Data,
                 link_count,
             },
-        } if path == &canonical_duplicate && link_count >= 2
+        }) if path == &canonical_duplicate && link_count >= 2
     );
     Ok(())
 }
@@ -203,17 +204,17 @@ fn vault_open_rejects_new_vault_hardlink_alias_before_second_lmdb_open() -> Resu
 
     assert_matches!(
         first_err,
-        Error::VaultRootPreflight {
+        Error::Store(StoreError::VaultRootPreflight {
             problem: VaultRootProblem::MultipleHardLinks { link_count, .. },
             ..
-        } if link_count >= 2
+        }) if link_count >= 2
     );
     assert_matches!(
         second_err,
-        Error::VaultRootPreflight {
+        Error::Store(StoreError::VaultRootPreflight {
             problem: VaultRootProblem::MultipleHardLinks { link_count, .. },
             ..
-        } if link_count >= 2
+        }) if link_count >= 2
     );
     Ok(())
 }
@@ -304,10 +305,10 @@ fn open_rejects_rogue_manifest_database_name() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::DbManifestMismatch {
+            Error::Store(StoreError::DbManifestMismatch {
                 ref missing,
                 ref unexpected
-            } if missing.is_empty() && unexpected == &vec!["future_manifest_26".to_owned()]
+            }) if missing.is_empty() && unexpected == &vec!["future_manifest_26".to_owned()]
         ),
         "expected DB manifest mismatch for rogue name, got {err:?}"
     );
@@ -337,10 +338,10 @@ fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
         assert!(
             matches!(
                 err,
-                Error::DbManifestMismatch {
+                Error::Store(StoreError::DbManifestMismatch {
                     ref missing,
                     ref unexpected
-                } if missing == &vec![missing_name.to_owned()] && unexpected.is_empty()
+                }) if missing == &vec![missing_name.to_owned()] && unexpected.is_empty()
             ),
             "expected DB manifest mismatch for missing {missing_name}, got {err:?}"
         );
@@ -365,10 +366,10 @@ fn open_rejects_pre_fix_manifest_shape_at_storage_abi_gate() -> Result<()> {
     assert!(
         matches!(
             err,
-            Error::StorageAbiVersionChanged {
+            Error::Store(StoreError::StorageAbiVersionChanged {
                 stored: Some(stored),
                 current: STORAGE_ABI_VERSION
-            } if stored == stale_abi
+            }) if stored == stale_abi
         ),
         "expected storage ABI rejection for pre-fix manifest shape, got {err:?}"
     );
@@ -605,7 +606,10 @@ fn open_rejects_missing_or_stale_storage_abi_version() -> Result<()> {
             Err(err) => err,
         };
         assert!(
-            matches!(err, Error::StorageAbiVersionChanged { .. }),
+            matches!(
+                err,
+                Error::Store(StoreError::StorageAbiVersionChanged { .. })
+            ),
             "case {case_name}: expected storage ABI version error, got {err:?}"
         );
     }
@@ -977,10 +981,10 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
         assert!(
             !matches!(
                 second,
-                Error::VaultRootPreflight {
+                Error::Store(StoreError::VaultRootPreflight {
                     problem: VaultRootProblem::DuplicateOpenRoot { .. },
                     ..
-                }
+                })
             ),
             "case {}: second open leaked a path registration instead of \
              re-hitting the gate: {second:?}",

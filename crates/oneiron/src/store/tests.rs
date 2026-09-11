@@ -16,7 +16,7 @@ use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_P
 use crate::config::VaultConfig;
 #[cfg(target_os = "linux")]
 use crate::error::VaultRootProblem;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::registry::{TypeByteZone, zone_of};
 use heed::RwTxn;
 use heed::types::Bytes;
@@ -155,10 +155,10 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
             assert!(
                 matches!(
                     result,
-                    Err(Error::StorageAbiVersionChanged {
+                    Err(Error::Store(StoreError::StorageAbiVersionChanged {
                         stored: Some(actual),
                         current: STORAGE_ABI_VERSION,
-                    }) if actual == stored
+                    })) if actual == stored
                 ),
                 "stored ABI {stored} must fail against current ABI {STORAGE_ABI_VERSION}",
             );
@@ -173,7 +173,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
             STORAGE_ABI_VERSION + 1,
             false
         ),
-        Err(Error::StorageAbiVersionChanged { .. })
+        Err(Error::Store(StoreError::StorageAbiVersionChanged { .. }))
     ));
 
     assert_eq!(
@@ -183,10 +183,10 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
     );
     assert!(matches!(
         gate_storage_abi_value(None, STORAGE_ABI_VERSION, false),
-        Err(Error::StorageAbiVersionChanged {
+        Err(Error::Store(StoreError::StorageAbiVersionChanged {
             stored: None,
             current: STORAGE_ABI_VERSION,
-        })
+        }))
     ));
 }
 
@@ -281,10 +281,10 @@ fn current_abi_vault_is_rejected_before_an_older_abi_reader_checks_receipt_marke
     };
     assert!(matches!(
         err,
-        Error::StorageAbiVersionChanged {
+        Error::Store(StoreError::StorageAbiVersionChanged {
             stored: Some(STORAGE_ABI_VERSION),
             current: OLDER_READER_ABI,
-        }
+        })
     ));
     Ok(())
 }
@@ -1976,7 +1976,7 @@ fn v2_hnsw_compat_record_opens_as_current_with_no_fast_dims() -> Result<()> {
         panic!("enabling fast_dims on a v2 vault must fail HnswConfigChanged");
     };
     assert!(
-        matches!(err, Error::HnswConfigChanged { .. }),
+        matches!(err, Error::Store(StoreError::HnswConfigChanged { .. })),
         "expected HnswConfigChanged, got {err:?}",
     );
     Ok(())
@@ -2006,12 +2006,18 @@ fn v3_hnsw_compat_record_round_trips_fast_dims() -> Result<()> {
     let Err(err) = Vault::open(dir.path(), funnel_compat_config(Some(3))) else {
         panic!("changed fast_dims must fail");
     };
-    assert!(matches!(err, Error::HnswConfigChanged { .. }));
+    assert!(matches!(
+        err,
+        Error::Store(StoreError::HnswConfigChanged { .. })
+    ));
 
     let Err(err) = Vault::open(dir.path(), funnel_compat_config(None)) else {
         panic!("removing fast_dims must fail");
     };
-    assert!(matches!(err, Error::HnswConfigChanged { .. }));
+    assert!(matches!(
+        err,
+        Error::Store(StoreError::HnswConfigChanged { .. })
+    ));
     Ok(())
 }
 
@@ -4528,7 +4534,7 @@ fn open_existing_refuses_a_root_replaced_inside_the_open_window() -> Result<()> 
     let replaced_after_open = VaultRootProblem::NotAnExistingVaultRoot {
         after_environment_open: true,
     };
-    let Error::VaultRootPreflight { problem, .. } = &error else {
+    let Error::Store(StoreError::VaultRootPreflight { problem, .. }) = &error else {
         panic!("expected a vault-root refusal, got {error}");
     };
     assert_eq!(*problem, replaced_after_open);
@@ -4564,7 +4570,7 @@ fn open_existing_refuses_a_supplied_model_against_an_unstamped_vault() -> Result
     let Err(error) = refused else {
         panic!("a supplied model against an unstamped vault must refuse");
     };
-    let Error::EmbeddingModelChanged { stored, requested } = &error else {
+    let Error::Store(StoreError::EmbeddingModelChanged { stored, requested }) = &error else {
         panic!("expected an embedding-model refusal, got {error}");
     };
     assert_eq!(stored.as_str(), "none");
@@ -4597,7 +4603,7 @@ fn open_existing_refuses_a_none_model_against_a_stamped_vault() -> Result<()> {
     let Err(error) = refused else {
         panic!("a `none` model against a stamped vault must refuse");
     };
-    let Error::EmbeddingModelChanged { stored, requested } = &error else {
+    let Error::Store(StoreError::EmbeddingModelChanged { stored, requested }) = &error else {
         panic!("expected an embedding-model refusal, got {error}");
     };
     assert_eq!(stored.as_str(), "oneiron/existing-only@v1");
@@ -4631,7 +4637,7 @@ fn open_existing_refuses_a_wrong_dictionary_root_on_an_empty_text_index() -> Res
         panic!("a wrong dictionary root must refuse even on an empty text index");
     };
     assert!(
-        matches!(error, Error::IncompatibleAnalyzer { .. }),
+        matches!(error, Error::Store(StoreError::IncompatibleAnalyzer { .. })),
         "{error}"
     );
     assert_eq!(
@@ -4676,7 +4682,7 @@ fn open_existing_refuses_a_vault_stamped_at_another_storage_abi() -> Result<()> 
     let Err(error) = refused else {
         panic!("a predecessor-stamped vault must refuse on the existing-only door");
     };
-    let Error::StorageAbiVersionChanged { stored, current } = &error else {
+    let Error::Store(StoreError::StorageAbiVersionChanged { stored, current }) = &error else {
         panic!("expected a storage-ABI refusal, got {error}");
     };
     assert_eq!(*stored, Some(STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR));
@@ -4711,7 +4717,7 @@ fn assert_refused_before_any_environment_open(root: &Path) {
     let Err(error) = refused else {
         panic!("{}: an incomplete LMDB pair must refuse", root.display());
     };
-    let Error::VaultRootPreflight { problem, .. } = &error else {
+    let Error::Store(StoreError::VaultRootPreflight { problem, .. }) = &error else {
         panic!("expected a vault-root refusal, got {error}");
     };
     assert_eq!(
@@ -4830,7 +4836,7 @@ fn open_existing_cannot_touch_a_replacement_staged_at_the_final_dereference() ->
     let Err(error) = opened else {
         panic!("a root replaced at the final dereference must refuse");
     };
-    let Error::VaultRootPreflight { problem, .. } = &error else {
+    let Error::Store(StoreError::VaultRootPreflight { problem, .. }) = &error else {
         panic!("expected a vault-root refusal, got {error}");
     };
     assert_eq!(

@@ -274,12 +274,14 @@ fn is_local_federated_admission_failure(e: &crate::error::Error) -> bool {
             | crate::error::Error::Io(_)
             | crate::error::Error::MapFull
             | crate::error::Error::InvalidConfig(_)
-            | crate::error::Error::EmbeddingModelChanged { .. }
-            | crate::error::Error::HnswConfigChanged { .. }
-            | crate::error::Error::StorageAbiVersionChanged { .. }
-            | crate::error::Error::StorageSchemaVersionChanged { .. }
-            | crate::error::Error::DbManifestMismatch { .. }
-            | crate::error::Error::VaultRootPreflight { .. }
+            | crate::error::Error::Store(crate::error::StoreError::EmbeddingModelChanged { .. })
+            | crate::error::Error::Store(crate::error::StoreError::HnswConfigChanged { .. })
+            | crate::error::Error::Store(crate::error::StoreError::StorageAbiVersionChanged { .. })
+            | crate::error::Error::Store(
+                crate::error::StoreError::StorageSchemaVersionChanged { .. }
+            )
+            | crate::error::Error::Store(crate::error::StoreError::DbManifestMismatch { .. })
+            | crate::error::Error::Store(crate::error::StoreError::VaultRootPreflight { .. })
             | crate::error::Error::Sync(crate::error::SyncError::WindowNotFound { .. })
             | crate::error::Error::Sync(crate::error::SyncError::WindowBusy { .. })
     )
