@@ -22,7 +22,7 @@ Dev-loop iteration — scoped, fast, default nextest profile, retries=0:
     cargo nextest run -p oneiron --all-features [-E 'test(<module>)']
 
 The `default` profile skips a slow set — see *nextest tiers* below; a green dev loop is not a
-green gate. Sync-lane iteration uses `--features sync` instead. A feature flag is no longer required: the
+green gate. Sync-lane iteration uses `--features sync,test-hooks` instead (the bare `sync` feature does not build). A feature flag is no longer required: the
 plain featureless build compiles its library *and* its test targets, and carries its own gates —
 see the featureless-build entry under Landmines.
 
