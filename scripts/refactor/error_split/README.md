@@ -73,7 +73,8 @@ Then, by hand, in this order:
    (`SyncConfigField`, `SyncSelectorValidation`, `SyncProtocolPruneScope`,
    `SyncProtocolValidation`, `SyncEngineContext`, `SyncRollbackError`) and the
    three constructors (`sync_protocol`, `sync_engine`, `sync_engine_rollback`).
-3. In `error.rs`: delete the 16 variants, add
+3. In `error/mod.rs` — `error.rs` becomes a directory module, `mod sync;` plus a
+   `pub use` seam so every `crate::error::*` path still resolves: delete the 16 variants, add
    `#[error(transparent)] Sync(#[from] SyncError),`, replace their `kind()` arms
    with `Self::Sync(inner) => inner.kind(),`, and delegate `WindowBusy` in
    `is_retryable`. Re-export the moved types from `error` so the existing path
@@ -124,13 +125,32 @@ a warning:
 
 The link target is always spelled out in full so it resolves without an import.
 A `use` that only a doc link reads is an `unused_imports` warning, and the gate
-denies warnings.
+denies warnings. A label that already carries its own `(target)` has that target
+REPLACED, not appended — otherwise the line ends up `[`X`](path)(path)`, which
+renders as broken prose and resolves nothing.
+
+**Residue the rustdoc gate will name.** In a file that ALSO has code sites, the
+domain enum ends up imported, so the label `[`SyncError::X`]` resolves on its
+own and the explicit target becomes `rustdoc::redundant_explicit_links` — an
+error under `-D warnings`. Fix is to drop the `(path)` in those files only; the
+gate names every one. The pilot hit 2 (both in `sync/manager.rs`), and only on
+`pub` items, because rustdoc does not check links on items it does not
+document.
 
 **Imports.** Bare `Error::Foo` sites need the domain enum in scope, so the
 script inserts `use crate::error::{…};` — into the innermost enclosing `mod`
 block, not blindly at the top of the file, because a top-level `use` is not in
-scope inside `#[cfg(test)] mod tests { … }`. Pass `--no-add-imports` to skip
-this and fix imports by hand.
+scope inside `#[cfg(test)] mod tests { … }`. The statement lands after the last
+`use` at that scope's own brace depth; a `use` inside a function body is
+skipped, because placing the import after it would make it function-local and
+every site in a sibling function would fail to resolve. Pass
+`--no-add-imports` to skip this and fix imports by hand.
+
+The one import decision the script cannot make is the `#[cfg]`: a file whose
+only use of the enum sits under `#[cfg(feature = "sync")]` needs the import
+gated the same way, or the featureless build reports `unused_imports` and the
+gate denies warnings. The sync pilot needed that on four files. Let the
+compiler name them.
 
 **Idempotent.** `ArtifactError::Foo` has no word boundary before `Error::`, so a
 second run matches nothing. Re-running after a partial compile-fix is safe.
@@ -202,3 +222,18 @@ caller. The manifest records that under `reachable_via`.
 * **`error.rs` is touched by roughly 6% of commits.** Land this in a quiet
   window, as few PRs as possible, and rebase open branches once. Every open
   branch that adds a variant will conflict on the enum.
+* **After the first domain lands, the root enum lives in `error/mod.rs`.** All
+  three scripts read either spelling, and both `rewrite.py` and the census in
+  `build_manifest.py` skip the whole `crates/oneiron/src/error/` directory —
+  rewriting inside it would nest the enum in itself. Rebuild the manifest after
+  each domain so `file` and `src_line` stay true; the census counts
+  `<Domain>Error::X` as well as `Error::X`, so a rebuild on a half-split tree
+  does not report every moved variant as dead.
+* **`cargo nextest run -p oneiron --features sync` does not build on this tree,
+  and did not before the split.** `sync::selector::tests` calls
+  `put_selector_test_federation_grant`, which is `#[cfg(feature =
+  "test-hooks")]`. Use `--features sync,test-hooks` for the sync-profile lane.
+* **`RUSTDOCFLAGS="-D warnings" cargo doc -p oneiron --all-features --no-deps`
+  fails at the branch base** with 236 pre-existing unresolved intra-doc links in
+  files this refactor does not touch. Judge the gate on the delta: the split
+  must add none.

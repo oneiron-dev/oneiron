@@ -46,6 +46,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 
 ERROR_RS = os.path.join("crates", "oneiron", "src", "error.rs")
+# After the first domain lands, the definition is the whole `error/`
+# directory; rewriting inside it would nest the enum in itself.
+ERROR_DIR = os.path.join("crates", "oneiron", "src", "error") + os.sep
 IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 REF = re.compile(r"\bError::([A-Z][A-Za-z0-9_]*)")
 QUAL = re.compile(r"((?:" + IDENT + r"::)+)$")
@@ -260,7 +263,12 @@ def rewrite_text(text: str, rel: str, moving: dict, domains: dict,
             if is_label and re.match(r"^:\s*[A-Za-z_][A-Za-z0-9_:]*\s*$", rest):
                 edits.append((at, at + len(label), f"[`{enum_name}::{name}`]"))
             elif is_label:
-                edits.append((at, at + len(label),
+                # The label may ALREADY carry an explicit `(target)`. Replace
+                # that target too — appending a second one produces
+                # `[`X`](path)(path)`, which rustdoc renders as broken prose.
+                had_target = re.match(r"^\([^()]*\)", rest)
+                label_end = at + len(label) + (had_target.end() if had_target else 0)
+                edits.append((at, label_end,
                               f"[`{enum_name}::{name}`]({full}::{name})"))
             else:
                 edits.append((start - len(qual), end, f"{full}::{name}"))
@@ -353,6 +361,20 @@ def statement_end(text: str, states: bytearray, at: int) -> int:
     return at
 
 
+def bracket_depth(text: str, states: bytearray, lo: int, off: int) -> int:
+    """Code-state bracket depth of `off` relative to `lo`."""
+    depth = 0
+    for i in range(lo, off):
+        if states[i] != CODE:
+            continue
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+    return depth
+
+
 def plan_imports(text: str, states: bytearray, rel: str,
                  imports: dict) -> list[tuple[int, int, str]]:
     """Edits that add `use <root>error::{...};` in the right module scope.
@@ -401,6 +423,12 @@ def plan_imports(text: str, states: bytearray, rel: str,
             off = lo + m.end() - 4
             inner = scope_of(off)
             if (inner or ("file", 0, ""))[0] != (scope[0] if scope[0] != "file" else "file"):
+                continue
+            # A `use` inside a function body is not in this scope — a function
+            # is not a module, so `scope_of` reports the enclosing one. Placing
+            # the statement after it makes the import function-local, and every
+            # site in a SIBLING function then fails to resolve.
+            if bracket_depth(text, states, lo if scope[0] != "file" else 0, off) != 0:
                 continue
             at = statement_end(text, states, off)
         if at is None:
@@ -472,7 +500,7 @@ def main() -> int:
                 continue
             path = os.path.join(dirpath, fn)
             rel = os.path.relpath(path, args.root)
-            if rel == ERROR_RS:
+            if rel == ERROR_RS or rel.startswith(ERROR_DIR):
                 continue
             try:
                 text = open(path, encoding="utf-8").read()

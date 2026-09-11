@@ -37,7 +37,6 @@ DOMAINS = {
     "maintenance": ("MaintenanceError", "error/maintenance.rs", "Maintenance"),
 }
 
-ROOT_FILE = "error.rs"
 
 # The 21-variant cross-cutting bag. Stays flat on `Error`; zero call sites move.
 ROOT = [

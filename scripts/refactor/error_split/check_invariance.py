@@ -44,6 +44,10 @@ sys.path.insert(0, HERE)
 import errparse  # noqa: E402
 
 ERROR_RS = "crates/oneiron/src/error.rs"
+# Once a domain is carved out, `error.rs` becomes the directory module
+# `error/mod.rs`. Both spellings hold the root `Error` and `ErrorKind`.
+ERROR_MOD = "crates/oneiron/src/error/mod.rs"
+ERROR_DIR = "crates/oneiron/src/error"
 SIZE_LIMIT = 128
 
 
@@ -264,7 +268,7 @@ def check_e(manifest: dict, rep: Report) -> None:
                 text = open(path, encoding="utf-8").read()
             except (OSError, UnicodeDecodeError):
                 continue
-            is_def = rel == ERROR_RS or rel.startswith(os.path.join("crates", "oneiron", "src", "error"))
+            is_def = rel == ERROR_RS or rel.startswith(ERROR_DIR)
             if not is_def:
                 for m in flat_re.finditer(text):
                     flat_hits.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1} Error::{m.group(1)}")
@@ -360,7 +364,7 @@ def check_g(rep: Report, skip: bool) -> None:
 
 
 def collect_sources() -> dict[str, str]:
-    """error.rs plus every file under crates/oneiron/src/error/."""
+    """The root enum's file plus every file under crates/oneiron/src/error/."""
     out = {}
     text = read(ERROR_RS)
     if text is not None:
@@ -382,15 +386,17 @@ def main() -> int:
     ap.add_argument("--skip-size", action="store_true", help="skip check g (needs cargo)")
     args = ap.parse_args()
 
-    base = git_show(args.base, ERROR_RS)
+    base = git_show(args.base, ERROR_RS) or git_show(args.base, ERROR_MOD)
     if base is None:
-        print(f"CHECK-ERROR: cannot read {args.base}:{ERROR_RS}", file=sys.stderr)
+        print(f"CHECK-ERROR: cannot read {args.base}:{ERROR_RS} or :{ERROR_MOD}",
+              file=sys.stderr)
         return 1
     with open(args.manifest, encoding="utf-8") as fh:
         manifest = json.load(fh)
     sources = collect_sources()
-    if ERROR_RS not in sources:
-        print(f"CHECK-ERROR: {ERROR_RS} is missing from the tree", file=sys.stderr)
+    if ERROR_RS not in sources and ERROR_MOD not in sources:
+        print(f"CHECK-ERROR: neither {ERROR_RS} nor {ERROR_MOD} is in the tree",
+              file=sys.stderr)
         return 1
 
     rep = Report()
