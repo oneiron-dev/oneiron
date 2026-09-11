@@ -101,10 +101,13 @@ impl LocalEmbedder {
         let lengths: Vec<usize> = tokenized.iter().map(|item| item.ids.len()).collect();
         let groups = batcher::group_equal_lengths(&lengths, self.batch_size);
         let mut vectors: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        // Poison recovery: the only state behind this lock is a cache of causal
+        // masks, which a panic cannot leave inconsistent, and refusing it would
+        // disable the embedder for the life of the process.
         let mut model = self
             .model
             .lock()
-            .map_err(|_| oneiron::Error::InvariantViolation("embedder model lock poisoned"))?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for group in &groups {
             let rows = self.embed_group(&mut model, &tokenized, group)?;
             for (index, row) in group.iter().zip(rows) {
