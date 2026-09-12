@@ -13,9 +13,11 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
+#[cfg(feature = "test-hooks")]
+use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT,
-    EntityClassification, TypeByteZone, entity_type_registry_entry, zone_of,
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, EntityClassification, TypeByteZone,
+    entity_type_registry_entry, zone_of,
 };
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,

@@ -41,6 +41,11 @@ run_stage codemap             scripts/codemap/check.sh
 run_stage fmt                 cargo fmt --check
 run_stage clippy              cargo clippy --workspace --all-targets --all-features -- -D warnings
 run_stage clippy-featureless  cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+# The server's own feature selection of the engine (`sync` without `test-hooks`) is a
+# third combination neither row above compiles: `--workspace --all-targets` unifies the
+# dev-dependency features in, and `--no-default-features` drops `sync`. No `--all-targets`
+# here on purpose — that is what the release binary builds.
+run_stage clippy-server       cargo clippy -p oneiron-server --all-features -- -D warnings
 run_stage test                cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full
 run_stage test-featureless    cargo test -p oneiron --lib --no-default-features
 run_stage doctest             cargo test --doc --workspace --exclude oneiron-bench --all-features
