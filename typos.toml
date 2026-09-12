@@ -3,10 +3,16 @@ extend-exclude = [
     "docs/**/*.svg",
     # Pinned upstream vendor of heed 0.20.5 — never edited here (crates/heed/PROVENANCE.md).
     "crates/heed/vendor/**",
+    # Pinned upstream vendor of paste 1.0.15 — never edited here (crates/paste/PROVENANCE.md).
+    "crates/paste/vendor/**",
     # Generated from source by scripts/codemap/codemap.py — fix the source, not the map.
     "docs/codemap/**",
     "target/**",
     "**/*.lock",
+    # Frozen excerpt of the spec corpus, used as embedder measurement input. Not
+    # prose this repo authors, and editing it would invalidate the reference
+    # vectors committed beside it.
+    "crates/oneiron-server/tests/fixtures/embed/**",
 ]
 
 [default.extend-words]
@@ -29,6 +35,10 @@ SINIC = "SINIC"
 unparseable = "unparseable"
 
 [default.extend-identifiers]
+# candle's own API names, reached verbatim: `Tensor::arange` and
+# `VarBuilder::from_mmaped_safetensors`.
+arange = "arange"
+from_mmaped_safetensors = "from_mmaped_safetensors"
 # Prose plural of the CODE_SYMBOL entity type; typos splits `…SYMBOLs` into `SYMBO` + `Ls`.
 CODE_SYMBOLs = "CODE_SYMBOLs"
 # Deliberately invalid relationship label in federation/tests.rs (digit inside the word).

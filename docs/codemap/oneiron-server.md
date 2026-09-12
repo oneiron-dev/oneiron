@@ -108,7 +108,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/run_tree/breaker_tests.rs` | test | s | — | — | — |
 | `src/api/saved_query.rs` | src | s | 6 crate-vis | — | CA-07 saved-query HTTP routes |
 | `src/api/scoped_auth.rs` | src | s | 4 crate-vis | — | Legacy owner-auth gate and scoped-read constructors for both auth flavors |
-| `src/api/search.rs` | src | m | 10 crate-vis | — | — |
+| `src/api/search.rs` | src | m | 12 crate-vis | — | — |
 | `src/api/surface_events.rs` | src | m | 14 crate-vis | — | Inbound SurfaceEvent handoff over `/v1/core` (OF-247 CID-6) |
 | `src/api/tests/auth_idempotency.rs` | test | m | — | — | OpenAPI route auth, v1/legacy auth plane + revocation + scopes, core idempotency middleware semantics |
 | `src/api/tests/billing_usage.rs` | test | L | — | — | Usage-event runtime debit boundaries, consumer top-up idempotency/validation, usage allowance + breakdowns |
@@ -146,15 +146,30 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/api.rs` | src | m | 1 fn · 10 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/tests.rs` | test | L | — | — | — |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
+| `src/config/embedder.rs` | src | m | 5 struct · 4 enum · 7 fn · 6 const · 2 crate-vis | EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant, EndpointEmbedderConfig +1 | The `[embedder]` section: provider selection and the keys each provider reads |
+| `src/config/embedder_tests.rs` | test | s | — | — | Resolution rows for the `[embedder]` section |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | m | 1 struct · 5 fn | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
-| `src/config/mod.rs` | src | s | 3 mod · 3 re-export | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `src/config/mod.rs` | src | s | 4 mod · 4 re-export | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/privacy_tests.rs` | test | m | — | — | — |
 | `src/config/process_env_tests.rs` | test | s | — | — | — |
 | `src/config/serve_args.rs` | src | m | 1 struct · 1 crate-vis | ServeArgs | CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides |
 | `src/config/server_config.rs` | src | m | 2 struct · 4 fn | ServeConfig, SyncServerConfig | Resolved server configuration: `SyncServerConfig` and `ServeConfig` |
 | `src/config/tests.rs` | test | L | — | — | — |
-| `src/error.rs` | src | m | 4 struct · 2 enum · 27 fn · 1 const | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
+| `src/embedder/endpoint.rs` | src | m | 5 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
+| `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
+| `src/embedder/local/batcher.rs` | src | s | 3 crate-vis | — | Tokenisation and no-padding batching |
+| `src/embedder/local/device.rs` | src | s | 3 crate-vis | — | Which candle device the local provider runs on, and at what precision |
+| `src/embedder/local/isq.rs` | src | s | 4 crate-vis | — | Quantise-at-load, in one function |
+| `src/embedder/local/mod.rs` | src | s | 9 crate-vis | — | The `local` provider: the model runs in this process, on candle |
+| `src/embedder/local/model_manager.rs` | src | m | 13 crate-vis | — | Where the local model's files live, and how they get there |
+| `src/embedder/local/qwen3_embedding.rs` | src | m | 13 crate-vis | — | The embedding model body: a Qwen3 decoder stack with no language head |
+| `src/embedder/local/st_modules.rs` | src | s | 6 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
+| `src/embedder/local/tests.rs` | test | L | — | — | Local-provider rows |
+| `src/embedder/mod.rs` | src | s | 13 crate-vis | — | The embedder provider slot |
+| `src/embedder/tests.rs` | test | L | — | — | Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server |
+| `src/error/mod.rs` | src | m | 4 struct · 2 enum · 25 fn · 1 const · 1 re-export | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
+| `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
 | `src/error/tests.rs` | test | s | — | — | — |
 | `src/handler/app_tier.rs` | src | s | 4 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | s | — | — | — |
@@ -219,7 +234,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/mode.rs` | src | s | 3 enum · 5 fn · 1 const · 2 crate-vis | RuntimeMode, RuntimeProviderKind, RuntimeRole | Runtime mode, provider-kind, and role taxonomies with string conversions |
 | `src/runtime/routes.rs` | src | s | 4 struct · 3 enum · 2 fn · 1 crate-vis | RuntimeHealthStatus, RuntimeRoute, RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus | Resolved route decisions and redacted/full status views for health and discovery |
 | `src/runtime/tests.rs` | test | m | — | — | — |
-| `src/server/core.rs` | src | s | 1 struct · 2 fn · 5 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
+| `src/server/core.rs` | src | s | 1 struct · 2 fn · 6 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
+| `src/server/embedding.rs` | src | s | 4 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/leases.rs` | src | m | 9 crate-vis | — | Device-lease registry: reads, registration, revocation, and commit/mirror |
 | `src/server/lifecycle.rs` | src | s | 12 crate-vis | — | Periodic lifecycle jobs: lease expiry and reassert-drain with debounce |
 | `src/server/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Sync server state and maintenance jobs, split by concern |

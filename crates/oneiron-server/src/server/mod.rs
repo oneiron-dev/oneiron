@@ -1,5 +1,6 @@
 //! Sync server state and maintenance jobs, split by concern.
 mod core;
+mod embedding;
 mod leases;
 mod lifecycle;
 mod windows;
