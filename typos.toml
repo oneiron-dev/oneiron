@@ -3,6 +3,8 @@ extend-exclude = [
     "docs/**/*.svg",
     # Pinned upstream vendor of heed 0.20.5 — never edited here (crates/heed/PROVENANCE.md).
     "crates/heed/vendor/**",
+    # Pinned upstream vendor of paste 1.0.15 — never edited here (crates/paste/PROVENANCE.md).
+    "crates/paste/vendor/**",
     # Generated from source by scripts/codemap/codemap.py — fix the source, not the map.
     "docs/codemap/**",
     "target/**",
