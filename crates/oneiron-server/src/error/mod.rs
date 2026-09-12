@@ -7,7 +7,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::de;
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::{Map, Value, json};
 use utoipa::ToSchema;
 
 /// Closed catalog of error codes emitted by agent-facing server APIs.
@@ -52,6 +51,17 @@ pub enum ErrorCode {
     /// property of this server and not of the caller.
     #[serde(rename = "DEEP_RETRIEVAL_UNAVAILABLE")]
     DeepRetrievalUnavailable,
+    /// ONE-1979: semantic retrieval asked for on a server with no embedder
+    /// serving. Follows [`Self::DeepRetrievalUnavailable`] onto 503 for the
+    /// same reason: the request is well-formed and the capability is a property
+    /// of this deployment, not of the caller.
+    #[serde(rename = "EMBEDDER_UNAVAILABLE")]
+    EmbedderUnavailable,
+    /// ONE-1979: a request body field exceeded the cap its endpoint documents.
+    /// The HTTP-level sibling of [`Self::CrdtFrameTooLarge`], which is a
+    /// WebSocket close code and not reachable from an HTTP route.
+    #[serde(rename = "PAYLOAD_TOO_LARGE")]
+    PayloadTooLarge,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -84,6 +94,8 @@ impl ErrorCode {
         Self::InvalidHeader,
         Self::UnsupportedCapability,
         Self::DeepRetrievalUnavailable,
+        Self::EmbedderUnavailable,
+        Self::PayloadTooLarge,
         Self::CrdtAuthExpired,
         Self::CrdtDecodeError,
         Self::CrdtUnknownTag,
@@ -110,6 +122,8 @@ impl ErrorCode {
             Self::InvalidHeader => "INVALID_HEADER",
             Self::UnsupportedCapability => "UNSUPPORTED_CAPABILITY",
             Self::DeepRetrievalUnavailable => "DEEP_RETRIEVAL_UNAVAILABLE",
+            Self::EmbedderUnavailable => "EMBEDDER_UNAVAILABLE",
+            Self::PayloadTooLarge => "PAYLOAD_TOO_LARGE",
             Self::CrdtAuthExpired => "4001",
             Self::CrdtDecodeError => "4002",
             Self::CrdtUnknownTag => "4003",
@@ -134,13 +148,13 @@ impl ErrorCode {
             | Self::InvalidState
             | Self::SnapshotMismatch => StatusCode::CONFLICT,
             Self::DailyBudgetExhausted => StatusCode::TOO_MANY_REQUESTS,
-            Self::MirrorNotReady | Self::DeepRetrievalUnavailable => {
+            Self::MirrorNotReady | Self::DeepRetrievalUnavailable | Self::EmbedderUnavailable => {
                 StatusCode::SERVICE_UNAVAILABLE
             }
             Self::UnsupportedFormat => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
-            Self::CrdtFrameTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::CrdtFrameTooLarge | Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
 }
@@ -213,6 +227,17 @@ pub enum ApiErrorDetails {
     // unprivileged caller.
     #[serde(rename = "DEEP_RETRIEVAL_UNAVAILABLE")]
     DeepRetrievalUnavailable,
+    // ONE-1979. Unit, like its sibling above: whether the provider is absent,
+    // still downloading a model or unreachable is deployment topology, and an
+    // unprivileged caller's remedy is the same either way.
+    #[serde(rename = "EMBEDDER_UNAVAILABLE")]
+    EmbedderUnavailable,
+    #[serde(rename = "PAYLOAD_TOO_LARGE", rename_all = "camelCase")]
+    PayloadTooLarge {
+        field: String,
+        max_bytes: usize,
+        received_bytes: usize,
+    },
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -251,6 +276,8 @@ impl ApiErrorDetails {
             Self::InvalidHeader { .. } => ErrorCode::InvalidHeader,
             Self::UnsupportedCapability { .. } => ErrorCode::UnsupportedCapability,
             Self::DeepRetrievalUnavailable => ErrorCode::DeepRetrievalUnavailable,
+            Self::EmbedderUnavailable => ErrorCode::EmbedderUnavailable,
+            Self::PayloadTooLarge { .. } => ErrorCode::PayloadTooLarge,
             Self::CrdtAuthExpired => ErrorCode::CrdtAuthExpired,
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
             Self::CrdtUnknownTag { .. } => ErrorCode::CrdtUnknownTag,
@@ -353,6 +380,34 @@ impl ApiError {
                 "Retry with depth=minimal or depth=standard, which need no backend.",
                 "Deep retrieval requires a host-injected deep search backend.",
             ],
+        )
+    }
+
+    /// ONE-1979: a semantic read on a server whose embedder is not serving.
+    ///
+    /// Not a 400 and not a 501: the vault is open and answering lexical and
+    /// graph reads, and the same request will succeed once the provider is up.
+    pub fn embedder_unavailable() -> Self {
+        Self::new(
+            "no embedder is serving on this server",
+            ApiErrorDetails::EmbedderUnavailable,
+            [
+                "Use /api/search/vector with a client-supplied embedding, or /api/search/text.",
+                "Semantic search requires a configured [embedder] section that is serving.",
+            ],
+        )
+    }
+
+    /// One field of a request body exceeded the cap its endpoint documents.
+    pub fn payload_too_large(field: &str, max_bytes: usize, received_bytes: usize) -> Self {
+        Self::new(
+            format!("{field} exceeds the {max_bytes} byte cap"),
+            ApiErrorDetails::PayloadTooLarge {
+                field: field.to_owned(),
+                max_bytes,
+                received_bytes,
+            },
+            ["Shorten the field and retry."],
         )
     }
 
@@ -559,196 +614,12 @@ fn next_request_id() -> String {
     format!("req-{id:016x}")
 }
 
-/// OpenAPI/JSON-schema component for the closed error-code enum.
-pub fn error_code_schema() -> Value {
-    json!({
-        "type": "string",
-        "enum": ErrorCode::ALL
-            .iter()
-            .map(|code| code.as_str())
-            .collect::<Vec<_>>(),
-    })
-}
+mod schema;
 
-/// OpenAPI/JSON-schema component for the structured API error body.
-pub fn api_error_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["code", "message", "details", "suggestions"],
-        "additionalProperties": false,
-        "properties": {
-            "code": error_code_schema(),
-            "message": { "type": "string" },
-            "details": {
-                "oneOf": ErrorCode::ALL
-                    .iter()
-                    .copied()
-                    .map(detail_schema_for_code)
-                    .collect::<Vec<_>>(),
-                "discriminator": { "propertyName": "code" },
-            },
-            "suggestions": {
-                "type": "array",
-                "items": { "type": "string" },
-            },
-        },
-    })
-}
-
-/// OpenAPI/JSON-schema component for `/v1/core/*` error envelopes.
-pub fn api_error_envelope_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["error"],
-        "additionalProperties": false,
-        "properties": {
-            "error": {
-                "type": "object",
-                "required": ["code", "message", "requestId", "details", "suggestions"],
-                "additionalProperties": false,
-                "properties": {
-                    "code": error_code_schema(),
-                    "message": { "type": "string" },
-                    "requestId": { "type": "string" },
-                    "details": {
-                        "oneOf": ErrorCode::ALL
-                            .iter()
-                            .copied()
-                            .map(detail_schema_for_code)
-                            .collect::<Vec<_>>(),
-                        "discriminator": { "propertyName": "code" },
-                    },
-                    "suggestions": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                    },
-                },
-            },
-        },
-    })
-}
-
-/// Reusable OpenAPI components for API error responses.
-pub fn openapi_error_components() -> Value {
-    json!({
-        "ErrorCode": error_code_schema(),
-        "ApiError": api_error_schema(),
-        "ApiErrorEnvelope": api_error_envelope_schema(),
-    })
-}
-
-fn detail_schema_for_code(code: ErrorCode) -> Value {
-    let mut required = vec!["code"];
-    let mut properties = Map::from_iter([("code".to_owned(), json!({ "const": code.as_str() }))]);
-
-    match code {
-        ErrorCode::BadRequest => {
-            optional_string(&mut properties, "field");
-        }
-        ErrorCode::Forbidden => {
-            optional_string(&mut properties, "requiredScope");
-        }
-        ErrorCode::NotFound => {
-            required.push("resource");
-            properties.insert("resource".to_owned(), json!({ "type": "string" }));
-            optional_string(&mut properties, "id");
-        }
-        ErrorCode::StaleEpoch => {
-            required.extend(["currentEpoch", "requestedEpoch"]);
-            properties.insert("currentEpoch".to_owned(), json!({ "type": "integer" }));
-            properties.insert("requestedEpoch".to_owned(), json!({ "type": "integer" }));
-        }
-        ErrorCode::IdempotencyReplayConflict => {
-            optional_string(&mut properties, "idempotencyKey");
-        }
-        ErrorCode::InvalidState => {
-            optional_string(&mut properties, "state");
-        }
-        ErrorCode::SnapshotMismatch => {
-            optional_integer(&mut properties, "expectedEpoch");
-            optional_integer(&mut properties, "receivedEpoch");
-        }
-        ErrorCode::DailyBudgetExhausted => {
-            optional_integer(&mut properties, "limit");
-            optional_integer(&mut properties, "used");
-            optional_string(&mut properties, "resetAt");
-        }
-        ErrorCode::MirrorNotReady => {
-            optional_string(&mut properties, "mirror");
-        }
-        ErrorCode::UnsupportedFormat => {
-            optional_string(&mut properties, "format");
-        }
-        ErrorCode::NotAcceptable => {
-            required.push("accepted");
-            properties.insert(
-                "accepted".to_owned(),
-                json!({ "type": "array", "items": { "type": "string" } }),
-            );
-        }
-        ErrorCode::InvalidHeader => {
-            required.push("header");
-            properties.insert("header".to_owned(), json!({ "type": "string" }));
-        }
-        ErrorCode::UnsupportedCapability => {
-            required.extend([
-                "connector",
-                "verb",
-                "connectorKnown",
-                "supportedConnectors",
-                "supportedVerbs",
-                "recovery_suggestions",
-            ]);
-            properties.insert("connector".to_owned(), json!({ "type": "string" }));
-            properties.insert("verb".to_owned(), json!({ "type": "string" }));
-            properties.insert("connectorKnown".to_owned(), json!({ "type": "boolean" }));
-            properties.insert(
-                "supportedConnectors".to_owned(),
-                json!({ "type": "array", "items": { "type": "string" } }),
-            );
-            properties.insert(
-                "supportedVerbs".to_owned(),
-                json!({ "type": "array", "items": { "type": "string" } }),
-            );
-            properties.insert(
-                "recovery_suggestions".to_owned(),
-                json!({ "type": "array", "items": { "type": "string" } }),
-            );
-        }
-        ErrorCode::CrdtUnknownTag => {
-            optional_integer(&mut properties, "tag");
-        }
-        ErrorCode::CrdtFrameTooLarge => {
-            optional_integer(&mut properties, "maxBytes");
-            optional_integer(&mut properties, "receivedBytes");
-        }
-        ErrorCode::CrdtVersionMismatch => {
-            optional_integer(&mut properties, "expectedVersion");
-            optional_integer(&mut properties, "receivedVersion");
-        }
-        ErrorCode::Unauthorized
-        | ErrorCode::NotImplemented
-        | ErrorCode::InternalServerError
-        | ErrorCode::DeepRetrievalUnavailable
-        | ErrorCode::CrdtAuthExpired
-        | ErrorCode::CrdtDecodeError => {}
-    }
-
-    json!({
-        "type": "object",
-        "required": required,
-        "additionalProperties": false,
-        "properties": properties,
-    })
-}
-
-fn optional_string(properties: &mut Map<String, Value>, name: &str) {
-    properties.insert(name.to_owned(), json!({ "type": ["string", "null"] }));
-}
-
-fn optional_integer(properties: &mut Map<String, Value>, name: &str) {
-    properties.insert(name.to_owned(), json!({ "type": ["integer", "null"] }));
-}
+// The schema generators keep their `crate::error::*` paths through this seam.
+pub use self::schema::{
+    api_error_envelope_schema, api_error_schema, error_code_schema, openapi_error_components,
+};
 
 #[cfg(test)]
 mod tests;

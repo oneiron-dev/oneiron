@@ -11276,10 +11276,18 @@
       "const": 6,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 4,
       "trait": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embed/payload_text_tests.rs",
+     "purpose": "The canonical text projection every host embeds",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -25283,7 +25291,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -26014,7 +26022,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1487,
-   "test_files": 533
+   "test_files": 534
   },
   "oneiron-bench": {
    "files": [
@@ -29522,7 +29530,7 @@
      "path": "src/api/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -29864,6 +29872,38 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbedderArgs",
+      "EmbedderConfig",
+      "EmbedderConfigOverride",
+      "EmbedderDevice",
+      "EmbedderLocality",
+      "EmbedderProvider",
+      "EmbedderQuant",
+      "EndpointEmbedderConfig",
+      "LocalEmbedderConfig"
+     ],
+     "path": "src/config/embedder.rs",
+     "purpose": "The `[embedder]` section: provider selection and the keys each provider reads",
+     "surface": {
+      "const": 6,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/config/embedder_tests.rs",
+     "purpose": "Resolution rows for the `[embedder]` section",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -29893,8 +29933,8 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "mod": 3,
-      "re-export": 3
+      "mod": 4,
+      "re-export": 4
      }
     },
     {
@@ -29951,6 +29991,122 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/embedder/endpoint.rs",
+     "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/attention.rs",
+     "purpose": "Attention: the fused Metal kernel where it applies, eager matmul elsewhere",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/batcher.rs",
+     "purpose": "Tokenisation and no-padding batching",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/device.rs",
+     "purpose": "Which candle device the local provider runs on, and at what precision",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/isq.rs",
+     "purpose": "Quantise-at-load, in one function",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/mod.rs",
+     "purpose": "The `local` provider: the model runs in this process, on candle",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/model_manager.rs",
+     "purpose": "Where the local model's files live, and how they get there",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/qwen3_embedding.rs",
+     "purpose": "The embedding model body: a Qwen3 decoder stack with no language head",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/st_modules.rs",
+     "purpose": "The sentence-transformers module chain that turns hidden states into one vector per input",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/local/tests.rs",
+     "purpose": "Local-provider rows",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/mod.rs",
+     "purpose": "The embedder provider slot",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/tests.rs",
+     "purpose": "Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ApiError",
       "ApiErrorDetails",
@@ -29959,13 +30115,24 @@
       "EnvelopedApiError",
       "ErrorCode"
      ],
-     "path": "src/error.rs",
+     "path": "src/error/mod.rs",
      "purpose": "Structured HTTP API errors and their schema catalog",
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 27,
+      "fn": 25,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/error/schema.rs",
+     "purpose": "JSON Schema generation for the API error catalog",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -30769,9 +30936,19 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/embedding.rs",
+     "purpose": "The embedding worker: the one thing that drives the engine's reconciler",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -31143,17 +31320,24 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 8,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
-    "error": {
-     "files": 2,
+    "embedder": {
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file+dir",
+     "layout": "dir",
+     "purpose": "The embedder provider slot"
+    },
+    "error": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Structured HTTP API errors and their schema catalog"
     },
     "handler": {
@@ -31220,7 +31404,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -31250,8 +31434,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 172,
-   "test_files": 68
+   "source_files": 185,
+   "test_files": 71
   },
   "oneiron-uniffi": {
    "files": [

@@ -19,6 +19,7 @@ mod broadcast;
 pub mod cli;
 pub mod commands;
 pub mod config;
+mod embedder;
 pub mod error;
 mod handler;
 mod idempotency;

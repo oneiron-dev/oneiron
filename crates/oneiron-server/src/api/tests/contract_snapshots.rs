@@ -684,6 +684,58 @@ async fn v1_core_error_contract_snapshot_matches_fixture() {
     }
 }
 
+/// The semantic door is a route an agent can only find if the served document
+/// carries it: discovery advertises the capability, but the operation, its body
+/// schema and its refusals live here.
+#[tokio::test]
+async fn served_openapi_document_publishes_the_semantic_search_operation() {
+    let (_dir, server) = test_server();
+    let response = api_routes(server)
+        .oneshot(
+            Request::builder()
+                .uri("/api/openapi.json")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("route response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("OpenAPI response body");
+    let spec: Value = serde_json::from_slice(&body).expect("OpenAPI JSON body");
+
+    let operation = &spec["paths"]["/api/search/semantic"]["post"];
+    assert!(
+        operation.is_object(),
+        "the served document must publish POST /api/search/semantic: {:?}",
+        spec["paths"]["/api/search/semantic"],
+    );
+    assert_eq!(
+        operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        Value::from("#/components/schemas/SemanticSearchRequest"),
+        "the semantic operation must name its published request schema",
+    );
+    assert!(
+        spec["components"]["schemas"]["SemanticSearchRequest"]["properties"]["text"].is_object(),
+        "the request schema must document the query text it embeds",
+    );
+    let responses = operation["responses"]
+        .as_object()
+        .expect("semantic responses object");
+    for status in ["200", "413", "503"] {
+        assert!(
+            responses.contains_key(status),
+            "the semantic operation must document its {status} response",
+        );
+    }
+    assert_eq!(
+        operation["security"],
+        json!([{ "CoreBearer": [] }]),
+        "the semantic operation authenticates and must say so",
+    );
+}
+
 #[test]
 fn generated_openapi_has_descriptions_examples_and_defaults() {
     let spec = generated_spec();
@@ -702,6 +754,7 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "/api/skills/oneiron.skills.md",
         "/api/core/discover",
         "/api/search/vector",
+        "/api/search/semantic",
         "/api/search/text",
         "/api/entity/{id}",
         "/api/edges/{id}",
@@ -830,6 +883,7 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         ("/api/skills/oneiron.skills.md", "get"),
         ("/api/core/discover", "get"),
         ("/api/search/vector", "get"),
+        ("/api/search/semantic", "post"),
         ("/api/search/text", "get"),
         ("/api/entity/{id}", "get"),
         ("/api/edges/{id}", "get"),

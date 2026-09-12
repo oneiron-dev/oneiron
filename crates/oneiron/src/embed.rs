@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::entity_id::EntityId;
 #[cfg(feature = "sync")]
 use crate::error::StoreError;
@@ -123,6 +125,32 @@ impl RemoteRung {
 #[must_use]
 pub fn dequantize_int8_embedding(codes: &[i8], scale: f32) -> Vec<f32> {
     codes.iter().map(|c| f32::from(*c) * scale).collect()
+}
+
+/// Canonical text projection of a pending payload.
+///
+/// One embedding space per vault only holds if every host that fills a row
+/// embeds the same string for it, so the projection lives here rather than in
+/// each host: a host that wrote its own would quietly open a second space
+/// inside the first. An epoch SUMMARY already arrives decoded, so its text
+/// passes through borrowed; a CLAIM is decoded by the engine's own canonical
+/// claim decoder, never by a second MessagePack parser over the same bytes.
+///
+/// A claim whose value is a string embeds that string. Any other value embeds
+/// the decoded value's `Display` form, which is the same text for the same
+/// bytes and therefore still one space — it is not an attempt at prose.
+pub fn payload_text(payload: &PendingEmbeddingPayload) -> Result<Cow<'_, str>> {
+    match payload {
+        PendingEmbeddingPayload::SummaryText(text) => Ok(Cow::Borrowed(text)),
+        PendingEmbeddingPayload::ClaimBody(bytes) => {
+            let body = crate::claim::decode_claim_body(bytes, true)?;
+            Ok(Cow::Owned(
+                body.value
+                    .as_str()
+                    .map_or_else(|| body.value.to_string(), str::to_owned),
+            ))
+        }
+    }
 }
 
 #[cfg(feature = "sync")]
@@ -697,3 +725,9 @@ fn unix_millis_now() -> u64 {
 
 #[cfg(all(test, feature = "sync"))]
 mod tests;
+
+// Base-mode law: the projection is featureless code, so its coverage runs in
+// the featureless build too. `tests.rs` is sync-gated because every row in it
+// drives the reconciler.
+#[cfg(test)]
+mod payload_text_tests;

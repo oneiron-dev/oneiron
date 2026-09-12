@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::Args;
 use oneiron::HostingPrivacyPosture;
 
+use super::embedder::EmbedderArgs;
 use super::lookup::redacted_secret;
 use crate::runtime::{
     RuntimeConfigOverride, RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoleTargetOverride,
@@ -23,6 +24,11 @@ pub struct ServeArgs {
     /// when present.
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// `--embedder-*` flags. Flattened rather than inlined so the twenty keys
+    /// of one optional section stay in the file that owns the section.
+    #[command(flatten)]
+    pub embedder: EmbedderArgs,
 
     /// Path to the LMDB vault directory.
     #[arg(long)]
@@ -339,6 +345,7 @@ impl fmt::Debug for ServeArgs {
                 &self.runtime_summarizer_provider_kind,
             )
             .field("runtime_summarizer_model", &self.runtime_summarizer_model)
+            .field("embedder", &self.embedder)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
+use super::embedder::EmbedderConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
@@ -236,6 +237,10 @@ pub struct ServeConfig {
     pub max_entity_blob: usize,
     pub max_bulk_decompressed: usize,
     pub runtime: RuntimeConfig,
+    /// The `[embedder]` section, absent until some layer names a key in it.
+    /// Absent means rung 0: no worker, no query door, vectors supplied by the
+    /// client exactly as before this section existed.
+    pub embedder: Option<EmbedderConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     /// Opaque host-managed KMS key reference. `Some` only for the hosted
@@ -281,6 +286,7 @@ impl Default for ServeConfig {
             max_entity_blob: server.max_entity_blob,
             max_bulk_decompressed: server.max_bulk_decompressed,
             runtime: server.runtime,
+            embedder: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -338,6 +344,7 @@ impl fmt::Debug for ServeConfig {
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
+            .field("embedder", &self.embedder)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -390,6 +397,15 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        // An active embedder pins the vault's embedding space. The engine then
+        // refuses any embedder whose `model_id` disagrees with what the vault
+        // already holds, which is the door that keeps one vault to one space.
+        // No `fast_dims`: the default local model has no MRL to truncate to.
+        config.embedding_model = self
+            .embedder
+            .as_ref()
+            .filter(|embedder| embedder.is_active())
+            .map(|embedder| embedder.model_id.clone());
         config
     }
 

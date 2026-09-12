@@ -6,7 +6,7 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # it must not be reformatted, relinted, or test-run as if it were our code.
 # See the `[patch.crates-io]` entry at the bottom of this file and
 # `crates/heed/PROVENANCE.md`.
-exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5"]
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15"]
 
 [workspace.package]
 version = "0.1.0"
@@ -93,3 +93,4 @@ too_many_lines = "deny"
 # `crates/heed/PROVENANCE.md`.
 [patch.crates-io]
 heed = { path = "crates/heed/vendor/heed-0.20.5" }
+paste = { path = "crates/paste/vendor/paste-1.0.15" }

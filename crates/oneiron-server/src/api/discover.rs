@@ -72,6 +72,11 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "health.capabilities",
     "skills_pack.fetch",
     "search.vector",
+    // The semantic door is advertised whether or not an embedder is serving:
+    // the route is always mounted, and at rung 0 it answers the typed
+    // `EMBEDDER_UNAVAILABLE` refusal rather than a 404 an agent would read as
+    // "this server has no such API".
+    "search.semantic",
     "search.text",
     "entity.get",
     "edges.get",
