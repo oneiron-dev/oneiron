@@ -132,7 +132,7 @@ fn record_round_trips_encode_decode() {
 /// The type-level half of that claim is only observable from OUTSIDE the
 /// crate — in here `value_bytes` is `pub(crate)` and therefore visible — so it
 /// is asserted by the external-position trybuild target
-/// `tests/secret_custody_compilefail.rs`: naming `value_bytes` on a
+/// `tests/type_boundaries_compilefail.rs`: naming `value_bytes` on a
 /// `SecretCustodyMetadata` is `E0609`, and struct-literalling a
 /// `SecretCustodyRecord` out of crate fails on the private `value_bytes` and
 /// `manifest_ref`.
