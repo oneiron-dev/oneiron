@@ -7,9 +7,11 @@ The scripts run in a fixture checkout with recording Cargo/codemap executables.
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -96,11 +98,33 @@ class VerifyCase(unittest.TestCase):
     def commands(self):
         return [record["command"] for record in self.records()]
 
+    def assert_stage_timing(self, output, stages):
+        events = re.findall(
+            r"^VERIFY-STAGE-(START|END) (\S+) wall_elapsed=([0-9]+)s"
+            r"(?: wall_duration=([0-9]+)s)?$",
+            output, re.MULTILINE,
+        )
+        self.assertEqual(
+            [(event, stage) for event, stage, _, _ in events],
+            [(event, stage) for stage in stages for event in ("START", "END")],
+            output,
+        )
+        previous_end = 0
+        for start, end in zip(events[::2], events[1::2]):
+            self.assertEqual(start[3], "")
+            self.assertNotEqual(end[3], "")
+            started, finished, duration = int(start[2]), int(end[2]), int(end[3])
+            self.assertGreaterEqual(started, previous_end)
+            self.assertGreaterEqual(finished, started)
+            self.assertEqual(duration, finished - started)
+            previous_end = finished
+
     def test_list_prints_stages_without_running_commands_or_claiming_success(self):
         result = self.run_script("--list")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(self.commands(), [])
         self.assertNotIn("VERIFY-OK", result.stdout)
+        self.assertNotIn("VERIFY-STAGE-", result.stdout)
         listed = []
         for line in result.stdout.splitlines():
             stage, command = line.split("\t", 1)
@@ -116,6 +140,7 @@ class VerifyCase(unittest.TestCase):
                 self.assertIn("--list", result.stdout)
                 self.assertIn(f"run all {len(GATES)} scripted stages", result.stdout)
                 self.assertNotIn("\nVERIFY-OK\n", result.stdout)
+                self.assertNotIn("VERIFY-STAGE-", result.stdout)
 
     def test_invalid_arguments_fail_before_any_command(self):
         for args in (("--unknown",), ("fmt",), ("--list", "--help"), ("",)):
@@ -125,12 +150,14 @@ class VerifyCase(unittest.TestCase):
                 self.assertEqual(self.commands(), [])
                 self.assertIn("VERIFY-FAIL-usage", result.stdout)
                 self.assertNotIn("\nVERIFY-OK\n", result.stdout)
+                self.assertNotIn("VERIFY-STAGE-", result.stdout)
 
     def test_full_gate_executes_every_listed_command_in_order(self):
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(self.commands(), COMMANDS)
         self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-OK")
+        self.assert_stage_timing(result.stdout, [stage for stage, _ in GATES])
 
     def test_rustdoc_denies_warnings_without_changing_other_stage_environments(self):
         # Cargo gives encoded flags precedence even when their value is empty.
@@ -155,6 +182,7 @@ class VerifyCase(unittest.TestCase):
                 self.assertEqual(self.commands(), COMMANDS[:index])
                 self.assertEqual(result.stdout.splitlines()[-1], f"VERIFY-FAIL-{stage}")
                 self.assertNotIn("VERIFY-OK", result.stdout)
+                self.assert_stage_timing(result.stdout, [name for name, _ in GATES[:index]])
 
     def test_compiler_errors_fail_even_when_command_exits_zero(self):
         for stage in ("clippy", "rustdoc"):
@@ -168,6 +196,38 @@ class VerifyCase(unittest.TestCase):
                     self.assertEqual(self.commands(), COMMANDS[:index])
                     self.assertIn(message, result.stdout)
                     self.assertEqual(result.stdout.splitlines()[-1], f"VERIFY-FAIL-{stage}")
+                    self.assertNotIn("VERIFY-OK", result.stdout)
+                    self.assert_stage_timing(result.stdout, [name for name, _ in GATES[:index]])
+
+    def test_refactor_conformance_uses_the_mandatory_narrow_sync_features(self):
+        # Exercise only the shell command contract in a fixture stage. The
+        # structural driver is stubbed; its own synthetic tests cover checks 1-8.
+        refactor = self.repo / "scripts/refactor"
+        moves = refactor / "moves"
+        moves.mkdir(parents=True)
+        (moves / "fixture.tsv").write_text("# No moves in this command fixture.\n")
+        (moves / "fixture.decls").write_text("## allowed\n")
+        shutil.copy2(ROOT / "scripts/refactor/conformance.sh", refactor / "conformance.sh")
+        git = self.bin / "git"
+        git.write_text(f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(str(self.repo))}\n")
+        git.chmod(0o755)
+        python = self.bin / "python3"
+        python.write_text(
+            '#!/bin/sh\nif [ "${2-}" = checks ]; then exit 0; fi\n'
+            f'exec {shlex.quote(sys.executable)} "$@"\n'
+        )
+        python.chmod(0o755)
+        result = self.run_script("fixture", "BASE", script="refactor/conformance.sh")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), [
+            COMMAND_BY_STAGE["fmt"],
+            COMMAND_BY_STAGE["clippy"],
+            ["cargo", "nextest", "run", "--workspace", "--all-features", "--profile", "full"],
+            COMMAND_BY_STAGE["doctest"],
+            ["cargo", "doc", "--workspace", "--all-features", "--no-deps"],
+            ["cargo", "nextest", "run", "-p", "oneiron", "--features", "sync,test-hooks", "--profile", "full"],
+        ])
+        self.assertIn("CONFORMANCE GREEN for fixture", result.stdout)
 
     def test_distributed_legs_keep_full_tier_and_host_specific_napi_coverage(self):
         for host in ("Linux", "Darwin"):

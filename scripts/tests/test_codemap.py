@@ -185,6 +185,57 @@ class TestPurpose(CodemapCase):
         page = codemap.render_crate("alpha", data["crates"]["alpha"])
         self.assertIn("a \\| b", page)
 
+    def test_rustdoc_symbol_links_render_as_code_in_generated_purposes(self):
+        for link, display in (
+            ("[`LlmBackend`](oneiron::LlmBackend)", "LlmBackend"),
+            ("[`Thing`](crate::Thing)", "Thing"),
+            ("[Parent](super::Parent)", "Parent"),
+            ("[`Thing`](dependency::nested::Thing)", "Thing"),
+        ):
+            with self.subTest(link=link):
+                source = f"//! Adapter for {link}. Second sentence.\n"
+                path = self.fx.write("crates/alpha/src/lib.rs", source)
+                code, out = self.fx.run()
+                self.assertEqual(code, 0, out)
+                expected = f"Adapter for `{display}`"
+                data = json.loads((self.fx.root / "docs/codemap/codemap.json").read_text())
+                crate = data["crates"]["alpha"]
+                self.assertEqual(crate["purpose"], expected)
+                self.assertEqual(crate["modules"]["lib"]["purpose"], expected)
+                self.assertEqual(crate["files"][0]["purpose"], expected)
+                for page in ("docs/CODEMAP.md", "docs/codemap/alpha.md"):
+                    rendered = (self.fx.root / page).read_text()
+                    self.assertIn(expected, rendered)
+                    self.assertNotIn(link, rendered)
+                self.assertEqual(path.read_text(), source)
+
+    def test_ordinary_markdown_and_code_examples_keep_their_exact_purpose(self):
+        for markup in (
+            "[guide](https://example.org/guide)",
+            "[`Thing`](https://example.org/api/dep::Thing)",
+            "[guide](../guide.md#intro)",
+            "[`Thing`](./Thing)",
+            "[guide](guide)",
+            "[overview](#overview)",
+            "[mail](mailto:docs@example.org)",
+            "[`Thing`][guide]",
+            "[`Thing`]",
+            "`[Thing](crate::Thing)`",
+            r"\[Thing](crate::Thing)",
+        ):
+            with self.subTest(markup=markup):
+                text = f"//! Read {markup} for details. Another sentence.\n"
+                self.assertEqual(self.purpose(text), f"Read {markup} for details")
+
+    def test_symbol_link_normalization_keeps_wrapped_sentence_behavior(self):
+        text = "//! Adapter for [`Thing`](crate::Thing)\n//! across lines. More detail.\n"
+        self.assertEqual(self.purpose(text), "Adapter for `Thing` across lines")
+
+    def test_symbol_destination_is_removed_before_the_length_cap(self):
+        target = "dependency::" + "nested::" * 20 + "LlmBackend"
+        text = f"//! Adapter for [`LlmBackend`]({target}) seam. More detail.\n"
+        self.assertEqual(self.purpose(text), "Adapter for `LlmBackend` seam")
+
     def test_crate_purpose_falls_back_to_cargo_description(self):
         self.fx.crate("beta", description="Beta from Cargo.toml.")
         self.fx.crate("gamma")

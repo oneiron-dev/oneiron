@@ -37,9 +37,27 @@ This is **workspace-first retention**, not LRU eviction. First-party code rebuil
 after cleanup. A dependency-heavy cache can still require a cold build after the
 fallback reset. No job-time reduction is guaranteed by this policy.
 
-Maintenance requires a canonical absolute `.../ci/target` path. Symlinked paths,
-invalid caps, and measurement/cleanup failures do not trigger a full reset.
-Maintenance failures do not change a build's pass/fail result. Run the script only
+Maintenance requires a canonical absolute `.../ci/target` path. Before each Cargo
+clean pass, a Python 3 scan checks every descendant without following symlinks.
+Any symlink (including internal, file, or dangling links), file or directory on a
+different device from the root, or scan/stat/read failure keeps the remaining
+cache without a full-reset fallback. This deliberately skips cleanup for
+otherwise valid build outputs that contain symlinks. Under-cap caches remain a
+no-op and do not need the scan.
+
+Both clean passes pin Cargo's `build.build-dir` to the validated target with an
+explicit CLI config value and remove the inherited `CARGO_BUILD_BUILD_DIR` from
+the child environment. A separately configured build directory is not cleaned.
+Paths containing braces are refused because Cargo can expand build-dir templates
+even in quoted strings. Symlinked root paths, invalid caps, and measurement/cleanup
+failures also do not trigger a full reset.
+
+Maintenance failures do not change a build's pass/fail result. The caller must own
+the target, prevent concurrent changes, and keep the filesystem namespace stable
+for the entire run. The target must have no mounted descendants, including Linux
+same-device bind mounts and file mounts. The device check is defense in depth: it
+does not detect same-device mounts or prove that this precondition holds. The
+preflight is not a lock and does not prevent path-swap races. Run the script only
 after the runner's build, never alongside a process that shares that target.
 
 The behavior tests use stub tools and disposable directories, not a live cache:

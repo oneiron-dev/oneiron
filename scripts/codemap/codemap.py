@@ -153,6 +153,22 @@ def decode_lines(data: bytes) -> list[str]:
 
 
 SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z`\[(\"'])")
+# A Rust `::` path is not a Markdown URL. Match only explicit symbol links,
+# leaving external/relative links and shortcut/reference syntax unchanged.
+# The first alternative protects examples inside inline code spans.
+PURPOSE_LINK_RE = re.compile(
+    r"(?P<code>`+).*?(?P=code)"
+    r"|(?<![!\\])\[(?P<label>`[^`]+`|[^\[\]`]+)\]\("
+    r"(?:::)?[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+\)"
+)
+
+
+def normalize_purpose_links(text: str) -> str:
+    def replace(match: re.Match) -> str:
+        label = match.group("label")
+        return "`" + label.strip("`") + "`" if label is not None else match.group(0)
+
+    return PURPOSE_LINK_RE.sub(replace, text)
 
 
 def trim_purpose(text: str, limit: int = PURPOSE_MAX) -> str:
@@ -199,7 +215,7 @@ def extract_purpose(lines: list[str]) -> str:
         break
     if not paragraph:
         return "—"
-    return trim_purpose(" ".join(paragraph))
+    return trim_purpose(normalize_purpose_links(" ".join(paragraph)))
 
 
 def scan_file(path: Path, rel: str) -> dict:
