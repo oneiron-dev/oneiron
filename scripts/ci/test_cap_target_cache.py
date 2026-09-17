@@ -85,7 +85,172 @@ class CacheCapTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.last_result = result
         return json.loads(self.state.read_text())["calls"]
+
+    def diagnostics(self):
+        prefix = "cap-target-cache: diagnostics "
+        self.assertNotIn(prefix, self.last_result.stdout)
+        return [json.loads(line[len(prefix):])
+                for line in self.last_result.stderr.splitlines()
+                if line.startswith(prefix)]
+
+    def diagnostic_mock(self, mode="good"):
+        mock_path = self.root / "diagnostic mock"
+        mock_path.mkdir(exist_ok=True)
+        (mock_path / "sitecustomize.py").write_text(
+            "import contextlib, json, os, pathlib, sys, types\n"
+            "if sys.argv[0] == '-':\n"
+            "    mode = os.environ['STUB_DIAGNOSTICS']\n"
+            "    def record(key, value):\n"
+            "        path = pathlib.Path(os.environ['STUB_STATE'])\n"
+            "        state = json.loads(path.read_text())\n"
+            "        state.setdefault(key, []).append(value)\n"
+            "        path.write_text(json.dumps(state))\n"
+            "    def statvfs(path):\n"
+            "        record('statvfs_paths', path)\n"
+            "        if mode == 'statvfs-fail':\n"
+            "            raise OSError('fixture statvfs failure')\n"
+            "        return types.SimpleNamespace(f_bavail=7, f_frsize=4096, f_bfree=999999)\n"
+            "    os.statvfs = statvfs\n"
+            "    original_scandir = os.scandir\n"
+            "    class SizeFailure:\n"
+            "        def __init__(self, result): self.result = result\n"
+            "        def __getattr__(self, name): return getattr(self.result, name)\n"
+            "        @property\n"
+            "        def st_size(self): raise OSError('fixture size-metric failure')\n"
+            "    class Entry:\n"
+            "        def __init__(self, entry): self.entry = entry\n"
+            "        def __getattr__(self, name): return getattr(self.entry, name)\n"
+            "        def stat(self, *args, **kwargs):\n"
+            "            assert kwargs.get('follow_symlinks') is False\n"
+            "            result = self.entry.stat(*args, **kwargs)\n"
+            "            return SizeFailure(result) if mode == 'size-fail' else result\n"
+            "    @contextlib.contextmanager\n"
+            "    def scandir(path):\n"
+            "        record('scan_paths', path)\n"
+            "        with original_scandir(path) as entries:\n"
+            "            yield (Entry(entry) for entry in entries)\n"
+            "    os.scandir = scandir\n"
+            "    if mode == 'stderr-fail':\n"
+            "        os.close(2)\n"
+        )
+        self.env["PYTHONPATH"] = str(mock_path)
+        self.env["STUB_DIAGNOSTICS"] = mode
+
+    def test_diagnostics_report_available_space_and_apparent_components(self):
+        self.diagnostic_mock()
+        contents = {
+            "debug/deps/dependency.rlib": b"d" * 3,
+            "debug/build/package/out/generated": b"b" * 5,
+            "debug/incremental/session/cache": b"i" * 7,
+            "release/deps/dependency.rlib": b"r" * 11,
+            "doc/oneiron/index.html": b"h" * 13,
+            "tests/trybuild/target/debug/deps/test.rlib": b"t" * 17,
+            "debug/deps-other/artifact": b"o" * 19,
+        }
+        for name, content in contents.items():
+            path = self.target / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        # Logical bytes count hard-link names independently and include sparse
+        # file holes. These totals must never be presented as du allocation.
+        os.link(self.target / "debug/deps/dependency.rlib", self.target / "debug/deps/alias.rlib")
+        sparse = self.target / "debug/incremental/sparse"
+        with sparse.open("wb") as stream:
+            stream.truncate(1024 * 1024)
+        initial_other = len(self.dependency.read_bytes()) + len(self.workspace.read_bytes()) + 19
+        calls = self.run_cap([2 * GIB_KIB, 0])
+        self.assertEqual([call[0] for call in calls], ["du", "cargo", "cargo", "du"])
+        reports = self.diagnostics()
+        self.assertEqual(len(reports), 2)
+        expected = {
+            "debug/deps": 6, "debug/build": 5, "debug/incremental": 7 + 1024 * 1024,
+            "release": 11, "doc": 13, "tests/trybuild": 17, "other": initial_other,
+        }
+        self.assertEqual(reports[0], {
+            "available_bytes": 7 * 4096,
+            "apparent_file_bytes_non_deduplicated": expected,
+        })
+        expected["other"] -= len(b"workspace\x00\xff")
+        self.assertEqual(reports[1], {
+            "available_bytes": 7 * 4096,
+            "apparent_file_bytes_non_deduplicated": expected,
+        })
+        self.assertTrue(self.dependency.exists())
+        self.assertFalse(self.workspace.exists())
+        state = json.loads(self.state.read_text())
+        directories = [str(self.target), *[str(path) for path in self.target.rglob("*") if path.is_dir()]]
+        # One existing safety walk per clean pass, not a second metrics walk.
+        self.assertEqual(sorted(state["scan_paths"]), sorted(directories * 2))
+        self.assertEqual(state["statvfs_paths"], [str(self.target)] * 2)
+
+    def test_diagnostic_failures_do_not_change_calls_or_deletion_outcomes(self):
+        cases = (
+            ("under-cap", [GIB_KIB - 1], {}),
+            ("retained", [2 * GIB_KIB, 0], {}),
+            ("reset", [2 * GIB_KIB, GIB_KIB], {}),
+            ("dev-fails", [2 * GIB_KIB], {"cargo_rc": 1}),
+            ("release-fails", [2 * GIB_KIB], {"cargo_fail_at": 1}),
+            ("first-du-fails", [2 * GIB_KIB], {"du_rc": 1}),
+            ("second-du-fails", [2 * GIB_KIB], {"du_fail_at": 1}),
+            ("reset-fails", [2 * GIB_KIB, GIB_KIB], {"rm_rc": 1}),
+        )
+        for case, sizes, options in cases:
+            baseline = None
+            for mode in ("good", "statvfs-fail", "stderr-fail", "size-fail"):
+                with self.subTest(case=case, mode=mode):
+                    self.target.mkdir(parents=True, exist_ok=True)
+                    self.dependency.write_bytes(b"dependency\x00\xff")
+                    self.workspace.write_bytes(b"workspace\x00\xff")
+                    self.diagnostic_mock(mode)
+                    calls = self.run_cap(sizes, **options)
+                    outcome = (
+                        calls, self.last_result.stdout, self.target.exists(),
+                        self.dependency.read_bytes() if self.dependency.exists() else None,
+                        self.workspace.read_bytes() if self.workspace.exists() else None,
+                    )
+                    reports = self.diagnostics()
+                    if mode == "good":
+                        baseline = outcome
+                        report_count = len(reports)
+                    else:
+                        self.assertEqual(outcome, baseline)
+                    self.assertEqual(len(reports), 0 if mode == "stderr-fail" else report_count)
+                    for report in reports:
+                        self.assertEqual(report["available_bytes"],
+                                         None if mode == "statvfs-fail" else 7 * 4096)
+                        if mode == "size-fail":
+                            self.assertIsNone(report["apparent_file_bytes_non_deduplicated"])
+                    if case in ("under-cap", "first-du-fails"):
+                        state = json.loads(self.state.read_text())
+                        self.assertNotIn("scan_paths", state)
+                        self.assertNotIn("statvfs_paths", state)
+
+    def test_failed_safety_scan_emits_no_diagnostics_even_when_metrics_fail(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        sentinel = outside / "sentinel"
+        sentinel.write_bytes(b"outside bytes")
+        link = self.target / "doc"
+        link.symlink_to(outside)
+        baseline = None
+        for mode in ("good", "statvfs-fail", "stderr-fail", "size-fail"):
+            with self.subTest(mode=mode):
+                self.diagnostic_mock(mode)
+                calls = self.run_cap([2 * GIB_KIB, 0])
+                if baseline is None:
+                    baseline = calls
+                self.assertEqual(calls, baseline)
+                self.assertEqual([call[0] for call in calls], ["du"])
+                self.assertEqual(self.diagnostics(), [])
+                state = json.loads(self.state.read_text())
+                self.assertEqual(state["scan_paths"], [str(self.target)])
+                self.assertNotIn("statvfs_paths", state)
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(sentinel.read_bytes(), b"outside bytes")
+                self.assertEqual(self.dependency.read_bytes(), b"dependency\x00\xff")
+                self.assertEqual(self.workspace.read_bytes(), b"workspace\x00\xff")
 
     def test_workspace_cleanup_preserves_dependencies_when_it_reaches_the_cap(self):
         calls = self.run_cap([2 * GIB_KIB, GIB_KIB // 2])

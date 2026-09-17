@@ -45,6 +45,16 @@ cache without a full-reset fallback. This deliberately skips cleanup for
 otherwise valid build outputs that contain symlinks. Under-cap caches remain a
 no-op and do not need the scan.
 
+Each successful scan emits best-effort JSON diagnostics on stderr: available
+filesystem bytes (`f_bavail * f_frsize`) and apparent regular-file bytes grouped
+as `debug/deps`, `debug/build`, `debug/incremental`, `release`, `doc`,
+`tests/trybuild`, and `other`. Component totals reuse the existing no-follow stat
+results: no second walk or under-cap scan is added. Hard-link names count
+separately and sparse-file holes count toward apparent size; these are **not
+allocated bytes**. `du` remains the cap's allocation measure. Unavailable metrics
+are `null`; metric or diagnostic-write failures never change cleanup decisions.
+Safety-scan failures still refuse cleanup and emit no diagnostics.
+
 Both clean passes pin Cargo's `build.build-dir` to the validated target with an
 explicit CLI config value and remove the inherited `CARGO_BUILD_BUILD_DIR` from
 the child environment. A separately configured build directory is not cleaned.

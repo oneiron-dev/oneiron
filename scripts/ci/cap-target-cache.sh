@@ -85,6 +85,10 @@ import stat
 import sys
 
 root = sys.argv[1]
+# Diagnostic logical sizes only: no second walk, extra stat, or inode accounting.
+components = dict.fromkeys((
+    "debug/deps", "debug/build", "debug/incremental", "release", "doc", "tests/trybuild", "other"
+), 0)
 try:
     root_stat = os.lstat(root)
     if not stat.S_ISDIR(root_stat.st_mode):
@@ -101,12 +105,38 @@ try:
                     raise ValueError(f"cache crosses a device boundary: {entry.path!r}")
                 if stat.S_ISDIR(mode):
                     pending.append(entry.path)
+                elif stat.S_ISREG(mode) and components is not None:
+                    # Keep optional accounting separate from stat and all safety
+                    # checks above. A metrics failure cannot veto a valid clean.
+                    try:
+                        relative = entry.path[len(root) + 1:]
+                        group = next((name for name in components
+                                      if relative.startswith(name + "/")), "other")
+                        components[group] += entry_stat.st_size
+                    except Exception:
+                        components = None
     # JSON basic-string escaping is also valid TOML. Keep non-ASCII characters
     # literal so non-BMP paths do not become JSON-only surrogate-pair escapes.
     print("build.build-dir=" + json.dumps(root, ensure_ascii=False))
 except (OSError, ValueError) as error:
     print(f"cap-target-cache: cannot validate cache layout: {error}", file=sys.stderr)
     sys.exit(1)
+
+# Only a complete successful safety scan reaches diagnostics. These values never
+# replace du's allocated KiB or feed a cleanup decision. None means unavailable.
+try:
+    space = os.statvfs(root)
+    available_bytes = space.f_bavail * space.f_frsize
+except Exception:
+    available_bytes = None
+try:
+    report = {"available_bytes": available_bytes,
+              "apparent_file_bytes_non_deduplicated": components}
+    # Write directly: a broken stderr must not leave buffered output that makes
+    # Python's shutdown fail after a successful scan/config result on stdout.
+    os.write(2, ("cap-target-cache: diagnostics " + json.dumps(report) + "\n").encode())
+except Exception:
+    pass
 PY
 )" || return 1
   # --target-dir alone does not constrain Cargo 1.96's separate build directory.

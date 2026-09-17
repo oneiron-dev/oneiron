@@ -56,8 +56,8 @@ with socket.socket() as s:
 BASE_URL="http://127.0.0.1:${PORT}"
 
 log "building oneiron-server and the fixture provisioner"
-cargo build --quiet -p oneiron-server --bin oneiron-server
-cargo build --quiet -p oneiron-remote --example provision-fixture-actor
+cargo build --locked --quiet -p oneiron-server --bin oneiron-server
+cargo build --locked --quiet -p oneiron-remote --example provision-fixture-actor
 
 SERVER_BIN="$(cargo metadata --format-version 1 --no-deps \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/debug/oneiron-server"
