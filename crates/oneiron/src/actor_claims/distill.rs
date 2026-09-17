@@ -117,7 +117,7 @@ pub fn pending_session_actor_distills(vault: &Vault) -> Result<Vec<EntityId>> {
     Ok(out)
 }
 /// Runs the CHAT-lane inlet for one ended sitting: brief → distiller → the same
-/// [`write_actor_claim`] door the TASK lane uses. Returns the claim ids landed.
+/// [`write_actor_claim`](crate::actor_claims::write_actor_claim) door the TASK lane uses. Returns the claim ids landed.
 ///
 /// **Plain chatting mints no TASK (08b r13).** This path writes CLAIM entities
 /// and clears its own job row; it has no task-minting door in reach, and that

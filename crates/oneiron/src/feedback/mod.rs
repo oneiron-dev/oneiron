@@ -16,7 +16,7 @@
 //! - In-vault redaction ([`FeedbackRedactor`]) and preview
 //!   ([`prepare_feedback_preview`]).
 //! - Per-bundle, per-destination consent over the existing
-//!   [`ConsentAskCard`] surface ([`feedback_approval_card`],
+//!   [`ConsentAskCard`](crate::genui::ConsentAskCard) surface ([`feedback_approval_card`],
 //!   [`validate_feedback_approval`]).
 //! - An ordinary outbound send through
 //!   [`Vault::dispatch_outbound_intent`](crate::Vault::dispatch_outbound_intent)
@@ -49,7 +49,7 @@
 //!
 //! # Trust boundary
 //!
-//! [`validate_feedback_approval`] consumes a [`ConsentActionEvaluation`] as
+//! [`validate_feedback_approval`] consumes a [`ConsentActionEvaluation`](crate::genui::ConsentActionEvaluation) as
 //! HOST-TRUSTED FIELD INPUT. It is not authentication. The host authenticated
 //! the owner when it evaluated the consent action; this module only checks
 //! that the evaluation it was handed describes an approve-once decision on the
@@ -69,7 +69,7 @@
 //! # Secret hygiene
 //!
 //! [`FeedbackConfigSnapshot`] is a whitelist projection of
-//! [`VaultConfig`]: it copies a fixed list of
+//! [`VaultConfig`](crate::VaultConfig): it copies a fixed list of
 //! non-secret tuning scalars and copies nothing else. Dictionary search roots,
 //! filesystem locations, environment values, connector credentials, custody
 //! references, payload bodies, hostnames, and account identifiers are all

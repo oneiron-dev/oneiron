@@ -60,7 +60,7 @@ pub(super) const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
 /// Recursion budget every NEW ROOT dispatch persists when the caller names
 /// none. Structural, not policy: the ceiling lattice bounds authority, this
 /// bounds how many levels of it can exist at all. Admission additionally
-/// CLAMPS the persisted root budget to [`CONTEXT_PROJECTION_MAX_ANCESTORS`],
+/// CLAMPS the persisted root budget to [`CONTEXT_PROJECTION_MAX_ANCESTORS`](crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS),
 /// so no stored lineage can exceed the ancestor-projection walk.
 pub const AGENT_DISPATCH_ROOT_DEPTH_REMAINING: u8 = 8;
 
@@ -102,7 +102,7 @@ pub struct AgentDispatchInput {
     /// `context_spec`, because panel blindness relies on the separation.
     pub context_from: Vec<EntityId>,
     /// Additive/defaulted v1 compatibility field; every new root writes `Some`.
-    /// LOAD-BEARING: [`AgentDispatcher::dispatch`] refuses to enqueue a child
+    /// LOAD-BEARING: [`AgentDispatcher::dispatch`](crate::agent_dispatch::AgentDispatcher::dispatch) refuses to enqueue a child
     /// under a parent whose stored value is `Some(0)`.
     pub depth_remaining: Option<u8>,
 }
@@ -177,7 +177,7 @@ pub const fn restrict_agent_ceiling(requested: AgentCeiling, parent: AgentCeilin
     }
 }
 
-/// Caller input for [`AgentDispatcher::dispatch`].
+/// Caller input for [`AgentDispatcher::dispatch`](crate::agent_dispatch::AgentDispatcher::dispatch).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DispatchAgent {
     pub target: AgentDispatchTarget,
@@ -264,7 +264,7 @@ pub enum HealerSlot {
     AgentDef { agent_def_ref: String },
 }
 
-/// Caller input for [`AgentDispatcher::dispatch_healer_slot`].
+/// Caller input for [`AgentDispatcher::dispatch_healer_slot`](crate::agent_dispatch::AgentDispatcher::dispatch_healer_slot).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchHealer {
     pub slot: HealerSlot,

@@ -23,7 +23,7 @@
 //! | [`PREDICATE_ACTOR_FAILURE_MODE`] | normalized note | SET, keyed on the text |
 //! | [`PREDICATE_ACTOR_SCOPE_NOTE`] | normalized note | SET, keyed on the text |
 //! | [`PREDICATE_ACTOR_SKILL_FIT`] | fit in `0..=1` | ONE per `(actor, skill)`, superseding |
-//! | [`PREDICATE_ACTOR_EDIT_COST`] | cost in `0..=1` | ONE per `(actor, scope)`, superseding |
+//! | [`PREDICATE_ACTOR_EDIT_COST`](crate::claim::PREDICATE_ACTOR_EDIT_COST) | cost in `0..=1` | ONE per `(actor, scope)`, superseding |
 //!
 //! A set row DEDUPES rather than supersedes: two different lessons are two
 //! standing facts, and re-observing one is not news. `skill_fit` is the
@@ -51,7 +51,7 @@
 //! provenance, so source honesty is unforgeable). Two provenance facts ride
 //! different fields, deliberately:
 //!
-//! * `src` is [`ClaimSource::Observed`] on every row — the projector and the
+//! * `src` is [`ClaimSource::Observed`](crate::ClaimSource::Observed) on every row — the projector and the
 //!   Dreamer OBSERVED the trace, which is the same stamp the sibling
 //!   `actor.confidence_prior` and `skill.reliability` projections carry. It is
 //!   also this ledger's federation boundary: the cross-vault door restamps

@@ -61,7 +61,7 @@ const IMPORTED_BASE_PREFIX: &[u8] = b"skill_reliability:imported_base:v1:";
 /// at that sequence (`attribution_judgments` is the stack seam, and the seam is
 /// over PERSISTED judgments) and its citation resolves to a real pack receipt
 /// whose manifest loaded this skill — the same grounding
-/// [`record_skill_contributing_win`] runs on the α side. Ungrounded rows are
+/// [`record_skill_contributing_win`](crate::skill_reliability::record_skill_contributing_win) runs on the α side. Ungrounded rows are
 /// SKIPPED rather than fatal: one forged row must not deny a whole pass.
 pub fn project_skill_reliability(
     vault: &Vault,

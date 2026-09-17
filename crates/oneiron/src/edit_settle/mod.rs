@@ -1,6 +1,6 @@
 //! ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts.
 //!
-//! An ARTL-3 [`EditProposal`] is a **retained output**: the edited bytes and
+//! An ARTL-3 [`EditProposal`](crate::edit_roundtrip::EditProposal) is a **retained output**: the edited bytes and
 //! the edit-manifest exist, but nothing touches the artifact until the proposal
 //! is *settled*. Settlement is **consume-once** (D5): exactly one of
 //!
@@ -23,7 +23,7 @@
 //! is the ledger: a select or discard writes exactly one.
 //!
 //! A settle-select's ledger acquisition, version append, and re-anchor sweep are
-//! ONE [`Vault::with_write_txn`] — all-or-nothing. The ledger key is checked
+//! ONE [`Vault::with_write_txn`](crate::Vault::with_write_txn) — all-or-nothing. The ledger key is checked
 //! FIRST, before any side effect, so a settle that finds it committed refuses
 //! having written nothing. Because LMDB serializes writers, a racing second
 //! settle runs its whole transaction only after the first commits, sees the
@@ -35,7 +35,7 @@
 //!
 //! # Stale-proposal refusal (D5)
 //!
-//! A proposal is produced FROM a specific head ([`EditProposal::base_content_hash`]).
+//! A proposal is produced FROM a specific head ([`EditProposal::base_content_hash`](crate::edit_roundtrip::EditProposal::base_content_hash)).
 //! Select refuses ([`ArtifactError::EditProposalStale`](crate::error::ArtifactError::EditProposalStale)) when that base no longer equals
 //! the artifact head — an intervening edit moved the head, so committing these
 //! bytes would clobber it and replay a stale manifest onto newer anchors.
@@ -43,21 +43,21 @@
 //! # Re-anchor on select (D2/D5)
 //!
 //! In the same transaction as the append, select replays the manifest's anchor
-//! effects ([`EditManifest::anchor_effects`]) onto the threads anchored at the
-//! prior head — the [`Vault::reanchor_annotation_threads`] sweep, driven through
+//! effects ([`EditManifest::anchor_effects`](crate::edit_roundtrip::EditManifest::anchor_effects)) onto the threads anchored at the
+//! prior head — the [`Vault::reanchor_annotation_threads`](crate::Vault::reanchor_annotation_threads) sweep, driven through
 //! the shared write txn. The manifest's
 //! [`AnchorEffect`](crate::edit_roundtrip::AnchorEffect)s lower to ARTL-2
-//! [`ReanchorOp`]s through `From<&AnchorEffect>` (the reconciliation the ARTL-2
+//! [`ReanchorOp`](crate::anchored_annotation::ReanchorOp)s through `From<&AnchorEffect>` (the reconciliation the ARTL-2
 //! module doc calls for): a thread on a moved cell advances to the new version
 //! with a remapped locator; a thread on a destroyed range drifts and stays
 //! pinned to its origin version.
 //!
 //! # Receipts (D6/D7)
 //!
-//! Both paths land an OF-367 receipt ([`ReceiptKind::ArtifactSettle`]) projected
+//! Both paths land an OF-367 receipt ([`ReceiptKind::ArtifactSettle`](crate::receipt::ReceiptKind::ArtifactSettle)) projected
 //! from the settlement record — a floor receipt, persisted through its own
 //! substrate. A select receipt resolves `artifact@version` plus the anchor set
-//! that moved (the tappable door, [`Vault::settle_receipt_door`], opens the lens
+//! that moved (the tappable door, [`Vault::settle_receipt_door`](crate::Vault::settle_receipt_door), opens the lens
 //! at those anchors); a discard receipt records the proposal ref and reason.
 //! When the settle rode an assigning brief, the receipt's `job_ref` joins that
 //! brief's project view (B2 RS4).
@@ -72,7 +72,7 @@
 //! sends-to-counterparties, not artifact writes — honoring one for a settle
 //! would conflate two capabilities. Per the ARTL-4 rule "do not invent a new
 //! grant family", the authority now comes from the DEC-0006 unified consent
-//! contract instead: [`Vault::settle_standing_grant_authorizes`] requires a
+//! contract instead: [`Vault::settle_standing_grant_authorizes`](crate::Vault::settle_standing_grant_authorizes) requires a
 //! live standing ACTION grant bounding the acting actor × [`SETTLE_VERB_CLASS`]
 //! × the exact brief target. It fails closed — a disclosure grant, another
 //! actor, a wider-target assumption, or a revoked row all authorize nothing.

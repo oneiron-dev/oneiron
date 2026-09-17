@@ -40,7 +40,7 @@ use crate::saved_query::{
 pub struct CampaignEnrollmentAttemptPayload {
     /// The persisted [`CampaignEnrollmentEvent`].
     pub membership_event_ref: EntityId,
-    /// The persisted [`CampaignProgram`].
+    /// The persisted [`CampaignProgram`](crate::campaign::enrollment::CampaignProgram).
     pub campaign_program_ref: EntityId,
     /// The persisted [`CampaignProgramStep`].
     pub program_step_ref: EntityId,

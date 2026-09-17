@@ -7,7 +7,7 @@
 //!
 //! # Visibility is a derived proof, never a flag
 //!
-//! [`Vault::published_origin_refs`] is the ONLY advertisement projection. A ref
+//! [`Vault::published_origin_refs`](crate::Vault::published_origin_refs) is the ONLY advertisement projection. A ref
 //! appears there while — and only while — a `Published` journal row's live ref
 //! still equals its `new_oid` and all required Git and LFS objects remain
 //! readable. There is no "visible" boolean anybody could set by hand. The
@@ -19,7 +19,7 @@
 //!
 //! Every ref advance goes through [`crate::git_wire::GitWire::update_ref_cas`]
 //! against the exact value the publication was decided against. A rejected
-//! compare-and-swap ([`GitWireRejection::RefMoved`]) is a durable `Conflicted`
+//! compare-and-swap ([`GitWireRejection::RefMoved`](crate::git_wire::GitWireRejection::RefMoved)) is a durable `Conflicted`
 //! record and is NEVER retried — retrying is precisely how a second writer
 //! would silently overwrite the first. That makes split-brain impossible
 //! without any coordination service (RA2).
@@ -27,7 +27,7 @@
 //! # Physical roots and logical owners (RA4)
 //!
 //! An object is pinned by ONE physical keep-ref — the landed
-//! [`GIT_WIRE_KEEP_REF_PREFIX`]`object/<oid>` shape, written only through
+//! [`GIT_WIRE_KEEP_REF_PREFIX`](crate::git_wire::GIT_WIRE_KEEP_REF_PREFIX)`object/<oid>` shape, written only through
 //! GitWire — and by as many LOGICAL owner rows as there are reasons to keep it
 //! ([`OriginKeepRefKind`]). The physical root is deleted only when the owner
 //! count reaches zero, so a publication releasing its own pin can never
@@ -38,7 +38,7 @@
 //!
 //! Objects and LFS bytes stage BEFORE the LMDB critical section. Three windows
 //! exist and each has exactly one durable disposition, all reached through the
-//! same code path [`Vault::reconcile_origin_publications`] drives:
+//! same code path [`Vault::reconcile_origin_publications`](crate::Vault::reconcile_origin_publications) drives:
 //!
 //! | Window | Observation | Disposition |
 //! |---|---|---|
@@ -68,7 +68,7 @@
 //! # One authority for "did the ref move"
 //!
 //! This module never decides a compare-and-swap for itself. It hands the
-//! decided-against value to [`GitWire::update_ref_cas`] and reads the verdict
+//! decided-against value to [`GitWire::update_ref_cas`](crate::git_wire::GitWire::update_ref_cas) and reads the verdict
 //! back, because GitWire already owns the journal, the roll-forward of an
 //! interrupted effect, the whole-graph object proof and the replay of a
 //! terminal record. A second implementation of that decision here would be a

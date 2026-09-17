@@ -12,8 +12,8 @@
 //! # Manager-owned windows (ONE-1126)
 //!
 //! Window docs are NOT private bare `LoroDoc`s: every window the client
-//! touches is a manager-owned [`LoadedWindow`] obtained through
-//! [`WindowManager::open_window`], which consults persisted `sync_state`
+//! touches is a manager-owned [`LoadedWindow`](crate::sync::window::LoadedWindow) obtained through
+//! [`WindowManager::open_window`](crate::sync::WindowManager::open_window), which consults persisted `sync_state`
 //! first (`d:w:{key}` snapshot + pending `u:w:{key}:*` replay — ARCH-0023b
 //! startup step 2), runs the pinned recovery order, and attaches
 //! Observer A + B last. Remote updates imported here therefore reach LMDB

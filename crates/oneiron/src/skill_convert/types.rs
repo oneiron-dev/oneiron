@@ -73,7 +73,7 @@ pub enum ConvertOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConvertUtterance {
     /// The TURN or MESSAGE these words came from — the id that lands in
-    /// [`PROVENANCE_SOURCE_MESSAGES_KEY`].
+    /// [`PROVENANCE_SOURCE_MESSAGES_KEY`](crate::skill_convert::PROVENANCE_SOURCE_MESSAGES_KEY).
     pub source: EntityId,
     pub speaker: Option<String>,
     pub text: Option<String>,
@@ -116,7 +116,7 @@ pub enum RefineVerdict {
 /// A refined SKILL.md-shaped tree plus the record fields it implies.
 ///
 /// The tree is `HubFile`s because the engine has exactly one representation of
-/// a skill file tree, and the identity function ([`canonical_skill_tree_hash`])
+/// a skill file tree, and the identity function ([`canonical_skill_tree_hash`](crate::skill::canonical_skill_tree_hash))
 /// is defined over it. The bytes stay the host's to write to disk — the engine
 /// persists the record and the tree's HASH, the same boundary the hub import
 /// door draws.

@@ -167,7 +167,7 @@ impl ManagedArgs {
     /// pipe. Each closes what it holds on drop, so a listener that is also
     /// `--credentials-fd` is read as a credential frame and closed under the
     /// listener, and one that is also `--ready-fd` has the ready byte written
-    /// into it. [`serve_managed`] calls this before any of the three is
+    /// into it. [`serve_managed`](crate::managed::serve_managed) calls this before any of the three is
     /// consumed and before the vault is opened, so neither the frame nor
     /// storage is touched on the way to the refusal.
     pub fn refuse_listen_fd_alias(&self, listen_fd: RawFd) -> Result<(), ManagedError> {

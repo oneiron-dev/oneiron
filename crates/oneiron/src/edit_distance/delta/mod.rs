@@ -12,7 +12,7 @@
 //! # Two lanes, one precedence
 //!
 //! * [`DeltaSource::RecordedOps`] — ED-00's finalized op window
-//!   ([`FinalizedProposalText`]) replayed per change. It sees CHURN (text
+//!   ([`FinalizedProposalText`](crate::edit_distance::FinalizedProposalText)) replayed per change. It sees CHURN (text
 //!   typed then retyped) that an endpoint comparison cannot, which is why it
 //!   outranks the others.
 //! * [`DeltaSource::FieldDiff`] — two canonical-MessagePack bodies (claim

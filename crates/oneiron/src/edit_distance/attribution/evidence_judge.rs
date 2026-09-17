@@ -34,7 +34,7 @@ use crate::skill_attribution::{AttributionJudge, RuleAttributionJudge};
 /// The actor check is the DOWNSTREAM door's own (`require_actor_entity`, the
 /// D13 matrix), asked here rather than three passes later: an
 /// [`AmendmentClass::ExecutionLapse`] on a TURN would be recorded, judged and
-/// persisted before [`project_edit_cost_claims`] hit the refusal, wedging every
+/// persisted before [`project_edit_cost_claims`](crate::edit_distance::attribution::project_edit_cost_claims) hit the refusal, wedging every
 /// later pass on durable state the engine had already accepted.
 ///
 /// # Errors
@@ -140,7 +140,7 @@ pub fn judge_amendment(vault: &Vault, receipt_id: &str) -> Result<Option<Amendme
 /// idempotent; a judge that has since been FIXED is exactly what the audit
 /// exists to provoke, and a ledger that refused its correction would keep the
 /// wrong verdict forever. The claim rows follow on the next
-/// [`project_edit_cost_claims`] pass, which recomputes from this ledger.
+/// [`project_edit_cost_claims`](crate::edit_distance::attribution::project_edit_cost_claims) pass, which recomputes from this ledger.
 ///
 /// ABSTENTION is a correction like any other. A re-judging pass whose honest
 /// answer is silence WITHDRAWS whatever the previous pass persisted rather than

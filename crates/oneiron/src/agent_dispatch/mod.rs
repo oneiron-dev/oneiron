@@ -1,7 +1,7 @@
 //! `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable
 //! runner substrate.
 //!
-//! Dispatch instantiates a saved [`AgentDefinition`] row as a durable
+//! Dispatch instantiates a saved [`AgentDefinition`](crate::agent_def::AgentDefinition) row as a durable
 //! run-tree branch: it rides the dreamer runner queue
 //! (kind `"dreamer"`, payload `job_type "agent.dispatch"`), inheriting BLAKE3
 //! dedupe, atomic budgeted admission, lease-timeout recovery, park/resume and

@@ -3,7 +3,7 @@
 /// Current settlement-record body schema version.
 pub const SETTLEMENT_SCHEMA_VERSION: u64 = 1;
 
-/// Pinned on-disk MessagePack key set for a [`SettlementRecord`] body.
+/// Pinned on-disk MessagePack key set for a [`SettlementRecord`](crate::edit_settle::SettlementRecord) body.
 pub const SETTLEMENT_RECORD_KEYS: [&str; 13] = [
     "schema_version",
     "proposal_ref",
@@ -20,7 +20,7 @@ pub const SETTLEMENT_RECORD_KEYS: [&str; 13] = [
     "reason",
 ];
 
-/// Pinned on-disk MessagePack key set for one [`SettledAnchor`] entry.
+/// Pinned on-disk MessagePack key set for one [`SettledAnchor`](crate::edit_settle::SettledAnchor) entry.
 pub const SETTLED_ANCHOR_KEYS: [&str; 3] = ["thread_id", "locator", "drifted"];
 
 /// Verb class a settle bundle-grant carries under the D6 brief×verb-class scope.

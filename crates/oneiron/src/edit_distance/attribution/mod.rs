@@ -22,7 +22,7 @@
 //!
 //! So this module adds ONE fact ([`AmendmentCause`]) and pre-filters on it.
 //! The `ProposalWrong` arm is then handed VERBATIM to
-//! [`AttributionJudge`] — SK-04's own trait, SK-04's own rule table, SK-04's
+//! [`AttributionJudge`](crate::skill_attribution::AttributionJudge) — SK-04's own trait, SK-04's own rule table, SK-04's
 //! own [`crate::skill_attribution::attribution_call_purpose`] for an LLM tier.
 //! There is no second classifier here and no LLM client: the import direction
 //! is the proof, and a host that wants a model tier implements SK-04's trait

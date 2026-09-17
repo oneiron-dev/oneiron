@@ -28,7 +28,7 @@ use super::publication_types::{
 /// The physical keep-ref that pins one object.
 ///
 /// The spelling follows the LANDED [`GIT_WIRE_KEEP_REF_PREFIX`] shape that
-/// [`GitWire::write_keep_ref`] writes, because the physical root must be the
+/// [`GitWire::write_keep_ref`](crate::git_wire::GitWire::write_keep_ref) writes, because the physical root must be the
 /// one GitWire owns rather than a second name meaning the same thing.
 pub fn origin_keep_ref_name(oid: &GitOid) -> Result<GitRefName> {
     GitRefName::parse_full(format!("{GIT_WIRE_KEEP_REF_PREFIX}object/{}", oid.as_str()))

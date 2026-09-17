@@ -26,7 +26,7 @@ use crate::error::RecordError;
 /// What an adapter hands the delegated door: NAMES, never evidence.
 ///
 /// There is deliberately no proof field and no way to add one. A
-/// [`DelegatedCustodyProof`] borrows the transaction that read the custody
+/// [`DelegatedCustodyProof`](crate::channel_identity::DelegatedCustodyProof) borrows the transaction that read the custody
 /// record, so a proof that reached a caller-owned struct would be a proof that
 /// outlived its evidence. The door mints its own inside the write transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]

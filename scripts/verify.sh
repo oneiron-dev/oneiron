@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full verify gate: code-map pin -> fmt (check-mode) -> all-feature and
-# featureless clippy -> full all-feature nextest tier -> featureless oneiron
-# library tests -> doctests.
+# featureless + server-production clippy -> strict rustdoc -> full all-feature
+# nextest tier -> featureless oneiron library tests -> doctests.
 #
 # Markers are printed to stdout so they land INSIDE the tee'd log — the marker in
 # the log is the only verify truth; wrapper/ssh exit codes are not evidence.
@@ -13,7 +13,26 @@
 # no-default-feature clippy and library-test stages. Doctests stay separate
 # because nextest does not run them.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+
+usage() {
+  printf '%s\n' \
+    'Usage: scripts/verify.sh [--list | --help]' \
+    '  No arguments: run all 9 scripted stages; success prints VERIFY-OK.' \
+    '  --list: print stage names and commands without running them.' \
+    '  --help: show this help without running any checks.' \
+    'The rustdoc stage denies documentation warnings before runtime tests.' \
+    'Scoped iteration: see AGENTS.md. Extra narrow-sync policy gate: WORKFLOW.md section 3.'
+}
+
+LIST_ONLY=false
+case "$#:$*" in
+  0:) ;;
+  1:--list) LIST_ONLY=true ;;
+  1:--help|1:-h) usage; exit 0 ;;
+  *) usage >&2; echo 'VERIFY-FAIL-usage' >&2; exit 2 ;;
+esac
+
+cd "$(dirname "$0")/.." || { echo 'VERIFY-FAIL-root'; exit 1; }
 
 # Coded compiler errors (`error[E0308]:` and bare `error:`) double-checked in
 # stage output: a runner that dies without a failing exit still can't pass.
@@ -23,6 +42,13 @@ ERR_RE='^error(\[E[0-9]+\])?:'
 
 run_stage() {
   local stage="$1"; shift
+  # Listing and execution share these calls, so discovery cannot omit a gate.
+  if [ "$LIST_ONLY" = true ]; then
+    printf '%s\t' "$stage"
+    printf '%q ' "$@"
+    printf '\n'
+    return
+  fi
   echo "=== verify: ${stage}: $* ==="
   local out rc
   out="$("$@" 2>&1)"; rc=$?
@@ -46,8 +72,14 @@ run_stage clippy-featureless  cargo clippy -p oneiron --all-targets --no-default
 # dev-dependency features in, and `--no-default-features` drops `sync`. No `--all-targets`
 # here on purpose — that is what the release binary builds.
 run_stage clippy-server       cargo clippy -p oneiron-server --all-features -- -D warnings
+# Existing mandatory documentation policy belongs in the gate, not a manual step.
+# Encoded flags take precedence even when empty. Unset them for this child only;
+# do not change other stages' environments or compiler fingerprints globally.
+run_stage rustdoc             env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 run_stage test                cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full
 run_stage test-featureless    cargo test -p oneiron --lib --no-default-features
 run_stage doctest             cargo test --doc --workspace --exclude oneiron-bench --all-features
 
-echo "VERIFY-OK"
+if [ "$LIST_ONLY" = false ]; then
+  echo "VERIFY-OK"
+fi

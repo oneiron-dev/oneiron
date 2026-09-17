@@ -69,7 +69,7 @@ impl IssueCategory {
 
 /// The closed set of count names a signature may carry.
 ///
-/// Each arm is one-to-one with a landed [`ProposalOutcome`] fact, so the whole
+/// Each arm is one-to-one with a landed [`ProposalOutcome`](crate::identity_topology::ProposalOutcome) fact, so the whole
 /// vocabulary is derivable from judged receipts and nothing here needs a
 /// consumer to invent a number. `ApprovedUntouched` has no arm on purpose: it
 /// is `Judged - Amended - Rejected`, and a redundant count is a second place

@@ -62,7 +62,7 @@ impl RelationshipContext {
 /// The semantic face a rule selects.
 ///
 /// A face is a ROLE, not an addressing shape: several
-/// [`ChannelIdentityShape`]s can wear one face, and the host classifies its own
+/// [`ChannelIdentityShape`](crate::channel_identity::ChannelIdentityShape)s can wear one face, and the host classifies its own
 /// identities into faces before asking for a decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChannelIdentityFace {

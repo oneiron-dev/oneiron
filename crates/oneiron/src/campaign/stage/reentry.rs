@@ -168,9 +168,9 @@ pub struct ReentryPlan {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] when the plan does not restart at touch 1, when
+/// [`Error::InvalidClaimBody`](crate::Error::InvalidClaimBody) when the plan does not restart at touch 1, when
 /// the named claim is not a live `campaign.member` head, or when its subject or
-/// campaign disagrees with the plan. [`Error::EntityNotFound`] from CA-03 for an
+/// campaign disagrees with the plan. [`Error::EntityNotFound`](crate::Error::EntityNotFound) from CA-03 for an
 /// unresolvable re-entry attempt. Claim-validation, queue, and storage errors
 /// propagate.
 pub fn snooze_with_wake(

@@ -9,7 +9,7 @@
 //!
 //! * `validate_calendar_claim_structure` is the byte-level half, wired into
 //!   the write-only validator chain in `crate::claim`. It sees a decoded
-//!   [`ClaimBody`] and no storage, so it enforces the subject *shape*
+//!   [`ClaimBody`](crate::ClaimBody) and no storage, so it enforces the subject *shape*
 //!   (`ClaimSubject::Entity`) plus the exact value shapes.
 //! * [`require_event_subject`] is the store-aware half, mirroring the
 //!   `comm.rs` PERSON-subject precedent. Subject *existence* is already

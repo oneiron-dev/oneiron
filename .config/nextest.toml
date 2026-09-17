@@ -6,9 +6,9 @@
 # collision class — the semaphore namespace is system-wide (ONE-1148).
 #
 # Tiers:
-#   * default (fast): `cargo nextest run -p oneiron [--features sync]`
+#   * default (fast): `cargo nextest run -p oneiron [--features sync,test-hooks]`
 #     — excludes the `slow` set below; the dev/agent inner loop.
-#   * full: `cargo nextest run -p oneiron --profile full [--features sync]`
+#   * full: `cargo nextest run -p oneiron --profile full [--features sync,test-hooks]`
 #     — everything; the pre-push gate and CI.
 #
 # `#[ignore]`d tests stay ignored in both tiers (nextest default; never add
@@ -50,8 +50,9 @@ default-filter = "all()"
 [profile.ci-pr]
 # PR-CI tier: the fast `default` filter (skips the slow set) BUT retries = 2,
 # so a transient flake doesn't red a PR. `default` stays retries = 0 for the
-# local fail-fast inner loop (ONE-1144) — CI must NOT inherit that. Selected
-# for pull_request events in .github/workflows/ci.yml; main pushes use `full`.
+# local fail-fast inner loop (ONE-1144). This is a legacy opt-in profile:
+# .github/workflows/ci.yml uses `full` for PRs and main pushes. Do not switch
+# those gates to this profile: it would drop their slow-test coverage.
 retries = 2
 default-filter = """
 not (

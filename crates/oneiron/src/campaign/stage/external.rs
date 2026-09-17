@@ -42,7 +42,7 @@ pub struct ExternalStageEvidenceHook {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] when the hook carries no evidence references,
+/// [`Error::InvalidClaimBody`](crate::Error::InvalidClaimBody) when the hook carries no evidence references,
 /// when its class disagrees with the configured transition, or when an
 /// owner-attested basis is not admissible (see `require_owner_attestable`).
 /// Projector and storage errors propagate.

@@ -60,7 +60,7 @@ pub fn linear_operation_id(
 }
 
 /// The durable identity of one inbound tracker event, as stored in
-/// [`TaskIssueLink::seen_event_digests`].
+/// [`TaskIssueLink::seen_event_digests`](crate::TaskIssueLink::seen_event_digests).
 ///
 /// Binds the issue, so an event id a tracker only makes unique per issue cannot
 /// mask a different issue's event. Deliberately free of `updated_at`: a

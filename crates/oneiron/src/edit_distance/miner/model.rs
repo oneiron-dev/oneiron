@@ -134,7 +134,7 @@ pub enum MinedSkillEditVerdict {
     /// The edit was applied through the gated apply door.
     Accepted,
     /// The decider refused it. The cluster goes quiet for
-    /// [`MINER_REJECTION_COOLDOWN_SECS`].
+    /// [`MINER_REJECTION_COOLDOWN_SECS`](crate::edit_distance::miner::MINER_REJECTION_COOLDOWN_SECS).
     Rejected,
 }
 

@@ -11,7 +11,7 @@
 //! Exactly three v1 connector shapes exist, and the enum is closed on purpose:
 //!
 //! 1. [`ByoaConnectorSpec::Endpoint`] — a provider-neutral endpoint config that
-//!    a host factory resolves into an existing [`LlmBackend`]. The provider
+//!    a host factory resolves into an existing [`LlmBackend`](crate::LlmBackend). The provider
 //!    codecs stay host-owned; this module never speaks a wire protocol.
 //! 2. [`ByoaConnectorSpec::ProtocolAttach`] — MCP, and only MCP. A2A gets no
 //!    variant here, so an A2A attach is a compile error rather than a runtime
@@ -21,7 +21,7 @@
 //!    anywhere in this module, and no direct socket: network access exists
 //!    only through an injected [`ByoaEgressPort`].
 //!
-//! Credentials cross this seam as [`SandboxCredentialHandle`] references and
+//! Credentials cross this seam as [`SandboxCredentialHandle`](crate::code_sandbox::SandboxCredentialHandle) references and
 //! never as bytes. That is the whole redaction story: there is no secret in
 //! any type here to leak into an attempt payload, a `Debug` rendering, or a
 //! terminal receipt, because none of them ever holds one.

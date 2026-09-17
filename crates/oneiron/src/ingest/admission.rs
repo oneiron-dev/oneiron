@@ -16,7 +16,7 @@ pub struct ImportedEvidenceEntityResolution {
     /// The resolved subject every admitted claim is written against.
     ///
     /// Waterfall-driven callers pass the `selected` subject of a NON-provisional
-    /// [`EntityResolutionWaterfallDecision`]. A provisional decision selects
+    /// [`EntityResolutionWaterfallDecision`](crate::EntityResolutionWaterfallDecision). A provisional decision selects
     /// nothing, and inventing a subject for it here would defeat the band that
     /// declined to link — a provisional mention belongs to whatever path mints
     /// provisional entities, not to this admission door.

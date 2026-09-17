@@ -48,9 +48,9 @@ pub enum RolloutRung {
     /// Compute and persist; reach nothing. The default for every scope.
     #[default]
     Shadow,
-    /// Informational: visible on [`routing_data_bar`], still feeding nothing.
+    /// Informational: visible on [`routing_data_bar`](crate::edit_distance::routing::routing_data_bar), still feeding nothing.
     DataBar,
-    /// [`routing_weight_hint`] answers for this task class.
+    /// [`routing_weight_hint`](crate::edit_distance::routing::routing_weight_hint) answers for this task class.
     Graduated,
 }
 
@@ -102,7 +102,7 @@ pub struct RoutingScopeStats {
     pub rung: RolloutRung,
     /// Judged amendments folded into this scope.
     pub runs: u64,
-    /// The same pair [`routing_weight_hint`] would return, shown here whether
+    /// The same pair [`routing_weight_hint`](crate::edit_distance::routing::routing_weight_hint) would return, shown here whether
     /// or not the scope has graduated.
     pub hint: WeightHint,
 }

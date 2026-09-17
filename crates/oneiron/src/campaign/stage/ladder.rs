@@ -37,7 +37,7 @@ pub enum PromotionMode {
 ///
 /// Deliberately not serde-derived: [`EntityId`] carries no serde impl and
 /// `entity_id.rs` is a CA non-claim, so evidence references cross a wire through
-/// CA-01's [`encode_crm_stage_value`] rather than a second serialization of the
+/// CA-01's [`encode_crm_stage_value`](crate::campaign::claims::encode_crm_stage_value) rather than a second serialization of the
 /// same refs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageEvidence {
@@ -167,7 +167,7 @@ pub struct StageLadderDefinition {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] with a distinct static reason per rejection:
+/// [`Error::InvalidClaimBody`](crate::Error::InvalidClaimBody) with a distinct static reason per rejection:
 /// empty ladder or stage key, duplicate stage, transition touching an undeclared
 /// stage, duplicate or ambiguous transition, a reply code routed twice, or a
 /// reply route promoting into an undeclared stage.

@@ -86,7 +86,7 @@ pub(super) fn put_amendment_row_in_txn(
 ///
 /// # Errors
 ///
-/// Storage errors, and [`Error::CorruptedIndex`] on an undecodable row.
+/// Storage errors, and [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn amendment_delta(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentDelta>> {
     let rtxn = vault.store.env.read_txn()?;
     let Some(row) = amendment_delta_in_txn(vault, &rtxn, receipt_id)? else {

@@ -83,7 +83,7 @@ pub(in crate::sync) fn enqueue_tombstone_reassert_marker(
 
 /// Lists DISTINCT windows with pending `ra:` re-assertion markers.
 ///
-/// Fail closed like [`pending_remat_windows`]: a row under `ra:w:` missing
+/// Fail closed like [`pending_remat_windows`](crate::sync::pending_remat_windows): a row under `ra:w:` missing
 /// the entity segment (or otherwise unparsable) is still surfaced — its
 /// whole remainder is reported as the pending window. A re-assertion intent
 /// is never dropped by a read.
@@ -141,7 +141,7 @@ fn pending_reassert_markers(
 }
 
 /// Outcome of a [`drain_reassert_markers`] pass — same shape as
-/// [`RematDrainReport`].
+/// [`RematDrainReport`](crate::sync::RematDrainReport).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReassertDrainReport {
     /// Windows whose `ra:` markers ALL re-asserted + cleared.
@@ -166,7 +166,7 @@ pub struct ReassertDrainReport {
 /// txn; this is doc-side repair only (no `fr:` marker, no `q:` scrub).
 ///
 /// Call sites: maintenance/doctor surfaces (alongside
-/// [`drain_remat_markers`]) and inline in the bulk-transfer door
+/// [`drain_remat_markers`](crate::sync::drain_remat_markers)) and inline in the bulk-transfer door
 /// (`SyncClient::handle_bulk_transfer_done`), scoped to that window.
 pub fn drain_reassert_markers(
     vault: &Arc<Vault>,

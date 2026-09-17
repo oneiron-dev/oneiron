@@ -31,7 +31,7 @@ pub struct TrustTableRow {
     pub grant_ref: Option<String>,
     /// Whether the history clears [`Self::threshold`] right now. Distinct from
     /// `state == Offered` only in that it survives the read: it is what
-    /// [`OfferAnswer::GoAuto`] may act on.
+    /// [`OfferAnswer::GoAuto`](crate::edit_distance::graduation::OfferAnswer::GoAuto) may act on.
     pub offer_is_earned: bool,
 }
 
@@ -41,7 +41,7 @@ pub struct TrustTableRow {
 ///
 /// # Errors
 ///
-/// [`Error::CorruptedIndex`] on an unreadable stats, threshold or answer row,
+/// [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an unreadable stats, threshold or answer row,
 /// plus storage failures.
 pub fn trust_table(vault: &Vault) -> Result<Vec<TrustTableRow>> {
     let rtxn = vault.store.env.read_txn()?;
