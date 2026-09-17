@@ -32,6 +32,8 @@ record = {
     "command": command,
     "rustdocflags": os.environ.get("RUSTDOCFLAGS"),
     "encoded_rustdocflags": os.environ.get("CARGO_ENCODED_RUSTDOCFLAGS"),
+    "nextest_user_config": os.environ.get("NEXTEST_USER_CONFIG_FILE"),
+    "nextest_retries": os.environ.get("NEXTEST_RETRIES"),
 }
 with log.open("a") as stream:
     stream.write(json.dumps(record) + "\n")
@@ -58,6 +60,14 @@ COMMANDS = [["codemap"], *[
     command[command.index("cargo"):] for _, command in GATES[1:]
 ]]
 COMMAND_BY_STAGE = dict(zip((stage for stage, _ in GATES), COMMANDS))
+FEATURELESS_NEXTEST = [
+    "env", "NEXTEST_USER_CONFIG_FILE=none", "cargo", "nextest", "run", "-p", "oneiron",
+    "--lib", "--no-default-features", "--profile", "featureless", "--test-threads", "8", "--retries", "0",
+]
+OPT_IN_GATES = [(stage, FEATURELESS_NEXTEST if stage == "test-featureless" else command)
+                for stage, command in GATES]
+OPT_IN_COMMANDS = [FEATURELESS_NEXTEST[2:] if stage == "test-featureless" else command
+                   for (stage, _), command in zip(GATES, COMMANDS)]
 
 
 class VerifyCase(unittest.TestCase):
@@ -77,7 +87,7 @@ class VerifyCase(unittest.TestCase):
         self.log = self.cwd / "commands.jsonl"
         self.env = {
             key: value for key, value in os.environ.items()
-            if not key.startswith("VERIFY_TEST_") and key != "LEG"
+            if not key.startswith("VERIFY_TEST_") and key not in ("LEG", "ONEIRON_FEATURELESS_RUNNER")
         }
         self.env.update(PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}",
                         VERIFY_TEST_LOG=str(self.log), VERIFY_TEST_OS="Linux")
@@ -138,6 +148,8 @@ class VerifyCase(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(self.commands(), [])
                 self.assertIn("--list", result.stdout)
+                self.assertIn("ONEIRON_FEATURELESS_RUNNER", result.stdout)
+                self.assertIn("nextest-8", result.stdout)
                 self.assertIn(f"run all {len(GATES)} scripted stages", result.stdout)
                 self.assertNotIn("\nVERIFY-OK\n", result.stdout)
                 self.assertNotIn("VERIFY-STAGE-", result.stdout)
@@ -158,6 +170,67 @@ class VerifyCase(unittest.TestCase):
         self.assertEqual(self.commands(), COMMANDS)
         self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-OK")
         self.assert_stage_timing(result.stdout, [stage for stage, _ in GATES])
+
+    def test_explicit_libtest_selection_keeps_the_default_commands_and_environment(self):
+        result = self.run_script(env={
+            "ONEIRON_FEATURELESS_RUNNER": "libtest",
+            "NEXTEST_USER_CONFIG_FILE": "fixture-user-config.toml",
+        })
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), COMMANDS)
+        self.assertEqual([record["nextest_user_config"] for record in self.records()],
+                         ["fixture-user-config.toml"] * len(GATES))
+
+    def test_featureless_nextest_opt_in_changes_only_the_selected_stage(self):
+        result = self.run_script(env={
+            "ONEIRON_FEATURELESS_RUNNER": "nextest-8",
+            "NEXTEST_USER_CONFIG_FILE": "fixture-user-config.toml",
+            "NEXTEST_RETRIES": "1",
+        })
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), OPT_IN_COMMANDS)
+        self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-OK")
+        self.assert_stage_timing(result.stdout, [stage for stage, _ in GATES])
+        expected_config = ["none" if stage == "test-featureless" else "fixture-user-config.toml"
+                           for stage, _ in GATES]
+        self.assertEqual([record["nextest_user_config"] for record in self.records()], expected_config)
+        # The CLI pins zero only for this stage; no child's ambient env is unset.
+        self.assertEqual([record["nextest_retries"] for record in self.records()], ["1"] * len(GATES))
+
+    def test_featureless_nextest_list_shows_the_selected_command_without_executing(self):
+        result = self.run_script("--list", env={"ONEIRON_FEATURELESS_RUNNER": "nextest-8"})
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), [])
+        listed = [(stage, shlex.split(command))
+                  for stage, command in (line.split("\t", 1) for line in result.stdout.splitlines())]
+        self.assertEqual(listed, OPT_IN_GATES)
+        self.assertNotIn("VERIFY-OK", result.stdout)
+        self.assertNotIn("VERIFY-STAGE-", result.stdout)
+
+    def test_invalid_featureless_selection_fails_before_any_command(self):
+        for selection in ("", "nextest", "nextest-16", "unknown"):
+            for args in ((), ("--list",)):
+                with self.subTest(selection=selection, args=args):
+                    result = self.run_script(*args, env={"ONEIRON_FEATURELESS_RUNNER": selection})
+                    self.assertEqual(result.returncode, 2, result.stdout)
+                    self.assertEqual(self.commands(), [])
+                    self.assertIn("VERIFY-FAIL-usage", result.stdout)
+                    self.assertNotIn("\nVERIFY-OK\n", result.stdout)
+                    self.assertNotIn("VERIFY-STAGE-", result.stdout)
+
+    def test_featureless_nextest_failure_stops_before_doctests(self):
+        index = next(i for i, (stage, _) in enumerate(GATES, 1) if stage == "test-featureless")
+        for status, output in (("7", "fixture failure"), ("0", "error[E0308]: fixture error")):
+            with self.subTest(status=status):
+                result = self.run_script(env={
+                    "ONEIRON_FEATURELESS_RUNNER": "nextest-8", "VERIFY_TEST_FAIL_CALL": str(index),
+                    "VERIFY_TEST_EXIT": status, "VERIFY_TEST_OUTPUT": output,
+                })
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(self.commands(), OPT_IN_COMMANDS[:index])
+                self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-FAIL-test-featureless")
+                self.assertNotIn("VERIFY-OK", result.stdout)
+                self.assert_stage_timing(result.stdout, [stage for stage, _ in GATES[:index]])
 
     def test_rustdoc_denies_warnings_without_changing_other_stage_environments(self):
         # Cargo gives encoded flags precedence even when their value is empty.
