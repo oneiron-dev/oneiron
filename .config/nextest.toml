@@ -62,3 +62,10 @@ not (
   | (binary(=it_sync) & test(/^sync_convergence_props::/))
 )
 """
+
+# Strict featureless alternative: all tests, the existing #[ignore] set, no retries.
+# Measurements support an 8-slot opt-in on the Mac mini; Linux keeps libtest.
+# Use --test-threads 8 explicitly when reproducing that bounded measurement.
+[profile.featureless]
+default-filter = "all()"
+retries = 0

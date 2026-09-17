@@ -15,6 +15,13 @@ exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "cra
 [profile.dev]
 debug = 1
 
+# Warm non-incremental core builds benefit from more LLVM codegen units.
+# This matches the ordinary incremental default count, not a measured edit-loop
+# speedup. Only oneiron dev/test units change; release and other packages do not.
+# Host-specific measurements and tradeoffs: docs/ops/build-performance.md.
+[profile.dev.package.oneiron]
+codegen-units = 256
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
