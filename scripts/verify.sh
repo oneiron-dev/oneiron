@@ -50,10 +50,16 @@ run_stage() {
     return
   fi
   echo "=== verify: ${stage}: $* ==="
-  local out rc
+  local out rc started finished
+  # Bash SECONDS measures elapsed wall time since script start, not CPU time.
+  # Emit the start before the command: its output stays buffered until it exits.
+  started=$SECONDS
+  echo "VERIFY-STAGE-START ${stage} wall_elapsed=${started}s"
   out="$("$@" 2>&1)"; rc=$?
+  finished=$SECONDS
   # Full output into the log (tee'd by the caller) — never grep-consumed.
   printf '%s\n' "$out"
+  echo "VERIFY-STAGE-END ${stage} wall_elapsed=${finished}s wall_duration=$((finished - started))s"
   if [ $rc -ne 0 ] || printf '%s\n' "$out" | grep -qE "$ERR_RE"; then
     echo "VERIFY-FAIL-${stage}"
     exit 1

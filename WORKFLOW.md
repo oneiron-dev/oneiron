@@ -52,7 +52,8 @@ logs, GitHub checks, and resolved review threads are the evidence that wins.
 - Claim the Linear ticket and move it to `In Progress` before implementation.
 - Maintain one Linear workpad comment with plan, PR link, gate results, review
   status, and blockers. Avoid routine per-step status comments.
-- Open the PR as a draft while work is still converging. Link it from Linear.
+- When publication is authorized, open the PR ready for review (never draft)
+  so CI and cloud-reviewer bots run. Link it from Linear.
 - When the local gate and GitHub checks are green, required review policy has
   been satisfied, and blocking comments are resolved, move the ticket to
   `In Review` with the PR link and gate summary.
@@ -132,7 +133,7 @@ Use risk-scaled review:
 
 GitHub cloud-reviewer bots are part of the normal review loop. Triage every
 substantive bot thread as `Fix`, `Follow-up`, or `Dismissed`; fix in-scope
-correctness or safety issues before undrafting.
+correctness or safety issues before merge.
 
 There is no default human-review gate. Stop for human review only when there is
 a true unresolved correctness or safety blocker, or when the change would deploy
@@ -142,11 +143,15 @@ an irreversible production effect.
 
 1. Commit the scoped change with a normal area-prefixed message such as
    `docs: update workflow policy`.
-2. Push the branch and open a draft PR with `## Summary` and `## Test plan`.
-3. Keep the PR in draft while local gate, GitHub CI, required cloud-reviewer
-   bot checks, and required `/fusion` review are still unresolved.
-4. When local gate and GitHub checks are green and blocking comments are fixed
-   or explicitly resolved, mark the PR ready for review.
+2. When publication is authorized, push the branch and open a ready-for-review
+   (non-draft) PR with `## Summary` and `## Test plan`. Do not use `--draft`:
+   draft PRs do not trigger the required CI and cloud-reviewer bots.
+3. Keep the PR ready for review while local gate, GitHub CI, required
+   cloud-reviewer bot checks, and required `/fusion` review converge. Ready
+   status starts review; it is not permission to merge.
+4. Fix or explicitly resolve blocking comments and wait for the local gate,
+   GitHub checks, and required reviews to pass on the final branch tip. Do not
+   enable auto-merge while any merge-gate condition is unresolved.
 5. Before merge, rehearse mergeability against current `origin/main` without
    touching `main`.
 6. Enable GitHub auto-merge once the merge rehearsal is clean and the PR remains
