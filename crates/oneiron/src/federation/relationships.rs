@@ -85,7 +85,7 @@ pub enum MemberRelationship {
 /// non-Active, and malformed claims never enter either contest.
 ///
 /// This reads only `member_ref`, so it is total over every
-/// [`FederationGrantRole`] — a Delegate resolves exactly like an Owner.
+/// [`FederationGrantRole`](crate::federation::FederationGrantRole) — a Delegate resolves exactly like an Owner.
 pub fn resolve_member_relationship(
     vault: &Vault,
     member_ref: EntityId,

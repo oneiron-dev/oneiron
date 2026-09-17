@@ -35,7 +35,7 @@ pub const MAX_QUARANTINE_ROWS: usize = 4096;
 /// batch would let a single admission both cost O(N) row writes AND flush the
 /// SHARED 4096-row ring, destroying unrelated evidence. Rows past this bound
 /// are accounted by COUNT (`m:quarantine_batch_drops`, doctor-visible as
-/// [`SyncQuarantineReport::batch_drop_count`]) instead of by row — the reason
+/// [`SyncQuarantineReport::batch_drop_count`](crate::sync::SyncQuarantineReport::batch_drop_count)) instead of by row — the reason
 /// code is uniform within a pass, so the (N - cap)th typed row carries no
 /// information the first cap rows do not already carry.
 pub const MAX_QUARANTINE_ROWS_PER_PASS: usize = 64;

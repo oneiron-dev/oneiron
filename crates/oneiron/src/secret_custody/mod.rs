@@ -45,8 +45,8 @@
 //!   shared by every security consumer of that plane:
 //!   `policy_manifest_bodies_strict`;
 //! * floor resolution over those bodies: [`SecretCustodyFloor::resolve`];
-//! * the `Vault` doors: [`Vault::register_secret`],
-//!   [`Vault::resolve_secret_ref`], [`Vault::get_secret_metadata`], and the
+//! * the `Vault` doors: [`Vault::register_secret`](crate::Vault::register_secret),
+//!   [`Vault::resolve_secret_ref`](crate::Vault::resolve_secret_ref), [`Vault::get_secret_metadata`](crate::Vault::get_secret_metadata), and the
 //!   SECRET-02 value-read door `Vault::get_secret_value_in_txn`.
 //!
 //! Companion [`crate::secret_manifest`] owns the repo-side TOML declaration

@@ -100,7 +100,7 @@ pub struct OutboundIntentReceipt {
     /// the first schedule's outcome (absent only if its binding is missing).
     pub gate_outcome: Option<String>,
     /// Persisted gate decision ref (`gate:<hex>`), queryable via
-    /// [`Memory::receipts`]. On dedupe this re-surfaces the first
+    /// [`Memory::receipts`](crate::Memory::receipts). On dedupe this re-surfaces the first
     /// schedule's decision (absent only if its binding is missing).
     pub gate_decision_ref: Option<String>,
     /// Gate reason codes.

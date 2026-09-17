@@ -144,7 +144,7 @@ pub fn attribution_audit_reports(vault: &Vault) -> Result<Vec<AttributionAuditRe
 /// leak the answer key into its own inputs.
 ///
 /// These ids are never resolved against the receipt ledger: fixtures go
-/// straight to the judge, never through [`record_attribution_evidence`].
+/// straight to the judge, never through [`record_attribution_evidence`](crate::skill_attribution::record_attribution_evidence).
 ///
 /// Subject ids are minted fresh per call. They are never written to the vault —
 /// the routing table reasons over the outcome and the two routing facts, so the

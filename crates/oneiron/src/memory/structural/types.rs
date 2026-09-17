@@ -44,7 +44,7 @@ pub struct StructuralPutInput {
     /// Caller-supplied deterministic 32-hex id; `None` ⇒ generated.
     pub id: Option<String>,
     /// Registry kind string (`MESSAGE`, `PERSON`, `TASK`, `ASSET`, …).
-    /// `CLAIM` is rejected — claims go through [`Memory::commit`].
+    /// `CLAIM` is rejected — claims go through [`Memory::commit`](crate::Memory::commit).
     pub kind: String,
     /// Entity body as a JSON object (stored as MessagePack).
     pub body: serde_json::Value,

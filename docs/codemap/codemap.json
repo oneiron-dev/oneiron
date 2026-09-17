@@ -27454,7 +27454,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
-     "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`] seam",
+     "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`](oneiron::LlmBackend) seam",
      "surface": {
       "re-export": 4
      }
@@ -27499,11 +27499,11 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
-     "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`] seam"
+     "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`](oneiron::LlmBackend) seam"
     }
    },
    "over_bar": 0,
-   "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`] seam",
+   "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`](oneiron::LlmBackend) seam",
    "source_files": 7,
    "test_files": 1
   },

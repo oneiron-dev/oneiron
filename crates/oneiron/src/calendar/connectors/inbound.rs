@@ -35,7 +35,7 @@ use crate::vault::Vault;
 ///
 /// Killed seats short-circuit with [`CalendarSyncOutcome::Killed`]: no transport
 /// call, no claim, no re-enqueue. Otherwise the run pulls from the seat cursor,
-/// re-parses every upsert through [`super::ics::parse_ics_feed`], classifies it
+/// re-parses every upsert through [`parse_ics_feed`](crate::calendar::parse_ics_feed), classifies it
 /// against the live passport, applies semantic changes through the CAL-02
 /// Gate-backed imported-evidence door, and re-enqueues one attempt inside the
 /// configured jitter window.

@@ -206,7 +206,7 @@ impl Vault {
     /// Lists durable publication ids for read-only diagnostics, in every status.
     ///
     /// `None` includes every repository. The scan refuses after
-    /// [`ORIGIN_PUBLICATION_MAX_ROWS`] rows rather than returning a partial list.
+    /// [`ORIGIN_PUBLICATION_MAX_ROWS`](crate::origin::publication::ORIGIN_PUBLICATION_MAX_ROWS) rows rather than returning a partial list.
     /// Use [`Vault::origin_publication`] to inspect a record. This list is not
     /// advertisement authority; only [`Vault::published_origin_refs`] proves
     /// that a ref may be served.

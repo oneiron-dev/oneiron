@@ -8,6 +8,13 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # `crates/heed/PROVENANCE.md`.
 exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15"]
 
+# Limited debug information keeps file/line backtraces while reducing build CPU,
+# peak memory and target size. Tests inherit this profile. For debugger locals:
+# CARGO_PROFILE_DEV_DEBUG=2 cargo ... . Release defaults are unchanged.
+# Measurements and tradeoffs: docs/ops/build-performance.md.
+[profile.dev]
+debug = 1
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

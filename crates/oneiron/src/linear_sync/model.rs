@@ -23,7 +23,7 @@ pub const LINEAR_SYNC_SCHEMA_VERSION: u8 = 3;
 /// never be read back as the newer one.
 pub const LINEAR_SYNC_LINK_KEY_PREFIX: &[u8] = b"linear_sync:link:v3:";
 
-/// Domain separator for [`linear_operation_id`]; pinned, because operation ids
+/// Domain separator for [`linear_operation_id`](crate::linear_operation_id); pinned, because operation ids
 /// are compared across processes and replicas to suppress duplicate writes.
 pub const LINEAR_SYNC_OPERATION_DOMAIN: &[u8] = b"oneiron:linear-sync-op:v1";
 
@@ -212,7 +212,7 @@ pub struct TaskIssueLink {
     /// next outbound push carries the FULL local snapshot and would overwrite
     /// it anyway — silent last-write-wins through the back door. While a field
     /// still holds the value that conflicted,
-    /// [`LinearSyncAdapter::push_task`] re-surfaces the conflict instead of
+    /// [`LinearSyncAdapter::push_task`](crate::LinearSyncAdapter::push_task) re-surfaces the conflict instead of
     /// calling the egress.
     ///
     /// Resolution stays evidence-based and needs no new API: a later explicit

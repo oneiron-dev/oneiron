@@ -32,7 +32,7 @@ impl Vault {
     /// value. `apply` returns only `()`: the value cannot come back through
     /// the closure's return type, and the workspace receives only the
     /// [`DoorInjectionReceipt`]. The receipt carries no value bytes; the
-    /// value is wrapped in [`Zeroizing`] for the door's own lifetime and
+    /// value is wrapped in [`Zeroizing`](zeroize::Zeroizing) for the door's own lifetime and
     /// scrubbed on drop.
     ///
     /// The door receipt is the return token only — the door CALLER
@@ -70,7 +70,7 @@ impl Vault {
 
     /// T1 lease materialization. Admits `T1Leased` under the one admission
     /// rule, then writes the [`SecretLease`] row and its
-    /// [`SecretMaterializationReceipt`] durable BEFORE the value returns —
+    /// [`SecretMaterializationReceipt`](crate::secret_lease::SecretMaterializationReceipt) durable BEFORE the value returns —
     /// receipt-at-materialization (S3). One write txn carries both rows, so
     /// a failed receipt write leaves no lease row and returns no value (the
     /// `#[cfg(test)]` fault hook proves it). Expiry is lazy: the lease is

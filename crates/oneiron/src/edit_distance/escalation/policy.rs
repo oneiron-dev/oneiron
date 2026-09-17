@@ -16,7 +16,7 @@ use crate::vault::Vault;
 // Standing policy
 // ---------------------------------------------------------------------------
 
-/// Proposes a standing policy when the newest [`escalation_standing_n`] rulings
+/// Proposes a standing policy when the newest [`escalation_standing_n`](crate::edit_distance::escalation::escalation_standing_n) rulings
 /// on `(scope, trigger)` agree, returning the new row's handle.
 ///
 /// `None` — never an error — for every ordinary reason not to propose: too

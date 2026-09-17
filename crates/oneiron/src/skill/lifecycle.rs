@@ -28,7 +28,7 @@
 ///   rejects a transition into `Quarantined` stamped `approval = auto`.
 /// - **`Superseded` is terminal for the revision** (not for the skill): the
 ///   old revision is frozen and never loads as canon; continuing the skill
-///   means admitting a new revision ([`Vault::supersede_skill_record`]).
+///   means admitting a new revision ([`Vault::supersede_skill_record`](crate::Vault::supersede_skill_record)).
 /// - **Identity/alignment-tier skills never enter the auto-edit loop** at
 ///   all (ratified with the SKILL-CONV/SKILL-OPT wave, ONE-1446..1449); the
 ///   auto-edit loop is SKILL-OPT machinery and enforces that law at its own

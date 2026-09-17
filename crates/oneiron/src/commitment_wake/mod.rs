@@ -8,7 +8,7 @@
 //!   the two crate-private transaction twins this module consumes. Nothing
 //!   here reads or writes a due-index key.
 //! * CMT-1 ([`crate::commitment`]) owns the obligation record. Only
-//!   [`CommitmentStrength::Commitment`] reaches the wake path: a `Decision` is
+//!   [`CommitmentStrength::Commitment`](crate::commitment::CommitmentStrength::Commitment) reaches the wake path: a `Decision` is
 //!   query/check-in material and a `StatedIntention` is retrieval-only.
 //! * The Dreamer ([`crate::dreamer_wake`]) owns wake enqueue and attempt
 //!   execution. The wake is an ordinary `WakeTrigger::Event` MICRO attempt and

@@ -234,7 +234,7 @@ fn derive_cause(
 /// `event` was detected under becomes the query's baseline, so detections under
 /// it route as ordinary data movement again.
 ///
-/// This is the engine half of [`EnrollmentExecution::ReviewRequired`]. Without
+/// This is the engine half of [`EnrollmentExecution::ReviewRequired`](crate::campaign::enrollment::EnrollmentExecution::ReviewRequired). Without
 /// it the routing rule would be a wall rather than a dial — every detection
 /// under a moved definition would report the move forever and the owner's
 /// ruling would have nowhere to land. Presenting the review is later surface

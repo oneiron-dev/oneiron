@@ -271,7 +271,7 @@ fn leaf_count(value: &Value) -> u32 {
 /// (text typed and then replaced) is invisible to it, and a rewrite that
 /// happens to land back on the proposed text scores zero. What it can do that
 /// neither other lane can is recognize a MOVE: relocated lines land in
-/// [`OpsSummary::moved`] at [`MOVE_DISCOUNT`] rather than being charged twice
+/// [`OpsSummary::moved`] at [`MOVE_DISCOUNT`](crate::edit_distance::myers::MOVE_DISCOUNT) rather than being charged twice
 /// as a deletion and an insertion.
 ///
 /// The refs are the two texts' own blake3 hashes, so a consumer can verify

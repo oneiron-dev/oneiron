@@ -111,7 +111,7 @@ pub fn skill_optimize_call_purpose() -> CallPurpose {
     }
 }
 
-/// Reads everything [`run_skill_optimize`] hands the author for one candidate.
+/// Reads everything [`run_skill_optimize`](crate::skill_optimize::run_skill_optimize) hands the author for one candidate.
 ///
 /// # Errors
 ///

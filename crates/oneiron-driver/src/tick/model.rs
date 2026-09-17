@@ -27,8 +27,8 @@ pub struct CommitmentDeadline {
 }
 
 /// Wake-class push payload: names the trigger and the consolidation lane
-/// the resulting pass should drain. Only a [`WakePusher`] can inject one
-/// into a [`PushTick`] channel.
+/// the resulting pass should drain. Only a [`WakePusher`](crate::WakePusher) can inject one
+/// into a [`PushTick`](crate::PushTick) channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakeSignal {
     pub trigger: WakeTrigger,

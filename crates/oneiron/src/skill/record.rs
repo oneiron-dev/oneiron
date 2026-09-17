@@ -127,7 +127,7 @@ pub struct SkillRecord {
     pub dependencies: Vec<SkillDependency>,
     pub provenance: Value,
     /// Canonical identity layer: SHA-256 over the canonicalized file tree
-    /// ([`canonical_skill_tree_hash`]). `None` when the identity has not
+    /// ([`canonical_skill_tree_hash`](crate::skill::canonical_skill_tree_hash)). `None` when the identity has not
     /// been computed yet (legacy rows, records without a materialized
     /// tree). Hub refs are NOT here — they are the separate mutable
     /// alias/provenance layer (provenance rows; structured `hub_ref`
@@ -202,7 +202,7 @@ impl SkillRecord {
     }
 
     /// Sets the fork-lineage parent (normally stamped by
-    /// [`Vault::fork_skill_record`], not by hand).
+    /// [`Vault::fork_skill_record`](crate::Vault::fork_skill_record), not by hand).
     #[must_use]
     pub fn with_forked_from(mut self, parent: EntityId) -> Self {
         self.forked_from = Some(parent);

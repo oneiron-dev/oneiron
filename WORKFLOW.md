@@ -18,10 +18,34 @@ logs, GitHub checks, and resolved review threads are the evidence that wins.
 - Keep the diff scoped to the ticket. No opportunistic refactors, dependency
   churn, config churn, test deletion, or public API movement unless the ticket
   requires it.
-- Use `rtk` for shell commands, `rg` for text search, `ast-grep` for syntax
-  shape or codemod work, and semantic tooling for symbol identity or references.
+- Use `rg` for text search; use `rtk`, `ast-grep`, and semantic tooling when
+  available. Missing optional wrappers do not block the native commands.
 - `scripts/review-pr.sh` does not exist; it was deleted as dead. Any reference
   to it is stale — do not try to run it.
+
+### Parallel agents and build ownership
+
+- Give each writer a file scope and a dedicated worktree. The coordinator
+  integrates changes and runs the final gate; context-only agents need no builds.
+- Before Cargo starts, assign a host CPU/RAM budget and a target directory.
+  Concurrent writers use separate targets: the worktree's default `target/`, or
+  an explicitly assigned absolute `CARGO_TARGET_DIR`. Check inherited environment
+  settings first; do not accidentally reuse a runner's `~/ci/target`.
+- A shared target is an explicit, **serialized** mode. Never run Cargo or cache
+  cleanup there while another writer/runner owns it. Cargo lock waits are not a
+  reason to launch duplicate builds or delete artifacts. Separate targets avoid
+  target-lock contention, but do not create more CPU, RAM, or disk capacity.
+- The coordinator bounds Cargo compilation (`CARGO_BUILD_JOBS` or `-j`) and
+  nextest execution (`--test-threads`) separately. Do not give every agent the
+  host's full core count. Record host, target, feature set, and these limits in
+  gate evidence. Scope overrides to the task, not global Cargo config.
+- Use Arch Linux for reference full-gate coverage. Mac mini and MacBook use the
+  same commands and toolchain, with the documented macOS exceptions in
+  `AGENTS.md`. Do not apply macOS `TMPDIR` paths on Linux or silently weaken a
+  full gate to make it pass on a different host.
+- Find the owning module through `docs/CODEMAP.md` and the per-crate map before
+  broad searches. Regenerate the maps after mapped facts change; never hand-edit
+  generated navigation. See `AGENTS.md` for generation and cheap fixture tests.
 
 ## 2. Linear Lifecycle
 
@@ -40,32 +64,55 @@ logs, GitHub checks, and resolved review threads are the evidence that wins.
 Run the full gate from the PR worktree after the final change. Repeat until all
 commands pass on the final branch tip.
 
-`scripts/verify.sh` is the single source of truth for the scripted gate — read
-it rather than copying commands here. It runs, in order: the code-map pin
-(`scripts/codemap/check.sh`), `cargo fmt --check` (members only, never `--all`
-— that would reformat the ONE-218 heed vendor),
-workspace clippy (`-D warnings`, all targets and features), featureless clippy
-(`-p oneiron --all-targets --no-default-features`), `cargo nextest run
---workspace --all-features --profile full`, `cargo test -p oneiron --lib
---no-default-features`, and `cargo test --doc --workspace --exclude
-oneiron-bench --all-features`.
+`scripts/verify.sh` is the single source of truth for the scripted gate. Use
+`scripts/verify.sh --list` to see the exact commands without running them;
+`--help` is also build-free. Scoped iteration commands are in `AGENTS.md` and
+are not substitutes for this gate.
+
+The nine scripted stages are code-map pin, fmt, workspace clippy, featureless
+clippy, server-production clippy, strict rustdoc, full workspace nextest,
+featureless library tests, and doctests. Formatting is members-only (`cargo fmt --check`, never `--all`,
+which follows the ONE-218 heed vendor). Server clippy deliberately omits
+`--all-targets` so test-only features cannot hide production errors. Workspace
+nextest excludes `oneiron-napi` for Linux linking; doctests exclude
+`oneiron-bench`. The rustdoc stage runs
+`env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps`
+after server clippy and before runtime tests. CI `Checks` runs the same command
+for Rust-relevant changes; documentation warnings are not a manual-only gate.
+The child command unsets inherited `CARGO_ENCODED_RUSTDOCFLAGS` because it overrides
+`RUSTDOCFLAGS` even when empty. Other stages keep their inherited environment.
 
 `nextest --profile full` is the canonical test tier and includes slow tests.
-Doctests run separately because nextest does not run them.
+Doctests run separately because nextest does not run them. Linux is the
+reference full-gate host: the unfiltered script still encounters the known
+macOS bench failures described in `AGENTS.md`. The macOS CI recipe is a separate,
+explicit platform lane; do not describe it as an unfiltered full-script pass.
 
-Two commands are current policy but are not yet wired into `scripts/verify.sh`
-— run them by hand until that gap closes:
+One current policy command is not yet wired into `scripts/verify.sh` — run the
+narrow sync lane by hand until that gap closes:
 
 ```bash
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 cargo nextest run -p oneiron --features sync,test-hooks --profile full
 ```
 
-For distributed runs, `scripts/verify-leg.sh` covers only the code-map pin,
-fmt, workspace clippy, partitioned nextest and doctests across
-`LEG=fmt-clippy|tests:1/2|tests:2/2`. No leg runs the two featureless stages,
-so the distributed gap is four commands: featureless clippy, featureless lib
-tests, and the two hand-run commands above.
+For distributed runs, `scripts/verify-leg.sh` covers the code-map pin, fmt,
+workspace clippy, partitioned full nextest, and doctests. The test legs exclude
+napi only on Linux; macOS keeps its existing napi coverage, unlike the full
+script's unconditional exclusion. Select `LEG=fmt-clippy`, `LEG=tests:1/2`,
+or `LEG=tests:2/2`.
+A pass across all three legs still needs **five** commands to close the gate:
+
+```bash
+cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+cargo clippy -p oneiron-server --all-features -- -D warnings
+cargo test -p oneiron --lib --no-default-features
+env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+cargo nextest run -p oneiron --features sync,test-hooks --profile full
+```
+
+Keep gate logs with the exact command, worktree revision, host, and environment
+choices. Discovery output is not gate evidence: only an executing full script
+can print `VERIFY-OK`, and the additional sync policy command needs its own log.
 
 For docs-only or comment-only PRs, still run formatting and no-op checks, then
 run the full cargo gate when practical. If a manager explicitly scopes the gate

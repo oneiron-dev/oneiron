@@ -22,7 +22,7 @@
 //!
 //! # Model
 //!
-//! A thread is identified by a `thread_id` ([`EntityId`]). All of a thread's
+//! A thread is identified by a `thread_id` ([`EntityId`](crate::EntityId)). All of a thread's
 //! claims take the blob artifact entity as their `subj` (the same subject the
 //! `blob.version` claim uses), so every thread + comment + brief for a workbook
 //! is reachable through one `claims_for_subject(artifact_id)` sweep — the read

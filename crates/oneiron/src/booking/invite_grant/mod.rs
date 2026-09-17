@@ -5,7 +5,7 @@
 //! nothing else. It is deliberately NOT a second send path:
 //!
 //! * **The gate still runs.** [`enqueue_confirm_invite`] builds an ordinary
-//!   [`OutboundDispatchRequest`] and hands it to
+//!   [`OutboundDispatchRequest`](crate::outbound::OutboundDispatchRequest) and hands it to
 //!   [`crate::Vault::dispatch_outbound_intent`], so the external-effect gate,
 //!   the opt-out wall, the rate/budget stage, the intent ledger, and the
 //!   connector adapter all execute exactly as they do for every other send.

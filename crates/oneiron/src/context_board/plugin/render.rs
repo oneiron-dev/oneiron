@@ -135,7 +135,7 @@ pub struct PluginProposalRow {
 ///
 /// A CONSTANT, not a manifest-supplied string: `PROPOSALS` is a core frame
 /// slot the engine owns, so no pack can name a section into it and no caller
-/// can rename it. It is deliberately not in [`CORE_SECTION_IDS`] — that list
+/// can rename it. It is deliberately not in [`CORE_SECTION_IDS`](crate::context_board::CORE_SECTION_IDS) — that list
 /// is the set of ids a plugin manifest may not CLAIM, and a plugin claiming
 /// `proposals` as its own section id is already refused by the id grammar
 /// plus the collision check on admitted ids.

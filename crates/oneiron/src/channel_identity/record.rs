@@ -76,7 +76,7 @@ impl ChannelIdentity {
     /// So the misuse is made UNSPELLABLE instead. `SelfHeldShape` has no
     /// `DelegatedGrant` variant, so there is no argument left that would need
     /// degrading. `Self::requested_delegated` — behind
-    /// [`Vault::provision_delegated_identity`], which mints a real custody
+    /// [`Vault::provision_delegated_identity`](crate::Vault::provision_delegated_identity), which mints a real custody
     /// proof — is the only delegated door.
     #[must_use]
     pub fn requested(

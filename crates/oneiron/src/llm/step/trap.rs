@@ -46,7 +46,7 @@ pub fn trap_park_owner(trap_claim_id: &EntityId) -> String {
 /// the private trap-binding row (attempt id + step hash + park owner) in ONE
 /// wtxn. The binding row is the device-local ground truth the consume path
 /// validates against — it never syncs and cannot be forged through claims.
-/// The budget path in [`call_as_step`] parks the attempt right after; consent
+/// The budget path in [`call_as_step`](crate::llm::call_as_step) parks the attempt right after; consent
 /// waits arrive via [`trap_for_durable_wait`].
 pub fn open_trap(
     vault: &Vault,

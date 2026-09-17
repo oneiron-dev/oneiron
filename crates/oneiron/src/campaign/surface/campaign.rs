@@ -21,7 +21,7 @@ pub const CAMPAIGN_NAME_MAX_BYTES: usize = 200;
 
 /// Lifecycle state of a campaign.
 ///
-/// Mirrors [`SavedQueryLifecycle`]'s archive-is-a-transition rule; a campaign
+/// Mirrors [`SavedQueryLifecycle`](crate::saved_query::SavedQueryLifecycle)'s archive-is-a-transition rule; a campaign
 /// has no paused state because it holds no evaluator to pause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CampaignLifecycle {

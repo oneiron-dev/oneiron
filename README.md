@@ -103,13 +103,21 @@ The default service vault convention is
 
 ```sh
 cargo build --release
-cargo nextest run -p oneiron                                # fast tier
-cargo nextest run -p oneiron --features sync --profile full # full tier (CI parity)
+cargo nextest run -p oneiron                                           # fast tier
+cargo nextest run -p oneiron --features sync,test-hooks --profile full  # narrow sync full tier
 ```
 
 Tests run via [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest`);
 profiles and the slow-test tier live in `.config/nextest.toml`. Plain
-`cargo test` still works.
+`cargo test` still works. The narrow sync test suite needs `test-hooks`; it is
+not the full workspace gate.
+
+For agent setup, scoped formatting/tests, and host requirements, start with
+[`AGENTS.md`](./AGENTS.md). [`WORKFLOW.md`](./WORKFLOW.md) covers parallel worktrees,
+build ownership, and full verification. `scripts/verify.sh --list` shows the
+scripted gate without building. The generated [`code map`](./docs/CODEMAP.md)
+links to each crate's file index; regenerate it with
+`python3 scripts/codemap/codemap.py` when mapped source facts change.
 
 ## Upgrade Notes
 

@@ -59,7 +59,7 @@ pub fn register_peer_result_wait(
 }
 
 /// Performs `Waiting→Sent` for a peer-assigned TASK that has reached a terminal
-/// record, and nothing else — resuming is [`consume_trap_signal`]'s job.
+/// record, and nothing else — resuming is [`consume_trap_signal`](crate::llm::consume_trap_signal)'s job.
 ///
 /// Returns the signal claim id when this call sent it, and `None` when there is
 /// nothing to do: no local delegation waits on this task, the task has not

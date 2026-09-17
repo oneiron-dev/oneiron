@@ -18,15 +18,15 @@
 //! "claims are truth, the record is cache" law the contact record follows.
 //!
 //! **What counts (§5).** Only two classes of outcome move the posterior:
-//! - β: an SK-04-routed [`AttributionVerdict::SkillDefect`] judgment — the
+//! - β: an SK-04-routed [`AttributionVerdict::SkillDefect`](crate::skill_attribution::AttributionVerdict::SkillDefect) judgment — the
 //!   skill's content was wrong.
 //! - α: a CONTRIBUTING WIN — a terminal pack receipt whose manifest loaded the
 //!   skill, whose attempt COMPLETED, and which SK-04 routed to no judgment.
 //!
 //! Everything else contributes NOTHING, by construction rather than by
-//! special-case: an [`AttributionVerdict::ExecutionLapse`] blames the actor and
+//! special-case: an [`AttributionVerdict::ExecutionLapse`](crate::skill_attribution::AttributionVerdict::ExecutionLapse) blames the actor and
 //! its attempt failed, so it is neither a defect on this skill nor a win; a
-//! [`AttributionVerdict::Discovery`] became an edit proposal, not a verdict on
+//! [`AttributionVerdict::Discovery`](crate::skill_attribution::AttributionVerdict::Discovery) became an edit proposal, not a verdict on
 //! reliability. ONE-1737's projector states the seam from its side: "Crediting
 //! a win is the reliability posterior's job (ONE-1738), which reads the same
 //! receipts."

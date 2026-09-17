@@ -125,7 +125,7 @@ impl RampScope {
 
     /// The consent registry reference of this scope's grant — the bound
     /// digest, so a grant the owner minted through the plain
-    /// [`Vault::create_standing_grant`] door is the SAME row this module reads.
+    /// [`Vault::create_standing_grant`](crate::Vault::create_standing_grant) door is the SAME row this module reads.
     /// There is no second bookkeeping table to drift.
     ///
     /// # Errors

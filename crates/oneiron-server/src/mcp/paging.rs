@@ -160,7 +160,7 @@ pub struct McpPageBudget {
     successor: Option<u32>,
     /// The opaque BOUND continuation handle for
     /// [`Self::successor_position`], present only once a registry has minted
-    /// and RETAINED it ([`McpConnectorActorRegistry::mint_page_cursor`]).
+    /// and RETAINED it ([`McpConnectorActorRegistry::mint_page_cursor`](crate::mcp::McpConnectorActorRegistry::mint_page_cursor)).
     pub cursor: Option<String>,
 }
 

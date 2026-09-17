@@ -29,7 +29,7 @@ impl Vault {
     /// Runs where OUR infrastructure touches a vault's outbound content, once
     /// per trust domain. `domain` is a sealed [`AttestedRelayDomain`] witness:
     /// the caller (the hosted relay / connector edge) mints it from an
-    /// [`AuthenticatedConnectionIdentity`] its edge auth validated, NEVER from
+    /// [`AuthenticatedConnectionIdentity`](crate::policy_model::AuthenticatedConnectionIdentity) its edge auth validated, NEVER from
     /// a vault-attested "already classified" receipt — the domain is evidence
     /// now, not a label the caller picks.
     ///

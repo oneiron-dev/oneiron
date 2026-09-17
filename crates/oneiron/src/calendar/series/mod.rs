@@ -16,7 +16,7 @@
 //! # Windowed, or not at all
 //!
 //! [`expand_window`] is the only expansion door and it always takes the
-//! caller's inclusive [`TimeRange`]. There is no unbounded variant to reach
+//! caller's inclusive [`TimeRange`](crate::TimeRange). There is no unbounded variant to reach
 //! for: a recurrence rule without `COUNT` or `UNTIL` names infinitely many
 //! occurrences, so "expand this series" is not a question with an answer.
 //!
@@ -34,7 +34,7 @@
 //! second job, and it discharges it by sliding a nonexistent local time into
 //! the adjacent hour — the one outcome the border exists to prevent. Stepping
 //! the wall clock and letting CAL-01 decide the instant is what keeps a
-//! spring-forward gap a typed [`CalendarError::NonexistentWallTime`] and a
+//! spring-forward gap a typed [`CalendarError::NonexistentWallTime`](crate::calendar::CalendarError::NonexistentWallTime) and a
 //! fall-back fold a resolved earliest-offset `Ok`.
 //!
 //! # Failure is never silence

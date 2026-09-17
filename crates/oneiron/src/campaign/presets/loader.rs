@@ -18,7 +18,7 @@ use crate::Result;
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] naming the first defect found: malformed JSON, an
+/// [`Error::InvalidConfig`](crate::Error::InvalidConfig) naming the first defect found: malformed JSON, an
 /// unknown or missing field, an id or version that is not the ratified pair, a
 /// ladder CA-04 itself rejects, or any violated content invariant.
 pub fn load_campaign_preset(json: &str) -> Result<CampaignPresetData> {

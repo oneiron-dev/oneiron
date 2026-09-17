@@ -274,7 +274,7 @@ pub struct OriginPublicationRecord {
     pub finished_at: Option<u64>,
 }
 
-/// What one [`Vault::publish_origin_ref`] call decided.
+/// What one [`Vault::publish_origin_ref`](crate::Vault::publish_origin_ref) call decided.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OriginPublicationReceipt {
     /// The durable record as it now stands.

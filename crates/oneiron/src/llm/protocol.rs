@@ -103,7 +103,7 @@ pub enum ImageContent {
 /// Typed stream events. Deltas are transient; only [`Self::Done`] is durable.
 ///
 /// Adapters must not emit [`Self::Done`] for a successful empty response; they
-/// should report [`FatalLlmError::EmptyResponse`] instead.
+/// should report [`FatalLlmError::EmptyResponse`](crate::FatalLlmError::EmptyResponse) instead.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum LlmStreamEvent {

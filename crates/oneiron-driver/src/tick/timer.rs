@@ -156,7 +156,7 @@ const COMMITMENT_TIMER_PHASES: [commitment_schedule::CommitmentDuePhase; 3] = [
 ///
 /// This source NEVER touches the attempt queue. A due phase's Dreamer attempt
 /// surfaces through the existing [`AttemptQueueDeadlines`] merge, so the
-/// supervisor still sees an ordinary [`Tick::Deadline`] and no new tick variant
+/// supervisor still sees an ordinary [`Tick::Deadline`](crate::Tick::Deadline) and no new tick variant
 /// exists: the Event-vs-Timer distinction belongs to the enqueued attempt, not
 /// to supervisor control flow.
 ///
@@ -261,12 +261,12 @@ fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
 /// no interval and no heartbeat — with no timed work (or on a deadline
 /// read error) the lane goes quiet instead of polling.
 ///
-/// Deliberately NOT a [`TickSource`]: a quiet timer lane is not source
+/// Deliberately NOT a [`TickSource`](crate::TickSource): a quiet timer lane is not source
 /// exhaustion — timed work can appear later, and under the no-poll
 /// architecture (ARCH-0026) the lane has no way to learn of it on its own.
 /// Wired bare into the supervisor it would either stop the loop permanently
 /// (`None` on an empty queue) or have to poll; both are wrong, so that
-/// wiring is unrepresentable. Compose it into a [`HybridTick`], whose push
+/// wiring is unrepresentable. Compose it into a [`HybridTick`](crate::HybridTick), whose push
 /// lane both carries the "new work arrived" notification and owns the one
 /// true exhaustion signal (every producer handle dropped).
 pub struct TimerTick<D> {

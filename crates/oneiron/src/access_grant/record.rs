@@ -336,7 +336,7 @@ impl AccessGrant {
 /// One row of the calendar-grant registry view.
 ///
 /// The pair, not the bare grant: `grant_ref` is the handle
-/// [`Vault::revoke_calendar_access_grant`] takes, so a listed row is directly
+/// [`Vault::revoke_calendar_access_grant`](crate::Vault::revoke_calendar_access_grant) takes, so a listed row is directly
 /// revocable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CalendarAccessGrantRow {

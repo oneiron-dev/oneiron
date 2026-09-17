@@ -47,7 +47,7 @@ impl PrepLensCopy {
 /// Composition only: the structure is the pack's, every word of chrome is the
 /// caller's, and each rendered row carries its backing vault ids as a detail
 /// line so nothing on the card is unattributed. There is no rendering path for
-/// an absent pack — `Ok(None)` from [`build_prep_pack`] means the caller emits
+/// an absent pack — `Ok(None)` from [`build_prep_pack`](crate::calendar::build_prep_pack) means the caller emits
 /// no lens at all.
 ///
 /// # Errors

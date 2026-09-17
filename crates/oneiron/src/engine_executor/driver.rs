@@ -142,7 +142,7 @@ impl<'a> EngineNativeExecutor<'a> {
     ///
     /// This explicit door never advances [`Self::witness_turn`]'s compatibility
     /// allocator. Durable runtime dispatch and fallback use a private sibling
-    /// that also binds [`EngineExecutorConfig::run_id`].
+    /// that also binds [`EngineExecutorConfig::run_id`](crate::engine_executor::EngineExecutorConfig::run_id).
     ///
     /// # Errors
     ///
