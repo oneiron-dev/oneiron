@@ -63,9 +63,9 @@ not (
 )
 """
 
-# Strict featureless alternative: all tests, the existing #[ignore] set, no retries.
-# Measurements support an 8-slot opt-in on the Mac mini; Linux keeps libtest.
-# Use --test-threads 8 explicitly when reproducing that bounded measurement.
+# Inner-loop only: all tests, the existing #[ignore] set, no retries.
+# Not a substitute for mandatory shared-process `cargo test --lib` verification.
+# Use NEXTEST_USER_CONFIG_FILE=none and --test-threads 8 --retries 0 explicitly.
 [profile.featureless]
 default-filter = "all()"
 retries = 0

@@ -82,36 +82,37 @@ The behavior tests use stub tools and disposable directories, not a live cache:
 python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
 ```
 
-## Opt-in featureless latency mode
+## Featureless nextest inner loop
 
-The full verification script can use an eight-slot nextest runner for its
-featureless-library stage. It is opt-in; an unset `ONEIRON_FEATURELESS_RUNNER`
-(or `libtest`) keeps the existing `cargo test -p oneiron --lib --no-default-features`
-command. `nextest-8` selects the alternative; other values, including an empty
-value, fail before any stage runs. Discover the selected commands without building,
-then run the full script:
+Full verification always runs `cargo test -p oneiron --lib --no-default-features`.
+This mandatory libtest lane runs tests as parallel threads in one process, so it
+exercises cross-test shared state and race behavior, including `#[cfg(test)]`
+statics. Nextest isolates tests in separate processes. Matching test IDs therefore
+does not preserve that semantic coverage; see `AGENTS.md` and the #922/#923 cases.
+
+The obsolete `ONEIRON_FEATURELESS_RUNNER=nextest-8` full-script selector is rejected
+before any stage runs. Unset or `libtest` retains the same nine mandatory commands.
+Discover or run the full gate normally; the extra narrow-sync gate in `WORKFLOW.md`
+is still required:
 
 ```sh
-env ONEIRON_FEATURELESS_RUNNER=nextest-8 scripts/verify.sh --list
-env ONEIRON_FEATURELESS_RUNNER=nextest-8 scripts/verify.sh
+scripts/verify.sh --list
+scripts/verify.sh
 ```
 
-Only `test-featureless` changes, to:
+For an optional **inner loop only**, run the strict featureless profile directly:
 
 ```sh
 env NEXTEST_USER_CONFIG_FILE=none cargo nextest run -p oneiron --lib \
   --no-default-features --profile featureless --test-threads 8 --retries 0
 ```
 
-The `featureless` profile includes all non-ignored tests, including the slow set,
-with zero retries. The CLI pin also overrides inherited `NEXTEST_RETRIES` without
-changing other stages' environments. The user-config override applies only to this
-child. All nine
-scripted stages remain; the other eight stages, warning severity, and fail-fast
-verdicts are unchanged. The additional narrow-sync gate in `WORKFLOW.md` remains
-required. CI does not select this mode automatically.
+This includes all non-ignored featureless library tests, including the slow set.
+The CLI pin overrides inherited `NEXTEST_RETRIES`; user-config suppression applies
+only to this command. It is not full verification, does not emit `VERIFY-OK`, and
+must not replace the mandatory shared-process libtest lane. CI is unchanged.
 
-This is a **latency/compute choice**, not a universal runner default. On the
+These **inner-loop** results are a latency/compute choice, not equivalent gate coverage. On the
 **Mac mini at eight slots**, with `CARGO_INCREMENTAL=0` and `debug=1`, three paired
 featureless-library comparisons reduced wall time by **4.02%, 9.25%, and 6.90%**
 (median paired reduction **6.90%**). Median user CPU rose from **197.7 to 251.8 s**;
@@ -329,8 +330,9 @@ cargo test --config 'profile.dev.package.oneiron.codegen-units=16' \
   remain. Fixture compilation errors now surface later; standalone helper use
   rejects stale lockfiles. Two fewer invocations are certain; elapsed-time
   savings were not measured.
-- **Featureless runner option adopted**, with the exact measured scope and CPU
-  tradeoff described above. Default CI and Linux libtest selection stay unchanged.
+- **Featureless nextest retained for the inner loop only**, with the scoped Mini
+  latency/CPU tradeoff above. Mandatory shared-process libtest verification and CI
+  remain unchanged; matching test IDs do not make the runners coverage-equivalent.
 - **No linker switch adopted.** Native probe output identified LLD 22.1.2, and
   captured workspace link invocations already selected `-fuse-ld=lld`. External
   Arch work interrupted the complete link-share/alternate-linker comparison.

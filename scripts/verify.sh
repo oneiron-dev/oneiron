@@ -20,8 +20,8 @@ usage() {
     '  No arguments: run all 9 scripted stages; success prints VERIFY-OK.' \
     '  --list: print stage names and commands without running them.' \
     '  --help: show this help without running any checks.' \
-    '  ONEIRON_FEATURELESS_RUNNER=libtest (default) or nextest-8 selects only the featureless lib stage.' \
-    '  nextest-8 runs all non-ignored featureless lib tests with 8 slots and no retries.' \
+    '  ONEIRON_FEATURELESS_RUNNER may be unset or libtest; other values are rejected.' \
+    'The featureless libtest stage is mandatory; nextest is an inner-loop option only.' \
     'The rustdoc stage denies documentation warnings before runtime tests.' \
     'Scoped iteration: see AGENTS.md. Extra narrow-sync policy gate: WORKFLOW.md section 3.'
 }
@@ -34,17 +34,11 @@ case "$#:$*" in
   *) usage >&2; echo 'VERIFY-FAIL-usage' >&2; exit 2 ;;
 esac
 
-FEATURELESS_COMMAND=(cargo test -p oneiron --lib --no-default-features)
+# Reject the retired replacement rather than silently weaken shared-process coverage.
 case "${ONEIRON_FEATURELESS_RUNNER-libtest}" in
   libtest) ;;
-  nextest-8)
-    # Keep user config isolated to this one child; other stages inherit it.
-    # CLI zero also overrides an inherited NEXTEST_RETRIES value.
-    FEATURELESS_COMMAND=(env NEXTEST_USER_CONFIG_FILE=none cargo nextest run
-      -p oneiron --lib --no-default-features --profile featureless --test-threads 8 --retries 0)
-    ;;
   *)
-    echo 'ONEIRON_FEATURELESS_RUNNER must be libtest or nextest-8' >&2
+    echo 'ONEIRON_FEATURELESS_RUNNER only accepts libtest; nextest is inner-loop only' >&2
     echo 'VERIFY-FAIL-usage' >&2
     exit 2
     ;;
@@ -101,7 +95,7 @@ run_stage clippy-server       cargo clippy -p oneiron-server --all-features -- -
 # do not change other stages' environments or compiler fingerprints globally.
 run_stage rustdoc             env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 run_stage test                cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full
-run_stage test-featureless    "${FEATURELESS_COMMAND[@]}"
+run_stage test-featureless    cargo test -p oneiron --lib --no-default-features
 run_stage doctest             cargo test --doc --workspace --exclude oneiron-bench --all-features
 
 if [ "$LIST_ONLY" = false ]; then
