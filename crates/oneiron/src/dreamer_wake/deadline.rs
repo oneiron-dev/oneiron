@@ -104,7 +104,7 @@ impl fmt::Debug for WakePassDeadline {
 /// would reopen the S3 off-record fence leak. A cancel that lands after a
 /// attempt was admitted parks that attempt and refunds its budget reservation
 /// through the ordinary Park bookkeeping before the pass reports
-/// [`WakePassStop::Cancelled`].
+/// [`WakePassStop::Cancelled`](crate::WakePassStop::Cancelled).
 ///
 /// Clones share the flag; the token holds no waker — it is a level, not an
 /// edge, and the pass polls it synchronously as it reaches each checkpoint.

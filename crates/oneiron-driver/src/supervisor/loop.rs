@@ -115,7 +115,7 @@ where
         self
     }
 
-    /// Injects the wall clock used for [`RunWakePass::now`] (tests).
+    /// Injects the wall clock used for [`RunWakePass::now`](oneiron::RunWakePass::now) (tests).
     #[must_use]
     pub fn with_clock(mut self, now_secs: NowSeconds) -> Self {
         self.now_secs = now_secs;

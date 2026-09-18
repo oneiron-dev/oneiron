@@ -20,7 +20,7 @@ impl BatchBuilder<'_> {
     ///
     /// Approved bound Dreamer consents then run canonical VAD consolidation
     /// after commit. A population error is returned with the batch retained;
-    /// retry [`Vault::consolidate_claim_vad`] on the approved member ids.
+    /// retry [`Vault::consolidate_claim_vad`](crate::Vault::consolidate_claim_vad) on the approved member ids.
     ///
     /// Returns any validation error captured during builder calls before
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad

@@ -1,6 +1,6 @@
 //! ONE-1823 [BK-00] availability solver and slot-mask projection.
 //!
-//! [`BookingSolver`] is the real [`SlotOracle`]: it binds a vault, a booking
+//! [`BookingSolver`] is the real [`SlotOracle`](crate::booking::SlotOracle): it binds a vault, a booking
 //! page, the request-time host→calendar selector binding, and a request-time
 //! `now_utc`, then runs one deterministic, side-effect-free pipeline of eight
 //! pure stages, in this order:
@@ -31,11 +31,11 @@
 //!
 //! # Interval convention
 //!
-//! [`TimeRange`] is inclusive on both ends in the engine core, and every
+//! [`TimeRange`](crate::TimeRange) is inclusive on both ends in the engine core, and every
 //! interval crossing a stage boundary HERE is half-open `[start, end)` — the
 //! convention CAL's [`BusyInterval`](crate::calendar::BusyInterval) and the
-//! seam's [`SlotMask`] already use. The conversion therefore happens exactly
-//! twice: once when [`SolveRequest::window`] is ingested, and once when the
+//! seam's [`SlotMask`](crate::booking::SlotMask) already use. The conversion therefore happens exactly
+//! twice: once when [`SolveRequest::window`](crate::booking::SolveRequest::window) is ingested, and once when the
 //! window is handed back to CAL's `freebusy`. Nothing in between mixes the two.
 //!
 //! # Time zones
@@ -43,8 +43,8 @@
 //! The core is `u64` UTC. Every IANA conversion goes through
 //! [`crate::calendar::tz`], the engine's one border, so no third-party time
 //! type appears in any signature here. Host wall windows convert forward
-//! ([`wall_to_utc`]); visitor-local placement — caps, constraint weekdays and
-//! local windows — converts backward ([`utc_to_wall`]), which is total and so
+//! ([`wall_to_utc`](crate::calendar::wall_to_utc)); visitor-local placement — caps, constraint weekdays and
+//! local windows — converts backward ([`utc_to_wall`](crate::calendar::utc_to_wall)), which is total and so
 //! never invents an instant.
 
 mod civil_date;

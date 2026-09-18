@@ -648,7 +648,7 @@ fn consent_guard_proposes_never_grants() {
 ///
 /// Those three facts are only observable from OUTSIDE the crate — in here,
 /// `pub(crate)` and private are the same thing — so they are asserted by the
-/// external-position trybuild target `tests/consent_guard_compilefail.rs`,
+/// external-position trybuild target `tests/type_boundaries_compilefail.rs`,
 /// whose three cases pin the `E0451` private-field diagnostic on the owner
 /// stamp and the two `E0277` missing-impl diagnostics on the conversions.
 ///

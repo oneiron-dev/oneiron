@@ -52,7 +52,7 @@ impl ChannelIdentityShape {
 /// The three shapes whose account the product actually holds.
 ///
 /// This exists so that "a delegated grant asked for at a self-held door" has no
-/// spelling. [`ChannelIdentity::requested`] takes this type, and it has no
+/// spelling. [`ChannelIdentity::requested`](crate::channel_identity::ChannelIdentity::requested) takes this type, and it has no
 /// `DelegatedGrant` variant, so a caller cannot hand it a delegated shape for
 /// the door to silently degrade — see that constructor for what the degrade
 /// actually cost.

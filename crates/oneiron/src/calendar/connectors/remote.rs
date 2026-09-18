@@ -33,7 +33,7 @@ use crate::calendar::claims::CalendarPassportDirection;
 ///
 /// `uid`, `sequence`, and `content_hash` are the transport's reading. The
 /// orchestration re-derives all three from `ics` through
-/// [`super::ics::parse_ics_feed`] before it classifies anything, so these
+/// [`parse_ics_feed`](crate::calendar::parse_ics_feed) before it classifies anything, so these
 /// fields are a convenience for the wire, never the authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteCalendarObject {
@@ -192,7 +192,7 @@ pub enum EchoDisposition {
 
 /// The echo law, as a pure function.
 ///
-/// SEQUENCE-first, exactly like [`super::passport::classify_passport`]: a higher
+/// SEQUENCE-first, exactly like [`classify_passport`](crate::calendar::classify_passport): a higher
 /// SEQUENCE applies, an equal SEQUENCE with a drifted hash applies, an equal
 /// SEQUENCE with the same hash is an echo, and a *lower* SEQUENCE is a stale
 /// replay that never regresses passport state. A passport its source previously

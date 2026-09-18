@@ -31,7 +31,7 @@ pub const SKILL_RELIABILITY_FLOOR_KEY: &[u8] = b"settings:skill:v1:reliability_f
 /// stay out of the quarantine-proposal path.
 ///
 /// 0.25 is deliberately far below every seeded prior mean
-/// ([`ProvenanceTrustClass`]), so crossing it takes real attributed losses
+/// ([`ProvenanceTrustClass`](crate::skill_reliability::ProvenanceTrustClass)), so crossing it takes real attributed losses
 /// rather than an unlucky provenance class.
 pub const DEFAULT_SKILL_RELIABILITY_FLOOR: f32 = 0.25;
 

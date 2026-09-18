@@ -6,7 +6,7 @@
 //! ONE identity, so this module adds a DOOR, not a second namespace: the user
 //! selects turns or messages, a host-supplied LLM tier refines them into a
 //! SKILL.md-shaped tree, and the result lands through the ordinary
-//! [`Vault::put_skill_record`] path as a `candidate` revision whose canonical
+//! [`Vault::put_skill_record`](crate::Vault::put_skill_record) path as a `candidate` revision whose canonical
 //! content hash enters the SAME content-hash index hub import dedups against.
 //!
 //! Layering, stated once:

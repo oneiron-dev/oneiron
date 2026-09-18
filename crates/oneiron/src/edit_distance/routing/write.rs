@@ -26,7 +26,7 @@ use crate::error::{Error, Result};
 /// receipt already bound to one is never re-folded — a second call after a
 /// model swap would otherwise count the same amendment twice, once against a
 /// generation that did not produce it. Re-judging a receipt is reflected by
-/// [`rebuild_routing_projection`], which re-reads the ledger against the
+/// [`rebuild_routing_projection`](crate::edit_distance::routing::rebuild_routing_projection), which re-reads the ledger against the
 /// bindings already recorded.
 ///
 /// # Errors

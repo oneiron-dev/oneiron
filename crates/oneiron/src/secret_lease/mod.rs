@@ -4,19 +4,19 @@
 //! The honest dividing line is memory (S3): a value that enters workspace
 //! memory is T1 minimum. The three rungs:
 //!
-//! * **T0 doored** — [`Vault::inject_secret_at_door`] resolves a secret ref
+//! * **T0 doored** — [`Vault::inject_secret_at_door`](crate::Vault::inject_secret_at_door) resolves a secret ref
 //!   and hands the value to a closure that runs INSIDE the door and returns
 //!   only `()`: the bytes cannot come back through the closure's return
 //!   type. The caller receives only a [`DoorInjectionReceipt`].
-//! * **T1 leased** — [`Vault::materialize_secret_lease`] admits the request,
+//! * **T1 leased** — [`Vault::materialize_secret_lease`](crate::Vault::materialize_secret_lease) admits the request,
 //!   then writes the [`SecretLease`] row and its
 //!   [`SecretMaterializationReceipt`] durable BEFORE the value returns
 //!   (receipt-at-materialization, S3 — environment reads are not
 //!   interceptable, so the receipt is stamped at the mint). The value
-//!   returns wrapped in [`Zeroizing`]. Expiry is lazy (checked at use) plus
-//!   the [`Vault::expire_secret_leases`] maintenance sweep; the engine owns
+//!   returns wrapped in [`Zeroizing`](zeroize::Zeroizing). Expiry is lazy (checked at use) plus
+//!   the [`Vault::expire_secret_leases`](crate::Vault::expire_secret_leases) maintenance sweep; the engine owns
 //!   no timers (ARCH-0026).
-//! * **T2 local-registered** — [`Vault::register_secret_local`]
+//! * **T2 local-registered** — [`Vault::register_secret_local`](crate::Vault::register_secret_local)
 //!   materializes the value to a manifest-declared local path under a live
 //!   lease and records a [`LocalRegistration`] so unlease can clean the
 //!   file and SECRET-03 (ONE-1921) can exclude the path. Recovery is
@@ -26,7 +26,7 @@
 //!
 //! A request is admitted iff ALL of:
 //!
-//! 1. the record has a [`SecretBinding`] for `(secret_ref, effector)` —
+//! 1. the record has a [`SecretBinding`](crate::secret_custody::SecretBinding) for `(secret_ref, effector)` —
 //!    otherwise [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied) (ONE-1919's binding
 //!    discipline, regression-checked here);
 //! 2. `requested_tier <= floor.band_for(class).max` against the live vault
@@ -68,7 +68,7 @@
 //!
 //! # Teardown honesty (S3/S6)
 //!
-//! [`Vault::revoke_secret_lease`] and expiry flip the lease status, revoke
+//! [`Vault::revoke_secret_lease`](crate::Vault::revoke_secret_lease) and expiry flip the lease status, revoke
 //! door-side use, and — for T2 — remove the registered local file
 //! (best-effort, recorded: a failed removal retains the registration row
 //! with the error recorded, so a path whose file may still hold the value

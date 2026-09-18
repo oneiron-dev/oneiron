@@ -2,9 +2,9 @@
 //!
 //! One engine-owned failure POLICY layer over the landed queue substrate. It
 //! classifies a typed, tiered attempt failure, retries only T1-tripwire
-//! transients through ONE-1795's fresh-row [`AttemptQueue::retry`], escalates
+//! transients through ONE-1795's fresh-row [`AttemptQueue::retry`](crate::AttemptQueue::retry), escalates
 //! the Nth consecutive transient through the per-scope policy, terminalizes
-//! every other class through the existing [`AttemptQueue::fail`], and projects
+//! every other class through the existing [`AttemptQueue::fail`](crate::AttemptQueue::fail), and projects
 //! a `self.report_blocked` receipt as a non-triggering Issues entry.
 //!
 //! What this module deliberately does NOT own: ATTEMPT storage or state

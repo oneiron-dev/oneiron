@@ -37,7 +37,7 @@ pub struct McpCacheHint {
 /// ONE-1704 M6: `cursor` is a real INPUT of the same closed
 /// `deny_unknown_fields` object the schema advertises, so a `More` result's
 /// successor handle can actually be presented back. It is opaque and BOUND —
-/// see [`McpConnectorActorRegistry::mint_page_cursor`] — never an offset a
+/// see [`McpConnectorActorRegistry::mint_page_cursor`](crate::mcp::McpConnectorActorRegistry::mint_page_cursor) — never an offset a
 /// caller could arithmetic its way past the budget with.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

@@ -13,9 +13,9 @@
 //! | field | why text cannot enter |
 //! |---|---|
 //! | `category` | [`IssueCategory`], a closed enum — not a string |
-//! | `artifact` | [`EntityId`], 16 opaque bytes |
+//! | `artifact` | [`EntityId`](crate::EntityId), 16 opaque bytes |
 //! | `version` | `u32` |
-//! | `model_id` | must parse as a [`ModelStackId`] AND be registered in the caller's [`ModelStackRegistry`]; an unknown id is refused, so "model id" is not a smuggling channel |
+//! | `model_id` | must parse as a [`ModelStackId`](crate::settings::ModelStackId) AND be registered in the caller's [`ModelStackRegistry`](crate::settings::ModelStackRegistry); an unknown id is refused, so "model id" is not a smuggling channel |
 //! | `counts` | keys are [`CountKey`], a closed enum; values are `u32` |
 //! | `content_hash` | exactly [`CONTENT_HASH_LEN`] lowercase hex characters |
 //!
@@ -29,7 +29,7 @@
 //! # Counts are tallies, never deltas
 //!
 //! Rung 1 carries "counts, pattern hashes. NEVER text, NEVER deltas". So
-//! [`CountKey`] is the three-arm tally of [`ProposalOutcome`] — how many judged
+//! [`CountKey`] is the three-arm tally of [`ProposalOutcome`](crate::identity_topology::ProposalOutcome) — how many judged
 //! outcomes, how many the human had to amend, how many the human threw away —
 //! and deliberately NOT the edit mass in [`OpsSummary`](super::delta::OpsSummary)
 //! (`ins`/`del`/`kept`/`d_norm`). Those numbers ARE the delta; they stay home.
@@ -38,7 +38,7 @@
 //!
 //! ARCH-0056 r7: "publisher ↔ user channel = a normal comm channel with the
 //! publisher ACTOR as counterparty — zero new primitives". This module calls
-//! [`resolve_or_create_comm_party`] and [`record_comm_send_receipt`] and owns
+//! [`resolve_or_create_comm_party`](crate::comm::resolve_or_create_comm_party) and [`record_comm_send_receipt`](crate::comm::record_comm_send_receipt) and owns
 //! nothing about send or retry; SPINE-COMM owns those internals. The DOWN
 //! direction (platform-voice notices, EC-7) is ordinary channel content and
 //! needs no engine surface at all.
@@ -119,7 +119,7 @@ pub enum PublisherError {
     #[error(transparent)]
     Comm(#[from] CommError),
     /// The offered model id is not a stack the caller's registry serves —
-    /// either it is not a well-formed [`ModelStackId`] at all, or it names no
+    /// either it is not a well-formed [`ModelStackId`](crate::settings::ModelStackId) at all, or it names no
     /// registered stack. One fact, one error: it is not a model this vault
     /// knows, and an unknown model id is how free text would get out.
     #[error("issue signature model id is not a registered model stack")]

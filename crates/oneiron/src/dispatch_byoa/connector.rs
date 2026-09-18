@@ -281,7 +281,7 @@ pub struct CliSandboxSpec {
     /// The real CHECKOUT this guest runs against.
     #[serde(with = "checkout_id_wire")]
     pub checkout_id: CheckoutId,
-    /// Names the egress profile an injected [`ByoaEgressPort`] must honour.
+    /// Names the egress profile an injected [`ByoaEgressPort`](crate::dispatch_byoa::ByoaEgressPort) must honour.
     /// It is a REFERENCE to a host-side policy, not the policy itself: a guest
     /// config cannot widen its own network reach.
     pub egress_profile_ref: String,

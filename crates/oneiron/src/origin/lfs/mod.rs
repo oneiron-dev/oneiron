@@ -5,7 +5,7 @@
 //! bytes-in/bytes-out adapter beside [`super::smart_http`], and it deliberately
 //! mints nothing new to be one:
 //!
-//! * every LFS byte is an ordinary [`ENTITY_TYPE_ASSET`] entity, so the
+//! * every LFS byte is an ordinary [`ENTITY_TYPE_ASSET`](crate::registry::ENTITY_TYPE_ASSET) entity, so the
 //!   standing batch pipeline — credential scan included — runs over it;
 //! * the whole object plane is two ADDITIVE `vault_meta` prefix row families
 //!   ([`VAULT_LFS_OBJECT_KEY_PREFIX`], [`VAULT_LFS_REF_KEY_PREFIX`]). No new
@@ -30,14 +30,14 @@
 //!
 //! # Read paths fail closed
 //!
-//! [`Vault::get_lfs_object`] and [`Vault::verify_lfs_object`] re-check the
+//! [`Vault::get_lfs_object`](crate::Vault::get_lfs_object) and [`Vault::verify_lfs_object`](crate::Vault::verify_lfs_object) re-check the
 //! stored length AND re-hash the stored body before either answers. A body that
-//! disagrees with its record is [`Error::CorruptedIndex`], never `Ok(bytes)` —
+//! disagrees with its record is [`Error::CorruptedIndex`](crate::Error::CorruptedIndex), never `Ok(bytes)` —
 //! wrong bytes are not a successful download.
 //!
 //! # Admission is policy, never a size threshold
 //!
-//! [`LfsPathPolicy`] classifies a repository path; [`Vault::admit_lfs_pointer`]
+//! [`LfsPathPolicy`] classifies a repository path; [`Vault::admit_lfs_pointer`](crate::Vault::admit_lfs_pointer)
 //! turns that classification into an [`LfsAdmission`] and nothing else. The
 //! caller enforces the outcome. There is NO automatic size threshold anywhere
 //! in this module, and none may be added: a build-required asset is

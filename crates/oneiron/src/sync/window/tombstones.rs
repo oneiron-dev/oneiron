@@ -132,7 +132,7 @@ pub(crate) fn export_tombstone_commit_delta(
 /// deletion's durable propagation intent, and it doubles as the crash
 /// marker between the purge txn and the CRDT commit on sync-enabled builds.
 ///
-/// A sync-enabled boot calls this BEFORE [`replay_pending_mirrors`] (so a
+/// A sync-enabled boot calls this BEFORE [`replay_pending_mirrors`](crate::sync::window::replay_pending_mirrors) (so a
 /// freshly replayed tombstone suppresses any pending mirror of the same
 /// entity). Idempotent: guarded tombstone insert + entities-key removal
 /// (+ edges-key removal for hard values). The doc state is persisted to

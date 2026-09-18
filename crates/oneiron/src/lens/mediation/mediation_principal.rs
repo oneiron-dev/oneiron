@@ -50,7 +50,7 @@ pub struct GeneratedUiAgentCallback {
     pub source_card_id: LensRenderId,
     pub source_element_id: LensAtomId,
     /// Read reach the acting principal selected, carried as context only. Populate it
-    /// through [`LensRenderFrame::with_selected_context`], which re-proves every handle.
+    /// through [`LensRenderFrame::with_selected_context`](crate::lens::LensRenderFrame::with_selected_context), which re-proves every handle.
     pub selected_context: Vec<LensReadHandle>,
 }
 

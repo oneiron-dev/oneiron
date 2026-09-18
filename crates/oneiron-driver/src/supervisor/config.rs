@@ -7,7 +7,7 @@ use oneiron::{
     DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS, Result, WakeMilestoneAuthor,
 };
 
-/// Second-resolution wall-clock read for [`RunWakePass::now`], injectable
+/// Second-resolution wall-clock read for [`RunWakePass::now`](oneiron::RunWakePass::now), injectable
 /// for tests.
 pub type NowSeconds = Arc<dyn Fn() -> u64 + Send + Sync>;
 
@@ -95,7 +95,7 @@ pub const MAX_PASS_BUDGET_BASE_LEN: usize = MAX_RUNNER_BUDGET_ID_LEN - PASS_BUDG
 /// budget row** derived from [`Self::budget_id`] (see
 /// `durable_pass_budget_id`).
 ///
-/// On each [`WakeSupervisor::run`] the supervisor probes the runner store
+/// On each [`WakeSupervisor::run`](crate::WakeSupervisor::run) the supervisor probes the runner store
 /// once for existing `{budget_id}:p{n}` rows and resumes at
 /// highest-occupied + 1 (dense-scanning `[0, bound)` then galloping past
 /// the bound when full) so process restarts do not re-mint spent rows or
@@ -108,7 +108,7 @@ pub struct WakeSupervisorConfig {
     /// pass index (`{budget_id}:p{n}`) so a long-lived supervisor never
     /// reuses a spent budget row across passes. Note: each pass therefore
     /// leaves one budget row in the runner store; this crate does not GC
-    /// them. Restart-safe: [`WakeSupervisor::run`] skip-scans existing
+    /// them. Restart-safe: [`WakeSupervisor::run`](crate::WakeSupervisor::run) skip-scans existing
     /// `:p{n}` rows before minting.
     pub budget_id: String,
     /// Lease owner stamped on admissions and parks.
@@ -129,8 +129,8 @@ pub struct WakeSupervisorConfig {
     /// Durable Started/Done milestone authorship, if the host wants it.
     pub milestones: Option<WakeMilestoneAuthor>,
     /// Restart-backoff shape for failed/panicked passes and for
-    /// zero-progress [`WakePassStop::BudgetExhausted`] /
-    /// [`WakePassStop::DeadlineHardCut`] (admitted == 0), which would
+    /// zero-progress [`WakePassStop::BudgetExhausted`](oneiron::WakePassStop::BudgetExhausted) /
+    /// [`WakePassStop::DeadlineHardCut`](oneiron::WakePassStop::DeadlineHardCut) (admitted == 0), which would
     /// otherwise hot-loop under HybridTick deadline redelivery.
     pub backoff: RestartBackoffConfig,
 }

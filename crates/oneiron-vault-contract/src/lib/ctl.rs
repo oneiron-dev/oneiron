@@ -64,7 +64,7 @@ pub enum ShedStatus {
 
 /// Wire mirror of the engine's `ShedBlocker`. Stringly by design so a newer
 /// vault's blocker kind stays displayable by an older supervisor; `detail`
-/// is human-facing and bounded by [`MAX_CTL_LINE`] at the framing layer.
+/// is human-facing and bounded by [`MAX_CTL_LINE`](crate::MAX_CTL_LINE) at the framing layer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShedBlockerWire {
     pub kind: String,
@@ -81,8 +81,9 @@ pub struct ShedBlockerWire {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CtlResponse {
-    /// Supervisors must run [`validate_wake_entries`] on `next_wake` before
-    /// trusting it — deserialization alone does not enforce the wire limits.
+    /// Supervisors must run [`validate_wake_entries`](crate::validate_wake_entries)
+    /// on `next_wake` before trusting it — deserialization alone does not enforce
+    /// the wire limits.
     PrepareReap {
         quiescent: bool,
         ledger_rev: u64,
@@ -134,7 +135,8 @@ pub enum CtlResponse {
 impl CtlResponse {
     /// Validate SLIM status, residency, numerics, and blocker combinations after
     /// parsing. Existing responses keep their prior validation requirements;
-    /// `PrepareReap.next_wake` still uses [`validate_wake_entries`].
+    /// `PrepareReap.next_wake` still uses
+    /// [`validate_wake_entries`](crate::validate_wake_entries).
     pub fn validate(&self) -> anyhow::Result<()> {
         if let CtlResponse::Slim {
             slim,

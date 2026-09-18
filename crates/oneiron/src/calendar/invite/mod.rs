@@ -16,7 +16,7 @@
 //! * **The UID/SEQUENCE law.** A UID is minted once, at the first confirm, and
 //!   reused forever; every update and cancel bumps `SEQUENCE` on the SAME UID.
 //!   The state lives in the CAL-00 `calendar.passport` claim
-//!   ([`CalendarPassportValue`]) with direction `outbound` — no local passport
+//!   ([`CalendarPassportValue`](crate::calendar::CalendarPassportValue)) with direction `outbound` — no local passport
 //!   type, no new predicate. A connector retry replays the frozen payload and
 //!   never re-enters [`admit_calendar_invite`], so it can neither mint a UID
 //!   nor bump a sequence.

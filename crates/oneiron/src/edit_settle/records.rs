@@ -21,7 +21,7 @@ pub enum SettleConsent {
     OwnerConsent { brief_ref: Option<String> },
     /// Rely on a standing brief×verb-class bundle grant to settle without a
     /// per-op consent prompt (the D6 escalation). `brief_ref` names the brief
-    /// the grant must cover. SEAM — see [`Vault::settle_standing_grant_authorizes`].
+    /// the grant must cover. SEAM — see [`Vault::settle_standing_grant_authorizes`](crate::Vault::settle_standing_grant_authorizes).
     StandingGrant { brief_ref: String },
 }
 

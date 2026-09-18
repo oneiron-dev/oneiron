@@ -127,7 +127,7 @@ pub fn interview_session(
 ///
 /// # Errors
 ///
-/// Storage errors; [`PublisherError::SignatureNotFound`] is not raised here —
+/// Storage errors; [`PublisherError::SignatureNotFound`](crate::edit_distance::publisher::PublisherError::SignatureNotFound) is not raised here —
 /// an unknown digest simply has no session, which surfaces as `Ok(None)` from
 /// [`interview_session`].
 pub fn submit_interview_for_review(
@@ -179,8 +179,8 @@ pub fn open_interview(
 ///
 /// The user's amendments become a Δ the ordinary way — the finalized record is
 /// persisted by `finalize`, so
-/// [`delta_from_recorded_ops`](super::delta::delta_from_recorded_ops) over
-/// [`finalized_proposal_text`](super::finalized_proposal_text) yields it. No
+/// [`delta_from_recorded_ops`](crate::edit_distance::delta::delta_from_recorded_ops) over
+/// [`finalized_proposal_text`](crate::edit_distance::finalized_proposal_text) yields it. No
 /// edit distance is computed here; that is ED-01's job and reusing it is the
 /// point of rung 3.
 ///

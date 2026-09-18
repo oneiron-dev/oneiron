@@ -27,7 +27,7 @@ pub const ACTOR_EDIT_COST_SCOPE_KEY: &str = "scope";
 /// the ED lane measures every other scope axis against
 /// (`edit_distance::escalation`).
 pub const ACTOR_EDIT_COST_SCOPE_MAX_BYTES: usize = crate::consent::MAX_CONSENT_REF_LEN;
-/// [`CallPurpose::Other`] name for the CHAT-lane distillation tier, so session
+/// [`CallPurpose::Other`](crate::CallPurpose::Other) name for the CHAT-lane distillation tier, so session
 /// distillation is budgeted and audited as its own class instead of hiding
 /// inside consolidation's totals.
 pub const ACTOR_DISTILL_CALL_PURPOSE_NAME: &str = "actor_session_distill";
@@ -51,7 +51,7 @@ pub const ACTOR_CLAIM_MAX_CITED_EVIDENCE: usize = 64;
 /// the distiller tier's work, and inventing a house sentence here to fill the
 /// slot would be the engine writing content it has no evidence for.
 pub const LAPSE_FAILURE_MODE: &str = "departed_from_loaded_skill";
-/// Scope key carrying the EVIDENCE MEET of a row: the [`ClaimSource`] wire
+/// Scope key carrying the EVIDENCE MEET of a row: the [`ClaimSource`](crate::ClaimSource) wire
 /// string of what the row actually rests on. See the module header — this is
 /// the lineage `src` deliberately does not carry.
 ///
@@ -65,7 +65,7 @@ pub const ACTOR_CLAIM_LINEAGE_KEY: &str = CLAIM_SCOPE_EVIDENCE_TAINT_KEY;
 // ---------------------------------------------------------------------------
 /// One `actor.*` row, before it is a claim.
 ///
-/// Owning every shape in one enum is what makes [`write_actor_claim`] a
+/// Owning every shape in one enum is what makes [`write_actor_claim`](crate::actor_claims::write_actor_claim) a
 /// chokepoint rather than a convention: a new row kind cannot be written
 /// without a variant here, and every variant lands through the same door.
 #[derive(Debug, Clone, PartialEq)]

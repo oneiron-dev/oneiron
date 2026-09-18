@@ -1,0 +1,325 @@
+"""Exercise verify CLI and gate contracts without compiling Rust.
+
+Run with: python3 -m unittest discover -s scripts/tests -p test_verify.py -v
+The scripts run in a fixture checkout with recording Cargo/codemap executables.
+"""
+
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+RECORDER = r"""#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+if Path(sys.argv[0]).name == "uname":
+    print(os.environ["VERIFY_TEST_OS"])
+    sys.exit(0)
+log = Path(os.environ["VERIFY_TEST_LOG"])
+command = ["codemap"] if Path(sys.argv[0]).name == "check.sh" else ["cargo", *sys.argv[1:]]
+record = {
+    "command": command,
+    "rustdocflags": os.environ.get("RUSTDOCFLAGS"),
+    "encoded_rustdocflags": os.environ.get("CARGO_ENCODED_RUSTDOCFLAGS"),
+    "nextest_user_config": os.environ.get("NEXTEST_USER_CONFIG_FILE"),
+    "nextest_retries": os.environ.get("NEXTEST_RETRIES"),
+}
+with log.open("a") as stream:
+    stream.write(json.dumps(record) + "\n")
+if len(log.read_text().splitlines()) == int(os.environ.get("VERIFY_TEST_FAIL_CALL", "0")):
+    print(os.environ.get("VERIFY_TEST_OUTPUT", "fixture failure"), file=sys.stderr)
+    sys.exit(int(os.environ.get("VERIFY_TEST_EXIT", "1")))
+print("PASS error::tests::fixture")
+"""
+
+
+GATES = [
+    ("codemap", ["scripts/codemap/check.sh"]),
+    ("fmt", ["cargo", "fmt", "--check"]),
+    ("clippy", ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]),
+    ("clippy-featureless", ["cargo", "clippy", "-p", "oneiron", "--all-targets", "--no-default-features", "--", "-D", "warnings"]),
+    ("clippy-server", ["cargo", "clippy", "-p", "oneiron-server", "--all-features", "--", "-D", "warnings"]),
+    ("rustdoc", ["env", "-u", "CARGO_ENCODED_RUSTDOCFLAGS", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--workspace", "--all-features", "--no-deps"]),
+    ("test", ["cargo", "nextest", "run", "--workspace", "--exclude", "oneiron-napi", "--all-features", "--profile", "full"]),
+    ("test-featureless", ["cargo", "test", "-p", "oneiron", "--lib", "--no-default-features"]),
+    ("doctest", ["cargo", "test", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"]),
+]
+# The recorder sees Cargo, not env's options/assignments or the fixture's path.
+COMMANDS = [["codemap"], *[
+    command[command.index("cargo"):] for _, command in GATES[1:]
+]]
+COMMAND_BY_STAGE = dict(zip((stage for stage, _ in GATES), COMMANDS))
+
+
+class VerifyCase(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="verify-tests-")
+        self.addCleanup(tmp.cleanup)
+        self.cwd = Path(tmp.name)
+        self.repo = self.cwd / "checkout with spaces"
+        (self.repo / "scripts/codemap").mkdir(parents=True)
+        for name in ("verify.sh", "verify-leg.sh"):
+            shutil.copy2(ROOT / "scripts" / name, self.repo / "scripts" / name)
+        self.bin = self.cwd / "bin"
+        self.bin.mkdir()
+        for path in (self.bin / "cargo", self.bin / "uname", self.repo / "scripts/codemap/check.sh"):
+            path.write_text(RECORDER, encoding="utf-8")
+            path.chmod(0o755)
+        self.log = self.cwd / "commands.jsonl"
+        self.env = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith("VERIFY_TEST_") and key not in ("LEG", "ONEIRON_FEATURELESS_RUNNER")
+        }
+        self.env.update(PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}",
+                        VERIFY_TEST_LOG=str(self.log), VERIFY_TEST_OS="Linux")
+
+    def run_script(self, *args, script="verify.sh", env=None):
+        self.log.unlink(missing_ok=True)
+        return subprocess.run(
+            ["bash", str(self.repo / "scripts" / script), *args],
+            cwd=self.cwd, env={**self.env, **(env or {})},
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30,
+        )
+
+    def records(self):
+        if not self.log.exists():
+            return []
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def commands(self):
+        return [record["command"] for record in self.records()]
+
+    def assert_stage_timing(self, output, stages):
+        events = re.findall(
+            r"^VERIFY-STAGE-(START|END) (\S+) wall_elapsed=([0-9]+)s"
+            r"(?: wall_duration=([0-9]+)s)?$",
+            output, re.MULTILINE,
+        )
+        self.assertEqual(
+            [(event, stage) for event, stage, _, _ in events],
+            [(event, stage) for stage in stages for event in ("START", "END")],
+            output,
+        )
+        previous_end = 0
+        for start, end in zip(events[::2], events[1::2]):
+            self.assertEqual(start[3], "")
+            self.assertNotEqual(end[3], "")
+            started, finished, duration = int(start[2]), int(end[2]), int(end[3])
+            self.assertGreaterEqual(started, previous_end)
+            self.assertGreaterEqual(finished, started)
+            self.assertEqual(duration, finished - started)
+            previous_end = finished
+
+    def test_list_prints_stages_without_running_commands_or_claiming_success(self):
+        result = self.run_script("--list")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), [])
+        self.assertNotIn("VERIFY-OK", result.stdout)
+        self.assertNotIn("VERIFY-STAGE-", result.stdout)
+        listed = []
+        for line in result.stdout.splitlines():
+            stage, command = line.split("\t", 1)
+            listed.append((stage, shlex.split(command)))
+        self.assertEqual(listed, GATES)
+
+    def test_help_does_not_run_commands_or_claim_success(self):
+        for option in ("--help", "-h"):
+            with self.subTest(option=option):
+                result = self.run_script(option)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(self.commands(), [])
+                self.assertIn("--list", result.stdout)
+                self.assertIn("ONEIRON_FEATURELESS_RUNNER", result.stdout)
+                self.assertIn("featureless libtest stage is mandatory", result.stdout)
+                self.assertNotIn("nextest-8 selects", result.stdout)
+                self.assertIn(f"run all {len(GATES)} scripted stages", result.stdout)
+                self.assertNotIn("\nVERIFY-OK\n", result.stdout)
+                self.assertNotIn("VERIFY-STAGE-", result.stdout)
+
+    def test_invalid_arguments_fail_before_any_command(self):
+        for args in (("--unknown",), ("fmt",), ("--list", "--help"), ("",)):
+            with self.subTest(args=args):
+                result = self.run_script(*args)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual(self.commands(), [])
+                self.assertIn("VERIFY-FAIL-usage", result.stdout)
+                self.assertNotIn("\nVERIFY-OK\n", result.stdout)
+                self.assertNotIn("VERIFY-STAGE-", result.stdout)
+
+    def test_full_gate_executes_every_listed_command_in_order(self):
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), COMMANDS)
+        self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-OK")
+        self.assert_stage_timing(result.stdout, [stage for stage, _ in GATES])
+
+    def test_explicit_libtest_selection_keeps_the_default_commands_and_environment(self):
+        result = self.run_script(env={
+            "ONEIRON_FEATURELESS_RUNNER": "libtest",
+            "NEXTEST_USER_CONFIG_FILE": "fixture-user-config.toml",
+            "NEXTEST_RETRIES": "1",
+        })
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), COMMANDS)
+        self.assertEqual([record["nextest_user_config"] for record in self.records()],
+                         ["fixture-user-config.toml"] * len(GATES))
+        self.assertEqual([record["nextest_retries"] for record in self.records()], ["1"] * len(GATES))
+        self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-OK")
+        self.assert_stage_timing(result.stdout, [stage for stage, _ in GATES])
+
+    def test_obsolete_nextest_selector_is_rejected_before_any_stage(self):
+        for args in ((), ("--list",)):
+            with self.subTest(args=args):
+                result = self.run_script(*args, env={
+                    "ONEIRON_FEATURELESS_RUNNER": "nextest-8",
+                    "NEXTEST_USER_CONFIG_FILE": "fixture-user-config.toml",
+                    "NEXTEST_RETRIES": "1",
+                })
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual(self.commands(), [])
+                self.assertIn("VERIFY-FAIL-usage", result.stdout)
+                self.assertNotIn("VERIFY-OK", result.stdout)
+                self.assertNotIn("VERIFY-STAGE-", result.stdout)
+
+    def test_explicit_libtest_list_keeps_all_nine_commands_without_executing(self):
+        result = self.run_script("--list", env={"ONEIRON_FEATURELESS_RUNNER": "libtest"})
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), [])
+        listed = [(stage, shlex.split(command))
+                  for stage, command in (line.split("\t", 1) for line in result.stdout.splitlines())]
+        self.assertEqual(listed, GATES)
+        self.assertNotIn("VERIFY-OK", result.stdout)
+        self.assertNotIn("VERIFY-STAGE-", result.stdout)
+
+    def test_invalid_featureless_selection_fails_before_any_command(self):
+        for selection in ("", "nextest", "nextest-16", "unknown"):
+            for args in ((), ("--list",)):
+                with self.subTest(selection=selection, args=args):
+                    result = self.run_script(*args, env={"ONEIRON_FEATURELESS_RUNNER": selection})
+                    self.assertEqual(result.returncode, 2, result.stdout)
+                    self.assertEqual(self.commands(), [])
+                    self.assertIn("VERIFY-FAIL-usage", result.stdout)
+                    self.assertNotIn("\nVERIFY-OK\n", result.stdout)
+                    self.assertNotIn("VERIFY-STAGE-", result.stdout)
+
+    def test_rustdoc_denies_warnings_without_changing_other_stage_environments(self):
+        # Cargo gives encoded flags precedence even when their value is empty.
+        for encoded in ("", "-A\x1fwarnings"):
+            with self.subTest(encoded=encoded):
+                result = self.run_script(env={
+                    "RUSTDOCFLAGS": "-A warnings",
+                    "CARGO_ENCODED_RUSTDOCFLAGS": encoded,
+                })
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(self.commands(), COMMANDS)
+                expected = ["-D warnings" if stage == "rustdoc" else "-A warnings" for stage, _ in GATES]
+                self.assertEqual([record["rustdocflags"] for record in self.records()], expected)
+                expected_encoded = [None if stage == "rustdoc" else encoded for stage, _ in GATES]
+                self.assertEqual([record["encoded_rustdocflags"] for record in self.records()], expected_encoded)
+
+    def test_each_failed_gate_stops_before_the_next_command(self):
+        for index, (stage, _) in enumerate(GATES, start=1):
+            with self.subTest(stage=stage):
+                result = self.run_script(env={"VERIFY_TEST_FAIL_CALL": str(index), "VERIFY_TEST_EXIT": "7"})
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(self.commands(), COMMANDS[:index])
+                self.assertEqual(result.stdout.splitlines()[-1], f"VERIFY-FAIL-{stage}")
+                self.assertNotIn("VERIFY-OK", result.stdout)
+                self.assert_stage_timing(result.stdout, [name for name, _ in GATES[:index]])
+
+    def test_compiler_errors_fail_even_when_command_exits_zero(self):
+        for stage in ("clippy", "rustdoc"):
+            index = next(index for index, (name, _) in enumerate(GATES, start=1) if name == stage)
+            for message in ("error[E0308]: fixture error", "error: fixture error"):
+                with self.subTest(stage=stage, message=message):
+                    result = self.run_script(env={
+                        "VERIFY_TEST_FAIL_CALL": str(index), "VERIFY_TEST_EXIT": "0", "VERIFY_TEST_OUTPUT": message,
+                    })
+                    self.assertEqual(result.returncode, 1, result.stdout)
+                    self.assertEqual(self.commands(), COMMANDS[:index])
+                    self.assertIn(message, result.stdout)
+                    self.assertEqual(result.stdout.splitlines()[-1], f"VERIFY-FAIL-{stage}")
+                    self.assertNotIn("VERIFY-OK", result.stdout)
+                    self.assert_stage_timing(result.stdout, [name for name, _ in GATES[:index]])
+
+    def test_refactor_conformance_uses_the_mandatory_narrow_sync_features(self):
+        # Exercise only the shell command contract in a fixture stage. The
+        # structural driver is stubbed; its own synthetic tests cover checks 1-8.
+        refactor = self.repo / "scripts/refactor"
+        moves = refactor / "moves"
+        moves.mkdir(parents=True)
+        (moves / "fixture.tsv").write_text("# No moves in this command fixture.\n")
+        (moves / "fixture.decls").write_text("## allowed\n")
+        shutil.copy2(ROOT / "scripts/refactor/conformance.sh", refactor / "conformance.sh")
+        git = self.bin / "git"
+        git.write_text(f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(str(self.repo))}\n")
+        git.chmod(0o755)
+        python = self.bin / "python3"
+        python.write_text(
+            '#!/bin/sh\nif [ "${2-}" = checks ]; then exit 0; fi\n'
+            f'exec {shlex.quote(sys.executable)} "$@"\n'
+        )
+        python.chmod(0o755)
+        result = self.run_script("fixture", "BASE", script="refactor/conformance.sh")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), [
+            COMMAND_BY_STAGE["fmt"],
+            COMMAND_BY_STAGE["clippy"],
+            ["cargo", "nextest", "run", "--workspace", "--all-features", "--profile", "full"],
+            COMMAND_BY_STAGE["doctest"],
+            ["cargo", "doc", "--workspace", "--all-features", "--no-deps"],
+            ["cargo", "nextest", "run", "-p", "oneiron", "--features", "sync,test-hooks", "--profile", "full"],
+        ])
+        self.assertIn("CONFORMANCE GREEN for fixture", result.stdout)
+
+    def test_distributed_legs_keep_full_tier_and_host_specific_napi_coverage(self):
+        for host in ("Linux", "Darwin"):
+            nextest = COMMAND_BY_STAGE["test"]
+            if host == "Darwin":
+                nextest = [arg for arg in nextest if arg not in ("--exclude", "oneiron-napi")]
+            legs = {
+                "fmt-clippy": COMMANDS[:3],
+                "tests:1/2": [nextest + ["--partition", "hash:1/2"], COMMAND_BY_STAGE["doctest"]],
+                "tests:2/2": [nextest + ["--partition", "hash:2/2"]],
+            }
+            for leg, expected in legs.items():
+                with self.subTest(host=host, leg=leg):
+                    result = self.run_script(script="verify-leg.sh", env={"LEG": leg, "VERIFY_TEST_OS": host})
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    self.assertEqual(self.commands(), expected)
+                    self.assertEqual(result.stdout.splitlines()[-1], f"VERIFY-LEG-OK {leg}")
+
+    def test_missing_or_invalid_leg_fails_before_any_command(self):
+        for env in ({}, {"LEG": "tests:3/3"}):
+            with self.subTest(env=env):
+                result = self.run_script(script="verify-leg.sh", env=env)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(self.commands(), [])
+                self.assertNotIn("VERIFY-LEG-OK", result.stdout)
+
+    def test_distributed_failure_never_claims_success(self):
+        for status, message in (("7", "fixture failure"), ("0", "error[E0308]: fixture error")):
+            with self.subTest(status=status):
+                result = self.run_script(script="verify-leg.sh", env={
+                    "LEG": "fmt-clippy", "VERIFY_TEST_FAIL_CALL": "2",
+                    "VERIFY_TEST_EXIT": status, "VERIFY_TEST_OUTPUT": message,
+                })
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(self.commands(), COMMANDS[:2])
+                self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-LEG-FAIL-fmt fmt-clippy")
+                self.assertNotIn("VERIFY-LEG-OK", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

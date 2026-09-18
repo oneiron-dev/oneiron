@@ -9,7 +9,7 @@ use crate::calendar::claims::CalendarBusyTransparency;
 ///
 /// `summary`, `description`, and `cancelled` extend the keystone skeleton:
 /// the runner needs the summary to name the minted EVENT, the description to
-/// build the CAL-09 safeguard's [`super::safeguard::CalendarInboundBody`], and
+/// build the CAL-09 safeguard's [`CalendarInboundBody`](crate::calendar::CalendarInboundBody), and
 /// the cancelled flag to write `calendar.status` with basis
 /// `imported_cancel`. The three fields are a deliberate CAL-02 amendment to
 /// that skeleton, not an accidental widening of the parsed surface.

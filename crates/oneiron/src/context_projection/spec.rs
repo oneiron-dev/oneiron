@@ -41,7 +41,7 @@ pub struct ContextSpec {
     #[serde(default)]
     pub briefing: Option<String>,
     /// Dev-only authoring note. Stripped at resolution — it never reaches a
-    /// [`ResolvedContextProjection`] and therefore never reaches a prompt.
+    /// [`ResolvedContextProjection`](crate::context_projection::ResolvedContextProjection) and therefore never reaches a prompt.
     #[serde(
         rename = "_annotation",
         default,

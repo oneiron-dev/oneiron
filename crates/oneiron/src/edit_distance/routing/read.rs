@@ -20,8 +20,8 @@ use crate::error::Result;
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] on an unusable scope; storage errors;
-/// [`Error::CorruptedIndex`] on an undecodable row.
+/// [`Error::InvalidClaimBody`](crate::Error::InvalidClaimBody) on an unusable scope; storage errors;
+/// [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Option<WeightHint>> {
     if rollout_rung(vault, &key.task_class)? != RolloutRung::Graduated {
         return Ok(None);
@@ -45,7 +45,7 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+/// Storage errors; [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
     let rtxn = vault.store.env.read_txn()?;
     let rows = aggregates(vault, &rtxn)?;

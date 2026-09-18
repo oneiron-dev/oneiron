@@ -51,7 +51,7 @@ impl<'a> RunTreeAdapter<'a> {
     ///
     /// The label is the first nonempty root [`RunTreeNode::agent_id`] in
     /// deterministic run-tree order; the name is `"{agent label} · {id8}"`, or
-    /// [`GATE_CONSENT_BUNDLE_FALLBACK_LABEL`] followed by the same fragment
+    /// [`GATE_CONSENT_BUNDLE_FALLBACK_LABEL`](crate::GATE_CONSENT_BUNDLE_FALLBACK_LABEL) followed by the same fragment
     /// when the run tree exposes no dispatched agent. `id8` is the first eight
     /// lowercase hex characters of the bundle id.
     ///

@@ -187,10 +187,10 @@ impl TryFrom<LensHandleRole> for LensReadReach {
 
 /// Engine-issued read reach over one selected atom. Serialize-only, with no public
 /// constructor: the only way to hold one is to have passed
-/// [`LensRenderFrame::select_atom`]. It carries an opaque backing token plus locator
+/// [`LensRenderFrame::select_atom`](crate::lens::LensRenderFrame::select_atom). It carries an opaque backing token plus locator
 /// metadata — never body text, screenshot bytes, a raw URL, authority, or a write
-/// chokepoint — and has no conversion into [`LensApprovedAction`],
-/// [`LensHostMediatedWrite`], or [`LensGateWriteChokepoint`]. Selection is not approval.
+/// chokepoint — and has no conversion into [`LensApprovedAction`](crate::lens::LensApprovedAction),
+/// [`LensHostMediatedWrite`](crate::lens::LensHostMediatedWrite), or [`LensGateWriteChokepoint`](crate::lens::LensGateWriteChokepoint). Selection is not approval.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LensReadHandle {
@@ -248,7 +248,7 @@ pub enum GeneratedUiResultSetScope {
 /// A pre-gate validated plan. Ticking rows produces one of these and nothing else: it
 /// has private fields, no public constructor, no `Deserialize`, and no `approve` or
 /// `execute`. Selection is not approval — the receipt is the
-/// [`LensHostMediatedWrite`] that [`LensRenderFrame::dispatch_result_set_action`]
+/// [`LensHostMediatedWrite`](crate::lens::LensHostMediatedWrite) that [`LensRenderFrame::dispatch_result_set_action`](crate::lens::LensRenderFrame::dispatch_result_set_action)
 /// returns after re-proving every handle.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeneratedUiResultSetWritePlan {

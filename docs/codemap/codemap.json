@@ -24112,14 +24112,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/consent_guard_compilefail.rs",
-     "purpose": "DEC-0006 invariant 5 (`the guard offers, never grants`): compile-fail proof that the guard→owner boundary is…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "tests/consent_guard_compilefail/a_owner_stamp_struct_literal_private_fields.rs",
      "purpose": "(a) A guard holding a `ConsentProposal` must not be able to struct-literal an `AuthenticatedOwner`: all…",
      "surface": {}
@@ -24686,14 +24678,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/relay_attestation_compilefail.rs",
-     "purpose": "B11-2b / ONE-1572: compile-fail proof that the sealed relay attestation boundary is real at the type level",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs",
      "purpose": "(a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor…",
      "surface": {}
@@ -24734,14 +24718,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/secret_custody_compilefail.rs",
-     "purpose": "SECRET-01 S1 read-plane discipline: compile-fail proof from an external-crate position",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs",
      "purpose": "(a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and…",
      "surface": {}
@@ -24752,6 +24728,14 @@
      "notable": [],
      "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
      "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/type_boundaries_compilefail.rs",
+     "purpose": "Compile-fail proofs of three type boundaries from external-crate positions",
      "surface": {}
     },
     {
@@ -26022,7 +26006,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1487,
-   "test_files": 534
+   "test_files": 532
   },
   "oneiron-bench": {
    "files": [
@@ -27454,7 +27438,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
-     "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`] seam",
+     "purpose": "Local in-process adapter for Oneiron's `LlmBackend` seam",
      "surface": {
       "re-export": 4
      }
@@ -27499,11 +27483,11 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
-     "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`] seam"
+     "purpose": "Local in-process adapter for Oneiron's `LlmBackend` seam"
     }
    },
    "over_bar": 0,
-   "purpose": "Local in-process adapter for Oneiron's [`LlmBackend`] seam",
+   "purpose": "Local in-process adapter for Oneiron's `LlmBackend` seam",
    "source_files": 7,
    "test_files": 1
   },

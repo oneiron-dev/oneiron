@@ -18,7 +18,7 @@ pub const ATTRIBUTION_CALL_PURPOSE_NAME: &str = "skill_attribution";
 /// Classifies one piece of evidence, or ABSTAINS (`Ok(None)`) when it cannot.
 ///
 /// Abstention is a first-class answer: a judge that guesses on unsettled facts
-/// is exactly the false-pass bias [`run_attribution_audit`] exists to expose.
+/// is exactly the false-pass bias [`run_attribution_audit`](crate::skill_attribution::run_attribution_audit) exists to expose.
 ///
 /// The production LLM tier is a host-supplied implementation calling the
 /// engine's existing LLM surface under [`attribution_call_purpose`]; this

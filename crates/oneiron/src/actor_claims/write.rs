@@ -372,7 +372,7 @@ pub fn skill_fit_for(vault: &Vault, actor: &EntityId, skill: &EntityId) -> Resul
 // ---------------------------------------------------------------------------
 // TASK lane — SK-04 lapse judgments → rows
 // ---------------------------------------------------------------------------
-/// Projects `ExecutionLapse` judgments into [`PREDICATE_ACTOR_FAILURE_MODE`]
+/// Projects `ExecutionLapse` judgments into [`PREDICATE_ACTOR_FAILURE_MODE`](crate::actor_claims::PREDICATE_ACTOR_FAILURE_MODE)
 /// rows, returning the claim ids this pass landed.
 ///
 /// ONE lapse is ONE row ([`LAPSE_FAILURE_MODE`]) — the class the routing

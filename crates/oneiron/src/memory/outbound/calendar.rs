@@ -110,7 +110,7 @@ impl Memory<'_> {
     /// gate.
     ///
     /// The public input is C7's exact five-field payload, never an
-    /// [`OutboundDraftInput`]: this surface owns the invite vocabulary and
+    /// [`OutboundDraftInput`](crate::OutboundDraftInput): this surface owns the invite vocabulary and
     /// constructs the generic draft internally, so no caller can hand-roll a
     /// draft that bypasses the invite contract. Delivery is never performed
     /// here — the ordinary schedule path is the only route, and the invite's

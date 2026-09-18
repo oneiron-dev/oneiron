@@ -167,7 +167,7 @@ impl Vault {
     /// construction.
     ///
     /// For decay / retrieval-feedback loops use the batch form
-    /// [`BatchBuilder::set_edge_weight`].
+    /// [`BatchBuilder::set_edge_weight`](crate::BatchBuilder::set_edge_weight).
     ///
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist
     /// (the setter never upserts); [`Error::InvalidEdgeWeight`] outside the
@@ -197,7 +197,7 @@ impl Vault {
     /// bytes verbatim), and provenance Claims are untouched. Exempt from the
     /// [`ClaimError::EdgeIsProvenanced`](crate::error::ClaimError::EdgeIsProvenanced) reject gate by construction.
     ///
-    /// For batched feedback loops use [`BatchBuilder::set_edge_vad`].
+    /// For batched feedback loops use [`BatchBuilder::set_edge_vad`](crate::BatchBuilder::set_edge_vad).
     ///
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist;
     /// [`Error::InvalidVad`] on non-finite/out-of-range components; a typed

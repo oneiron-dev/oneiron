@@ -12,7 +12,7 @@
 //! 1. **Measurement** ([`ScopeOutcomeStats`]) is universal. Every resolved
 //!    proposal folds into its scope's counters, whatever the op kind. Counters
 //!    are a rebuildable projection (CID-7): every input is a durable,
-//!    receipt-visible act, and [`Vault::rebuild_ramp_stats_from_receipts`]
+//!    receipt-visible act, and [`Vault::rebuild_ramp_stats_from_receipts`](crate::Vault::rebuild_ramp_stats_from_receipts)
 //!    drops the whole table and refolds those acts, landing byte-identically
 //!    on what incremental maintenance produced. There are exactly two input
 //!    families, and NOTHING moves a counter outside them:
@@ -38,17 +38,17 @@
 //!    grant is ever minted from them, and no apply path consults this module.
 //!    Oracle: `ms06_merge_split_never_gated_by_ramp`.
 //! 3. **Authority** is not ours to mint. A crossed streak surfaces an OFFER;
-//!    only [`Vault::accept_graduation_offer`] — which demands an
-//!    [`AuthenticatedOwner`] because it routes through the one
-//!    [`Vault::create_standing_grant`] door — creates a grant. DEC-0006
+//!    only [`Vault::accept_graduation_offer`](crate::Vault::accept_graduation_offer) — which demands an
+//!    [`AuthenticatedOwner`](crate::consent::AuthenticatedOwner) because it routes through the one
+//!    [`Vault::create_standing_grant`](crate::Vault::create_standing_grant) door — creates a grant. DEC-0006
 //!    invariant 5, enforced by the type system rather than by review.
 //!
 //! 4. **Nothing this module records is silent.** A demotion revokes the
 //!    standing grant and appends a durable demotion row (oracle
 //!    `ms06_self_demotion_is_receipted_never_silent`); a ruling recorded
-//!    through [`Vault::record_proposal_outcome_for_ramp`] — the propose-lane
+//!    through [`Vault::record_proposal_outcome_for_ramp`](crate::Vault::record_proposal_outcome_for_ramp) — the propose-lane
 //!    door for surfaces that have no identity-topology ledger event — appends
-//!    a durable outcome row. Both project as a SECOND [`ReceiptKind::Gate`]
+//!    a durable outcome row. Both project as a SECOND [`ReceiptKind::Gate`](crate::receipt::ReceiptKind::Gate)
 //!    receipt family, registered beside the gate-decision projector in
 //!    `receipt::collect_receipt_records` and discriminated by receipt-id
 //!    prefix ([`is_ramp_demotion_receipt`] / [`is_ramp_outcome_receipt`]).
@@ -73,10 +73,10 @@
 //!   now the streak axis of ED-05's compiled catch-all threshold row, which
 //!   pairs it with a posterior guard; `derive_state_in_txn` asks
 //!   `graduation_policy_in_txn` rather than comparing against a floor itself.
-//!   [`Vault::set_ramp_streak_floor`] survives unchanged as the per-scope
+//!   [`Vault::set_ramp_streak_floor`](crate::Vault::set_ramp_streak_floor) survives unchanged as the per-scope
 //!   override, and is the most specific statement in that resolution.
 //! * **Whether to ASK.** Snooze and manual-pin are ED-05 state, consulted by
-//!   [`Vault::graduation_offers`] alone. [`RampState`] is untouched by them on
+//!   [`Vault::graduation_offers`](crate::Vault::graduation_offers) alone. [`RampState`] is untouched by them on
 //!   purpose: it answers what authority is live, and an offer the owner
 //!   snoozed is still an offer they may accept.
 

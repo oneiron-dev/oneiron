@@ -51,7 +51,7 @@
 //!   and does not import ARTL-2 types; whichever PR merges second reconciles.
 //! * **ARTL-4 (settle/receipts)** consumes an [`EditProposal`]:
 //!   [`EditProposal::agent_run_provenance`] yields the
-//!   [`BlobVersionProvenance::AgentRun`] to append, and [`EditManifest::to_msgpack`]
+//!   [`BlobVersionProvenance::AgentRun`](crate::blob_artifact::BlobVersionProvenance::AgentRun) to append, and [`EditManifest::to_msgpack`]
 //!   the manifest bytes to receipt.
 
 mod address;

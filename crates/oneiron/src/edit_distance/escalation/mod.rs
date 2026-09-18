@@ -30,9 +30,9 @@
 //!
 //! # One delta language
 //!
-//! An [`EscalationRuling::Amend`] carries ED-01's [`AmendmentDelta`], stored as
-//! the bytes [`AmendmentDelta::encode`] produced and read back through
-//! [`AmendmentDelta::decode`]. Same bytes, same decode, lane-wide — a Δ that
+//! An [`EscalationRuling::Amend`] carries ED-01's [`AmendmentDelta`](crate::edit_distance::delta::AmendmentDelta), stored as
+//! the bytes [`AmendmentDelta::encode`](crate::edit_distance::delta::AmendmentDelta::encode) produced and read back through
+//! [`AmendmentDelta::decode`](crate::edit_distance::delta::AmendmentDelta::decode). Same bytes, same decode, lane-wide — a Δ that
 //! rode an inbox approve-with-edit and a Δ that rode an escalation amendment
 //! are the same artifact, down to the receipt field key they land in.
 //!
@@ -43,7 +43,7 @@
 //! is UI customization and is not involved — the N dial's key const lives
 //! here). Receipts are PROJECTIONS of those rows, in the `Gate` family beside
 //! MS-06's demotion rows and ED-05's offer answers: an escalation is a gate
-//! decision a human made, so it mints no new [`ReceiptKind`]. The `escalation`
+//! decision a human made, so it mints no new [`ReceiptKind`](crate::receipt::ReceiptKind). The `escalation`
 //! FIELD CLASS (`crate::receipt::FIELD_ESCALATION_SCOPE` and its siblings) is
 //! what tells the families apart inside the kind.
 //!

@@ -337,7 +337,7 @@ pub struct TrapRef {
     pub step_hash: [u8; 32],
 }
 
-/// Terminal outcome of [`call_as_step`].
+/// Terminal outcome of [`call_as_step`](crate::llm::call_as_step).
 #[derive(Debug, Clone, PartialEq)]
 pub enum StepOutcome {
     Finished {

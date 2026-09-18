@@ -49,7 +49,7 @@ fn stack_claims(stack: &ModelStack, model: &ModelId) -> bool {
         .any(|entry| entry.model.as_str() == model.as_str())
 }
 
-/// The generation [`record_judged_amendment`] stamps new folds with.
+/// The generation [`record_judged_amendment`](crate::edit_distance::routing::record_judged_amendment) stamps new folds with.
 ///
 /// Unset resolves to the drafting role's compiled default, which is what the
 /// consumer side would build a key from — so an unconfigured vault records and

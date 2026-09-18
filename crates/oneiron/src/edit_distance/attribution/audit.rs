@@ -136,7 +136,7 @@ pub fn judge_audit_reports(vault: &Vault) -> Result<Vec<AttributionAuditReport>>
 /// the answer key must not leak into its own inputs.
 ///
 /// These ids are never resolved against any ledger: fixtures go straight to
-/// [`classify_amendment`], never through [`record_amendment_evidence`]. Subject
+/// [`classify_amendment`], never through [`record_amendment_evidence`](crate::edit_distance::attribution::record_amendment_evidence). Subject
 /// ids are minted fresh per call and never written — the table reasons over the
 /// cause and the two routing facts, so a fixed seed would only risk aliasing a
 /// real entity.

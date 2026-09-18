@@ -151,9 +151,9 @@ impl SkillReliabilityPosterior {
 
 /// Provenance classes the prior table is keyed by (ARCH-0053 §5).
 ///
-/// Total over lawful [`SkillRecord`] shapes: the record invariant is that
+/// Total over lawful [`SkillRecord`](crate::skill::SkillRecord) shapes: the record invariant is that
 /// exactly one of `generated` / `human_authored` holds and `generated` matches
-/// [`ClaimSource::Generated`], so every record lands in exactly one arm.
+/// [`ClaimSource::Generated`](crate::ClaimSource::Generated), so every record lands in exactly one arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ProvenanceTrustClass {

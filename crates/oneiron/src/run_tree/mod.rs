@@ -1,6 +1,6 @@
 //! Run tree projection and control adapter over generic AttemptQueue rows.
 //!
-//! Lifecycle transitions stay in [`AttemptQueue`]. This module renders queue rows
+//! Lifecycle transitions stay in [`AttemptQueue`](crate::AttemptQueue). This module renders queue rows
 //! and their lifecycle/operator events into a deterministic tree surface.
 
 mod a2a;
