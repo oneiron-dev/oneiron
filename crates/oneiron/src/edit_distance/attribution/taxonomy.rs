@@ -24,7 +24,7 @@ pub type AmendmentClass = AttributionVerdict;
 /// APPROVAL, so wrongness is a question, and these three answers are what the
 /// pre-filter in [`classify_amendment`] reasons over. `None` on the evidence
 /// means the question is unsettled, and the judge abstains rather than guessing
-/// — the false-pass bias [`run_judge_audit`] exists to expose starts exactly
+/// — the false-pass bias [`run_judge_audit`](crate::edit_distance::attribution::run_judge_audit) exists to expose starts exactly
 /// there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -212,7 +212,7 @@ pub struct PreferenceProposal {
 ///
 /// The delegated arm is SK-04's table verbatim (lapse / defect / discovery),
 /// reached by handing it the same evidence in its own shape. `judge` is the
-/// tier seam: [`RuleAttributionJudge`] for the deterministic pass, a
+/// tier seam: [`RuleAttributionJudge`](crate::skill_attribution::RuleAttributionJudge) for the deterministic pass, a
 /// host-supplied implementation for the model tier.
 ///
 /// # Errors

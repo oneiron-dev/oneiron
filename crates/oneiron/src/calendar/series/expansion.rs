@@ -37,7 +37,7 @@ const RRULE_PROPERTY: &str = "RRULE";
 /// each inside the inclusive `window`.
 ///
 /// The rule is stepped on `dtstart`'s wall clock and each occurrence crosses
-/// the [`super::tz`] border once, so a recurring local hour survives a DST
+/// the [`tz`](crate::calendar::tz) border once, so a recurring local hour survives a DST
 /// transition instead of drifting by the offset change.
 ///
 /// # Errors
@@ -59,7 +59,7 @@ const RRULE_PROPERTY: &str = "RRULE";
 ///   is past the border's supported range.
 ///
 /// A fall-back fold is not an error: it resolves to the earliest offset, the
-/// same way [`super::tz::wall_to_utc`] resolves it everywhere else.
+/// same way [`wall_to_utc`](crate::calendar::wall_to_utc) resolves it everywhere else.
 pub fn expand_window(
     rrule: &str,
     dtstart: SeriesDtStart<'_>,

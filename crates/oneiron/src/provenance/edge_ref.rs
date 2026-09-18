@@ -148,7 +148,7 @@ fn entity_id_from(bytes: &[u8], context: &'static str) -> Result<EntityId> {
 /// Authoritative supersession status of an `edge.provenance` Claim
 /// (contracts.ts `supersession_status`: proposed | confirmed | disputed |
 /// retracted). Serialized as u8 in the MessagePack value record; mirrors
-/// the edge's cached [`EdgeConfirmationStatus`] flag one-to-one.
+/// the edge's cached [`EdgeConfirmationStatus`](crate::edge::EdgeConfirmationStatus) flag one-to-one.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SupersessionStatus {

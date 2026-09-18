@@ -200,7 +200,7 @@ impl CalendarConnectorSeatState {
     }
 
     /// The next poll's due instant inside the configured window. Mirrors the
-    /// `linkedin_connector` / [`super::ingest`] jitter formula exactly.
+    /// `linkedin_connector` / [`ingest`](crate::calendar::ingest) jitter formula exactly.
     ///
     /// # Errors
     ///

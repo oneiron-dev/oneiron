@@ -514,7 +514,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 /// The last thing the supervisor hears from this process.
 ///
 /// Rev-ordered, through the same push-on-change path a running engine uses,
-/// and that is the whole point of not hand-rolling it here. [`LedgerUpdate`]
+/// and that is the whole point of not hand-rolling it here. [`LedgerUpdate`](oneiron_vault_contract::LedgerUpdate)
 /// is a full replacement ordered by `rev`: a shutdown snapshot carrying
 /// entries that moved since the last accepted push — a job that became ready,
 /// a lease that changed — has to advance the revision, or a supervisor that

@@ -43,7 +43,7 @@ pub const PREDICATE_CALENDAR_STATUS: &str = "calendar.status";
 /// Membership is an exact table, never a `calendar.` prefix match: an unknown
 /// future `calendar.*` predicate must not be silently interpreted as one of
 /// these classes. `calendar.event_outcome` (CAL-07) is the one member whose
-/// constant lives in a sibling module — [`super::outcome`] owns its semantics —
+/// constant lives in a sibling module — [`outcome`](crate::calendar::outcome) owns its semantics —
 /// but the table, the validator, and the descriptor row stay here, so the family
 /// still has exactly one home.
 pub const CALENDAR_CLAIM_PREDICATES: &[&str] = &[
@@ -71,10 +71,10 @@ pub(super) const MAX_RRULE_BYTES: usize = 2048;
 /// Content hashes are SHA-256 sized.
 pub(super) const CONTENT_HASH_LEN: usize = 32;
 
-/// ICS `TRANSP` property value mapping to [`CalendarBusyTransparency::Busy`].
+/// ICS `TRANSP` property value mapping to [`CalendarBusyTransparency::Busy`](crate::calendar::CalendarBusyTransparency::Busy).
 pub const ICS_TRANSP_OPAQUE: &str = "OPAQUE";
 
-/// ICS `TRANSP` property value mapping to [`CalendarBusyTransparency::Free`].
+/// ICS `TRANSP` property value mapping to [`CalendarBusyTransparency::Free`](crate::calendar::CalendarBusyTransparency::Free).
 pub const ICS_TRANSP_TRANSPARENT: &str = "TRANSPARENT";
 
 /// Write class for claims an engine projector records rather than a human asserts.

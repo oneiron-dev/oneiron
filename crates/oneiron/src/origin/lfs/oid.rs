@@ -15,7 +15,7 @@ pub const VAULT_LFS_OID_HEX_LEN: usize = 64;
 // ---------------------------------------------------------------------------
 /// A Git-LFS object id: the SHA-256 of the object's bytes.
 ///
-/// Deliberately a distinct 32-byte type from the 16-byte [`EntityId`]: an
+/// Deliberately a distinct 32-byte type from the 16-byte [`EntityId`](crate::EntityId): an
 /// object id addresses BYTES and an entity id addresses an ENTITY, and the two
 /// are never interchangeable even though one deterministically derives the
 /// other.

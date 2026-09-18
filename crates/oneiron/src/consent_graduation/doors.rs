@@ -174,7 +174,7 @@ impl Vault {
     }
 
     /// Overrides one scope's graduation streak floor (ED-05's seam; the
-    /// compiled default is [`DEFAULT_GRADUATION_STREAK_FLOOR`]).
+    /// compiled default is [`DEFAULT_GRADUATION_STREAK_FLOOR`](crate::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR)).
     ///
     /// # Errors
     ///

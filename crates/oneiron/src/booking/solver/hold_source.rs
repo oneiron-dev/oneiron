@@ -14,8 +14,8 @@ use crate::temporal::TimeRange;
 /// `exclude_session_key` lets the session that is confirming its own hold see
 /// the slot it already reserved, so a confirm never fails against itself.
 ///
-/// `Send + Sync` for the same reason [`SlotOracle`] carries them: a
-/// [`BookingSolver`] holds `&dyn ActiveHoldSource`, and a solver that is not
+/// `Send + Sync` for the same reason [`SlotOracle`](crate::booking::SlotOracle) carries them: a
+/// [`BookingSolver`](crate::booking::BookingSolver) holds `&dyn ActiveHoldSource`, and a solver that is not
 /// `Sync` cannot be a `SlotOracle` at all.
 pub trait ActiveHoldSource: Send + Sync {
     /// Unexpired holds on `page_ref` overlapping `window` as of `now_utc`.

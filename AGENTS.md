@@ -15,38 +15,64 @@ Oneiron is a general-purpose memory engine (Rust workspace; core crate `crates/o
 Products are built on top of the engine, never inside it: no product names, prompt/persona text,
 or product-branded modules in engine code. Full rule and its 4 consequences: `CLAUDE.md`.
 
+## Start a task
+
+1. Read `CLAUDE.md`, this file, `WORKFLOW.md`, and `REVIEW.md`; then any closer instructions.
+2. Confirm the branch and working tree with `git status --short --branch`. Use one external
+   worktree per writer. `WORKFLOW.md` §1 covers target-directory ownership and host budgets.
+3. Read `docs/CODEMAP.md`, then search only the owning `docs/codemap/<crate>.md` and source
+   subtree. File paths in a crate map are relative to `crates/<crate>/`.
+4. Use a scoped dev loop below. The coordinator owns the full gate after integration;
+   a scoped pass is not a VERDICT.
+
 ## Exact commands
 
-Dev-loop iteration — scoped, fast, default nextest profile, retries=0:
+Discover the gate without compiling or running tests:
 
-    cargo nextest run -p oneiron --all-features [-E 'test(<module>)']
+    scripts/verify.sh --help
+    scripts/verify.sh --list
 
-The `default` profile skips a slow set — see *nextest tiers* below; a green dev loop is not a
-green gate. Sync-lane iteration uses `--features sync,test-hooks` instead (the bare `sync` feature does not build). A feature flag is no longer required: the
-plain featureless build compiles its library *and* its test targets, and carries its own gates —
-see the featureless-build entry under Landmines.
+For generated navigation, `scripts/codemap/check.sh` checks without writing;
+`python3 scripts/codemap/codemap.py` regenerates. See *Code map* for when to regenerate.
 
-Full verify gate — run at VERDICT time only, never for iteration:
+`--list` prints the live stage names and commands from the same definitions used by execution.
+It does not run the code-map check or emit `VERIFY-OK`. Unknown arguments fail before any stage.
+
+Dev-loop examples for the core crate; replace the crate or test filter with the changed scope:
+
+    cargo fmt -p oneiron --check
+    cargo clippy -p oneiron --all-targets --all-features -- -D warnings
+    cargo nextest run -p oneiron --all-features -E 'test(gate::)'
+
+To apply formatting, use `cargo fmt -p oneiron` (or the owning crate), then inspect the diff.
+For the workspace use `cargo fmt --check`, never `--all`: that follows the path dependency into
+the ONE-218 heed vendor. Sync-lane iteration uses `--features sync,test-hooks` instead of
+`--all-features`; bare `sync` does not build the test targets. The plain featureless library
+and test targets also have gates; see *Landmines*. The default nextest profile skips slow tests
+and has no retries. A green dev loop is not a green gate.
+
+Full scripted gate — run at VERDICT time, not after every edit:
 
     scripts/verify.sh
 
-`scripts/verify.sh` is the single source of truth for the scripted gate and runs the code-map
-pin (`scripts/codemap/check.sh`) and then 6 stages: `cargo fmt --check` (members only — never `--all`, which would follow the path dependency into the
-ONE-218 heed vendor), workspace clippy (`-D warnings`, all targets/features), featureless clippy
-(`cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings`), `cargo nextest run
---workspace --exclude oneiron-napi --all-features --profile full` (napi cannot link its test binary
-off a Node host — ONE-1997), `cargo test -p oneiron --lib --no-default-features`,
-and `cargo test --doc --workspace --exclude oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
-script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCFLAGS="-D warnings"
-cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync,test-hooks
---profile full` (the bare `sync` feature does not build: `sync::selector::tests` calls a
-`test-hooks`-gated helper).
+The script is the source of truth. Its **nine stages** check the code-map pin, fmt,
+workspace clippy, featureless clippy, **server-production clippy** (`clippy-server`),
+**rustdoc with warnings denied** (`rustdoc`), full workspace nextest (excluding
+`oneiron-napi`), featureless library tests, and doctests (excluding `oneiron-bench`).
+Server clippy deliberately has no `--all-targets`: it checks the engine's production
+`sync` selection without test-only feature unification. Linux is the reference full-gate host;
+the macOS caveats below still apply to this script.
 
-Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh`. Leg coverage is
-narrower than the script: `fmt-clippy` runs the code-map pin, fmt and workspace clippy;
-`tests:1/2` runs nextest partition `hash:1/2` plus doctests; `tests:2/2` runs partition
-`hash:2/2`. No leg runs the two featureless stages, so a distributed run has a four-command
-gap: featureless clippy, featureless lib tests, `cargo doc`, and the sync-profile nextest run.
+`WORKFLOW.md` §3 lists the one additional policy command not wired into the script:
+narrow sync/test-hooks full nextest. The strict rustdoc stage runs before runtime tests:
+
+    env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+
+The child command clears inherited encoded flags, which otherwise override `RUSTDOCFLAGS`
+even when empty. Other stages keep their inherited environment.
+The distributed form (`scripts/verify-leg.sh`) still omits **five** commands (featureless clippy,
+server-production clippy, featureless lib tests, rustdoc, and narrow sync full nextest).
+Do not report a distributed-only pass as the full gate.
 
 ## nextest tiers
 
@@ -74,12 +100,29 @@ Linux is the reference host. On macOS:
 ## Code map
 
 Read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules with layout,
-size bucket and purpose), then drill into `docs/codemap/<crate>.md` for the per-file table. Both
-are generated deterministically by `scripts/codemap/` and pinned by `scripts/codemap/check.sh`
-(stage 0 of `scripts/verify.sh`, also run by `ratchet.yml`): a stale map fails with
-`CODEMAP-STALE` and prints the regenerate command. After adding, moving, or deleting a Rust file
-run `python3 scripts/codemap/codemap.py` and commit the output in the same change. `python3
-scripts/codemap/codemap.py --sizes` prints the live line counts.
+size bucket and purpose), then search `docs/codemap/<crate>.md` for the owning module or type.
+These maps cover `crates/` only; the workspace's macOS app lives separately at
+`apps/macos/src-tauri/` and is linked from the overview. Both map levels
+are generated deterministically by `scripts/codemap/`, along with the machine-readable
+`docs/codemap/codemap.json`. They are pinned by `scripts/codemap/check.sh` (stage 0 of
+`scripts/verify.sh`, CI `Checks`, and `ratchet.yml`): a stale map fails with `CODEMAP-STALE`
+and prints the regenerate command. No watcher or installed hook is needed.
+
+After adding, moving, or deleting a Rust file, run `python3 scripts/codemap/codemap.py` and
+commit its output in the same change. Also regenerate when a file's leading `//!` purpose,
+public items, or size bucket changes. The check is read-only; generation updates only changed
+artifacts and removes orphan crate pages. `python3 scripts/codemap/codemap.py --sizes` prints
+live line counts without changing the maps. The index is a source summary, not a call graph
+or proof of which features compile.
+
+For a narrow lookup, use `rg -n 'gate/evaluate|GateError' docs/codemap/oneiron.md`, then open the
+matching path under `crates/oneiron/`. Read only matching rows or a narrow line range;
+do not load large crate maps (especially `docs/codemap/oneiron.md`) whole.
+
+The generator and verification CLI have dependency-free fixture tests (no Cargo builds):
+
+    python3 -m unittest discover -s scripts/tests -p test_codemap.py -v
+    python3 -m unittest discover -s scripts/tests -p test_verify.py -v
 
 Size and dependency questions without `tokei` / `cargo-modules` (`rg` is present):
 
@@ -87,16 +130,24 @@ Size and dependency questions without `tokei` / `cargo-modules` (`rg` is present
     rg -l 'crate::pipeline\b' crates --type rust                                     # who names a module
     rg -oIN '\bcrate::[a-z_]+' crates/oneiron/src/pipeline | sort | uniq -c | sort -rn  # what a module names
 
-## Tool truth (verified on this box)
+## Tools and hosts
 
-Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9, `rg` (ripgrep 15). NOT installed —
-don't assume them: `just`, `tokei`, `cargo-modules`, `cargo-public-api`.
+Arch Linux is the reference host; the Mac mini and MacBook also run development and macOS
+checks. Read `rust-toolchain.toml` for the Rust pin and components. Gate tools are `cargo`
+(with rustfmt, clippy, and nextest), `git`, `python3` ≥ 3.11, `bash`, and `rg`.
+
+Check tools on the host you are using, not on the coordinator's host. `rtk` and `ast-grep` are
+useful when available, but optional wrappers are not gate requirements. Do not assume `just`,
+`tokei`, `cargo-modules`, or `cargo-public-api` are installed; the code map and `rg` work without
+them. Do not install global hooks, change shared Cargo configuration, or start a second full
+build to work around an occupied target directory.
 
 ## Landmines
 
-- `oneiron-napi` cannot link its test binary on any host (the `napi_*` symbols come from a Node
-  host at load time on Linux; macOS links it since the build script passes `-undefined
-  dynamic_lookup`): Linux workspace nextest runs carry `--exclude oneiron-napi`, `scripts/verify.sh` included.
+- `oneiron-napi` cannot link its test binary on Linux without a Node host (the `napi_*`
+  symbols come from that host). macOS links it through `-undefined dynamic_lookup`.
+  `scripts/verify.sh` excludes it on all hosts; distributed nextest legs exclude it only on
+  Linux, preserving their macOS napi coverage. macOS CI includes it too.
 - Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
   if you find a reference to it, that reference is stale.
 - Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
@@ -138,21 +189,21 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   requires the `Checks` and `Test` contexts and a filtered trigger starts no run at all, so a
   docs-only PR reported neither and was blocked forever (#921 needed `--admin`). The `changes` job
   still detects a rust diff; it now gates STEPS, not the run. Jobs: `changes` (path detector) /
-  `checks` (fmt, workspace + featureless clippy, typos, `cargo-deny` policy — one job, one runner
-  slot) / `test` (macOS) /
+  `checks` (fmt, workspace + featureless + server-production clippy, strict rustdoc,
+  code-map pin, tooling fixture tests, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
   `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
   no `RUSTFLAGS` (see *Self-hosted runners*). `checks` and `test` both run on every non-draft
   `pull_request`, on every `push` to `main` and on `workflow_dispatch`, so both required contexts
   always report; each gates its cargo steps on a rust diff (always on dispatch and tags, fail-open
-  if the detector broke), so a docs-only run is a checkout plus the always-on typos and `cargo-deny`
-  policy steps. `test` runs the macOS recipe
+  if the detector broke), so a docs-only run still checks the code-map pin, tooling fixtures, typos, and
+  `cargo-deny` policy. `.cargo/**` changes count as Rust-relevant. `test` runs the macOS recipe
   (the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
   filtered out by name — ONE-1996 — then the featureless lib tests and doctests); on `push` that
   job keeps the rust-diff gate at job level; `test-linux` runs the `--profile full` suite with
   only the napi exclusion, plus the same two stages, on `push` to `main` and `workflow_dispatch`
   only — never on PRs, Arch is the Wave host; `package` waits for a `v*` tag push that no
-  trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy and
-  tests pre-merge; `scripts/verify.sh` on the branch stays the local gate.
+  trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy,
+  strict rustdoc and tests pre-merge; `scripts/verify.sh` on the branch stays the local gate.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
@@ -187,10 +238,12 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   workflow sets `RUSTFLAGS`: `-Dwarnings` there also reaches the vendored `crates/heed` path
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
-  flags let the runner caches share fingerprints with developer builds. The cache only grows
-  (cargo never evicts stale artifacts), so every cargo job ends with
-  `scripts/ci/cap-target-cache.sh 20`: past 20 GB the dir is removed and the next job on that
-  runner builds cold; it never touches a path that is not `…/ci/target`.
+  flags let the runner caches share fingerprints with developer builds. Cargo does not evict stale
+  artifacts itself. Cache maintenance is opt-in per workflow: the macOS Checks/Test jobs and
+  binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; `test-linux` currently has
+  no cap step. Do not assume every host has the same cache budget. Policy and safe maintenance
+  commands live in `docs/ops/build-performance.md`; the script is the behavior source of truth.
+  Never share a runner's target directory with concurrent developer jobs.
 - Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
   `python3` ≥ 3.11; macOS runners also poppler's `pdfsig` (seal-oracle). `uniffi-stub` needs a
   full Xcode, not Command Line Tools alone, so it targets the capability label `xcode`; add that

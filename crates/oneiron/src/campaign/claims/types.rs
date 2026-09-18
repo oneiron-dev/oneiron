@@ -345,8 +345,8 @@ pub struct CommBounceValue {
 
 /// Value of a `comm.jurisdiction` claim.
 ///
-/// Confidence stays in [`ClaimBody::confidence`] and provenance stays in
-/// [`ClaimBody::evidence`] — neither is duplicated into the value. ONE-1777
+/// Confidence stays in [`ClaimBody::confidence`](crate::ClaimBody::confidence) and provenance stays in
+/// [`ClaimBody::evidence`](crate::ClaimBody::evidence) — neither is duplicated into the value. ONE-1777
 /// owns compliance-row evaluation over these facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommJurisdictionValue {

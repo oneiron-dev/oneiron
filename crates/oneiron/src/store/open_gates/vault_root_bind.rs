@@ -16,7 +16,7 @@ use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "linux")]
-use heed::{Env, EnvOpenOptions};
+use heed::EnvOpenOptions;
 
 use crate::config::VaultConfig;
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};

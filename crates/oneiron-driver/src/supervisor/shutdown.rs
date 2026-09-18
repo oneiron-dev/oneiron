@@ -5,7 +5,7 @@ use tokio::sync::watch;
 
 /// Requests a graceful supervisor stop. Cooperative ONLY (H-S5/R2): between
 /// passes the loop exits immediately; mid-pass the running pass's
-/// [`WakeCancellation`] flag is raised and the pass is awaited to its own
+/// [`WakeCancellation`](oneiron::WakeCancellation) flag is raised and the pass is awaited to its own
 /// attempt-boundary stop — never aborted.
 #[derive(Debug, Clone)]
 pub struct ShutdownHandle {

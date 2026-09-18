@@ -170,7 +170,7 @@ pub struct SyncQuarantineReport {
     pub eviction_count: u64,
     /// Cumulative rows a `TerminalRejectionBatch` accounted by COUNT rather
     /// than by `x:` row, because the pass exceeded
-    /// [`MAX_QUARANTINE_ROWS_PER_PASS`] (`m:quarantine_batch_drops`). Nonzero
+    /// [`MAX_QUARANTINE_ROWS_PER_PASS`](crate::sync::MAX_QUARANTINE_ROWS_PER_PASS) (`m:quarantine_batch_drops`). Nonzero
     /// means a peer sent a frame with more rejectable rows than one pass mints
     /// evidence for — the rejections happened and are accounted here.
     pub batch_drop_count: u64,
@@ -178,7 +178,7 @@ pub struct SyncQuarantineReport {
     /// marker — needs-rematerialization. Non-empty is an ERROR signal: a
     /// CRDT-tombstone purge failed, so hard-deleted content may still be
     /// live in the local active store (GDPR SLA breach signal) until
-    /// [`drain_remat_markers`] succeeds. Unparsable `rm:` rows surface here
+    /// [`drain_remat_markers`](crate::sync::drain_remat_markers) succeeds. Unparsable `rm:` rows surface here
     /// too (fail closed — never dropped).
     pub rm_pending_windows: Vec<String>,
 }

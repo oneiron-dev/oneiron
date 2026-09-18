@@ -106,7 +106,7 @@ impl GeneratedLens {
     /// Stamp the live pair, [`LensVersionStamp::current`]: a body built here was by
     /// construction compiled against the atom kit and the shell contracts this build
     /// ships, so it is exactly what [`lens_load_action`] calls current and what
-    /// [`regenerate_lens`] accepts as a candidate for the requested target.
+    /// [`regenerate_lens`](crate::lens::regenerate_lens) accepts as a candidate for the requested target.
     ///
     /// Neither component is derived from the tree. The contained-atom minimum is a
     /// *floor* an envelope may not under-declare (see the tree validator below), never

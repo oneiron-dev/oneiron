@@ -84,7 +84,7 @@ run cargo clippy --workspace --all-targets --all-features -- -D warnings
 run cargo nextest run --workspace --all-features --profile full
 run cargo test --doc --workspace --exclude oneiron-bench --all-features
 run env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-run cargo nextest run -p oneiron --features sync --profile full
+run cargo nextest run -p oneiron --features sync,test-hooks --profile full
 echo "OK check 7 (WORKFLOW gate)"
 
 echo "== CONFORMANCE GREEN for $STAGE =="

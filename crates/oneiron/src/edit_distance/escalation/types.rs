@@ -116,7 +116,7 @@ impl StandingPolicyStatus {
 // The public records
 // ---------------------------------------------------------------------------
 
-/// One ruled escalation, as [`record_escalation`] takes it.
+/// One ruled escalation, as [`record_escalation`](crate::edit_distance::escalation::record_escalation) takes it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EscalationReceipt {
     /// The task the ask was about.
@@ -142,7 +142,7 @@ pub struct EscalationReceipt {
 /// A standing answer for one `(scope, trigger)` pair.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StandingPolicy {
-    /// The row's own handle — what [`accept_standing_policy`] takes.
+    /// The row's own handle — what [`accept_standing_policy`](crate::edit_distance::escalation::accept_standing_policy) takes.
     pub row_ref: EntityId,
     /// The scope it governs.
     pub scope: String,
@@ -194,7 +194,7 @@ pub struct EscalationStats {
     pub deny: u32,
     /// Amendments recorded.
     pub amend: u32,
-    /// Newest [`ESCALATION_LAST_RULINGS_BOUND`] retained, returned
+    /// Newest [`ESCALATION_LAST_RULINGS_BOUND`](crate::edit_distance::escalation::ESCALATION_LAST_RULINGS_BOUND) retained, returned
     /// oldest-to-newest.
     pub last_rulings: Vec<EscalationRuling>,
 }

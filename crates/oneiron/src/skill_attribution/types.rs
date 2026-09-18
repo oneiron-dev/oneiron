@@ -20,7 +20,7 @@ pub const SKILL_ATTRIBUTION_SCHEMA_VERSION: u64 = 1;
 /// WRONG at all. They share this enum rather than forking a parallel taxonomy
 /// because the wrong-on-its-own-terms case routes through the very same
 /// skill/actor ladder — [`crate::edit_distance::attribution`] pre-filters the
-/// two amendment-only causes and delegates the rest to [`AttributionJudge`].
+/// two amendment-only causes and delegates the rest to [`AttributionJudge`](crate::skill_attribution::AttributionJudge).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AttributionVerdict {
@@ -117,7 +117,7 @@ impl AttemptOutcome {
 ///
 /// The `receipt_ref` is the id of the terminal PACK RECEIPT the attempt's
 /// close stamped ([`crate::receipt::attempt_pack_receipt_id`]) — a string on
-/// the landed spine, not an entity id. [`record_attribution_evidence`]
+/// the landed spine, not an entity id. [`record_attribution_evidence`](crate::skill_attribution::record_attribution_evidence)
 /// resolves it, and the `skill` must appear in that receipt's manifest, so a
 /// verdict is always traceable back to the record that produced it.
 ///

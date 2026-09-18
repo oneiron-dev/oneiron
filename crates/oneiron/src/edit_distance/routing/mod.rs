@@ -21,7 +21,7 @@
 //! # A swap is a new generation, not a new datapoint
 //!
 //! [`RoutingScopeKey::model_version`] is a `ModelStack` identity, resolved from
-//! a [`ModelId`] HERE (`settings::model_versioning` stays read-only prior art).
+//! a [`ModelId`](crate::ModelId) HERE (`settings::model_versioning` stays read-only prior art).
 //! Swapping the serving model therefore starts a FRESH aggregate: the old row
 //! is retained as history and never merged into the new one. Blending two
 //! generations' edit mass would produce a number that describes neither, and it

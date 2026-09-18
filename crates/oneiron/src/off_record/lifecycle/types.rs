@@ -72,7 +72,7 @@ pub struct OffRecordCloseOutcome {
     /// and evaporation is what deletes them).
     pub context_receipts_deleted: usize,
     /// Emit-adjacent receipts dropped with the session's
-    /// [`SessionLocalReceiptLog`] (RECEIPTS-FOLLOW-TRANSCRIPT).
+    /// [`SessionLocalReceiptLog`](crate::receipt::SessionLocalReceiptLog) (RECEIPTS-FOLLOW-TRANSCRIPT).
     pub emit_receipts_deleted: usize,
     /// Emit receipts recorded after flipping the session on record.
     pub emit_receipts_retained: Vec<ReceiptRecord>,

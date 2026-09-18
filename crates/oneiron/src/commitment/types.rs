@@ -254,7 +254,7 @@ impl CommitmentStatus {
 /// Every status-effecting fulfillment names the thing that caused it. There is
 /// no ambient or inferred arm: a Dreamer witness writes a PROPOSAL claim
 /// instead of a status, and only these three explicit sources reach
-/// [`Vault::fulfill_commitment`].
+/// [`Vault::fulfill_commitment`](crate::Vault::fulfill_commitment).
 ///
 /// [`Self::ChecklistTick`] is the typed N6 hook. It is deliberately UNWIRED:
 /// the engine has no checklist-tick producer, so the dispatcher accepts the

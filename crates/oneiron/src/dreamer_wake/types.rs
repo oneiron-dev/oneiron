@@ -21,7 +21,7 @@ use super::deadline::WakePassDeadline;
 /// # Compaction handoff (DREAM-008, ONE-1250)
 ///
 /// [`Self::Compaction`] stays fully usable on its own: a host that simply
-/// observed a compaction calls [`request_wake`] with no packet and nothing
+/// observed a compaction calls [`request_wake`](crate::dreamer_wake::request_wake) with no packet and nothing
 /// about that path changed. The trigger carries no packet field, and no
 /// wake path gained a validation step.
 ///
@@ -43,7 +43,7 @@ pub enum WakeTrigger {
 
 impl WakeTrigger {
     /// Default consolidation scope for this trigger. `Event` defaults to
-    /// Micro; the event payload may override at [`request_wake`] time.
+    /// Micro; the event payload may override at [`request_wake`](crate::dreamer_wake::request_wake) time.
     #[must_use]
     pub const fn default_scope(self) -> DreamerConsolidationScope {
         match self {
@@ -75,7 +75,7 @@ pub enum WakePassStop {
     Trapped,
     NotHomeNode,
     NoHomeNode,
-    /// A [`WakeCancellation`] request was honored at an attempt-boundary
+    /// A [`WakeCancellation`](crate::WakeCancellation) request was honored at an attempt-boundary
     /// checkpoint. Any attempt admitted when the request landed was parked and
     /// its budget reservation refunded — nothing leaks (H-S5/R2).
     Cancelled,

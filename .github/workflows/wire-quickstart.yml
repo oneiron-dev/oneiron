@@ -132,11 +132,9 @@ jobs:
       - name: Install Python build and metadata tooling
         run: python -m pip install --disable-pip-version-check maturin==1.9.4 twine==6.1.0
 
-      - name: Build the SDK crates and server fixture
+      - name: Build the SDK crates (dev profile)
         run: |
           cargo build --locked -p oneiron-remote -p oneiron-napi -p oneiron-py
-          cargo build --locked -p oneiron-server --bin oneiron-server
-          cargo build --locked -p oneiron-remote --example provision-fixture-actor
 
       - name: Shared backend contract tests
         run: cargo test --locked -p oneiron-remote

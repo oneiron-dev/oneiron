@@ -86,7 +86,7 @@ pub const MCP_SERVER_NAME: &str = "oneiron";
 ///
 /// These seven names are no longer a wire surface. Neither registered endpoint
 /// lists them and `tools/call` cannot resolve them on either endpoint: name
-/// resolution goes through [`McpRegisteredSurface::resolve`] and nothing else,
+/// resolution goes through [`McpRegisteredSurface::resolve`](crate::mcp::McpRegisteredSurface::resolve) and nothing else,
 /// so every one of them answers `unknown_tool`. What survives here is a private
 /// argument/schema catalog plus the executor bodies the shared gated vault API
 /// still reaches internally — a library, not a callable second surface, and not

@@ -61,7 +61,7 @@ impl PrepHomeNodeJob {
 ///   that law lives in, and a prep pack for a called-off meeting is noise;
 /// * it must still be eligible, from live `calendar.attendee` rows;
 /// * its T-45 must still be the instant the payload was planned for. An EVENT
-///   that moved has a new wake with the same [`prep_wake_id`]; this one is
+///   that moved has a new wake with the same [`prep_wake_id`](crate::calendar::prep_wake_id); this one is
 ///   stale and answers `None` rather than rendering against an old time.
 ///
 /// `Ok(None)` therefore covers both "stale" and "now empty", and in both cases

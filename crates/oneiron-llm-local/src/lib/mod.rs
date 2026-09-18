@@ -1,4 +1,4 @@
-//! Local in-process adapter for Oneiron's [`LlmBackend`] seam.
+//! Local in-process adapter for Oneiron's [`LlmBackend`](oneiron::LlmBackend) seam.
 //!
 //! This crate intentionally does not download, select, or quantize models. It
 //! adapts an already-loaded llama.cpp/mistral.rs-class runtime into the engine

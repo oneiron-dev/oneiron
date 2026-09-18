@@ -43,7 +43,7 @@ pub struct PrefilterScreen {
     pub scanned: usize,
     pub passed: usize,
     pub skipped: usize,
-    /// Summed [`estimated_prompt_tokens`] of the SKIPPED turns — the budget
+    /// Summed [`estimated_prompt_tokens`](crate::dreamer_prefilter::estimated_prompt_tokens) of the SKIPPED turns — the budget
     /// this round did not spend.
     pub estimated_tokens_saved: u64,
 }

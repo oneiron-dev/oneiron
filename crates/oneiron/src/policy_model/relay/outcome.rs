@@ -151,11 +151,11 @@ impl RelayResolution {
 ///
 /// `Classified` is the only variant that ran a pass, and its verdict is
 /// HOSTED-LEGAL ONLY — the owner plane is never assembled at the relay, so the
-/// verdict category can never be [`PolicyVerdictCategory::OwnerPolicy`] unless
+/// verdict category can never be [`PolicyVerdictCategory::OwnerPolicy`](crate::policy_model::PolicyVerdictCategory::OwnerPolicy) unless
 /// it came from a verified vault-side receipt.
 ///
 /// Intentionally `Serialize` but NOT `Deserialize` (same reason as
-/// [`RelayTrustDomain`]): a relay outcome is emitted for receipts/logs, never
+/// [`RelayTrustDomain`](crate::policy_model::RelayTrustDomain)): a relay outcome is emitted for receipts/logs, never
 /// reconstructed from untrusted bytes.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

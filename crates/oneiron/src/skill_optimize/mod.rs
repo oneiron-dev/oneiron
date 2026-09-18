@@ -23,8 +23,8 @@
 //! and not re-stamped, exactly as `skill_convert`'s merge proposal leaves its
 //! target alone. Admission of the successor (`candidate → active`) is the
 //! GATE's act (ONE-1449, ARCH-0005b: AI is never the sole approver), and the
-//! prior revision is frozen by [`Vault::supersede_skill_record`] — the door
-//! that writes the `Supersedes` edge. [`Vault::update_skill_record`] is NOT
+//! prior revision is frozen by [`Vault::supersede_skill_record`](crate::Vault::supersede_skill_record) — the door
+//! that writes the `Supersedes` edge. [`Vault::update_skill_record`](crate::Vault::update_skill_record) is NOT
 //! the archive path and rejects a bare flip into `superseded`.
 //!
 //! **One skill and at most one proposal per attempt**, by construction: the
@@ -61,7 +61,7 @@
 //!
 //! Identity- and alignment-tier skills are never optimization targets — not
 //! "rejected at the end", but absent from the candidate list
-//! ([`optimize_candidates`]). [`SkillGovernanceTier`] is minted for this by
+//! ([`optimize_candidates`]). [`SkillGovernanceTier`](crate::SkillGovernanceTier) is minted for this by
 //! ONE-1448 as a SKILL body key; what makes the rule hold on data older than
 //! the key is [`skill_governance_tier`]:
 //!
@@ -98,7 +98,7 @@
 //!    churn with a rationale.
 //! 2. **Evidence of LOSS** — the posterior mean sits below the mean of the
 //!    skill's own provenance prior
-//!    ([`SkillReliabilityPosterior::seeded_from_provenance`]): attributed
+//!    ([`SkillReliabilityPosterior::seeded_from_provenance`](crate::skill_reliability::SkillReliabilityPosterior::seeded_from_provenance)): attributed
 //!    outcomes have moved this skill DOWN from where its birth path started
 //!    it. No second dial is minted for this, and the reliability FLOOR is
 //!    deliberately not reused — crossing the floor is the QUARANTINE question

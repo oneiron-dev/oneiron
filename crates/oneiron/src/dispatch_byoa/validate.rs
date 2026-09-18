@@ -26,7 +26,7 @@ fn is_bounded_printable(value: &str, max_len: usize) -> bool {
 ///
 /// # Errors
 ///
-/// Returns [`ByoaError::Store`] naming the field that failed.
+/// Returns [`ByoaError::Store`](crate::dispatch_byoa::ByoaError::Store) naming the field that failed.
 pub fn validate_connector(connector: &ByoaConnectorSpec) -> ByoaResult<()> {
     match connector {
         ByoaConnectorSpec::Endpoint(spec) => validate_endpoint(spec),

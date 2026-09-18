@@ -27,6 +27,17 @@ run_stage() {
   fi
 }
 
+run_test_partition() {
+  local partition="$1"
+  local -a packages=(--workspace)
+  # Linux cannot link napi tests off a Node host. Keep the existing macOS
+  # coverage, unlike verify.sh's unconditional exclusion for its reference lane.
+  if [ "$(uname -s)" = Linux ]; then
+    packages+=(--exclude oneiron-napi)
+  fi
+  run_stage test cargo nextest run "${packages[@]}" --all-features --profile full --partition "$partition"
+}
+
 case "$LEG" in
   fmt-clippy)
     run_stage codemap scripts/codemap/check.sh
@@ -35,12 +46,12 @@ case "$LEG" in
     run_stage clippy cargo clippy --workspace --all-targets --all-features -- -D warnings
     ;;
   tests:1/2)
-    run_stage test    cargo nextest run --workspace --all-features --profile full --partition hash:1/2
+    run_test_partition hash:1/2
     # Doctests ride the 1/2 leg (nextest doesn't run them; they're fast).
     run_stage doctest cargo test --doc --workspace --exclude oneiron-bench --all-features
     ;;
   tests:2/2)
-    run_stage test cargo nextest run --workspace --all-features --profile full --partition hash:2/2
+    run_test_partition hash:2/2
     ;;
   *)
     echo "VERIFY-LEG-FAIL-badleg ${LEG}"

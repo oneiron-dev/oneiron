@@ -1,9 +1,8 @@
 """The generated code map must be deterministic, fail closed, and follow the ratchet's definitions.
 
-Runs under `python3 -m pytest scripts/tests/test_codemap.py -q` and, because the
-cases are `unittest.TestCase`s, also under `python3 -m unittest` when pytest is
-not installed. Every case builds its own fixture workspace in a temp dir; nothing
-here depends on the real tree's numbers.
+Run with `python3 -m unittest discover -s scripts/tests -p test_codemap.py -v`.
+No extra dependencies are needed. Every case builds its own fixture workspace
+in a temp dir; nothing here depends on the real tree's numbers.
 """
 
 import importlib.util
@@ -186,6 +185,57 @@ class TestPurpose(CodemapCase):
         page = codemap.render_crate("alpha", data["crates"]["alpha"])
         self.assertIn("a \\| b", page)
 
+    def test_rustdoc_symbol_links_render_as_code_in_generated_purposes(self):
+        for link, display in (
+            ("[`LlmBackend`](oneiron::LlmBackend)", "LlmBackend"),
+            ("[`Thing`](crate::Thing)", "Thing"),
+            ("[Parent](super::Parent)", "Parent"),
+            ("[`Thing`](dependency::nested::Thing)", "Thing"),
+        ):
+            with self.subTest(link=link):
+                source = f"//! Adapter for {link}. Second sentence.\n"
+                path = self.fx.write("crates/alpha/src/lib.rs", source)
+                code, out = self.fx.run()
+                self.assertEqual(code, 0, out)
+                expected = f"Adapter for `{display}`"
+                data = json.loads((self.fx.root / "docs/codemap/codemap.json").read_text())
+                crate = data["crates"]["alpha"]
+                self.assertEqual(crate["purpose"], expected)
+                self.assertEqual(crate["modules"]["lib"]["purpose"], expected)
+                self.assertEqual(crate["files"][0]["purpose"], expected)
+                for page in ("docs/CODEMAP.md", "docs/codemap/alpha.md"):
+                    rendered = (self.fx.root / page).read_text()
+                    self.assertIn(expected, rendered)
+                    self.assertNotIn(link, rendered)
+                self.assertEqual(path.read_text(), source)
+
+    def test_ordinary_markdown_and_code_examples_keep_their_exact_purpose(self):
+        for markup in (
+            "[guide](https://example.org/guide)",
+            "[`Thing`](https://example.org/api/dep::Thing)",
+            "[guide](../guide.md#intro)",
+            "[`Thing`](./Thing)",
+            "[guide](guide)",
+            "[overview](#overview)",
+            "[mail](mailto:docs@example.org)",
+            "[`Thing`][guide]",
+            "[`Thing`]",
+            "`[Thing](crate::Thing)`",
+            r"\[Thing](crate::Thing)",
+        ):
+            with self.subTest(markup=markup):
+                text = f"//! Read {markup} for details. Another sentence.\n"
+                self.assertEqual(self.purpose(text), f"Read {markup} for details")
+
+    def test_symbol_link_normalization_keeps_wrapped_sentence_behavior(self):
+        text = "//! Adapter for [`Thing`](crate::Thing)\n//! across lines. More detail.\n"
+        self.assertEqual(self.purpose(text), "Adapter for `Thing` across lines")
+
+    def test_symbol_destination_is_removed_before_the_length_cap(self):
+        target = "dependency::" + "nested::" * 20 + "LlmBackend"
+        text = f"//! Adapter for [`LlmBackend`]({target}) seam. More detail.\n"
+        self.assertEqual(self.purpose(text), "Adapter for `LlmBackend` seam")
+
     def test_crate_purpose_falls_back_to_cargo_description(self):
         self.fx.crate("beta", description="Beta from Cargo.toml.")
         self.fx.crate("gamma")
@@ -288,10 +338,11 @@ class TestPubSurface(CodemapCase):
 
 
 class TestModes(CodemapCase):
-    def artifact_bytes(self):
+    def artifact_bytes(self, root=None):
+        root = root or self.fx.root
         return {
-            rel: (self.fx.root / rel).read_bytes()
-            for rel in sorted(p.relative_to(self.fx.root) for p in (self.fx.root / "docs").rglob("*") if p.is_file())
+            rel: (root / rel).read_bytes()
+            for rel in sorted(p.relative_to(root) for p in (root / "docs").rglob("*") if p.is_file())
         }
 
     def test_generate_is_deterministic_and_check_passes(self):
@@ -315,6 +366,75 @@ class TestModes(CodemapCase):
         data = json.loads(first[Path("docs/codemap/codemap.json")])
         self.assertEqual(list(data), ["crates"])
         self.assertNotIn("loc", json.dumps(data))
+
+    def test_independent_roots_creation_order_and_line_endings_produce_identical_maps(self):
+        other = Fixture()
+        self.addCleanup(other.cleanup)
+        files = {
+            "crates/alpha/src/zebra.rs": "//! Zebra.\npub enum Zebra {}\n",
+            "crates/alpha/src/area/mod.rs": "//! Area.\npub struct Area;\n",
+            "crates/alpha/src/area/tests.rs": "#[test]\nfn it_works() {}\n",
+        }
+        for name in ("gamma", "beta"):
+            self.fx.crate(name)
+        for name in ("beta", "gamma"):
+            other.crate(name)
+        for rel, text in files.items():
+            self.fx.write(rel, text)
+        for rel, text in reversed(list(files.items())):
+            other.write(rel, text.replace("\n", "\r\n").encode("utf-8"))
+        for fixture in (self.fx, other):
+            code, out = fixture.run()
+            self.assertEqual(code, 0, out)
+            self.assertEqual(fixture.run("--check")[0], 0)
+        self.assertEqual(self.artifact_bytes(), self.artifact_bytes(other.root))
+
+    def test_check_detects_in_place_changes_without_writing_artifacts(self):
+        path = "crates/alpha/src/thing.rs"
+        self.fx.write(path, rust_lines(299, "Before"))
+        self.assertEqual(self.fx.run()[0], 0)
+        before = self.artifact_bytes()
+        self.fx.write(path, rust_lines(300, "After"))
+        code, out = self.fx.run("--check")
+        self.assertEqual(code, 1, out)
+        self.assertIn("CODEMAP-STALE", out)
+        self.assertEqual(before, self.artifact_bytes())
+        self.assertEqual(self.fx.run()[0], 0)
+        self.assertEqual(self.fx.run("--check")[0], 0)
+        data = json.loads((self.fx.root / "docs/codemap/codemap.json").read_text())
+        changed = next(f for f in data["crates"]["alpha"]["files"] if f["path"] == "src/thing.rs")
+        self.assertEqual(changed["purpose"], "After")
+        self.assertEqual(changed["bucket"], "m")
+
+    def test_renamed_and_deleted_files_leave_no_stale_paths_after_regeneration(self):
+        before = self.fx.write("crates/alpha/src/before.rs", "//! Moving.\n")
+        self.assertEqual(self.fx.run()[0], 0)
+        after = before.with_name("after.rs")
+        before.rename(after)
+        self.assertEqual(self.fx.run("--check")[0], 1)
+        self.assertEqual(self.fx.run()[0], 0)
+        data = json.loads((self.fx.root / "docs/codemap/codemap.json").read_text())
+        paths = [f["path"] for f in data["crates"]["alpha"]["files"]]
+        self.assertNotIn("src/before.rs", paths)
+        self.assertIn("src/after.rs", paths)
+        after.unlink()
+        self.assertEqual(self.fx.run("--check")[0], 1)
+        self.assertEqual(self.fx.run()[0], 0)
+        self.assertEqual(self.fx.run("--check")[0], 0)
+        data = json.loads((self.fx.root / "docs/codemap/codemap.json").read_text())
+        self.assertEqual([f["path"] for f in data["crates"]["alpha"]["files"]], ["src/lib.rs"])
+
+    def test_scope_note_links_to_the_unmapped_macos_workspace_member(self):
+        app = self.fx.root / "apps/macos/src-tauri"
+        self.fx.write("apps/macos/src-tauri/Cargo.toml", '[package]\nname = "oneiron-macos"\n')
+        self.fx.write("apps/macos/src-tauri/src/lib.rs", "//! App outside crates.\n")
+        code, out = self.fx.run()
+        self.assertEqual(code, 0, out)
+        overview = (self.fx.root / "docs/CODEMAP.md").read_text()
+        self.assertIn("[oneiron-macos](../apps/macos/src-tauri/)", overview)
+        self.assertTrue((self.fx.root / "docs/../apps/macos/src-tauri").samefile(app))
+        data = json.loads((self.fx.root / "docs/codemap/codemap.json").read_text())
+        self.assertEqual(list(data["crates"]), ["alpha"])
 
     def test_check_is_stale_after_a_new_file(self):
         self.fx.run()
