@@ -1,7 +1,7 @@
 //! Streaming text stays on the existing opaque, budgeted ephemeral hub lane.
 use super::*;
 use crate::config::SyncServerConfig;
-use oneiron::sync::{EphemeralStore, LoroValue, decode_ephemeral_states};
+use oneiron::sync::{EphemeralStore, LoroValue, decode_ephemeral_states, encode_ephemeral_states};
 
 #[tokio::test]
 async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_text() {
@@ -63,11 +63,17 @@ async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_te
     assert_eq!(late_receiver.get(&key), producer.get(&key));
     assert!(!vault.entity_exists(&message).unwrap());
     assert!(vault.search_text("one two", 10).unwrap().is_empty());
-    producer.delete(&key);
+    // Loro uses millisecond LWW timestamps and ignores equal-timestamp updates.
+    // Exercise a causally newer clear without depending on test execution speed.
+    let mut cleared = decode_ephemeral_states(&frame[1..]).unwrap();
+    for row in &mut cleared {
+        row.value = None;
+        row.timestamp += 1;
+    }
     handle_sync_message(
         &server,
         17,
-        SyncMessage::Ephemeral(producer.encode(&key)),
+        SyncMessage::Ephemeral(encode_ephemeral_states(&cleared).unwrap()),
         &direct_tx,
         &mut state,
     )
