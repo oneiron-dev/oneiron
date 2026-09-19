@@ -408,3 +408,38 @@ fn resolved_or_replaced_consents_and_duplicate_receipts_do_not_inflate_depth() {
             .is_empty()
     );
 }
+
+#[test]
+fn unavailable_or_oversized_tripwire_inputs_are_not_reported_as_healthy() {
+    let (_d, v) = vault();
+    v.with_write_txn(|txn| {
+        v.store
+            .vault_meta
+            .put(txn, b"retr_run:v0:invalid-key", b"invalid-row")
+            .map_err(Into::into)
+    })
+    .unwrap();
+    assert!(matches!(
+        v.run_retrieval_miss_detector("corrupt", 10),
+        Err(crate::Error::CorruptedIndex(_))
+    ));
+    let receipts =
+        vec![receipt("pending", crate::consent::CONSENT_CONTENT_KIND); MAX_EVENTS_PER_RUN + 1];
+    assert!(matches!(
+        v.project_receipt_tripwires("oversized", &receipts, 100),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    for bounds in [
+        TripwireBounds {
+            consent_depth: MAX_EVENTS_PER_RUN as u64 + 1,
+            ..TripwireBounds::default()
+        },
+        TripwireBounds {
+            actor_writes: MAX_EVENTS_PER_RUN as u64 + 1,
+            ..TripwireBounds::default()
+        },
+    ] {
+        set_bounds(&v, bounds);
+        assert!(v.tripwire_bounds().unwrap().is_none());
+    }
+}

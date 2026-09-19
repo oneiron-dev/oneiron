@@ -137,7 +137,9 @@ impl TripwireBounds {
     }
 
     fn valid(self) -> bool {
-        self.window_secs > 0 && self.consent_depth > 0 && self.actor_writes > 0
+        self.window_secs > 0
+            && (1..=MAX_EVENTS_PER_RUN as u64).contains(&self.consent_depth)
+            && (1..=MAX_EVENTS_PER_RUN as u64).contains(&self.actor_writes)
     }
 }
 pub struct ConsentStormDetector {
@@ -333,8 +335,7 @@ impl Vault {
         }
         let observations = self
             .store
-            .retrieval_runs(limit)
-            .unwrap_or_default()
+            .retrieval_runs(limit)?
             .iter()
             .filter_map(DiagnosticObservation::from_retrieval_run)
             .collect();
@@ -360,7 +361,9 @@ impl Vault {
             return Ok(vec![]);
         };
         if receipts.len() > MAX_EVENTS_PER_RUN {
-            return Ok(vec![]);
+            return Err(crate::Error::InvalidConfig(
+                "tripwire receipt window exceeds observation capacity".into(),
+            ));
         }
         let mut observations: Vec<_> = receipts
             .iter()
@@ -388,7 +391,7 @@ impl Vault {
             let Some(pending) = self.store.pending_gate_consent_in_txn(&txn, &claim)? else {
                 continue;
             };
-            if pending.decision_id.as_bytes() == id.as_bytes()
+            if pending.decision_id.as_bytes() == *id.as_bytes()
                 && seen.insert(id)
                 && let Some(o) = observation(id, "consent_pending", pending.created_at, &pending)
             {
