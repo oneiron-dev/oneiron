@@ -3,10 +3,11 @@
 import argparse
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
-from run_word_oracle import preflight, digest
+from run_word_oracle import preflight, digest, word_stage
 
 
 def run(args):
@@ -22,10 +23,15 @@ def run(args):
     args.lock.mkdir()
     (args.lock / "owner").write_text(f"W7-C14 Word revisions {args.output}\n")
     release = False
+    stage = None
     try:
         text = args.output / "resolved.txt"
+        stage = word_stage()
+        staged = stage / args.input.name
+        shutil.copyfile(args.input, staged)
+        if preflight(staged) != input_hash: raise RuntimeError("staged input hash mismatch")
         process = subprocess.run(["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript",
-                                  str(args.script), str(args.input), args.action, str(text)],
+                                  str(args.script), str(staged), args.action, str(stage / text.name)],
                                  capture_output=True, text=True, timeout=130)
         (args.output / "driver.log").write_text(process.stdout + process.stderr)
         if process.returncode:
@@ -35,7 +41,8 @@ def run(args):
         if initial != final:
             raise RuntimeError("Word document count changed")
         release = True
-        if int(after) != 0 or preflight(args.input) != input_hash:
+        shutil.move(stage / text.name, text)
+        if int(after) != 0 or preflight(staged) != input_hash:
             raise RuntimeError("Word did not resolve all revisions or changed the input")
         receipt.update(status="completed", app_version=version, before_revisions=int(before),
                        after_revisions=int(after), paragraphs=int(paragraphs),
@@ -55,8 +62,11 @@ def run(args):
         raise
     finally:
         receipt["lock_retained"] = not release
+        receipt["stage"] = str(stage) if stage is not None else None
         receipt["finished_at"] = time.time()
         save()
+        if stage is not None and release:
+            shutil.rmtree(stage)
         if release:
             (args.lock / "owner").unlink()
             args.lock.rmdir()

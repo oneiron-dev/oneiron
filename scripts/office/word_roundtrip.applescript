@@ -28,7 +28,6 @@ on run argv
             set display alerts to originalAlerts
             set finalCount to count of documents
             if finalCount is not initialCount then error "Word document count changed"
-            if finalCount is 0 then quit
             return appVersion & tab & revisionCount & tab & commentCount & tab & paragraphCount & tab & initialCount & tab & finalCount
         on error errorText number errorNumber
             if ownedDocument is not missing value then

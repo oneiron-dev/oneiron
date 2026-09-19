@@ -14,7 +14,6 @@ on run argv
         close active presentation saving no
         set finalCount to count of presentations
         if finalCount is not initialCount then error "PowerPoint presentation count changed"
-        if finalCount is 0 then quit
         return appVersion & tab & slideCount & tab & initialCount & tab & finalCount
     end tell
 end run

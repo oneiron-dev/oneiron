@@ -9,9 +9,11 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
+from run_word_oracle import app_stage
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -97,6 +99,14 @@ def result_value(case, cells):
         return [v for row in grid for v in row]
     return grid
 
+def workbook_identities(script):
+    process = subprocess.run(["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", str(script.with_name("excel_inventory.applescript"))], capture_output=True, text=True, timeout=130)
+    if process.returncode: raise RuntimeError("Excel inventory refused")
+    rows = [tuple(line.split("\t")) for line in process.stdout.splitlines() if line]
+    if any(len(row) != 3 for row in rows): raise RuntimeError("Invalid workbook inventory")
+    return sorted(rows)
+
+
 def run(args):
     if sys.platform != "darwin":
         raise RuntimeError("Excel oracle must run on the Office Mac")
@@ -144,6 +154,7 @@ def run(args):
         return
     (args.lock / "owner").write_text(f"W7-C14 {args.output}\n")
     release = True
+    stage = app_stage("excel")
     try:
         for offset in range(len(cases)):
             if cases[offset]["id"] in receipt["cases"]:
@@ -154,8 +165,16 @@ def run(args):
                 batch.append(row)
             payload = args.output / f"batch-{offset:04}.json"
             payload.write_text(json.dumps({"cases": batch}, ensure_ascii=False))
-            command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", "-l", "JavaScript", str(args.script), str(payload)]
+            shutil.copyfile(payload, stage / payload.name)
+            if digest(payload) != digest(stage / payload.name): raise RuntimeError("staged payload hash mismatch")
+            command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", "-l", "JavaScript", str(args.script), str(stage / payload.name)]
             try:
+                before_workbooks = workbook_identities(args.script)
+                # Creating a new workbook must not discard existing unsaved/recovered work.
+                # Refuse it rather than treating a raw count or saved-only roster as custody.
+                if any(not identity[1] for identity in before_workbooks):
+                    raise RuntimeError("Foreign unsaved or recovered workbook is open")
+                release = False
                 process = subprocess.run(command, capture_output=True, text=True, timeout=130)
             except subprocess.TimeoutExpired:
                 receipt["status"] = "timed-out"
@@ -174,11 +193,13 @@ def run(args):
             # proven native AppleScript close door with both name AND path bound.
             result = report["cases"][0]
             remaining = report["finalWorkbooks"]
+            saved = None
             if result.get("workbookName") is not None:
                 if result["status"] in ("ok", "formula-rejected"):
+                    saved = stage / Path(batch[0]["file"]).name
                     cleanup = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV",
                                "/usr/bin/osascript", str(args.script.with_name("save_excel.applescript")),
-                               result["workbookName"], batch[0]["file"], Path(batch[0]["file"]).name]
+                               result["workbookName"], str(saved), Path(batch[0]["file"]).name]
                 else:
                     cleanup = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV",
                                "/usr/bin/osascript", str(args.script.with_name("close_excel.applescript")),
@@ -189,13 +210,19 @@ def run(args):
                     if closed.returncode != 0:
                         raise RuntimeError("native Excel close refused")
                     remaining = int(closed.stdout.strip())
+                    if saved is not None:
+                        shutil.move(saved, batch[0]["file"])
                 except Exception:
                     release = False
                     raise
             report["afterCleanupWorkbooks"] = remaining
-            if remaining != report["initialWorkbooks"]:
+            after_workbooks = workbook_identities(args.script)
+            report["workbooksBefore"] = before_workbooks
+            report["workbooksAfter"] = after_workbooks
+            if before_workbooks != after_workbooks:
                 release = False
-                raise RuntimeError("Office workbook count changed")
+                raise RuntimeError("Office workbook identities changed")
+            release = True
             if report.get("error"):
                 raise RuntimeError("Excel case failed; owned workbook cleaned")
             if previous is not None and report["version"] != previous["app_version"]:
@@ -226,6 +253,13 @@ def run(args):
         receipt["finished_at"] = time.time()
         receipt["lock_retained"] = not release
         save()
+        receipt["stage"] = str(stage)
+        save()
+        if release: shutil.rmtree(stage)
+        # Excel stays open between cases (a quit-and-relaunch races LaunchServices and fails with -600);
+        # leave the owner's Mac clean once the corpus is done and Excel holds nothing.
+        if release: subprocess.run(["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", "-e", 'if application "Microsoft Excel" is running then tell application "Microsoft Excel" to if (count of workbooks) is 0 then quit'],
+                       capture_output=True, timeout=130)
         if release:
             (args.lock / "owner").unlink()
             args.lock.rmdir()

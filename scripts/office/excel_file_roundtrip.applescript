@@ -1,5 +1,5 @@
 on run argv
-    set separator to ASCII character 9
+    set fieldBreak to (ASCII character 9)
     set inputPath to item 1 of argv
     set outputPath to item 2 of argv
     set outputName to item 3 of argv
@@ -7,15 +7,11 @@ on run argv
     set cellName to item 5 of argv
     set inputName to item 6 of argv
     tell application "Microsoft Excel"
+        my closeBlankStartup()
         set initialCount to count of workbooks
+        set beforeIdentities to my workbookIdentities()
+        set savedBefore to my identityField(beforeIdentities)
         if exists workbook inputName then error "Oracle input is already open"
-        set startupBlank to 0
-        if initialCount is 1 then
-            set wb to active workbook
-            if name of wb is "Book1" and (path of wb as text) is "" and saved of wb is true then
-                if (count of worksheets of wb) is 1 and (value of used range of active sheet) is "" then set startupBlank to 1
-            end if
-        end if
         set appVersion to version
         set priorAlerts to display alerts
         set display alerts to false
@@ -27,11 +23,50 @@ on run argv
             close workbook outputName saving no
             set display alerts to priorAlerts
             set finalCount to count of workbooks
-            if finalCount is 0 then quit
-            return appVersion & separator & (observedValue as text) & separator & initialCount & separator & finalCount & separator & startupBlank
+            set afterIdentities to my workbookIdentities()
+            if beforeIdentities is not afterIdentities then error "Workbook identities changed"
+            set savedAfter to my identityField(afterIdentities)
+            return appVersion & fieldBreak & (observedValue as text) & fieldBreak & initialCount & fieldBreak & finalCount & fieldBreak & savedBefore & fieldBreak & savedAfter
         on error errorMessage number errorNumber
             set display alerts to priorAlerts
             error errorMessage number errorNumber
         end try
     end tell
 end run
+
+
+-- Close only Excel's untouched startup document. A named/recovered/edited workbook is foreign.
+on closeBlankStartup()
+    tell application "Microsoft Excel"
+        repeat with i from (count of workbooks) to 1 by -1
+            if (name of workbook i) is "Book1" and ((path of workbook i) as text) is "" and (saved of workbook i) is true then
+                if (count of worksheets of workbook i) is 1 then
+                    set s to worksheet 1 of workbook i
+                    if (name of s) is "Sheet1" and (count of shapes of s) is 0 then
+                        if (value of used range of s) is "" and (formula of used range of s) is "" then close workbook i saving no
+                    end if
+                end if
+            end if
+        end repeat
+    end tell
+end closeBlankStartup
+
+-- Index iteration avoids Excel's -50 on a repeat-reference path. Unsaved work is NEVER ignored.
+on workbookIdentities()
+    set identities to {}
+    tell application "Microsoft Excel"
+        repeat with i from 1 to count of workbooks
+            set identity_ to {(name of workbook i) as text, (path of workbook i) as text, saved of workbook i}
+            set end of identities to identity_
+        end repeat
+    end tell
+    return identities
+end workbookIdentities
+
+on identityField(identities)
+    set field_ to "["
+    repeat with identity_ in identities
+        set field_ to field_ & (item 1 of identity_) & ">" & (item 2 of identity_) & ">" & (item 3 of identity_ as text) & ";"
+    end repeat
+    return field_ & "]"
+end identityField

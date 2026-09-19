@@ -103,7 +103,7 @@ class StoredMeasurements(unittest.TestCase):
             with self.subTest(name=name):
                 receipt = json.loads((fixtures / f"{name}.json").read_bytes())
                 self.assertEqual(receipt["input_sha256"], hashlib.sha256((fixtures / source).read_bytes()).hexdigest())
-                self.assertEqual(receipt["script_sha256"], hashlib.sha256((ROOT / "scripts/office/word_revision_oracle.applescript").read_bytes()).hexdigest())
+                self.assertEqual(receipt["script_sha256"], hashlib.sha256((fixtures / "observed-script.txt").read_bytes()).hexdigest())
                 self.assertEqual(receipt["status"], "completed")
                 self.assertEqual(receipt["app_version"], "16.112.4")
                 self.assertEqual(receipt["after_revisions"], 0)

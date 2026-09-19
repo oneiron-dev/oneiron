@@ -16,7 +16,6 @@ on run argv
             error errorMessage number errorNumber
         end try
         set remaining to count of workbooks
-        if remaining is 0 then quit
         return remaining
     end tell
 end run

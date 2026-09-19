@@ -3,10 +3,11 @@
 import argparse
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
-from run_word_oracle import preflight, digest
+from run_word_oracle import preflight, digest, app_stage
 
 
 def run(args):
@@ -21,10 +22,15 @@ def run(args):
     args.lock.mkdir()
     (args.lock / "owner").write_text(f"W7-C14 PowerPoint {args.output}\n")
     release = False
+    stage = None
     try:
         pptx = args.output / "roundtrip.pptx"
         pdf = args.output / "roundtrip.pdf"
-        command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", str(args.script), str(args.input), str(pptx), str(pdf)]
+        stage = app_stage("ppt")
+        staged = stage / args.input.name
+        shutil.copyfile(args.input, staged)
+        if preflight(staged, "ppt") != checksum: raise RuntimeError("staged input hash mismatch")
+        command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", str(args.script), str(staged), str(stage / pptx.name), str(stage / pdf.name)]
         process = subprocess.run(command, capture_output=True, text=True, timeout=130)
         (args.output / "driver.log").write_text(process.stdout + process.stderr)
         if process.returncode != 0:
@@ -33,6 +39,8 @@ def run(args):
         version, slides, initial, final = process.stdout.strip().split("\t")
         if initial != final:
             raise RuntimeError("PowerPoint presentation count changed")
+        shutil.move(stage / pptx.name, pptx)
+        shutil.move(stage / pdf.name, pdf)
         release = True
         receipt.update({"status": "completed", "app_version": version, "slides": int(slides), "initial_presentations": int(initial), "final_presentations": int(final), "output_sha256": preflight(pptx, "ppt"), "pdf_sha256": digest(pdf)})
     except subprocess.TimeoutExpired:
@@ -43,8 +51,11 @@ def run(args):
         raise
     finally:
         receipt["lock_retained"] = not release
+        receipt["stage"] = str(stage) if stage is not None else None
         receipt["finished_at"] = time.time()
         save()
+        if stage is not None and release:
+            shutil.rmtree(stage)
         if release:
             (args.lock / "owner").unlink()
             args.lock.rmdir()

@@ -52,7 +52,6 @@ function run(argv) {
         app.displayAlerts = alerts;
         console.log("reading final workbook count");
         report.finalWorkbooks = (app.workbooks() || []).length;
-        if (report.finalWorkbooks === 0) app.quit();
     }
     return JSON.stringify(report);
 }

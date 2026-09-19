@@ -85,6 +85,23 @@ def run(args):
     finally:
         report["finished_at"] = time.time()
         save()
+        # Word stays open between oracle calls (a quit-and-relaunch races LaunchServices and fails with -600);
+        # leave the owner's Mac clean when the run is over and Word holds nothing.
+        if report["status"] == "completed":
+            try:
+                args.lock.mkdir()
+            except FileExistsError:
+                pass  # Another Office caller owns custody; do not quit under it.
+            else:
+                owner = f"W7-C14 Word corpus shutdown {args.output}"
+                (args.lock / "owner").write_text(owner + "\n")
+                shutdown = subprocess.run(["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", "-e", 'if application "Microsoft Word" is running then tell application "Microsoft Word" to if (count of documents) is 0 then quit'], capture_output=True, text=True, timeout=130)
+                if shutdown.returncode:
+                    raise RuntimeError("Word shutdown failed; custody lock retained")
+                if (args.lock / "owner").read_text().strip() != owner:
+                    raise RuntimeError("Office lock ownership changed")
+                (args.lock / "owner").unlink()
+                args.lock.rmdir()
 
 
 if __name__ == "__main__":

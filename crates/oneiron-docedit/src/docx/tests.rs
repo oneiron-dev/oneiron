@@ -340,7 +340,7 @@ fn linker_catches_dangling_refs_and_missing_comment_parts() {
         body: "orphan".to_owned(),
     };
     let write = apply_comment(DOCUMENT.as_bytes(), None, &op, &mark(), 5).expect("comment");
-    let mut orphan = parsed.clone();
+    let mut orphan = parsed;
     orphan.upsert("word/document.xml", write.document_xml);
     assert!(
         !check_docx_links(&orphan).ok,

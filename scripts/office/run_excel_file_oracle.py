@@ -4,9 +4,11 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
+from run_word_oracle import app_stage
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -41,19 +43,27 @@ def run(args):
     args.lock.mkdir()
     (args.lock / "owner").write_text(f"W7-C14 Excel native {args.output}\n")
     released = False
+    stage = None
     try:
         output = args.output / "roundtrip.xlsx"
-        command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", str(args.script), str(args.input), str(output), output.name, args.sheet, args.cell, args.input.name]
+        stage = app_stage("excel")
+        staged = stage / args.input.name
+        shutil.copyfile(args.input, staged)
+        if preflight(staged) != input_hash: raise RuntimeError("staged input hash mismatch")
+        command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", str(args.script), str(staged), str(stage / output.name), output.name, args.sheet, args.cell, args.input.name]
         result = subprocess.run(command, capture_output=True, text=True, timeout=130)
         (args.output / "driver.log").write_text(result.stdout + result.stderr)
         if result.returncode:
             receipt["status"] = "timed-out" if result.returncode in (-14, 142) else "driver-error"
             raise RuntimeError(f"Excel driver refused: {result.returncode}")
-        version, value, initial, final, startup_blank = result.stdout.strip().split("\t")
-        if initial != final and not (initial == "1" and final == "0" and startup_blank == "1"):
+        version, value, initial, final, saved_before, saved_after = result.stdout.strip().split("\t")
+        # Custody is the identity of the SAVED workbooks, not the raw count: Excel auto-creates a blank
+        # unsaved Book1 and discards it as soon as a document opens, which moves the count on its own.
+        if saved_before != saved_after:
             raise RuntimeError("Excel workbook custody changed")
+        shutil.move(stage / output.name, output)
         released = True
-        receipt.update(app_version=version, observed=float(value), expected=args.expected, output_sha256=preflight(output), initial_workbooks=int(initial), final_workbooks=int(final), repair_requested=False)
+        receipt.update(app_version=version, observed=float(value), expected=args.expected, output_sha256=preflight(output), initial_workbooks=int(initial), final_workbooks=int(final), saved_workbooks_before=saved_before, saved_workbooks_after=saved_after, repair_requested=False)
         if receipt["observed"] != args.expected:
             raise ValueError("Excel value differs from the pinned expectation")
         receipt["status"] = "completed"
@@ -61,13 +71,13 @@ def run(args):
         receipt["status"] = "timed-out"
         raise
     except Exception as error:
-        if receipt["status"] == "running":
-            receipt["status"] = "validation-error"
         receipt["error"] = str(error)
         raise
     finally:
-        receipt.update(lock_retained=not released, finished_at=time.time())
+        receipt.update(lock_retained=not released, stage=str(stage) if stage is not None else None, finished_at=time.time())
         (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        if stage is not None and released:
+            shutil.rmtree(stage)
         if released:
             (args.lock / "owner").unlink()
             args.lock.rmdir()

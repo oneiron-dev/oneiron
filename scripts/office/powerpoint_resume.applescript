@@ -17,7 +17,6 @@ on run argv
         close active presentation saving no
         set finalCount to count of presentations
         if finalCount is not (initialCount - 1) then error "PowerPoint count mismatch"
-        if finalCount is 0 then quit
         return appVersion & tab & slideCount & tab & initialCount & tab & finalCount
     end tell
 end run

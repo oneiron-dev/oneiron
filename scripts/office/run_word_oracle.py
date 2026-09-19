@@ -3,12 +3,31 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
 import zipfile
 import xml.etree.ElementTree as ET
+
+CONTAINERS = {"word": "com.microsoft.Word", "excel": "com.microsoft.Excel", "ppt": "com.microsoft.Powerpoint"}
+
+
+def app_stage(app="word"):
+    """A fresh folder inside that Office app's sandbox container.
+
+    Word, Excel and PowerPoint are sandboxed apart from Full Disk Access: a path that AppleScript opens or saves
+    outside the app's own container raises the Grant File Access prompt every time. Paths inside the container are
+    silent, so each oracle copies its input here, points the app at the copy and moves any app-written result back."""
+    stage = Path.home() / "Library/Containers" / CONTAINERS[app] / "Data/tmp/w7-oracle" / f"{time.time_ns()}-{os.getpid()}"
+    stage.mkdir(parents=True)
+    return stage
+
+
+def word_stage():
+    return app_stage("word")
 
 
 def digest(path):
@@ -49,10 +68,15 @@ def run(args):
     args.lock.mkdir()
     (args.lock / "owner").write_text(f"W7-C14 Word {args.output}\n")
     release = False
+    stage = None
     try:
         output = args.output / "roundtrip.docx"
         pdf = args.output / "roundtrip.pdf"
-        command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", str(args.script), str(args.input), str(output), str(pdf)]
+        stage = word_stage()
+        staged = stage / args.input.name
+        shutil.copyfile(args.input, staged)
+        if preflight(staged) != input_hash: raise RuntimeError("staged input hash mismatch")
+        command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", str(args.script), str(staged), str(stage / output.name), str(stage / pdf.name)]
         process = subprocess.run(command, capture_output=True, text=True, timeout=130)
         (args.output / "driver.log").write_text(process.stdout + process.stderr)
         if process.returncode != 0:
@@ -61,6 +85,8 @@ def run(args):
         version, revisions, comments, paragraphs, initial, final = process.stdout.strip().split("\t")
         if initial != final:
             raise RuntimeError("Word document count changed")
+        shutil.move(stage / output.name, output)
+        shutil.move(stage / pdf.name, pdf)
         release = True
         receipt.update({"app_version": version, "revisions": int(revisions), "comments": int(comments), "paragraphs": int(paragraphs), "initial_documents": int(initial), "final_documents": int(final), "repair_requested": False,
                         "output_sha256": preflight(output), "pdf_sha256": digest(pdf), "status": "completed"})
@@ -72,8 +98,11 @@ def run(args):
         raise
     finally:
         receipt["lock_retained"] = not release
+        receipt["stage"] = str(stage) if stage is not None else None
         receipt["finished_at"] = time.time()
         save()
+        if stage is not None and release:
+            shutil.rmtree(stage)
         if release:
             (args.lock / "owner").unlink()
             args.lock.rmdir()

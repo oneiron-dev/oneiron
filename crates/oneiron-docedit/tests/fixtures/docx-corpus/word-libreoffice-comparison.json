@@ -8,8 +8,8 @@
     "native_proposals": 15,
     "not_proposed": 25
   },
-  "runner_sha256": "63ddef00021c2a45dc410bd3b0826f9615ffb558a3f969cd9e2793f7aa73b37a",
-  "started_at": 1789800746.4148018,
+  "runner_sha256": "168d4682636405f157a066484bd616dfe552400fd9d9d663b2d57110323708e2",
+  "started_at": 1789801303.385615,
   "cases": {
     "docx4j/altered/comments-one.docx": {
       "native_status": "refused",
@@ -39,9 +39,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "fcf95c72b22148e260aaa9a3fb37874c9b710c35bbeff852595194ffcca788bb",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800749.862331,
+          "started_at": 1789801307.064964,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -52,14 +52,14 @@
           "resolved_text": "[Native corpus insert] Article 1\nAll human beings are born free and equal in dignity and rights. They are endowed with reason and conscience and should act towards one another in a spirit of brotherhood.\nArticle 2\nEveryone is entitled to all the rights and freedoms set forth in this Declaration, without distinction of any kind, such as race, colour, sex, language, religion, political or other opinion, national or social origin, property, birth or other status. Furthermore, no distinction shall be made on the basis of the political, jurisdictional or international status of the country or territory to which a person belongs, whether it be independent, trust, non-self-governing or under any other limitation of sovereignty.\nArticle 3\nEveryone has the right to life, liberty and security of person.\nArticle 4\nNo one shall be held in slavery or servitude; slavery and the slave trade shall be prohibited in all their forms.\nArticle 5\nNo one shall be subjected to torture or to cruel, inhuman or degrading treatment or punishment.\nArticle 6\nEveryone has the right to recognition everywhere as a person before the law.\nArticle 7\nAll are equal before the law and are entitled without any discrimination to equal protection of the law. All are entitled to equal protection against any discrimination in violation of this Declaration and against any incitement to such discrimination.\nArticle 8\nEveryone has the right to an effective remedy by the competent national tribunals for acts violating the fundamental rights granted him by the constitution or by law.\nArticle 9\nNo one shall be subjected to arbitrary arrest, detention or exile.\nArticle 10\nEveryone is entitled in full equality to a fair and public hearing by an independent and impartial tribunal, in the determination of his rights and obligations and of any criminal charge against him.\nArticle 11\nEveryone charged with a penal offence has the right to be presumed innocent until proved guilty according to law in a public trial at which he has had all the guarantees necessary for his defence.\nNo one shall be held guilty of any penal offence on account of any act or omission which did not constitute a penal offence, under national or international law, at the time when it was committed. Nor shall a heavier penalty be imposed than the one that was applicable at the time the penal offence was committed.\nArticle 12\nNo one shall be subjected to arbitrary interference with his privacy, family, home or correspondence, nor to attacks upon his honour and reputation. Everyone has the right to the protection of the law against such interference or attacks.\n\n",
           "resolved_text_sha256": "6172d5b353a5acf3d37f6adbd7255187404fc899ebabda5dd155c7171af0ddc9",
           "lock_retained": false,
-          "finished_at": 1789800758.0622458
+          "finished_at": 1789801309.3095622
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "b3f8be65f0099d343e045a4515145e88f0db137d241dab31714fe0e614bd0aa5",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "0f1952832dc402ee4374ba81c0455cc47aee27caef838dc1435619c5934fd99c",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800758.06664,
+          "started_at": 1789801309.31359,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -70,7 +70,7 @@
           "resolved_text": "[Native corpus insert] Article 1\nAll human beings are born free and equal in dignity and rights. They are endowed with reason and conscience and should act towards one another in a spirit of brotherhood.\nArticle 2\nEveryone is entitled to all the rights and freedoms set forth in this Declaration, without distinction of any kind, such as race, colour, sex, language, religion, political or other opinion, national or social origin, property, birth or other status. Furthermore, no distinction shall be made on the basis of the political, jurisdictional or international status of the country or territory to which a person belongs, whether it be independent, trust, non-self-governing or under any other limitation of sovereignty.\nArticle 3\nEveryone has the right to life, liberty and security of person.\nArticle 4\nNo one shall be held in slavery or servitude; slavery and the slave trade shall be prohibited in all their forms.\nArticle 5\nNo one shall be subjected to torture or to cruel, inhuman or degrading treatment or punishment.\nArticle 6\nEveryone has the right to recognition everywhere as a person before the law.\nArticle 7\nAll are equal before the law and are entitled without any discrimination to equal protection of the law. All are entitled to equal protection against any discrimination in violation of this Declaration and against any incitement to such discrimination.\nArticle 8\nEveryone has the right to an effective remedy by the competent national tribunals for acts violating the fundamental rights granted him by the constitution or by law.\nArticle 9\nNo one shall be subjected to arbitrary arrest, detention or exile.\nArticle 10\nEveryone is entitled in full equality to a fair and public hearing by an independent and impartial tribunal, in the determination of his rights and obligations and of any criminal charge against him.\nArticle 11\nEveryone charged with a penal offence has the right to be presumed innocent until proved guilty according to law in a public trial at which he has had all the guarantees necessary for his defence.\nNo one shall be held guilty of any penal offence on account of any act or omission which did not constitute a penal offence, under national or international law, at the time when it was committed. Nor shall a heavier penalty be imposed than the one that was applicable at the time the penal offence was committed.\nArticle 12\nNo one shall be subjected to arbitrary interference with his privacy, family, home or correspondence, nor to attacks upon his honour and reputation. Everyone has the right to the protection of the law against such interference or attacks.\n\n",
           "resolved_text_sha256": "6172d5b353a5acf3d37f6adbd7255187404fc899ebabda5dd155c7171af0ddc9",
           "lock_retained": false,
-          "finished_at": 1789800766.5790389
+          "finished_at": 1789801311.744151
         }
       },
       "native_pass": true,
@@ -85,9 +85,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "102ff2d799ac1521ae46088c290abdb76dea83148b486bb162c0f47918632ebe",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800769.533313,
+          "started_at": 1789801315.1939871,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -98,14 +98,14 @@
           "resolved_text": "[Native corpus insert] Article 1\nAll human beings are born free and equal in dignity and rights. They are endowed with reason and conscience and should act towards one another in a spirit of brotherhood.\nArticle 2\nEveryone (unless they have four legs) is entitled to all the rights and freedoms set forth in this Declaration, without distinction of any kind, such as race, colour, sex, language, religion, political or other opinion, national or social origin, property, birth or other status. Furthermore, no distinction shall be made on the basis of the political, jurisdictional or international status of the country or territory to which a person belongs, whether it be independent, trust, non-self-governing or under any other limitation of sovereignty.\nArticle 6\nEveryone has the right to recognition everywhere as a person before the law.\nArticle 3\nEveryone has the right to life, liberty and security of person.\nArticle 4\nNo one shall be held in slavery or servitude; slavery and the slave trade shall be prohibited in all their forms.\nArticle 5\nNo one shall be subjected to torture or to cruel, inhuman or degrading treatment or punishment.\nArticle 7\nAll are equal before the law and are entitled without any discrimination to equal protection of the law. All are entitled to equal protection against any discrimination in violation of this Declaration and against any incitement to such discrimination.\nArticle 8\nEveryone has the right to an effective remedy by the competent national tribunals for acts violating the fundamental rights granted him by the constitution or by law.\nArticle 10\nEveryone is entitled in full equality to a fair and public hearing by an independent and impartial tribunal, in the determination of his rights and obligations and of any criminal charge against him.\nArticle 11\nEveryone charged with a penal offence has the right to be presumed innocent until proved guilty according to law in a public trial at which he has had all the guarantees necessary for his defence.\nNo one shall be held guilty of any penal offence on account of any act or omission which did not constitute a penal offence, under national or international law, at the time when it was committed. Nor shall a heavier penalty be imposed than the one that was applicable at the time the penal offence was committed.\nArticle 12\nNo one shall be subjected to arbitrary interference with his privacy, family, home or correspondence, nor to attacks upon his honour and reputation. Everyone has the right to the protection of the law against such interference or attacks.\n\n",
           "resolved_text_sha256": "8309b0af5a43acdb8b3a6c06ba1a271262fd41314a41647da1afc9259a9ebdd7",
           "lock_retained": false,
-          "finished_at": 1789800776.142001
+          "finished_at": 1789801316.029526
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "bc9994829eea84a87b529f53e5f0c1d79a1c931363d4356fc1f90210c61cc65d",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "bd28e464cd953507595a831e4455cb2ff133acf039772eb104c645fffff43f55",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800776.1458611,
+          "started_at": 1789801316.0333261,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -116,7 +116,7 @@
           "resolved_text": "[Native corpus insert] Article 1\nAll human beings are born free and equal in dignity and rights. They are endowed with reason and conscience and should act towards one another in a spirit of brotherhood.\nArticle 2\nEveryone (unless they have four legs) is entitled to all the rights and freedoms set forth in this Declaration, without distinction of any kind, such as race, colour, sex, language, religion, political or other opinion, national or social origin, property, birth or other status. Furthermore, no distinction shall be made on the basis of the political, jurisdictional or international status of the country or territory to which a person belongs, whether it be independent, trust, non-self-governing or under any other limitation of sovereignty.\nArticle 6\nEveryone has the right to recognition everywhere as a person before the law.\nArticle 3\nEveryone has the right to life, liberty and security of person.\nArticle 4\nNo one shall be held in slavery or servitude; slavery and the slave trade shall be prohibited in all their forms.\nArticle 5\nNo one shall be subjected to torture or to cruel, inhuman or degrading treatment or punishment.\nArticle 7\nAll are equal before the law and are entitled without any discrimination to equal protection of the law. All are entitled to equal protection against any discrimination in violation of this Declaration and against any incitement to such discrimination.\nArticle 8\nEveryone has the right to an effective remedy by the competent national tribunals for acts violating the fundamental rights granted him by the constitution or by law.\nArticle 10\nEveryone is entitled in full equality to a fair and public hearing by an independent and impartial tribunal, in the determination of his rights and obligations and of any criminal charge against him.\nArticle 11\nEveryone charged with a penal offence has the right to be presumed innocent until proved guilty according to law in a public trial at which he has had all the guarantees necessary for his defence.\nNo one shall be held guilty of any penal offence on account of any act or omission which did not constitute a penal offence, under national or international law, at the time when it was committed. Nor shall a heavier penalty be imposed than the one that was applicable at the time the penal offence was committed.\nArticle 12\nNo one shall be subjected to arbitrary interference with his privacy, family, home or correspondence, nor to attacks upon his honour and reputation. Everyone has the right to the protection of the law against such interference or attacks.\n\n",
           "resolved_text_sha256": "8309b0af5a43acdb8b3a6c06ba1a271262fd41314a41647da1afc9259a9ebdd7",
           "lock_retained": false,
-          "finished_at": 1789800782.463168
+          "finished_at": 1789801316.830288
         }
       },
       "native_pass": true,
@@ -131,9 +131,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "be23d8423f129e2298fc8e0f23ba09087d435531d20f14f37899fe4c6383837f",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800785.57465,
+          "started_at": 1789801319.9003289,
           "app_version": "16.112.4",
           "before_revisions": 13,
           "after_revisions": 0,
@@ -144,14 +144,14 @@
           "resolved_text": "[Native corpus insert] with units of metres per second:\nm\u2009\ns\n\u22121\n.\nHeight above ground is\n\ud835\udc67.\nAir density is\n\ud835\udf0c\nin\nkg\u2009\nm\n\u22123\n.\nPower is \ud835\udc43, normally in MW, and energy is \ud835\udc38, normally in MWh or GWh.\nWind direction will usually be denoted by\n\ud835\udf03.\nA bar denotes an average:\n\n\ud835\udc48\n.\nAn expectation over a probability distribution is written\n\ud835\udc38\n\ud835\udc48\n.\nThese are related concepts but are not always interchangeable.\n0.5 Time averages matter\nA phrase such as \u201cwind speed is 8 m/s\u201d is incomplete without knowing whether this means:\ninstantaneous wind;\n1-second average;\n10-minute average;\nhourly average;\ndaily average;\nannual mean.\nBecause wind-to-power conversion is nonlinear,\n\ud835\udc43\n\ud835\udc38\n\ud835\udc48\n\n\u2260\ud835\udc38\n\ud835\udc43\n\ud835\udc48\n\n.\nTemporal resolution will therefore be treated as part of the definition of a wind quantity, not as incidental metadata.\n\n",
           "resolved_text_sha256": "dcf640e98fbf65d2d0601fdf93177a90da798dca3787ed02921d3f75c99de7ea",
           "lock_retained": false,
-          "finished_at": 1789800793.096637
+          "finished_at": 1789801321.262497
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "59a2dccdb9f0c3cf5967f5c1e9eb5f18d138653bd945207982df5df49a583f21",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "6e73fabd1c2c3863d65d0af2d484e35ef5f1c4e4373938614de2f5aa65354a2d",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800793.1163661,
+          "started_at": 1789801321.2667131,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -162,7 +162,7 @@
           "resolved_text": "[Native corpus insert] with units of metres per second:\n\ud835\udc5a\n\n\n\nHeight above ground is\n\ud835\udc67.\nAir density is\n\ud835\udf0c\nin\n\ud835\udc58\ud835\udc54\n\n\n\nPower is \ud835\udc43, normally in MW, and energy is \ud835\udc38, normally in MWh or GWh.\nWind direction will usually be denoted by\n\ud835\udf03.\nA bar denotes an average:\n\n\n\n\n.\nAn expectation over a probability distribution is written\n\ud835\udc38\n\n\nThese are related concepts but are not always interchangeable.\n0.5 Time averages matter\nA phrase such as \u201cwind speed is 8 m/s\u201d is incomplete without knowing whether this means:\ninstantaneous wind;\n1-second average;\n10-minute average;\nhourly average;\ndaily average;\nannual mean.\nBecause wind-to-power conversion is nonlinear,\n\ud835\udc43\n\n\n\n\n\n\ud835\udc38\n\n\n\n\n\n\nTemporal resolution will therefore be treated as part of the definition of a wind quantity, not as incidental metadata.\n\n",
           "resolved_text_sha256": "b12fd1cc8aec0410e81632a43f400fe8903e692ae51389bca2d19a781be132e7",
           "lock_retained": false,
-          "finished_at": 1789800805.891476
+          "finished_at": 1789801322.029192
         }
       },
       "native_pass": true,
@@ -212,9 +212,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "4d68cc9bf6acd0e69145a8fe01b2c6b702f898d3513ac502d2cb7912e5a21958",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800809.446794,
+          "started_at": 1789801325.1079779,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -225,14 +225,14 @@
           "resolved_text": "[Native corpus insert] Non protetto.\n",
           "resolved_text_sha256": "3d20add182715bff6ddc153ad9f6e7aa1744ebcdc1561eb5aea1cbd5f8da52fa",
           "lock_retained": false,
-          "finished_at": 1789800818.409289
+          "finished_at": 1789801325.8986828
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "2b927ab213393d4d72c84f72a5b2df9e106a384775a6678bc0a2301aaa4b41eb",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "8e33d16f66ce9284ffb1dad997d2159d35f776a3b7bc0402d180f2540d142c09",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800818.440675,
+          "started_at": 1789801325.906053,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -243,7 +243,7 @@
           "resolved_text": "[Native corpus insert] Non protetto.\n",
           "resolved_text_sha256": "3d20add182715bff6ddc153ad9f6e7aa1744ebcdc1561eb5aea1cbd5f8da52fa",
           "lock_retained": false,
-          "finished_at": 1789800826.3310468
+          "finished_at": 1789801326.640241
         }
       },
       "native_pass": true,
@@ -258,9 +258,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "91e1166fa270f313f225d382090dcf02ed3943df485eca9324b6ed5563f28781",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800829.3494809,
+          "started_at": 1789801329.5899572,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -271,14 +271,14 @@
           "resolved_text": "[Native corpus insert] Non protetto caso facile\n",
           "resolved_text_sha256": "0a8a9d43f8fe526e37895ae890b487a2d7435a0181a5a5209f3a279412ca015e",
           "lock_retained": false,
-          "finished_at": 1789800853.1726542
+          "finished_at": 1789801330.333363
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "307d188178291d309c68442c3a0db43ce63141db3450cb2a1bab93c5039d2f03",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "5cd05adf1266df15ef6b19a87142c1ee1268bad39e441c00b39b4ac3bfb0f2b6",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800853.2106838,
+          "started_at": 1789801330.3387032,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -289,7 +289,7 @@
           "resolved_text": "[Native corpus insert] Non protetto caso facile\n",
           "resolved_text_sha256": "0a8a9d43f8fe526e37895ae890b487a2d7435a0181a5a5209f3a279412ca015e",
           "lock_retained": false,
-          "finished_at": 1789800870.781847
+          "finished_at": 1789801331.055678
         }
       },
       "native_pass": true,
@@ -319,9 +319,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "70ce02990d9931a45be0960486b3a46a47b8002930713fbb49afc6ceb6d9cc7f",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800873.8071291,
+          "started_at": 1789801333.954699,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -332,14 +332,14 @@
           "resolved_text": "Sidebar.\n[Native corpus insert] This is a much longer sequence that will be found first in the LCS algorithm.\n",
           "resolved_text_sha256": "4e2b8644ee04d62902d8e31e0d75d773a2bff83ff5198de1f0caa791c02ec4ad",
           "lock_retained": false,
-          "finished_at": 1789800880.93261
+          "finished_at": 1789801334.701194
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "8cef110c91d54a1098efef6fc1e168bda2cdff52515a94c97225694ede3ca0af",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "5f60d10b387ed57c05de7cb1b7e42e36ad8d5dbdad163768e64111c7bd3a29ca",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800880.9441862,
+          "started_at": 1789801334.709721,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -350,7 +350,7 @@
           "resolved_text": "Sidebar.\n[Native corpus insert] This is a much longer sequence that will be found first in the LCS algorithm.\n",
           "resolved_text_sha256": "4e2b8644ee04d62902d8e31e0d75d773a2bff83ff5198de1f0caa791c02ec4ad",
           "lock_retained": false,
-          "finished_at": 1789800887.394342
+          "finished_at": 1789801335.429591
         }
       },
       "native_pass": true,
@@ -365,9 +365,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "4402486f4ac2694b31ae80bf497fa9832b615922a0dd5cc99352ea6b3bda2725",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800890.468344,
+          "started_at": 1789801338.3532548,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -378,14 +378,14 @@
           "resolved_text": "[Native corpus insert] Sidebar.\nThis is a very interesting test that includes lots of stuff.\nThis is a much longer sequence that will be found first in the LCS algorithms.\n",
           "resolved_text_sha256": "f822d5820e7394e1d3d488b1808a62f2a21b6fb1b9d53456e7f3bb0169716b60",
           "lock_retained": false,
-          "finished_at": 1789800910.8834188
+          "finished_at": 1789801339.822352
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "003013b946c5648f077b4fd697c27575faa100b7d30b72e63a922f70af9309e4",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "33d8500ec4ee4429bbc325f252befbd59cf47dedee1bcc99ec534af77fdbd009",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800910.894432,
+          "started_at": 1789801339.8290792,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -396,7 +396,7 @@
           "resolved_text": "[Native corpus insert] Sidebar.\nThis is a very interesting test that includes lots of stuff.\nThis is a much longer sequence that will be found first in the LCS algorithms.\n",
           "resolved_text_sha256": "f822d5820e7394e1d3d488b1808a62f2a21b6fb1b9d53456e7f3bb0169716b60",
           "lock_retained": false,
-          "finished_at": 1789800917.455761
+          "finished_at": 1789801340.563744
         }
       },
       "native_pass": true,
@@ -426,9 +426,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "c6e4a1047f766e4a56defade329230eae594ce4d0d8ec923e9c3e1e31df5b5d2",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800920.417589,
+          "started_at": 1789801343.507464,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -439,14 +439,14 @@
           "resolved_text": "First paragraph with comment start.\n[Native corpus insert] Second paragraph inside comment range.\nThird paragraph with comment end.\n",
           "resolved_text_sha256": "2be3ede7836f163f733bc0220ba7e7805c29dee4222616f51e6e374d6498dd9e",
           "lock_retained": false,
-          "finished_at": 1789800926.8767612
+          "finished_at": 1789801345.6470468
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "f2e439c5ecd5fd54df6802dec1ecc594d2910e3d3d3f7609dcb9fff2af41cef3",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "6b32915a8121aa62ca5d911ecf95704951fc97f3a32a03f0686d35ccf29b9389",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800926.896202,
+          "started_at": 1789801345.665021,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -457,7 +457,7 @@
           "resolved_text": "First paragraph with comment start.\n[Native corpus insert] Second paragraph inside comment range.\nThird paragraph with comment end.\n",
           "resolved_text_sha256": "2be3ede7836f163f733bc0220ba7e7805c29dee4222616f51e6e374d6498dd9e",
           "lock_retained": false,
-          "finished_at": 1789800935.4218812
+          "finished_at": 1789801346.468508
         }
       },
       "native_pass": true,
@@ -497,9 +497,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "220913e17439c07de628fe3e325eb56bd962b7e6efdc1051660550cf1c0ef1b9",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800938.532044,
+          "started_at": 1789801349.440044,
           "app_version": "16.112.4",
           "before_revisions": 2,
           "after_revisions": 0,
@@ -510,14 +510,14 @@
           "resolved_text": "[Native corpus insert] Alignment was changed from left to center.\n",
           "resolved_text_sha256": "cb13ff70cc1b233ed9a288d0661841a4d5efd8ecae882fac4200f4a7400a988a",
           "lock_retained": false,
-          "finished_at": 1789800943.946769
+          "finished_at": 1789801351.6343591
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "70b3a78df3be27a051a2c0186828f2a690bdcf2613c6eade052cadee4d82681e",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "8b3e6d4bbf56bfdb771ef43662086289942cab690accd7119f4f062e4c6e4a9b",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800943.970062,
+          "started_at": 1789801351.652108,
           "app_version": "16.112.4",
           "before_revisions": 2,
           "after_revisions": 0,
@@ -528,7 +528,7 @@
           "resolved_text": "[Native corpus insert] Alignment was changed from left to center.\n",
           "resolved_text_sha256": "cb13ff70cc1b233ed9a288d0661841a4d5efd8ecae882fac4200f4a7400a988a",
           "lock_retained": false,
-          "finished_at": 1789800951.212769
+          "finished_at": 1789801352.4776
         }
       },
       "native_pass": true,
@@ -543,9 +543,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "7826a19990839984ee89cbf3681337d6412a64732e9fa0bc3ef8330c4cf6c9e0",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800954.262096,
+          "started_at": 1789801355.5489018,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -556,14 +556,14 @@
           "resolved_text": "[Native corpus insert] Hello\n",
           "resolved_text_sha256": "c59b3da31807557f6914662b3aeef2b8009011140a0e9625a260d22b9c2c4c6c",
           "lock_retained": false,
-          "finished_at": 1789800960.212994
+          "finished_at": 1789801357.570019
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "0eecb15419f1ba0addee6f9f7063ac3dc7c889c10b17ab3394875ef6081bb36a",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "92a1bc2309fe55cfad6f89170630bdca52f24966a4c78e1f6c29a499f561de33",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800960.234624,
+          "started_at": 1789801357.5872362,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -574,7 +574,7 @@
           "resolved_text": "[Native corpus insert] Hello\n",
           "resolved_text_sha256": "c59b3da31807557f6914662b3aeef2b8009011140a0e9625a260d22b9c2c4c6c",
           "lock_retained": false,
-          "finished_at": 1789800967.722347
+          "finished_at": 1789801358.385519
         }
       },
       "native_pass": true,
@@ -589,9 +589,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "9b6bd00e3f1cd82da86cdb64a8e8347f801862e2c9400f2d2babb10b3d0a9396",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800970.718575,
+          "started_at": 1789801361.503519,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -602,14 +602,14 @@
           "resolved_text": "[Native corpus insert] Hello World\n",
           "resolved_text_sha256": "83453260d91b638088a4b97fccb9415b406d0e1c81e28c93dffe3cdf3f44de3b",
           "lock_retained": false,
-          "finished_at": 1789800977.313527
+          "finished_at": 1789801363.286357
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "bf0576e838fcd2eaec22c5ea11deededa6a5139b7577d7c09828f6a93a0a6983",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "c5e8a41e4d6a191336844cb9d2ae593318b046e31d1885e3e65cb518458a1270",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800977.331365,
+          "started_at": 1789801363.304546,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -620,7 +620,7 @@
           "resolved_text": "[Native corpus insert] Hello World\n",
           "resolved_text_sha256": "83453260d91b638088a4b97fccb9415b406d0e1c81e28c93dffe3cdf3f44de3b",
           "lock_retained": false,
-          "finished_at": 1789800985.6630569
+          "finished_at": 1789801364.077312
         }
       },
       "native_pass": true,
@@ -635,9 +635,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "f53f9d9746a15a20fd3cd57280fcfabf0a00aeb39a338a19612923f2d242f5f6",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800988.794089,
+          "started_at": 1789801367.140519,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -648,14 +648,14 @@
           "resolved_text": "[Native corpus insert] First line of updated text.\nSecond line stays the same.\nThird line with new content.\n",
           "resolved_text_sha256": "ea1ecbd584a33ce1e1b42677c37866aa54d1909aef47599f497eb31eb3d6f7e2",
           "lock_retained": false,
-          "finished_at": 1789800993.911627
+          "finished_at": 1789801372.942522
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "2bc35a534745745d582e6cb2b2a279f87904f7be72541d67c3f24e60782cd46f",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "9365fc5ee2954bee050af2332826c9aad3f803573b2c54bb6558c38fe7bad999",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789800993.9321768,
+          "started_at": 1789801372.959408,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -666,7 +666,7 @@
           "resolved_text": "[Native corpus insert] First line of updated text.\nSecond line stays the same.\nThird line with new content.\n",
           "resolved_text_sha256": "ea1ecbd584a33ce1e1b42677c37866aa54d1909aef47599f497eb31eb3d6f7e2",
           "lock_retained": false,
-          "finished_at": 1789801001.60723
+          "finished_at": 1789801373.824339
         }
       },
       "native_pass": true,
@@ -681,9 +681,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "71acc7dac54fbc13def92bc7606d2a005b53238a36eb61c8c5928749419216e1",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789801005.136136,
+          "started_at": 1789801377.0890791,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -694,14 +694,14 @@
           "resolved_text": "[Native corpus insert] First line of text to modify.\nSecond line stays the same.\nThird line with old content.\nFourth line to be removed.\n",
           "resolved_text_sha256": "25d2b2419f5211dabdb506d971fda14b72434c9215619c4190bd4bf60ff2807d",
           "lock_retained": false,
-          "finished_at": 1789801010.2998111
+          "finished_at": 1789801378.715725
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "2701b66b22377ac553ae9584f7a2e8a868ff51a54b6e4b08156049632e1c7281",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "f161f95417712c82c0ab7ede0bed672ec7a0df100421bfe4434228796035ae31",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789801010.317621,
+          "started_at": 1789801378.733404,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -712,7 +712,7 @@
           "resolved_text": "[Native corpus insert] First line of text to modify.\nSecond line stays the same.\nThird line with old content.\nFourth line to be removed.\n",
           "resolved_text_sha256": "25d2b2419f5211dabdb506d971fda14b72434c9215619c4190bd4bf60ff2807d",
           "lock_retained": false,
-          "finished_at": 1789801017.837237
+          "finished_at": 1789801379.556931
         }
       },
       "native_pass": true,
@@ -727,9 +727,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "933ac7b70953a7a833c67df266e7643e3caeb04beeea4d6292f52683fc0d79d2",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789801021.122721,
+          "started_at": 1789801382.920498,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -740,14 +740,14 @@
           "resolved_text": "[Native corpus insert] Line one with changed words.\nLine three with new text.\nLine four unchanged.\nLine five with more new text.\nLine six freshly added.\n",
           "resolved_text_sha256": "850ee2dfd328b01d19f99a10c72f476fdf24b042596919498835096f56adf290",
           "lock_retained": false,
-          "finished_at": 1789801026.683282
+          "finished_at": 1789801384.624811
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "b0ec7abcbb24c8efcb90ecdb87cdeddb0305da55ff3fb8f1b8d02a354c3d0169",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "c74b7d65ed3f79eedf202a30d247912e3afc4b45edea5aadea4db4386a966bd9",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789801026.701428,
+          "started_at": 1789801384.641991,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -758,7 +758,7 @@
           "resolved_text": "[Native corpus insert] Line one with changed words.\nLine three with new text.\nLine four unchanged.\nLine five with more new text.\nLine six freshly added.\n",
           "resolved_text_sha256": "850ee2dfd328b01d19f99a10c72f476fdf24b042596919498835096f56adf290",
           "lock_retained": false,
-          "finished_at": 1789801034.549236
+          "finished_at": 1789801385.4327419
         }
       },
       "native_pass": true,
@@ -773,9 +773,9 @@
         "native": {
           "status": "completed",
           "input_sha256": "4cc6d7bd443febbf091fafe941e6692dfaf5f98020fc85c7c86c5554b5d10f1d",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789801038.799767,
+          "started_at": 1789801388.773835,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -786,14 +786,14 @@
           "resolved_text": "[Native corpus insert] Line one with original words.\nLine two to be removed.\nLine three with old text.\nLine four unchanged.\nLine five with more old text.\n",
           "resolved_text_sha256": "8ea8425a5477a0037af543136fa5b25d053aac95bc3a12518ec27752d7281bf3",
           "lock_retained": false,
-          "finished_at": 1789801045.343848
+          "finished_at": 1789801390.7122371
         },
         "libreoffice": {
           "status": "completed",
-          "input_sha256": "d5e6b8fe4d39f88fac775758db8dee262db90c3e83085063e02463824beda9b6",
-          "script_sha256": "19351f57263448aceb6352681313c745520046d1136f5fcbc78e2783163e83e4",
+          "input_sha256": "f61623a6f6c18c010aeb7ab80826446194d0f9892e69646121dc2d8ae524140b",
+          "script_sha256": "21640f737cdfbfa02432a932bcde465629153343cd74979a36b18c718a825684",
           "action": "accept",
-          "started_at": 1789801045.369081,
+          "started_at": 1789801390.729307,
           "app_version": "16.112.4",
           "before_revisions": 1,
           "after_revisions": 0,
@@ -804,7 +804,7 @@
           "resolved_text": "[Native corpus insert] Line one with original words.\nLine two to be removed.\nLine three with old text.\nLine four unchanged.\nLine five with more old text.\n",
           "resolved_text_sha256": "8ea8425a5477a0037af543136fa5b25d053aac95bc3a12518ec27752d7281bf3",
           "lock_retained": false,
-          "finished_at": 1789801053.3737862
+          "finished_at": 1789801391.5279958
         }
       },
       "native_pass": true,
@@ -833,5 +833,5 @@
     "native_pass": 15,
     "libreoffice_pass": 14
   },
-  "finished_at": 1789801053.375277
+  "finished_at": 1789801391.530398
 }
