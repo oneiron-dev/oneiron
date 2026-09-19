@@ -24,7 +24,7 @@ async fn org_admin_routes_render_only_setup_powers_and_refuse_excluded_operation
         .vault()
         .put_entity(
             &admin,
-            oneiron::ENTITY_TYPE_PERSON,
+            oneiron::registry::ENTITY_TYPE_PERSON,
             oneiron::TimeRange { start: 1, end: 1 },
             1,
             b"admin",
@@ -49,12 +49,12 @@ async fn org_admin_routes_render_only_setup_powers_and_refuse_excluded_operation
         )
         .unwrap();
     let signature =
-        holder.sign(&pairing_binding_transcript(&ticket, &key, &admin.to_hex()).unwrap());
+        holder.sign(&pairing_binding_transcript(&ticket.ticket, &key, &admin.to_hex()).unwrap());
     let slip = server
         .vault()
         .redeem_pairing_link(
             &issuer,
-            &ticket,
+            &ticket.ticket,
             &admin.to_hex(),
             key,
             &signature.to_bytes(),

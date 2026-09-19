@@ -105,6 +105,13 @@ async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    let used_proof=proof(&slip,&holder);
+    for expected in [StatusCode::OK,StatusCode::UNAUTHORIZED] {
+        let (status,_)=route_json(server.clone(),headers().header("x-oneiron-binding",&used_proof).body(Body::empty()).unwrap()).await;
+        assert_eq!(status,expected);
+    }
+    let (status,_)=route_json(server.clone(),headers().header("x-oneiron-binding",proof(&slip,&holder)).body(Body::empty()).unwrap()).await;
+    assert_eq!(status,StatusCode::OK);
     let mut tampered = slip.clone();
     tampered.claims.scope = Scope::top();
     let (status, _) = route_json(

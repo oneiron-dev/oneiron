@@ -60,7 +60,7 @@ struct Credential {slip:oneiron::authority::CapabilitySlip,holder:ed25519_dalek:
 fn credential(fixture:&Fixture)->Credential {
     let vault=fixture.server.vault();
     let principal=oneiron::EntityId::from_hex(PRINCIPAL).unwrap();
-    if vault.get_entity_type(&principal).unwrap().is_none() {vault.put_entity(&principal,oneiron::ENTITY_TYPE_PERSON,oneiron::TimeRange{start:1,end:1},1,b"app principal").unwrap();}
+    if vault.get_entity_type(&principal).unwrap().is_none() {vault.put_entity(&principal,oneiron::registry::ENTITY_TYPE_PERSON,oneiron::TimeRange{start:1,end:1},1,b"app principal").unwrap();}
     let issuer=oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
     let mut claims=vault.ensure_host_root_slip(&issuer).unwrap().claims;
     claims.slip_id=*blake3::hash(oneiron::EntityId::now().as_bytes()).as_bytes();
@@ -231,17 +231,22 @@ async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
         send(&mut socket,TAG_RPC,json!({"requestId":1,"method":"auth.bind","params":invalid})).await;
         assert_eq!(close_code(&mut socket).await,4008);
     }
+    let once=bind_payload(&valid,now());
     let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":5,"method":"auth.bind","params":bind_payload(&valid,now())}),
+        json!({"requestId":5,"method":"auth.bind","params":once.clone()}),
     )
     .await;
     assert_eq!(
         rpc_reply(&mut socket).await,
         json!({"requestId":5,"result":null,"last":true})
     );
+    let mut replay=connect(&fixture,APP_TIER_PROTOCOL_VERSION_VERSION).await;
+    send(&mut replay,TAG_RPC,json!({"requestId":6,"method":"auth.bind","params":once})).await;
+    assert_eq!(close_code(&mut replay).await,4008);
+
 }
 
 #[tokio::test]
