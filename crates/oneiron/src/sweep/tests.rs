@@ -129,6 +129,10 @@ fn sweep_skips_not_due_job_while_processing_due_job() {
         .unwrap();
     let receipt_id = outcome.receipt_id.expect("receipt id");
     let due_key = outcome.sweep_key.expect("sweep key");
+    let old_pin = vault.pin_entity_revision(&receipt_id).unwrap();
+    let old_raw = vault
+        .get_raw_with_mode(&receipt_id, crate::vault::entity_revision::ReadMode::Live)
+        .unwrap();
 
     // A NOT-due crafted job: queued_at (= next_attempt_at) in the future.
     let future = crate::unix_seconds_now() + 86_400;
@@ -144,6 +148,28 @@ fn sweep_skips_not_due_job_while_processing_due_job() {
     assert_eq!(run.jobs_processed, 1, "the due job must complete");
     assert!(run.jobs_deferred >= 1, "the not-due job must defer");
     assert_eq!(run.receipts_finalized, 1);
+    let new_pin = vault.pin_entity_revision(&receipt_id).unwrap();
+    assert_ne!(old_pin, new_pin);
+    assert_eq!(
+        vault
+            .get_raw_with_mode(
+                &receipt_id,
+                crate::vault::entity_revision::ReadMode::Pinned(old_pin)
+            )
+            .unwrap(),
+        old_raw
+    );
+    assert_eq!(
+        vault
+            .get_raw_with_mode(
+                &receipt_id,
+                crate::vault::entity_revision::ReadMode::Pinned(new_pin)
+            )
+            .unwrap(),
+        vault
+            .get_raw_with_mode(&receipt_id, crate::vault::entity_revision::ReadMode::Live)
+            .unwrap()
+    );
     assert!(
         receipt_sweep_complete_at(&vault, &receipt_id).is_some(),
         "receipt sweep_complete_at must be populated"

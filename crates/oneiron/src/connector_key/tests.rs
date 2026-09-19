@@ -572,6 +572,24 @@ fn suspend_cap_uses_engine_clock() -> Result<()> {
     assert_eq!((tally.admitted, tally.refused), (1, 1));
     let suspended = vault.get_connector_key(&id)?.expect("stored key");
     assert_eq!(suspended.status, ConnectorKeyStatus::Suspended);
+    let new_pin = vault.pin_entity_revision(&id)?;
+    assert_ne!(old_pin, new_pin);
+    assert_eq!(vault.pin_entity_revision(&id)?, new_pin);
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &id,
+            crate::vault::entity_revision::ReadMode::Pinned(old_pin)
+        )?,
+        old_raw
+    );
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &id,
+            crate::vault::entity_revision::ReadMode::Pinned(new_pin)
+        )?,
+        vault.get_raw_with_mode(&id, crate::vault::entity_revision::ReadMode::Live)?
+    );
+
     assert_eq!(suspended.status_changed_at, Some(FROZEN));
 
     // Resume keeps usage (the hard cap is the window, not the status), so
@@ -1157,6 +1175,8 @@ fn lifecycle_transitions_are_enforced() -> Result<()> {
         ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
     )?;
 
+    let old_pin = vault.pin_entity_revision(&id)?;
+    let old_raw = vault.get_raw_with_mode(&id, crate::vault::entity_revision::ReadMode::Live)?;
     let suspended = vault.suspend_connector_key(&id, "owner", 1_010)?;
     assert_eq!(suspended.status, ConnectorKeyStatus::Suspended);
     assert_eq!(suspended.suspended_reason.as_deref(), Some("owner"));

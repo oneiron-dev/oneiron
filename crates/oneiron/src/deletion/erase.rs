@@ -359,6 +359,8 @@ impl Vault {
             scrubbed.push((event_id, record));
         }
         for (event_id, record) in &scrubbed {
+            // Erasure must remove the old author stamp from retained history too.
+            crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, event_id)?;
             self.store.entities.put(wtxn, event_id.as_bytes(), record)?;
         }
         Ok(())
