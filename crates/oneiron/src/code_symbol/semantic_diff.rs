@@ -195,11 +195,17 @@ fn collect(
     let mut end = node.start_byte();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        own.push_str(&source[end..child.start_byte()]);
+        let gap = &source[end..child.start_byte()];
+        if node.kind() != "source_file" || !gap.trim().is_empty() {
+            own.push_str(gap);
+        }
         own.push_str(&collect(child, source, child_scope, units)?);
         end = child.end_byte();
     }
-    own.push_str(&source[end..node.end_byte()]);
+    let tail = &source[end..node.end_byte()];
+    if node.kind() != "source_file" || !tail.trim().is_empty() {
+        own.push_str(tail);
+    }
     if let (Some(key), Some(name)) = (key, name) {
         let start = super::rust_source::rust_doc_context_start_byte(node, source);
         let comparison = format!("{}{}", &source[start..node.start_byte()], own);
@@ -217,12 +223,12 @@ fn collect(
         if node.kind() == "source_file" && !own.trim().is_empty() {
             // The root residual contains imports, attributes and other source
             // facts that must not disappear merely because they lack a name.
-            let residual = own.split_whitespace().collect::<Vec<_>>().join(" ");
+            let residual = own.trim();
             insert(
                 units,
                 "file-residual".into(),
                 source,
-                &residual,
+                residual,
                 1,
                 source.lines().count().max(1) as u32,
             )?;
@@ -258,6 +264,31 @@ mod tests {
             semantic_code_diff("src/lib.rs", before, moved)
                 .unwrap()
                 .is_empty()
+        );
+    }
+    #[test]
+    fn file_residual_keeps_literal_spaces_but_ignores_inter_item_gaps() {
+        let before = "include!(\"a  b.rs\");\n";
+        let after = "include!(\"a b.rs\");\n";
+        let changes = semantic_code_diff("lib.rs", before, after).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].symbol, "file-residual");
+        assert_ne!(
+            changes[0].before.as_ref().unwrap().content_hash,
+            changes[0].after.as_ref().unwrap().content_hash
+        );
+        assert_eq!(
+            code_text_diff("lib.rs", before, after).unwrap(),
+            render_code_semantic_diff(&changes)
+        );
+        assert!(
+            semantic_code_diff(
+                "lib.rs",
+                "fn a() {}\nfn b() {}",
+                "\nfn a() {}\n\nfn b() {}\n"
+            )
+            .unwrap()
+            .is_empty()
         );
     }
     #[test]
