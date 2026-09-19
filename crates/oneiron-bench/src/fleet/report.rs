@@ -58,7 +58,7 @@ impl Host {
                 .ok_or("CPU model unavailable")?
                 .to_owned()
         } else if cfg!(target_os = "macos") {
-            command("sysctl", &["-n", "machdep.cpu.brand_string"])?
+            command("/usr/sbin/sysctl", &["-n", "machdep.cpu.brand_string"])?
         } else {
             return Err("fleet provenance supports Linux and macOS hosts".into());
         };

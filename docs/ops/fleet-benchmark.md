@@ -154,3 +154,18 @@ digest may change; workload, host, and optimization output must not.
 A new machine, kernel, FD limit, storage label, build setting or workload needs
 new measured baseline approval. Nothing in this command edits a CI workflow or
 a shared host's settings. Wire it into the runner that owns the floor artifact.
+
+## Residual miss scaling (separate receipt)
+
+`fleet ppr-scaling --plan fleet-plan.json --out scaling.json` measures the paired
+full/residual route at `ppr_nodes`, four times that size, and sixteen times that
+size (maximum 100,000 nodes). It retains the same sample count and depth at every
+size. Every pair must have byte-identical result IDs and score bits. The report
+carries each raw timing sample, host and artifact identity, the observed miss-cost
+growth ratio, and whether that ratio was below the node-growth ratio. The unit
+fixture checks arithmetic and exact outputs, not noisy timing thresholds.
+
+This schema is deliberately distinct from a fleet receipt and cannot set a fleet
+CI floor. It does not start agent sockets or claim fleet throughput. Use it to
+verify the cache-miss scaling acceptance without repeating the unrelated socket
+load at every graph size. A non-sublinear result is reported honestly, not masked.

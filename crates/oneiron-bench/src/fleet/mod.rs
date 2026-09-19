@@ -2,6 +2,7 @@
 mod configuration;
 mod optimization;
 mod report;
+mod scaling;
 #[cfg(test)]
 mod tests;
 mod wire;
@@ -29,6 +30,17 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 }
 
 fn dispatch(args: &[String]) -> Result<()> {
+    if let [cmd, flag, input, out_flag, output] = args
+        && cmd == "ppr-scaling"
+        && flag == "--plan"
+        && out_flag == "--out"
+    {
+        let plan: Plan = serde_json::from_slice(&std::fs::read(input)?)?;
+        plan.validate()?;
+        let receipt = scaling::measure(&plan)?;
+        report::write_new(Path::new(output), &receipt)?;
+        return Ok(());
+    }
     let (plan, out) = match args {
         [help] if help == "--help" => {
             writeln!(

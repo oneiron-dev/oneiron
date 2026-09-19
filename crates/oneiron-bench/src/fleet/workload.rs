@@ -4,6 +4,7 @@ use oneiron::{TimeRange, Vault};
 use oneiron_server::{config::SyncServerConfig, server::SyncServer};
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,6 +15,13 @@ use super::{
     report::Metric,
     wire::Agent,
 };
+
+fn progress(phase: &str, completed: usize, total: usize) {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "fleet-progress phase={phase} completed={completed}/{total}"
+    );
+}
 
 pub(super) struct Observation {
     pub metrics: BTreeMap<String, Metric>,
@@ -51,6 +59,7 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
     let directory = tempfile::tempdir_in(&plan.scratch)?;
     let vault = Arc::new(Vault::open(directory.path(), optimization::config(plan))?);
     seed_actors(&vault, plan.agents)?;
+    progress("seeded", plan.agents, plan.agents);
     let secret = oneiron::EntityId::now().to_hex();
     let server = Arc::new(SyncServer::new(
         vault.clone(),
@@ -85,6 +94,7 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
     let endpoint = format!("http://{}/v1/core/facade/witness", addresses[0]);
     let client_sockets = super::wire::client_sockets(plan.agents, plan.listeners)?;
     let start = Instant::now();
+    let mut opened = 0;
     let connected: Vec<_> = stream::iter(client_sockets.into_iter().enumerate())
         .map(|(index, tcp)| {
             let url = &urls[index % urls.len()];
@@ -99,6 +109,13 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
             }
         })
         .buffer_unordered(plan.concurrency)
+        .map_ok(|row| {
+            opened += 1;
+            if opened % 1000 == 0 || opened == plan.agents {
+                progress("socket_open", opened, plan.agents);
+            }
+            row
+        })
         .try_collect()
         .await?;
     let open_elapsed = start.elapsed().as_secs_f64();
@@ -114,8 +131,18 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
         write_phase(&mut agents, plan, &http, &endpoint, round, &mut metrics).await?;
         verify_writes(&vault, plan, round)?;
         verified_writes += plan.agents;
+        progress(
+            "writes_verified",
+            verified_writes,
+            plan.agents * plan.rounds,
+        );
         recall_phase(&mut agents, plan, round, &mut metrics).await?;
         verified_recalls += plan.agents;
+        progress(
+            "recalls_verified",
+            verified_recalls,
+            plan.agents * plan.rounds,
+        );
     }
     tokio::time::sleep(Duration::from_millis(plan.hold_ms)).await;
     ping_phase(&mut agents, plan, 1, "socket_probe_after", &mut metrics).await?;
