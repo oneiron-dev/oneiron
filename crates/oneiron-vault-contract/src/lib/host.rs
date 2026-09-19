@@ -72,7 +72,10 @@ pub fn shed_before_reap<S, R>(
         cause: crate::ShedCause::MemoryPressure,
         waited_secs,
     };
-    let shed = request.validate().map_err(anyhow::Error::msg).and_then(|()| ctl(request));
+    let shed = request
+        .validate()
+        .map_err(anyhow::Error::msg)
+        .and_then(|()| ctl(request));
     let decision = reap();
     (shed, decision)
 }

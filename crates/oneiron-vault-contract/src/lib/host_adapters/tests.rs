@@ -203,10 +203,17 @@ fn pressure_sheds_before_unchanged_reap_decision() -> anyhow::Result<()> {
 #[test]
 fn ctl_failure_does_not_skip_or_replace_the_host_reap_predicate() {
     let attempted = std::cell::Cell::new(false);
-    let (shed, reap) = shed_before_reap(2, |_| {
-        attempted.set(true);
-        Err::<(),_>(anyhow::anyhow!("ctl unavailable"))
-    }, || {assert!(attempted.get()); true});
+    let (shed, reap) = shed_before_reap(
+        2,
+        |_| {
+            attempted.set(true);
+            Err::<(), _>(anyhow::anyhow!("ctl unavailable"))
+        },
+        || {
+            assert!(attempted.get());
+            true
+        },
+    );
     assert!(shed.is_err());
     assert!(reap);
 }
