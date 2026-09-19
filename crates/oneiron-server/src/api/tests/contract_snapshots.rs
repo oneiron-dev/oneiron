@@ -992,6 +992,16 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
 
 #[test]
 fn read_receipt_schema_is_mandatory_and_query_is_not_an_opaque_object() {
+    // A flattened access projection can use allOf. Follow schema composition,
+    // not Rust source text, to assert the consumer-visible required field.
+    fn requires_receipt(schema: &Value) -> bool {
+        schema["required"]
+            .as_array()
+            .is_some_and(|fields| fields.contains(&json!("narrowing")))
+            || schema["allOf"]
+                .as_array()
+                .is_some_and(|parts| parts.iter().any(requires_receipt))
+    }
     let spec = generated_spec();
     assert_eq!(
         spec["paths"]["/v1/core/query"]["post"]["responses"]["200"]["content"]["application/json"]
@@ -1013,16 +1023,6 @@ fn read_receipt_schema_is_mandatory_and_query_is_not_an_opaque_object() {
                 .unwrap()
                 .contains(&json!(field))
         );
-    }
-    // A flattened access projection can use allOf. Follow schema composition,
-    // not Rust source text, to assert the consumer-visible required field.
-    fn requires_receipt(schema: &Value) -> bool {
-        schema["required"]
-            .as_array()
-            .is_some_and(|fields| fields.contains(&json!("narrowing")))
-            || schema["allOf"]
-                .as_array()
-                .is_some_and(|parts| parts.iter().any(requires_receipt))
     }
     for name in [
         "CoreScopedQueryResponse",

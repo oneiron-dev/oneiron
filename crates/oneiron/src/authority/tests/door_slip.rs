@@ -62,13 +62,7 @@ fn signed_child_cannot_widen_parent_class_and_spend_is_monotone_under_permutatio
     let expected = fold_authority_log(&entries);
     for permutation in [
         vec![spend.clone(), child.clone(), genesis.clone(), mint.clone()],
-        vec![
-            mint.clone(),
-            child.clone(),
-            child.clone(),
-            spend.clone(),
-            genesis.clone(),
-        ],
+        vec![mint, child.clone(), child, spend.clone(), genesis],
     ] {
         let folded = fold_authority_log(&permutation);
         assert_eq!(folded, expected);

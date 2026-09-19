@@ -367,16 +367,13 @@ pub(crate) fn project_hydrated_short_id(
     narrowing: oneiron::claim::ScopedReadReceipt,
 ) -> Option<CoreHydrateResponse> {
     let content_hash_hex = format!("{content_hash:02x}");
-    let Some(oneiron::HydratedShortId {
+    let oneiron::HydratedShortId {
         id,
         entity_type,
         learned_at,
         deletion,
         body,
-    }) = hydrated
-    else {
-        return None;
-    };
+    } = hydrated?;
 
     let Some(body) = body else {
         return Some(CoreHydrateResponse {

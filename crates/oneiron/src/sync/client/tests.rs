@@ -2403,7 +2403,7 @@ fn bound_wire_federation_burst_is_durable_before_import_and_replays_after_restar
     let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
     let peer = crate::sync::federation_burst::tests::test_peer(&vault);
     let config = SyncClientConfig {
-        federation_peer: Some(peer.clone()),
+        federation_peer: Some(peer),
         ..Default::default()
     };
     let manager = Arc::new(WindowManager::new(
