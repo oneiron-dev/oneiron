@@ -71,3 +71,32 @@ fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
     assert_eq!(reopened.project_room_changes(root_id)?.len(), 1);
     Ok(())
 }
+
+#[test]
+fn project_binding_does_not_hijack_a_preexisting_crm_slot() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let campaign = EntityId::now();
+    {
+        let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::device())?;
+        crate::campaign::register_crm_pack(&vault, 107, 108)?;
+        vault.put_entity(
+            &campaign,
+            107,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"existing campaign",
+        )?;
+    }
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+    assert_eq!(vault.project_type_byte()?, 109);
+    assert_eq!(vault.get_entity_type(&campaign)?, Some(107));
+    let root = vault.root_project()?;
+    assert_eq!(vault.get_entity_type(&root)?, Some(109));
+    let project = vault.project(root)?.unwrap();
+    assert!(
+        vault
+            .project_room(EntityId::from_hex(&project.home_room)?)?
+            .is_some()
+    );
+    Ok(())
+}

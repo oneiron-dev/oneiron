@@ -60,7 +60,7 @@ pub(in crate::batch) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
-    if entity_type == crate::workspace_roster::PROJECT_TYPE_BYTE {
+    if crate::workspace_roster::is_project_type(store, entity_type) {
         for referenced in crate::workspace_roster::validate_project_body(id, data)? {
             reject_overlay_member_base_write(store, &referenced, origin)?;
         }

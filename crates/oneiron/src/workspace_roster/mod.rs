@@ -116,7 +116,8 @@ mod tests;
 mod project;
 pub use project::{PROJECT_TYPE_BYTE, ProjectRecord, ProjectRoom, ProjectRoomChange};
 pub(crate) use project::{
-    reconcile_project_rooms, seed_root_project, validate_project_body, validate_room_body,
+    is_project_type, reconcile_project_rooms, seed_root_project, validate_project_body,
+    validate_room_body,
 };
 
 mod rooms;

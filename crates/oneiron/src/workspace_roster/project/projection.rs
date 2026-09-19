@@ -51,13 +51,16 @@ pub(crate) fn reconcile_project_rooms(
     txn: &mut heed::RwTxn<'_>,
     touched: &BTreeSet<EntityId>,
 ) -> Result<()> {
+    let Some(project_kind) = project_type(store) else {
+        return Ok(());
+    };
     let mut room_ops = Vec::new();
     for id in touched {
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-        if header.entity_type != PROJECT_TYPE_BYTE || raw.len() == ENTITY_METADATA_HEADER_LEN {
+        if header.entity_type != project_kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
             continue;
         }
         let body: ProjectRecord = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?;
@@ -69,7 +72,7 @@ pub(crate) fn reconcile_project_rooms(
                 return Err(invalid());
             }
             let parent_body: ProjectRecord =
-                record(store, txn, EntityId::from_hex(&next)?, PROJECT_TYPE_BYTE)?
+                record(store, txn, EntityId::from_hex(&next)?, project_kind)?
                     .ok_or_else(invalid)?;
             parent = parent_body.parent;
         }
@@ -143,7 +146,7 @@ pub(crate) fn reconcile_project_rooms(
         };
         let project_id = EntityId::from_hex(&room.project_id)?;
         let project: ProjectRecord =
-            record(store, txn, project_id, PROJECT_TYPE_BYTE)?.ok_or_else(invalid)?;
+            record(store, txn, project_id, project_kind)?.ok_or_else(invalid)?;
         if room.schema_version != 1
             || room.kind != "channel"
             || project.home_room != id.to_hex()

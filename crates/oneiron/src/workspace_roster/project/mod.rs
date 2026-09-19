@@ -12,6 +12,8 @@ use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+/// Preferred slot in an otherwise empty compiled-pack registry. Existing
+/// vaults can assign another slot; use Vault::project_type_byte for the binding.
 pub const PROJECT_TYPE_BYTE: u8 = 107;
 const PACK: &str = "oneiron.project";
 const ROOT: &[u8] = b"project.root.v1";
@@ -118,13 +120,29 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     decode(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
 }
 
+pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
+    store
+        .structural_kind_registration(kind)
+        .is_some_and(|row| row.pack == PACK && row.short_id_prefix == "pj")
+}
+pub(super) fn project_type(store: &crate::store::Store) -> Option<u8> {
+    store
+        .structural_kind_registrations()
+        .into_iter()
+        .find(|row| row.pack == PACK && row.short_id_prefix == "pj")
+        .map(|row| row.type_byte)
+}
 impl Vault {
+    /// Persisted project kind binding. Never assume a slot already occupied by another pack.
+    pub fn project_type_byte(&self) -> Result<u8> {
+        project_type(&self.store).ok_or_else(invalid)
+    }
     /// Creates or edits the project. The common batch projector co-commits the
     /// home room and its ChangeLog row, including raw-put and replay writes.
     pub fn put_project(&self, id: EntityId, record: &ProjectRecord, now: u64) -> Result<()> {
         self.put_entity(
             &id,
-            PROJECT_TYPE_BYTE,
+            self.project_type_byte()?,
             TimeRange {
                 start: now,
                 end: now,
@@ -138,7 +156,7 @@ impl Vault {
             &self.store,
             &self.store.env.read_txn()?,
             id,
-            PROJECT_TYPE_BYTE,
+            self.project_type_byte()?,
         )
     }
     pub fn project_room(&self, id: EntityId) -> Result<Option<ProjectRoom>> {
@@ -168,18 +186,27 @@ impl Vault {
 }
 
 pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
-    match vault.structural_kind_registration(PROJECT_TYPE_BYTE) {
-        Some(row) if row.pack == PACK && row.short_id_prefix == "pj" => {}
-        Some(_) => return Err(invalid()),
-        None => {
-            vault.register_structural_kind(
-                PROJECT_TYPE_BYTE,
-                "pj",
-                TypeByteZone::CompiledProduct,
-                PACK,
-            )?;
+    let kind = if let Some(kind) = project_type(&vault.store) {
+        kind
+    } else {
+        if vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, ROOT)?
+            .is_some()
+        {
+            return Err(invalid());
         }
-    }
+        let kind = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
+            ..=crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+            .find(|byte| {
+                crate::registry::entity_type_registry_entry(*byte).is_none()
+                    && vault.structural_kind_registration(*byte).is_none()
+            })
+            .ok_or_else(invalid)?;
+        vault.register_structural_kind(kind, "pj", TypeByteZone::CompiledProduct, PACK)?;
+        kind
+    };
     let (leader, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")?
         .ok_or_else(invalid)?;
@@ -193,7 +220,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
             .batch_in()
             .put(
                 &id,
-                PROJECT_TYPE_BYTE,
+                kind,
                 TimeRange { start: 0, end: 0 },
                 0,
                 &encode(&body)?,
