@@ -4,7 +4,7 @@ use crate::EntityId;
 /// Actor key bound to a scoped read lane over the `core:read` surface.
 ///
 /// The fields are private and construction rejects blank actor refs, so a
-/// [`ScopedRead`] cannot be built as an unkeyed bulk read handle.
+/// [`ScopedRead`](crate::claim::ScopedRead) cannot be built as an unkeyed bulk read handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopedReadActorKey {
     actor_ref: String,

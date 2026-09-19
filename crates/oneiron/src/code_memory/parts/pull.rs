@@ -103,7 +103,7 @@ pub struct CodeMemoryPullResult {
 ///
 /// [`ScopedRead::ppr_node_visible`] is the canonical readability predicate —
 /// literally `ScopedRead::is_entity_readable_with_policy_in`, the same
-/// admission [`ScopedRead::get_entity_parts`] applies — and it answers in the
+/// admission `ScopedRead::get_entity_parts` applies — and it answers in the
 /// transaction it is handed. That is what lets this module decide a candidate
 /// and MATERIALIZE it against one coherent view.
 ///
