@@ -397,9 +397,6 @@ impl Vault {
         if counter_end <= counter_start {
             return Err(invalid());
         }
-        let update = candidate
-            .export(ExportMode::all_updates())
-            .map_err(|_| invalid())?;
         let head = load_head(&self.store, &*wtxn, &session.document_id)?;
         let (merged, mut receipts) = if let Some(row) = head {
             if row.initial_hash != session.initial_hash
@@ -408,7 +405,20 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            (checked_snapshot(&row.state)?, row.receipts)
+            let persisted = checked_snapshot(&row.state)?;
+            if row.state.frontier == before {
+                // The session already contains the complete durable head. It
+                // needs no merge: importing its own history makes Loro rebuild
+                // a rich-text diff tracker, quadratic for large insert runs.
+                (candidate, row.receipts)
+            } else {
+                let merged = persisted;
+                let update = candidate
+                    .export(ExportMode::all_updates())
+                    .map_err(|_| invalid())?;
+                merged.import(&update).map_err(|_| invalid())?;
+                (merged, row.receipts)
+            }
         } else {
             // A rename may have claimed this path since the session opened.
             if let Some(id) = self
@@ -419,17 +429,8 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            (
-                doc_from_snapshot(
-                    &session
-                        .doc
-                        .export(ExportMode::Snapshot)
-                        .map_err(|_| invalid())?,
-                )?,
-                Vec::new(),
-            )
+            (candidate, Vec::new())
         };
-        merged.import(&update).map_err(|_| invalid())?;
         if merged.get_text("body").to_string().len() > MAX_FILE_BYTES {
             return Err(invalid());
         }
