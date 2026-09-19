@@ -41,7 +41,10 @@ impl BroadcastSubscriber {
     pub(crate) async fn recv(&mut self) -> Result<Option<Vec<u8>>, BroadcastError> {
         loop {
             match self.rx.recv().await {
-                Ok((sender_conn_id, data)) => {
+                Ok(BroadcastPayload::Resync { missed }) => {
+                    return Err(BroadcastError::Lagged(missed));
+                }
+                Ok(BroadcastPayload::Frame(sender_conn_id, data)) => {
                     // Reset lag counter on successful receive
                     self.lag_count = 0;
 
@@ -115,7 +118,10 @@ impl ReactiveChangeSubscriber {
     pub(crate) async fn recv(&mut self) -> Option<ReactiveChange> {
         loop {
             match self.rx.recv().await {
-                Ok((_, data)) => {
+                Ok(BroadcastPayload::Resync { missed }) => {
+                    return Some(ReactiveChange::InvalidateAll { missed });
+                }
+                Ok(BroadcastPayload::Frame(_, data)) => {
                     if let Some(change) = persistent_change(&data) {
                         return Some(change);
                     }
@@ -146,6 +152,31 @@ fn persistent_change(data: &[u8]) -> Option<ReactiveChange> {
             sub_tag,
             ..
         }) if sub_tag == window_sub_tags::UPDATE => Some(ReactiveChange::Window { window_key }),
+        Ok(SyncMessage::Doc {
+            entity,
+            kind:
+                oneiron::sync::transport::document_sub_tags::UPDATE
+                | oneiron::sync::transport::document_sub_tags::STATE,
+            ..
+        }) => Some(ReactiveChange::Doc {
+            entities: vec![entity],
+        }),
+        Ok(SyncMessage::Batch(docs)) => {
+            let entities: Vec<_> = docs
+                .into_iter()
+                .filter_map(|doc| match doc {
+                    SyncMessage::Doc {
+                        entity,
+                        kind:
+                            oneiron::sync::transport::document_sub_tags::UPDATE
+                            | oneiron::sync::transport::document_sub_tags::STATE,
+                        ..
+                    } => Some(entity),
+                    _ => None,
+                })
+                .collect();
+            (!entities.is_empty()).then_some(ReactiveChange::Doc { entities })
+        }
         Ok(_) | Err(_) => None,
     }
 }
@@ -160,7 +191,7 @@ pub(crate) fn broadcast(
     conn_id: u32,
     data: Vec<u8>,
 ) -> Result<(), broadcast::error::SendError<BroadcastPayload>> {
-    tx.send((conn_id, data))?;
+    tx.send(BroadcastPayload::Frame(conn_id, data))?;
     Ok(())
 }
 
@@ -205,5 +236,28 @@ mod tests {
 
         let msg2 = sub2.recv().await.unwrap().unwrap();
         assert_eq!(msg2, vec![77]);
+    }
+    #[test]
+    fn document_and_batch_notices_invalidate_only_named_entity_queries() {
+        use crate::api::ReactiveDependency;
+        use oneiron::sync::transport::{document_sub_tags, encode_document, encode_document_batch};
+        let id = oneiron::EntityId::now();
+        let other = oneiron::EntityId::now();
+        let frame = encode_document(id, document_sub_tags::UPDATE, b"delta")
+            .into_result()
+            .unwrap();
+        for frame in [
+            frame.clone(),
+            encode_document_batch(&[frame]).into_result().unwrap(),
+        ] {
+            let notice = persistent_change(&frame).unwrap();
+            assert!(notice.invalidates(&[ReactiveDependency::Doc(id)]));
+            assert!(!notice.invalidates(&[ReactiveDependency::Doc(other)]));
+            assert!(!notice.invalidates(&[ReactiveDependency::Window("2026-03".into())]));
+        }
+        let request = encode_document(id, document_sub_tags::REQUEST, b"request")
+            .into_result()
+            .unwrap();
+        assert!(persistent_change(&request).is_none());
     }
 }

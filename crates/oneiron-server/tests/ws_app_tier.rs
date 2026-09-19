@@ -4,8 +4,8 @@
 
 use futures_util::{SinkExt, StreamExt};
 use oneiron::sync::transport::{
-    APP_TIER_PROTOCOL_VERSION_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, TAG_PROTOCOL_HELLO,
-    TAG_RPC, TAG_SUB, TAG_VERSION_VECTOR,
+    LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION, TAG_PROTOCOL_HELLO, TAG_RPC, TAG_SUB,
+    TAG_VERSION_VECTOR,
 };
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ async fn next(socket: &mut Socket) -> Message {
         .unwrap()
 }
 
-/// The version-8 app envelope the server speaks: TAG + MessagePack
+/// The app envelope the server speaks: TAG + MessagePack
 /// `{type, id, seq, last, payload}`. Requests are terminal at seq zero; RPC
 /// results arrive as `rpc.res` chunks whose payloads concatenate into one
 /// MessagePack value.
@@ -168,8 +168,8 @@ async fn close_code(socket: &mut Socket) -> u16 {
 #[tokio::test]
 async fn old_version_syncs_but_app_tag_closes_4007_before_json_decode() {
     let fixture = fixture().await;
-    const { assert!(LEGACY_SELECTOR_PROTOCOL_VERSION < APP_TIER_PROTOCOL_VERSION_VERSION) };
-    let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION - 1).await;
+    const { assert!(LEGACY_SELECTOR_PROTOCOL_VERSION < PROTOCOL_VERSION) };
+    let mut socket = connect(&fixture, LEGACY_SELECTOR_PROTOCOL_VERSION).await;
     let mut vv = vec![TAG_VERSION_VECTOR];
     vv.extend_from_slice(&loro::VersionVector::default().encode());
     socket.send(Message::Binary(vv.into())).await.unwrap();
@@ -185,7 +185,7 @@ async fn old_version_syncs_but_app_tag_closes_4007_before_json_decode() {
 async fn rpc_and_sub_without_bind_close_4008() {
     let fixture = fixture().await;
     for tag in [TAG_RPC, TAG_SUB] {
-        let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
+        let mut socket = connect(&fixture, PROTOCOL_VERSION).await;
         send(
             &mut socket,
             tag,
@@ -209,7 +209,7 @@ async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
         "v2.scope=core:read.bad",
         &unknown,
     ] {
-        let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
+        let mut socket = connect(&fixture, PROTOCOL_VERSION).await;
         send(
             &mut socket,
             TAG_RPC,
@@ -218,7 +218,7 @@ async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
         .await;
         assert_eq!(close_code(&mut socket).await, 4008);
     }
-    let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
+    let mut socket = connect(&fixture, PROTOCOL_VERSION).await;
     send(
         &mut socket,
         TAG_RPC,

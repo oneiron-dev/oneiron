@@ -28,6 +28,10 @@ pub struct TxnBatchBuilder<'a> {
     ops: Vec<BatchOp>,
     validation_error: Option<Error>,
     origin: BaseWriteOrigin<'a>,
+    #[cfg(feature = "sync")]
+    import_tier: crate::sync::client::ImportTier,
+    #[cfg(feature = "sync")]
+    federated_puts: Vec<usize>,
 }
 
 impl<'a> TxnBatchBuilder<'a> {
@@ -37,6 +41,10 @@ impl<'a> TxnBatchBuilder<'a> {
             ops: Vec::new(),
             validation_error: None,
             origin: BaseWriteOrigin::Ordinary,
+            #[cfg(feature = "sync")]
+            import_tier: crate::sync::client::ImportTier::OwnDevice,
+            #[cfg(feature = "sync")]
+            federated_puts: Vec::new(),
         }
     }
 
@@ -64,6 +72,10 @@ impl<'a> TxnBatchBuilder<'a> {
             ops,
             validation_error: None,
             origin: BaseWriteOrigin::PromoteReplay(grant),
+            #[cfg(feature = "sync")]
+            import_tier: crate::sync::client::ImportTier::OwnDevice,
+            #[cfg(feature = "sync")]
+            federated_puts: Vec::new(),
         }
     }
 
@@ -332,6 +344,12 @@ impl<'a> TxnBatchBuilder<'a> {
     /// ungrammatical predicates and malformed bodies fail typed even here.
     /// Used ONLY by `bridge::materialize_entity_blob_in_txn`.
     #[cfg(feature = "sync")]
+    pub(crate) fn with_import_tier(mut self, tier: crate::sync::client::ImportTier) -> Self {
+        self.import_tier = tier;
+        self
+    }
+
+    #[cfg(feature = "sync")]
     pub(crate) fn put_replicated(
         mut self,
         id: &EntityId,
@@ -340,6 +358,12 @@ impl<'a> TxnBatchBuilder<'a> {
         learned_at: u64,
         data: &[u8],
     ) -> Self {
+        if matches!(
+            self.import_tier,
+            crate::sync::client::ImportTier::Federated(_)
+        ) {
+            self.federated_puts.push(self.ops.len());
+        }
         self.ops.push(replicated_put_op(
             id,
             entity_type,
@@ -567,36 +591,73 @@ impl<'a> TxnBatchBuilder<'a> {
         self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true))
     }
 
-    fn apply_with_gate_mode(self, wtxn: &mut RwTxn<'_>, gate_mode: ApplyOpsGateMode) -> Result<()> {
-        if let Some(err) = self.validation_error {
-            return Err(err);
+    fn apply_with_gate_mode(
+        mut self,
+        wtxn: &mut RwTxn<'_>,
+        gate_mode: ApplyOpsGateMode,
+    ) -> Result<()> {
+        if let Some(error) = self.validation_error.take() {
+            return Err(error);
         }
-        let text_index_trusted = if contains_text_op(&self.ops) {
-            self.vault.ensure_text_index_trusted()?;
+        #[cfg(feature = "sync")]
+        let mut this = self;
+        #[cfg(not(feature = "sync"))]
+        let this = self;
+        #[cfg(feature = "sync")]
+        if !this.federated_puts.is_empty() {
+            let policy = crate::gate::resolve_policy_manifest(&this.vault.store, wtxn)?;
+            for index in &this.federated_puts {
+                if let BatchOp::Put {
+                    id,
+                    entity_type,
+                    occurred,
+                    learned_at,
+                    data,
+                    ..
+                } = &mut this.ops[*index]
+                {
+                    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+                    blob.push(*entity_type);
+                    blob.extend_from_slice(&occurred.start.to_be_bytes());
+                    blob.extend_from_slice(&occurred.end.to_be_bytes());
+                    blob.extend_from_slice(&learned_at.to_be_bytes());
+                    blob.extend_from_slice(data);
+                    let admitted = crate::sync::selector::admit_federated_entity_blob(
+                        this.vault,
+                        &policy,
+                        &id.to_hex(),
+                        Some(&blob),
+                    )?;
+                    *data = admitted[ENTITY_METADATA_HEADER_LEN..].to_vec();
+                }
+            }
+        }
+        let text_index_trusted = if contains_text_op(&this.ops) {
+            this.vault.ensure_text_index_trusted()?;
             true
         } else {
-            self.vault
+            this.vault
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
-        let pending_vad_ids = if super::vad_postcommit::has_vad_postcommit_owner(self.vault, wtxn) {
-            super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, wtxn, &self.ops)?
+        let pending_vad_ids = if super::vad_postcommit::has_vad_postcommit_owner(this.vault, wtxn) {
+            super::vad_postcommit::pending_dreamer_vad_approvals(this.vault, wtxn, &this.ops)?
         } else {
             Vec::new()
         };
         apply_ops_with_origin(
-            &self.vault.store,
-            &self.vault.config,
-            &self.vault.analyzer,
+            &this.vault.store,
+            &this.vault.config,
+            &this.vault.analyzer,
             wtxn,
-            self.ops,
+            this.ops,
             text_index_trusted,
             gate_mode,
-            self.origin,
+            this.origin,
         )?;
         // Queue only after admitted apply. The owner checks the final body and
         // redeemed consent after ALL of its batches, then commits before VAD.
-        super::vad_postcommit::queue_dreamer_vad_approvals(self.vault, wtxn, pending_vad_ids);
+        super::vad_postcommit::queue_dreamer_vad_approvals(this.vault, wtxn, pending_vad_ids);
         Ok(())
     }
 }

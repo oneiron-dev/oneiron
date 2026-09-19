@@ -238,7 +238,7 @@ async fn handle_connection(
                             for frame in frames {
                                 // Recipient/subscription routing is stripped only by the
                                 // matching socket. Never fan out a bare private app frame.
-                                let _ = server.broadcast_tx.send((0, frame));
+                                let _ = crate::broadcast::broadcast(&server.broadcast_tx, 0, frame);
                             }
                         }
                         Err(_) => break,
@@ -271,7 +271,25 @@ async fn handle_connection(
                         ) {
                             continue;
                         }
-                        if should_forward_broadcast(protocol_version, &data)
+                        if matches!(
+                            data.first(),
+                            Some(&oneiron::sync::transport::TAG_DOCUMENT)
+                                | Some(&oneiron::sync::transport::TAG_BATCH)
+                        ) {
+                            let Ok(frames) =
+                                super::documents::document_delivery(&server, &conn_state, &data)
+                            else {
+                                break;
+                            };
+                            for frame in frames {
+                                let _ = direct_tx.send(frame);
+                            }
+                            continue;
+                        }
+                        if (should_forward_broadcast(protocol_version, &data)
+                            || (conn_state.window_sync_mode
+                                == super::conn_state::WindowSyncMode::FullWindow
+                                && data.first() == Some(&protocol::TAG_WINDOW_SYNC)))
                             && !transport.send_binary(data).await
                         {
                             break;
@@ -279,6 +297,12 @@ async fn handle_connection(
                     }
                     Ok(None) => break,
                     Err(crate::broadcast::BroadcastError::Lagged(n)) => {
+                        // Reconnect replays persisted document subscriptions and VVs.
+                        // App replay alone cannot repair a missed text-document notice.
+                        if !conn_state.documents.is_empty() {
+                            transport.close().await;
+                            break;
+                        }
                         app_connection.replay_after_lag();
                         tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
                     }
@@ -294,6 +318,7 @@ async fn handle_connection(
                 let Some(data) = direct_msg else {
                     break;
                 };
+                let mut data = data;
                 let app_frame = matches!(
                     data.first().copied(),
                     Some(protocol::TAG_RPC | protocol::TAG_SUB)
@@ -319,6 +344,17 @@ async fn handle_connection(
                 } else {
                     None
                 };
+                if matches!(
+                    data.first(),
+                    Some(&oneiron::sync::transport::TAG_DOCUMENT)
+                        | Some(&oneiron::sync::transport::TAG_BATCH)
+                ) {
+                    match super::documents::document_delivery(&server, &conn_state, &data) {
+                        Ok(mut frames) if frames.len() == 1 => data = frames.remove(0),
+                        Ok(frames) if frames.is_empty() => continue,
+                        _ => break,
+                    }
+                }
                 let sent = transport.send_binary(data).await;
                 transport.app_jti = None;
                 if !sent {
@@ -516,6 +552,8 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         SyncMessage::Ephemeral(_)
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
+        | SyncMessage::Doc { .. }
+        | SyncMessage::Batch(_)
         | SyncMessage::WindowSync { .. }
         | SyncMessage::Rpc(_)
         | SyncMessage::Sub(_) => true,
@@ -523,6 +561,12 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
 }
 
 pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> bool {
+    if matches!(
+        data.first(),
+        Some(&oneiron::sync::transport::TAG_DOCUMENT) | Some(&oneiron::sync::transport::TAG_BATCH)
+    ) {
+        return false; // Only document_delivery may construct a recipient's export.
+    }
     protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
         || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
 }

@@ -652,6 +652,30 @@ impl Vault {
     /// that history over a shallow-compacted `d:w:` row, so the sweep must
     /// never compact while such a handle may persist.
     #[cfg(feature = "sync")]
+    pub(crate) fn compact_document_for_sweep(
+        &self,
+        id: crate::EntityId,
+        erased: bool,
+    ) -> crate::Result<bool> {
+        let manager = self.live_window_manager.lock().map_err(|_| {
+            crate::Error::InvariantViolation("document manager attachment poisoned")
+        })?;
+        match manager.upgrade() {
+            Some(manager) => manager.compact_closed_document(id, erased),
+            None if self
+                .live_window_manager_attached
+                .load(std::sync::atomic::Ordering::Acquire) =>
+            {
+                Ok(false)
+            }
+            None => {
+                crate::sync::documents::compact(self, id, erased)?;
+                Ok(true)
+            }
+        }
+    }
+
+    #[cfg(feature = "sync")]
     pub(crate) fn live_window_for_sweep(&self, key: &crate::sync::WindowKey) -> bool {
         let attached = self
             .live_window_manager_attached

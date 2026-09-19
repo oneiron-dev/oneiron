@@ -20,6 +20,29 @@ fn app_payload_limits_are_checked_before_copying_or_decoding() {
 }
 
 #[test]
+fn document_and_batch_limits_include_framing() {
+    use oneiron::sync::transport::{TAG_BATCH, TAG_DOCUMENT};
+
+    let max = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
+    for tag in [TAG_DOCUMENT, TAG_BATCH] {
+        let mut bytes = vec![0; max];
+        bytes[0] = tag;
+        let document_offset = if tag == TAG_BATCH {
+            bytes[1..5].copy_from_slice(&((max - 5) as u32).to_be_bytes());
+            5
+        } else {
+            0
+        };
+        bytes[document_offset] = TAG_DOCUMENT;
+        bytes[document_offset + 1..document_offset + 17].fill(7);
+        assert!(crate::protocol::parse_message(&bytes).is_ok());
+        bytes.push(0);
+        assert!(matches!(crate::protocol::parse_message(&bytes),
+            Err(ProtocolError::FrameTooLarge { size, max: cap }) if size == max + 1 && cap == max));
+    }
+}
+
+#[test]
 fn all_caller_controlled_list_sizes_are_validated_before_engine_reads() {
     for limit in [0, crate::api::CORE_MAX_LIST_LIMIT + 1, usize::MAX] {
         for (method, params) in [

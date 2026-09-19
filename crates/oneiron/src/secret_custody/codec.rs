@@ -37,7 +37,13 @@ pub(super) fn invalid_body(reason: &'static str) -> Error {
 /// ([`crate::sync::selector`]) drops the byte from the export set, and reverse
 /// rematerialization skips-and-scrubs it. Neither has a caller to fail.
 pub(crate) fn reject_secret_custody_byte() -> Error {
-    invalid_body("secret custody records are sealed from the raw/CRDT planes until ONE-1865")
+    invalid_body("secret custody is not eligible for this raw or sync door")
+}
+
+/// Same-vault replication eligibility. Malformed bodies fail closed.
+pub(crate) fn custody_sync_allowed(body: &[u8]) -> bool {
+    decode_secret_custody_body(body)
+        .is_ok_and(|record| record.class == CustodyClass::CustodyPortable && !record.device_only)
 }
 
 fn tier_band_to_value(band: &TierBand) -> Value {

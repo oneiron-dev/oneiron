@@ -152,7 +152,7 @@ async fn connect(f: &Fixture, actor: &str) -> Socket {
         .send(Message::Binary(
             vec![
                 oneiron::sync::transport::TAG_PROTOCOL_HELLO,
-                oneiron::sync::transport::APP_TIER_PROTOCOL_VERSION_VERSION,
+                oneiron::sync::transport::PROTOCOL_VERSION,
             ]
             .into(),
         ))

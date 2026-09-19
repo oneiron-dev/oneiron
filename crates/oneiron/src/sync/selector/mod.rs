@@ -6,6 +6,7 @@
 //! subgraph and exports from that doc instead.
 
 mod admission;
+pub(crate) use admission::admit_federated_entity_blob;
 mod authorize;
 mod codec;
 #[cfg(feature = "sync")]

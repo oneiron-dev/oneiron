@@ -44,6 +44,8 @@ pub(crate) enum ReactiveDependency {
     Root,
     /// One specific window, keyed `YYYY-MM`.
     Window(String),
+    /// One entity text document.
+    Doc(oneiron::EntityId),
     /// Every persistent change, whichever store it lands in.
     AnyPersistent,
 }
@@ -62,6 +64,8 @@ pub(crate) enum ReactiveChange {
         /// Window key (`YYYY-MM`) the update belongs to.
         window_key: String,
     },
+    /// One or more entity documents changed in one frame.
+    Doc { entities: Vec<oneiron::EntityId> },
     /// The notice channel dropped `missed` frames. Which stores changed is
     /// unknowable, so every query re-reads once.
     InvalidateAll {
@@ -78,6 +82,11 @@ impl ReactiveChange {
     /// window plus `AnyPersistent`; `InvalidateAll` matches everything.
     pub(crate) fn invalidates(&self, dependencies: &[ReactiveDependency]) -> bool {
         match self {
+            Self::Doc { entities } => dependencies.iter().any(|dependency| match dependency {
+                ReactiveDependency::Doc(id) => entities.contains(id),
+                ReactiveDependency::AnyPersistent => true,
+                _ => false,
+            }),
             Self::InvalidateAll { .. } => true,
             Self::Root => dependencies.iter().any(|dependency| {
                 matches!(
@@ -88,7 +97,7 @@ impl ReactiveChange {
             Self::Window { window_key } => dependencies.iter().any(|dependency| match dependency {
                 ReactiveDependency::Window(key) => key == window_key,
                 ReactiveDependency::AnyPersistent => true,
-                ReactiveDependency::Root => false,
+                ReactiveDependency::Root | ReactiveDependency::Doc(_) => false,
             }),
         }
     }

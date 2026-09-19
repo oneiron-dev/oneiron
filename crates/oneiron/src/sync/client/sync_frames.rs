@@ -86,11 +86,11 @@ impl SyncClient {
     pub(in crate::sync) fn try_generate_initial_sync(
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        // Phase 0: full-window hello — this client path still uses the
-        // pre-FED-002 full-window VV_REQUEST flow.
+        // v9 carries own-device windows and grant-backed entity documents
+        // on the same connection; ledger mode remains bound on first use.
         // Frame #2: lease request (ONE-1140, OD-5).
         let mut messages = vec![
-            transport::encode_legacy_full_window_protocol_hello(),
+            transport::encode_protocol_hello(),
             self.lease_request_frame(),
         ];
         messages.extend(self.generate_phase_frames()?);
@@ -176,6 +176,12 @@ impl SyncClient {
             }
         }
 
+        messages.extend(
+            self.manager
+                .documents()
+                .request_frames()
+                .map_err(|error| TransportError::Storage(error.to_string()))?,
+        );
         Ok(messages)
     }
 

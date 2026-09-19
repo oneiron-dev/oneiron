@@ -1549,7 +1549,7 @@ fn forward_remat_quarantines_replicated_secret_custody_carrier() -> Result<()> {
     let body = encode_secret_custody_body(&SecretCustodyRecord {
         schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
         name: "peer-authored".to_owned(),
-        class: CustodyClass::CustodyPortable,
+        class: CustodyClass::CustodyDeviceBound,
         device_only: false,
         value_bytes: b"peer-plaintext-value".to_vec(),
         status: SecretCustodyStatus::Active,
@@ -2907,7 +2907,7 @@ fn seed_secret_custody(
     let rec = crate::secret_custody::SecretCustodyRecord {
         schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
         name: name.to_owned(),
-        class: crate::secret_custody::CustodyClass::CustodyPortable,
+        class: crate::secret_custody::CustodyClass::CustodyDeviceBound,
         device_only: false,
         value_bytes: value.to_vec(),
         status: crate::secret_custody::SecretCustodyStatus::Active,
@@ -3429,4 +3429,52 @@ fn forward_remat_refuses_replicated_message_bodies_before_any_mutation() -> Resu
         );
     }
     Ok(())
+}
+
+#[test]
+fn replicated_lww_overwrite_removes_loser_bm25f_in_the_write_transaction() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let id = EntityId::now();
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"old",
+    )?;
+    vault.with_write_txn(|txn| {
+        crate::bm25::index_text(
+            &vault.store,
+            txn,
+            &vault.analyzer,
+            &id,
+            &[("body".to_owned(), "loseruniquetoken".to_owned())],
+        )?;
+        Ok(())
+    })?;
+    vault.with_write_txn(|txn| {
+        vault
+            .batch_in()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_TURN,
+                TimeRange { start: 2, end: 2 },
+                2,
+                b"winner",
+            )
+            .apply(txn)?;
+        // Assert stored postings inside the overwrite transaction, before commit.
+        assert!(vault.store.text_forward.get(txn, id.as_bytes())?.is_none());
+        assert!(
+            vault
+                .store
+                .text_doc_field_lengths
+                .get(txn, id.as_bytes())?
+                .is_none()
+        );
+        assert!(vault.store.text_postings.iter(txn)?.next().is_none());
+        let row = vault.store.entities.get(txn, id.as_bytes())?.unwrap();
+        assert_eq!(&row[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
+        Ok(())
+    })
 }

@@ -42,6 +42,8 @@
 //!   open/unload. Code built on the manager must never acquire the registry
 //!   lock while holding the materializer lock.
 
+mod document_api;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
@@ -60,6 +62,7 @@ use crate::error::{Error, Result, SyncError};
 /// See the module docs for the pinned startup order and lock semantics.
 pub struct WindowManager {
     vault: Arc<Vault>,
+    documents: super::documents::DocumentRegistry,
     materializer: Arc<Materializer>,
     user_id: String,
     config: SyncConfig,
@@ -111,6 +114,7 @@ impl WindowManager {
         config: SyncConfig,
     ) -> Self {
         Self {
+            documents: super::documents::DocumentRegistry::new(vault.clone()),
             vault,
             materializer,
             user_id: user_id.into(),

@@ -26,10 +26,14 @@ use crate::usage::UsageLedger;
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 
-/// Broadcast payload: (conn_id, encoded_message).
-/// conn_id 0 = local/bridge writes (broadcast to all devices).
-/// conn_id >= 1 = specific connection (echo suppression skips sender).
-pub(crate) type BroadcastPayload = (u32, Vec<u8>);
+/// Internal fan-out. Recovery notices never become wire frames.
+#[derive(Debug, Clone)]
+pub(crate) enum BroadcastPayload {
+    /// Sender zero denotes a local write; other senders use echo suppression.
+    Frame(u32, Vec<u8>),
+    /// A producer lost notifications before they reached this channel.
+    Resync { missed: u64 },
+}
 
 /// Core sync server state shared across all connections.
 pub struct SyncServer {

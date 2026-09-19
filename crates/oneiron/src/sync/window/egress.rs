@@ -10,7 +10,7 @@ use super::loro_support::{
 };
 use super::quarantine::{self, QuarantineContainer};
 use super::reverse::{
-    delete_edges_touching_entities, is_secret_custody_record,
+    delete_edges_touching_entities, is_unsyncable_secret_custody,
     quarantine_outbound_protected_tombstones, remove_entity_crdt_carriers,
     reverse_remat_skip_redaction_receipt_mirror, skip_companion_register_sync_mirror,
 };
@@ -87,18 +87,33 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
     let mut malformed_key_carriers: Vec<String> = Vec::new();
+    let mut portable_ids = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
-        if !is_secret_custody_record(blob) {
+        if crate::batch::EntityMetadataHeader::parse(blob)
+            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+        {
             return;
         }
         match EntityId::from_hex(raw_key) {
-            Ok(id) => {
-                custody_ids.insert(id);
+            Ok(id) if id.to_hex() == raw_key => {
+                if is_unsyncable_secret_custody(blob) {
+                    custody_ids.insert(id);
+                } else {
+                    portable_ids.push(id);
+                }
             }
-            Err(_) => malformed_key_carriers.push(raw_key.to_owned()),
+            _ => malformed_key_carriers.push(raw_key.to_owned()),
         }
     });
+    for id in portable_ids {
+        if vault
+            .get_raw_unsealed(&id)?
+            .is_some_and(|raw| is_unsyncable_secret_custody(&raw))
+        {
+            custody_ids.insert(id);
+        }
+    }
     let mut removed = false;
     for raw_key in &malformed_key_carriers {
         // Quarantine keeps hashed evidence (never the bytes); the delete is
@@ -224,7 +239,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        if skip_companion_register_sync_mirror(&raw)? {
+        if is_unsyncable_secret_custody(&raw) || skip_companion_register_sync_mirror(&raw)? {
             let mut wrote_doc = false;
             if map_contains_binary(&entities_map, &hex_id) {
                 map_delete(&entities_map, &hex_id)?;
@@ -234,6 +249,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 wrote_doc = true;
             }
             if wrote_doc {
+                require_history_free_window(vault, window_key)?;
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
             vault.with_write_txn(|wtxn| {

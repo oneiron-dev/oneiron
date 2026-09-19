@@ -30,6 +30,7 @@ pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    pub(crate) document_updates: tokio::sync::broadcast::Receiver<Vec<u8>>,
     pub(crate) client_id: u64,
     /// This device's Ed25519 attestation key (ONE-1140, OD-2): signs the
     /// lease-request proof of possession on every connect. Receipt signing
@@ -101,7 +102,9 @@ impl SyncClient {
                 true
             }));
 
+        let document_updates = manager.documents().subscribe();
         let client = Self {
+            document_updates,
             vault,
             manager,
             root_doc,

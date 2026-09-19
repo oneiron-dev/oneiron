@@ -528,23 +528,34 @@ fn sweep_without_sync_completes_clean_vault_and_defers_on_crdt_rows() {
         .unwrap();
     let receipt_id2 = outcome2.receipt_id.expect("receipt id");
     let sweep_key2 = outcome2.sweep_key.expect("sweep key");
-    {
-        let mut wtxn = vault.store.env.write_txn().unwrap();
+    for key in [
+        "d:w:2026-02".to_owned(),
+        format!("d:e:{}", id2.to_hex()),
+        format!("u:e:{}:00000001", id2.to_hex()),
+        format!("qd:e:{}:00000001", id2.to_hex()),
+        "d:e:malformed".to_owned(),
+    ] {
         vault
-            .store
-            .sync_state
-            .put(&mut wtxn, "d:w:2026-02", b"opaque-crdt-snapshot")
+            .with_write_txn(|txn| {
+                vault
+                    .store
+                    .sync_state
+                    .put(txn, &key, b"opaque-crdt-snapshot")?;
+                Ok(())
+            })
             .unwrap();
-        wtxn.commit().unwrap();
+        let run = run_hard_erase_sweep(&vault).unwrap();
+        assert_eq!(run.jobs_processed, 0, "CRDT rows present: {key}");
+        assert!(run.jobs_deferred >= 1);
+        assert!(h_rows(&vault).iter().any(|(k, _)| *k == sweep_key2));
+        assert!(receipt_sweep_complete_at(&vault, &receipt_id2).is_none());
+        vault
+            .with_write_txn(|txn| {
+                vault.store.sync_state.delete(txn, &key)?;
+                Ok(())
+            })
+            .unwrap();
     }
-    let run = run_hard_erase_sweep(&vault).unwrap();
-    assert_eq!(run.jobs_processed, 0, "CRDT rows present ⇒ fail closed");
-    assert!(run.jobs_deferred >= 1);
-    assert!(
-        h_rows(&vault).iter().any(|(k, _)| *k == sweep_key2),
-        "obligation kept"
-    );
-    assert!(receipt_sweep_complete_at(&vault, &receipt_id2).is_none());
 }
 
 /// Pins the ONE-1087 replay-door exception comparator to EXACTLY the
