@@ -93,7 +93,8 @@ fn remark_claims_pending_in_txn(
 
 #[cfg(test)]
 mod tests {
-    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+    use crate::{ClaimCandidate, EdgeActorClass, WriteActor, WriteEnvelope, WriteProvenance};
     use crate::{EntityId, TimeRange, Vault, VaultConfig};
 
     #[test]
@@ -113,15 +114,25 @@ mod tests {
             &rmp_serde::to_vec_named(&serde_json::json!({"name":"fixture"})).unwrap(),
         )?;
         let id = EntityId::now();
-        let body = ClaimBody::new(
+        let candidate = ClaimCandidate::new(
             "test.fact",
             ClaimSubject::Entity(subject),
             "a fact".into(),
             1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
         );
-        vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(subject, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(rmpv::Value::Map(vec![(
+                "fixture".into(),
+                "cold-attach".into(),
+            )]))?,
+            ClaimApprovalStatus::Auto,
+        );
+        vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, TimeRange { start: 1, end: 1 }, 1)
+            .commit()?;
         drop(vault);
         config.embedding_model = Some("fixture/embedder@v1".into());
         let vault = Vault::open(dir.path(), config.clone())?;
