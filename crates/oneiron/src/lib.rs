@@ -175,6 +175,7 @@ pub mod code_revision;
 pub mod code_symbol;
 pub mod code_view;
 pub mod codebase;
+pub mod contract_oracle;
 pub(crate) mod credential_door;
 pub mod edit_distance;
 pub mod edit_roundtrip;
