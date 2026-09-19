@@ -31,6 +31,12 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
                 1,
                 &crate::claim::encode_claim_body(&body)?,
             )
+            .edge(
+                &head,
+                EdgeKind::ClaimOf,
+                &subject,
+                crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
+            )
             .commit()?;
         let judgment = if resolution == "down" {
             Err(crate::LlmError::Fatal(crate::FatalLlmError::InvalidRequest))
@@ -100,8 +106,8 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
     for source in [ClaimSource::Inferred, ClaimSource::UserStated] {
         let (_dir, vault) = open_vault();
         let manifest_id = crate::gate::default_policy_manifest_id()?;
-        let raw = vault.get_raw(&manifest_id)?.expect("manifest");
-        let mut cursor = std::io::Cursor::new(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+        let raw = crate::gate::default_policy_manifest();
+        let mut cursor = std::io::Cursor::new(&raw);
         let Value::Map(mut rows) = rmpv::decode::read_value(&mut cursor).expect("manifest decode")
         else {
             panic!("manifest map");
@@ -140,6 +146,12 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
                 occurred(1),
                 1,
                 &crate::claim::encode_claim_body(&body)?,
+            )
+            .edge(
+                &head,
+                EdgeKind::ClaimOf,
+                &subject,
+                crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
             )
             .commit()?;
         let mut script = vec![Ok(extraction_response(&subject, &turns[0]))];

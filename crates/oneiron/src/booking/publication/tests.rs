@@ -220,7 +220,7 @@ fn public_booking_publication_is_durable_and_retraction_does_not_revive_old_allo
             .is_none()
     );
     owner
-        .confirm_booking_publication(&receipt.claim_short_id, 150)
+        .confirm_booking_publication(&receipt.claim_short_id, crate::unix_seconds_now())
         .expect("confirm owner revision");
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("reopen");

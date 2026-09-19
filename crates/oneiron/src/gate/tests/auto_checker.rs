@@ -439,7 +439,7 @@ fn either_manifest_key_rejects_malformed_values_and_duplicates() -> Result<()> {
 
 // Independent preimage for the small frontier fixture below: landed main
 // a56c0398edbecd8126ffebac525871444b629fd8's hash_policy_frontier_v0,
-// plus ONE-1453's intentional breaker-presence byte. Posture still follows
+// with the single-valued predicate domain and no retired breaker byte. Posture follows
 // budget exhaustion even WITHOUT a checker; an absent checker adds no bytes.
 fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     use sha2::{Digest, Sha256};
@@ -467,6 +467,8 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
         text(&mut bytes, source);
         bytes.push(0); // no source-trust row
     }
+    text(&mut bytes, "single_valued_predicates");
+    len(&mut bytes, 0);
     text(&mut bytes, "suspend");
     text(&mut bytes, posture);
     len(&mut bytes, 0); // budget-policy rows
@@ -484,7 +486,6 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     }
     bytes.extend_from_slice(&[0; 2]); // owner-policy enabled / rows dropped
     len(&mut bytes, 0); // owner-policy rows
-    bytes.push(0); // no actor-burst-breaker override (ONE-1453 frontier domain)
     bytes.extend_from_slice(&[0; 3]); // document, output contract, patterns dropped
     len(&mut bytes, 0); // owner-policy patterns
     len(&mut bytes, 0); // signatures
@@ -1260,7 +1261,7 @@ fn native_checker_observes_structural_streak_outage_neutrality_and_success_reset
     let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
     let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
     let mut invalid = body.clone();
-    invalid.value = Value::from("");
+    invalid.value = Value::from("placeholder output");
     let checker = Arc::new(RecordingAutoChecker::allow());
     let bounded_checker = BoundedAutoChecker::new(checker.clone());
     let error =

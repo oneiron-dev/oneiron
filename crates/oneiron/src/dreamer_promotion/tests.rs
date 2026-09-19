@@ -1510,12 +1510,11 @@ fn promotion_bounds_repeated_blocked_checker_calls_and_records_each_refusal() ->
 }
 
 #[test]
-fn checked_promotion_rolls_back_claim_and_receipt_when_supersession_fails() -> Result<()> {
+fn checked_promotion_cannot_override_attributed_proposal_hold() -> Result<()> {
     let (_dir, vault) = open_auto_checker_vault();
     let fixture = fixture(&vault)?;
     let head = user_stated_head(&vault, &fixture, "profile.name")?;
     let head_before = vault.get_raw(&head)?.expect("existing head");
-    let receipts_before = vault.store.gate_decisions(1_000)?;
     let mut promoted = candidate(&fixture, "profile.name", "Different", vec![fixture.turn]);
     promoted.supersedes = Some(head);
     let claim_id = promoted.claim_id;
@@ -1530,12 +1529,21 @@ fn checked_promotion_rolls_back_claim_and_receipt_when_supersession_fails() -> R
     )?;
 
     assert!(outcome.landed.is_empty());
-    assert_eq!(outcome.rejected.len(), 1);
-    assert_eq!(host.calls(), 1);
-    assert!(vault.get_raw(&claim_id)?.is_none());
+    assert!(outcome.rejected.is_empty());
+    assert_eq!(outcome.pended, vec![claim_id]);
+    // Even an allowing host checker cannot bypass a named human-review hold.
+    assert_eq!(host.calls(), 0);
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("held proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
     assert_eq!(vault.get_raw(&head)?.expect("unchanged head"), head_before);
-    assert_eq!(vault.store.gate_decisions(1_000)?, receipts_before);
-    assert!(vault.pending_gate_consents(10)?.is_empty());
+    assert!(
+        vault
+            .pending_gate_consents(10)?
+            .iter()
+            .any(|pending| pending.claim_id == *claim_id.as_bytes())
+    );
     Ok(())
 }
 

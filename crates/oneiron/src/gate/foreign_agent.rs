@@ -185,7 +185,9 @@ impl Vault {
                     actor_ref: Some(owner.actor().to_hex()),
                     delegation_grant_ref: None,
                 },
-                source: Some(crate::claim::ClaimSource::UserStated),
+                // A widen request carries no claim candidate or sensitivity.
+                // Owner authority and actor ceilings still pass the normal gate.
+                source: None,
                 content_kind: GateContentKind::Claim,
                 sensitivity_band: None,
                 criticality: PolicyCriticality::Normal,
@@ -208,9 +210,9 @@ impl Vault {
                 row.widen = Some((frontier, next == PolicyApprovalCeiling::Auto));
                 put(&self.store, txn, foreign, &row)?;
             }
-            self.store.append_gate_decision_in_txn(
+            self.store.append_fresh_gate_decision_in_txn(
                 txn,
-                &GateDecisionRecord {
+                &mut GateDecisionRecord {
                     version: 0,
                     decision_id: GateDecisionId::now(),
                     created_at: crate::unix_seconds_now(),

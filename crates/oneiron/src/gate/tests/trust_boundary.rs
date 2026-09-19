@@ -475,7 +475,17 @@ fn replicated_policy_manifest_is_restrict_only_on_both_batch_doors() -> Result<(
                 .any(|row| row.id == id.to_hex() && row.restrict_only)
         );
     }
-    assert_auto_source_rejected(&vault, 0x84, ClaimSource::ToolOutput)
+    assert_auto_source_gate_rejected(
+        &vault,
+        0x84,
+        ClaimSource::ToolOutput,
+        "pending",
+        &[
+            "gate.pending.actor_ceiling",
+            "gate.pending.source_trust",
+            "gate.pending.criticality_floor",
+        ],
+    )
 }
 
 #[cfg(feature = "sync")]
@@ -557,7 +567,17 @@ fn forward_rematerialize_stores_untrusted_manifest_without_permits() -> Result<(
             .any(|row| row.id == id.to_hex() && row.restrict_only)
     );
 
-    assert_auto_source_rejected(&vault, 0x86, ClaimSource::ToolOutput)
+    assert_auto_source_gate_rejected(
+        &vault,
+        0x86,
+        ClaimSource::ToolOutput,
+        "pending",
+        &[
+            "gate.pending.actor_ceiling",
+            "gate.pending.source_trust",
+            "gate.pending.criticality_floor",
+        ],
+    )
 }
 
 #[cfg(feature = "sync")]

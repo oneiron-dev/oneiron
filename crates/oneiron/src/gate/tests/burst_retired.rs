@@ -142,6 +142,7 @@ fn repeated_claim_id_pending_writes_bind_the_last_operation_receipt() -> Result<
     let (diff, frontier) = claim_consent_binding_parts(&vault.store, &txn, &landed)?;
     assert_eq!(record.diff_handle, diff);
     assert_eq!(record.read_frontier_hash, frontier);
+    drop(txn);
     assert_eq!(vault.store.gate_decisions(256)?.len(), 2);
     Ok(())
 }

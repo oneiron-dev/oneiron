@@ -548,11 +548,11 @@ fn publication_slots_stay_owner_only_after_head_change_soft_delete_and_reopen() 
     assert!(
         vault
             .memory(id(2), EdgeActorClass::Agent)
-            .confirm_booking_publication(&second.claim_short_id, 150)
+            .confirm_booking_publication(&second.claim_short_id, crate::unix_seconds_now())
             .is_err()
     );
     owner
-        .confirm_booking_publication(&second.claim_short_id, 150)
+        .confirm_booking_publication(&second.claim_short_id, crate::unix_seconds_now())
         .expect("owner confirms");
     assert_eq!(load_public_booking_page(&vault, id(1), 150)?, Some(updated));
     let bodies = [

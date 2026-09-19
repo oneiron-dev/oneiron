@@ -69,11 +69,30 @@ impl ScopedRead<'_> {
         let Some(fields) = body.as_map() else {
             return Ok(false);
         };
+        // Witness MESSAGE scope fields live in the authenticated envelope's
+        // metadata. Legacy top-level fields remain readable, but declaring the
+        // same axis in both locations is ambiguous and fails closed below.
+        let mut metadata = None;
+        if kind == ENTITY_TYPE_MESSAGE {
+            for (key, value) in fields {
+                if key.as_str() == Some("metadata") {
+                    if metadata.is_some() {
+                        return Ok(false);
+                    }
+                    metadata = Some(value);
+                }
+            }
+        }
+        let metadata_fields = match metadata {
+            None | Some(rmpv::Value::Nil) => &[][..],
+            Some(rmpv::Value::Map(fields)) => fields.as_slice(),
+            Some(_) => return Ok(false),
+        };
         let mut space = None;
         let mut seen_rel = false;
         let mut seen_scope = false;
         let mut private = false;
-        for (key, value) in fields {
+        for (key, value) in fields.iter().chain(metadata_fields) {
             if key.as_str() == Some("rel") {
                 if seen_rel {
                     return Ok(false);

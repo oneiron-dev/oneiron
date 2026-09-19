@@ -394,11 +394,9 @@ fn check_claim_policy_for_write_with_record_inner(
         };
 
         if mode.record_decision {
-            if attach_critical_confirm {
-                store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
-            } else {
-                store.append_gate_decision_in_txn(wtxn, &decision_record)?;
-            }
+            // A structural streak follows durable append order, including
+            // ordinary receipts created within the same clock millisecond.
+            store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
             let recorded = RecordedClaimGateDecision {
                 record: decision_record.clone(),
                 decision: decision.clone(),

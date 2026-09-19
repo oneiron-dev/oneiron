@@ -162,7 +162,31 @@ mod tests {
         )
         .unwrap();
         let when = crate::TimeRange { start: 1, end: 1 };
-        vault.put_entity(&message, ENTITY_TYPE_MESSAGE, when, 1, &body)?;
+        let author = EntityId::now();
+        vault.put_entity(
+            &author,
+            crate::registry::ENTITY_TYPE_PERSON,
+            when,
+            1,
+            b"author",
+        )?;
+        vault
+            .memory(author, crate::EdgeActorClass::Human)
+            .witness(&crate::memory::WitnessTurn {
+                conversation_ref: EntityId::now().to_hex(),
+                turn_ref: None,
+                occurred_at: 1,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: Some(message.to_hex()),
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "dialogue".into(),
+                    content: "safe content".into(),
+                    metadata: Some(serde_json::json!({"rel":space.to_hex()})),
+                    is_visible: true,
+                    order: 0,
+                }],
+            })
+            .expect("authenticated witness message");
         vault.put_entity(&summary, ENTITY_TYPE_SUMMARY, when, 1, &body)?;
         let grant_ref = EntityId::now();
         let mut grant = AccessGrant {
@@ -211,7 +235,17 @@ mod tests {
             let malformed = EntityId::now();
             let mut bytes = Vec::new();
             rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(fields)).unwrap();
-            vault.put_entity(&malformed, ENTITY_TYPE_MESSAGE, when, 1, &bytes)?;
+            // Corrupt/legacy payloads cannot enter through today's witness door.
+            // Seed only this read fixture, preserving the valid MESSAGE header.
+            let mut txn = vault.store.env.write_txn()?;
+            let raw = vault.store.entities.get(&txn, message.as_bytes())?.unwrap();
+            let mut malformed_raw = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+            malformed_raw.extend_from_slice(&bytes);
+            vault
+                .store
+                .entities
+                .put(&mut txn, malformed.as_bytes(), &malformed_raw)?;
+            txn.commit()?;
             assert!(
                 reader
                     .filter_scored_entities(vec![ScoredEntity {

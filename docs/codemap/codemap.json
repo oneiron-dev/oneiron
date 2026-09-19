@@ -2017,7 +2017,7 @@
      "path": "src/batch/export/credential_filter.rs",
      "purpose": "Credential filtering at memory serve and export serialization boundaries",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -2271,7 +2271,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -29660,7 +29660,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/entity.rs",

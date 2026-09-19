@@ -30,6 +30,7 @@ pub(super) fn claim_burst_inputs(
         GateReasonCode::DenyDreamerDegenerateOutput.as_str(),
         GateReasonCode::DenyDreamerMalformed.as_str(),
         GateReasonCode::DenyDreamerNoEvidence.as_str(),
+        GateReasonCode::DenyPersonaSingleCycle.as_str(),
     ];
     store.for_each_gate_decision_in_txn(txn, |record| {
         if record.actor_class != "agent"
