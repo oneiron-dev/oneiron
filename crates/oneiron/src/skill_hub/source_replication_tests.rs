@@ -133,7 +133,7 @@ fn replicated_source_drift_and_carrier_overwrite_fail_closed() -> Result<()> {
     let (_dir, _vault, id, record, carrier_bytes) = persisted();
     let carrier = source_carrier_id(&id, &record.content_hash.expect("hash")).expect("carrier id");
     // Same hash, forged description: the carrier must not present as this skill.
-    let mut forged = record.clone();
+    let mut forged = record;
     forged.desc = "Forged instructions".into();
     let (_target_dir, target) = open();
     target

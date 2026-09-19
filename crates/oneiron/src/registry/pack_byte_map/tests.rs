@@ -294,15 +294,11 @@ fn forged_legacy_registration_never_opens_the_pack_half() -> Result<()> {
     encoded.extend_from_slice(b"qx");
     encoded.extend_from_slice(pack);
     vault.with_write_txn(|txn| {
-        vault
-            .store
-            .vault_meta
-            .put(
-                txn,
-                &crate::store::structural_kind_registry_key(128),
-                &encoded,
-            )
-            .map_err(Error::from)
+        vault.store.vault_meta.put(
+            txn,
+            &crate::store::structural_kind_registry_key(128),
+            &encoded,
+        )
     })?;
     drop(vault);
     let reopened = Vault::open(dir.path(), config())?;

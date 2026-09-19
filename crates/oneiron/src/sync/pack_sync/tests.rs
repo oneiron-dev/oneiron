@@ -91,7 +91,7 @@ fn two_vault_loro_round_trip_is_stable_across_different_local_handles() -> Resul
     let beta = kind("beta");
     // Different local registration orders: same global names, different bytes.
     install(&source, &[alpha.clone(), beta.clone()]);
-    install(&destination, &[beta.clone(), alpha.clone()]);
+    install(&destination, &[beta, alpha.clone()]);
     assert_eq!(
         source.pack_kind_registration(&alpha.name)?.unwrap().handle,
         Some(128)

@@ -85,7 +85,7 @@ mod tests {
             crate::claim::decode_claim_body(&exported.to_bytes()?, false)?.evidence,
             body.evidence
         );
-        let mut extended = body.clone();
+        let mut extended = body;
         let Some(Value::Map(entries)) = &mut extended.evidence else {
             panic!("fixture map")
         };

@@ -47,7 +47,7 @@ fn captured_fork_source_replays_after_parent_edits_and_stays_untrusted() -> Resu
     source.put_agent_definition(&child, &child_def, at, 10)?;
     let original =
         read_birth_source(&source.store, &source.store.env.read_txn()?, &child)?.unwrap();
-    let mut edited = parent_def.clone();
+    let mut edited = parent_def;
     edited.version = "2".into();
     edited.instructions = Some("Different parent text".into());
     source.put_agent_definition(&parent, &edited, at, 10)?;

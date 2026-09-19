@@ -492,7 +492,7 @@ fn authored_source_save_update_and_fork_keep_real_files_atomic_and_candidate() {
             )
             .is_err()
     );
-    assert_eq!(vault.get_skill_record(&id).unwrap(), Some(original.clone()));
+    assert_eq!(vault.get_skill_record(&id).unwrap(), Some(original));
     assert_eq!(source_files(&vault, id), files("1"));
     vault
         .memory(resident, EdgeActorClass::Agent)
