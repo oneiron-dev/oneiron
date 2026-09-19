@@ -141,12 +141,12 @@ impl ManagedArgs {
             return Err(ManagedError::InvalidVaultName { name: vault_name });
         }
 
-        let mut owner = [0; 32];
-        hex::decode_to_slice(
-            require(args.derivation_owner.as_deref(), "derivation-owner")?,
-            &mut owner,
-        )
-        .map_err(|_| ManagedError::InvalidDerivationOwner)?;
+        let owner_text = require(args.derivation_owner.as_deref(), "derivation-owner")?;
+        if !owner_text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(ManagedError::InvalidDerivationOwner);
+        }
+        let owner = crate::server::vault_binding::decode_hex(owner_text)
+            .ok_or(ManagedError::InvalidDerivationOwner)?;
 
         let managed = Self {
             vault_name,

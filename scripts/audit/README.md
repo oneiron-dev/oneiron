@@ -53,3 +53,9 @@ sets `CARGO_LLVM_COV_SETUP=no`, so missing components fail rather than installin
 checks or other test lanes. On macOS only the seven named UnsupportedPlatform
 benchmark cases already excluded by CI are excluded here. Cargo and test threads
 are bounded separately to two.
+
+Test temporary files use a private, real-path directory independent of report
+output. For long checkout paths on macOS, pass `--tmp-dir` with a short owned
+parent (for example a `.w7/coverage-tmp` directory in the main worktree). The
+collector refuses an overly long temporary path before running tests; Unix socket
+fixtures must fit macOS `SUN_LEN`. The private child is removed after collection.

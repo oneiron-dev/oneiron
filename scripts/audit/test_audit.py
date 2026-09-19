@@ -2,7 +2,8 @@ import json
 import pathlib
 import tempfile
 import unittest
-from coverage import merge
+from unittest.mock import patch
+from coverage import collect, coverage_tmp, merge
 from mutation import enforce
 
 class AuditTests(unittest.TestCase):
@@ -45,3 +46,33 @@ class AuditTests(unittest.TestCase):
             self.assertEqual(report.count("DA:1,"), 1)
             self.assertIn("LF:3\nLH:3", report)
             self.assertIn("DA:1,5", report)
+
+    def test_coverage_temporary_directory_is_real_private_and_removed(self):
+        with tempfile.TemporaryDirectory() as root:
+            real = pathlib.Path(root) / "real"
+            real.mkdir()
+            alias = pathlib.Path(root) / "alias"
+            alias.symlink_to(real, target_is_directory=True)
+            with coverage_tmp(alias) as temporary:
+                self.assertEqual(temporary.parent, real.resolve())
+                self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
+            self.assertFalse(temporary.exists())
+
+    def test_deep_reports_do_not_lengthen_test_socket_paths(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            output = root / ("deep-" * 20) / "reports"
+            observed = []
+            def run(command, *, cwd, env, check):
+                temporary = pathlib.Path(env["TMPDIR"])
+                self.assertEqual(temporary.parent, root.resolve())
+                self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
+                observed.append(temporary)
+                if "--output-path" in command:
+                    pathlib.Path(command[-1]).write_text("SF:/source/lib.rs\nDA:1,1\nend_of_record\n")
+            with patch("coverage.subprocess.check_output", return_value="cargo-llvm-cov 0.8.7"), patch("coverage.subprocess.run", side_effect=run):
+                reports = collect(output, tmp_dir=root)
+            self.assertEqual(len(reports), 3)
+            self.assertTrue(all(path.is_file() for path in reports))
+            self.assertTrue(observed)
+            self.assertTrue(all(not path.exists() for path in observed))

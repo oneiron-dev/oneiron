@@ -1729,6 +1729,7 @@ fn managed_owner_is_supplied_explicitly_and_malformed_ids_fail_closed() {
         "",
         "abc",
         &"gg".repeat(32),
+        &"+9".repeat(32),
         &"09".repeat(31),
         &"09".repeat(33),
     ] {
