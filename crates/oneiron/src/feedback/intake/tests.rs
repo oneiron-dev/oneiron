@@ -118,3 +118,54 @@ fn queue_identity_mismatch_is_refused_by_every_reader_and_mutator() -> Result<()
     assert_eq!(vault.feedback_digest()?, vec![item]);
     Ok(())
 }
+
+#[test]
+fn feedback_digest_omits_proposals_with_dead_or_changed_bundle_evidence() -> Result<()> {
+    for reason in [
+        Some(crate::DeleteReason::UserHardDelete),
+        Some(crate::DeleteReason::UserDelete),
+        None,
+    ] {
+        let config = crate::VaultConfig {
+            dimensions: 2,
+            ..crate::test_util::embedding_test_config()
+        };
+        let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+        let mut bundle =
+            FeedbackBundle::new(FeedbackCategory::Bug, "1.0", FeedbackPlatform::current());
+        let a = encode_feedback_bundle(&bundle).unwrap();
+        let dial = FeedbackDedup::new(0.9)?;
+        let first = vault.ingest_feedback(&a, &[1.0, 0.0], dial, 10)?;
+        bundle.user_note = Some("second source for the same proposal".into());
+        let b = encode_feedback_bundle(&bundle).unwrap();
+        let merged = vault.ingest_feedback(&b, &[1.0, 0.0], dial, 11)?;
+        assert_eq!(merged.id, first.id);
+        assert_eq!(merged.bundles.len(), 2);
+        bundle.user_note = Some("independent proposal".into());
+        let c = encode_feedback_bundle(&bundle).unwrap();
+        let sibling = vault.ingest_feedback(&c, &[-1.0, 0.0], dial, 12)?;
+        assert_eq!(
+            vault.feedback_digest()?,
+            vec![merged.clone(), sibling.clone()]
+        );
+        let deleted = merged.bundles[1];
+        if let Some(reason) = reason {
+            vault.delete_entity_with_reason(&deleted, reason)?;
+        } else {
+            // A different live ASSET under the old reference is not the original evidence.
+            vault
+                .batch()
+                .put(
+                    &deleted,
+                    crate::registry::ENTITY_TYPE_ASSET,
+                    TimeRange { start: 13, end: 13 },
+                    13,
+                    &c,
+                )
+                .commit()?;
+        }
+        assert_eq!(vault.feedback_digest()?, vec![sibling]);
+        assert_eq!(vault.get(&merged.bundles[0])?.unwrap(), a);
+    }
+    Ok(())
+}

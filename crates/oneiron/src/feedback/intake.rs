@@ -55,6 +55,36 @@ fn normalized(vector: &[f32]) -> Result<Vec<f32>> {
         .map(|v| (f64::from(*v) / norm) as f32)
         .collect())
 }
+fn live_bundle_matches(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    category: FeedbackCategory,
+) -> Result<bool> {
+    let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+        vault,
+        txn,
+        id,
+        crate::vault::entity_revision::ReadMode::Live,
+    )?
+    else {
+        return Ok(false);
+    };
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return Ok(false);
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+        return Ok(false);
+    }
+    let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    let Ok(bundle) = decode_feedback_bundle(bytes) else {
+        return Ok(false);
+    };
+    let digest = feedback_bundle_digest(bytes);
+    Ok(bundle.category == category
+        && blake3::hash(digest.as_bytes()).as_bytes()[..16] == id.as_bytes()[..])
+}
+
 impl Vault {
     /// The embedding is supplied by the receiving host. No model runs in this
     /// transaction. Identical bundles are idempotent; T2 keeps one review item
@@ -174,7 +204,17 @@ impl Vault {
         for row in self.store.vault_meta.prefix_iter(&txn, QUEUE)? {
             let (key, bytes) = row?;
             let item = decode(&key, &bytes)?;
-            if item.open {
+            if !item.open {
+                continue;
+            }
+            let mut actionable = true;
+            for bundle in &item.bundles {
+                if !live_bundle_matches(self, &txn, bundle, item.category)? {
+                    actionable = false;
+                    break;
+                }
+            }
+            if actionable {
                 items.push(item);
             }
         }
