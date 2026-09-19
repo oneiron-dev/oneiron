@@ -19608,13 +19608,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/registry/pack_byte_map/doors.rs",
      "purpose": "Local installation commands and name-based instance admission",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 6
      }
     },

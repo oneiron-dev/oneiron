@@ -382,6 +382,21 @@ fn overflow_shares_final_byte_with_name_bound_subtypes_and_safe_reuse() -> Resul
     assert_eq!(PackInstanceEnvelope::from_bytes(a_body)?.kind, kinds[119]);
     let b_bytes = vault.get(&b)?.unwrap();
     assert_eq!(PackInstanceEnvelope::from_bytes(&b_bytes)?.kind, kinds[120]);
+    assert_eq!(
+        vault
+            .put_pack_instance(&a, &kinds[120].name, range(), 10, b"wrong subtype")
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidPackByteMap
+    );
+    assert_eq!(
+        vault
+            .put_entity(&a, ENTITY_TYPE_ASSET, range(), 10, b"wrong kind")
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidPackByteMap
+    );
+    assert_eq!(vault.get(&a)?, Some(a_bytes));
     vault.uninstall_pack_kind(&kinds[119].name)?;
     assert!(!vault.gc_pack_kind(&kinds[119].name)?);
     vault.uninstall_pack_kind(&kinds[121].name)?;

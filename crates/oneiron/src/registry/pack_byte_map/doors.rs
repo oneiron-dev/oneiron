@@ -168,6 +168,35 @@ impl Vault {
 }
 
 impl Store {
+    /// An occupied runtime entity id keeps its global kind identity, including
+    /// when a caller tries to replace it with a compiled kind or another subtype.
+    pub(crate) fn guard_pack_instance_identity_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        data: &[u8],
+    ) -> Result<()> {
+        let Some(raw) = self.entities.get(txn, id.as_bytes())? else {
+            return Ok(());
+        };
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("pack instance prior header"))?;
+        if zone_of(header.entity_type) != TypeByteZone::PackHandle {
+            return Ok(());
+        }
+        if zone_of(entity_type) != TypeByteZone::PackHandle {
+            return Err(invalid("runtime entity kind cannot be replaced"));
+        }
+        let prior =
+            PackInstanceEnvelope::from_bytes(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+        let next = PackInstanceEnvelope::from_bytes(data)?;
+        if prior.kind != next.kind {
+            return Err(invalid("runtime entity global kind identity changed"));
+        }
+        Ok(())
+    }
+
     /// An imported ASSET cannot replace the carrier the LOCAL head pins.
     /// Other assets and historical snapshots remain ordinary data.
     pub(crate) fn guard_pack_map_carrier_put_in_txn(
