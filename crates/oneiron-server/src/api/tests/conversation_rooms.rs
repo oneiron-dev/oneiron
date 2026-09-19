@@ -120,7 +120,6 @@ async fn conversation_rooms_members_threads_and_filters_round_trip() {
     assert_eq!(presence["active_participant_ids"], json!([person]));
 }
 
-
 #[tokio::test]
 async fn conversation_member_writes_require_scoped_actor_class() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -130,7 +129,15 @@ async fn conversation_member_writes_require_scoped_actor_class() {
     let actor = server.vault.ensure_embedded_owner_actor().unwrap();
     let room = oneiron::EntityId::now();
     let writer = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human);
-    server.vault.create_conversation(room, &oneiron::conversation::ConversationBody::default(), writer, 1).unwrap();
+    server
+        .vault
+        .create_conversation(
+            room,
+            &oneiron::conversation::ConversationBody::default(),
+            writer,
+            1,
+        )
+        .unwrap();
     let uri = format!("/v1/core/conversations/{}/members", room.to_hex());
     let actor_hex = actor.to_hex();
     let body = json!({"actor":actor,"person_id":actor,"action":"join","at":2});
@@ -138,13 +145,21 @@ async fn conversation_member_writes_require_scoped_actor_class() {
         "scope=core:write,core:auth".to_owned(),
         format!("scope=core:write,core:auth;principal_ref={actor_hex}"),
     ] {
-        let (status, _) = route_json(server.clone(), core_request_with_authz("POST", &uri, test_bearer(&claims), Some(&body))).await;
+        let (status, _) = route_json(
+            server.clone(),
+            core_request_with_authz("POST", &uri, test_bearer(&claims), Some(&body)),
+        )
+        .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert!(server.vault.membership_ledger(room).unwrap().is_empty());
         assert!(server.vault.members(room).unwrap().is_empty());
     }
     let claims = format!("scope=core:write;principal_ref={actor_hex};actor_class=human");
-    let (status, body) = route_json(server.clone(), core_request_with_authz("POST", &uri, test_bearer(&claims), Some(&body))).await;
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_authz("POST", &uri, test_bearer(&claims), Some(&body)),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(server.vault.members(room).unwrap(), vec![actor]);
 }
