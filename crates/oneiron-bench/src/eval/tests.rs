@@ -26,6 +26,29 @@ fn open_vault(path: &Path) -> Vault {
     open_vault_with(path, VaultConfig::device())
 }
 
+/// Existing-only opens are descriptor-bound on Linux. Other hosts must
+/// refuse, rather than silently substituting the create-capable open door.
+fn assert_existing_cli_exit(exit: ExitCode, path: &Path, config: &VaultConfig) -> bool {
+    if cfg!(target_os = "linux") {
+        assert_eq!(exit, ExitCode::SUCCESS);
+        true
+    } else {
+        assert_eq!(exit, ExitCode::FAILURE);
+        assert!(matches!(
+            Vault::open_existing(path, config.clone()),
+            Err(oneiron::Error::Store(
+                oneiron::error::StoreError::VaultRootPreflight {
+                    problem: oneiron::error::VaultRootProblem::UnsupportedPlatform {
+                        entry: VaultRootEntry::Data,
+                    },
+                    ..
+                }
+            ))
+        ));
+        false
+    }
+}
+
 /// A valid vault whose persisted identity differs from the device preset
 /// in both of the fields the open gate compares by value: the HNSW
 /// dimension and the embedding model id. Opening it under the device
@@ -303,11 +326,13 @@ fn eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault() {
         ],
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
+    let opened = assert_existing_cli_exit(exit, tempdir.path(), &VaultConfig::device());
     let vault = open_vault(tempdir.path());
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].reward, Some(0.75));
+    assert_eq!(outcomes.len(), usize::from(opened));
+    if opened {
+        assert_eq!(outcomes[0].reward, Some(0.75));
+    }
 }
 
 #[test]
@@ -384,14 +409,18 @@ fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
         ]),
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
+    let opened = assert_existing_cli_exit(exit, tempdir.path(), &VaultConfig::device());
     let vault = open_vault(tempdir.path());
     let tuned = vault.retrieval_blend_weight_table().expect("table");
-    assert_ne!(tuned.weights, before.weights);
-    assert_eq!(tuned.data_window.run_count, 1);
-    assert_eq!(tuned.data_window.outcome_count, 1);
-    let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
-    assert_eq!(max_runs, Some("8"));
+    if opened {
+        assert_ne!(tuned.weights, before.weights);
+        assert_eq!(tuned.data_window.run_count, 1);
+        assert_eq!(tuned.data_window.outcome_count, 1);
+        let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
+        assert_eq!(max_runs, Some("8"));
+    } else {
+        assert_eq!(tuned, before, "a refused CLI must not tune the vault");
+    }
 }
 
 #[test]
@@ -405,6 +434,7 @@ fn eval_tune_honors_the_max_runs_bound() {
     }
     let ingested = ingest(&vault, &jsonl(&rows), Some("beam.reward")).expect("ingest");
     assert_eq!(ingested, 2);
+    let before = vault.retrieval_blend_weight_table().expect("table");
     drop(vault);
 
     let exit = run(&eval_argv(
@@ -414,11 +444,15 @@ fn eval_tune_honors_the_max_runs_bound() {
         &owned(&["--max-runs", "1"]),
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
+    let opened = assert_existing_cli_exit(exit, tempdir.path(), &VaultConfig::device());
     let vault = open_vault(tempdir.path());
     let tuned = vault.retrieval_blend_weight_table().expect("table");
-    assert_eq!(tuned.data_window.run_count, 1);
-    assert_eq!(tuned.data_window.outcome_count, 1);
+    if opened {
+        assert_eq!(tuned.data_window.run_count, 1);
+        assert_eq!(tuned.data_window.outcome_count, 1);
+    } else {
+        assert_eq!(tuned, before, "a refused CLI must not tune the vault");
+    }
 }
 
 #[test]
@@ -561,13 +595,15 @@ fn eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config() {
         ],
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
+    let opened = assert_existing_cli_exit(exit, tempdir.path(), &non_device_vault_config());
     let vault = open_vault_with(tempdir.path(), non_device_vault_config());
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].key, "beam.reward");
-    assert_eq!(outcomes[0].reward, Some(0.75));
-    assert_eq!(metadata_of(&outcomes[0], "evaluator"), Some("judge.v1"));
+    assert_eq!(outcomes.len(), usize::from(opened));
+    if opened {
+        assert_eq!(outcomes[0].key, "beam.reward");
+        assert_eq!(outcomes[0].reward, Some(0.75));
+        assert_eq!(metadata_of(&outcomes[0], "evaluator"), Some("judge.v1"));
+    }
 }
 
 #[test]
@@ -598,14 +634,18 @@ fn eval_tune_opens_a_non_device_vault_through_the_explicit_config() {
         ]),
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
+    let opened = assert_existing_cli_exit(exit, tempdir.path(), &non_device_vault_config());
     let vault = open_vault_with(tempdir.path(), non_device_vault_config());
     let tuned = vault.retrieval_blend_weight_table().expect("table");
-    assert_ne!(tuned.weights, before.weights);
-    assert_eq!(tuned.data_window.run_count, 1);
-    assert_eq!(tuned.data_window.outcome_count, 1);
-    let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
-    assert_eq!(max_runs, Some("8"));
+    if opened {
+        assert_ne!(tuned.weights, before.weights);
+        assert_eq!(tuned.data_window.run_count, 1);
+        assert_eq!(tuned.data_window.outcome_count, 1);
+        let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
+        assert_eq!(max_runs, Some("8"));
+    } else {
+        assert_eq!(tuned, before, "a refused CLI must not tune the vault");
+    }
 }
 
 #[test]
@@ -883,15 +923,21 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
     ));
 
     assert!(matches!(refused, ExitCode::FAILURE));
-    assert!(matches!(ingest, ExitCode::SUCCESS));
-    assert!(matches!(tune, ExitCode::SUCCESS));
+    let opened = assert_existing_cli_exit(ingest, &vault_path, &config);
+    assert_eq!(assert_existing_cli_exit(tune, &vault_path, &config), opened);
     let vault = open_vault_with(&vault_path, config);
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].reward, Some(0.75));
+    assert_eq!(outcomes.len(), usize::from(opened));
+    if opened {
+        assert_eq!(outcomes[0].reward, Some(0.75));
+    }
     let tuned = vault.retrieval_blend_weight_table().expect("table");
-    assert_ne!(tuned.weights, before.weights);
-    assert_eq!(tuned.data_window.outcome_count, 1);
+    if opened {
+        assert_ne!(tuned.weights, before.weights);
+        assert_eq!(tuned.data_window.outcome_count, 1);
+    } else {
+        assert_eq!(tuned, before, "refused commands must not tune the vault");
+    }
 }
 
 /// The top-level help names `eval --help` as the place to read the vault-open
@@ -910,7 +956,9 @@ fn eval_help_flags_print_usage_and_succeed() {
 /// seam on the existing-only door — the one door that never rewrites it. The
 /// bench still decodes no vault byte of its own.
 fn stored_analyzer_manifest_hash(path: &Path, config: &VaultConfig) -> Option<String> {
-    let vault = Vault::open_existing(path, config.clone()).expect("existing vault reopens");
+    // Inspect our trusted fixture with its creation contract, on every host.
+    // The command under test still exclusively uses the fail-closed existing door.
+    let vault = open_vault_with(path, config.clone());
     vault.doctor().expect("doctor").analyzer_manifest_hash
 }
 
