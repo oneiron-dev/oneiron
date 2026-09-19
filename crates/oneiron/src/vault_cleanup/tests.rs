@@ -511,12 +511,21 @@ fn restore_archived_revives_the_row_without_minting_a_twin() {
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("set posture");
     let person = fresh_id();
     put_person(&vault, &person);
+    let old_pin = vault.pinned_short_ref(&person).expect("pin before archive");
+    let (old_ref, revision) = old_pin.rsplit_once('@').unwrap();
+    let revision = crate::memory::RevisionRef::from_hex(revision).unwrap();
     let before = vault.entities_by_type(ENTITY_TYPE_PERSON).expect("by type");
 
     run_vault_cleanup(&vault, &AttemptId::now()).expect("run");
     assert!(vault.is_deleted_shell(&person).expect("shell"));
 
     vault.restore_archived(&person).expect("restore");
+    assert!(
+        vault
+            .resolve_pinned_entity_reference(old_ref, revision)
+            .expect("old pin lookup")
+            .is_none()
+    );
 
     assert!(
         !vault.is_deleted_shell(&person).expect("shell"),

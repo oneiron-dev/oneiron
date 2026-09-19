@@ -21,6 +21,7 @@ pub struct ContextPackBuilder<'a> {
     pub(super) pipeline: PipelineBuilder<'a>,
     pub(super) vault: &'a Vault,
     pub(super) hydrate: bool,
+    pub(super) read_mode: crate::vault::ReadMode,
     pub(super) include_edges: bool,
     pub(in crate::context_pack) edge_hop: u32,
     pub(in crate::context_pack) selected_edge_budget: usize,
@@ -48,11 +49,29 @@ pub struct ContextPackBuilder<'a> {
 }
 
 impl<'a> ContextPackBuilder<'a> {
+    pub fn retrieval_effort(mut self, effort: crate::memory::Effort, seeds: &[EntityId]) -> Self {
+        self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
+        self
+    }
+    pub fn deadline(mut self, deadline: &'a crate::retrieval_depth::RetrievalDeadline) -> Self {
+        self.pipeline = self.pipeline.deadline(deadline);
+        self
+    }
+    pub fn rerank(
+        mut self,
+        reranker: &'a dyn crate::rerank::Reranker,
+        options: crate::rerank::RerankOptions,
+    ) -> Self {
+        self.pipeline = self.pipeline.rerank(reranker, options);
+        self
+    }
+
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             pipeline: vault.query().telemetry_action(RetrievalAction::ContextPack),
             vault,
             hydrate: true,
+            read_mode: crate::vault::ReadMode::Indexed,
             include_edges: false,
             edge_hop: 0,
             selected_edge_budget: DEFAULT_MAX_NEIGHBORS,
@@ -324,6 +343,13 @@ impl<'a> ContextPackBuilder<'a> {
     /// consulted for `All` scope with surviving non-base claims.
     pub fn non_base_world_claim_fraction(mut self, fraction: f32) -> Self {
         self.non_base_world_fraction = fraction;
+        self
+    }
+
+    /// Selects the hydration frontier. Retrieval defaults to INDEXED.
+    /// An explicit pin must exist for every hydrated entity; it never approximates.
+    pub fn read_mode(mut self, mode: crate::vault::ReadMode) -> Self {
+        self.read_mode = mode;
         self
     }
 

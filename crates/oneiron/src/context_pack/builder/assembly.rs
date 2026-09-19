@@ -191,6 +191,7 @@ impl<'a> ContextPackBuilder<'a> {
             let surfaced_candidate_count = scored.len();
 
             let result_options = HydrateOptions {
+                read_mode: self.read_mode,
                 hydrate_fields: self.hydrate,
                 include_edges: hydrate_result_edges,
                 include_vectors: self.include_vectors,
@@ -292,6 +293,7 @@ impl<'a> ContextPackBuilder<'a> {
                 )?;
             }
             let neighbor_options = HydrateOptions {
+                read_mode: self.read_mode,
                 hydrate_fields: self.hydrate,
                 include_edges: self.include_edges,
                 include_vectors: self.include_vectors,

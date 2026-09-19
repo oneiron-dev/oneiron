@@ -508,7 +508,18 @@ pub(in crate::batch) fn apply_put(
         // same-bytes replay must NOT touch the index, and metadata-only
         // (occurred/learned) changes are not body changes.
         body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
-        let should_deindex_stale_text = body_changed && (replicated || !has_later_covering_text_op);
+        // Retaining an indexed text revision is not permission to retain a
+        // withdrawn claim in the search index. Lifecycle/approval takes effect
+        // immediately; only still-surfaceable text edits await idle publication.
+        let withdrawn_claim = decoded_claim_body
+            .as_ref()
+            .is_some_and(|body| !crate::claim::claim_surfaceable(body));
+        let should_deindex_stale_text = body_changed
+            && (withdrawn_claim
+                || ((replicated || !has_later_covering_text_op)
+                    && !crate::vault::entity_revision::storage_manages_text(
+                        store, wtxn, &id, data,
+                    )?));
         let old_code_artifact_body =
             if old_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT && body_changed {
                 Some(old_record[ENTITY_METADATA_HEADER_LEN..].to_vec())
@@ -730,6 +741,9 @@ pub(in crate::batch) fn apply_put(
     }
     let pending_embedding_token =
         if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
+            // Mint the new invalidation token even while idle publication is
+            // pending. The worker skips these revisions; old completions must
+            // still observe that their token no longer owns the current body.
             let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
             let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
             if !body_changed && has_vector && !has_current_pending {

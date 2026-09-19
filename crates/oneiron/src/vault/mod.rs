@@ -6,6 +6,11 @@ mod actors_memory;
 mod doctor_manifest;
 mod edges;
 mod entities;
+pub(crate) mod entity_revision;
+pub use entity_revision::{
+    IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
+    ResolvedCitation, RevisionRef,
+};
 mod open;
 mod search_retrieval;
 mod transactions;

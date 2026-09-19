@@ -247,10 +247,31 @@ fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<
         .batch()
         .vector_for_pending_embedding(&claim, &[0.0, 1.0, 0.0, 0.0], &new_token)
         .commit()?;
-    assert!(
-        !has_pending_embedding_marker(&vault, &claim)?,
-        "current-token fill must clear the marker"
+    assert!(has_pending_embedding_marker(&vault, &claim)?);
+    assert_eq!(
+        vault.get_vector(&claim)?.as_deref(),
+        Some([1.0, 0.0, 0.0, 0.0].as_slice())
     );
+    struct IdleFill {
+        claim: EntityId,
+        body: Vec<u8>,
+    }
+    impl crate::memory::IndexedRevisionEmbedder for IdleFill {
+        fn embed_revision(&self, input: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
+            assert_eq!(input.entity, self.claim);
+            assert_eq!(input.body, self.body);
+            Ok(vec![0.0, 1.0, 0.0, 0.0])
+        }
+    }
+    vault.set_indexed_idle_delay_ms(0)?;
+    let idle = IdleFill {
+        claim,
+        body: vault.get(&claim)?.unwrap(),
+    };
+    let report =
+        vault.refresh_indexed_at_idle(crate::unix_seconds_now().saturating_mul(1000), &idle)?;
+    assert_eq!(report.refreshed.len(), 1);
+    assert!(!has_pending_embedding_marker(&vault, &claim)?);
     assert_eq!(
         vault.get_vector(&claim)?.as_deref(),
         Some([0.0, 1.0, 0.0, 0.0].as_slice())
@@ -281,7 +302,8 @@ fn plain_vector_fill_does_not_clear_stale_pending_embedding_marker() -> Result<(
 
     assert_eq!(
         vault.get_vector(&claim)?.as_deref(),
-        Some([1.0, 0.0, 0.0, 0.0].as_slice())
+        None,
+        "a per-operation fill cannot advance an indexed revision awaiting idle"
     );
     assert_eq!(
         raw_pending_embedding_marker(&vault, &claim)?.as_deref(),
@@ -309,8 +331,8 @@ fn plain_vector_fill_after_claim_overwrite_keeps_newer_pending_embedding_marker(
 
     assert_eq!(
         vault.get_vector(&claim)?.as_deref(),
-        Some([1.0, 0.0, 0.0, 0.0].as_slice()),
-        "legacy vector path still writes the row"
+        None,
+        "a bare vector cannot be labelled as the indexed revision after an edit"
     );
     assert_eq!(
         pending_embedding_token(&vault, &claim)?,

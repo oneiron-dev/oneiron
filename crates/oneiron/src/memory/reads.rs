@@ -109,6 +109,10 @@ impl Memory<'_> {
 
     /// Reads one entity as a typed view. `Ok(None)` when absent.
     pub fn get_entity(&self, entity_ref: &str) -> MemoryResult<Option<EntityView>> {
+        if let Some((reference, revision)) = entity_ref.rsplit_once('@') {
+            let revision = crate::vault::RevisionRef::from_hex(revision)?;
+            return self.get_entity_with_mode(reference, crate::vault::ReadMode::Pinned(revision));
+        }
         let id = match self.resolve_ref(entity_ref) {
             Ok(id) => id,
             Err(err) if err.code == MEMORY_CODE_NOT_FOUND => return Ok(None),
@@ -117,13 +121,54 @@ impl Memory<'_> {
         self.entity_view(&id)
     }
 
+    /// Reads LIVE, the last indexed revision, or an exact retained pin.
+    pub fn get_entity_with_mode(
+        &self,
+        entity_ref: &str,
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Option<EntityView>> {
+        let id = match mode {
+            crate::vault::ReadMode::Pinned(revision) => {
+                match self
+                    .vault
+                    .resolve_pinned_entity_reference(entity_ref, revision)?
+                {
+                    Some(id) => id,
+                    None => return Ok(None),
+                }
+            }
+            _ => match self.resolve_ref(entity_ref) {
+                Ok(id) => id,
+                Err(err) if err.code == MEMORY_CODE_NOT_FOUND => return Ok(None),
+                Err(err) => return Err(err),
+            },
+        };
+        self.entity_view_with_mode(&id, mode)
+    }
+
+    /// Hydrates every ref through the same explicit read frontier.
+    pub fn hydrate_with_mode(
+        &self,
+        refs: &[String],
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Vec<EntityView>> {
+        refs.iter()
+            .map(|reference| {
+                self.get_entity_with_mode(reference, mode)?.ok_or_else(|| {
+                    MemoryError::not_found(format!(
+                        "entity {reference:?} does not resolve at requested revision"
+                    ))
+                })
+            })
+            .collect()
+    }
+
     /// Hydrates short refs (or hex ids) to full entity views. Unresolvable
     /// refs are typed errors — hydrate is the OF-096 round-trip contract.
     pub fn hydrate(&self, refs: &[String]) -> MemoryResult<Vec<EntityView>> {
         let mut views = Vec::with_capacity(refs.len());
         for reference in refs {
-            let id = self.resolve_ref(reference)?;
-            let Some(view) = self.entity_view(&id)? else {
+            let Some(view) = self.get_entity(reference)? else {
                 return Err(MemoryError::not_found(format!(
                     "entity {reference:?} does not resolve"
                 )));
@@ -323,15 +368,30 @@ impl Memory<'_> {
     }
 
     pub(super) fn entity_view(&self, id: &EntityId) -> MemoryResult<Option<EntityView>> {
-        let Some(raw) = self.vault.get_raw(id)? else {
+        self.entity_view_with_mode(id, crate::vault::ReadMode::Live)
+    }
+
+    fn entity_view_with_mode(
+        &self,
+        id: &EntityId,
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Option<EntityView>> {
+        let Some(raw) = self.vault.get_raw_with_mode(id, mode)? else {
             return Ok(None);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or_else(|| MemoryError::from(Error::CorruptedIndex("entity header")))?;
         let body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+        let short_ref = self.short_ref_of(id)?.map(|reference| {
+            let short = reference.split(':').next().unwrap_or(&reference);
+            let hash =
+                (xxhash_rust::xxh32::xxh32(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], 0)
+                    % 256) as u8;
+            format!("{short}:{hash:02x}")
+        });
         Ok(Some(EntityView {
             id_hex: id.to_hex(),
-            short_ref: self.short_ref_of(id)?,
+            short_ref,
             kind: kind_string_for_type(header.entity_type),
             occurred_start: header.occurred_start,
             occurred_end: header.occurred_end,

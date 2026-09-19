@@ -1,0 +1,301 @@
+//! Acceptance laws exercise the existing put/index/read engines, not a side store.
+use super::*;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::error::Result;
+use crate::registry::ENTITY_TYPE_ASSET_TEXT;
+use crate::temporal::TimeRange;
+use crate::{EntityId, Vault};
+
+fn body(text: &str) -> Vec<u8> {
+    rmp_serde::to_vec_named(&serde_json::json!({"content": text})).unwrap()
+}
+
+fn put(vault: &Vault, id: &EntityId, text: &str) {
+    vault
+        .batch()
+        .put(
+            id,
+            ENTITY_TYPE_ASSET_TEXT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body(text),
+        )
+        .text(id, &[("content", text)])
+        .vector(id, &[1.0, 0.0, 0.0, 0.0])
+        .commit()
+        .unwrap();
+}
+
+struct Embed {
+    expected: RevisionRef,
+    expected_body: Vec<u8>,
+}
+impl IndexedRevisionEmbedder for Embed {
+    fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+        assert_eq!(input.source_revision_ref, self.expected);
+        assert_eq!(input.body, self.expected_body);
+        Ok(vec![0.0, 1.0, 0.0, 0.0])
+    }
+}
+
+#[test]
+fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let id = EntityId::now();
+    put(&vault, &id, "alpha zebra");
+    let citation = vault.cite_entity_text(&id, "content", 0, 5).unwrap();
+    let mut forged = citation.clone();
+    forged.short_ref = "pr999999:00".into();
+    assert!(matches!(
+        vault.resolve_citation(&forged),
+        Err(crate::Error::InvalidKey)
+    ));
+    let original = vault
+        .get_raw_with_mode(&id, ReadMode::Live)
+        .unwrap()
+        .unwrap();
+    put(&vault, &id, "beta yak");
+    let changed = vault
+        .get_raw_with_mode(&id, ReadMode::Live)
+        .unwrap()
+        .unwrap();
+    let next = vault.pin_entity_revision(&id).unwrap();
+    assert_ne!(original, changed);
+    assert_eq!(
+        vault
+            .get_raw_with_mode(&id, ReadMode::Indexed)
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    assert_eq!(
+        vault
+            .get_raw_with_mode(&id, ReadMode::Pinned(citation.source_revision_ref))
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    assert_eq!(
+        vault
+            .resolve_pinned_entity_reference(&citation.short_ref, citation.source_revision_ref)
+            .unwrap(),
+        Some(id)
+    );
+    let pack = vault.context_pack().search_text("alpha", 10).run().unwrap();
+    assert_eq!(pack.results.len(), 1);
+    assert_eq!(
+        pack.results[0].fields.as_ref().unwrap().get("content"),
+        Some(&serde_json::json!("alpha zebra"))
+    );
+    assert!(vault.search_text("beta", 10).unwrap().is_empty());
+    let embedder = Embed {
+        expected: next,
+        expected_body: body("beta yak"),
+    };
+    assert!(matches!(
+        vault.refresh_indexed_at_idle(0, &embedder),
+        Err(crate::error::Error::InvalidConfig(_))
+    ));
+    vault.set_indexed_idle_delay_ms(u64::MAX).unwrap();
+    assert!(
+        vault
+            .refresh_indexed_at_idle(0, &embedder)
+            .unwrap()
+            .refreshed
+            .is_empty()
+    );
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let receipt = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+    assert_eq!(receipt.refreshed, vec![(id, next)]);
+    assert_eq!(
+        vault
+            .get_raw_with_mode(&id, ReadMode::Indexed)
+            .unwrap()
+            .unwrap(),
+        changed
+    );
+    assert_eq!(
+        vault.get_vector(&id).unwrap().unwrap(),
+        vec![0.0, 1.0, 0.0, 0.0]
+    );
+    assert!(vault.search_text("alpha", 10).unwrap().is_empty());
+    assert_eq!(vault.search_text("beta", 10).unwrap()[0].id, id);
+    assert_eq!(
+        vault
+            .get_raw_with_mode(&id, ReadMode::Pinned(citation.source_revision_ref))
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    assert_eq!(
+        vault.resolve_citation(&citation).unwrap(),
+        ResolvedCitation {
+            quote: "alpha".into(),
+            drifted: true
+        }
+    );
+    let memory = vault.memory(EntityId::now(), crate::EdgeActorClass::Human);
+    assert_eq!(
+        memory
+            .get_entity_with_mode(
+                &citation.short_ref,
+                ReadMode::Pinned(citation.source_revision_ref)
+            )
+            .unwrap()
+            .unwrap()
+            .body,
+        Some(serde_json::json!({"content": "alpha zebra"}))
+    );
+    assert_eq!(
+        memory.hydrate(&[citation.reference()]).unwrap()[0].body,
+        Some(serde_json::json!({"content": "alpha zebra"}))
+    );
+    assert_eq!(original[ENTITY_METADATA_HEADER_LEN..], body("alpha zebra"));
+}
+
+struct EditingEmbedder<'a> {
+    vault: &'a Vault,
+    id: EntityId,
+}
+impl IndexedRevisionEmbedder for EditingEmbedder<'_> {
+    fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+        assert_eq!(input.body, body("beta yak"));
+        put(self.vault, &self.id, "gamma fox");
+        Ok(vec![0.0, 1.0, 0.0, 0.0])
+    }
+}
+
+#[test]
+fn concurrent_edit_discards_embedding_without_advancing_indexed_frontier() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let id = EntityId::now();
+    put(&vault, &id, "alpha zebra");
+    let first = vault.indexed_revision(&id).unwrap();
+    put(&vault, &id, "beta yak");
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let receipt = vault
+        .refresh_indexed_at_idle(u64::MAX, &EditingEmbedder { vault: &vault, id })
+        .unwrap();
+    assert!(receipt.refreshed.is_empty());
+    assert_eq!(receipt.superseded, vec![id]);
+    assert_eq!(vault.indexed_revision(&id).unwrap(), first);
+    assert_eq!(
+        vault.get_vector(&id).unwrap().unwrap(),
+        vec![1.0, 0.0, 0.0, 0.0]
+    );
+}
+
+#[test]
+fn old_citation_survives_reopen_but_delete_cannot_resurrect_document() {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let id = EntityId::now();
+    put(&vault, &id, "alpha zebra");
+    let citation = vault.cite_entity_text(&id, "content", 0, 5).unwrap();
+    let mut forged = citation.clone();
+    forged.short_ref = "pr999999:00".into();
+    assert!(matches!(
+        vault.resolve_citation(&forged),
+        Err(crate::Error::InvalidKey)
+    ));
+    put(&vault, &id, "beta yak");
+    put(&vault, &id, "alpha zebra");
+    assert_ne!(
+        vault.pin_entity_revision(&id).unwrap(),
+        citation.source_revision_ref
+    );
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    assert_eq!(vault.resolve_citation(&citation).unwrap().quote, "alpha");
+    vault.batch().delete(&id).commit().unwrap();
+    assert!(
+        vault
+            .get_raw_with_mode(&id, ReadMode::Pinned(citation.source_revision_ref))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        vault.resolve_citation(&citation).unwrap(),
+        ResolvedCitation {
+            quote: "alpha".into(),
+            drifted: true
+        }
+    );
+}
+
+#[test]
+fn pinned_claim_does_not_bypass_current_scoped_admission() {
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+        ScopedReadActorKey,
+    };
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let subject = EntityId::now();
+    put(&vault, &subject, "subject");
+    let claim = EntityId::now();
+    let mut body = ClaimBody::new(
+        "core.fact",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("original"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(ClaimSource::Observed);
+    vault
+        .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let pin = vault.pin_entity_revision(&claim).unwrap();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
+    assert!(
+        scoped
+            .get_with_mode(&claim, ReadMode::Pinned(pin))
+            .unwrap()
+            .is_some()
+    );
+    vault.retract_claim(&claim, 2).unwrap();
+    assert!(
+        scoped
+            .get_with_mode(&claim, ReadMode::Pinned(pin))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn phonetic_codes_advance_with_the_idle_indexed_revision() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let id = EntityId::now();
+    put(&vault, &id, "first name");
+    vault.batch().phonetic(&id, &["OLD"]).commit().unwrap();
+    put(&vault, &id, "second name");
+    vault.batch().phonetic(&id, &["NEW"]).commit().unwrap();
+    let search = |code: &str| {
+        vault
+            .query()
+            .search_phonetic(&[code])
+            .run()
+            .unwrap()
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(search("OLD"), vec![id]);
+    assert!(search("NEW").is_empty());
+    struct Embed;
+    impl IndexedRevisionEmbedder for Embed {
+        fn embed_revision(&self, _: &IndexedRevisionInput) -> Result<Vec<f32>> {
+            Ok(vec![1.0, 0.0, 0.0, 0.0])
+        }
+    }
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    vault
+        .refresh_indexed_at_idle(crate::unix_seconds_now().saturating_mul(1000), &Embed)
+        .unwrap();
+    assert!(search("OLD").is_empty());
+    assert_eq!(search("NEW"), vec![id]);
+}

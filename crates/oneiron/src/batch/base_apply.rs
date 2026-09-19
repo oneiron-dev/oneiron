@@ -520,10 +520,14 @@ pub(super) fn apply_ops_with_origin(
                     crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
                     text_manifest_checked = true;
                 }
-                crate::bm25::index_text(store, wtxn, analyzer, &id, &fields)?;
+                if !crate::vault::entity_revision::entity_has_pending_revision(store, wtxn, &id)? {
+                    crate::bm25::index_text(store, wtxn, analyzer, &id, &fields)?;
+                }
             }
             BatchOp::Phonetic { id, codes } => {
-                apply_phonetic(store, wtxn, id, &codes)?;
+                if !crate::vault::entity_revision::defer_phonetic(store, wtxn, &id, &codes)? {
+                    apply_phonetic(store, wtxn, id, &codes)?;
+                }
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;

@@ -32,6 +32,12 @@ pub(super) fn apply_vector(
             cleared_pending_embedding: false,
         });
     }
+    if crate::vault::entity_revision::entity_has_pending_revision(store, wtxn, &id)? {
+        return Ok(AppliedVector {
+            wrote_vector: false,
+            cleared_pending_embedding: false,
+        });
+    }
     stage_vector_row(store, config, wtxn, &id, vector)?;
     let cleared_pending_embedding = match pending_embedding_token {
         Some(token) => store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?,
