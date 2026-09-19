@@ -7,6 +7,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use super::config::{GIT_WIRE_POLL_INTERVAL, GIT_WIRE_READ_CHUNK_BYTES};
+use super::failure::invalid;
 use super::{GIT_WIRE_CONFIG_POLICY, GIT_WIRE_FIXED_ENV, GitWireProcessEnv};
 use crate::error::Result;
 
@@ -35,11 +36,19 @@ pub(super) fn spawn_git(
     args: &[OsString],
     stdin_payload: Option<&[u8]>,
 ) -> Result<GitWireProcessOutput> {
+    let repo_root = repo_root.canonicalize()?;
     let mut command = Command::new(process_env.git_binary.as_os_str());
-    command.arg("-C").arg(repo_root).args(args);
+    command.arg("-C").arg(&repo_root).args(args);
     command.env_clear();
     for (key, value) in child_env(process_env) {
         command.env(key, value);
+    }
+    // A vanished nested .git must fail, never rediscover an ancestor repository.
+    // Git excludes the ceiling itself, so the bound root's parent is the limit.
+    if let Some(parent) = repo_root.parent() {
+        let ceiling = std::env::join_paths([parent])
+            .map_err(|_| invalid("git repository discovery ceiling cannot be encoded"))?;
+        command.env("GIT_CEILING_DIRECTORIES", ceiling);
     }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command.stdin(if stdin_payload.is_some() {
@@ -140,7 +149,8 @@ fn wait_bounded(child: &mut Child, timeout: Duration) -> Result<Option<ExitStatu
     }
 }
 
-/// The complete environment of a GitWire child after `env_clear`.
+/// The process baseline after `env_clear`; `spawn_git` also pins a per-root
+/// repository-discovery ceiling.
 pub(super) fn child_env(process_env: &GitWireProcessEnv) -> Vec<(String, OsString)> {
     child_env_from(process_env, ambient_env)
 }
