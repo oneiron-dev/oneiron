@@ -131,11 +131,17 @@ def run(args):
         raise RuntimeError("Excel must run on the MacBook")
     last_count = -1
     while True:
-        identity, manifest, rows = verify(args)
-        if args.lock.exists():
-            if len(rows) <= last_count:
-                raise RuntimeError("oracle made no progress; preserve custody")
-            last_count = recover(args)
+        if not (args.output / "identity.json").exists():
+            if args.lock.exists():
+                raise ValueError("Office is already owned; do not start another session")
+            if args.output.exists() and any(args.output.iterdir()):
+                raise ValueError("unrecognized output folder; preserve its contents")
+        else:
+            identity, manifest, rows = verify(args)
+            if args.lock.exists():
+                if len(rows) <= last_count:
+                    raise RuntimeError("oracle made no progress; preserve custody")
+                last_count = recover(args)
         command = [sys.executable, str(args.driver), "--corpus", str(args.corpus),
                    "--manifest", str(args.manifest), "--output", str(args.output),
                    "--script", str(args.script), "--lock", str(args.lock)]

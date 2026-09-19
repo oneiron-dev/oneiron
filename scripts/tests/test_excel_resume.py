@@ -128,6 +128,36 @@ class ExcelResumeTests(unittest.TestCase):
             MODULE.run(self.args)
         self.assertEqual((self.args.lock / "owner").read_text(), "another Office owner")
 
+    def test_new_corpus_runs_driver_once_and_checks_complete_receipts(self):
+        import shutil
+        saved = {p.name: p.read_bytes() for p in self.args.output.iterdir()}
+        shutil.rmtree(self.args.output)
+        (self.args.lock / "owner").unlink()
+        self.args.lock.rmdir()
+        self.args.corpus = self.input.parent
+        commands = []
+        def finished(command):
+            commands.append(command)
+            self.args.output.mkdir()
+            for name, data in saved.items():
+                (self.args.output / name).write_bytes(data)
+            (self.args.output / "custody.json").write_text(json.dumps(dict(self.custody, lock_retained=False)))
+            return subprocess.CompletedProcess(command, 0)
+        with patch.object(MODULE.sys, "platform", "darwin"), patch.object(MODULE.subprocess, "run", finished):
+            MODULE.run(self.args)
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(json.loads((self.args.output / "identity.json").read_text()), json.loads(saved["identity.json"]))
+
+    def test_new_corpus_refuses_an_existing_office_owner(self):
+        import shutil
+        shutil.rmtree(self.args.output)
+        (self.args.lock / "owner").write_text("foreign owner")
+        with patch.object(MODULE.sys, "platform", "darwin"), patch.object(MODULE.subprocess, "run") as driver:
+            with self.assertRaisesRegex(ValueError, "already owned"):
+                MODULE.run(self.args)
+            driver.assert_not_called()
+        self.assertEqual((self.args.lock / "owner").read_text(), "foreign owner")
+
     def test_duplicate_or_corrupt_prior_output_refuses(self):
         before = self.rows.read_text()
         self.rows.write_text(before + "\n" + json.dumps(self.row))
