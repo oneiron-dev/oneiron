@@ -7,7 +7,7 @@ use oneiron::booking::anti_abuse::{
     write_slot_list_cache,
 };
 
-use super::support::{engine_error, now_secs};
+use super::support::engine_error;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -22,7 +22,7 @@ pub(crate) fn cached_slot_list_body(
     page_ref: &EntityId,
     event_type: Option<&EventTypeKey>,
 ) -> std::result::Result<Option<Vec<u8>>, ApiError> {
-    read_slot_list_cache(&server.vault, page_ref, event_type, now_secs()?).map_err(engine_error)
+    read_slot_list_cache(&server.vault, page_ref, event_type, server.booking_now_secs()?).map_err(engine_error)
 }
 
 /// Stores one slot-list response under the governing rule's cache TTL.
@@ -50,7 +50,7 @@ pub(crate) fn remember_slot_list_body(
         event_type,
         body,
         cache_ttl_secs,
-        now_secs()?,
+        server.booking_now_secs()?,
     )
     .map_err(engine_error)?;
     Ok(true)

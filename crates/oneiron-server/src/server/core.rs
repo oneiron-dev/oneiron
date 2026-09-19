@@ -79,6 +79,9 @@ pub struct SyncServer {
     /// construction, the same way the deep-retrieval host is: `Self::new` pins
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
+    /// Instance-local booking clock override; production always reads wall time.
+    #[cfg(test)]
+    pub(crate) booking_test_now_secs: Option<u64>,
 }
 
 impl SyncServer {
@@ -191,6 +194,8 @@ impl SyncServer {
             mcp_registry,
             deep_retrieval: None,
             embedder: None,
+            #[cfg(test)]
+            booking_test_now_secs: None,
         })
     }
 

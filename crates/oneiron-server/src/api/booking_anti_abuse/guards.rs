@@ -14,7 +14,7 @@ use oneiron::booking::anti_abuse::{
     server_submission_fingerprint, slot_list_rate_knobs,
 };
 
-use super::support::{correction_body, engine_error, log_rate_block, now_secs};
+use super::support::{correction_body, engine_error, log_rate_block};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -90,17 +90,17 @@ pub(super) fn disposition_from_verdict(
 /// Confirmation and amendment share this bucket: both are writes on the same
 /// page, so a caller cannot mint fresh budget by switching between the two.
 fn spend_book_bucket(
-    vault: &Vault,
+    server: &SyncServer,
     endpoint: &'static str,
     key: &BookingRateKey,
     per_minute_per_ip: NonZeroU32,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     match observe_book_request(
-        vault,
+        &server.vault,
         &key.ip_hash,
         key.email_hash.as_ref(),
         per_minute_per_ip,
-        now_secs()?,
+        server.booking_now_secs()?,
     )
     .map_err(engine_error)?
     {
@@ -132,7 +132,7 @@ pub(crate) async fn enforce_slot_list(
     else {
         return Ok(BookingHttpDisposition::Continue);
     };
-    let now = now_secs()?;
+    let now = server.booking_now_secs()?;
     // A fresh cached listing answers without spending quota; the handler
     // serves the body through `cached_slot_list_body`.
     if cache_hit {
@@ -183,7 +183,7 @@ pub(crate) async fn enforce_hold(
     else {
         return Ok(BookingHttpDisposition::Continue);
     };
-    match observe_hold_request(vault, &facts.ip_hash, per_minute_per_ip, now_secs()?)
+    match observe_hold_request(vault, &facts.ip_hash, per_minute_per_ip, server.booking_now_secs()?)
         .map_err(engine_error)?
     {
         BookingRateDecision::Allowed => Ok(BookingHttpDisposition::Continue),
@@ -236,7 +236,7 @@ pub(crate) async fn enforce_book(
     if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
         // This one engine door serializes exact-retry lookup, aggregate quota,
         // and first durable quarantine write.
-        match admit_quarantine_submission(vault, &facts, reason, per_minute_per_ip, now_secs()?)
+        match admit_quarantine_submission(vault, &facts, reason, per_minute_per_ip, server.booking_now_secs()?)
             .map_err(engine_error)?
         {
             BookingQuarantineAdmission::Accepted(receipt) => {
@@ -256,7 +256,7 @@ pub(crate) async fn enforce_book(
         }
     }
     // A non-quarantine request consumes its identity confirmation bucket.
-    spend_book_bucket(vault, "book", &key, per_minute_per_ip)
+    spend_book_bucket(&server, "book", &key, per_minute_per_ip)
 }
 
 /// Amend guard for cancel and reschedule. An amendment presents an action
@@ -287,5 +287,5 @@ pub(crate) async fn enforce_amend(
         ip_hash: facts.ip_hash,
         email_hash: facts.email_hash,
     };
-    spend_book_bucket(vault, "amend", &key, per_minute_per_ip)
+    spend_book_bucket(&server, "amend", &key, per_minute_per_ip)
 }
