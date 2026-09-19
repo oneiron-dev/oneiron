@@ -312,7 +312,12 @@ async fn handle_connection(
                 let mut data = data;
                 let app_frame = matches!(
                     data.first().copied(),
-                    Some(protocol::TAG_RPC | protocol::TAG_SUB)
+                    Some(
+                        protocol::TAG_RPC
+                            | protocol::TAG_SUB
+                            | oneiron::sync::transport::TAG_DOCUMENT
+                            | oneiron::sync::transport::TAG_BATCH
+                    )
                 ) || (conn_state.window_sync_mode
                     == super::conn_state::WindowSyncMode::Selector
                     && data.first().copied() == Some(protocol::TAG_WINDOW_SYNC));
