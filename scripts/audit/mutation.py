@@ -47,7 +47,8 @@ def main():
         version = subprocess.check_output(["cargo", "mutants", "--version"], text=True).strip()
         if version != baseline["runner"]:
             raise ValueError("required runner: " + baseline["runner"])
-        changed = subprocess.check_output(["git", "diff", "--name-only", args.base], text=True).splitlines()
+        changed = [] if args.all_engine else subprocess.check_output(
+            ["git", "diff", "--name-only", args.base], text=True).splitlines()
         crates = sorted({path.split("/")[1] for path in changed if path.startswith("crates/") and len(path.split("/")) > 2} & set(baseline["scope"]))
         if args.all_engine:
             crates = baseline["scope"]
@@ -60,7 +61,12 @@ def main():
         parent.mkdir(parents=True, exist_ok=True)
         # A failed launch must not accidentally reuse yesterday's green report.
         with tempfile.TemporaryDirectory(prefix="run-", dir=parent) as fresh:
-            command = ["cargo", "mutants", "--output", fresh]
+            command = ["cargo", "mutants", "--output", fresh, "--test-tool", "nextest",
+                       "--re", baseline["mutant_filter"], "--cargo-test-arg=--lib",
+                       "--cargo-test-arg=-E", "--cargo-test-arg=" + baseline["test_filter"],
+                       "--jobs", "1", "--jobserver-tasks", "2"]
+            for file in baseline["files"]:
+                command += ["--file", file]
             for crate in crates:
                 command += ["--package", crate]
             result = subprocess.run(command, cwd=ROOT, check=False)

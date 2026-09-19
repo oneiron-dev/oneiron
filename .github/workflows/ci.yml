@@ -146,9 +146,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
-      - name: Shared compiler cache (sccache 0.10.0)
+      - name: Shared compiler cache (sccache 0.15.0)
         run: |
-          cargo install --locked sccache@0.10.0 --root "$HOME/ci/tools"
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
           echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
@@ -157,9 +157,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/ci/sccache
-          key: sccache-0.10.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            sccache-0.10.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -269,9 +269,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
-      - name: Shared compiler cache (sccache 0.10.0)
+      - name: Shared compiler cache (sccache 0.15.0)
         run: |
-          cargo install --locked sccache@0.10.0 --root "$HOME/ci/tools"
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
           echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
@@ -280,9 +280,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/ci/sccache
-          key: sccache-0.10.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            sccache-0.10.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -367,9 +367,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
-      - name: Shared compiler cache (sccache 0.10.0)
+      - name: Shared compiler cache (sccache 0.15.0)
         run: |
-          cargo install --locked sccache@0.10.0 --root "$HOME/ci/tools"
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
           echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
@@ -378,9 +378,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/ci/sccache
-          key: sccache-0.10.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            sccache-0.10.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -428,9 +428,9 @@ jobs:
         with:
           persist-credentials: false
           clean: true
-      - name: Shared compiler cache (sccache 0.10.0)
+      - name: Shared compiler cache (sccache 0.15.0)
         run: |
-          cargo install --locked sccache@0.10.0 --root "$HOME/ci/tools"
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
           echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
@@ -439,9 +439,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/ci/sccache
-          key: sccache-0.10.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            sccache-0.10.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -470,7 +470,7 @@ jobs:
           fetch-depth: 0
       - name: Pinned mutant runner
         run: |
-          cargo install --locked cargo-mutants@25.3.1 --root "$HOME/ci/tools"
+          cargo install --locked cargo-mutants@27.1.0 --root "$HOME/ci/tools"
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
       - name: Enforce touched-engine mutation baseline
         env:

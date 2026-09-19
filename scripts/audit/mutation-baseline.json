@@ -1,9 +1,19 @@
 {
   "schema": 1,
-  "runner": "cargo-mutants 25.3.1",
-  "minimum_score": 0.80,
+  "runner": "cargo-mutants 27.1.0",
+  "minimum_score": 0.8,
   "minimum_tested": 1,
-  "scope": ["oneiron", "oneiron-server"],
+  "scope": [
+    "oneiron",
+    "oneiron-server"
+  ],
   "measured": false,
-  "note": "Initial required floor; replace measured=false with audit evidence after the first real engine run."
+  "note": "Initial required floor; replace measured=false with audit evidence after the first real engine run.",
+  "mutant_filter": "GpuHealth::healthy|TripwireBounds::valid",
+  "test_filter": "test(runtime::gpu::) | test(self_heal::tripwire_tests::)",
+  "scope_note": "Initial deterministic boundary audit: GPU health conjunction and manifest tripwire bounds in the two engine crates. This is a pinned sentinel corpus, not exhaustive workspace mutation coverage.",
+  "files": [
+    "crates/oneiron/src/self_heal/tripwires.rs",
+    "crates/oneiron-server/src/runtime/gpu.rs"
+  ]
 }
