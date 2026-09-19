@@ -1,6 +1,7 @@
 //! Run-tree attempt-queue reads, agent_id projection, intervene effects, unbounded-read rejection.
 
 use super::*;
+use futures_util::StreamExt;
 
 #[tokio::test]
 async fn v1_core_run_tree_reads_attempt_queue_rows() {
@@ -42,7 +43,6 @@ async fn v1_core_run_tree_reads_attempt_queue_rows() {
     );
     assert_eq!(roots[0]["children"], json!([]));
 
-    use futures_util::StreamExt;
     let response = api_routes(server.clone())
         .oneshot(core_request(
             "GET",

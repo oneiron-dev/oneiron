@@ -4,10 +4,10 @@ use super::*;
 #[tokio::test]
 async fn mcp_memory_reads_use_native_clamps_and_keep_runtime_refusals_typed() {
     let (_dir, server) = test_server();
-    let actor = seeded_test_entity_id(0x2486_01);
-    let visible = seeded_test_entity_id(0x2486_02);
-    let hidden = seeded_test_entity_id(0x2486_03);
-    let missing = seeded_test_entity_id(0x2486_04);
+    let actor = seeded_test_entity_id(0x0024_8601);
+    let visible = seeded_test_entity_id(0x0024_8602);
+    let hidden = seeded_test_entity_id(0x0024_8603);
+    let missing = seeded_test_entity_id(0x0024_8604);
     let credential = "memory-read-wide";
     register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
     let occurred = oneiron::TimeRange { start: 10, end: 10 };
