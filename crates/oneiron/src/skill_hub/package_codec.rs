@@ -55,7 +55,14 @@ fn text(input: &mut Cursor<&[u8]>, max: usize) -> Result<String> {
 /// Encodes a validated package for bounded local storage or explicit host transport.
 /// Does not authorize disclosure: export callers must still run the export gate.
 pub fn encode_hub_package(package: &HubPackage) -> Result<Vec<u8>> {
-    package.content_hash()?;
+    let hash = package.content_hash()?;
+    if package
+        .record
+        .content_hash
+        .is_some_and(|declared| declared != hash)
+    {
+        return Err(invalid("package hash drift"));
+    }
     validate_native_source(package)?;
     let mut out = MAGIC.to_vec();
     out.push(match package.format {

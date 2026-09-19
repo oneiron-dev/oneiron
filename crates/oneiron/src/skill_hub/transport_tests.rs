@@ -274,6 +274,16 @@ fn stored_package_roundtrip_is_bounded_and_cannot_forge_file_identity() -> Resul
     let package = super::folder::package_from_files(files("fixture.skill", "1", "round trip"))?;
     let bytes = encode_hub_package(&package)?;
     assert_eq!(decode_hub_package(&bytes)?, package);
+    let mut mismatch = package.clone();
+    let mut false_hash = *package.content_hash()?.as_bytes();
+    false_hash[0] ^= 1;
+    mismatch.record.content_hash = Some(crate::skill::SkillContentHash::from_bytes(false_hash));
+    assert_eq!(
+        encode_hub_package(&mismatch)
+            .expect_err("encoder binds declared identity too")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
     let mut trailing = bytes.clone();
     trailing.push(0);
     assert!(decode_hub_package(&trailing).is_err());
