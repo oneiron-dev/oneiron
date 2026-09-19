@@ -22612,6 +22612,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/admission.rs",
+     "purpose": "Full-window UPDATE locality admission without live document side effects",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22674,7 +22684,7 @@
       "crate-vis": 8,
       "fn": 6,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 1
      }
     },
@@ -26114,7 +26124,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 74,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26249,7 +26259,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1502,
+   "source_files": 1503,
    "test_files": 536
   },
   "oneiron-bench": {

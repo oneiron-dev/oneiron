@@ -2332,7 +2332,7 @@ async fn sync_connection_sends_auth_token_on_upgrade() {
 }
 
 #[tokio::test]
-async fn diagnostic_update_is_scrubbed_before_relay_persistence_and_later_fetch() {
+async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let (addr, _server, handle) =
@@ -2342,16 +2342,28 @@ async fn diagnostic_update_is_scrubbed_before_relay_persistence_and_later_fetch(
     let _ = next_binary(&mut sender).await;
     let _ = next_binary(&mut receiver).await;
 
+    let author = LoroDoc::new();
+    author
+        .get_map("entities")
+        .insert("ordinary", b"previously accepted".as_slice())
+        .unwrap();
+    author.commit();
+    let ordinary = author.export(ExportMode::all_updates()).unwrap();
+    let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &ordinary);
+    sender.send(Message::Binary(frame.into())).await.unwrap();
+    let relayed = next_binary(&mut receiver).await;
+    let (_, _, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
+    assert_eq!(payload, ordinary.as_slice());
+    let before = author.oplog_vv();
+
     let diagnostic_key = seeded_entity(0x71).to_hex();
     let marker = b"private-diagnostic-wire-observation";
-    // A hostile peer supplies the wire record directly, bypassing the native
-    // writer. The metadata header is type + three big-endian u64 timestamps.
+    // Craft a hostile wire record without using the sealed native writer.
     let mut diagnostic_blob = vec![oneiron::registry::ENTITY_TYPE_DIAGNOSTIC];
     for timestamp in [1_u64, 1, 1] {
         diagnostic_blob.extend_from_slice(&timestamp.to_be_bytes());
     }
     diagnostic_blob.extend_from_slice(marker);
-    let author = LoroDoc::new();
     for key in [diagnostic_key.as_str(), "malformed-diagnostic-id"] {
         author
             .get_map("entities")
@@ -2360,55 +2372,41 @@ async fn diagnostic_update_is_scrubbed_before_relay_persistence_and_later_fetch(
     }
     author
         .get_map("entities")
-        .insert("ordinary", b"still-relays".as_slice())
+        .insert("mixed-new-row", b"must not be accepted".as_slice())
         .unwrap();
     author.commit();
-    let update = author.export(ExportMode::all_updates()).unwrap();
+    let update = author.export(ExportMode::updates(&before)).unwrap();
     let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &update);
     sender.send(Message::Binary(frame.into())).await.unwrap();
+    assert_ws_closes(&mut sender, "local-only diagnostic update must be refused").await;
 
-    // Scrub commits may also produce a local-change notice. Every notice must
-    // be clean, and a complete history-free state must still reach the peer.
-    loop {
-        let relayed = next_binary(&mut receiver).await;
-        assert_eq!(relayed[0], TAG_WINDOW_SYNC);
-        let (key, tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
-        assert_eq!((key, tag), ("2026-02", window_sub_tags::UPDATE));
-        assert!(!payload.windows(marker.len()).any(|bytes| bytes == marker));
-        let peer = LoroDoc::new();
-        peer.import(payload).unwrap();
-        assert!(deep_map_bytes(&peer, "entities", &diagnostic_key).is_none());
-        assert!(deep_map_bytes(&peer, "entities", "malformed-diagnostic-id").is_none());
-        if deep_map_bytes(&peer, "entities", "ordinary").is_some() {
-            assert!(peer.is_shallow());
-            assert_eq!(
-                deep_map_bytes(&peer, "entities", "ordinary").unwrap(),
-                b"still-relays"
-            );
-            break;
-        }
-    }
+    // A later positive fetch is also a relay barrier: a wrongly broadcast
+    // original UPDATE would be ahead of the response in this connection.
+    let empty_vv = LoroDoc::new().oplog_vv().encode();
+    let fetch = transport::encode_window_sync("2026-02", window_sub_tags::VV_REQUEST, &empty_vv);
+    receiver.send(Message::Binary(fetch.into())).await.unwrap();
+    let reply = next_binary(&mut receiver).await;
+    assert_eq!(reply[0], TAG_WINDOW_SYNC);
+    let (key, tag, payload) = transport::decode_window_sync(&reply[1..]).unwrap();
+    assert_eq!((key, tag), ("2026-02", window_sub_tags::UPDATE));
+    assert!(!payload.windows(marker.len()).any(|bytes| bytes == marker));
+    let peer = LoroDoc::new();
+    peer.import(payload).unwrap();
+    assert!(deep_map_bytes(&peer, "entities", &diagnostic_key).is_none());
+    assert!(deep_map_bytes(&peer, "entities", "malformed-diagnostic-id").is_none());
+    assert!(deep_map_bytes(&peer, "entities", "mixed-new-row").is_none());
+    assert_eq!(
+        deep_map_bytes(&peer, "entities", "ordinary").unwrap(),
+        b"previously accepted"
+    );
 
-    // The durable replay door must produce the same clean state. It must not
-    // merely rely on the current server's already-scrubbed in-memory window.
     let key = oneiron::sync::WindowKey::new("2026-02");
     let restored = oneiron::sync::window::load_window_from_state(&vault, "server", &key).unwrap();
-    let fetched = oneiron::sync::window::export_window_updates_since(
-        &vault,
-        &key,
-        &restored,
-        &LoroDoc::new().oplog_vv().encode(),
-    )
-    .unwrap();
-    assert!(!fetched.windows(marker.len()).any(|bytes| bytes == marker));
-    let restored_peer = LoroDoc::new();
-    restored_peer.import(&fetched).unwrap();
-    assert!(restored_peer.is_shallow());
-    assert!(deep_map_bytes(&restored_peer, "entities", &diagnostic_key).is_none());
-    assert!(deep_map_bytes(&restored_peer, "entities", "malformed-diagnostic-id").is_none());
     assert_eq!(
-        deep_map_bytes(&restored_peer, "entities", "ordinary").unwrap(),
-        b"still-relays"
+        deep_map_bytes(&restored, "entities", "ordinary").unwrap(),
+        b"previously accepted"
     );
+    assert!(deep_map_bytes(&restored, "entities", &diagnostic_key).is_none());
+    assert!(deep_map_bytes(&restored, "entities", "mixed-new-row").is_none());
     handle.abort();
 }
