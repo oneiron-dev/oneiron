@@ -160,3 +160,23 @@ unchanged. No unsafe block or process global was added.
 The exact-revision item projector moved unchanged into `memory/recall/items.rs`
 after the repair reached the 800-line bar. Its new regression has its own module.
 No baseline was raised. All four ratchets and the 701-name root surface still pass.
+
+## Latest Codex findings (2026-09-19 15:37 UTC)
+
+Complete PR939 REST comments/reviews plus GraphQL review-thread refresh retained at `/home/lexi/w7-build/tickets/W7-C10/review-recovery/pr939-20260919T155803Z`. All pages are complete. These seven additional findings are assessed separately from the earlier six; none replaces an original finding. Scoped regression proof at `218ea673` is 72/72 green on the MacBook; broader validation remains active.
+
+- `4053637002` — VALID — facet recall selects the indexed frontier and returns a pinned reference; shared HTTP search projection reads Indexed. Added exact-body/ref and Summary/Full regressions.
+- `4053637007` — VALID — deletion removes the authentication evidence, so citation resolution now fails EntityNotFound rather than accepting a caller-recomputed hash. Original and forged post-delete citations are both refused.
+- `4053637009` — VALID — first request after restart restores a persisted matching active window before incrementing counts; regression also pins threshold-question idempotence.
+- `4053637013` — VALID — revision capture and first pin use millisecond wall-clock precision. The server idle tick now also passes true milliseconds. Added a deterministic boundary-precision test.
+- `4053637016` — VALID — index_only must be disjoint from all five persisted families, before any transaction writes; regression checks each family and absent turn anchors.
+- `4053637018` — VALID underlying binding gap; literal requested-turn equality SKIPPED because unchanged families deliberately reuse earlier claims. A durable per-claim writing-frontier binding is minted in the same transaction and verified by the common claim read/write door. Test preserves unchanged-turn reuse and rejects a forged reference for both turns. No deployed-vault migration required pre-GA.
+- `4053637022` — VALID — every successful embedding pass invokes entity-local due publication, regardless of global queue occupancy. An event-gated real-worker regression holds the second leased request and checks that an already-staged revision was published while backlog remains.
+
+### Validation at `218ea673`
+
+- MacBook scoped nextest: **72 passed**, 0 failed, 9008 filtered; run `5dba0ac1-d077-4b8a-9d3a-d9821510e9ad`. All original regression tests and the first six Codex regressions passed.
+- Full touched-crate MacBook nextest: **6474 passed (515 retried), 2645 failed**, 28 skipped. Widespread `StorageFull` / OS error 28 occurred while test vaults used the system-volume temporary directory. This is NOT a full pass. Native logs and exact commands remain under ticket `review-recovery/native-at-218ea673/`.
+- Found one independent deterministic failure: the shipped server skill-pack copy still carried the old effort names and enforced-WebSocket claim. Synchronized it byte-for-byte with the already-correct root artifact.
+- Disk receipt after the run: system/temp volume 38,563,040 KiB available; external Cinema volume 863,011,352 KiB available. Next validation uses a ticket-owned real-path temporary directory on Cinema, with a 100 GiB free-space check on both test and build volumes. No other ticket, cache, or shared capacity was changed. Non-space assertion failures are retained separately and must be rechecked; they are not silently waived.
+- The seven latest fixes above are pending native validation. Full-gate follow-up remains required; neither this scoped pass nor the failed broad run is a verdict.

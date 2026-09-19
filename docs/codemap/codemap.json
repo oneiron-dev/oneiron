@@ -8258,7 +8258,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/history/tests.rs",
@@ -23699,6 +23699,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/vault/entity_revision/storage/tests.rs",
+     "purpose": "Revision debounce clock precision",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -26430,7 +26438,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26496,7 +26504,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1522,
-   "test_files": 539
+   "test_files": 540
   },
   "oneiron-bench": {
    "files": [
