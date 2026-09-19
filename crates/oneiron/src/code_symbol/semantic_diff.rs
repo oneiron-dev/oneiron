@@ -200,19 +200,19 @@ fn collect(
         end = child.end_byte();
     }
     own.push_str(&source[end..node.end_byte()]);
-    if let Some(key) = key {
+    if let (Some(key), Some(name)) = (key, name) {
         let start = super::rust_source::rust_doc_context_start_byte(node, source);
         let comparison = format!("{}{}", &source[start..node.start_byte()], own);
         let start_line = source[..start].bytes().filter(|b| *b == b'\n').count() as u32 + 1;
         insert(
             units,
-            key.clone(),
+            key,
             &source[start..node.end_byte()],
             &comparison,
             start_line,
             node.end_position().row as u32 + 1,
         )?;
-        Ok(format!("<{}>", name.unwrap()))
+        Ok(format!("<{name}>"))
     } else {
         if node.kind() == "source_file" && !own.trim().is_empty() {
             // The root residual contains imports, attributes and other source
