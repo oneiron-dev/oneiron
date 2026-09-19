@@ -162,10 +162,13 @@ impl Vault {
         for stored in prepared_entries {
             let recovery_intent = stored.prepared_conflict_resolution.clone();
             let stale = public_oplog_entry(stored)?;
-            let (actual_fork_hash, _) = capture_repo_snapshot(repo_root)?;
+            let (actual_fork_hash, actual_snapshot) = capture_repo_snapshot(repo_root)?;
+            // Old write-ahead records name the same manifest with SHA-256.
+            let legacy_hash = sha256_bytes(&actual_snapshot);
+            let actual_matches = |expected| expected == actual_fork_hash || expected == legacy_hash;
             if stale.operation_kind == "resolve_conflict_file"
                 && recovery_intent.is_none()
-                && actual_fork_hash != stale.pre_action_fork_hash
+                && !actual_matches(stale.pre_action_fork_hash)
             {
                 let entry = self.finish_repo_mutation(
                     &PreparedRepoMutation {
@@ -188,7 +191,7 @@ impl Vault {
             if stale
                 .expected_post_action_fork_hash
                 .is_some_and(|expected| {
-                    expected != stale.pre_action_fork_hash && actual_fork_hash == expected
+                    expected != stale.pre_action_fork_hash && actual_matches(expected)
                 })
             {
                 let repo_conflict_claim_id = finish_repo_mutation_roll_forward(
@@ -215,7 +218,7 @@ impl Vault {
             }
 
             if stale.expected_post_action_fork_hash.is_none()
-                && actual_fork_hash != stale.pre_action_fork_hash
+                && !actual_matches(stale.pre_action_fork_hash)
             {
                 let entry = self.finish_repo_mutation(
                     &PreparedRepoMutation {
@@ -236,7 +239,7 @@ impl Vault {
                 continue;
             }
 
-            if actual_fork_hash != stale.pre_action_fork_hash {
+            if !actual_matches(stale.pre_action_fork_hash) {
                 return Err(Error::Code(CodeError::RepoMutationRecoveryDiverged {
                     seq: stale.seq,
                     pre_action_fork_hash: Box::new(stale.pre_action_fork_hash),

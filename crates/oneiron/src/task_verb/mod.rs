@@ -19,6 +19,7 @@ mod lifecycle_facade;
 mod presence_scan;
 mod query_facade;
 mod rate_limit;
+mod reconciliation;
 mod route_receipts;
 mod terminal_state;
 mod verb_kind;

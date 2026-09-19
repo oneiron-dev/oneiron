@@ -140,6 +140,21 @@ pub(super) fn record_repo_conflict(
         )));
     }
 
+    // A replay records the same still-open conflict, never a duplicate TASK.
+    if let Some(existing) = vault
+        .repo_conflict_claims(&branch_subject)?
+        .into_iter()
+        .find(|claim| {
+            claim.repo_ref == *repo_ref
+                && claim.branch == branch_name
+                && claim.base_tree == base_tree
+                && claim.ours_tree == ours_tree
+                && claim.theirs_tree == theirs_tree
+                && claim.conflicted_paths == conflicted_paths
+        })
+    {
+        return Ok(existing.claim_id);
+    }
     let claim_id = EntityId::now();
     put_repo_conflict_open_claim(
         vault,
@@ -379,6 +394,15 @@ fn put_engine_repo_conflict_claim(
     learned_at: u64,
 ) -> Result<()> {
     let data = encode_claim_body(body)?;
+    let reconciliation_owner = if body.predicate == PREDICATE_CONFLICT_OPEN {
+        Some(
+            vault
+                .ensure_embedded_owner_actor()
+                .map_err(|error| Error::Code(CodeError::RepoMutationFailed(error.to_string())))?,
+        )
+    } else {
+        None
+    };
     let mut wtxn = vault.store.env.write_txn()?;
     if vault
         .store
@@ -424,6 +448,20 @@ fn put_engine_repo_conflict_claim(
         false,
         true,
     )?;
+    if let Some(owner) = reconciliation_owner {
+        let value = decode_repo_conflict_open_value(&body.value)?;
+        let conflict = RepoConflictClaim {
+            claim_id,
+            subject: branch_subject,
+            repo_ref: value.repo_ref,
+            branch: value.branch,
+            base_tree: value.base_tree,
+            ours_tree: value.ours_tree,
+            theirs_tree: value.theirs_tree,
+            conflicted_paths: value.conflicted_paths,
+        };
+        vault.create_repo_reconciliation_task_in_txn(&mut wtxn, &conflict, owner, learned_at)?;
+    }
     wtxn.commit()?;
     Ok(())
 }

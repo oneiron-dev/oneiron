@@ -29,6 +29,7 @@ use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
+use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 
 /// Where a serve invocation writes its response.
 ///
@@ -120,14 +121,37 @@ pub fn serve_with_provenance(
             "a new exchange cannot reuse external evidence",
         ));
     }
+    serve_request(vault, repo_name, request, seam, None, body, sink)
+}
+
+/// Serves using a lease supplied by trusted host configuration, not by the
+/// pusher or a CGI/header field. A configured origin refuses ordinary `serve`.
+/// The coordinator pins this epoch from admission through durable landing.
+pub fn serve_with_authority(
+    vault: &Arc<Vault>,
+    repo_name: &str,
+    request: &ServeRequest,
+    seam: DoorSeam,
+    authority: &OriginAuthorityLease,
+    body: &mut (dyn Read + Send),
+    sink: &mut dyn ServeSink,
+) -> Result<ServeReport> {
+    serve_request(vault, repo_name, request, seam, Some(authority), body, sink)
+}
+
+fn serve_request(
+    vault: &Arc<Vault>,
+    repo_name: &str,
+    request: &ServeRequest,
+    seam: DoorSeam,
+    authority: Option<&OriginAuthorityLease>,
+    body: &mut (dyn Read + Send),
+    sink: &mut dyn ServeSink,
+) -> Result<ServeReport> {
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
     let hooks = DoorHooksDir::materialize(&origin_door_root(vault)?)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
-    let admission = stamp_admission(vault, request, &repo_dir, seam)?;
-    if let Some(stamp) = admission.as_ref() {
-        vault.record_receive_pack_admission(&repo_dir, stamp, seam)?;
-    }
     let coordinator = if request.is_receive_pack() {
         Some(lock_repository(&repo_common_dir(&repo_dir)?)?)
     } else {
@@ -135,6 +159,13 @@ pub fn serve_with_provenance(
         // a push and neither delays one.
         None
     };
+    // The same coordinator guards epoch cutover. Stamp and persist only after
+    // acquiring it, so an old accepted request cannot cross an epoch change.
+    let mut admission = stamp_admission(vault, request, &repo_dir, seam)?;
+    if let Some(stamp) = admission.as_mut() {
+        stamp.origin_authority = authority.map(OriginAuthorityStamp::from_lease);
+        vault.record_receive_pack_admission(&repo_dir, stamp, seam)?;
+    }
     // This also runs for advertisements and no-op retries. A crash after the
     // backend effect must not leave a ref hidden merely because no new hook runs.
     vault.reconcile_receive_pack_operations(&repo_dir)?;

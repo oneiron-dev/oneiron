@@ -197,11 +197,19 @@ fn receive_pack_landing_never_writes_sync_plane() {
             .expect("operation id string"),
     )
     .expect("operation entity id");
+    let change = vault
+        .origin_change_for_commit(record.repo_id, &record.new_oid)
+        .unwrap()
+        .unwrap();
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let epoch =
         crate::hnsw::read_embedding_model_epoch(&vault.store, &rtxn).expect("embedding epoch");
     for (id, predicate) in [
         (operation_id, RECEIVE_PACK_ADMISSION_PREDICATE),
+        (
+            change.claim_id,
+            crate::origin::change_index::ORIGIN_CHANGE_PREDICATE,
+        ),
         (record.provenance_claim_id, RECEIVE_PACK_OUTCOME_PREDICATE),
         (
             record
@@ -424,6 +432,24 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
     vault
         .apply_receive_pack_update_with_attribution(&repo, &outcome, &attribution)
         .expect("explicit source claim");
+    let operations = vault
+        .received_file_operations(attribution.provenance_claim_id)
+        .unwrap();
+    assert!(!operations.is_empty());
+    assert!(
+        operations
+            .iter()
+            .all(|op| op.actor_id == attribution.actor_id.to_hex())
+    );
+    let edits = vault
+        .received_code_operations(attribution.provenance_claim_id)
+        .unwrap();
+    assert!(!edits.is_empty());
+    assert!(
+        edits
+            .iter()
+            .all(|op| op.actor.entity_ref() == attribution.actor_id)
+    );
     let repo_id = landed_repo_id(&vault, &repo, &root);
     let rows = vault
         .origin_publication_rows(Some(repo_id))
@@ -442,6 +468,18 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
             .apply_receive_pack_update(&repo, &outcome)
             .expect("journal-backed replay")
             .replayed
+    );
+    assert_eq!(
+        vault
+            .received_file_operations(attribution.provenance_claim_id)
+            .unwrap(),
+        operations
+    );
+    assert_eq!(
+        vault
+            .received_code_operations(attribution.provenance_claim_id)
+            .unwrap(),
+        edits
     );
 }
 
@@ -561,4 +599,73 @@ fn smart_http_landing_refuses_an_empty_publication() {
         vault.apply_receive_pack_fixture(&repo, &outcome).is_err(),
         "a landing that moves no ref is refused, never receipted"
     );
+}
+
+#[test]
+fn concurrent_pushes_share_one_document_ingress_and_ref_cas_door() {
+    use super::tests::{commit_file, pushed_outcome, ref_update};
+    let (_dir, vault) = temp_vault();
+    let (_repo, root, base) = seeded_repo();
+    git(&root, &["checkout", "-b", "left"]);
+    let left = commit_file(&root, "README.md", "left\n");
+    git(&root, &["checkout", "-b", "right", base.as_str()]);
+    let right = commit_file(&root, "README.md", "right\n");
+    let outcomes = [left, right].map(|tip| {
+        pushed_outcome(
+            &root,
+            vec![ref_update("refs/heads/main", Some(&base), Some(&tip))],
+            vec![],
+        )
+    });
+    let actors = outcomes
+        .each_ref()
+        .map(|outcome| fixture_attribution(&vault, outcome));
+    let barrier = std::sync::Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let tasks: Vec<_> = outcomes
+            .iter()
+            .zip(&actors)
+            .map(|(outcome, actor)| {
+                let vault = &vault;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    vault.apply_receive_pack_update_with_attribution(
+                        &outcome.pinned_repo_ref().unwrap(),
+                        outcome,
+                        actor,
+                    )
+                })
+            })
+            .collect();
+        tasks
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    for (index, result) in results.iter().enumerate() {
+        let edits = vault
+            .received_code_operations(actors[index].provenance_claim_id)
+            .unwrap();
+        if result.is_ok() {
+            assert_eq!(edits.len(), 1);
+            assert_eq!(edits[0].actor.entity_ref(), actors[index].actor_id);
+            assert_eq!(edits[0].sequence, 1);
+            assert_eq!(
+                git(&root, &["rev-parse", "refs/heads/main"]),
+                outcomes[index].ref_updates[0]
+                    .new_oid
+                    .as_ref()
+                    .unwrap()
+                    .as_str()
+            );
+            assert_eq!(
+                vault.code_document_at(&edits[0].after).unwrap(),
+                if index == 0 { "left\n" } else { "right\n" }
+            );
+        } else {
+            assert!(edits.is_empty());
+        }
+    }
 }

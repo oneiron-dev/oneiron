@@ -22,6 +22,7 @@ use crate::origin::lfs::{LfsPointerIntent, lfs_repo_id};
 use crate::origin::publication::{
     OriginPublicationReceipt, OriginPublicationRequest, OriginPublicationStatus,
 };
+use crate::origin::residence::OriginAuthorityStamp;
 use crate::temporal::TimeRange;
 
 /// Attribution from the durable receive-pack observer. The landing verifies
@@ -176,6 +177,10 @@ impl Vault {
             }
         };
         self.validate_receive_pack_attribution(repo_id, outcome, attribution)?;
+        // Restored only from producer-backed admission/outcome evidence. This
+        // same check gates deletions and document landing before either effect.
+        let authority =
+            self.receive_pack_landing_authority(repo_id, &outcome.repo_root, attribution)?;
         // Decided BEFORE the refs move: a RepositoryLarge pointer whose bytes
         // this vault does not hold refuses the landing, so no head is ever
         // advertised that a stock client could not check out.
@@ -188,6 +193,7 @@ impl Vault {
             outcome,
             &admitted,
             Some(attribution),
+            authority.as_ref(),
             learned_at,
         )?;
         // The landing's own postcondition, proved against the repository
@@ -220,11 +226,22 @@ impl Vault {
         outcome: &ReceivePackOutcome,
         admitted: &[LfsPointerIntent],
         attribution: Option<&ReceivePackAttribution>,
+        authority: Option<&OriginAuthorityStamp>,
         learned_at: u64,
     ) -> Result<ReceivePackLanding> {
         let mut certified: Option<GitWireReceipt> = None;
         let mut replayed = true;
         for update in &outcome.ref_updates {
+            if let Some(attribution) = attribution {
+                let current =
+                    wire.read_ref(handle, &GitRefName::parse_full(update.name.clone())?)?;
+                if current != update.old_oid && current != update.new_oid {
+                    return Err(Error::ConcurrentWrite(
+                        "receive-pack ref changed before document ingress",
+                    ));
+                }
+                self.land_received_code_operations(wire, handle, update, attribution, learned_at)?;
+            }
             let (receipt, was_replayed) = match update.new_oid.as_ref() {
                 Some(next) => self.publish_landing_advance(
                     wire,
@@ -234,6 +251,7 @@ impl Vault {
                     next,
                     admitted,
                     attribution,
+                    authority,
                     learned_at,
                 )?,
                 None => landed_wire_outcome(wire.publish_refs(
@@ -282,6 +300,7 @@ impl Vault {
         next: &GitOid,
         admitted: &[LfsPointerIntent],
         attribution: Option<&ReceivePackAttribution>,
+        authority: Option<&OriginAuthorityStamp>,
         learned_at: u64,
     ) -> Result<(GitWireReceipt, bool)> {
         let ref_name = GitRefName::parse_full(update.name.clone())?;
@@ -327,7 +346,12 @@ impl Vault {
             },
             learned_at,
         };
-        let receipt = self.publish_origin_ref(wire, request)?;
+        let receipt = match authority {
+            Some(authority) => {
+                self.publish_origin_ref_authorized(wire, request, &authority.lease()?)?
+            }
+            None => self.publish_origin_ref(wire, request)?,
+        };
         landing_from_publication(&update.name, &receipt)
     }
 }

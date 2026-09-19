@@ -94,13 +94,15 @@ pub use self::paths::{
     ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_REQUEST_ENV_KEYS, origin_repo_dir,
     origin_serving_root, validate_repo_name,
 };
-pub use self::serve::{ServeReport, ServeSink, serve, serve_with_provenance};
+pub use self::serve::{ServeReport, ServeSink, serve, serve_with_authority, serve_with_provenance};
 pub use self::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 
 #[cfg(test)]
 mod advertise_tests;
 #[cfg(test)]
 mod door_serve_tests;
+#[cfg(test)]
+mod epoch_tests;
 #[cfg(test)]
 mod intent_recovery_tests;
 #[cfg(test)]

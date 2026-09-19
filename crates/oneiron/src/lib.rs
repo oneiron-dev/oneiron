@@ -182,6 +182,7 @@ pub mod edit_distance;
 pub mod edit_roundtrip;
 pub mod edit_settle;
 pub mod git_wire;
+pub mod merge_queue;
 pub mod origin;
 pub mod repo_mutation;
 pub mod secret_custody;

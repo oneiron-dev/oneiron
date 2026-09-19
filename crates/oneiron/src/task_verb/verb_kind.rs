@@ -50,6 +50,7 @@ impl TasksVerb {
 pub enum TaskKind {
     Standard,
     Consult,
+    Reconciliation,
 }
 
 impl TaskKind {
@@ -59,6 +60,7 @@ impl TaskKind {
         match self {
             Self::Standard => "standard",
             Self::Consult => "consult",
+            Self::Reconciliation => "reconciliation",
         }
     }
 
@@ -66,6 +68,7 @@ impl TaskKind {
         match token {
             "standard" => Ok(Self::Standard),
             "consult" => Ok(Self::Consult),
+            "reconciliation" => Ok(Self::Reconciliation),
             _ => Err(Error::Record(RecordError::InvalidTaskBody(
                 "tasks.body.kind",
             ))),

@@ -1,5 +1,7 @@
 mod commit_metadata;
 pub use commit_metadata::CodeCommitMetadata;
+mod promotion;
+pub use promotion::CodeSessionRun;
 mod codec;
 mod file_frontiers;
 mod frontier;

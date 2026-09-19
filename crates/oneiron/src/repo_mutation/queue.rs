@@ -24,7 +24,7 @@ use super::snapshot::{
     StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind,
     capture_repo_snapshot, decode_snapshot, encode_snapshot, restore_repo_snapshot,
 };
-use super::support::{hex_bytes, now_millis, sha256_bytes, truncate_failure};
+use super::support::{hex_bytes, now_millis, truncate_failure};
 use super::trailer::{commit_message_with_provenance_trailer, validate_repo_provenance_request};
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome,
@@ -49,7 +49,9 @@ pub(super) enum RepoMutationCrashPoint {
     #[default]
     None,
     AfterPreparedBeforeAction,
+    AfterDocumentBeforeAction,
     AfterActionBeforeApplied,
+    AfterStackMember,
 }
 
 #[cfg(test)]
@@ -135,7 +137,7 @@ impl PreparedRepoMutationExecution {
 }
 
 #[cfg(test)]
-fn take_repo_mutation_crash(point: RepoMutationCrashPoint) -> bool {
+pub(super) fn take_repo_mutation_crash(point: RepoMutationCrashPoint) -> bool {
     INJECT_REPO_MUTATION_CRASH.with(|cell| {
         if cell.get() == point {
             cell.set(RepoMutationCrashPoint::None);
@@ -157,6 +159,32 @@ impl Vault {
     /// non-recovery mutation automatically remounts prepared rows first, and
     /// callers can explicitly invoke [`Vault::recover_prepared_repo_mutations`].
     pub fn apply_repo_mutation(&self, request: RepoMutationRequest) -> Result<RepoMutationOutcome> {
+        self.apply_repo_mutation_inner(request, None, None)
+    }
+
+    pub(super) fn apply_repo_mutation_approved(
+        &self,
+        request: RepoMutationRequest,
+        proposal: EntityId,
+    ) -> Result<RepoMutationOutcome> {
+        self.apply_repo_mutation_inner(request, Some(proposal), None)
+    }
+
+    pub(super) fn apply_repo_mutation_stack(
+        &self,
+        request: RepoMutationRequest,
+        proposal: EntityId,
+        step: &super::reviewed_stack::StackStep,
+    ) -> Result<RepoMutationOutcome> {
+        self.apply_repo_mutation_inner(request, Some(proposal), Some(step))
+    }
+
+    fn apply_repo_mutation_inner(
+        &self,
+        request: RepoMutationRequest,
+        proposal: Option<EntityId>,
+        stack: Option<&super::reviewed_stack::StackStep>,
+    ) -> Result<RepoMutationOutcome> {
         validate_operation(&request.operation)?;
         validate_repo_provenance_request(self, &request)?;
         let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
@@ -172,7 +200,9 @@ impl Vault {
             self.recover_prepared_repo_mutations_locked(&repo_ref, &repo_root)?;
         }
 
-        let prepared = self.prepare_repo_mutation(&repo_ref, &request, &repo_root)?;
+        super::proposal::authorize(self, &request, proposal, &repo_root, stack)?;
+        let prepared =
+            self.prepare_repo_mutation_with_proposal(&repo_ref, &request, &repo_root, proposal)?;
         #[cfg(test)]
         if take_repo_mutation_crash(RepoMutationCrashPoint::AfterPreparedBeforeAction) {
             let _ = prepared.execution.cleanup(&repo_root);
@@ -181,8 +211,18 @@ impl Vault {
             ));
         }
 
-        let execution =
-            execute_repo_mutation(self, &repo_ref, &repo_root, &request, &prepared.execution);
+        let execution = (|| {
+            if let Some(id) = proposal {
+                super::document::land_reviewed_document(self, id)?;
+            }
+            #[cfg(test)]
+            if take_repo_mutation_crash(RepoMutationCrashPoint::AfterDocumentBeforeAction) {
+                return Err(Error::InvariantViolation(
+                    "test: interrupted after reviewed document before Git action",
+                ));
+            }
+            execute_repo_mutation(self, &repo_ref, &repo_root, &request, &prepared.execution)
+        })();
         let cleanup = prepared.execution.cleanup(&repo_root);
         let execution = match (execution, cleanup) {
             (Err(error), _) => Err(error),
@@ -213,6 +253,12 @@ impl Vault {
                 })
             }
             Err(error) => {
+                // An attributed write can fail after its document or Git effect.
+                // Keep its intent Prepared so recovery proves pre/post state,
+                // rather than recording a false terminal failure after a commit.
+                if proposal.is_some() {
+                    return Err(error);
+                }
                 let failure = truncate_failure(&error.to_string());
                 let _ = self.finish_repo_mutation(
                     &prepared.oplog,
@@ -238,6 +284,16 @@ impl Vault {
         repo_ref: &RepoRef,
         request: &RepoMutationRequest,
         repo_root: &Path,
+    ) -> Result<PreparedRepoMutationAction> {
+        self.prepare_repo_mutation_with_proposal(repo_ref, request, repo_root, None)
+    }
+
+    fn prepare_repo_mutation_with_proposal(
+        &self,
+        repo_ref: &RepoRef,
+        request: &RepoMutationRequest,
+        repo_root: &Path,
+        proposal: Option<EntityId>,
     ) -> Result<PreparedRepoMutationAction> {
         let (fork_hash, snapshot_bytes) = capture_repo_snapshot(repo_root)?;
         let pre_action_snapshot = decode_snapshot(&snapshot_bytes)?;
@@ -295,6 +351,7 @@ impl Vault {
                 &repo_mutation_oplog_key(&repo_key_hash, seq),
                 &encoded,
             )?;
+            super::proposal::bind_prepared(self, &mut wtxn, proposal, repo_ref, seq)?;
             wtxn.commit()?;
             Ok(PreparedRepoMutation { repo_key_hash, seq })
         })();
@@ -364,6 +421,13 @@ impl Vault {
         stored.status = status.as_str().to_owned();
         stored.failure = failure;
         stored.finished_at_ms = Some(finished_at_ms);
+        super::proposal::finish(
+            self,
+            &mut wtxn,
+            &RepoRef::parse(&stored.repo_ref)?,
+            stored.seq,
+            status,
+        )?;
         let encoded = encode_oplog_entry(&stored)?;
         self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
         wtxn.commit()?;
@@ -491,7 +555,7 @@ fn expected_post_action_fork_hash(
     post_action_snapshot
         .entries
         .sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(sha256_bytes(&encode_snapshot(&post_action_snapshot)?))
+    Ok(*blake3::hash(&encode_snapshot(&post_action_snapshot)?).as_bytes())
 }
 
 pub(super) fn execute_repo_mutation(
@@ -589,7 +653,7 @@ pub(super) fn execute_repo_mutation(
     }
 }
 
-fn validate_operation(operation: &RepoMutationOperation) -> Result<()> {
+pub(super) fn validate_operation(operation: &RepoMutationOperation) -> Result<()> {
     match operation {
         RepoMutationOperation::CommitFile { path, message, .. } => {
             validate_relative_repo_path(path)?;

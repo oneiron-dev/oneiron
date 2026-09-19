@@ -1,8 +1,12 @@
 mod conflict;
 mod conflict_value;
+mod document;
 mod git;
+pub mod mount;
 mod oplog;
+pub mod proposal;
 mod queue;
+mod reviewed_stack;
 mod snapshot;
 mod support;
 mod trailer;

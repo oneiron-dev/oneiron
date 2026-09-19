@@ -43,7 +43,7 @@ fn linked_views_share_blobs_server_and_build_results() {
             "initial",
         ],
     );
-    let vault = Vault::open(&temp.path().join("vault"), VaultConfig::default()).unwrap();
+    let vault = Vault::open(temp.path().join("vault"), VaultConfig::default()).unwrap();
     let at = TimeRange { start: 1, end: 1 };
     let actor = EntityId::now();
     vault

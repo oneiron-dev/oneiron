@@ -11,6 +11,7 @@ use crate::credential_door::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::origin::residence::OriginAuthorityStamp;
 
 /// A derived admission record — NOT an identity type and NOT a credential
 /// store.
@@ -26,6 +27,7 @@ pub struct DoorAdmissionStamp {
     pub(super) method: &'static str,
     pub(super) admitted_at: u64,
     pub(super) operation_id: EntityId,
+    pub(super) origin_authority: Option<OriginAuthorityStamp>,
 }
 
 impl DoorAdmissionStamp {
@@ -39,6 +41,7 @@ impl DoorAdmissionStamp {
             method: "bearer+registered-principal",
             admitted_at,
             operation_id: EntityId::now(),
+            origin_authority: None,
         }
     }
 
@@ -57,6 +60,7 @@ impl DoorAdmissionStamp {
             method: "door-credential+registered-principal",
             admitted_at,
             operation_id: EntityId::now(),
+            origin_authority: None,
         }
     }
 
