@@ -8,19 +8,23 @@ fn recall_items_and_document_chat_keep_the_indexed_revision() {
     let facade = facade_for(&vault, actor);
     let id = EntityId::from_bytes([0x6B; 16]).unwrap();
     let put = |content: &str| {
-        facade
-            .put_structural(&StructuralPutInput {
-                id: Some(id.to_hex()),
-                kind: "EVENT".into(),
-                body: serde_json::json!({"content": content}),
-                text_fields: Some(vec![TextIndexField {
-                    field: "content".into(),
-                    value: content.into(),
-                }]),
-                edges: None,
-                occurred_at: 1400,
-                learned_at: Some(1400),
-            })
+        let body =
+            rmp_serde::to_vec_named(&serde_json::json!({"name": content, "content": content}))
+                .unwrap();
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_EVENT,
+                crate::TimeRange {
+                    start: 1400,
+                    end: 1400,
+                },
+                1400,
+                &body,
+            )
+            .text(&id, &[("content", content)])
+            .commit()
             .unwrap();
     };
     put("revisionanchor original evidence");
