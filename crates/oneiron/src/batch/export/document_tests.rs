@@ -426,6 +426,21 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
     record.confidence = 0.9;
     record.supersession_status = SupersessionStatus::Confirmed;
     source.put_edge_provenance(&second, &edge, &record, EdgeActorClass::Human, 20)?;
+    let withdrawn = crate::EntityId::now();
+    let reversed = EdgeRef::new(to, EdgeKind::EmployedBy, from);
+    source
+        .batch()
+        .edge_with_created_at_and_vad(
+            &to,
+            reversed.kind,
+            &from,
+            0.7,
+            9,
+            crate::affect::Vad::NEUTRAL,
+        )
+        .commit()?;
+    source.put_edge_provenance(&withdrawn, &reversed, &record, EdgeActorClass::Human, 30)?;
+    source.retract_edge_provenance(&withdrawn, 40)?;
     let export = source.export_whole_vault(PackFormat::Json)?;
     assert!(
         target
@@ -479,6 +494,10 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
     assert_eq!(prior.source, Some(ClaimSource::Imported));
     assert_eq!(prior.lifecycle, ClaimLifecycleStatus::Superseded);
     assert_eq!(head.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        target.get_claim(&withdrawn)?.unwrap().lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
     assert_eq!(
         crate::provenance::decode_edge_provenance_body(&head.value)?.substrate_ref,
         Some(local_substrate)
