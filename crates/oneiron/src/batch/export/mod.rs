@@ -43,6 +43,7 @@ mod document_import;
 mod document_snapshot;
 mod document_types;
 mod document_validation;
+mod provenance_import;
 pub(crate) use document_snapshot::ExportSnapshot;
 pub use document_types::*;
 #[cfg(test)]

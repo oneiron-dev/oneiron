@@ -132,6 +132,8 @@
 //! `resolve_persisted_actor_class`.
 
 mod actor_substrate;
+mod archive;
+pub(crate) use archive::archived_provenance_body;
 mod codec;
 mod edge_ref;
 mod imported;

@@ -87,6 +87,10 @@ impl WholeVaultDocument {
                 || matches!(&row.body, ExportBody::Pack(value) if matches!(value.payload, ExportBody::Nulled))
             {
                 Some(ImportRefusalReason::RedactedBody)
+            } else if row.entity_type == crate::registry::ENTITY_TYPE_MODEL
+                || super::provenance_import::is_provenance(row)
+            {
+                None
             } else if crate::registry::zone_of(row.entity_type)
                 != crate::registry::TypeByteZone::PackHandle
                 && crate::registry::validate_public_entity_type(row.entity_type).is_err()
@@ -128,6 +132,12 @@ impl WholeVaultDocument {
         edges.sort_by(|a, b| (&a.source, a.kind, &a.target).cmp(&(&b.source, b.kind, &b.target)));
         for edge in edges {
             if edge.provenance.is_some()
+                && !self.claims.iter().any(|row| {
+                    super::provenance_import::is_provenance(row) && row.body.to_bytes().ok()
+                    .and_then(|bytes|crate::claim::decode_claim_body(&bytes,true).ok()).is_some_and(|claim| {
+                        matches!(claim.subject, crate::claim::ClaimSubject::Edge { source,kind,target } if source.to_hex()==edge.source && kind as u8==edge.kind && target.to_hex()==edge.target)
+                    })
+                })
                 && !omitted.contains(edge.source.as_str())
                 && !omitted.contains(edge.target.as_str())
             {

@@ -2203,7 +2203,7 @@
      "path": "src/batch/export/document_import.rs",
      "purpose": "Validating JSON import through ordinary admission doors, never sync replay",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -2378,6 +2378,16 @@
      "surface": {
       "crate-vis": 1,
       "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/provenance_import.rs",
+     "purpose": "Ordered archive restore through MODEL and edge-provenance owning doors",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -19153,6 +19163,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/provenance/archive.rs",
+     "purpose": "Foreign archive provenance reconstructed through the owning lifecycle",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -19226,7 +19246,7 @@
      "path": "src/provenance/mod.rs",
      "purpose": "`edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 3
      }
     },
@@ -19256,7 +19276,7 @@
      "path": "src/provenance/writes.rs",
      "purpose": "Vault write doors: put, supersede, retract, model substrate, and the shared writer",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -26402,7 +26422,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27165,7 +27185,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27559,7 +27579,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1583,
+   "source_files": 1585,
    "test_files": 569
   },
   "oneiron-bench": {

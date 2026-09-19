@@ -387,11 +387,98 @@ fn foreign_archive_authority_and_witness_rows_remain_data_not_local_rights() -> 
         );
     }
     target.import_whole_vault_json(export.bytes())?;
-    assert!(target.get_entity(&person)?.is_some());
+    assert!(target.get_entity_type(&person)?.is_some());
     for id in ids {
-        assert!(target.get_entity(&id)?.is_none());
+        assert!(target.get_entity_type(&id)?.is_none());
     }
     // Re-import cannot turn omitted foreign rows into native authority either.
+    let replay = target.import_whole_vault_json(export.bytes())?;
+    assert_eq!(replay.inserted_entities, 0);
+    Ok(())
+}
+
+#[test]
+fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_policy() -> Result<()>
+{
+    use crate::edge::EdgeActorClass;
+    use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    let actor = crate::EntityId::now();
+    let from = crate::EntityId::now();
+    let to = crate::EntityId::now();
+    for id in [actor, from, to] {
+        source.put_entity(&id, ENTITY_TYPE_PERSON, range(), 789, b"archive actor")?;
+    }
+    let substrate = source.ensure_model_substrate("fixture model", "v1", 10)?;
+    let local_substrate = target.ensure_model_substrate("fixture model", "v1", 1)?;
+    assert_ne!(substrate, local_substrate);
+    let edge = EdgeRef::new(from, EdgeKind::EmployedBy, to);
+    source
+        .batch()
+        .edge_with_created_at_and_vad(&from, edge.kind, &to, 0.8, 8, crate::affect::Vad::NEUTRAL)
+        .commit()?;
+    let first = crate::EntityId::now();
+    let second = crate::EntityId::now();
+    let mut record = EdgeProvenanceClaimBody::new(actor, 0.7, SupersessionStatus::Proposed);
+    record.substrate_ref = Some(substrate);
+    source.put_edge_provenance(&first, &edge, &record, EdgeActorClass::Human, 10)?;
+    record.confidence = 0.9;
+    record.supersession_status = SupersessionStatus::Confirmed;
+    source.put_edge_provenance(&second, &edge, &record, EdgeActorClass::Human, 20)?;
+    let export = source.export_whole_vault(PackFormat::Json)?;
+    assert!(
+        target
+            .read_whole_vault_json(export.bytes())?
+            .manifest
+            .import_refusals
+            .is_empty()
+    );
+    assert!(target.import_whole_vault_json(export.bytes()).is_err());
+    assert!(target.get_claim(&first)?.is_none());
+    assert!(target.get_entity_type(&actor)?.is_none());
+    // This fixture explicitly installs a LOCAL Imported-source permit. The
+    // production importer never mints or widens it from the archive.
+    let mut policy =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap();
+    let Value::Map(entries) = &mut policy else {
+        panic!("policy");
+    };
+    let (_, Value::Map(trust)) = entries
+        .iter_mut()
+        .find(|(k, _)| k.as_str() == Some("source_trust"))
+        .unwrap()
+    else {
+        panic!("trust");
+    };
+    trust.retain(|(key, _)| key.as_str() != Some("imported"));
+    trust.push((
+        "imported".into(),
+        Value::Map(vec![
+            ("actor_ref".into(), actor.to_hex().into()),
+            (
+                "max_auto_sensitivity".into(),
+                u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND).into(),
+            ),
+            ("receipted".into(), true.into()),
+            ("warned".into(), true.into()),
+        ]),
+    ));
+    crate::test_util::put_policy_manifest_bytes(
+        &target,
+        crate::gate::default_policy_manifest_id()?,
+        &encode(&policy),
+    )?;
+    target.import_whole_vault_json(export.bytes())?;
+    let prior = target.get_claim(&first)?.unwrap();
+    let head = target.get_claim(&second)?.unwrap();
+    assert_eq!(prior.source, Some(ClaimSource::Imported));
+    assert_eq!(prior.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(head.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        crate::provenance::decode_edge_provenance_body(&head.value)?.substrate_ref,
+        Some(local_substrate)
+    );
     let replay = target.import_whole_vault_json(export.bytes())?;
     assert_eq!(replay.inserted_entities, 0);
     Ok(())

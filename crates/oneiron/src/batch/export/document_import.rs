@@ -62,6 +62,8 @@ impl Vault {
                 row.body = ExportBody::from_bytes(&envelope.to_bytes()?, handle);
             }
         }
+        let models = super::provenance_import::restore_models(self, &mut wtxn, &document)?;
+        let provenance = super::provenance_import::ProvenanceImport::new(&document, &models)?;
         let skill_bundles: BTreeMap<_, _> = document
             .skills
             .iter()
@@ -71,7 +73,7 @@ impl Vault {
         let mut unchanged_entities = 0;
         for row in document.entities() {
             let id = parse_id(&row.id)?;
-            if omitted.contains(&id) {
+            if omitted.contains(&id) || models.contains_key(&id) || provenance.ids.contains(&id) {
                 continue;
             }
             if self.store.off_record_sessions.contains_entity(&id)? {
@@ -113,7 +115,7 @@ impl Vault {
             pending.insert(id, (row, imported_body(row)?));
         }
         let inserted_ids: BTreeSet<_> = pending.keys().copied().collect();
-        let inserted_entities = pending.len();
+        let mut inserted_entities = pending.len();
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         while !pending.is_empty() {
@@ -199,13 +201,44 @@ impl Vault {
                 )?;
             }
         }
-        for edge in &document.evidence_ledger.edges {
+        let edges = document
+            .evidence_ledger
+            .edges
+            .iter()
+            .map(|edge| super::provenance_import::mapped_edge(edge, &models))
+            .collect::<Result<Vec<_>>>()?;
+        for edge in &edges {
+            let source = parse_id(&edge.source)?;
+            let target = parse_id(&edge.target)?;
+            if omitted.contains(&source)
+                || omitted.contains(&target)
+                || provenance.ids.contains(&source)
+                || provenance.ids.contains(&target)
+            {
+                continue;
+            }
+            super::provenance_import::stage_edge(self, &mut wtxn, edge, &inserted_ids)?;
+        }
+        let new_provenance: BTreeSet<_> = provenance
+            .ids
+            .iter()
+            .filter_map(|id| match self.store.entities.get(&wtxn, id.as_bytes()) {
+                Ok(None) => Some(Ok(*id)),
+                Ok(Some(_)) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<std::result::Result<_, _>>()?;
+        let (inserted, unchanged) = provenance.restore(self, &mut wtxn)?;
+        inserted_entities += inserted;
+        unchanged_entities += unchanged;
+        let all_inserted = inserted_ids.union(&new_provenance).copied().collect();
+        for edge in &edges {
             if omitted.contains(&parse_id(&edge.source)?)
                 || omitted.contains(&parse_id(&edge.target)?)
             {
                 continue;
             }
-            import_edge(self, &mut wtxn, edge, &inserted_ids)?;
+            import_edge(self, &mut wtxn, edge, &all_inserted)?;
         }
         wtxn.commit()?;
         Ok(WholeVaultImportReceipt {
@@ -251,7 +284,7 @@ pub(super) fn parse_id(text: &str) -> Result<EntityId> {
     Ok(id)
 }
 
-fn matches_row(row: &ExportEntity, raw: &[u8], expected: &ExportBody) -> bool {
+pub(super) fn matches_row(row: &ExportEntity, raw: &[u8], expected: &ExportBody) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return false;
     };
@@ -322,7 +355,7 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
     })
 }
 
-fn import_edge(
+pub(super) fn import_edge(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     edge: &ExportEdge,
