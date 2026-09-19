@@ -7,6 +7,7 @@ fn response_preserves_true_pause_marker_and_elides_false() {
         run_id: Some("run".to_owned()),
         parent_id: None,
         worker_kind: "worker".to_owned(),
+        worker: None,
         agent_id: None,
         status: oneiron::RunTreeStatus::Queued,
         timestamps: oneiron::run_tree::RunTreeTimestamps {

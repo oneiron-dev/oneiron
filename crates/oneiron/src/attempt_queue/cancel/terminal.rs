@@ -42,6 +42,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.finish_landing_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -174,6 +175,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.force_cancel_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -243,6 +245,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.warn_budget_pressure_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -338,6 +341,7 @@ impl AttemptQueue<'_> {
             }
         }
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(report)
     }
 
@@ -381,6 +385,7 @@ impl AttemptQueue<'_> {
             input.now,
         )?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(LeaseWarningOutcome::LandingRequested(record))
     }
 }
@@ -549,6 +554,14 @@ fn landing_successor(source: &AttemptRecord, scheduled_at: Option<u64>, now: u64
             },
             ..AttemptCancelState::default()
         },
+        placement: source.placement.as_ref().map(|placement| {
+            crate::attempt_queue::AttemptPlacement {
+                worker: placement.worker.clone(),
+                // Keep the new try below its predecessor, not beside it. A later
+                // explicit redirect can still select another effective parent.
+                parent: Some(source.id),
+            }
+        }),
         result_ref: None,
     }
 }

@@ -59,6 +59,7 @@ mod cb_t {
             run_id: None,
             parent_id: None,
             worker_kind: "sync".to_owned(),
+            worker: None,
             agent_id: None,
             status: RunTreeStatus::Running,
             result_ref: None,

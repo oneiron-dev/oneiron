@@ -20,11 +20,11 @@ mod context_pack_disclosure;
 mod context_pack_v4;
 mod contract_snapshots;
 mod core_memory_conversations;
+mod mcp_memory;
 mod mcp_paging_cursors;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
-mod mcp_memory;
 mod mcp_write_guards;
 mod reactive;
 mod retrieval_depth_quality;
@@ -161,6 +161,7 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreRunTreeInterventionEffect",
     "CoreRunTreeInterventionKind",
     "CoreRunTreeInterventionRequest",
+    "CoreAttemptPlacement",
     "CoreRunTreeInterventionResponse",
     "CoreRunTreeNode",
     "CoreRunTreeQuery",

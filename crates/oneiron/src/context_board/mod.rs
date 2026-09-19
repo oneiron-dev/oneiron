@@ -102,6 +102,7 @@ mod test_support {
             run_id: None,
             parent_id: None,
             worker_kind: worker_kind.to_owned(),
+            worker: None,
             agent_id: agent_id.map(str::to_owned),
             status,
             result_ref: None,

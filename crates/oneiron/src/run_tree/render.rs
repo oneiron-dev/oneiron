@@ -107,7 +107,10 @@ fn run_tree_status(record: &AttemptRecord) -> RunTreeStatus {
 }
 
 fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
-    let metadata = attempt_metadata(&record);
+    let mut metadata = attempt_metadata(&record);
+    if let Some(placement) = &record.placement {
+        metadata.parent_id = placement.parent.map(|id| bytes_to_hex_lower(id.as_bytes()));
+    }
     let state = record.state;
     let status = run_tree_status(&record);
     let attempt_id = attempt_id_hex(&record);
@@ -129,6 +132,7 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         run_id: record.run_id,
         parent_id: metadata.parent_id,
         worker_kind: metadata.worker_kind,
+        worker: record.placement.and_then(|placement| placement.worker),
         agent_id: metadata.agent_id,
         status,
         result_ref,
@@ -223,6 +227,21 @@ struct AttemptMetadata {
     parent_id: Option<String>,
     worker_kind: String,
     agent_id: Option<String>,
+}
+
+pub(crate) fn effective_parent(record: &AttemptRecord) -> Option<crate::attempt_queue::AttemptId> {
+    if let Some(placement) = &record.placement {
+        return placement.parent;
+    }
+    record.retry_of.or_else(|| {
+        (record.kind == DREAMER_RUNNER_ATTEMPT_KIND)
+            .then(|| {
+                decode_dreamer_attempt_payload(&record.payload)
+                    .ok()?
+                    .parent_attempt
+            })
+            .flatten()
+    })
 }
 
 fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {

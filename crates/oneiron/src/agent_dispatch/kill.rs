@@ -201,6 +201,7 @@ impl AgentDispatcher<'_> {
             },
         )?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         match outcome.effect {
             AttemptInterventionEffect::Cancelled => Ok(KillOutcome::Killed),
             AttemptInterventionEffect::AlreadyCancelled => Ok(KillOutcome::AlreadyTerminal),

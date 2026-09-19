@@ -28,6 +28,7 @@ impl AttemptQueue<'_> {
         let outcome = self.complete_in_txn(&mut wtxn, input)?;
         if matches!(outcome, CompleteOutcome::Completed(_)) {
             wtxn.commit()?;
+            self.store.notify_attempt_observers();
         }
         Ok(outcome)
     }
@@ -51,6 +52,7 @@ impl AttemptQueue<'_> {
         let outcome = self.fail_in_txn(&mut wtxn, input)?;
         if matches!(outcome, FailOutcome::Failed(_)) {
             wtxn.commit()?;
+            self.store.notify_attempt_observers();
         }
         Ok(outcome)
     }

@@ -111,6 +111,7 @@ pub fn write_cursor(
         .vault_meta
         .put(&mut wtxn, &cursor_key(scope, partition_hash), &encoded)?;
     wtxn.commit()?;
+    vault.store.notify_attempt_observers();
     Ok(())
 }
 

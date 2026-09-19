@@ -699,6 +699,7 @@ fn dreamer_record(
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        placement: None,
         result_ref: None,
     })
 }
@@ -828,6 +829,7 @@ fn abandoned_record(seed: u8, kind: &str, result_ref: &str) -> AttemptRecord {
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        placement: None,
         result_ref: Some(
             crate::attempt_queue::AttemptResultRef::new(result_ref).expect("valid result ref"),
         ),
@@ -862,6 +864,7 @@ fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        placement: None,
         result_ref: None,
     }
 }

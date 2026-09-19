@@ -223,6 +223,7 @@ impl Vault {
         let approved_vad_ids =
             self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit().map_err(Error::from)?;
+        self.store.notify_attempt_observers();
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved.
         let now = crate::unix_seconds_now();

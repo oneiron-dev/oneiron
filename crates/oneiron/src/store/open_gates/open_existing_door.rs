@@ -119,6 +119,8 @@ impl Store {
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             diagnostics: Diagnostics::default(),
             #[cfg(feature = "sync")]
+            attempt_updates: tokio::sync::broadcast::channel(256).0,
+            #[cfg(feature = "sync")]
             staged_import_admission_lock: Mutex::new(()),
             #[cfg(feature = "sync")]
             staged_import_confirm_lock: Mutex::new(()),

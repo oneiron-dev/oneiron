@@ -16,6 +16,7 @@ mod cancel;
 mod completion;
 mod encoding;
 mod engine;
+mod observe;
 mod result;
 mod settlement;
 mod telemetry;
@@ -44,7 +45,7 @@ pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
 pub use types::{
     AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
-    AttemptInterventionKind, AttemptQueueCleanupReport, AttemptQueueRetryReason,
+    AttemptInterventionKind, AttemptPlacement, AttemptQueueCleanupReport, AttemptQueueRetryReason,
     AttemptQueueRetryReasonCount, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
     ClaimOutcome, CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
     EnqueueOutcome, FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome,

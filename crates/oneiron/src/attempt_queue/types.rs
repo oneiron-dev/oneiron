@@ -190,6 +190,7 @@ pub enum AttemptInterventionKind {
     Pause,
     Resume,
     Cancel,
+    Redirect,
 }
 
 impl AttemptInterventionKind {
@@ -199,6 +200,7 @@ impl AttemptInterventionKind {
             Self::Pause => "pause",
             Self::Resume => "resume",
             Self::Cancel => "cancel",
+            Self::Redirect => "redirect",
         }
     }
 }
@@ -361,9 +363,19 @@ pub struct AttemptRecord {
     /// migration is needed and an old row stays byte-identically readable.
     #[serde(default)]
     pub result_ref: Option<AttemptResultRef>,
+    /// Operator-selected placement, separate from the immutable executor payload.
+    #[serde(default)]
+    pub placement: Option<AttemptPlacement>,
 }
 
 impl AttemptRecord {
+    pub(super) fn accepts_worker(&self, worker: &str) -> bool {
+        self.placement
+            .as_ref()
+            .and_then(|p| p.worker.as_deref())
+            .is_none_or(|assigned| assigned == worker)
+    }
+
     /// The attempt's accumulated pack manifest, in append order.
     #[must_use]
     pub fn manifest(&self) -> &[ManifestEntry] {
@@ -567,6 +579,15 @@ pub struct InterveneAttempt {
     pub now: u64,
 }
 
+/// Operator-selected worker and parent. An absent worker keeps ordinary claiming;
+/// an absent parent makes the attempt a root. The executor kind never changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptPlacement {
+    pub worker: Option<String>,
+    pub parent: Option<AttemptId>,
+}
+
 /// Observable effect of an intervention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttemptInterventionEffect {
@@ -577,6 +598,8 @@ pub enum AttemptInterventionEffect {
     AlreadyResumed,
     Cancelled,
     AlreadyCancelled,
+    Redirected,
+    AlreadyRedirected,
 }
 
 impl AttemptInterventionEffect {
@@ -590,6 +613,8 @@ impl AttemptInterventionEffect {
             Self::AlreadyResumed => "already_resumed",
             Self::Cancelled => "cancelled",
             Self::AlreadyCancelled => "already_cancelled",
+            Self::Redirected => "redirected",
+            Self::AlreadyRedirected => "already_redirected",
         }
     }
 }
