@@ -137,6 +137,11 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     return;
                 }
             };
+            if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && crate::note::sync::is_native(doc)
+            {
+                return; // Core and editable document share the NOTE transaction.
+            }
             let delete_protected =
                 crate::registry::is_delete_protected_engine_record(header.entity_type);
 

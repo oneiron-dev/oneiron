@@ -47,9 +47,15 @@ pub fn forward_rematerialize(
     materializer: &Materializer,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    let documents = crate::recovery::validate_window_documents(doc)?;
+    let native_notes = crate::note::sync::is_native(doc);
+    let native_documents = native_notes
+        .then(|| crate::note::sync::validate(doc))
+        .transpose()?;
+    let documents = (!native_notes)
+        .then(|| crate::recovery::validate_window_documents(doc))
+        .transpose()?;
     let _guard = materializer.lock();
-    {
+    if let Some(documents) = &documents {
         let txn = vault.store.env.read_txn()?;
         documents.preflight_note_recovery(vault, &txn)?;
     }
@@ -87,6 +93,11 @@ pub fn forward_rematerialize(
     // tombstones, then the marker settle below. The tombstone call has no
     // `?`: its error stays deferred past the marker txn (Trap 2).
     entity_pass::run(&ctx, &mut ledger)?;
+    if let Some(documents) = native_documents {
+        ledger
+            .healed
+            .extend(crate::note::sync::apply(vault, doc, documents)?);
+    }
     crate::recovery::materialize_retained_shells(vault, doc)?;
     edge_pass::run(&ctx, &mut ledger)?;
     let tombstone_outcome = tombstone_pass::run(&ctx, &mut ledger);
@@ -230,7 +241,9 @@ pub fn forward_rematerialize(
         );
     }
 
-    crate::recovery::materialize_window_documents(vault, doc, &documents)?;
+    if let Some(documents) = documents {
+        crate::recovery::materialize_window_documents(vault, doc, &documents)?;
+    }
     calendar::reconcile(&ctx)?;
     Ok(ledger.count)
 }

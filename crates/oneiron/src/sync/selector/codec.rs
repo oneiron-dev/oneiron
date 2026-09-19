@@ -310,7 +310,7 @@ pub fn guest_share_envelope_body(
         vault.store.clock.now_recorded_at(),
     )?;
     let filtered = filter_window_doc(vault, source, key, grant_scope, selector, empty)?;
-    let stripped = strip_guest_share_metadata(&filtered, key)?;
+    let stripped = strip_guest_share_metadata(vault, &filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;

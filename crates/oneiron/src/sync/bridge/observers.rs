@@ -456,6 +456,7 @@ pub fn register_observer_b_with_tee(
         ("tombstones", tee.clone()),
     );
 
+    let entity_sub = super::note::subscribe(doc, vault, materializer, window_key, entity_sub);
     (entity_sub, edge_sub, tombstone_sub)
 }
 

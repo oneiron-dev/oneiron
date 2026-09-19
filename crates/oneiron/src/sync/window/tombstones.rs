@@ -51,6 +51,8 @@ pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[
         map_insert_bytes(&tombstones, &hex_id, raw_value)?;
     }
 
+    crate::note::sync::deleted(doc, id)?;
+
     let entities = doc.get_map("entities");
     if entities.get(&hex_id).is_some() {
         map_delete(&entities, &hex_id)?;

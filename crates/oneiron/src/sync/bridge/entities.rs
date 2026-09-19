@@ -115,6 +115,11 @@ pub(super) fn materialize_entities_from_delta(
                     // tombstone key still names this id). Presence is
                     // value-agnostic (a non-binary tombstone decodes HARD
                     // downstream).
+                    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                        && crate::note::sync::is_native(doc)
+                    {
+                        continue; // Root NOTE observer admits core and documents atomically.
+                    }
                     let delete_protected =
                         crate::registry::is_delete_protected_engine_record(header.entity_type);
                     if !delete_protected && tombstone_map_contains_id(&tombstones_map, &id) {

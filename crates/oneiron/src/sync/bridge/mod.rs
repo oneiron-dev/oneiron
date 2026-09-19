@@ -21,6 +21,7 @@ mod childof;
 mod companion_identity;
 mod edges;
 mod entities;
+mod note;
 mod observers;
 mod recovery;
 pub(crate) use recovery::preflight_canonical_recovery;

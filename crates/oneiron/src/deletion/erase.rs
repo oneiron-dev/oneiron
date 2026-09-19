@@ -379,6 +379,7 @@ impl Vault {
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+        let note_removed = crate::note::erase::purge(self, wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
         if had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
@@ -386,7 +387,7 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed)
+        Ok(existed || note_removed)
     }
 
     pub(super) fn soft_erase_active_store_in_txn(
@@ -402,6 +403,7 @@ impl Vault {
         if hint_had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
+        crate::note::erase::purge(self, wtxn, id)?;
         bm25::deindex_text(&self.store, wtxn, id)?;
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
         crate::code_revision::delete_code_revision_lifecycle_in_txn(&self.store, wtxn, id)?;
@@ -785,6 +787,9 @@ impl Vault {
             return Ok(true);
         }
 
+        if crate::note::erase::scope_exists(self, txn, id)? {
+            return Ok(true);
+        }
         vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)
     }
 }
