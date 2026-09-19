@@ -123,7 +123,7 @@ async fn conversation_rooms_members_threads_and_filters_round_trip() {
 #[tokio::test]
 async fn conversation_member_writes_require_scoped_actor_class() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_token: Some("secret".to_owned()),
+        auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
     let actor = server.vault.ensure_embedded_owner_actor().unwrap();
