@@ -1029,6 +1029,7 @@ fn read_receipt_schema_is_mandatory_and_query_is_not_an_opaque_object() {
         "CoreHydrateResponse",
         "CoreBatchShortIdHydrateResponse",
         "CoreContextPackResponse",
+        "CoreMemoryTimelineResponse",
     ] {
         assert!(
             requires_receipt(openapi_component_schema(&spec, name)),
@@ -1043,6 +1044,23 @@ async fn core_hydrate_absence_retains_receipt_without_counting_missing_refs() {
     let (status, body) = route_json(
         server,
         json_request("POST", "/v1/core/hydrate", json!({"ref": "cl999999:00"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["narrowing"]["suppressed_count"], 0);
+    assert!(body["narrowing"]["applied"].is_object());
+}
+
+#[tokio::test]
+async fn core_memory_timeline_absence_retains_the_read_receipt() {
+    let (_dir, server) = test_server();
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "GET",
+            "/v1/core/memory/03030303030303030303030303030303/timeline",
+            json!(null),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);

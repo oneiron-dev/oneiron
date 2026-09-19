@@ -88,7 +88,9 @@ impl ReadScope {
 }
 
 impl ScopedReadReceipt {
-    pub(crate) fn add_suppressed(&mut self, count: usize) {
+    /// Add existing rows withheld by a consumer projection, not missing refs or page limits.
+    /// The row-authority axis and re-plan hint stay consistent with the new count.
+    pub fn add_suppressed(&mut self, count: usize) {
         self.suppressed_count = self.suppressed_count.saturating_add(count);
         self.record_axes();
     }

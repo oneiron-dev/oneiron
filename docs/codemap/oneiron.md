@@ -480,11 +480,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/put.rs` | src | m | 1 fn · 5 crate-vis | — | `Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the… |
 | `src/claim/read.rs` | src | m | 2 fn · 9 crate-vis | — | `Vault` claim read doors: targeted `get_claim`, the subject/predicate scans, the session-bundle projection… |
 | `src/claim/scope.rs` | src | s | 2 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
-| `src/claim/scoped_read.rs` | src | m | 1 struct · 13 fn · 2 re-export · 4 crate-vis | ScopedRead | The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that… |
+| `src/claim/scoped_read.rs` | src | m | 1 struct · 11 fn · 2 re-export · 4 crate-vis | ScopedRead | The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that… |
 | `src/claim/scoped_read/access_gate.rs` | src | s | 2 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
 | `src/claim/scoped_read/actor_key.rs` | src | s | 1 struct · 5 fn | ScopedReadActorKey | Authenticated identity carried by a scoped read |
+| `src/claim/scoped_read/graph_reads.rs` | src | s | 2 fn | — | Receipted graph and timeline reads under the resolved actor floor |
 | `src/claim/scoped_read/point_reads.rs` | src | s | 5 fn · 1 crate-vis | — | Same-snapshot, receipted point and short-reference hydration doors |
-| `src/claim/scoped_read/receipt.rs` | src | s | 3 struct · 3 fn · 2 crate-vis | ReadScope, ScopedReadReceipt, ScopedReadResult | Mandatory read receipts |
+| `src/claim/scoped_read/receipt.rs` | src | s | 3 struct · 4 fn · 1 crate-vis | ReadScope, ScopedReadReceipt, ScopedReadResult | Mandatory read receipts |
 | `src/claim/scoped_read/retrieval_visibility.rs` | src | s | 3 crate-vis | — | The retrieval authority floor for graph channels on a scoped read |
 | `src/claim/source_trust.rs` | src | m | 2 enum · 19 crate-vis | ClaimDemotionAction, ClaimDemotionRung | Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus… |
 | `src/claim/status.rs` | src | s | 3 enum · 3 fn · 4 crate-vis | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |

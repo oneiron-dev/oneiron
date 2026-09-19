@@ -5912,7 +5912,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 4,
-      "fn": 13,
+      "fn": 11,
       "re-export": 2,
       "struct": 1
      }
@@ -5944,6 +5944,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/scoped_read/graph_reads.rs",
+     "purpose": "Receipted graph and timeline reads under the resolved actor floor",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "Same-snapshot, receipted point and short-reference hydration doors",
      "surface": {
@@ -5962,8 +5972,8 @@
      "path": "src/claim/scoped_read/receipt.rs",
      "purpose": "Mandatory read receipts",
      "surface": {
-      "crate-vis": 2,
-      "fn": 3,
+      "crate-vis": 1,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -25536,7 +25546,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26581,7 +26591,7 @@
    },
    "over_bar": 1,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1529,
+   "source_files": 1530,
    "test_files": 539
   },
   "oneiron-bench": {

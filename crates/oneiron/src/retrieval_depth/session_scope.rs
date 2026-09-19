@@ -103,7 +103,7 @@ fn claim_world(scoped: &ScopedRead<'_>, id: &EntityId) -> Result<Option<EntityId
 }
 
 fn carries_facet(scoped: &ScopedRead<'_>, id: &EntityId, facet: &EntityId) -> Result<bool> {
-    let Some(edges) = scoped.edges_out(id)? else {
+    let Some(edges) = scoped.edges_out(id)?.value else {
         return Ok(false);
     };
     Ok(edges

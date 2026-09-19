@@ -7,7 +7,6 @@ use std::collections::HashSet;
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_pack::{ContextEntity, ContextPack, EmptyContext, EmptyReason};
-use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -15,6 +14,7 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFi
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod graph_reads;
 mod point_reads;
 mod receipt;
 mod retrieval_visibility;
@@ -291,34 +291,6 @@ impl<'a> ScopedRead<'a> {
         crate::retrieval_depth::execute(self, request)
     }
 
-    pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
-        if !self.is_entity_readable(anchor)? {
-            return Ok(MemoryTimeline {
-                anchor: *anchor,
-                records: Vec::new(),
-            });
-        }
-        let mut timeline = self.vault.memory_timeline(anchor)?;
-        timeline.records = self.filter_memory_timeline_records(timeline.records)?;
-        Ok(timeline)
-    }
-
-    pub fn edges_out(&self, id: &EntityId) -> Result<Option<Vec<EdgeInfo>>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
-        if !self.is_entity_readable_with_policy_in(&rtxn, &policy, id)? {
-            return Ok(None);
-        }
-        let edges = self.edges_out_in(&rtxn, id)?;
-        let mut kept = Vec::with_capacity(edges.len());
-        for edge in edges {
-            if self.is_entity_readable_with_policy_in(&rtxn, &policy, &edge.target)? {
-                kept.push(edge);
-            }
-        }
-        Ok(Some(kept))
-    }
-
     pub fn search_candidate_limit(
         &self,
         requested: usize,
@@ -430,7 +402,11 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
-        self.is_entity_readable_with_filter_in(rtxn, policy, id, None)
+        let filter = crate::gate::narrow_retrieval_filter(
+            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
+            None,
+        )?;
+        self.is_entity_retrievable_with_policy_in(rtxn, policy, &filter, id)
     }
 
     fn is_entity_readable_with_filter_in(
@@ -438,7 +414,7 @@ impl<'a> ScopedRead<'a> {
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         id: &EntityId,
-        filter: Option<&ResolvedRetrievalFilter>,
+        filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
         let Some(raw) = self.entities().get(rtxn, id.as_bytes())? else {
             return Ok(false);
@@ -474,7 +450,7 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
-        filter: Option<&ResolvedRetrievalFilter>,
+        filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
         if raw.len() == ENTITY_METADATA_HEADER_LEN
             && self.vault.store.entity_deletion_present_in_txn(
@@ -497,12 +473,9 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         body: &ClaimBody,
-        filter: Option<&ResolvedRetrievalFilter>,
+        filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
-        let admitted = match filter {
-            Some(filter) => crate::pipeline::retrieval_claim_allowed(filter, body),
-            None => claim_surfaceable(body),
-        };
+        let admitted = crate::pipeline::retrieval_claim_allowed(filter, body);
         if !admitted || !self.relationship_claim_allowed_in(rtxn, body)? {
             return Ok(false);
         }
@@ -531,7 +504,7 @@ impl<'a> ScopedRead<'a> {
                     self.vault, rtxn, &entity,
                 )?
             {
-                self.filter_context_entity_edges(rtxn, policy, &mut entity)?;
+                self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
                 kept.push(entity);
             } else if self.entities().get(rtxn, entity.id.as_bytes())?.is_some() {
                 suppressed += 1;
@@ -613,6 +586,7 @@ impl<'a> ScopedRead<'a> {
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
         entity: &mut ContextEntity,
     ) -> Result<()> {
         let Some(edges) = entity.edges.as_mut() else {
@@ -620,40 +594,12 @@ impl<'a> ScopedRead<'a> {
         };
         let mut kept = Vec::with_capacity(edges.len());
         for edge in edges.drain(..) {
-            if self.is_entity_readable_with_policy_in(rtxn, policy, &edge.target)? {
+            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &edge.target)? {
                 kept.push(edge);
             }
         }
         *edges = kept;
         Ok(())
-    }
-
-    fn filter_memory_timeline_records(
-        &self,
-        records: Vec<MemoryTimelineRecord>,
-    ) -> Result<Vec<MemoryTimelineRecord>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
-        let mut kept = Vec::with_capacity(records.len());
-        for record in records {
-            let readable = match (record.state, record.entity_type) {
-                (MemoryTimelineRecordState::Missing, _) => false,
-                (_, Some(ENTITY_TYPE_CLAIM)) => {
-                    self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
-                }
-                (_, Some(_)) => true,
-                (_, None) => false,
-            };
-            if readable {
-                kept.push(record);
-            }
-        }
-        let kept_ids: HashSet<EntityId> = kept.iter().map(|record| record.id).collect();
-        for record in &mut kept {
-            record.supersedes.retain(|id| kept_ids.contains(id));
-            record.superseded_by.retain(|id| kept_ids.contains(id));
-        }
-        Ok(kept)
     }
 
     pub(crate) fn policy_manifest_in(

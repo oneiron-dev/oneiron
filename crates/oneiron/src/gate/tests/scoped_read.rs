@@ -861,6 +861,8 @@ fn scoped_read_memory_timeline_prunes_links_to_filtered_records() -> Result<()> 
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let timeline = scoped_read.memory_timeline(&new)?;
+    assert_eq!(timeline.receipt.suppressed_count, 1);
+    assert_eq!(timeline.receipt.replan_hint, vec!["row_authority"]);
     assert_eq!(timeline.records.len(), 1);
     let record = &timeline.records[0];
     assert_eq!(record.id, new);
@@ -892,6 +894,7 @@ fn scoped_read_memory_timeline_rejects_unreadable_anchor() -> Result<()> {
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let timeline = scoped_read.memory_timeline(&denied_anchor)?;
+    assert_eq!(timeline.receipt.suppressed_count, 1);
     assert!(
         timeline.records.is_empty(),
         "unreadable anchors must not reveal readable chain neighbors"
@@ -934,13 +937,15 @@ fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
     vault.put_edge(&denied_source, EdgeKind::Supports, &allowed_claim, 0.7)?;
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
-    let edges = scoped_read
-        .edges_out(&source)?
+    let result = scoped_read.edges_out(&source)?;
+    assert_eq!(result.receipt.suppressed_count, 1);
+    let edges = result
+        .value
         .expect("readable source should return scoped edges");
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].target, allowed_claim);
     assert!(
-        scoped_read.edges_out(&denied_source)?.is_none(),
+        scoped_read.edges_out(&denied_source)?.value.is_none(),
         "denied edge sources must not reveal outgoing relationships"
     );
     Ok(())
@@ -1040,5 +1045,50 @@ fn scoped_receipts_include_prefilter_exclusions_and_refresh_point_authority() ->
     let missing = reader.get_entity_parts_with_receipt(&test_id(0x53), None)?;
     assert!(missing.value.is_none());
     assert_eq!(missing.receipt.suppressed_count, 0);
+    Ok(())
+}
+
+#[test]
+fn graph_read_receipts_clamp_nonclaim_types_and_include_unnarrowed_reads() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let source = test_id(0xE1);
+    let target = test_id(0xE2);
+    vault.put_entity(&source, ENTITY_TYPE_TURN, test_time(1), 1, b"source")?;
+    vault.put_entity(&target, ENTITY_TYPE_ASSET, test_time(1), 1, b"target")?;
+    vault.put_edge(&source, EdgeKind::Supports, &target, 0.7)?;
+    let install = |types: &[u8]| {
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0xE3),
+            &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+                "graph-reader",
+                Value::Map(vec![(
+                    Value::from("entity_types"),
+                    Value::Array(types.iter().copied().map(Value::from).collect()),
+                )]),
+            )]),
+        )
+    };
+    let read = vault.scoped_read(ScopedReadActorKey::new("graph-reader").unwrap());
+    install(&[ENTITY_TYPE_CLAIM])?;
+    let denied_edges = read.edges_out(&source)?;
+    assert!(denied_edges.value.is_none());
+    assert_eq!(denied_edges.receipt.suppressed_count, 1);
+    let denied_timeline = read.memory_timeline(&source)?;
+    assert!(denied_timeline.records.is_empty());
+    assert_eq!(denied_timeline.receipt.suppressed_count, 1);
+    install(&[ENTITY_TYPE_TURN])?;
+    let narrowed_edges = read.edges_out(&source)?;
+    assert!(narrowed_edges.value.unwrap().is_empty());
+    assert_eq!(narrowed_edges.receipt.suppressed_count, 1);
+    let timeline = read.memory_timeline(&source)?;
+    assert_eq!(timeline.records.len(), 1);
+    assert_eq!(timeline.receipt.suppressed_count, 0);
+    install(&[ENTITY_TYPE_TURN, ENTITY_TYPE_ASSET])?;
+    let complete = read.edges_out(&source)?;
+    assert_eq!(complete.value.unwrap()[0].target, target);
+    assert_eq!(complete.receipt.suppressed_count, 0);
+    assert!(complete.receipt.replan_hint.is_empty());
     Ok(())
 }
