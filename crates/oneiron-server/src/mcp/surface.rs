@@ -114,6 +114,7 @@ impl McpSurfaceMode {
 pub enum McpVerbFamily {
     Board,
     Tasks,
+    Rooms,
 }
 
 impl McpVerbFamily {
@@ -122,6 +123,7 @@ impl McpVerbFamily {
         match self {
             Self::Board => "board",
             Self::Tasks => "tasks",
+            Self::Rooms => "rooms",
         }
     }
 
@@ -129,6 +131,7 @@ impl McpVerbFamily {
         match prefix {
             "board" => Some(Self::Board),
             "tasks" => Some(Self::Tasks),
+            "rooms" => Some(Self::Rooms),
             _ => None,
         }
     }
@@ -146,6 +149,12 @@ pub enum McpVerbBinding {
     BoardRefresh,
     BoardSubscribe,
     BoardUnsubscribe,
+    TasksAsk,
+    TasksWait,
+    RoomsList,
+    RoomsMessages,
+    RoomsSpeak,
+    RoomsClaim,
     TasksAck,
     TasksCancel,
     TasksCheck,
@@ -181,6 +190,7 @@ pub fn exported_verb_rows() -> Vec<&'static str> {
     let mut rows = Vec::with_capacity(BOARD_VERBS.len() + TASKS_VERBS.len());
     rows.extend_from_slice(&BOARD_VERBS);
     rows.extend_from_slice(&TASKS_VERBS);
+    rows.extend_from_slice(&oneiron::workspace_roster::ROOMS_VERBS);
     rows
 }
 
@@ -247,6 +257,12 @@ fn verb_binding(family: McpVerbFamily, verb: &str) -> Option<McpVerbBinding> {
         (McpVerbFamily::Board, "refresh") => Some(McpVerbBinding::BoardRefresh),
         (McpVerbFamily::Board, "subscribe") => Some(McpVerbBinding::BoardSubscribe),
         (McpVerbFamily::Board, "unsubscribe") => Some(McpVerbBinding::BoardUnsubscribe),
+        (McpVerbFamily::Tasks, "ask") => Some(McpVerbBinding::TasksAsk),
+        (McpVerbFamily::Tasks, "wait") => Some(McpVerbBinding::TasksWait),
+        (McpVerbFamily::Rooms, "list") => Some(McpVerbBinding::RoomsList),
+        (McpVerbFamily::Rooms, "messages") => Some(McpVerbBinding::RoomsMessages),
+        (McpVerbFamily::Rooms, "speak") => Some(McpVerbBinding::RoomsSpeak),
+        (McpVerbFamily::Rooms, "claim") => Some(McpVerbBinding::RoomsClaim),
         (McpVerbFamily::Tasks, "ack") => Some(McpVerbBinding::TasksAck),
         (McpVerbFamily::Tasks, "cancel") => Some(McpVerbBinding::TasksCancel),
         (McpVerbFamily::Tasks, "check") => Some(McpVerbBinding::TasksCheck),

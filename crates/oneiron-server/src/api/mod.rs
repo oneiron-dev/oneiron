@@ -89,6 +89,7 @@ mod core;
 mod discover;
 mod entity;
 mod error_map;
+mod esign;
 // ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
 // surface, nested at `/v1/core/facade`. Its own file because it is its own
 // contract — one route per public verb, engine DTOs verbatim, and a facade
@@ -306,6 +307,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // BK-08's machine-readable booking surface. Every route addresses the
         // page by opaque token and dispatches into the one shared executor.
         .merge(self::booking::booking_routes())
+        .merge(self::esign::routes())
         // ONE-1908: git smart-HTTP. Stock clients clone, fetch, and push here;
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())

@@ -1227,7 +1227,9 @@ fn tool_first_endpoint_is_generated_from_the_exported_verb_rows() {
     assert_eq!(surface.tool_names(), expected);
     assert_eq!(
         expected.len(),
-        oneiron::board_verb::BOARD_VERBS.len() + oneiron::task_verb::TASKS_VERBS.len(),
+        oneiron::board_verb::BOARD_VERBS.len()
+            + oneiron::task_verb::TASKS_VERBS.len()
+            + oneiron::workspace_roster::ROOMS_VERBS.len(),
     );
 
     // Every registered tool IS a projection of a row: nothing hand-written.
@@ -1862,6 +1864,14 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
 /// The minimal in-grammar `arguments` object for one generated verb.
 fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
     match verb.binding {
+        McpVerbBinding::TasksAsk => {
+            json!({"spec":{"question":{"text":"answer"},"holders":[ACTOR_ID],"idempotency_key":"ask-test","outcome_binding":null}})
+        }
+        McpVerbBinding::TasksWait => json!({"task_ref":ACTOR_ID,"key":"step-one"}),
+        McpVerbBinding::RoomsList => json!({}),
+        McpVerbBinding::RoomsMessages => json!({"room_ref":ACTOR_ID}),
+        McpVerbBinding::RoomsClaim => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
+        McpVerbBinding::RoomsSpeak => json!({"room_ref":ACTOR_ID,"spec":{}}),
         McpVerbBinding::BoardExpand => json!({ "key": "TASKS" }),
         McpVerbBinding::BoardRefresh | McpVerbBinding::TasksCheck => json!({}),
         McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => {
