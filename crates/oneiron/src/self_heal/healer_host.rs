@@ -43,6 +43,8 @@ pub struct ProposalBurstCheck {
     #[serde(with = "super::receipt_serde::id")]
     pub actor: EntityId,
     pub count: u64,
+    /// Run that crossed the threshold, not the scope of the actor-wide burst.
+    /// Use `Vault::reverse_healer_burst` to reverse the flagged actor's submissions.
     pub run_ref: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -162,23 +164,56 @@ impl Vault {
                 .vault_meta
                 .get(txn, &rk)?
                 .ok_or(Error::EntityNotFound)?;
-            let mut receipt: HealerRunReceipt = decode(&raw)?;
-            for id in &receipt.proposals {
-                let pk = key(b"healer:proposal:", id.as_bytes());
-                let raw = self
-                    .store
-                    .vault_meta
-                    .get(txn, &pk)?
-                    .ok_or(Error::EntityNotFound)?;
-                let mut record: HealerProposalRecord = decode(&raw)?;
-                if record.state == ProposalState::Proposed {
-                    record.state = ProposalState::Reversed;
-                    self.store.vault_meta.put(txn, &pk, &encode(&record)?)?;
-                }
+            let receipt: HealerRunReceipt = decode(&raw)?;
+            if receipt.actor != *actor || receipt.run_ref != run {
+                return Err(Error::CorruptedIndex("healer run key mismatch"));
             }
-            receipt.reversed = true;
-            self.store.vault_meta.put(txn, &rk, &encode(&receipt)?)?;
-            Ok(receipt)
+            reverse_receipt_in_txn(self, txn, receipt)
+        })
+    }
+    /// Reverses all still-proposed submissions for a flagged actor, across
+    /// caller-chosen run names. Every run receipt changes in one transaction.
+    /// Released or denied proposals remain terminal and are never undone.
+    pub fn reverse_healer_burst(
+        &self,
+        owner: &AuthenticatedOwner,
+        check: &ProposalBurstCheck,
+    ) -> Result<Vec<HealerRunReceipt>> {
+        self.authenticate_owner(
+            owner.actor(),
+            owner.principal_ref(),
+            true,
+            owner.decision_id(),
+        )?;
+        self.with_write_txn(|txn| {
+            let count_key = key(b"healer:count:", check.actor.as_bytes());
+            let row = self
+                .store
+                .vault_meta
+                .get(txn, &count_key)?
+                .ok_or_else(|| Error::InvalidConfig("actor has no burst check".into()))?;
+            let counter: ActorCount = decode(&row)?;
+            if counter.check.as_ref() != Some(check) {
+                return Err(Error::InvalidConfig("burst check is not current".into()));
+            }
+            let prefix = key(b"healer:run:", check.actor.as_bytes());
+            let receipts: Vec<HealerRunReceipt> = self
+                .store
+                .vault_meta
+                .prefix_iter(txn, &prefix)?
+                .map(|row| {
+                    let (_, raw) = row?;
+                    decode(&raw)
+                })
+                .collect::<Result<_>>()?;
+            let mut reversed = Vec::with_capacity(receipts.len());
+            for receipt in receipts {
+                if receipt.actor != check.actor {
+                    return Err(Error::CorruptedIndex("healer burst actor mismatch"));
+                }
+                reversed.push(reverse_receipt_in_txn(self, txn, receipt)?);
+            }
+            Ok(reversed)
         })
     }
     /// A human-ratified shipped-release PR shape. There is no apply/execute method.
@@ -244,6 +279,32 @@ impl Vault {
             Ok(pr)
         })
     }
+}
+fn reverse_receipt_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    mut receipt: HealerRunReceipt,
+) -> Result<HealerRunReceipt> {
+    for id in &receipt.proposals {
+        let pk = key(b"healer:proposal:", id.as_bytes());
+        let raw = vault
+            .store
+            .vault_meta
+            .get(txn, &pk)?
+            .ok_or(Error::EntityNotFound)?;
+        let mut record: HealerProposalRecord = decode(&raw)?;
+        if record.state == ProposalState::Proposed {
+            record.state = ProposalState::Reversed;
+            vault.store.vault_meta.put(txn, &pk, &encode(&record)?)?;
+        }
+    }
+    receipt.reversed = true;
+    vault.store.vault_meta.put(
+        txn,
+        &run_key(&receipt.actor, &receipt.run_ref),
+        &encode(&receipt)?,
+    )?;
+    Ok(receipt)
 }
 fn run_key(actor: &EntityId, run: &str) -> Vec<u8> {
     let mut k = key(b"healer:run:", actor.as_bytes());

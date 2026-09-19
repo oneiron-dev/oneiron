@@ -251,3 +251,51 @@ fn production_refs_refuse_protected_namespaces_before_persistence() {
         }
     }
 }
+
+#[test]
+fn actor_burst_reversal_covers_distinct_run_names() {
+    let (_dir, v, owner, actor) = fixture();
+    let previous = super::healer_host::PROPOSAL_BURST_THRESHOLD - 1;
+    v.with_write_txn(|txn| {
+        let mut key = b"healer:count:".to_vec();
+        key.extend_from_slice(actor.entity_ref().as_bytes());
+        let body = rmp_serde::to_vec_named(&serde_json::json!({"count": previous, "check": null}))
+            .unwrap();
+        v.store.vault_meta.put(txn, &key, &body)?;
+        Ok(())
+    })
+    .unwrap();
+    let registration = v
+        .register_dev_healer(HealerDeployment::SelfHostSingleWriter, actor)
+        .unwrap();
+    let mut ids = Vec::new();
+    for run in ["first-run", "second-run"] {
+        let proposal = patch(RepairOperation::DevPatch {
+            repo_ref: "repo".into(),
+            patch_ref: "patch".into(),
+        });
+        ids.push(proposal.proposal_id);
+        registration.submit(run, "session", proposal).unwrap();
+    }
+    let check = v
+        .proposal_burst_check(&actor.entity_ref())
+        .unwrap()
+        .unwrap();
+    let receipts = v.reverse_healer_burst(&owner, &check).unwrap();
+    assert_eq!(receipts.len(), 2);
+    assert!(receipts.iter().all(|receipt| receipt.reversed));
+    for id in ids {
+        assert_eq!(
+            v.healer_proposal(&id).unwrap().unwrap().state,
+            ProposalState::Reversed
+        );
+    }
+    for run in ["first-run", "second-run"] {
+        assert!(
+            v.healer_run_receipt(&actor.entity_ref(), run)
+                .unwrap()
+                .unwrap()
+                .reversed
+        );
+    }
+}

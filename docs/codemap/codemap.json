@@ -19775,12 +19775,12 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/self_heal/healer_host_tests.rs",
