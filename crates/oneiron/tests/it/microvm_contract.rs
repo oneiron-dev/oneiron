@@ -284,7 +284,9 @@ mod dev_backend {
                     SandboxProposalWrite::FileWrite(write) => {
                         (write.path.as_str().to_owned(), write.bytes.clone())
                     }
-                    SandboxProposalWrite::ClaimCandidate(_) => unreachable!("file writes only"),
+                    SandboxProposalWrite::ClaimCandidate(_) | SandboxProposalWrite::FileEdit(_) => {
+                        unreachable!("file writes only")
+                    }
                 }
             })
             .collect::<Vec<_>>();

@@ -266,7 +266,9 @@ fn code_sandbox_microvm_overlay_small_multifile_parity() {
         .into_iter()
         .map(|write| match write {
             SandboxProposalWrite::FileWrite(write) => (write.path.as_str().to_owned(), write.bytes),
-            SandboxProposalWrite::ClaimCandidate(_) => unreachable!("file writes only"),
+            SandboxProposalWrite::ClaimCandidate(_) | SandboxProposalWrite::FileEdit(_) => {
+                unreachable!("file writes only")
+            }
         })
         .collect::<Vec<_>>();
     collected.sort();
@@ -397,11 +399,8 @@ fn code_sandbox_microvm_isolating_tiers_never_fall_through_silently() {
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
         match select_backend_for_tier(tier) {
             Ok(selected) => {
-                let _backend = selected.expect("isolating tier requires a backend");
-                assert!(
-                    dev_backend_compiled() || firecracker_backend_compiled(),
-                    "a backend was returned without one being compiled in"
-                );
+                let backend = selected.expect("isolating tier requires a backend");
+                assert_eq!(backend.name(), "firecracker");
             }
             Err(error) => {
                 assert_eq!(error.kind(), ErrorKind::MicroVmBackendUnavailable);
