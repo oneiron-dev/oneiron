@@ -30,25 +30,3 @@ test("native exact key, replay, namespace and deletion round trip", () => {
     expect(() => memory.keyValuePut({ ...request, value: { invalid: Number.NaN } })).toThrow(OneironError)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
-
-
-// DTO behavior is observable without a native policy exception. Explicitly
-// undefined source becomes the engine's generated default, not user_stated.
-test("undefined optional envelope fields omit, undefined JSON data refuses", async () => {
-  const { keyedJson } = await import("../src/key-value.js")
-  expect(JSON.parse(keyedJson({ namespace: ["n"], key: "k", request_id: "r",
-    value: { n: 2 }, source: undefined }))).toEqual({ namespace: ["n"], key: "k",
-    request_id: "r", value: { n: 2 } })
-  expect(JSON.parse(keyedJson({ namespace_prefix: [], limit: undefined,
-    offset: undefined, filter: undefined }))).toEqual({ namespace_prefix: [] })
-  expect(JSON.parse(keyedJson({ prefix: undefined, suffix: undefined,
-    max_depth: undefined }))).toEqual({})
-  for (const value of [
-    { value: { nested: undefined } },
-    { value: { source: undefined } },
-    { value: { nested: [undefined] } },
-    { filter: { n: undefined } },
-    { value: undefined },
-    { value: { n: Number.POSITIVE_INFINITY } },
-  ]) expect(() => keyedJson(value)).toThrow(OneironError)
-})

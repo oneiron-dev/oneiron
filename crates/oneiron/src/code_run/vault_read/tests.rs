@@ -117,6 +117,7 @@ fn wire_adapter(reply: Value) -> (Arc<ScriptedTransport>, WireTransportVaultRead
 
 fn empty_projection() -> CoreContextPackProjection {
     CoreContextPackProjection {
+        capabilities: Vec::new(),
         results: Vec::new(),
         neighbors: Vec::new(),
         stats: CoreContextPackStats {

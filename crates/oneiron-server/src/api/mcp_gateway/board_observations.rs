@@ -20,8 +20,8 @@ pub(super) async fn read_set<'a>(
         actor.gate_actor_class,
         &actor.gate_actor_ref,
         &actor.stream_connection.0,
-        actor.scope.world_ref,
-        actor.scope.facet_ref,
+        actor.scope.world_ref.map(|id| id.to_hex()),
+        actor.scope.facet_ref.map(|id| id.to_hex()),
     ))
     .expect("string tuple serializes");
     let mut store = server.memories_cursors.lock().await;
