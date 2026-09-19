@@ -362,6 +362,29 @@ fn pipeline_reports_pending_vector_state_for_retrieved_claim() -> Result<()> {
         .token
         .clone();
 
+    let owner = crate::federation::derivation::DerivationOwner([7; 32]);
+    vault.bind_derivation_owner(owner)?;
+    let resealed = vault
+        .query()
+        .search_text("pendingvectorneedle", 10)
+        .run_with_pending_vectors()?;
+    assert_eq!(resealed.pending_vector_ids, vec![claim]);
+    let sealed_token = resealed.pending_vectors[0].token.clone();
+    assert_ne!(sealed_token, token);
+    // Work dispatched before the owner binding cannot complete under that owner.
+    vault
+        .batch()
+        .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
+        .commit()?;
+    assert!(vault.get_vector(&claim)?.is_none());
+    vault.bind_derivation_owner(owner)?;
+    let repeated = vault
+        .query()
+        .search_text("pendingvectorneedle", 10)
+        .run_with_pending_vectors()?;
+    assert_eq!(repeated.pending_vectors[0].token, sealed_token);
+    let token = sealed_token;
+
     vault
         .batch()
         .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)

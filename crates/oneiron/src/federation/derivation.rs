@@ -141,6 +141,7 @@ impl crate::Vault {
                     ));
                 }
             } else {
+                self.store.seal_pending_embeddings_for_owner(txn, owner)?;
                 self.store.vault_meta.put(txn, key, &owner.0)?;
             }
             Ok(DerivationScope { owner })

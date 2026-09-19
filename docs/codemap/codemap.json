@@ -21350,7 +21350,7 @@
      "path": "src/store/pending_embedding.rs",
      "purpose": "Pending-embedding marker rows gating vector writes: encode/decode, mark/clear, and token checks",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {

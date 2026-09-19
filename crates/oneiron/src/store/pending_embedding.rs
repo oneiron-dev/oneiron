@@ -95,6 +95,38 @@ impl Store {
         Ok(token.to_vec())
     }
 
+    /// Reseal already queued work during the first account binding. Historical
+    /// or stale tokens stay stale; only work current before the binding moves.
+    pub(crate) fn seal_pending_embeddings_for_owner(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        owner: crate::federation::derivation::DerivationOwner,
+    ) -> Result<()> {
+        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let pending = self
+            .sync_state
+            .prefix_iter(&*wtxn, PENDING_EMBEDDING_MARKER_PREFIX)?
+            .map(|row| row.map(|(key, marker)| (key.into_owned(), marker.to_vec())))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for (key, marker) in pending {
+            let id = EntityId::from_hex(
+                key.strip_prefix(PENDING_EMBEDDING_MARKER_PREFIX)
+                    .ok_or(crate::Error::CorruptedIndex("pending embedding key"))?,
+            )?;
+            let Some(record) = self.entities.get(&*wtxn, id.as_bytes())? else {
+                continue;
+            };
+            let Some(body) = self.embeddable_body_from_record(&record) else {
+                continue;
+            };
+            if Self::pending_marker_is_current(&marker, epoch, body, None) {
+                let token = Self::scoped_embedding_token(epoch, body, Some(owner));
+                self.sync_state.put(wtxn, &key, &token)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn clear_pending_embedding(
         &self,
         wtxn: &mut RwTxn<'_>,
