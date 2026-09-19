@@ -38,3 +38,12 @@ use crate::serialize::WHOLE_VAULT_EXPORT_SERIALIZER;
 use crate::store::{STORAGE_ABI_VERSION, STORAGE_SCHEMA_VERSION};
 #[cfg(test)]
 use std::collections::BTreeSet;
+
+mod document_import;
+mod document_snapshot;
+mod document_types;
+mod document_validation;
+pub(crate) use document_snapshot::ExportSnapshot;
+pub use document_types::*;
+#[cfg(test)]
+mod document_tests;

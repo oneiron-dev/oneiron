@@ -32,3 +32,8 @@ pub use pack_entry::{
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use item_budget::is_critical_claim_predicate;
 pub(crate) use pack_entry::{SerializedPackTelemetry, serialize_pack_with_telemetry};
+
+mod export_value;
+mod vault_document;
+pub use export_value::{ExportBody, ExportValue};
+pub(crate) use vault_document::serialize_vault_snapshot;
