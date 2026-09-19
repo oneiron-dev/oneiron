@@ -686,7 +686,9 @@ pub(super) fn cancel_target_state(
                 .and_then(|parent| decode_dreamer_attempt_payload(&parent.payload).ok())
                 .filter(|parent| parent.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
                 .and_then(|parent| decode_agent_dispatch_input(&parent.input).ok())
-                .is_some_and(|parent| agent_dispatch_actor(&parent).entity_ref() == actor);
+                .is_some_and(|parent| {
+                    agent_dispatch_actor(&parent).is_ok_and(|writer| writer.entity_ref() == actor)
+                });
             Ok(CancelTargetState {
                 owned,
                 task_ref: None,

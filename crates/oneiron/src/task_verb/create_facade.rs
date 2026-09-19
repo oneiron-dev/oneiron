@@ -322,7 +322,15 @@ impl Memory<'_> {
                 // Dispatched and deduped-existing are ONE idempotent outcome: a
                 // retried route returns the attempt already realizing the task.
                 let (AgentDispatchOutcome::Dispatched(status)
-                | AgentDispatchOutcome::Existing(status)) = outcome;
+                | AgentDispatchOutcome::Existing(status)) = outcome
+                else {
+                    return Err(crate::error::Error::Artifact(
+                        crate::error::ArtifactError::InvalidAgentDispatchInput(
+                            "root TASK dispatch unexpectedly proposed widening",
+                        ),
+                    )
+                    .into());
+                };
                 Ok(TaskRouteOutcome::AgentDispatch {
                     attempt_ref: status.attempt.id,
                     agent_def_ref,

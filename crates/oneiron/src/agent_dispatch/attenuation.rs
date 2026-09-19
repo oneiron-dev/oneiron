@@ -64,7 +64,9 @@ impl AgentDispatcher<'_> {
         };
         // The parent's ACTUAL target row, read live — its own attenuated fork
         // when it was itself clamped, which is what makes this hold recursively.
-        let parent_ceiling = self.dispatchable_definition(&parent_input.target)?.ceiling;
+        let parent_ceiling = self
+            .dispatchable_definition_in_txn(wtxn, &parent_input.target)?
+            .ceiling;
         let effective_child_ceiling =
             restrict_agent_ceiling(requested_definition.ceiling, parent_ceiling);
         if effective_child_ceiling == requested_definition.ceiling {

@@ -90,15 +90,15 @@ fn task_sweep_projects_defect_lapse_and_win_once_across_bounded_pages() -> Resul
     let after = skill_reliability_posterior(&vault, &skill)?.unwrap();
     assert_eq!(after.alpha, prior.alpha + 1.0);
     assert_eq!(after.beta, prior.beta + 1.0);
-    let failures: Vec<_> = vault
+    let failures = vault
         .claims_for_subject(&actor)?
         .into_iter()
         .filter_map(|id| vault.get_claim(&id).transpose())
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .filter(|body| body.predicate == crate::actor_claims::PREDICATE_ACTOR_FAILURE_MODE)
-        .collect();
-    assert_eq!(failures.len(), 1);
+        .count();
+    assert_eq!(failures, 1);
     let cursor = read_attribution_cursor(&vault)?;
     let rerun = run_task_attribution_sweep(&vault, 32, &source)?;
     assert_eq!(rerun.captured_evidence, 0);

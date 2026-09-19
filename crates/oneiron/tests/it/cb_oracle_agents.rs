@@ -176,7 +176,11 @@ mod cb_a {
         else {
             panic!("expected one fresh spawn");
         };
-        let AgentDispatchTarget::Custom(resolved_id) = status.input.target;
+        let resolved_id = status
+            .input
+            .target
+            .agent_definition_ref()
+            .expect("agent target");
         let resolved_logical_id = vault
             .get_agent_definition(&resolved_id)
             .expect("read the resolved row")
@@ -538,7 +542,11 @@ mod cb_a {
         // Effective ceilings come from the row each dispatch NAMED, read back
         // live — never from the frozen payload snapshot, which carries none.
         let effective = |status: &AgentDispatchStatus| {
-            let AgentDispatchTarget::Custom(id) = status.input.target;
+            let id = status
+                .input
+                .target
+                .agent_definition_ref()
+                .expect("agent target");
             vault
                 .get_agent_definition(&id)
                 .expect("read the dispatched row")

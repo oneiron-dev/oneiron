@@ -9,6 +9,7 @@
 mod enqueue_claim;
 mod mutate;
 mod reads;
+mod workflow;
 
 use crate::store::Store;
 

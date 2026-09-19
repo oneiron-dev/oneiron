@@ -9,6 +9,7 @@ mod codec;
 mod doors;
 mod identity;
 mod lifecycle;
+mod pack_load;
 mod record;
 mod validate;
 

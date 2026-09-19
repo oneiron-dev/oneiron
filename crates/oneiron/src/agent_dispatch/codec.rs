@@ -28,6 +28,11 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         Value::from(AGENT_DISPATCH_INPUT_SCHEMA_VERSION),
     )];
     match &input.target {
+        AgentDispatchTarget::Workflow(_) => {
+            return Err(super::widen_record::invalid(
+                "workflow requires its own payload",
+            ));
+        }
         AgentDispatchTarget::Custom(id) => {
             entries.push((Value::from(KEY_TARGET), Value::from(TARGET_CUSTOM)));
             entries.push((Value::from(KEY_AGENT_DEF), Value::from(id.to_hex())));
@@ -290,10 +295,11 @@ pub fn agent_dispatch_payload_agent_id(payload: &DreamerAttemptPayload) -> Optio
 /// `Agent`. This is the identity the gate's live ceiling resolver and
 /// `actor_ceilings` rows key on.
 #[must_use]
-pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> WriteActor {
-    match &input.target {
-        AgentDispatchTarget::Custom(id) => WriteActor::new(*id, EdgeActorClass::Agent),
-    }
+pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
+    Ok(WriteActor::new(
+        input.target.agent_definition_ref()?,
+        EdgeActorClass::Agent,
+    ))
 }
 
 /// A queue row's decoded dispatch input, or `None` when the row is not an
