@@ -79,6 +79,13 @@ fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()>
         needed_before: 150,
         waiting_harms_intent: true,
     };
+    vault.put_entity(
+        &entity(0x32),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"other owner",
+    )?;
     for change in 0..4 {
         let mut unrelated = intent.clone();
         match change {

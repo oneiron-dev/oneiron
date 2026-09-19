@@ -16,6 +16,13 @@ fn predicate_projection_tracks_overwrites_rollback_and_deletion() -> Result<()> 
         ClaimLifecycleStatus::Active,
     );
     let at = TimeRange { start: 1, end: 1 };
+    vault.put_entity(
+        &entity(0x76),
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        1,
+        b"subject",
+    )?;
     vault.put_claim(&id, &body, at, 1)?;
     let lookup = |predicate: &str| -> Result<Vec<EntityId>> {
         let txn = vault.store.env.read_txn()?;
