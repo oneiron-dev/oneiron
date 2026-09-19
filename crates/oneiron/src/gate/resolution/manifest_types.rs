@@ -2,7 +2,6 @@
 
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
-use crate::gate::breaker::GateBreakerThresholds;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
@@ -80,6 +79,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
     pub(super) source_trust: SourceTrustCeiling,
+    pub(super) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(super) scoped_grants: Vec<PolicyScopedGrant>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_rows_dropped: bool,
@@ -97,8 +97,4 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
-    /// ONE-1453: the ONE resolved burst-breaker dial, or `None` for engine
-    /// defaults. Zero valid overrides and two-or-more distinct valid overrides
-    /// both resolve here as `None`.
-    pub(super) actor_burst_breaker: Option<GateBreakerThresholds>,
 }

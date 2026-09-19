@@ -17,6 +17,10 @@ use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
+    pub(crate) fn is_single_valued_predicate(&self, predicate: &str) -> bool {
+        !self.is_fail_closed() && self.single_valued_predicates.contains(predicate)
+    }
+
     #[must_use]
     pub(crate) fn diagnostics(&self) -> PolicyManifestDiagnostics {
         self.diagnostics
@@ -73,7 +77,7 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
-    pub(in crate::gate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
+    pub(crate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
         if self.is_fail_closed() {
             return PolicyCriticality::Critical;
         }

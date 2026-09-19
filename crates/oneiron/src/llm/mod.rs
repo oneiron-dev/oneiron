@@ -7,6 +7,7 @@
 mod autocheck;
 mod backend;
 mod budget;
+mod burst_inputs;
 mod call;
 mod catalog;
 mod error;
@@ -36,6 +37,8 @@ pub use budget::{
     BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
 };
 pub(crate) use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
+
+pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub(crate) use self::autocheck::truncate_on_char_boundary;
 pub use self::autocheck::{

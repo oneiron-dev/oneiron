@@ -793,6 +793,7 @@ pub(super) fn gate_evaluator_input(
         },
         external_effect: None,
         agent_definition_ceiling: None,
+        foreign_agent_ceiling: None,
         consent: None,
     }
 }

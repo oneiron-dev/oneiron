@@ -33,6 +33,20 @@ pub(crate) fn agent_definition_ceiling_for_actor(
     txn: &heed::RoTxn<'_>,
     actor: WriteActor,
 ) -> Option<PolicyApprovalCeiling> {
+    let definition = definition_only_ceiling_for_actor(store, txn, actor);
+    let foreign = super::foreign_agent::resolve(store, txn, actor)
+        .unwrap_or(Some(PolicyApprovalCeiling::Proposed));
+    match (definition, foreign) {
+        (Some(a), Some(b)) => Some(a.restrict(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+pub(super) fn definition_only_ceiling_for_actor(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+) -> Option<PolicyApprovalCeiling> {
     if actor.actor_class() != EdgeActorClass::Agent {
         return None;
     }

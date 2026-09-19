@@ -12,7 +12,6 @@ use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
 use super::manifest_types::PolicyManifestResolution;
-use crate::gate::breaker::{GateBreakerThresholds, resolve_gate_breaker_thresholds};
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
@@ -24,10 +23,8 @@ pub(crate) fn resolve_policy_manifest(
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
+    let mut untrusted_source_rows = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
-    // ONE-1453: only VALID overrides enter the fold; a malformed one
-    // contributed no candidate at decode.
-    let mut actor_burst_breaker_candidates: Vec<GateBreakerThresholds> = Vec::new();
 
     for index_entry in store
         .type_index
@@ -51,9 +48,27 @@ pub(crate) fn resolve_policy_manifest(
             continue;
         }
 
-        match decode_policy_manifest(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]) {
+        let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        if crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, &id, body)? {
+            continue;
+        }
+        let trusted =
+            crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
+        match decode_policy_manifest(body) {
             Some(decoded) => {
                 resolution.diagnostics.manifest_count += 1;
+                if !trusted {
+                    untrusted_source_rows.push(decoded.source_trust);
+                    continue;
+                }
+                // Only trusted packs can authorize the no-LLM lane. Each must agree.
+                if resolution.packs.is_empty() {
+                    resolution.single_valued_predicates = decoded.single_valued_predicates;
+                } else {
+                    resolution
+                        .single_valued_predicates
+                        .retain(|p| decoded.single_valued_predicates.contains(p));
+                }
                 resolution.diagnostics.malformed_manifest_seen |=
                     decoded.source_trust.malformed_manifest_seen;
                 resolution.diagnostics.unsupported_schema_seen |= decoded.unsupported_schema;
@@ -123,15 +138,16 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
-                if let Some(thresholds) = decoded.actor_burst_breaker {
-                    actor_burst_breaker_candidates.push(thresholds);
-                }
                 resolution.packs.push(decoded.pack);
             }
             None => {
                 resolution.diagnostics.malformed_manifest_seen = true;
             }
         }
+    }
+
+    for contribution in untrusted_source_rows {
+        resolution.source_trust.restrict_only(contribution);
     }
 
     // Duplicate owner rows are refused per manifest by
@@ -147,13 +163,6 @@ pub(crate) fn resolve_policy_manifest(
         resolution.owner_policy_rows.clear();
         resolution.owner_policy_rows_dropped = true;
     }
-
-    // ONE-1453: the distinct-valid-value rule alone decides. One distinct
-    // valid value applies; two or more are an ambiguity, and both that case
-    // and the zero-candidate case take engine defaults. A conflicting dial is
-    // NOT a malformed manifest: it does not fail-close the write gate.
-    resolution.actor_burst_breaker =
-        resolve_gate_breaker_thresholds(&actor_burst_breaker_candidates);
 
     // A resolved table must stay addressable by a u16 row index: up to 65,536
     // rows (indices 0..=65535) are valid; the 65,537th row marks the whole

@@ -361,6 +361,7 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let hydrated = scoped_read
         .hydrate_short_id("cldangling", 0x5A)?
+        .value
         .expect("dangling short id should surface deletion metadata");
     assert_eq!(hydrated.id, missing_id);
     assert!(hydrated.body.is_none());
@@ -396,6 +397,7 @@ fn scoped_read_hydrate_preserves_deleted_claim_short_id_metadata() -> Result<()>
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let hydrated = scoped_read
         .hydrate_short_id(short_id, content_hash)?
+        .value
         .expect("deleted claim short id should preserve deletion metadata");
     assert_eq!(hydrated.id, claim_id);
     assert_eq!(hydrated.entity_type, crate::registry::ENTITY_TYPE_CLAIM);
@@ -980,5 +982,63 @@ fn scoped_read_facet_grants_match_facet_of_edges() -> Result<()> {
         scoped_read.get(&unfaceted_claim)?.is_none(),
         "facet grant must not fall through to unfaceted claims"
     );
+    Ok(())
+}
+
+#[test]
+fn scoped_receipts_include_prefilter_exclusions_and_refresh_point_authority() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let weak_id = test_id(0x51);
+    let strong_id = test_id(0x52);
+    let mut weak = source_trust_claim(ClaimSource::UserStated);
+    weak.confidence = 0.2;
+    let mut strong = source_trust_claim(ClaimSource::UserStated);
+    strong.confidence = 0.95;
+    put_claim_text_body(&vault, &weak_id, "receiptcountneedle", &weak)?;
+    put_claim_text_body(&vault, &strong_id, "receiptcountneedle", &strong)?;
+    let manifest_id = test_id(0x61);
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "reader",
+            Value::Map(vec![(Value::from("min_confidence"), Value::F64(0.8))]),
+        )]),
+    )?;
+    let reader = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
+    let result = reader.search_text("receiptcountneedle", 1, None)?;
+    assert_eq!(
+        result.value.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![strong_id]
+    );
+    assert_eq!(result.receipt.suppressed_count, 1);
+    assert!(
+        result
+            .receipt
+            .replan_hint
+            .iter()
+            .any(|axis| axis == "row_authority")
+    );
+    assert!(
+        reader
+            .get_entity_parts_with_receipt(&strong_id, None)?
+            .value
+            .is_some()
+    );
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "different-reader",
+            Value::Nil,
+        )]),
+    )?;
+    let denied = reader.get_entity_parts_with_receipt(&strong_id, None)?;
+    assert!(denied.value.is_none());
+    assert!(denied.receipt.applied.deny_all);
+    assert_eq!(denied.receipt.suppressed_count, 1);
+    let missing = reader.get_entity_parts_with_receipt(&test_id(0x53), None)?;
+    assert!(missing.value.is_none());
+    assert_eq!(missing.receipt.suppressed_count, 0);
     Ok(())
 }

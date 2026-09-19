@@ -38,6 +38,7 @@ pub(super) const GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE: &str =
 pub(super) enum PreauthorizedClaimStatusGrant {
     TimeoutDemotion,
     FoldDecline,
+    FoldClear,
 }
 
 #[cfg(test)]
@@ -80,6 +81,9 @@ pub(super) fn put_preauthorized_claim_status_in_txn(
     match grant {
         PreauthorizedClaimStatusGrant::TimeoutDemotion => {
             updated.approval = ClaimApprovalStatus::Proposed;
+        }
+        PreauthorizedClaimStatusGrant::FoldClear => {
+            updated.approval = ClaimApprovalStatus::Auto;
         }
         PreauthorizedClaimStatusGrant::FoldDecline => {
             updated.lifecycle = ClaimLifecycleStatus::Retracted;
@@ -234,7 +238,8 @@ impl Vault {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             let expired = binding.expires_at <= now;
-            if expired {
+            let deferred = self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
+            if expired && !deferred {
                 put_preauthorized_claim_status_in_txn(
                     self,
                     wtxn,
@@ -255,7 +260,7 @@ impl Vault {
                     .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
             }
             let Some(state) = fold.critical_write_confirms.get(&confirm_id) else {
-                return Ok(Ok(if expired {
+                return Ok(Ok(if expired && !deferred {
                     CriticalWriteConfirmResolution::DemotedToProposed
                 } else {
                     CriticalWriteConfirmResolution::AlreadySettled
@@ -265,14 +270,18 @@ impl Vault {
                 .conflicted_critical_write_confirms
                 .contains(&confirm_id)
             {
-                return Ok(Ok(if expired {
+                return Ok(Ok(if expired && !deferred {
                     CriticalWriteConfirmResolution::DemotedToProposed
                 } else {
                     CriticalWriteConfirmResolution::AlreadySettled
                 }));
             }
             if expired && state.action.disposition == CriticalWriteConfirmDisposition::Clear {
-                return Ok(Ok(CriticalWriteConfirmResolution::DemotedToProposed));
+                return Ok(Ok(if deferred {
+                    CriticalWriteConfirmResolution::AlreadySettled
+                } else {
+                    CriticalWriteConfirmResolution::DemotedToProposed
+                }));
             }
             if state.action.gate_decision_id != binding.gate_decision_id.as_bytes()
                 || state.action.claim_id != binding.claim_id
@@ -285,6 +294,23 @@ impl Vault {
             }
             match state.action.disposition {
                 CriticalWriteConfirmDisposition::Clear => {
+                    if deferred {
+                        if self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)? {
+                            put_preauthorized_claim_status_in_txn(
+                                self,
+                                wtxn,
+                                &binding.claim_id,
+                                &body,
+                                PreauthorizedClaimStatusGrant::FoldClear,
+                                TimeRange {
+                                    start: header.occurred_start,
+                                    end: header.occurred_end,
+                                },
+                                header.learned_at,
+                            )?;
+                        }
+                        self.complete_deferred_claim_in_txn(wtxn, &binding.claim_id, true, now)?;
+                    }
                     self.store
                         .delete_pending_gate_consent_in_txn(wtxn, &binding.claim_id)?;
                     self.store
@@ -292,18 +318,23 @@ impl Vault {
                     Ok(Ok(CriticalWriteConfirmResolution::Cleared))
                 }
                 CriticalWriteConfirmDisposition::Decline => {
-                    put_preauthorized_claim_status_in_txn(
-                        self,
-                        wtxn,
-                        &binding.claim_id,
-                        &body,
-                        PreauthorizedClaimStatusGrant::FoldDecline,
-                        TimeRange {
-                            start: header.occurred_start,
-                            end: header.occurred_end,
-                        },
-                        header.learned_at,
-                    )?;
+                    let retract = !deferred
+                        || self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)?;
+                    self.cancel_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
+                    if retract {
+                        put_preauthorized_claim_status_in_txn(
+                            self,
+                            wtxn,
+                            &binding.claim_id,
+                            &body,
+                            PreauthorizedClaimStatusGrant::FoldDecline,
+                            TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            header.learned_at,
+                        )?;
+                    }
                     self.store.close_pending_gate_consent_in_txn(
                         wtxn,
                         &binding.claim_id,
@@ -314,7 +345,11 @@ impl Vault {
                     )?;
                     self.store
                         .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
-                    Ok(Ok(CriticalWriteConfirmResolution::Retracted))
+                    Ok(Ok(if retract {
+                        CriticalWriteConfirmResolution::Retracted
+                    } else {
+                        CriticalWriteConfirmResolution::AlreadySettled
+                    }))
                 }
             }
         })?
@@ -356,7 +391,9 @@ impl Vault {
                 let Ok(binding) = critical_write_confirm_binding(&row) else {
                     continue;
                 };
-                if binding.expires_at > now {
+                if binding.expires_at > now
+                    || self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?
+                {
                     continue;
                 }
                 let Some(body) = self.get_claim_in_txn(&*wtxn, &binding.claim_id)? else {

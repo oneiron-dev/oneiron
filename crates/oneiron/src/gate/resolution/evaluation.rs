@@ -245,6 +245,9 @@ impl PolicyManifestResolution {
                 && self.delegation_fold.effective_ceiling(grant_ref)
                     == Some(PolicyApprovalCeiling::Auto);
         }
+        if input.foreign_agent_ceiling == Some(PolicyApprovalCeiling::Proposed) {
+            actor_ceiling_allows_auto = false;
+        }
         if !actor_ceiling_allows_auto {
             pending.push(GateReasonCode::PendingActorCeiling);
         }

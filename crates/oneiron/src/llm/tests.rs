@@ -638,6 +638,10 @@ fn auto_check_candidate() -> AutoCheckCandidateOwned {
         lineage: Some(SourceLineage::of(ClaimSource::Generated)),
         actor_class: "agent".to_owned(),
         sensitivity_band: Some(0),
+        burst: Some(NormalizedBurstInputs {
+            rate_ratio: 2.5,
+            streak: 3,
+        }),
     }
 }
 
@@ -736,7 +740,14 @@ fn besteffort_rejected_stale_canon() {
 
     // The candidate the gate saw is what the request describes.
     let rendered = format!("{:?}", request.messages);
-    for expected in ["profile.name", "generated", "agent", "Ada"] {
+    for expected in [
+        "profile.name",
+        "generated",
+        "agent",
+        "Ada",
+        "rate_ratio: 2.5",
+        "streak: 3",
+    ] {
         assert!(
             rendered.contains(expected),
             "the auto-check request must describe {expected}"
