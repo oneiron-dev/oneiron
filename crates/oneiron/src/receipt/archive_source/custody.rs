@@ -65,7 +65,7 @@ pub(crate) fn validate_receipt_archive_put(
         return Err(invalid());
     }
     if let Some(bound) = store.vault_meta.get(txn, &slot_key(&source)?)?
-        && bound.as_slice() != id.as_bytes().as_slice()
+        && bound != id.as_bytes().as_slice()
     {
         return Err(invalid());
     }
