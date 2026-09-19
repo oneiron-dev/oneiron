@@ -31365,6 +31365,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gpu_distribution.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -31605,7 +31613,7 @@
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 188,
-   "test_files": 72
+   "test_files": 73
   },
   "oneiron-uniffi": {
    "files": [
