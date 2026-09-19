@@ -101,6 +101,7 @@ mod facade;
 mod git_http;
 mod git_lfs;
 mod lease;
+mod llm;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
@@ -309,6 +310,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // ONE-1908: git smart-HTTP. Stock clients clone, fetch, and push here;
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
+        .nest("/v1/llm", self::llm::routes())
         .nest("/v1/core", core_routes)
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete

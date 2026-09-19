@@ -6269,11 +6269,13 @@ name = "oneiron-remote"
 version = "0.1.0"
 dependencies = [
  "futures-channel",
+ "futures-core",
  "oneiron",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -6327,6 +6329,7 @@ dependencies = [
  "jsonwebtoken",
  "loro",
  "oneiron",
+ "oneiron-remote",
  "oneiron-vault-contract",
  "reqwest 0.12.28",
  "rmp-serde",
