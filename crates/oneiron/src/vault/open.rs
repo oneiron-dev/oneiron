@@ -494,6 +494,24 @@ impl Vault {
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
+        // The document runtime is optional, but its ownership of stored bodies is
+        // not. A featureless handle must never overwrite a pointer or delete its
+        // row while leaving document history, forks and citation quotes behind.
+        #[cfg(not(feature = "sync"))]
+        {
+            let txn = store.env.read_txn()?;
+            if store
+                .vault_meta
+                .prefix_iter(&txn, b"entity_doc:v1:head:")?
+                .next()
+                .transpose()?
+                .is_some()
+            {
+                return Err(Error::InvalidConfig(
+                    "this vault contains entity documents and requires the sync feature".to_owned(),
+                ));
+            }
+        }
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
         // caller holds the handle. Missing rows are created with pinned

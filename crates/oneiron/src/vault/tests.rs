@@ -1257,3 +1257,35 @@ fn host_managed_key_reference_is_redacted_in_debug_output() {
 
     assert!(!debug.contains("super-secret-key-ref"));
 }
+
+#[cfg(not(feature = "sync"))]
+#[test]
+fn featureless_open_refuses_existing_entity_document_planes() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), test_config())?;
+    // Only the durable head's presence matters at the capability boundary. A
+    // featureless runtime must refuse even an unloadable document, not expose
+    // a body writer that can orphan or bypass its history.
+    let key = format!("entity_doc:v1:head:{}", entity(223).to_hex());
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, key.as_bytes(), b"head")?;
+    txn.commit()?;
+    drop(vault);
+
+    assert_matches!(
+        Vault::open(tmp.path(), test_config()),
+        Err(Error::InvalidConfig(_))
+    );
+    assert_matches!(
+        Vault::open_existing(tmp.path(), test_config()),
+        Err(Error::InvalidConfig(_))
+    );
+    assert_matches!(
+        Vault::open_owned(tmp.path(), test_config()),
+        Err(Error::InvalidConfig(_))
+    );
+    Ok(())
+}
