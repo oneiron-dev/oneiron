@@ -19,6 +19,7 @@ use crate::mcp::McpValidatedToolArgs;
 use crate::server::SyncServer;
 use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
+use oneiron::federation::{ScopeAxis, ScopeId};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use serde_json::json;
@@ -71,7 +72,6 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     }
     // The legacy registry can represent only all or one world/facet. Refuse
     // a wider registration instead of silently projecting away verifier bounds.
-    use oneiron::federation::{ScopeAxis, ScopeId};
     let axis = |id: Option<oneiron::EntityId>| {
         id.map_or(ScopeAxis::All, |id| {
             ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(id)]))

@@ -64,7 +64,7 @@ pub(super) async fn powers(
         .visible_powers(admin)
         .into_iter()
         .filter(|power| auth.has_scope(CoreScope::OrgAdmin(*power)))
-        .map(|power| power.as_str())
+        .map(oneiron::federation::OrgAdminPower::as_str)
         .collect();
     Ok(Json(serde_json::json!({"powers":powers})))
 }

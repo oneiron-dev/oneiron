@@ -147,11 +147,17 @@ fn selector_claim_body(person: oneiron::EntityId, predicate: &str) -> Vec<u8> {
         (Value::from("life"), Value::from(claim.lifecycle.as_str())),
         (
             "worldId".into(),
-            oneiron::claim::base_world_id().to_hex().into(),
+            Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
         ),
-        ("scopeFacetId".into(), claim.scope_facet.to_hex().into()),
+        (
+            "scopeFacetId".into(),
+            Value::Binary(claim.scope_facet.as_bytes().to_vec()),
+        ),
         ("scopeRelationshipId".into(), "all".into()),
-        ("scopeProjectId".into(), claim.scope_project.to_hex().into()),
+        (
+            "scopeProjectId".into(),
+            Value::Binary(claim.scope_project.as_bytes().to_vec()),
+        ),
         ("scopeVersion".into(), 2_u64.into()),
     ]);
     let mut encoded = Vec::new();

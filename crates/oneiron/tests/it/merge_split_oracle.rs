@@ -931,11 +931,11 @@ fn ms03_facet_mints_exactly_n_type13_entities() {
     let all = vault.facets_of(&person).expect("facets of");
     assert_eq!(all.len(), 3);
     assert!(all.contains(&oneiron::claim::substrate_facet_id(person)));
-    let scenario: Vec<_> = all
+    let scenario_count = all
         .into_iter()
         .filter(|mask| *mask != oneiron::claim::substrate_facet_id(person))
-        .collect();
-    assert_eq!(scenario.len(), 2);
+        .count();
+    assert_eq!(scenario_count, 2);
     assert_eq!(seam::count_facet_entities_of(&vault, &person), 3);
 }
 

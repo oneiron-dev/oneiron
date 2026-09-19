@@ -6,12 +6,12 @@ use heed::RwTxn;
 
 use super::{
     AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
-    StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
-    check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, index_thread_claim_subject, parse_entity_metadata,
-    plan_short_id_update, reject_overlay_member_base_write, stage_entity_body_row,
-    stage_entity_index_rows, stage_optimizer_birth_marker_row, validate_companion_register_put,
+    ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS, StagedClaimGateOutcome,
+    apply_short_id_plan, authority_observation_secs_for_write, check_authority_log_store_key,
+    delete_short_id_rows_for_id, evict_authority_log_store_key_squatter,
+    index_thread_claim_subject, parse_entity_metadata, plan_short_id_update,
+    reject_overlay_member_base_write, stage_entity_body_row, stage_entity_index_rows,
+    stage_optimizer_birth_marker_row, validate_companion_register_put,
     validate_local_agent_definition_create, validate_local_skill_create,
     validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
     validate_task_checkin_immutable,

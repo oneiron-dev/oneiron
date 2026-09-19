@@ -7731,7 +7731,7 @@
      "purpose": "Companion relationship/persona record substrate",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -7756,6 +7756,30 @@
       "fn": 35,
       "struct": 4
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CompiledPersona",
+      "PersonaChange",
+      "PersonaMadeBy"
+     ],
+     "path": "src/companion/persona.rs",
+     "purpose": "PERSON identity baselines and deterministic replay of recorded changes",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/companion/persona/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -25629,7 +25653,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
     },
     "companion": {
-     "files": 9,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26562,8 +26586,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1520,
-   "test_files": 547
+   "source_files": 1521,
+   "test_files": 548
   },
   "oneiron-bench": {
    "files": [
@@ -30241,7 +30265,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 69
+      "crate-vis": 68
      }
     },
     {

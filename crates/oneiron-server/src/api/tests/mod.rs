@@ -518,13 +518,6 @@ pub(super) async fn route_json_auth(
     route_json(server, with_default_recipe(request)).await
 }
 
-pub(super) async fn route_bytes_auth(
-    server: Arc<SyncServer>,
-    request: Request<Body>,
-) -> (StatusCode, HeaderMap, Bytes) {
-    route_bytes(server, with_default_recipe(request)).await
-}
-
 fn with_default_recipe(mut request: Request<Body>) -> Request<Body> {
     if !request.headers().contains_key(AUTHORIZATION) {
         request.headers_mut().insert(

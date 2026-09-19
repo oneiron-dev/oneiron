@@ -7,6 +7,7 @@
 mod codec;
 mod keys;
 mod model;
+mod persona;
 mod queue;
 mod register;
 mod store;
@@ -34,6 +35,7 @@ pub use self::model::{
     CompanionExpression, CompanionLifecycleEvent, CompanionLifecycleEventKind, CompanionProvenance,
     CompanionRecord, CompanionRecordKey, CompanionRecordKind, CompanionScope, CompanionSubject,
 };
+pub use self::persona::{CompiledPersona, PERSONA_CHANGE_PREDICATE, PersonaChange, PersonaMadeBy};
 pub use self::queue::{
     ClaimCompanionTask, ClaimCompanionTaskOutcome, CompanionQueue, CompanionTask,
     CompanionTaskKind, CompanionTaskStatus, CompleteCompanionTask, CompleteCompanionTaskOutcome,
