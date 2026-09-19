@@ -187,3 +187,20 @@ pub(super) fn stage_skill_index_rows(
     // All put doors share this reverse index, including hub import and sync replay.
     crate::skill_convert::maintain_skill_source_index_for_put(store, wtxn, id, previous, record)
 }
+
+/// Keeps CLAIM-derived thread and Dreamer indexes on every put/replay door.
+pub(super) fn stage_claim_projection_indexes(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+    learned_at: u64,
+) -> Result<()> {
+    if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+        super::index_thread_claim_subject(store, wtxn, id, body, learned_at)?;
+    }
+    crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
+        store, wtxn, id, body, learned_at,
+    )?;
+    crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
+}

@@ -68,10 +68,10 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         id(edge.target)?;
         if deleted
             .get(&edge.source)
-            .is_some_and(super::super::deletion::tombstone::DecodedTombstoneValue::is_hard)
+            .is_some_and(crate::deletion::DecodedTombstoneValue::is_hard)
             || deleted
                 .get(&edge.target)
-                .is_some_and(super::super::deletion::tombstone::DecodedTombstoneValue::is_hard)
+                .is_some_and(crate::deletion::DecodedTombstoneValue::is_hard)
         {
             return Err(invalid("hard-deleted edge endpoint"));
         }
