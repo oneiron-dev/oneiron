@@ -368,6 +368,7 @@ fn admit_surface_event_once(
         },
     )?;
     wtxn.commit()?;
+    vault.store.notify_attempt_observers();
     Ok(match outcome {
         EnqueueOutcome::Enqueued(attempt) => AdmittedSurfaceEvent {
             attempt,

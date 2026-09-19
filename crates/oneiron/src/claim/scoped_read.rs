@@ -299,7 +299,18 @@ impl<'a> ScopedRead<'a> {
         }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(Some((header.entity_type, header.learned_at, body.to_vec())));
+            let body = crate::note::live_body_in_txn(
+                &self.vault.store,
+                &rtxn,
+                id,
+                header.entity_type,
+                body,
+            )?;
+            return Ok(Some((
+                header.entity_type,
+                header.learned_at,
+                body.into_owned(),
+            )));
         }
         if !self.is_claim_raw_readable_in(&rtxn, id, &raw)? {
             return Ok(None);

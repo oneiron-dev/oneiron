@@ -19,6 +19,7 @@ pub struct LensRenderFrame {
     pub(super) render_id: LensRenderId,
     pub(super) principal: LensPrincipalBinding,
     pub(super) backing_refs: Vec<LensHostBackingRef>,
+    pub(super) world_scope: crate::pipeline::WorldScope,
 }
 
 impl LensRenderFrame {
@@ -28,6 +29,7 @@ impl LensRenderFrame {
             render_id,
             principal,
             backing_refs: Vec::new(),
+            world_scope: crate::pipeline::WorldScope::All,
         }
     }
 
@@ -63,7 +65,7 @@ impl LensRenderFrame {
                 "lens backing handle must be host-bound at most once per render".to_string(),
             ));
         }
-        Self::ensure_target_readable(scoped_read, &target)?;
+        self.ensure_target_readable(scoped_read, &target)?;
 
         let ref_id = LensBackingRefId::new(format!("ref-{}", self.backing_refs.len()))?;
         let token = LensBackingRefToken {
@@ -97,7 +99,7 @@ impl LensRenderFrame {
             .ok_or_else(|| {
                 Error::InvalidConfig("lens backing ref token was not host-minted".to_string())
             })?;
-        Self::ensure_target_readable(scoped_read, &backing_ref.target)?;
+        self.ensure_target_readable(scoped_read, &backing_ref.target)?;
         Ok(backing_ref.clone())
     }
 
@@ -272,9 +274,15 @@ impl LensRenderFrame {
     }
 
     pub(super) fn ensure_target_readable(
+        &self,
         scoped_read: &ScopedRead<'_>,
         target: &LensBackingTarget,
     ) -> Result<()> {
+        if self.scoped_body(scoped_read, target.entity_id())?.is_none() {
+            return Err(Error::InvalidConfig(
+                "lens target outside frame scope".into(),
+            ));
+        }
         let Some(hydrated) =
             scoped_read.hydrate_short_id(target.short_id(), target.content_hash())?
         else {

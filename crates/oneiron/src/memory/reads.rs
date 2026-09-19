@@ -323,15 +323,26 @@ impl Memory<'_> {
     }
 
     pub(super) fn entity_view(&self, id: &EntityId) -> MemoryResult<Option<EntityView>> {
-        let Some(raw) = self.vault.get_raw(id)? else {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let Some(raw) = self.vault.get_raw_in(&txn, id)? else {
             return Ok(None);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or_else(|| MemoryError::from(Error::CorruptedIndex("entity header")))?;
-        let body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte().into());
+        }
+        let projected = crate::note::live_body_in_txn(
+            &self.vault.store,
+            &txn,
+            id,
+            header.entity_type,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let body = decode_body_json(&projected);
         Ok(Some(EntityView {
             id_hex: id.to_hex(),
-            short_ref: self.short_ref_of(id)?,
+            short_ref: self.short_ref_of_in_txn(&txn, id)?,
             kind: kind_string_for_type(header.entity_type),
             occurred_start: header.occurred_start,
             occurred_end: header.occurred_end,
@@ -360,7 +371,7 @@ impl Memory<'_> {
         })
     }
 
-    pub(super) fn entity_ref_receipt(&self, id: &EntityId) -> MemoryResult<EntityRefReceipt> {
+    pub(crate) fn entity_ref_receipt(&self, id: &EntityId) -> MemoryResult<EntityRefReceipt> {
         Ok(EntityRefReceipt {
             entity_ref: self.short_ref_or_hex(id)?,
             id_hex: id.to_hex(),

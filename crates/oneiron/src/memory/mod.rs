@@ -86,8 +86,11 @@ pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use support::{
-    facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_deletion_authority_in_txn,
+    facade_provenance, hard_deleted_refusal, verify_actor_binding,
+    verify_deletion_authority_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use support::verify_owner_actor_binding_in_txn;
 pub(crate) use witness::sole_edge_target;
 
 #[cfg(test)]

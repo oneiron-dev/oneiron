@@ -9,15 +9,9 @@
 //! untouched. Two actors over one claim therefore produce two NOTE entities,
 //! never an upsert keyed by `(actor, target)`.
 //!
-//! [`NoteKind`] is deliberately CLOSED at one variant. The other six ARCH-0032
-//! kinds (Scratchpad, Observation, Handoff, Research, Reflection, Diary) and
-//! pack-defined `Plugin` kinds are not designed for the live engine yet;
-//! placeholder variants would publish a wire surface nothing can honour.
-//!
-//! Byte law: the engine registers NOTE at [`crate::registry::ENTITY_TYPE_NOTE`]
-//! (86, productivity band). Canon assigns 106 under BYTE-SPACE REDESIGN v3 and
-//! ONE-1754 executes the persisted re-key as one atomic v3 map; this module
-//! never writes a migration and never names 106.
+//! Plugin kinds remain namespace tags. `plugin/brief` alone has a registered,
+//! person-stamped policy descriptor. Editable bodies and citation pins use the
+//! note's entity document; the three-key body remains the birth record.
 
 use rmpv::Value;
 
@@ -36,23 +30,37 @@ const KEY_MARKDOWN: &str = NOTE_BODY_KEYS[2];
 ///
 /// Closed at one variant on purpose — see the module doc. `parse` fails closed
 /// so an unknown wire string can never widen the enum by accident.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoteKind {
     /// An actor's attributed opinion about a subject or a claim.
     OpinionTake,
+    /// A pack namespace tag; only `brief` carries a blessed contract.
+    Plugin(String),
 }
 
 impl NoteKind {
     /// The pinned wire literal. This string IS the storage ABI.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        "opinion/take"
+    pub fn as_str(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::OpinionTake => std::borrow::Cow::Borrowed("opinion/take"),
+            Self::Plugin(tag) => std::borrow::Cow::Owned(format!("plugin/{tag}")),
+        }
     }
 
     /// Parses the wire literal; `None` for anything else.
     #[must_use]
     pub fn parse(raw: &str) -> Option<Self> {
-        (raw == Self::OpinionTake.as_str()).then_some(Self::OpinionTake)
+        if raw == "opinion/take" {
+            return Some(Self::OpinionTake);
+        }
+        let tag = raw.strip_prefix("plugin/")?;
+        (!tag.is_empty()
+            && tag.len() <= 128
+            && tag
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
+        .then(|| Self::Plugin(tag.to_owned()))
     }
 }
 
@@ -82,8 +90,16 @@ pub enum TakeTarget {
 /// Encodes a NOTE body to the pinned three-key MessagePack map.
 pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
     validate_markdown(&body.markdown)?;
+    if NoteKind::parse(&body.kind.as_str()).as_ref() != Some(&body.kind) {
+        return Err(Error::Record(RecordError::InvalidNoteBody(
+            "invalid plugin namespace",
+        )));
+    }
     let value = Value::Map(vec![
-        (Value::from(KEY_KIND), Value::from(body.kind.as_str())),
+        (
+            Value::from(KEY_KIND),
+            Value::from(body.kind.as_str().as_ref()),
+        ),
         (
             Value::from(KEY_AUTHOR_REF),
             Value::from(body.author_ref.to_hex()),
@@ -203,3 +219,27 @@ fn validate_markdown(markdown: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+mod delete;
+mod live_body;
+pub(crate) use live_body::live_body_in_txn;
+mod kind_contract;
+#[cfg(all(test, feature = "sync"))]
+mod live_body_tests;
+pub(crate) use delete::delete_document_in_txn;
+mod id_codec;
+pub use kind_contract::{
+    BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
+};
+#[cfg(feature = "sync")]
+mod brief_view;
+#[cfg(feature = "sync")]
+mod document;
+#[cfg(feature = "sync")]
+mod document_store;
+#[cfg(feature = "sync")]
+pub use brief_view::{BriefCitationView, BriefView};
+#[cfg(all(test, feature = "sync"))]
+mod document_tests;
+#[cfg(feature = "sync")]
+pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution};

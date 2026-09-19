@@ -45,7 +45,6 @@ fn opinion_kind_round_trip() {
         "research",
         "reflection",
         "diary",
-        "plugin/custom",
         "OPINION/TAKE",
         "",
     ] {

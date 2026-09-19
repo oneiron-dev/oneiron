@@ -379,6 +379,7 @@ impl Vault {
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+        crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
         if had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
@@ -403,6 +404,7 @@ impl Vault {
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
         crate::code_revision::delete_code_revision_lifecycle_in_txn(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+        crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
         let blob_cleanup =
             crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(&self.store, wtxn, id)?;
         if blob_cleanup.had_graph_mutation {

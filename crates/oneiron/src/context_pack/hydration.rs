@@ -75,7 +75,16 @@ pub(super) fn hydrate_entity(
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
-            None => decode_entity_fields(&raw, header.entity_type).unwrap_or_default(),
+            None => {
+                let body = crate::note::live_body_in_txn(
+                    &vault.store,
+                    rtxn,
+                    &id,
+                    header.entity_type,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?;
+                decode_entity_fields(&body, header.entity_type).unwrap_or_default()
+            }
         })
     } else {
         None
@@ -176,12 +185,14 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     out
 }
 
-fn decode_entity_fields(raw: &[u8], entity_type: u8) -> Option<HashMap<String, serde_json::Value>> {
-    if raw.len() <= ENTITY_METADATA_HEADER_LEN {
+fn decode_entity_fields(
+    payload: &[u8],
+    entity_type: u8,
+) -> Option<HashMap<String, serde_json::Value>> {
+    if payload.is_empty() {
         return Some(HashMap::new());
     }
 
-    let payload = &raw[ENTITY_METADATA_HEADER_LEN..];
     if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         return decode_companion_register_fields(payload);
     }
@@ -283,7 +294,7 @@ fn companion_subject_to_json(subject: &CompanionSubject) -> serde_json::Value {
     }
 }
 
-fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
+pub(super) fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
     match value {
         rmpv::Value::Nil => serde_json::Value::Null,
         rmpv::Value::Boolean(v) => serde_json::Value::Bool(*v),
