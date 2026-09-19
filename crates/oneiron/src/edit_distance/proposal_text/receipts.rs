@@ -30,6 +30,11 @@ impl ProposalTextArtifact {
                 "generated birth process must name its writing actor".into(),
             ));
         }
+        if vault.get_entity_type(&prompt)?.is_none() || !trigger_is_valid(vault, &trigger)? {
+            return Err(Error::InvalidConfig(
+                "invalid generated birth input or trigger".into(),
+            ));
+        }
         let made_by = MadeBy {
             inputs: vec![MadeByInput {
                 row: prompt,
@@ -67,16 +72,21 @@ impl ProposalTextArtifact {
                             {
                                 return false;
                             }
-                            let mut required_rows: Vec<EntityId> = made_by
+                            let required_rows: Vec<EntityId> = made_by
                                 .inputs
                                 .iter()
                                 .filter(|input| input.role == MadeByInputRole::Prompt)
                                 .map(|input| input.row)
                                 .collect();
                             if let Some(trigger) = &made_by.trigger {
-                                required_rows.push(match trigger {
-                                    MadeByTrigger::Task(id) | MadeByTrigger::Ask(id) => *id,
-                                });
+                                match trigger_is_valid(vault, trigger) {
+                                    Ok(true) => {}
+                                    Ok(false) => return false,
+                                    Err(error) => {
+                                        authority_error = Some(error);
+                                        return false;
+                                    }
+                                }
                             }
                             for row in required_rows {
                                 match vault.get_entity_type(&row) {
@@ -178,4 +188,12 @@ impl ProposalTextArtifact {
         );
         Ok(())
     }
+}
+
+fn trigger_is_valid(vault: &crate::Vault, trigger: &MadeByTrigger) -> Result<bool> {
+    let (id, expected) = match trigger {
+        MadeByTrigger::Task(id) => (id, crate::registry::ENTITY_TYPE_TASK),
+        MadeByTrigger::Ask(id) => (id, crate::registry::ENTITY_TYPE_TURN),
+    };
+    Ok(vault.get_entity_type(id)? == Some(expected))
 }

@@ -516,6 +516,35 @@ mod tests {
     }
 
     #[test]
+    fn meeting_links_are_bounded_across_properties_without_counting_duplicates() {
+        let links: Vec<_> = (0..32)
+            .map(|n| format!("https://meet.example/{n}"))
+            .collect();
+        let properties = format!(
+            "URL:{}\r\nCONFERENCE:{}\r\nLOCATION:{}\r\nDESCRIPTION:{}\r\n",
+            links[0],
+            links[1],
+            links[2],
+            links[3..].join(" ")
+        );
+        let bounded = FEED.replace("END:VEVENT\r\n", &format!("{properties}END:VEVENT\r\n"));
+        let duplicated = bounded.replace(
+            "END:VEVENT\r\n",
+            &format!("DESCRIPTION:{}\r\nEND:VEVENT\r\n", links.join(" ")),
+        );
+        let feed = parse_ics_feed(duplicated.as_bytes()).unwrap();
+        assert_eq!(feed.events[0].properties.meeting_links, links);
+        let overflowing = bounded.replace(
+            "END:VEVENT\r\n",
+            "URL:https://meet.example/overflow\r\nEND:VEVENT\r\n",
+        );
+        assert!(matches!(
+            parse_ics_feed(overflowing.as_bytes()),
+            Err(CalendarError::IcsParse { .. })
+        ));
+    }
+
+    #[test]
     fn cancelled_status_surfaces() {
         let cancelled = FEED.replace(
             "TRANSP:TRANSPARENT\r\n",

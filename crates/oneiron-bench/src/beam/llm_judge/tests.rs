@@ -28,6 +28,9 @@ impl LlmBackend for CountingJudge {
         Box::pin(async move {
             assert_eq!(request.envelope.purpose, CallPurpose::Eval);
             assert_eq!(request.model.as_str(), BEAM_JUDGE);
+            assert!(
+                matches!(&request.messages[0].content[0], ContentPart::Text { text } if text == "Fixture scoring policy.")
+            );
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if self.fail_first && n == 0 {
                 return Err(oneiron::FatalLlmError::InvalidRequest.into());
@@ -62,6 +65,7 @@ impl LlmBackend for CountingJudge {
 fn config() -> JudgeConfig {
     JudgeConfig {
         benchmark: JudgeBenchmark::Beam,
+        instruction: AnswerPromptPin::from_exact_text("Fixture scoring policy."),
         model: ModelPin {
             model_id: BEAM_JUDGE.parse().unwrap(),
             provider_model: "gpt-4.1-mini-2025-04-14".into(),
@@ -119,9 +123,24 @@ fn production_judge_issues_three_calls_prices_usage_and_rejects_prompt_before_ca
         score_item(&session, &config, "wrong prompt", &item),
         Err(BeamError::JudgeCardInvalid { .. })
     ));
+    for instruction in [
+        AnswerPromptPin::from_exact_text(""),
+        AnswerPromptPin {
+            content: "tampered policy".into(),
+            sha256: config.instruction.sha256.clone(),
+        },
+    ] {
+        let mut wrong = config.clone();
+        wrong.instruction = instruction;
+        assert!(matches!(
+            score_item(&session, &wrong, "Answer from the evidence.", &item),
+            Err(BeamError::JudgeCardInvalid { .. })
+        ));
+    }
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let report = score_item(&session, &config, "Answer from the evidence.", &item).unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(report.judge.instruction, config.instruction);
     assert_eq!(report.winning_tally, 2);
     assert_eq!(report.verdict, 0.5);
     assert_eq!(report.judge_cost.input_tokens, 300);

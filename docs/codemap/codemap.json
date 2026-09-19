@@ -26512,7 +26512,7 @@
      "path": "src/beam/llm_judge.rs",
      "purpose": "The production model-scored BEAM door: pin validation, three votes, no reward feedback",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {

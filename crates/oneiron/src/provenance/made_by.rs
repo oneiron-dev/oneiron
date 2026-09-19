@@ -79,7 +79,9 @@ pub struct MadeByProcess {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MadeByTrigger {
+    /// The initiating TASK row.
     Task(#[serde(with = "super::entity_ref_wire")] EntityId),
+    /// The TURN row that carries the initiating ask.
     Ask(#[serde(with = "super::entity_ref_wire")] EntityId),
 }
 

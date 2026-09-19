@@ -19,6 +19,11 @@ explicitly fake example prices with a verified versioned price table. A provider
 must report the pinned model revision and token usage. A response missing either
 fails closed. No credential belongs in a plan or command-line argument.
 
+Each `judge` configuration requires `instruction: {"content": "...", "sha256": "..."}`.
+The hash pins the exact UTF-8 instruction bytes. Empty content or a mismatched
+hash fails before any provider call. The binary supplies no implicit judge prompt.
+Retrieval-only reports use a null judge-instruction hash because they invoke no judge.
+
 Reports record the exact answer prompt, its card pin, judge-instruction hash,
 fixed call contract, model pins, real provider usage and request hashes. Judge
 usage is eval overhead. Offline engine ingest/index time and tokenizer work are

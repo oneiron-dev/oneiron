@@ -116,6 +116,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
         },
         judge: JudgeConfig {
             benchmark: JudgeBenchmark::Beam,
+            instruction: AnswerPromptPin::from_exact_text("Fixture scoring policy."),
             model: judge_model.clone(),
             card: JudgeMetadata {
                 judge_id: "gpt-4.1-mini".into(),
@@ -180,6 +181,10 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
             .iter()
             .any(|row| row.ablation.as_deref() == Some("ablation-2:access-factor-neutral"))
     );
+    assert_eq!(
+        report.scorer.judge_instruction_sha256.as_deref(),
+        Some(plan.judge.instruction.sha256.as_str())
+    );
     assert_eq!(report.rows.len(), 8);
     assert_eq!(report.chat_cost_accuracy_points.len(), 2);
     assert!(!report.frontier.is_empty());
@@ -220,6 +225,10 @@ fn shipped_measured_plan_pins_answerer_judge_and_example_prices() {
     assert_eq!(plan.host.prices.revision, "example-not-current-tariff");
     let session = fixture_session(&plan, FixtureBackend::default());
     let report = run_with_session(&plan, &session).unwrap();
+    assert_eq!(
+        report.scorer.judge_instruction_sha256.as_deref(),
+        Some(plan.judge.instruction.sha256.as_str())
+    );
     assert_eq!(report.rows.len(), 8);
     assert!(report.rows.iter().all(|row| {
         row.scoring.beam.as_ref().unwrap().wedge_buckets[&WedgeBucket::KnowledgeUpdate].is_some()

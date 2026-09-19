@@ -4,6 +4,8 @@ use crate::calendar::{
     CalendarError,
     claims::{CalendarAttendeeValue, CalendarTimeKind, CalendarWallTimeValue},
 };
+const MAX_MEETING_LINKS: usize = 32;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ParsedCalendarProperties {
     pub recurrence_id_utc: Option<u64>,
@@ -91,6 +93,9 @@ pub(super) fn parse(
                     && token.len() <= 4096
                     && !properties.meeting_links.iter().any(|link| link == token)
                 {
+                    if properties.meeting_links.len() >= MAX_MEETING_LINKS {
+                        return Err(ics_parse("too many meeting links"));
+                    }
                     properties.meeting_links.push(token.into());
                 }
             }

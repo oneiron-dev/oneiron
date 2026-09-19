@@ -31,7 +31,7 @@ impl BeamScorer for FixedBeamScorer {
     fn metadata(&self) -> ScorerReport {
         ScorerReport {
             convention: super::nuggets::CONVENTION.into(),
-            judge_instruction_sha256: super::llm_judge::instruction_hash(),
+            judge_instruction_sha256: None,
             scorer_id: "beam-fixed-scorer".to_owned(),
             version: BEAM_SCORER_VERSION.to_owned(),
             comparator_version: BEAM_COMPARATOR_VERSION.to_owned(),

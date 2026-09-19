@@ -366,3 +366,89 @@ fn made_by_two_commits_fold_and_birth_round_trips() {
     reopened.doc.commit();
     assert_eq!(reopened.provenance(&vault).unwrap(), None);
 }
+
+#[test]
+fn generated_triggers_require_matching_entity_types_at_birth_and_import() {
+    use crate::provenance::made_by::{
+        MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
+    };
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault, EdgeActorClass::Agent);
+    let ask = EntityId::now();
+    let task = EntityId::now();
+    vault
+        .put_entity(
+            &ask,
+            crate::registry::ENTITY_TYPE_TURN,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&serde_json::json!({"text":"Please summarize."})).unwrap(),
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &task,
+            crate::registry::ENTITY_TYPE_TASK,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+        )
+        .unwrap();
+    let process = MadeByProcess {
+        actor: actor.entity_ref(),
+        class: MadeByClass::Concluded,
+        identity: "fixture/model@v1".into(),
+        version: "v1".into(),
+        params_hash: "fixture".into(),
+    };
+    let valid = ProposalTextArtifact::open_generated(
+        &vault,
+        "summary",
+        &actor,
+        ask,
+        MadeByTrigger::Ask(ask),
+        process.clone(),
+    )
+    .unwrap();
+    let reopened = ProposalTextArtifact::from_snapshot(&valid.export_snapshot().unwrap()).unwrap();
+    assert!(reopened.provenance(&vault).unwrap().is_some());
+    for trigger in [
+        MadeByTrigger::Task(ask),
+        MadeByTrigger::Ask(task),
+        MadeByTrigger::Task(EntityId::now()),
+    ] {
+        assert!(matches!(
+            ProposalTextArtifact::open_generated(
+                &vault,
+                "summary",
+                &actor,
+                ask,
+                trigger.clone(),
+                process.clone()
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+        // Build the same malformed history an imported snapshot can carry,
+        // bypassing admission without weakening the public writer.
+        let forged = ProposalTextArtifact::open_with_receipt(
+            &vault,
+            "summary",
+            &actor,
+            Some(ask),
+            Some(MadeBy {
+                inputs: vec![MadeByInput {
+                    row: ask,
+                    role: MadeByInputRole::Prompt,
+                }],
+                process: process.clone(),
+                at: crate::unix_seconds_now(),
+                trigger: Some(trigger),
+            }),
+        )
+        .unwrap();
+        let imported =
+            ProposalTextArtifact::from_snapshot(&forged.export_snapshot().unwrap()).unwrap();
+        assert_eq!(imported.provenance(&vault).unwrap(), None);
+        assert!(imported.finalize(&vault).is_err());
+    }
+}

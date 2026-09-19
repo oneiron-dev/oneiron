@@ -552,7 +552,10 @@ pub(super) fn run_with_session(
                 )
             })
             .collect(),
-        scorer: super::scorer::BeamScorer::metadata(&FixedBeamScorer),
+        scorer: super::report_model::ScorerReport {
+            judge_instruction_sha256: Some(plan.judge.instruction.sha256.clone()),
+            ..super::scorer::BeamScorer::metadata(&FixedBeamScorer)
+        },
         execution_contract: "response_format=text; tools=none; provider_options=none",
         ablation_rows,
         ablation_unavailable,

@@ -295,7 +295,7 @@ pub(super) struct ContextPackReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ScorerReport {
-    pub(super) judge_instruction_sha256: String,
+    pub(super) judge_instruction_sha256: Option<String>,
     pub(super) convention: String,
     pub(super) scorer_id: String,
     pub(super) version: String,

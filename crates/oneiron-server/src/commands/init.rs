@@ -8,7 +8,11 @@ use std::path::{Path, PathBuf};
 
 const EMBEDDER_DOCS: &str = "https://oneiron.dev/oneiron/agents/oneiron-arch-0036-runtime-v1/";
 
-pub fn init(mut args: InitArgs) -> anyhow::Result<()> {
+pub fn init(args: InitArgs) -> anyhow::Result<()> {
+    init_with_env(args, EnvConfig::from_process()?)
+}
+
+fn init_with_env(mut args: InitArgs, env: EnvConfig) -> anyhow::Result<()> {
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     let choice = match args.embedder {
@@ -41,9 +45,9 @@ pub fn init(mut args: InitArgs) -> anyhow::Result<()> {
     // Validate exactly what serve will read before downloading or creating a vault.
     let staged = stage_config(&path, &config_text)?;
     let result = (|| {
-        let config = read_config(&staged)?;
+        let config = read_config(&staged, env)?;
         let device = match config.embedder.as_ref().filter(|c| c.is_active()) {
-            Some(embedder) if choice == EmbedderProvider::Local => {
+            Some(embedder) if embedder.provider == EmbedderProvider::Local => {
                 crate::embedder::prepare_local(embedder)?.to_owned()
             }
             Some(embedder) => {
@@ -321,13 +325,13 @@ fn config_text(args: &InitArgs, choice: EmbedderProvider, path: &Path) -> anyhow
     Ok(toml::to_string_pretty(&table)?)
 }
 
-fn read_config(path: &Path) -> anyhow::Result<ServeConfig> {
+fn read_config(path: &Path, env: EnvConfig) -> anyhow::Result<ServeConfig> {
     crate::config::resolve_serve_config_with_sources(
         &ServeArgs {
             config: Some(path.to_path_buf()),
             ..Default::default()
         },
-        EnvConfig::default(),
+        env,
         None,
     )
 }
@@ -392,11 +396,64 @@ provider = "local"
             map_size: 64 * 1024 * 1024,
             ..Default::default()
         };
-        init(args).unwrap();
-        let config = read_config(&path).unwrap();
+        init_with_env(args, EnvConfig::default()).unwrap();
+        let config = read_config(&path, EnvConfig::default()).unwrap();
         assert_eq!(config.port, 12345);
         assert!(!config.embedder.unwrap().is_active());
     }
+    #[test]
+    fn init_uses_serve_environment_and_refuses_invalid_overrides_before_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        let args = InitArgs {
+            path: dir.path().join("vault"),
+            config: Some(path.clone()),
+            embedder: Some(EmbedderProvider::Local),
+            map_size: 64 * 1024 * 1024,
+            ..Default::default()
+        };
+        let overrides = [
+            ("ONEIRON_EMBEDDER_PROVIDER", "endpoint"),
+            ("ONEIRON_EMBEDDER_ENDPOINT", "http://127.0.0.1:8080/v1"),
+            ("ONEIRON_EMBEDDER_MODEL_ID", "fixture/embedder@v1"),
+            ("ONEIRON_EMBEDDER_MODEL_KEY", "fixture"),
+            ("ONEIRON_EMBEDDER_DIMENSIONS", "8"),
+            ("ONEIRON_DIMENSIONS", "8"),
+        ];
+        let invalid = EnvConfig::from_pairs(
+            overrides
+                .into_iter()
+                .chain([("ONEIRON_EMBEDDER_DIMENSIONS", "16")]),
+        )
+        .unwrap();
+        assert!(init_with_env(args.clone(), invalid).is_err());
+        assert!(!args.path.exists());
+        assert!(!path.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        let env = EnvConfig::from_pairs(overrides).unwrap();
+        init_with_env(args.clone(), env.clone()).unwrap();
+        let serve = crate::config::resolve_serve_config_with_sources(
+            &ServeArgs {
+                config: Some(path.clone()),
+                ..Default::default()
+            },
+            env,
+            None,
+        )
+        .unwrap();
+        let embedder = serve.embedder.as_ref().unwrap();
+        assert_eq!(embedder.provider, EmbedderProvider::Endpoint);
+        assert_eq!(embedder.model_id, "fixture/embedder@v1");
+        assert_eq!(serve.dimensions, 8);
+        // The created vault accepts serve's effective dimensions and model pin.
+        let vault = oneiron::Vault::open_owned(&serve.vault_path, serve.vault_config()).unwrap();
+        drop(vault);
+        let mut wrong = serve.vault_config();
+        wrong.dimensions = 1024;
+        assert!(oneiron::Vault::open_owned(&serve.vault_path, wrong).is_err());
+    }
+
     #[test]
     fn network_init_requires_explicit_egress_and_a_local_fallback() {
         let dir = tempfile::tempdir().unwrap();
@@ -416,7 +473,10 @@ provider = "local"
         args.embedder_egress_allow = vec![oneiron::EntityId::now().to_hex()];
         let text = config_text(&args, EmbedderProvider::Endpoint, &path).unwrap();
         let staged = stage_config(&path, &text).unwrap();
-        let config = read_config(&staged).unwrap().embedder.unwrap();
+        let config = read_config(&staged, EnvConfig::default())
+            .unwrap()
+            .embedder
+            .unwrap();
         let remote = config.remote.as_ref().unwrap();
         assert_eq!(remote.locality, EmbedderLocality::ThirdParty);
         assert_eq!(remote.endpoint, "https://embed.example/v1");

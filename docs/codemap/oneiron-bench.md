@@ -36,7 +36,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/infra.rs` | src | s | 4 crate-vis | — | Vector-database cost framing |
 | `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |
 | `src/beam/llm_host.rs` | src | m | 10 crate-vis | — | Host-owned HTTP transport for the shipped LlmBackend adapter |
-| `src/beam/llm_judge.rs` | src | s | 8 crate-vis | — | The production model-scored BEAM door: pin validation, three votes, no reward feedback |
+| `src/beam/llm_judge.rs` | src | s | 7 crate-vis | — | The production model-scored BEAM door: pin validation, three votes, no reward feedback |
 | `src/beam/llm_judge/tests.rs` | test | s | — | — | — |
 | `src/beam/load.rs` | src | m | 17 crate-vis | — | Dataset and contract loading |
 | `src/beam/mod.rs` | src | s | 7 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
