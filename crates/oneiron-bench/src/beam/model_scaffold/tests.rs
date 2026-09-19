@@ -377,6 +377,7 @@ fn measured_judge_must_match_the_loaded_dataset_before_model_calls() {
             .map(|arm| arm.model.clone())
             .chain(std::iter::once(plan.judge.model.clone()))
             .collect();
+        plan.validate().unwrap();
         let session = ModelSession::with_backend(
             Box::new(NoCalls),
             plan.host.prices.clone(),

@@ -25,17 +25,15 @@ pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
             && body.lifecycle == ClaimLifecycleStatus::Active
             && OWNED.contains(&body.predicate.as_str())
             && body.source == Some(crate::claim::ClaimSource::Imported)
-            && body
-                .evidence
-                .as_ref()
-                .and_then(Value::as_map)
-                .and_then(|entries| {
-                    entries
-                        .iter()
-                        .find(|(key, _)| key.as_str() == Some("source_record_id"))
+            && body.evidence.as_ref().is_some_and(|evidence| {
+                let candidate = evidence_field(evidence, crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY);
+                candidate.is_some_and(|value| {
+                    evidence_field(value, "kind").and_then(Value::as_str) == Some("imported_evidence")
+                        && evidence_field(value, "source_id").and_then(Value::as_str) == Some(crate::ingest::ICS_FEED_SOURCE_ID)
+                        && evidence_field(value, "source_record_id").and_then(Value::as_str)
+                            .is_some_and(|source| source.starts_with(source_prefix))
                 })
-                .and_then(|(_, value)| value.as_str())
-                .is_some_and(|source| source.starts_with(source_prefix))
+            })
         {
             live.push((id, body.predicate, body.value));
         }
@@ -109,4 +107,8 @@ fn values(event: &ParsedVEvent) -> Vec<(&'static str, Value)> {
 pub(super) fn source_prefix(system: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("calendar-source:{:x}:", Sha256::digest(system.as_bytes()))
+}
+
+fn evidence_field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
+    value.as_map()?.iter().find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
 }
