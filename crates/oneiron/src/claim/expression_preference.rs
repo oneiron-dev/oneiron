@@ -10,11 +10,12 @@ use super::*;
 use crate::Vault;
 use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_with_gate_mode};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, GateError, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, require_key_len};
+use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 impl Vault {
@@ -250,8 +251,8 @@ impl Vault {
             }
             let old_learned_at = self
                 .store
-                .entities
-                .get(&wtxn, old_id.as_bytes())?
+                .port_entity_record(&wtxn, &old_id)?
+                .map(|row| row.encode())
                 .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
                 .ok_or(Error::CorruptedIndex("expression preference header"))?;
             if Self::expression_preference_wins(
@@ -329,8 +330,8 @@ impl Vault {
             for (id, body) in self.claims_with_predicate_in_txn(rtxn, predicate)? {
                 let learned_at = self
                     .store
-                    .entities
-                    .get(rtxn, id.as_bytes())?
+                    .port_entity_record(rtxn, &id)?
+                    .map(|row| row.encode())
                     .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
                     .ok_or(Error::CorruptedIndex("expression preference header"))?;
                 // `claim_surfaceable`, not a bare lifecycle check: a claim
@@ -462,24 +463,18 @@ impl Vault {
         }
         self.verify_expression_preference_retract_actor_in_txn(&wtxn, actor, &head)?;
 
-        let prefix = edge_kind_prefix(claim_id, EdgeKind::Supersedes);
         let mut predecessors = Vec::new();
-        for entry in self.store.edges_out.prefix_iter(&wtxn, &prefix)? {
+        for entry in self.port_edges(
+            &wtxn,
+            claim_id,
+            EdgeDirection::Out,
+            Some(EdgeKind::Supersedes),
+            None,
+        )? {
             if predecessors.len() >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("expression preference predecessors"));
             }
-            let (key, _) = entry?;
-            require_key_len(
-                &key,
-                ENTITY_ID_LEN + 1 + ENTITY_ID_LEN,
-                "supersedes edge key",
-            )?;
-            let id = EntityId::from_bytes(
-                key[ENTITY_ID_LEN + 1..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?;
+            let id = entry?.target;
             predecessors.push(id);
         }
 
