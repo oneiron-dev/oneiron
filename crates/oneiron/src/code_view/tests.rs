@@ -278,9 +278,8 @@ fn independent_views_share_blobs_server_and_build_results() {
     };
     let narrow = set.materialize(&mount, actor, &narrow_policy).unwrap();
     let same_narrow = set.materialize(&mount, actor, &narrow_policy).unwrap();
-    let explicit = action
-        .clone()
-        .with_reapi_input_root(crate::build_cache::ReapiDigest::of(b"explicit CAS root"));
+    let explicit =
+        action.with_reapi_input_root(crate::build_cache::ReapiDigest::of(b"explicit CAS root"));
     let result = |producer: EntityId| ActionResult {
         exit_code: 0,
         outputs: BTreeMap::new(),
