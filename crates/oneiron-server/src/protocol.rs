@@ -188,11 +188,14 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
     let payload = &data[1..];
 
     let max = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
-    if data.len() > max {
-        return Err(ProtocolError::FrameTooLarge {
-            size: payload.len(),
-            max,
-        });
+    // App-tier limits count payload bytes; document/batch limits include framing.
+    let size = if matches!(tag, TAG_RPC | TAG_SUB) {
+        payload.len()
+    } else {
+        data.len()
+    };
+    if size > max {
+        return Err(ProtocolError::FrameTooLarge { size, max });
     }
     match tag {
         TAG_DOCUMENT => {
