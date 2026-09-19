@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "packages": {
+    "torch": "2.8.0",
+    "transformers": "4.57.6"
+  },
+  "asr": null,
+  "alignment": null,
+  "diarization": null,
+  "cleanup": null,
+  "moss": null,
+  "uk_alignment": {
+    "model_id": "Yehor/w2v-xls-r-uk",
+    "snapshot": "/Volumes/Cinema/w7-build/audio-runtime-20260919/models/Yehor--w2v-xls-r-uk/55b6dc09dc1d43fe655018e24e6ff77305ff0879",
+    "files": {
+      ".gitattributes": "61df6ff8b3c81b5a2682dbcde9414bffddac19890f6b67450633ef4cc34bfd0d",
+      "README.md": "6a73d74a2487a6362568146efb07aaa6efbe938a19e0f4c5266f887ad8d22989",
+      "added_tokens.json": "0b6cfb85e4e0b3da8f3ab5940a02c7ff7aceb7c844ebc3ed64520d4655446aec",
+      "alphabet.json": "faa5d9f251e3e366e6b749c6502eb15247ff3b8bf6dbe66c9268e6d04b9eed4b",
+      "config.json": "18cfcf1ecfeda0f499a3ef0866943d8e8f274219736bed4a51c57c2d0658d5b9",
+      "model.safetensors": "e8d3ea3825853c6016539d474878fc281cf0bbb2fa9209f34f403b91e2eb0fe9",
+      "preprocessor_config.json": "2c594304e9d9832162bedd5345051df29e8daf458a845cbed58c6ede23ceeae3",
+      "special_tokens_map.json": "b51414c824f9a5aef78bebd44a22564f5e98c67ab06a6cdb25a07a247febf03f",
+      "tokenizer_config.json": "d57dc2850ae95c6cf4c274c411a7651f912b00e6b467d716b826e2ee03b64e56",
+      "vocab.json": "cbd3c988a282c33e41d2cdee5071733de78a0eba61d0314f23a0940a8618ad6c"
+    },
+    "access_ref": "C02_AUDIO_PROVISIONED_20260919/public-Apache-2.0/55b6dc09dc1d43fe655018e24e6ff77305ff0879"
+  }
+}

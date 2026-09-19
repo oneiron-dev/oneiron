@@ -1,0 +1,14 @@
+{
+  "aligner": {
+    "path": "/mnt/wd16/w7-build/toolchains/audio-20260919/aligner.lock",
+    "sha256": "89895c3c3405d8f8b80cfa36f5ace8bb54b2e383a4f733ab5f93c8c13abc53de"
+  },
+  "diarization": {
+    "path": "/mnt/wd16/w7-build/toolchains/audio-20260919/diarization.lock",
+    "sha256": "9041c071b3e26163ae27dd9bb2690ca24a4f8fc5885f038c1ac78e5b4fa8e15b"
+  },
+  "uk-timing": {
+    "path": "/mnt/wd16/w7-build/toolchains/audio-20260919/uk-timing.lock",
+    "sha256": "570f621bf9e0dc35aee45df5696e6eab8cb25e3b6749e82f7248243791f95658"
+  }
+}
