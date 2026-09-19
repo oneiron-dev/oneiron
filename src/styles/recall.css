@@ -182,3 +182,34 @@ main.pane.recall {
   .receipt { transition: none; }
   .a-sect .head .fold-hint { transition: none; }
 }
+
+/* An optional, still scene belongs only to the pre-question door. The
+   existing sheet ink/paper is fully opaque under ALL text, including the
+   ask and sample chips. None keeps the original layout via display:contents. */
+.recall-entry { display: contents; }
+main.recall.has-scene { position: relative; isolation: isolate; }
+.recall-scene-backdrop { position: absolute; inset: 0; pointer-events: none; }
+.recall-scene-backdrop > div { position: absolute; inset: 0; background: center / cover no-repeat; }
+.recall.has-scene .pane-body { position: relative; }
+.recall.has-scene .recall-entry {
+  display: flex; flex-direction: column; gap: 14px; flex: none;
+  width: min(620px, 100%); margin: auto;
+  padding: 22px; border-radius: var(--sheet-radius);
+  background: var(--bg-elevated);
+}
+.recall.has-scene .ask::placeholder { color: var(--silver-2); }
+.recall.has-scene .ask:focus-visible { outline: 1.5px solid var(--silver-3); outline-offset: 5px; }
+.recall.has-scene .recall-empty { flex-wrap: wrap; }
+.recall.has-scene .recall-empty .lead { flex: 1; min-width: min(200px, 100%); }
+.recall.has-scene .recall-empty .line { text-wrap: pretty; }
+.recall.has-scene .recall-empty .doors { flex-wrap: wrap; }
+.recall.has-scene .chip { color: var(--silver-2); }
+@media (max-width: 600px) {
+  .recall.has-scene .pane-body { padding: 16px 12px; }
+  .recall.has-scene .recall-entry { padding: 18px 16px; }
+  .recall.has-scene .recall-empty { gap: 12px; padding-inline: 0; }
+  .recall.has-scene .recall-empty .spot { width: 110px; }
+}
+@media (pointer: coarse) {
+  .recall.has-scene .chip { min-height: 44px; }
+}

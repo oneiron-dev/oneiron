@@ -3,6 +3,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { applyTheme, cue, markCued, readTheme, useSound, type Theme } from '~/components/safelight/hooks'
 import { PaneHead, Sheet } from './-shared'
 import { AppIconAppearanceRow } from '~/components/desktop/AppIconAppearance'
+import { RECALL_SCENES, recallSceneAssets, useRecallScene, type RecallScene } from '~/runtime/recall-scene'
 
 export const Route = createFileRoute('/settings/appearance')({
   component: AppearancePage,
@@ -10,7 +11,23 @@ export const Route = createFileRoute('/settings/appearance')({
 
 /* ── appearance: theme + sound live HERE (rules 2, 25, 37). the pressed
    act is the receipt; it settles at once. ── */
+const SCENE_LABELS: Record<RecallScene, string> = {
+  none: 'None',
+  'tidal-margin': 'Tidal margin',
+  'high-weather': 'High weather',
+}
+
 function AppearancePage() {
+  const [scene, setScene] = useRecallScene()
+  const sceneAssets = recallSceneAssets(scene)
+  const [sceneSaved, setSceneSaved] = React.useState(true)
+  const pickScene = (next: RecallScene) => (e: React.MouseEvent) => {
+    markCued(e)
+    if (next === scene) return
+    setSceneSaved(setScene(next))
+    cue('toggle')
+  }
+
   /* the theme is a class on <html> (readTheme/applyTheme); read on mount,
      and follow the `t` key so the row never lies */
   const [theme, setTheme] = React.useState<Theme>('system')
@@ -86,6 +103,36 @@ function AppearancePage() {
             off
           </button>
         </span>
+      </div>
+      <div className="srow recall-scene-row">
+        <span className="key" id="recall-scene-label">Recall scene</span>
+        <div className="recall-scene-control">
+          <div className="acts" role="group" aria-labelledby="recall-scene-label" aria-describedby="recall-scene-note">
+            {RECALL_SCENES.map((choice) => (
+              <button
+                key={choice}
+                type="button"
+                className={scene === choice ? 'act on' : 'act'}
+                aria-pressed={scene === choice}
+                onClick={pickScene(choice)}
+              >
+                {SCENE_LABELS[choice]}
+              </button>
+            ))}
+          </div>
+          <div className="recall-scene-detail">
+            <span className="recall-scene-preview" aria-hidden="true">
+              {sceneAssets && <>
+                <span className="art-day" style={{ backgroundImage: `url("${sceneAssets.day}")` }} />
+                <span className="art-night" style={{ backgroundImage: `url("${sceneAssets.night}")` }} />
+              </>}
+            </span>
+            <span id="recall-scene-note">Only before a question in Recall. Follows the theme.</span>
+          </div>
+          <span className="recall-scene-status" role="status">
+            {!sceneSaved && 'For this session only. This device could not save the choice.'}
+          </span>
+        </div>
       </div>
       <AppIconAppearanceRow />
     </Sheet>
