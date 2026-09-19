@@ -798,7 +798,10 @@ fn in_process_is_not_privileged() {
     );
     assert_eq!(direct_pack.0.results.len(), 1, "only the admitted claim");
     assert_eq!(direct_pack.0.results[0].id, fixture.admitted_id.to_hex());
-    assert_eq!(direct_pack.0.results[0].score, 1.0, "fixture decay is neutral");
+    assert_eq!(
+        direct_pack.0.results[0].score, 1.0,
+        "fixture decay is neutral"
+    );
 }
 
 // ─── 8. Serialization round trip ─────────────────────────────────────────────
