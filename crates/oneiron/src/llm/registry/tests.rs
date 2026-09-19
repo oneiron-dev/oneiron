@@ -121,10 +121,15 @@ fn unchanged_observation_advances_watermark_without_diff_and_blocks_stale_change
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let row = row("one");
     vault.put_model_registry_row(&row)?;
-    let model = row.catalog.model.clone();
+    let model = row.catalog.model;
     let snapshot = |at, score| ScoreSnapshot {
-        source: "bench".into(), fetched_at: at,
-        observations: vec![ScoreObservation { model: model.clone(), benchmark: "quality".into(), score }],
+        source: "bench".into(),
+        fetched_at: at,
+        observations: vec![ScoreObservation {
+            model: model.clone(),
+            benchmark: "quality".into(),
+            score,
+        }],
     };
     assert_eq!(vault.apply_model_scores(&snapshot(100, 50.0))?.len(), 1);
     assert!(vault.apply_model_scores(&snapshot(160, 50.0))?.is_empty());

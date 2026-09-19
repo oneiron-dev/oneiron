@@ -228,7 +228,8 @@ impl Vault {
                 // Observation recency is independent of score changes. An
                 // identical newer snapshot still fences out older replays,
                 // but must not append a spurious change record.
-                row.fetched_at.insert(snapshot.source.clone(), snapshot.fetched_at);
+                row.fetched_at
+                    .insert(snapshot.source.clone(), snapshot.fetched_at);
                 self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
                 continue;
             }

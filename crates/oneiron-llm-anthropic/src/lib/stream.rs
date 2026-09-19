@@ -61,8 +61,14 @@ impl AnthropicMessagesStreamAccumulator {
                     ),
                     Some("thinking") => {
                         let signature = block["signature"].as_str().map(str::to_owned);
-                        if let Some(signature) = &signature { self.signatures.insert(index, signature.clone()); }
-                        events.extend(self.assembly.reasoning(&id, block["thinking"].as_str().unwrap_or(""), signature)?);
+                        if let Some(signature) = &signature {
+                            self.signatures.insert(index, signature.clone());
+                        }
+                        events.extend(self.assembly.reasoning(
+                            &id,
+                            block["thinking"].as_str().unwrap_or(""),
+                            signature,
+                        )?);
                     }
                     Some("tool_use") => {
                         let call_id = block["id"]
@@ -101,7 +107,9 @@ impl AnthropicMessagesStreamAccumulator {
                         )?,
                     ),
                     Some("signature_delta") => {
-                        let fragment = delta["signature"].as_str().ok_or(FatalLlmError::InvalidRequest)?;
+                        let fragment = delta["signature"]
+                            .as_str()
+                            .ok_or(FatalLlmError::InvalidRequest)?;
                         let signature = self.signatures.entry(index).or_default();
                         signature.push_str(fragment);
                         events.extend(self.assembly.reasoning(&id, "", Some(signature.clone()))?);
@@ -130,12 +138,12 @@ impl AnthropicMessagesStreamAccumulator {
                 if let Some((call_id, name, input)) = self.tools.get(&index)
                     && !self.tool_has_delta.contains(&index)
                 {
-                        events.extend(self.assembly.tool(
-                            &id,
-                            call_id,
-                            name,
-                            &input.as_ref().unwrap_or(&serde_json::json!({})).to_string(),
-                        )?);
+                    events.extend(self.assembly.tool(
+                        &id,
+                        call_id,
+                        name,
+                        &input.as_ref().unwrap_or(&serde_json::json!({})).to_string(),
+                    )?);
                 }
                 events.push(self.assembly.end(&id)?);
             }

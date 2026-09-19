@@ -74,8 +74,7 @@ impl GeminiAccumulator {
                     let id = call
                         .get("id")
                         .and_then(Value::as_str)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| format!("call-{}", self.tool_seq));
+                        .map_or_else(|| format!("call-{}", self.tool_seq), str::to_owned);
                     self.tool_seq += 1;
                     let args = call.get("args").ok_or(FatalLlmError::InvalidRequest)?;
                     let part_id = format!("tool-{id}");
@@ -140,7 +139,10 @@ impl Stream for GeminiEventStream<'_> {
                     .pending
                     .extend(this.accumulator.abort(usage).into_iter().map(Ok)),
                 Poll::Ready(Some(Ok(GeminiFrame::Status(response)))) => {
-                    return Poll::Ready(Some(Err(classify_status(response.status, &response.body))));
+                    return Poll::Ready(Some(Err(classify_status(
+                        response.status,
+                        &response.body,
+                    ))));
                 }
                 Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
                 Poll::Ready(None) => return Poll::Ready(None),

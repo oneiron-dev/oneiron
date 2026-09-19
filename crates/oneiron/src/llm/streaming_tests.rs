@@ -4,7 +4,7 @@ use std::future::Future;
 use std::{
     pin::Pin,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, Waker},
 };
 struct Sink(Arc<Mutex<Vec<LlmResponse>>>);
 impl TerminalSink for Sink {
@@ -21,13 +21,8 @@ impl Stream for FakeStream {
     }
 }
 
-struct Noop;
-impl Wake for Noop {
-    fn wake(self: Arc<Self>) {}
-}
 fn drain(sub: &mut StreamSubscription) -> Vec<LlmStreamEvent> {
-    let w = Waker::from(Arc::new(Noop));
-    let mut cx = Context::from_waker(&w);
+    let mut cx = Context::from_waker(Waker::noop());
     let mut events = Vec::new();
     while let Poll::Ready(Some(e)) = Pin::new(&mut *sub).poll_next(&mut cx) {
         events.push(e);

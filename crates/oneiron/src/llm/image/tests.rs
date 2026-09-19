@@ -1,12 +1,7 @@
 use super::*;
-use std::task::{Context, Poll, Wake, Waker};
-struct Noop;
-impl Wake for Noop {
-    fn wake(self: Arc<Self>) {}
-}
+use std::task::{Context, Poll, Waker};
 fn run<F: Future>(future: F) -> F::Output {
-    let w = Waker::from(Arc::new(Noop));
-    let mut cx = Context::from_waker(&w);
+    let mut cx = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
     match future.as_mut().poll(&mut cx) {
         Poll::Ready(v) => v,

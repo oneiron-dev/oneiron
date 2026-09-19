@@ -1263,7 +1263,10 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
         let id = test_id(0x33);
         let proposed = checker_body(&vault, ClaimApprovalStatus::Proposed)?;
         attempt_checked_candidate_write(&vault, &id, &proposed, None)?;
-        assert_eq!(vault.get_claim(&id)?.expect("proposal landed").approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(
+            vault.get_claim(&id)?.expect("proposal landed").approval,
+            ClaimApprovalStatus::Proposed
+        );
         let model = ModelId::new("test/verdict@1").expect("model");
         vault.set_model_manifest(&ModelManifest {
             version: 2,
@@ -1305,7 +1308,10 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
         match mode {
             VerdictMode::Enforce => {
                 assert!(result.is_err());
-                assert_eq!(vault.get_claim(&id)?.expect("proposal retained").approval, ClaimApprovalStatus::Proposed);
+                assert_eq!(
+                    vault.get_claim(&id)?.expect("proposal retained").approval,
+                    ClaimApprovalStatus::Proposed
+                );
                 assert!(
                     decision_rows(&vault)?
                         .iter()
