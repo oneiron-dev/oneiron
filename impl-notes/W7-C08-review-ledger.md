@@ -241,3 +241,21 @@ review existed. All 40 authorized replies were therefore attached to that same d
 through the thread API. Before comment-only submission, its body was still empty and
 its comments matched exactly these 40 responses; no other authored draft content was
 published or deleted. No approval, push, merge or close is authorized by this receipt.
+
+### Preexisting review provenance clarification
+
+Review `5255668739` predated this continuation. Its original authoring session is
+unverified; the authenticated account name did not establish its provenance or
+authority to publish it. At 13:25:36Z it was submitted as `COMMENT` after a check
+confirmed an empty body and exactly the 40 replies added by this continuation.
+The review ID and all comment bodies were preserved, but its prior PENDING state
+was not. No approval or merge occurred. No further mutation or deletion of that
+review is planned. For any future preexisting draft of unknown provenance, use
+the PR issue-summary path unless the owner explicitly directs otherwise.
+
+The latest owner guidance identifies the live validation custody as
+`w7-c08-bot-routed-validation.service`, driver PID 3415120 and Cargo child 3415121.
+The old `w7-c08-bot-recovery-validation.service` is not the current job. Running
+or queued checks are productive waiting, not a terminal BLOCKED result. Consume
+the existing job's terminal receipts before final validation disposition; do not
+create another build or observer.
