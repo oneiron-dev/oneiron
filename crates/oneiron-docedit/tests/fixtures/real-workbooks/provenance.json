@@ -1,0 +1,34 @@
+{
+  "harness": {
+    "repository": "https://github.com/witanlabs/xlsx-corpus-bench",
+    "revision": "e4198c6e2629e4924260eb925408f7d5109a927a",
+    "license": "Apache-2.0",
+    "files": {
+      "LICENSE": "ed7db782380c2ec95b9a37620d088d0ef02490b6782fc6eac104553673cf2eb3",
+      "harness/compare_truth.py": "a02b85d59233ec190a5ffd81dc484b49224041afad4fceebae4c1d3a4a874230",
+      "harness/run.py": "2591d1b1daf9810407ec7e01f1fcfb3f237de29c39e02ff9b95ecd7f4a171a7f",
+      "harness/cached_values.py": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+      "harness/manifest.py": "52cbbd17fd4584b7b903053f7e9f33c19f707f0102a6aea980fd6a34e49c0d5f",
+      "harness/excel_truth.py": "fc338c75c23cc540af4c064bb800254e7d1bb79cd0542792a0ceb71396d40ef2"
+    }
+  },
+  "spreadsheetbench": {
+    "url": "https://raw.githubusercontent.com/RUCKBReasoning/SpreadsheetBench/fdde69e1eb23b6514b4f6cf3ee8543aadaa7a2e3/data/spreadsheetbench_912_v0.1.tar.gz",
+    "sha256": "9cf7228b54f1edcdd4b372eb736774adf29cb4f804c9920229bac6c154833399",
+    "bytes": 95752357,
+    "license": "CC BY-SA 4.0",
+    "scanned": 5464,
+    "unique": 5455,
+    "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+    "measurement": "pending"
+  },
+  "fuse": {
+    "doi": "10.5281/zenodo.581678",
+    "url": "https://zenodo.org/records/581678/files/fuse.zip?download=1",
+    "license": "CC BY 4.0",
+    "download_status": "HTTP 504 (retried)",
+    "measurement": "blocked on source download",
+    "macbook_status": "HEAD also returned HTTP 504"
+  },
+  "truth_status": "Upstream Excel recalculated truth workbooks are not distributed; original saved caches are not equivalent to a fresh same-corpus Excel oracle. Do not use cached-source diagnostics to select a production default."
+}

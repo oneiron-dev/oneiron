@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/witanlabs/xlsx-corpus-bench",
+  "revision": "e4198c6e2629e4924260eb925408f7d5109a927a",
+  "license": "Apache-2.0",
+  "files": {
+    "cached_values.py": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242"
+  },
+  "changes": "None. Used unchanged for extraction and comparison; original saved caches are labeled diagnostic, not freshly recalculated Excel truth."
+}

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/office"))
@@ -28,6 +29,23 @@ class StoredMeasurements(unittest.TestCase):
             self.assertEqual(result[key], recorded[key])
         self.assertEqual(recorded["at_or_above_libreoffice"],
                          result["counts"]["formualizer_unchanged"]["passed"] >= result["counts"]["libreoffice"]["passed"])
+
+    def test_native_xlookup_prefix_and_value_survive_excel(self):
+        fixture = FIXTURES / "spreadsheet-compat/measurements/native-xlookup"
+        receipt = json.loads((fixture / "receipt.json").read_bytes())
+        self.assertEqual(receipt["status"], "completed")
+        self.assertFalse(receipt["lock_retained"])
+        self.assertEqual(receipt["observed"], receipt["expected"])
+        self.assertEqual(receipt["script_sha256"], hashlib.sha256((fixture / "observed-script.applescript").read_bytes()).hexdigest())
+        ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        cells = [ET.parse(fixture / name).find('.//s:c[@r="F1"]', ns)
+                 for name in ("input-sheet.xml", "native-sheet.xml", "excel-sheet.xml")]
+        self.assertEqual(cells[0].find("s:v", ns).text, "0")
+        self.assertTrue(cells[0].find("s:f", ns).text.startswith("XLOOKUP("))
+        for cell in cells[1:]:
+            self.assertTrue(cell.find("s:f", ns).text.startswith("_xlfn.XLOOKUP("))
+            self.assertEqual(float(cell.find("s:v", ns).text), receipt["expected"])
+        self.assertEqual(receipt["input_preparation"]["engine"]["engine"]["engine"], "oneiron-xlsx-formula")
 
     def test_docx_preservation_rate_comes_from_same_input_word_receipts(self):
         fixture = FIXTURES / "docx-corpus"
@@ -54,6 +72,24 @@ class StoredMeasurements(unittest.TestCase):
             counts["native_pass"] += 1
             counts["libreoffice_pass"] += int(lo_pass)
         self.assertEqual(report["counts"], counts)
+
+    def test_pptarena_identity_receipt_covers_the_pinned_manifest(self):
+        fixture = FIXTURES / "pptarena"
+        manifest_bytes = (fixture / "manifest.json").read_bytes()
+        manifest = json.loads(manifest_bytes)
+        receipt = json.loads((fixture / "receipt.json").read_bytes())
+        self.assertEqual(receipt["manifest_sha256"], hashlib.sha256(manifest_bytes).hexdigest())
+        expected = {Path(row["path"]).name: row for row in manifest["files"]}
+        rows = receipt["native_identity_results"]
+        self.assertEqual(len(rows), len(expected))
+        self.assertEqual({row["file"] for row in rows}, set(expected))
+        for row in rows:
+            with self.subTest(file=row["file"]):
+                self.assertEqual(row["bytes"], expected[row["file"]]["size"])
+                self.assertEqual(len(bytes.fromhex(row["input_blake3"])), 32)
+                self.assertTrue(row["no_op_archive_exact"])
+                self.assertTrue(row["edit_unknown_xml_in_place"])
+                self.assertTrue(row["untouched_part_payloads_exact"])
 
     def test_word_revision_receipts_bind_authored_inputs_and_native_semantics(self):
         fixtures = FIXTURES / "docx/word-semantics"

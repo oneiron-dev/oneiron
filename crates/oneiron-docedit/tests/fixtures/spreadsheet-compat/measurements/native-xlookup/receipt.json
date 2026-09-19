@@ -1,0 +1,34 @@
+{
+  "status": "completed",
+  "input_sha256": "0e9fadc28bf051be92ab40179b2a986333b62b5b0eea0785f2a86c60cda73a58",
+  "script_sha256": "fae02a7b26776e59136b270de0d5d1b74b2f141de625a8b8f92bed43bf588a8a",
+  "started_at": 1789807287.4449978,
+  "error": "not enough values to unpack (expected 4, got 1)",
+  "lock_retained": false,
+  "finished_at": 1789807299.374,
+  "app_version": "16.112.4",
+  "observed": 2.0,
+  "expected": 2.0,
+  "initial_workbooks": 1,
+  "final_workbooks": 0,
+  "repair_requested": false,
+  "output_sha256": "bce74d3498bafb4aacbf4bfcc3c5b6bfcc866c7cc588c447a5b2f4e8dc948299",
+  "recovery": {
+    "parser": "Excel dictionary shadows tab; recovered delimiter from the successful driver output",
+    "initial_inventory": "1, , Book1",
+    "final_inventory": "driver final 0; inventory restarted Excel, verified blank startup Book1 and closed it; final 0",
+    "custody": "Only the owned roundtrip workbook was closed by the script; Excel dropped the initial unsaved startup workbook on open."
+  },
+  "input_preparation": {
+    "source": "XLOOKUP_exact_match",
+    "uncached_sha256": "0d4bca665007f578967fc84e27ca12a52387a0a4e62e449c20b9b46a6ad5a743",
+    "action": "Remove _xlfn prefix and set F1 cache to zero before native recalc",
+    "engine": {
+      "engine": {
+        "engine": "oneiron-xlsx-formula",
+        "version": "0.1.0+formualizer.0.9.3"
+      },
+      "formula_count": 2
+    }
+  }
+}

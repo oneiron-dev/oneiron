@@ -1,0 +1,27 @@
+{
+  "successful_recalculations": 2292,
+  "refused_recalculations": 3163,
+  "refusals": {
+    "Error: Unsupported { feature: \"ZIP local extra metadata\", context: \"[Content_Types].xml\" }": 2152,
+    "Error: Unsupported { feature: \"array/data-table/unknown formula kind\", context: \"worksheet\" }": 84,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Open\" }": 12,
+    "Error: Unsupported { feature: \"external links or rich/dynamic cell metadata\", context: \"XLSX package\" }": 593,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Data\" }": 5,
+    "Error: Unsupported { feature: \"worksheet width limit\", context: \"worksheet\" }": 33,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Original Data\" }": 6,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Combined\" }": 6,
+    "Error: Unsupported { feature: \"table metadata ingestion is not supported\", context: \"cache-only recalculation\" }": 125,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Sheet1\" }": 26,
+    "Error: Unsupported { feature: \"non-top-left shared formula anchor\", context: \"worksheet\" }": 47,
+    "Error: Unsupported { feature: \"engine-specific error has no approved XLSX cache encoding\", context: \"#CIRC!\" }": 32,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Contact List\" }": 6,
+    "Error: Unsupported { feature: \"inconsistent ZIP local/central metadata\", context: \"xl/pivotCache/pivotCacheRecords1.xml\" }": 12,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Cumulative\" }": 5,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Import Data\" }": 6,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Sub CO's\" }": 3,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"DATABANK\" }": 2,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Test\" }": 6,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Dati\" }": 1,
+    "Error: Unsupported { feature: \"formula result is not current\", context: \"Sheet2\" }": 1
+  }
+}
