@@ -103,7 +103,9 @@ impl OutboundDispatchPipeline {
         request.channel_identity_ref = resolve_dispatch_sender(
             vault,
             &request,
-            replay.as_ref().map(|record| record.payload()),
+            replay
+                .as_ref()
+                .map(crate::outbound_intent_ledger::IntentLedgerRecord::payload),
         )?;
         let space_posting = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
