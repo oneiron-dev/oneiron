@@ -1619,10 +1619,13 @@ fn run_all_operations() -> Result<()> {
 fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let clock = crate::ports::ManualClock::new(1);
-    let vault = Vault::open(temp_dir.path(), VaultConfig {
-        store_clock: clock.bundle(),
-        ..test_config()
-    })?;
+    let vault = Vault::open(
+        temp_dir.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..test_config()
+        },
+    )?;
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
@@ -1681,10 +1684,13 @@ fn attempt_queue_maintenance_warns_a_live_lease_before_cleanup_takes_it() -> Res
 
     let temp_dir = tempfile::tempdir()?;
     let clock = crate::ports::ManualClock::new(1);
-    let vault = Vault::open(temp_dir.path(), VaultConfig {
-        store_clock: clock.bundle(),
-        ..test_config()
-    })?;
+    let vault = Vault::open(
+        temp_dir.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..test_config()
+        },
+    )?;
     let queue = AttemptQueue::new(&vault);
     queue.enqueue(EnqueueAttempt {
         kind: "claim_extraction".to_owned(),

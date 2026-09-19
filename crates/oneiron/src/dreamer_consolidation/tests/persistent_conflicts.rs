@@ -128,45 +128,65 @@ fn prior_head_disagreement_opens_one_persistent_marker_and_close_audit() -> Resu
 fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_attempt_fixture(
-        &vault, &store, 0xB4, &[("user", "I like coffee and tea")],
-    )?;
+    let (admitted, turns, _) =
+        admitted_attempt_fixture(&vault, &store, 0xB4, &[("user", "I like coffee and tea")])?;
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
-    let candidates: Vec<_> = ["coffee", "tea"].into_iter().map(|topic| {
-        serde_json::json!({
-            "subject": subject.to_hex(), "predicate": "preference.food",
-            "value": "yes", "topic_key": topic, "confidence": 0.9,
-            "evidence_turn_refs": [turns[0].to_hex()]
+    let candidates: Vec<_> = ["coffee", "tea"]
+        .into_iter()
+        .map(|topic| {
+            serde_json::json!({
+                "subject": subject.to_hex(), "predicate": "preference.food",
+                "value": "yes", "topic_key": topic, "confidence": 0.9,
+                "evidence_turn_refs": [turns[0].to_hex()]
+            })
         })
-    }).collect();
+        .collect();
     let backend = ScriptedBackend::new(vec![Ok(text_response(
         serde_json::json!({"candidates": candidates}).to_string(),
     ))]);
     let guard = crate::BudgetGuard::with_reserve_units(
-        "wake", 10_000, 100, BudgetExhaustionPolicy::Suspend,
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
     );
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     for _ in 0..2 {
         let mut executor = ConsolidationExecutor {
-            backend: &backend, guard: &guard,
+            backend: &backend,
+            guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
             actor: WriteActor::new(subject, EdgeActorClass::Agent),
             model: crate::ModelId::new("test/model@r1").expect("fixture model"),
             sink: &mut sink,
         };
         let mut ctx = WakeAttemptContext {
-            vault: &vault, deadline: &deadline, budget_id: "wake", now_ms: 21_000,
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms: 21_000,
         };
         assert!(matches!(
             block_on_ready(executor.execute(&admitted, &mut ctx))?,
             DreamerAttemptExecution::Completed { .. }
         ));
     }
-    let ids: Vec<_> = sink.accepted.iter().map(|candidate| candidate.claim_id).collect();
+    let ids: Vec<_> = sink
+        .accepted
+        .iter()
+        .map(|candidate| candidate.claim_id)
+        .collect();
     assert_eq!(ids.len(), 4);
-    assert_ne!(ids[0], ids[1], "different questions cannot overwrite each other");
-    assert_eq!(&ids[..2], &ids[2..], "replay keeps both write-once identities");
+    assert_ne!(
+        ids[0], ids[1],
+        "different questions cannot overwrite each other"
+    );
+    assert_eq!(
+        &ids[..2],
+        &ids[2..],
+        "replay keeps both write-once identities"
+    );
     Ok(())
 }

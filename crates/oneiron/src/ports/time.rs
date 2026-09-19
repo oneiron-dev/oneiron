@@ -153,11 +153,15 @@ pub(crate) fn recorded_at_in_txn(
     };
     let observed_id_floor = store.clock().observe_id_floor(id_floor)?;
     if observed_id_floor != id_floor {
-        store.vault_meta().put(txn, ID_FLOOR, &observed_id_floor.to_be_bytes())?;
+        store
+            .vault_meta()
+            .put(txn, ID_FLOOR, &observed_id_floor.to_be_bytes())?;
     }
     let now = store.clock().observe_floor(persisted)?;
     if now != persisted {
-        store.vault_meta().put(txn, CLOCK_FLOOR, &now.to_be_bytes())?;
+        store
+            .vault_meta()
+            .put(txn, CLOCK_FLOOR, &now.to_be_bytes())?;
     }
     Ok(now)
 }

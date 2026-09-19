@@ -405,7 +405,8 @@ fn already_delivered_does_not_rearm() -> crate::Result<()> {
         assert_eq!(queue.list_run("run:atomic-audit")?, vec![completed]);
         let after = retry_storage_snapshot(&vault)?;
         assert_eq!(
-            audit_receipts(&vault)?, before_audit,
+            audit_receipts(&vault)?,
+            before_audit,
             "delivery evidence remains unchanged while the storage clock advances"
         );
         assert!(after[2].is_empty(), "no ready source or successor");

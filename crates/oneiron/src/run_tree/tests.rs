@@ -98,7 +98,8 @@ fn run_tree_renders_nested_subagent_attempts_deterministically() -> Result<()> {
 fn run_tree_event_stream_reports_lifecycle_statuses() -> Result<()> {
     let clock = crate::ports::ManualClock::new(10);
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
-        store_clock: clock.bundle(), ..VaultConfig::device()
+        store_clock: clock.bundle(),
+        ..VaultConfig::device()
     });
     let runner = DreamerRunnerStore::new(&vault);
     let running = enqueue(&runner, "running-subagent", None, 10, "run-lifecycle")?;
@@ -110,7 +111,10 @@ fn run_tree_event_stream_reports_lifecycle_statuses() -> Result<()> {
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "stream-worker".to_owned(),
-        now: { clock.set(40); 40 },
+        now: {
+            clock.set(40);
+            40
+        },
     })?
     else {
         panic!("expected running claim");
@@ -168,7 +172,8 @@ fn run_tree_event_stream_reports_lifecycle_statuses() -> Result<()> {
 fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
     let clock = crate::ports::ManualClock::new(10);
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
-        store_clock: clock.bundle(), ..VaultConfig::device()
+        store_clock: clock.bundle(),
+        ..VaultConfig::device()
     });
     let runner = DreamerRunnerStore::new(&vault);
     let running = enqueue(&runner, "interruptible-subagent", None, 10, "run-interrupt")?;
@@ -176,7 +181,10 @@ fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "stream-worker".to_owned(),
-        now: { clock.set(20); 20 },
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claim");
@@ -187,7 +195,10 @@ fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
         kind: AttemptInterventionKind::Interrupt,
         actor: "dashboard".to_owned(),
         note: Some("stop current tool call".to_owned()),
-        now: { clock.set(30); 30 },
+        now: {
+            clock.set(30);
+            30
+        },
     })?;
 
     let tree = RunTreeAdapter::new(&vault).read_run("run-interrupt")?;
@@ -213,7 +224,8 @@ fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
 fn run_tree_preserves_claimed_event_after_terminal_transition() -> Result<()> {
     let clock = crate::ports::ManualClock::new(10);
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
-        store_clock: clock.bundle(), ..VaultConfig::device()
+        store_clock: clock.bundle(),
+        ..VaultConfig::device()
     });
     let runner = DreamerRunnerStore::new(&vault);
     let attempt = enqueue(&runner, "terminal-subagent", None, 10, "run-terminal")?;
@@ -221,7 +233,10 @@ fn run_tree_preserves_claimed_event_after_terminal_transition() -> Result<()> {
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "stream-worker".to_owned(),
-        now: { clock.set(20); 20 },
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claim");
@@ -235,7 +250,10 @@ fn run_tree_preserves_claimed_event_after_terminal_transition() -> Result<()> {
         id: attempt.attempt.id,
         lease_owner: "stream-worker".to_owned(),
         attempt_count: claimed.attempt_count,
-        now: { clock.set(30); 30 },
+        now: {
+            clock.set(30);
+            30
+        },
     })?
     else {
         panic!("expected completion");

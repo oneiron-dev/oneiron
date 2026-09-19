@@ -1278,7 +1278,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/message_stream/policy.rs` | src | s | 3 fn · 1 crate-vis | — | Actor-bound streaming policy persistence; overrides affect only future begins |
 | `src/message_stream/receipts.rs` | src | s | 1 fn · 1 crate-vis | — | Finality sidecars written inside the witness transaction |
 | `src/message_stream/tests.rs` | test | s | — | — | Caller-visible streaming laws; partial text never reaches storage |
-| `src/message_stream/types.rs` | src | s | 4 struct · 5 enum · 8 fn | MessageFinality, MessageFinalityReceipt, MessageStreamFrame, MessageStreamHandle, MessageStreamPolicy, MessageWriteMode, StreamCadence, StreamCancelReason +1 | Stream policy, ephemeral frames and durable finality receipts |
+| `src/message_stream/types.rs` | src | s | 4 struct · 5 enum · 9 fn | MessageFinality, MessageFinalityReceipt, MessageStreamFrame, MessageStreamHandle, MessageStreamPolicy, MessageWriteMode, StreamCadence, StreamCancelReason +1 | Stream policy, ephemeral frames and durable finality receipts |
 | `src/note.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 3 re-export · 3 crate-vis | NoteBody, TakeTarget | Governed NOTE cores, PACK kind descriptors, and per-note editable documents |
 | `src/note/document_tests.rs` | test | m | — | — | NOTE caller-observable storage, cursor, fork and bridge laws |
 | `src/note/documents.rs` | src | m | 3 struct · 2 enum · 6 fn · 12 crate-vis | NoteAnchor, NoteDocument, NoteEdit, NoteEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |
@@ -1814,7 +1814,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/surface_event/handoff.rs` | src | m | 5 struct · 4 enum · 1 trait · 9 fn · 1 const · 2 crate-vis | SurfaceEventAck, SurfaceEventAdmission, SurfaceEventAttemptPayload, SurfaceEventAttemptRef, SurfaceEventDispatchDisposition, SurfaceEventDispatchRequest, SurfaceEventDispatcher, SurfaceEventHandoffState +2 | Durable admission txn, attempt payload codec, dispatch handoff, and status reads |
 | `src/surface_event/inbound.rs` | src | m | 4 struct · 7 enum · 14 fn · 2 const · 1 crate-vis | InboundSurfaceEventInput, InboundSurfaceRejectionReason, InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAction, SurfaceEventDispatchRoute +3 | Inbound surface event, source and action types, channel routing, and route receipts |
 | `src/surface_event/mod.rs` | src | s | 2 re-export | — | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
-| `src/surface_event/tests.rs` | test | L | — | — | — |
+| `src/surface_event/tests.rs` | test | XL | — | — | — |
 | `src/sweep/compact.rs` | src | m | 2 crate-vis | — | Window shallow-snapshot compaction and erased-id scrub |
 | `src/sweep/finalize.rs` | src | m | 3 crate-vis | — | Job finalize, retry rewrite, and dropped-obligation audit |
 | `src/sweep/mod.rs` | src | s | 1 crate-vis | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |

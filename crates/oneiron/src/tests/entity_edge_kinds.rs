@@ -910,8 +910,10 @@ fn conversation_edges_are_structural_door_only_and_non_traversed() -> Result<()>
             edge::validate_public_edge_creation_kind(kind)?;
         } else {
             assert_eq!(
-                vault.put_edge(&EntityId::now(), kind, &EntityId::now(), 1.0)
-                    .unwrap_err().kind(),
+                vault
+                    .put_edge(&EntityId::now(), kind, &EntityId::now(), 1.0)
+                    .unwrap_err()
+                    .kind(),
                 crate::ErrorKind::ReservedEdgeKind
             );
         }

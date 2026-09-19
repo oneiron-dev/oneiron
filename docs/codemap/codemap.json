@@ -16169,7 +16169,7 @@
      "purpose": "Stream policy, ephemeral frames and durable finality receipts",
      "surface": {
       "enum": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -22529,7 +22529,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/surface_event/tests.rs",

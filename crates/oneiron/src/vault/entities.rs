@@ -181,11 +181,13 @@ impl Vault {
             return Ok(None);
         };
         let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(self, &txn, id)?;
-        Ok((row.body.is_empty()
-            && visibility.deleted
-            && !visibility.archived
-            && !visibility.stale)
-            .then(Vec::new))
+        Ok(
+            (row.body.is_empty()
+                && visibility.deleted
+                && !visibility.archived
+                && !visibility.stale)
+                .then(Vec::new),
+        )
     }
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
