@@ -5,6 +5,7 @@ fn cache_isolates_triples_and_bad_issuer_fails_before_redemption() {
     let key = TokenCacheKey {
         vault_id: "v".into(),
         actor_ref: "a".into(),
+        connector_ref: "connector-a".into(),
         issuer: "https://issuer.test".into(),
     };
     cache.register_issuer(&key).unwrap();
@@ -44,6 +45,26 @@ fn cache_isolates_triples_and_bad_issuer_fails_before_redemption() {
     ] {
         assert_eq!(cache.get(&other, 2), None);
     }
+    let independent = TokenCacheKey {
+        connector_ref: "connector-b".into(),
+        issuer: "https://provider-b.test".into(),
+        ..key.clone()
+    };
+    cache.register_issuer(&independent).unwrap();
+    cache
+        .redeem(
+            &independent,
+            "state",
+            &AuthorizationResponse {
+                iss: independent.issuer.clone(),
+                ..good.clone()
+            },
+            1,
+            |_| Ok(("token-b".into(), 10)),
+        )
+        .unwrap();
+    assert_eq!(cache.get(&key, 2), Some("token"));
+    assert_eq!(cache.get(&independent, 2), Some("token-b"));
     let drift = TokenCacheKey {
         issuer: "https://other.test".into(),
         ..key.clone()
@@ -53,8 +74,9 @@ fn cache_isolates_triples_and_bad_issuer_fails_before_redemption() {
         Err(OAuthClientError::IssuerDrift)
     );
     assert_eq!(cache.get(&key, 2), None);
-    cache.revoke(&key.vault_id, &key.actor_ref);
+    cache.revoke(&key.vault_id, &key.actor_ref, &key.connector_ref);
     cache.register_issuer(&drift).unwrap();
+    assert_eq!(cache.get(&independent, 2), Some("token-b"));
     assert_eq!(
         cache.redeem(&drift, "state", &good, 2, |_| panic!("old issuer")),
         Err(OAuthClientError::IssuerMismatch)

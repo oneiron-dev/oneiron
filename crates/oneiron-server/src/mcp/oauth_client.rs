@@ -3,12 +3,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Every cache lookup names all three axes. No actor-only or issuer-only door.
+/// Every lookup binds vault, actor and issuer to one connector registration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TokenCacheKey {
     pub vault_id: String,
     pub actor_ref: String,
     pub issuer: String,
+    pub connector_ref: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OAuthClientError {
@@ -30,8 +31,8 @@ struct CachedToken {
 #[derive(Default)]
 pub struct OAuthTokenCache {
     tokens: BTreeMap<TokenCacheKey, CachedToken>,
-    issuers: BTreeMap<(String, String), String>,
-    drifted: BTreeSet<(String, String)>,
+    issuers: BTreeMap<(String, String, String), String>,
+    drifted: BTreeSet<(String, String, String)>,
 }
 impl std::fmt::Debug for OAuthTokenCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -52,7 +53,11 @@ impl OAuthTokenCache {
     /// cached credentials; ordinary redemption cannot silently rebind it.
     pub fn register_issuer(&mut self, key: &TokenCacheKey) -> Result<(), OAuthClientError> {
         validate_key(key)?;
-        let pair = (key.vault_id.clone(), key.actor_ref.clone());
+        let pair = (
+            key.vault_id.clone(),
+            key.actor_ref.clone(),
+            key.connector_ref.clone(),
+        );
         if self.drifted.contains(&pair) {
             return Err(OAuthClientError::IssuerDrift);
         }
@@ -61,8 +66,11 @@ impl OAuthTokenCache {
             .get(&pair)
             .is_some_and(|old| old != &key.issuer)
         {
-            self.tokens
-                .retain(|k, _| k.vault_id != key.vault_id || k.actor_ref != key.actor_ref);
+            self.tokens.retain(|k, _| {
+                k.vault_id != key.vault_id
+                    || k.actor_ref != key.actor_ref
+                    || k.connector_ref != key.connector_ref
+            });
             self.drifted.insert(pair);
             return Err(OAuthClientError::IssuerDrift);
         }
@@ -70,17 +78,28 @@ impl OAuthTokenCache {
         Ok(())
     }
     /// A re-consent callback must explicitly retire the old registration first.
-    pub fn revoke(&mut self, vault_id: &str, actor_ref: &str) {
-        self.tokens
-            .retain(|k, _| k.vault_id != vault_id || k.actor_ref != actor_ref);
-        self.issuers.remove(&(vault_id.into(), actor_ref.into()));
-        self.drifted.remove(&(vault_id.into(), actor_ref.into()));
+    pub fn revoke(&mut self, vault_id: &str, actor_ref: &str, connector_ref: &str) {
+        self.tokens.retain(|k, _| {
+            k.vault_id != vault_id || k.actor_ref != actor_ref || k.connector_ref != connector_ref
+        });
+        self.issuers
+            .remove(&(vault_id.into(), actor_ref.into(), connector_ref.into()));
+        self.drifted
+            .remove(&(vault_id.into(), actor_ref.into(), connector_ref.into()));
     }
     pub fn get(&self, key: &TokenCacheKey, now: u64) -> Option<&str> {
-        if self
-            .issuers
-            .get(&(key.vault_id.clone(), key.actor_ref.clone()))
-            != Some(&key.issuer)
+        if self.drifted.contains(&(
+            key.vault_id.clone(),
+            key.actor_ref.clone(),
+            key.connector_ref.clone(),
+        )) {
+            return None;
+        }
+        if self.issuers.get(&(
+            key.vault_id.clone(),
+            key.actor_ref.clone(),
+            key.connector_ref.clone(),
+        )) != Some(&key.issuer)
         {
             return None;
         }
@@ -100,16 +119,18 @@ impl OAuthTokenCache {
         exchange: impl FnOnce(&str) -> Result<(String, u64), OAuthClientError>,
     ) -> Result<(), OAuthClientError> {
         validate_key(key)?;
-        if self
-            .drifted
-            .contains(&(key.vault_id.clone(), key.actor_ref.clone()))
-        {
+        if self.drifted.contains(&(
+            key.vault_id.clone(),
+            key.actor_ref.clone(),
+            key.connector_ref.clone(),
+        )) {
             return Err(OAuthClientError::IssuerDrift);
         }
-        if self
-            .issuers
-            .get(&(key.vault_id.clone(), key.actor_ref.clone()))
-            != Some(&key.issuer)
+        if self.issuers.get(&(
+            key.vault_id.clone(),
+            key.actor_ref.clone(),
+            key.connector_ref.clone(),
+        )) != Some(&key.issuer)
         {
             return Err(OAuthClientError::IssuerDrift);
         }
@@ -140,6 +161,7 @@ fn validate_key(key: &TokenCacheKey) -> Result<(), OAuthClientError> {
     let url = reqwest::Url::parse(&key.issuer).map_err(|_| OAuthClientError::InvalidResponse)?;
     if key.vault_id.is_empty()
         || key.actor_ref.is_empty()
+        || key.connector_ref.is_empty()
         || url.scheme() != "https"
         || url.host_str().is_none()
         || !url.username().is_empty()
