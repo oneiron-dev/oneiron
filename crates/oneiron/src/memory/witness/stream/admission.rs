@@ -219,6 +219,7 @@ impl Memory<'_> {
             &text,
             chars.saturating_sub(state.emitted_chars),
         ) {
+            #[cfg(feature = "sync")]
             self.vault
                 .publish_message_stream(&state.seed, &text, next)?;
             state.emitted_chars = chars;
@@ -243,6 +244,7 @@ impl Memory<'_> {
         let txn = self.vault.store.env.read_txn()?;
         authorize(self.vault, &txn, &state.seed, &text)?;
         drop(txn);
+        #[cfg(feature = "sync")]
         self.vault
             .publish_message_stream(&state.seed, &text, state.sequence)?;
         state.emitted_chars = text.chars().count();
@@ -383,12 +385,9 @@ pub(super) fn committed_text(
     }
     Ok(Some(text))
 }
+#[cfg(feature = "sync")]
 impl Vault {
     fn publish_message_stream(&self, seed: &Seed, text: &str, seq: u64) -> MessageStreamResult<()> {
-        #[cfg(feature = "sync")]
-        self.message_streams.presence.publish(seed, text, seq)?;
-        #[cfg(not(feature = "sync"))]
-        let _ = (seed, text, seq);
-        Ok(())
+        self.message_streams.presence.publish(seed, text, seq)
     }
 }
