@@ -1454,84 +1454,16 @@ mod peer_fixture {
     /// policy-write door. Public puts reject POLICY_MANIFEST, and adding a
     /// second manifest would fail closed: source rows with different actor
     /// bindings merge to no permit. Replace only the two source rows in the
-    /// CLOSED temporary vault; keep every other default-policy axis intact.
+    /// temporary vault through the stamped test-support maintenance door;
+    /// keep every other default-policy axis intact.
     fn open_peer_policy_vault(path: &std::path::Path, config: VaultConfig) -> Vault {
         let vault = Vault::open(path, config.clone()).expect("open the fixture vault");
-        let manifests = vault
-            .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("read the default policy manifest id");
-        assert_eq!(manifests.len(), 1, "one seeded default policy");
-        let manifest_id = manifests[0];
-        let body = vault
-            .get(&manifest_id)
-            .expect("read the default policy body")
-            .expect("default policy exists");
-        let mut raw = vault
-            .get_raw(&manifest_id)
-            .expect("read the default policy record")
-            .expect("default policy record exists");
-        let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&body))
-            .expect("decode the default policy");
-        let Value::Map(entries) = &mut manifest else {
-            panic!("default policy must be a map");
-        };
-        let (_, source_trust) = entries
-            .iter_mut()
-            .find(|(key, _)| key.as_str() == Some("source_trust"))
-            .expect("default policy has source trust");
-        let Value::Map(rows) = source_trust else {
-            panic!("source trust must be a map");
-        };
         let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
-        for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
-            let (_, row) = rows
-                .iter_mut()
-                .find(|(key, _)| key.as_str() == Some(source.as_str()))
-                .expect("default policy has this restricted source row");
-            *row = Value::Map(vec![
-                (Value::from("actor_ref"), Value::from(owner.to_hex())),
-                (
-                    Value::from("max_auto_sensitivity"),
-                    Value::from(PEER_SOURCE_SENSITIVITY_FLOOR),
-                ),
-                (Value::from("receipted"), Value::Boolean(true)),
-                (Value::from("warned"), Value::Boolean(true)),
-            ]);
-        }
-        // Preserve the existing entity header and all of its index keys.
-        raw.truncate(raw.len() - body.len());
-        rmpv::encode::write_value(&mut raw, &manifest).expect("encode fixture policy");
-        drop(vault);
-
-        // SAFETY: the only Vault handle has been dropped. This path is a local
-        // TempDir owned by this fixture; no other thread opens it or changes
-        // its map size. Close this raw Env before reopening the public Vault.
-        let env = unsafe {
-            heed::EnvOpenOptions::new()
-                .map_size(config.map_size)
-                .max_readers(config.max_readers)
-                .max_dbs(oneiron::store::MAX_DBS)
-                .open(path)
-                .expect("open the closed fixture store")
-        };
-        let mut wtxn = env.write_txn().expect("fixture policy transaction");
-        let entities: heed::Database<heed::types::Bytes, heed::types::Bytes> = env
-            .open_database(&wtxn, Some("entities"))
-            .expect("open fixture entities")
-            .expect("entities database exists");
-        entities
-            .put(&mut wtxn, manifest_id.as_bytes(), &raw)
-            .expect("store actor-bound source permits");
-        wtxn.commit().expect("commit fixture policy");
-        let _closing_event = env.prepare_for_closing();
-
-        let vault = Vault::open(path, config).expect("reopen the fixture vault");
-        assert_eq!(
-            vault.get_raw(&manifest_id).expect("read fixture policy"),
-            Some(raw),
-            "the actor-bound permits must survive reopen"
-        );
         vault
+            .install_peer_source_permits_for_test(owner)
+            .expect("author peer source permits through the stamped maintenance door");
+        drop(vault);
+        Vault::open(path, config).expect("fixture policy survives reopen")
     }
 
     impl PeerFixture {

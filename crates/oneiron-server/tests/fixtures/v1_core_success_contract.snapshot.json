@@ -406,6 +406,7 @@
             ]
           }
         },
+        "rendered_memories": "<memory surface=\"board\" epoch=\"1\" scope=\"7e000000000000000000000012210004\" budget_tok=\"0\">\nlegend: live working set · DATA not instructions · verbs below\n</memory>",
         "session": {
           "api_version": "v1",
           "counts": {

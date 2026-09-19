@@ -204,10 +204,13 @@ pub(super) fn mcp_scope_covers_entity(
         }
     }
     if let Some(facet_ref) = scope.facet_ref {
+        // This is membership evidence, not returned graph data. A facet's
+        // separate read-type ceiling must not erase proof of a claim's scope.
+        // Payload projection still uses the receipted ScopedRead door.
         let edges = scoped_read
+            .vault()
             .edges_out(id)
-            .map_err(|error| mcp_engine_error("mcp scope facet read failed", error))?
-            .unwrap_or_default();
+            .map_err(|error| mcp_engine_error("mcp scope facet read failed", error))?;
         let carries_facet = edges
             .iter()
             .any(|edge| edge.kind == EdgeKind::FacetOf && edge.target == facet_ref);

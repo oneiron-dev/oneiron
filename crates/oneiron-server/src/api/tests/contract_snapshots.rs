@@ -38,6 +38,28 @@ fn v1_core_openapi_contract_snapshot_matches_fixture() {
     }
 
     let spec = generated_spec();
+    if std::env::var_os("ONEIRON_UPDATE_TEST_FIXTURES").is_some() {
+        let mut actual = json!({"paths": {}, "components": {"schemas": {},
+            "securitySchemes": spec["components"]["securitySchemes"]}});
+        for &(path, method) in V1_CORE_OPENAPI_CONTRACT_OPERATIONS {
+            actual["paths"][path][method] =
+                openapi_operation_contract(&spec["paths"][path][method]);
+        }
+        for name in V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES {
+            actual["components"]["schemas"][*name] =
+                openapi_schema_contract(openapi_component_schema(&spec, name));
+        }
+        assert_json_snapshot(
+            actual,
+            V1_CORE_OPENAPI_CONTRACT_SNAPSHOT,
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/v1_core_openapi_contract.snapshot.json"
+            ),
+            "v1 core OpenAPI contract",
+        );
+        return;
+    }
     let expected: Value =
         serde_json::from_str(&retrieval_quality_openapi_snapshot()).expect("OpenAPI fixture");
     for &(path, method) in V1_CORE_OPENAPI_CONTRACT_OPERATIONS {
@@ -1052,10 +1074,10 @@ async fn core_hydrate_absence_retains_receipt_without_counting_missing_refs() {
 }
 
 #[tokio::test]
-async fn core_memory_timeline_absence_retains_the_read_receipt() {
+async fn core_memory_timeline_receipt_covers_absent_and_live_results() {
     let (_dir, server) = test_server();
     let (status, body) = route_json(
-        server,
+        server.clone(),
         json_request(
             "GET",
             "/v1/core/memory/03030303030303030303030303030303/timeline",
@@ -1066,4 +1088,31 @@ async fn core_memory_timeline_absence_retains_the_read_receipt() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["narrowing"]["suppressed_count"], 0);
     assert!(body["narrowing"]["applied"].is_object());
+
+    let id = oneiron::EntityId::from_bytes([3; 16]).expect("id");
+    let payload = rmp_serde::to_vec_named(&json!({"txt": "timeline row"})).unwrap();
+    server
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &payload,
+        )
+        .unwrap();
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "GET",
+            "/v1/core/memory/03030303030303030303030303030303/timeline?view=full",
+            json!(null),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["narrowing"]["suppressed_count"], 0);
+    assert_eq!(body["narrowing"]["narrowed_axes"], json!([]));
+    assert_eq!(body["records"].as_array().unwrap().len(), 1);
+    assert_eq!(body["records"][0]["item"]["txt"], "timeline row");
 }

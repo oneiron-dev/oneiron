@@ -23845,7 +23845,7 @@
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
       "crate-vis": 8,
-      "fn": 11
+      "fn": 12
      }
     },
     {

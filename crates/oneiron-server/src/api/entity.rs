@@ -204,6 +204,7 @@ mod credential_tests {
         (
             status = 200,
             description = "Outbound graph edges from the requested entity, projected according to `view`.",
+            headers(("x-oneiron-read-receipt" = String, description = "JSON requested scope, actor ceiling, intersection, narrowed axes and suppression count.")),
             body = Vec<Object>,
             content_type = "application/json",
             example = json!([{
@@ -236,7 +237,7 @@ pub(crate) async fn get_edges(
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
-) -> Result<Json<Vec<Value>>, ApiError> {
+) -> Result<Response, ApiError> {
     check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
@@ -246,20 +247,23 @@ pub(crate) async fn get_edges(
     })?;
 
     let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
-    let edges = scoped_read
+    let read = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {
             tracing::error!(error = %e, "get edges failed");
         })
-        .map_err(|_| ApiError::internal_server_error("get edges failed"))?
-        .ok_or_else(|| ApiError::not_found("entity", Some(&id_hex)))?;
-
-    let response: Vec<Value> = edges
-        .into_iter()
-        .map(|edge| projection::project_edge(&edge, view))
-        .collect();
-
-    Ok(Json(response))
+        .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
+    let response = match read.value {
+        None => ApiError::not_found("entity", Some(&id_hex)).into_response(),
+        Some(edges) => Json(
+            edges
+                .into_iter()
+                .map(|edge| projection::project_edge(&edge, view))
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+    };
+    attach_read_receipt(response, &read.receipt)
 }
 
 /// Outbound edge from one entity to another.
