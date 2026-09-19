@@ -346,9 +346,12 @@ fn interventions_and_manifest_rows_stay_separate_lanes() -> Result<()> {
 /// manifest, split by kind, in append order.
 #[test]
 fn completing_an_attempt_under_a_pack_stamps_its_terminal_receipt() -> Result<()> {
-    let (_dir, vault, _clock) = open_queue_at(10);
+    let (_dir, vault, clock) = open_queue_at(10);
 
-    let (receipt_id, receipt) = run_packed_attempt(&vault, complete_at_14)?;
+    let (receipt_id, receipt) = run_packed_attempt(&vault, |queue, id, generation| {
+        clock.set(14);
+        complete_at_14(queue, id, generation)
+    })?;
     let receipt = receipt.expect("the terminal transition stamped a pack receipt");
 
     assert_eq!(receipt.receipt_id, receipt_id);

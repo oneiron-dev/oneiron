@@ -42,11 +42,15 @@ struct TimedVault {
 }
 impl std::ops::Deref for TimedVault {
     type Target = Vault;
-    fn deref(&self) -> &Vault { &self.vault }
+    fn deref(&self) -> &Vault {
+        &self.vault
+    }
 }
 impl TimedVault {
     fn run_connector_task_executor<S: OutboundExecutionSink>(
-        &self, sink: &mut S, now: u64,
+        &self,
+        sink: &mut S,
+        now: u64,
     ) -> std::result::Result<usize, ConnectorTaskExecutorError> {
         self.clock.set(now);
         self.vault.run_connector_task_executor(sink, now)
@@ -686,7 +690,7 @@ fn sends_per_day_key(limit: u64) -> crate::connector_key::ConnectorKeyRecord {
 fn budget_vault_with_key(
     limit: u64,
 ) -> std::result::Result<
-    (tempfile::TempDir, Vault, OutboundDispatchActor),
+    (tempfile::TempDir, TimedVault, OutboundDispatchActor),
     Box<dyn std::error::Error>,
 > {
     let (tmp, vault) = temp_vault();
@@ -723,7 +727,7 @@ const ONE_1768_SCHEDULED_AT: u64 = 10;
 
 struct QuietWindowFixture {
     _tmp: tempfile::TempDir,
-    vault: Vault,
+    vault: TimedVault,
     actor: EntityId,
 }
 

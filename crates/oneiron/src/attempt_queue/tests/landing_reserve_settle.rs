@@ -415,12 +415,12 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
 
     // Lease rung: the sweep warns inside the window and leaves the already
     // expired lease to cleanup's hard rung.
-    let (_dir_b, vault_b) = open_queue();
+    let (_dir_b, vault_b, clock_b) = open_queue_at(11);
     let queue_b = AttemptQueue::new(&vault_b);
     let inside = leased_attempt(&queue_b, "turn:lease-warning")?;
     let not_due = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
         now: {
-            clock.set(12);
+            clock_b.set(12);
             12
         },
         lease_timeout_secs: 100,
@@ -431,7 +431,7 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
 
     let warned = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
         now: {
-            clock.set(100);
+            clock_b.set(100);
             100
         },
         lease_timeout_secs: 100,
@@ -449,7 +449,7 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
     );
     let repeated = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
         now: {
-            clock.set(101);
+            clock_b.set(101);
             101
         },
         lease_timeout_secs: 100,
@@ -459,7 +459,7 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
 
     let expired = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
         now: {
-            clock.set(10_000);
+            clock_b.set(10_000);
             10_000
         },
         lease_timeout_secs: 100,
@@ -472,7 +472,7 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
     // And cleanup still owns stale-lease recovery, unchanged.
     let cleanup = queue_b.cleanup_leases(CleanupAttemptLeases {
         now: {
-            clock.set(10_000);
+            clock_b.set(10_000);
             10_000
         },
         lease_timeout_secs: 100,

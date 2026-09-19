@@ -1618,7 +1618,11 @@ fn run_all_operations() -> Result<()> {
 #[test]
 fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let clock = std::sync::Arc::new(crate::ports::ManualClock::new(1));
+    let vault = Vault::open(temp_dir.path(), VaultConfig {
+        store_clock: crate::ports::StoreClock::new(clock.clone()),
+        ..test_config()
+    })?;
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
@@ -1631,6 +1635,7 @@ fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()>
     else {
         panic!("expected enqueue");
     };
+    clock.set(2);
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 2,
@@ -1640,6 +1645,7 @@ fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()>
     };
     assert_eq!(claimed.id, attempt.id);
 
+    clock.set(100);
     let report = vault.maintain().cleanup_attempt_queue_leases(1).run()?;
     assert_eq!(report.attempt_queue_cleanup.pending, 1);
     assert_eq!(report.attempt_queue_cleanup.running, 0);
@@ -1655,7 +1661,7 @@ fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()>
 
     let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
-        now: crate::unix_seconds_now(),
+        now: 100,
     })?
     else {
         panic!("expected reclaimed attempt");
@@ -1674,7 +1680,11 @@ fn attempt_queue_maintenance_warns_a_live_lease_before_cleanup_takes_it() -> Res
     const LEASE_TIMEOUT_SECS: u64 = 1_000;
 
     let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let clock = std::sync::Arc::new(crate::ports::ManualClock::new(1));
+    let vault = Vault::open(temp_dir.path(), VaultConfig {
+        store_clock: crate::ports::StoreClock::new(clock.clone()),
+        ..test_config()
+    })?;
     let queue = AttemptQueue::new(&vault);
     queue.enqueue(EnqueueAttempt {
         kind: "claim_extraction".to_owned(),
@@ -1685,7 +1695,8 @@ fn attempt_queue_maintenance_warns_a_live_lease_before_cleanup_takes_it() -> Res
     })?;
     // Claimed far enough in the past to sit inside the warning window
     // (>= 80% of the timeout) but well short of expiry.
-    let claimed_at = crate::unix_seconds_now().saturating_sub(900);
+    let claimed_at = 100;
+    clock.set(claimed_at);
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: claimed_at,
@@ -1694,6 +1705,7 @@ fn attempt_queue_maintenance_warns_a_live_lease_before_cleanup_takes_it() -> Res
         panic!("expected claim");
     };
 
+    clock.set(1_000);
     let report = vault
         .maintain()
         .cleanup_attempt_queue_leases(LEASE_TIMEOUT_SECS)

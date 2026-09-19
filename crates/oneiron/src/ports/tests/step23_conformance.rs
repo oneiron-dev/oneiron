@@ -358,20 +358,45 @@ fn scheduler_horizon_only_narrows_clock_and_never_reclaims_its_retry_in_one_tick
     let (_dir, vault) = crate::test_util::open_test_vault_with(config(&clock));
     let queue = AttemptQueue::new(&vault);
     let EnqueueOutcome::Enqueued(_) = queue.enqueue(EnqueueAttempt {
-        kind: "clock.horizon".into(), payload: vec![], dedupe_key: None,
-        run_id: None, now: 1,
-    })? else { panic!("enqueue") };
+        kind: "clock.horizon".into(),
+        payload: vec![],
+        dedupe_key: None,
+        run_id: None,
+        now: 1,
+    })?
+    else {
+        panic!("enqueue")
+    };
     let ClaimOutcome::Claimed(first) = queue.claim(ClaimAttempt {
-        lease_owner: "worker".into(), now: 10,
-    })? else { panic!("immediate queued row") };
+        lease_owner: "worker".into(),
+        now: 10,
+    })?
+    else {
+        panic!("immediate queued row")
+    };
     assert_eq!(first.claimed_at, Some(100));
     let RetryOutcome::Retried(retry) = queue.retry(RetryAttempt {
-        id: first.id, lease_owner: "worker".into(), attempt_count: first.attempt_count,
-        backoff_until: 11, last_error: None, now: 10,
+        id: first.id,
+        lease_owner: "worker".into(),
+        attempt_count: first.attempt_count,
+        backoff_until: 11,
+        last_error: None,
+        now: 10,
     })?;
-    assert_eq!(queue.claim(ClaimAttempt { lease_owner: "worker".into(), now: 10 })?, ClaimOutcome::Empty);
-    let ClaimOutcome::Claimed(next) = queue.claim(ClaimAttempt { lease_owner: "worker".into(), now: 11 })?
-        else { panic!("next tick") };
+    assert_eq!(
+        queue.claim(ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 10
+        })?,
+        ClaimOutcome::Empty
+    );
+    let ClaimOutcome::Claimed(next) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".into(),
+        now: 11,
+    })?
+    else {
+        panic!("next tick")
+    };
     assert_eq!(next.id, retry.id);
     assert_eq!(next.claimed_at, Some(100));
     Ok(())

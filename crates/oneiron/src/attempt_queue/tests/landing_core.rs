@@ -533,6 +533,7 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
     // cleanup, not requeued as ordinary work, and the warning rung is a
     // DIFFERENT, non-terminal thing.
     let expiring = leased_attempt(&queue, "turn:force-expiry")?;
+    let lease_at = expiring.updated_at;
     assert!(matches!(
         queue.warn_lease_expiry(WarnAttemptLeaseExpiry {
             id: expiring.id,
@@ -549,8 +550,8 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
             id: expiring.id,
             lease_timeout_secs: 100,
             now: {
-                clock.set(100);
-                100
+                clock.set(lease_at + 90);
+                lease_at + 90
             },
         })?
     else {
@@ -566,8 +567,8 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
                 id: expiring.id,
                 lease_timeout_secs: 100,
                 now: {
-                    clock.set(101);
-                    101
+                    clock.set(lease_at + 91);
+                    lease_at + 91
                 },
             })?,
             LeaseWarningOutcome::AlreadyRequested(_)
@@ -575,10 +576,16 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
         "polling the warning records one row, not a hundred"
     );
 
-    let landing = accept_landing_at(&queue, &expiring, LandingTrigger::LeaseWarning, 102)?;
+    let landing = accept_landing_at(
+        &queue,
+        &expiring,
+        LandingTrigger::LeaseWarning,
+        lease_at + 92,
+    )?;
     assert_eq!(landing.state, AttemptState::Landing);
     assert_eq!(
-        landing.updated_at, 102,
+        landing.updated_at,
+        lease_at + 92,
         "accepting buys ONE fresh bounded window"
     );
     queue
@@ -587,8 +594,8 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
             limit_units: 100,
             reserve_percent: None,
             now: {
-                clock.set(103);
-                103
+                clock.set(lease_at + 93);
+                lease_at + 93
             },
         })
         .expect_err("a landing row is not re-dialed");
@@ -603,7 +610,8 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
         },
     })?;
     assert_eq!(
-        busy.updated_at, 102,
+        busy.updated_at,
+        lease_at + 92,
         "landing work does not extend the window by looking busy"
     );
     let report = queue.cleanup_leases(CleanupAttemptLeases {

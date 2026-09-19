@@ -165,7 +165,7 @@ pub(super) fn enqueued(queue: &AttemptQueue<'_>, now: u64) -> Result<AttemptReco
 /// door, returning its stamped receipt (if any) and its receipt id.
 pub(super) fn run_packed_attempt(
     vault: &Vault,
-    terminal: fn(&AttemptQueue<'_>, AttemptId, u32) -> Result<()>,
+    terminal: impl FnOnce(&AttemptQueue<'_>, AttemptId, u32) -> Result<()>,
 ) -> Result<(String, Option<crate::receipt::ReceiptRecord>)> {
     let queue = AttemptQueue::new(vault);
     let attempt = enqueued(&queue, 10)?;

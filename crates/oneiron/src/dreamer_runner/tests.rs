@@ -539,7 +539,10 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
             claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
             admission: AdmitDreamerAttempt {
                 lease_owner: "single-pass-worker".to_owned(),
-                now: { clock.set(20); 20 },
+                now: {
+                    clock.set(20);
+                    20
+                },
                 budget_id: "wake:micro".to_owned(),
                 budget_total_units: 12,
                 reserve_units: 8,
@@ -557,7 +560,10 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
     // identity its per-attempt budget reservation is keyed by. (`retry` now
     // mints a distinct row, which is a new try, not a resumed one.)
     queue.cleanup_leases(CleanupAttemptLeases {
-        now: { clock.set(24); 24 },
+        now: {
+            clock.set(24);
+            24
+        },
         lease_timeout_secs: 1,
     })?;
 
@@ -581,7 +587,10 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
             ),
             admission: AdmitDreamerAttempt {
                 lease_owner: "tournament-worker".to_owned(),
-                now: { clock.set(30); 30 },
+                now: {
+                    clock.set(30);
+                    30
+                },
                 budget_id: "wake:micro".to_owned(),
                 budget_total_units: 12,
                 reserve_units: 0,
@@ -624,7 +633,10 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
             claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
             admission: AdmitDreamerAttempt {
                 lease_owner: "single-pass-worker".to_owned(),
-                now: { clock.set(20); 20 },
+                now: {
+                    clock.set(20);
+                    20
+                },
                 budget_id: "wake:micro".to_owned(),
                 budget_total_units: 11,
                 reserve_units: 8,
@@ -639,7 +651,10 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
     // Lease-timeout reclaim keeps the row (and therefore its reservation) so
     // the re-admission exercises the top-up path.
     queue.cleanup_leases(CleanupAttemptLeases {
-        now: { clock.set(24); 24 },
+        now: {
+            clock.set(24);
+            24
+        },
         lease_timeout_secs: 1,
     })?;
 
@@ -663,7 +678,10 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
             ),
             admission: AdmitDreamerAttempt {
                 lease_owner: "tournament-worker".to_owned(),
-                now: { clock.set(30); 30 },
+                now: {
+                    clock.set(30);
+                    30
+                },
                 budget_id: "wake:micro".to_owned(),
                 budget_total_units: 11,
                 reserve_units: 0,
@@ -2360,7 +2378,10 @@ fn dreamer_admission_reuses_existing_reservation_after_lease_timeout_requeue() -
 
     let DreamerAdmissionOutcome::Admitted(first) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "first-worker".to_owned(),
-        now: { clock.set(20); 20 },
+        now: {
+            clock.set(20);
+            20
+        },
         budget_id: "wake".to_owned(),
         budget_total_units: 10,
         reserve_units: 8,
@@ -2377,7 +2398,10 @@ fn dreamer_admission_reuses_existing_reservation_after_lease_timeout_requeue() -
     let first_reservation = first.reservation.clone();
 
     let report = queue.cleanup_leases(CleanupAttemptLeases {
-        now: { clock.set(40); 40 },
+        now: {
+            clock.set(40);
+            40
+        },
         lease_timeout_secs: 10,
     })?;
     assert_eq!(report.stale_requeued, 1);
@@ -2390,7 +2414,10 @@ fn dreamer_admission_reuses_existing_reservation_after_lease_timeout_requeue() -
 
     let DreamerAdmissionOutcome::Admitted(second) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "second-worker".to_owned(),
-        now: { clock.set(50); 50 },
+        now: {
+            clock.set(50);
+            50
+        },
         budget_id: "wake".to_owned(),
         budget_total_units: 10,
         reserve_units: 8,

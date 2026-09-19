@@ -299,6 +299,7 @@ fn persist_and_retry_are_one_txn() -> crate::Result<()> {
         })?,
         ClaimOutcome::Empty
     );
+    vault.clock.set(1_001);
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "connector-task-executor".to_owned(),
         now: 1_001,
@@ -378,11 +379,13 @@ fn already_delivered_does_not_rearm() -> crate::Result<()> {
         )?);
         let delivered = delivered_send_receipt_for_task(&vault, task_ref)?;
         let before = retry_storage_snapshot(&vault)?;
+        let before_audit = audit_receipts(&vault)?;
         assert_eq!(
             before[3].len(),
             1,
             "the leased source owns its dedupe entry"
         );
+        vault.clock.set(102);
         assert!(!persist_failed_send_receipt_and_retry(
             &vault,
             &source,
@@ -402,8 +405,8 @@ fn already_delivered_does_not_rearm() -> crate::Result<()> {
         assert_eq!(queue.list_run("run:atomic-audit")?, vec![completed]);
         let after = retry_storage_snapshot(&vault)?;
         assert_eq!(
-            after[0], before[0],
-            "delivery evidence and indexes are sticky"
+            audit_receipts(&vault)?, before_audit,
+            "delivery evidence remains unchanged while the storage clock advances"
         );
         assert!(after[2].is_empty(), "no ready source or successor");
         assert!(

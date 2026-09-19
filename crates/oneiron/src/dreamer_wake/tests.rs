@@ -328,7 +328,10 @@ fn park_and_resume_roundtrip() -> Result<()> {
         park_via_store_first: false,
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(20); 20 }),
+        run_input(DreamerConsolidationScope::Micro, node_id, {
+            store_clock.set(20);
+            20
+        }),
         &mut parker,
         &WakeCancellation::new(),
     ))?;
@@ -370,7 +373,10 @@ fn park_and_resume_roundtrip() -> Result<()> {
         executed: 0,
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(130); 130 }),
+        run_input(DreamerConsolidationScope::Micro, node_id, {
+            store_clock.set(130);
+            130
+        }),
         &mut completer,
         &WakeCancellation::new(),
     ))?;
@@ -676,7 +682,10 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
         executed: 0,
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(20); 20 }),
+        run_input(DreamerConsolidationScope::Micro, node_id, {
+            store_clock.set(20);
+            20
+        }),
         &mut exec,
         &WakeCancellation::new(),
     ))?;
@@ -717,7 +726,10 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
         clock: Arc::clone(&clock),
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(30); 30 }),
+        run_input(DreamerConsolidationScope::Micro, node_id, {
+            store_clock.set(30);
+            30
+        }),
         &mut exec,
         &WakeCancellation::new(),
     ))
@@ -1270,7 +1282,10 @@ fn a_cooperative_worker_lands_through_the_driver_and_is_not_reported_completed()
         observed: None,
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(20); 20 }),
+        run_input(DreamerConsolidationScope::Micro, node_id, {
+            store_clock.set(20);
+            20
+        }),
         &mut exec,
         &WakeCancellation::new(),
     ))?;

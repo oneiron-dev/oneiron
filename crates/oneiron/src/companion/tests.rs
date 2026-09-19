@@ -110,7 +110,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         payload: b"generic".to_vec(),
         dedupe_key: Some("turn:generic".to_owned()),
         run_id: Some("run-generic".to_owned()),
-        now: { clock.set(5); 5 },
+        now: {
+            clock.set(5);
+            5
+        },
     })?
     else {
         panic!("expected generic enqueue");
@@ -126,7 +129,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         companion_queue.enqueue(EnqueueCompanionTask {
             task: context_task.clone(),
             run_id: Some("run-context".to_owned()),
-            now: { clock.set(10); 10 },
+            now: {
+                clock.set(10);
+                10
+            },
         })?
     else {
         panic!("expected context enqueue");
@@ -143,7 +149,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         companion_queue.enqueue(EnqueueCompanionTask {
             task: context_task,
             run_id: Some("run-context-duplicate".to_owned()),
-            now: { clock.set(11); 11 },
+            now: {
+                clock.set(11);
+                11
+            },
         })?
     else {
         panic!("expected context dedupe hit");
@@ -153,7 +162,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let ClaimCompanionTaskOutcome::Claimed(claimed_context) =
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "companion-worker".to_owned(),
-            now: { clock.set(20); 20 },
+            now: {
+                clock.set(20);
+                20
+            },
         })?
     else {
         panic!("expected context claim");
@@ -175,7 +187,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             id: claimed_context.attempt.id,
             lease_owner: "companion-worker".to_owned(),
             attempt_count: claimed_context.attempt.attempt_count,
-            now: { clock.set(21); 21 },
+            now: {
+                clock.set(21);
+                21
+            },
         })?
     else {
         panic!("expected context complete");
@@ -198,7 +213,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         companion_queue.enqueue(EnqueueCompanionTask {
             task: profile_task.clone(),
             run_id: Some("run-profile".to_owned()),
-            now: { clock.set(30); 30 },
+            now: {
+                clock.set(30);
+                30
+            },
         })?
     else {
         panic!("expected profile enqueue");
@@ -206,7 +224,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let ClaimCompanionTaskOutcome::Claimed(claimed_profile) =
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "companion-worker".to_owned(),
-            now: { clock.set(31); 31 },
+            now: {
+                clock.set(31);
+                31
+            },
         })?
     else {
         panic!("expected profile claim");
@@ -220,7 +241,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             attempt_count: claimed_profile.attempt.attempt_count,
             backoff_until: 40,
             last_error: Some("profile model unavailable".to_owned()),
-            now: { clock.set(32); 32 },
+            now: {
+                clock.set(32);
+                32
+            },
         })?;
     // Retry mints a fresh ATTEMPT carrying the same companion task forward; the
     // retryable reason stays on the finalized source try.
@@ -245,7 +269,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     assert_eq!(
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "too-early".to_owned(),
-            now: { clock.set(39); 39 },
+            now: {
+                clock.set(39);
+                39
+            },
         })?,
         ClaimCompanionTaskOutcome::Empty
     );
@@ -253,7 +280,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let ClaimCompanionTaskOutcome::Claimed(reclaimed_profile) =
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "companion-worker".to_owned(),
-            now: { clock.set(40); 40 },
+            now: {
+                clock.set(40);
+                40
+            },
         })?
     else {
         panic!("expected profile reclaim");
@@ -265,7 +295,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             id: reclaimed_profile.attempt.id,
             lease_owner: "companion-worker".to_owned(),
             attempt_count: reclaimed_profile.attempt.attempt_count,
-            now: { clock.set(41); 41 },
+            now: {
+                clock.set(41);
+                41
+            },
         })?
     else {
         panic!("expected profile complete");
@@ -281,7 +314,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         companion_queue.enqueue(EnqueueCompanionTask {
             task: memory_task.clone(),
             run_id: Some("run-memory".to_owned()),
-            now: { clock.set(50); 50 },
+            now: {
+                clock.set(50);
+                50
+            },
         })?
     else {
         panic!("expected memory enqueue");
@@ -289,7 +325,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let ClaimCompanionTaskOutcome::Claimed(claimed_memory) =
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "companion-worker".to_owned(),
-            now: { clock.set(51); 51 },
+            now: {
+                clock.set(51);
+                51
+            },
         })?
     else {
         panic!("expected memory claim");
@@ -301,7 +340,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             lease_owner: "companion-worker".to_owned(),
             attempt_count: claimed_memory.attempt.attempt_count,
             reason: "memory task exhausted retries".to_owned(),
-            now: { clock.set(52); 52 },
+            now: {
+                clock.set(52);
+                52
+            },
         })?
     else {
         panic!("expected memory fail");
@@ -320,7 +362,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
 
     let ClaimOutcome::Claimed(claimed_generic) = generic_queue.claim(ClaimAttempt {
         lease_owner: "generic-worker".to_owned(),
-        now: { clock.set(60); 60 },
+        now: {
+            clock.set(60);
+            60
+        },
     })?
     else {
         panic!("expected generic claim after companion work");
@@ -332,7 +377,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
                 id: claimed_generic.id,
                 lease_owner: "generic-worker".to_owned(),
                 attempt_count: claimed_generic.attempt_count,
-                now: { clock.set(61); 61 },
+                now: {
+                    clock.set(61);
+                    61
+                },
             })
             .is_err()
     );
