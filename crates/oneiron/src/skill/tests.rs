@@ -961,6 +961,11 @@ fn canonical_tree_hash_rejects_bad_trees_fail_closed() {
     let err = canonical_skill_tree_hash([("Foo.md", content), ("foo.md", content)])
         .expect_err("case-fold duplicate paths must fail closed");
     assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
+    for paths in [["file", "file/child"], ["a/b", "a"], ["A", "a/b"]] {
+        let err = canonical_skill_tree_hash(paths.map(|path| (path, content)))
+            .expect_err("a portable tree cannot use a file as a directory");
+        assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
+    }
     let err = canonical_skill_tree_hash(std::iter::empty::<(&str, &[u8])>())
         .expect_err("an empty tree has no identity");
     assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
