@@ -98,6 +98,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/actor_claims/archive.rs",
+     "purpose": "Domain-owned inert restore of learned actor rows",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/actor_claims/archive_references.rs",
      "purpose": "Typed actor evidence references for credential-safe archive serialization",
      "surface": {
@@ -143,7 +153,7 @@
      "path": "src/actor_claims/mod.rs",
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 6
      }
     },
@@ -10979,6 +10989,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/archive.rs",
+     "purpose": "Inert restoration of skill amendment-cost history; never a judged local cost",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AmendmentAuditFixture"
      ],
@@ -11007,7 +11027,7 @@
      "path": "src/edit_distance/attribution/mod.rs",
      "purpose": "ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and the `*.edit_cost` claim rows a judged amendment earns",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -22405,6 +22425,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/skill_reliability/archive.rs",
+     "purpose": "Imported reliability history is inert data, not a local posterior or synced base",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill_reliability/codec.rs",
      "purpose": "The msgpack map accessors and value encode/decode this module’s rows are read through",
      "surface": {
@@ -22442,7 +22472,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 6
      }
     },
@@ -26555,8 +26585,8 @@
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
-     "files": 11,
-     "impl_vault": false,
+     "files": 12,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
@@ -27045,8 +27075,8 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 65,
-     "impl_vault": false,
+     "files": 66,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
@@ -27605,8 +27635,8 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…"
     },
     "skill_reliability": {
-     "files": 9,
-     "impl_vault": false,
+     "files": 10,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…"
@@ -27796,7 +27826,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1599,
+   "source_files": 1602,
    "test_files": 576
   },
   "oneiron-bench": {

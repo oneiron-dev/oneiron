@@ -141,3 +141,6 @@ mod tests;
 
 mod archive_references;
 pub(crate) use archive_references::actor_archive_references;
+
+mod archive;
+pub(crate) use archive::{imported_actor_body, imported_actor_dependencies};

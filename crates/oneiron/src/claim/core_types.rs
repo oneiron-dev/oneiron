@@ -602,6 +602,10 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::subject_model::validate_actor_subject_claim_structure(&body)?;
     } else if body.predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE {
         crate::subject_model::validate_person_substrate_claim_structure(&body)?;
+    } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
+        crate::skill_reliability::validate_imported_reliability(&body)?;
+    } else if body.predicate == PREDICATE_SKILL_EDIT_COST {
+        crate::edit_distance::attribution::validate_imported_skill_cost(&body)?;
     } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::validate_actor_claim_structure(&body)?;
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)

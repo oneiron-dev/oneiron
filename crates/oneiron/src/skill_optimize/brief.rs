@@ -271,6 +271,8 @@ fn reliability_citations(vault: &Vault, skill: &EntityId) -> Result<Vec<String>>
         };
         if body.predicate != crate::skill_reliability::PREDICATE_SKILL_RELIABILITY
             || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+            || body.source != Some(crate::claim::ClaimSource::Observed)
+            || body.approval != crate::claim::ClaimApprovalStatus::Auto
         {
             continue;
         }

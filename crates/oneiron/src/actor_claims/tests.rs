@@ -1006,3 +1006,107 @@ fn a_sitting_with_no_turns_distills_nothing() -> Result<()> {
 mod runner;
 
 mod pack_load;
+
+#[test]
+fn archived_actor_history_is_typed_but_not_live_or_a_projector_prior() -> Result<()> {
+    let (_source_dir, source) = temp_vault();
+    let (_target_dir, target) = temp_vault();
+    let actor = put_actor(&source)?;
+    let skill = put_skill(&source, "archive.actor.fit")?;
+    let evidence = task_evidence(&source, 50);
+    let mut ids = Vec::new();
+    for row in [
+        ActorClaimRow::Lesson {
+            actor,
+            text: "cite the receipt".into(),
+        },
+        ActorClaimRow::FailureMode {
+            actor,
+            text: "missed a step".into(),
+        },
+        ActorClaimRow::ScopeNote {
+            actor,
+            text: "compare sources".into(),
+        },
+        ActorClaimRow::SkillFit {
+            actor,
+            skill,
+            fit: 0.99,
+        },
+        ActorClaimRow::EditCost {
+            actor,
+            scope: "outbound".into(),
+            cost: 0.9,
+        },
+    ] {
+        ids.push(write_actor_claim(&source, row, &evidence)?);
+    }
+    let archive = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let document = target.read_whole_vault_json(archive.bytes())?;
+    for id in &ids {
+        assert!(!document.manifest.import_refusals.iter().any(|refusal|matches!(refusal,crate::batch::export::ExportImportRefusal::Entity{entity_id,..} if entity_id==&id.to_hex())));
+    }
+    target.import_whole_vault_json(archive.bytes())?;
+    assert_eq!(
+        target
+            .import_whole_vault_json(archive.bytes())?
+            .inserted_entities,
+        0
+    );
+    for id in &ids {
+        let stored = target.get_claim(id)?.unwrap();
+        let original = source.get_claim(id)?.unwrap();
+        assert_eq!(stored.value, original.value);
+        assert_eq!(stored.evidence, original.evidence);
+        assert_eq!(stored.source, Some(ClaimSource::Imported));
+        assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(actor_claim_lineage(&stored), Some(ClaimSource::Imported));
+        // Native approval/source combinations remain closed on raw replay.
+        for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Approved] {
+            let mut forged = stored.clone();
+            forged.approval = approval;
+            let bytes = crate::claim::encode_claim_body(&forged)?;
+            assert!(
+                target
+                    .batch()
+                    .put_replicated(
+                        &EntityId::now(),
+                        crate::registry::ENTITY_TYPE_CLAIM,
+                        t(70),
+                        70,
+                        &bytes
+                    )
+                    .commit()
+                    .is_err()
+            );
+        }
+    }
+    assert_eq!(skill_fit_for(&target, &actor, &skill)?, None);
+    assert_eq!(
+        crate::edit_distance::attribution::edit_cost_for(&target, &actor, "outbound")?,
+        None
+    );
+    let original_bodies = ids
+        .iter()
+        .map(|id| target.get_claim(id))
+        .collect::<Result<Vec<_>>>()?;
+    let fresh = write_actor_claim(
+        &target,
+        ActorClaimRow::SkillFit {
+            actor,
+            skill,
+            fit: 0.25,
+        },
+        &task_evidence(&target, 80),
+    )?;
+    assert!(!ids.contains(&fresh));
+    assert_eq!(skill_fit_for(&target, &actor, &skill)?, Some(0.25));
+    for (id, before) in ids.iter().zip(original_bodies) {
+        assert_eq!(target.get_claim(id)?, before);
+    }
+    let reexport = target.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let (_third_dir, third) = temp_vault();
+    third.import_whole_vault_json(reexport.bytes())?;
+    assert_eq!(skill_fit_for(&third, &actor, &skill)?, None);
+    Ok(())
+}

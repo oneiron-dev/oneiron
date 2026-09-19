@@ -101,8 +101,13 @@ impl WholeVaultDocument {
                 Some(ImportRefusalReason::LocalExpressionWriterRequired)
             } else if row.entity_type == ENTITY_TYPE_CLAIM
                 && crate::claim::decode_claim_body(&row.body.to_bytes()?, false).is_err()
-                && !crate::claim::decode_claim_body(&row.body.to_bytes()?, true)
-                    .is_ok_and(|body| crate::subject_model::imported_subject_body(&body).is_ok())
+                && !crate::claim::decode_claim_body(&row.body.to_bytes()?, true).is_ok_and(|body| {
+                    crate::subject_model::imported_subject_body(&body).is_ok()
+                        || crate::actor_claims::imported_actor_body(&body).is_ok()
+                        || crate::skill_reliability::imported_reliability_body(&body).is_ok()
+                        || crate::edit_distance::attribution::imported_skill_cost_body(&body)
+                            .is_ok()
+                })
             {
                 Some(ImportRefusalReason::OwningClaimAdapterRequired)
             } else {

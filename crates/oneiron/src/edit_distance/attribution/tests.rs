@@ -831,3 +831,71 @@ fn an_always_abstaining_tier_cannot_score_full_marks() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> {
+    let (_source_dir, source) = temp_vault();
+    let (_target_dir, target) = temp_vault();
+    let actor = put_actor(&source)?;
+    let skill = put_skill(&source, "archive.amendment.cost")?;
+    let mut judgments = Vec::new();
+    for (receipt, followed) in [("archive:defect", true), ("archive:lapse", false)] {
+        judgments.push(
+            judged(
+                &source,
+                receipt,
+                AmendmentEvidence::new(receipt, actor, "outbound")
+                    .at(50)
+                    .with_skill(skill)
+                    .with_cause(AmendmentCause::ProposalWrong)
+                    .with_routing_facts(followed, true),
+                "old wording",
+                "better wording",
+            )?
+            .unwrap(),
+        );
+    }
+    let ids = project_edit_cost_claims(&source, &judgments)?;
+    assert_eq!(ids.len(), 2);
+    let archive = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    target.import_whole_vault_json(archive.bytes())?;
+    assert_eq!(
+        target
+            .import_whole_vault_json(archive.bytes())?
+            .inserted_entities,
+        0
+    );
+    let mut preserved = Vec::new();
+    for id in &ids {
+        let body = target.get_claim(id)?.unwrap();
+        let before = source.get_claim(id)?.unwrap();
+        assert_eq!(body.value, before.value);
+        assert_eq!(body.evidence, before.evidence);
+        assert_eq!(body.source, Some(ClaimSource::Imported));
+        assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+        preserved.push(body);
+    }
+    assert_eq!(edit_cost_for(&target, &actor, "outbound")?, None);
+    assert_eq!(edit_cost_for(&target, &skill, "outbound")?, None);
+    assert!(project_edit_cost_claims(&target, &judgments)?.is_empty());
+    let local = judged(
+        &target,
+        "local:defect",
+        AmendmentEvidence::new("local:defect", actor, "outbound")
+            .at(80)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(true, true),
+        "one two",
+        "one three",
+    )?
+    .unwrap();
+    let fresh = project_edit_cost_claims(&target, &[local])?;
+    assert_eq!(fresh.len(), 1);
+    assert!(!ids.contains(&fresh[0]));
+    assert!(edit_cost_for(&target, &skill, "outbound")?.is_some());
+    for (id, before) in ids.iter().zip(preserved) {
+        assert_eq!(target.get_claim(id)?, Some(before));
+    }
+    Ok(())
+}
