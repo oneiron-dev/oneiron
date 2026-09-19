@@ -24,6 +24,7 @@ use crate::{
 use super::*;
 
 mod person_extraction;
+mod prior_heads;
 mod scope_enforcement;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
@@ -1435,6 +1436,14 @@ struct CapturingSink {
 }
 
 impl ConsolidationSink for CapturingSink {
+    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        assert!(
+            write.attachments.is_empty(),
+            "use a real promotion sink for attachments"
+        );
+        self.accept(write.candidates().to_vec())
+    }
+
     fn accept(&mut self, candidates: Vec<PromotionCandidate>) -> Result<()> {
         self.accepted.extend(candidates);
         Ok(())

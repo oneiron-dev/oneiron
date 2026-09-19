@@ -21,8 +21,8 @@ pub(super) fn assemble(
 ) -> Result<AssembledCandidates> {
     resources.validate_candidates(resources.scope(), &candidates)?;
     let config = vault.consolidation_selection()?;
-    let rules = vault.consolidation_key_rules()?;
-    let candidates = attach_duplicate_evidence(candidates, &rules)?;
+    let rules = resources.key_rules();
+    let candidates = attach_duplicate_evidence(candidates, rules)?;
     let mut inputs = Vec::new();
     let mut embeddings = BTreeMap::new();
     for candidate in &candidates {
@@ -43,7 +43,8 @@ pub(super) fn assemble(
         .iter()
         .filter_map(|id| by_id.remove(id))
         .collect();
-    let conflicts = judge_queue(&ready, &embeddings, &rules, config.cosine_threshold)?;
+    let conflicts = judge_queue(&ready, &embeddings, rules, config.cosine_threshold)?;
+    let conflicts = resources.route_priors(&ready, conflicts, rules)?;
     Ok(AssembledCandidates {
         candidates: ready,
         conflicts,

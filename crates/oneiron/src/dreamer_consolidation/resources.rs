@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::conflict::{candidate_facts, deterministic_claim_id, swarm_evidence_content_hash};
 
+mod prior;
 mod signals;
+mod write;
 use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
@@ -20,7 +22,10 @@ use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
+pub(crate) use write::ConsolidationFence;
+pub use write::ScopedConsolidationWrite;
 
+#[derive(Clone)]
 struct SourcePin {
     resource: ScopeResource,
     entity_type: u8,
@@ -37,6 +42,8 @@ pub(super) struct BranchResources<'a> {
     scope: Scope,
     attempt: AttemptId,
     signals: ScopeResource,
+    priors: BTreeMap<EntityId, super::PriorHead>,
+    rules: super::routing::PredicateKeyRules,
 }
 
 impl<'a> BranchResources<'a> {
@@ -104,7 +111,7 @@ impl<'a> BranchResources<'a> {
         // exact documents are the caller's graph/project slice, not source TURNs.
         // A supplied scope is authority, not a request to infer more authority.
         let scope = requested.cloned().unwrap_or(granted);
-        let resources = Self {
+        let mut resources = Self {
             read,
             partition,
             sources,
@@ -114,6 +121,8 @@ impl<'a> BranchResources<'a> {
             scope,
             attempt,
             signals,
+            priors: BTreeMap::new(),
+            rules: vault.consolidation_key_rules()?,
         };
         resources.check_axes(&resources.scope)?;
         resources.source(&resources.scope, &partition.conversation_ref)?;
@@ -121,7 +130,12 @@ impl<'a> BranchResources<'a> {
         for turn in turns {
             resources.turn(&resources.scope, turn)?;
         }
+        resources.admit_priors()?;
         Ok(resources)
+    }
+
+    pub(super) fn key_rules(&self) -> &super::routing::PredicateKeyRules {
+        &self.rules
     }
 
     pub(super) fn scope(&self) -> &Scope {
@@ -275,8 +289,8 @@ impl<'a> BranchResources<'a> {
         sink: &mut dyn ConsolidationSink,
         candidates: Vec<PromotionCandidate>,
     ) -> Result<()> {
-        self.validate_candidates(scope, &candidates)?;
-        sink.accept(candidates)
+        let write = self.prepare_write(scope, candidates)?;
+        sink.accept_scoped(write)
     }
 }
 

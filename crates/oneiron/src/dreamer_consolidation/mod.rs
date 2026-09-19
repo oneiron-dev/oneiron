@@ -36,7 +36,7 @@ mod gap;
 mod open_conflict;
 mod partition;
 mod provenance;
-mod resources;
+pub(crate) mod resources;
 pub mod routing;
 pub mod selection;
 mod support;
@@ -50,6 +50,7 @@ pub use executor::*;
 pub use gap::*;
 pub use partition::*;
 pub use provenance::*;
+pub use resources::ScopedConsolidationWrite;
 pub use support::*;
 pub use watermark::*;
 

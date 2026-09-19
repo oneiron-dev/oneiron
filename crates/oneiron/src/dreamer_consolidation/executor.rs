@@ -201,7 +201,12 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|index| &candidates[*index])
                 .collect();
-            let request = self.merge_request(&conflict.identity, &members, resources.scope())?;
+            let prior = conflict
+                .prior_head
+                .map(|id| resources.prior(id))
+                .transpose()?;
+            let request =
+                self.merge_request(&conflict.identity, &members, prior, resources.scope())?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,
@@ -224,6 +229,7 @@ impl ConsolidationExecutor<'_> {
                         step_identity.0,
                         conflict,
                         &members,
+                        &resources.write_fence(),
                         ctx.now_ms,
                     )?;
                     return Err(error);
@@ -297,9 +303,18 @@ impl ConsolidationExecutor<'_> {
         &self,
         identity: &ConflictIdentity,
         members: &[&PromotionCandidate],
+        prior: Option<&super::PriorHead>,
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
         let mut lines = String::new();
+        if let Some(prior) = prior {
+            lines.push_str(&format!(
+                "prior_head: {} predicate: {} value: {}\n",
+                prior.claim_id.to_hex(),
+                prior.body.predicate,
+                serde_json::to_string(&rmpv_to_json(&prior.body.value)).unwrap_or_default(),
+            ));
+        }
         for member in members {
             let facts = candidate_facts(&member.candidate)?;
             lines.push_str(&format!(

@@ -12,6 +12,7 @@ pub(super) fn park_open_conflict(
     attempt: crate::attempt_queue::AttemptId,
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
+    fence: &super::resources::ConsolidationFence,
     now: u64,
 ) -> Result<EntityId> {
     let id = conflict_open_marker_id(conflict, attempt);
@@ -45,6 +46,12 @@ pub(super) fn park_open_conflict(
                 Value::from(conflict.identity.predicate.clone()),
             ),
             (
+                Value::from("prior_head"),
+                conflict
+                    .prior_head
+                    .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
+            ),
+            (
                 Value::from("candidates"),
                 Value::Array(
                     members
@@ -69,18 +76,21 @@ pub(super) fn park_open_conflict(
             Value::Binary(facet.as_bytes().to_vec()),
         )]));
     }
-    vault
-        .batch()
-        .claim_candidate(
-            &id,
-            candidate,
-            &envelope,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-        )
-        .commit()?;
+    vault.with_write_txn(|txn| {
+        fence.validate_in_txn(vault, txn)?;
+        vault
+            .batch_in()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .apply_recording_gate_decisions(txn)
+    })?;
     Ok(id)
 }
