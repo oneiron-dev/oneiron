@@ -22,6 +22,7 @@ pub const SAVED_QUERY_SHORT_ID_PREFIX: &str = "sq";
 pub const SAVED_QUERY_SCHEMA_VERSION: u32 = 1;
 
 /// Registers the SAVED_QUERY structural kind for a NEW vault.
+/// The caller explicitly declares the replication family, just as for CAMPAIGN.
 ///
 /// `assigned_type_byte` comes from the byte-space-v3 registration flow run by
 /// the vault/pack initializer; this module never chooses, infers, or hard-codes
@@ -37,11 +38,12 @@ pub const SAVED_QUERY_SCHEMA_VERSION: u32 = 1;
 pub fn register_saved_query_kind(
     vault: &Vault,
     assigned_type_byte: u8,
+    family: TypeByteFamily,
 ) -> Result<StructuralKindRegistration> {
     vault.register_structural_kind_in_family(
         assigned_type_byte,
         SAVED_QUERY_SHORT_ID_PREFIX,
-        TypeByteFamily::Crm,
+        family,
         CRM_PACK_ID,
     )
 }

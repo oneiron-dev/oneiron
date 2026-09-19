@@ -4768,10 +4768,10 @@ fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
             .filter(|byte| entity_type_registry_entry(*byte).is_none())
             .take(3)
             .collect();
-    let pack = crate::campaign::register_crm_pack(&vault, slots[0], slots[1]).unwrap();
+    let pack = crate::campaign::register_crm_pack(&vault, slots[0], slots[1], crate::registry::TypeByteFamily::Productivity).unwrap();
     // Whole-pack retry preserves the same declared family and assigned slots.
     assert_eq!(
-        crate::campaign::register_crm_pack(&vault, slots[0], slots[1]).unwrap(),
+        crate::campaign::register_crm_pack(&vault, slots[0], slots[1], crate::registry::TypeByteFamily::Productivity).unwrap(),
         pack
     );
     vault
@@ -4789,7 +4789,7 @@ fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
         insert_blob(&doc, *id, &vault.get_raw(id).unwrap().unwrap());
     }
     doc.commit();
-    for bands in [vec![], vec![SelectorRange::Family(TypeByteFamily::Crm)]] {
+    for bands in [vec![], vec![SelectorRange::Family(TypeByteFamily::Productivity)]] {
         let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], bands);
         let filtered = filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector)
             .unwrap();

@@ -26,7 +26,7 @@ fn oracle_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
         .expect("open unseeded vault");
-    register_crm_pack(&vault, CAMPAIGN_BYTE, SAVED_QUERY_BYTE).expect("register CRM pack");
+    register_crm_pack(&vault, CAMPAIGN_BYTE, SAVED_QUERY_BYTE, crate::registry::TypeByteFamily::Productivity).expect("register CRM pack");
     (dir, vault)
 }
 
