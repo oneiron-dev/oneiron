@@ -76,3 +76,26 @@ pub(super) fn clear(
     store.vault_meta().delete(txn, &key(PENDING, id))?;
     Ok(())
 }
+
+/// Keeps staged work attached when only record metadata changes.
+pub(super) fn retarget_revision(
+    store: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    prior: RevisionRef,
+    next: RevisionRef,
+) -> Result<()> {
+    let key = key(PENDING, id);
+    let Some(bytes) = store.vault_meta().get(txn, &key)? else {
+        return Ok(());
+    };
+    let mut pending: Pending =
+        rmp_serde::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("pending index inputs"))?;
+    if pending.revision == prior {
+        pending.revision = next;
+        let bytes = rmp_serde::to_vec_named(&pending)
+            .map_err(|_| Error::InvariantViolation("pending index inputs encode"))?;
+        store.vault_meta().put(txn, &key, &bytes)?;
+    }
+    Ok(())
+}

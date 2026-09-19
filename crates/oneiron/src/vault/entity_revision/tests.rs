@@ -497,3 +497,129 @@ fn pack_level_pin_selects_its_entity_from_multiple_hits_and_neighbors() {
     );
     assert!(pack.neighbors.iter().all(|entity| entity.id == a));
 }
+
+#[test]
+fn metadata_only_put_advances_indexed_without_embedding_and_preserves_pins() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    for pin_first in [false, true] {
+        let id = EntityId::now();
+        put(&vault, &id, "unchanged body");
+        let old = vault
+            .get_raw_with_mode(&id, ReadMode::Indexed)
+            .unwrap()
+            .unwrap();
+        let original = vault.indexed_revision(&id).unwrap().unwrap();
+        if pin_first {
+            assert_eq!(vault.pin_entity_revision(&id).unwrap(), original);
+        }
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_ASSET_TEXT,
+                TimeRange { start: 20, end: 30 },
+                40,
+                &body("unchanged body"),
+            )
+            .commit()
+            .unwrap();
+        let latest = vault.pin_entity_revision(&id).unwrap();
+        assert_ne!(latest, original);
+        assert_eq!(vault.indexed_revision(&id).unwrap(), Some(latest));
+        assert_eq!(
+            vault.get_raw_with_mode(&id, ReadMode::Indexed).unwrap(),
+            vault.get_raw(&id).unwrap()
+        );
+        assert_eq!(
+            vault
+                .get_raw_with_mode(&id, ReadMode::Pinned(original))
+                .unwrap(),
+            Some(old)
+        );
+        assert_eq!(
+            vault.get_vector(&id).unwrap().unwrap(),
+            vec![1.0, 0.0, 0.0, 0.0]
+        );
+        assert!(
+            vault
+                .refresh_staged_indexed_at_idle(u64::MAX)
+                .unwrap()
+                .refreshed
+                .is_empty()
+        );
+        assert!(
+            vault
+                .search_text("unchanged", 10)
+                .unwrap()
+                .iter()
+                .any(|row| row.id == id)
+        );
+    }
+}
+
+#[test]
+fn metadata_only_put_keeps_pending_content_and_staged_inputs_together() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let id = EntityId::now();
+    put(&vault, &id, "original body");
+    let indexed = vault.indexed_revision(&id).unwrap().unwrap();
+    put(&vault, &id, "pending body");
+    let before_metadata = vault.pin_entity_revision(&id).unwrap();
+    let pending_raw = vault.get_raw(&id).unwrap().unwrap();
+    vault
+        .batch()
+        .text(&id, &[("content", "stagedword")])
+        .vector(&id, &[0.0, 1.0, 0.0, 0.0])
+        .phonetic(&id, &["NEXT"])
+        .commit()
+        .unwrap();
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_ASSET_TEXT,
+            TimeRange { start: 20, end: 30 },
+            40,
+            &body("pending body"),
+        )
+        .commit()
+        .unwrap();
+    let latest = vault.pin_entity_revision(&id).unwrap();
+    assert_ne!(latest, before_metadata);
+    assert_eq!(vault.indexed_revision(&id).unwrap(), Some(indexed));
+    assert!(vault.search_text("stagedword", 10).unwrap().is_empty());
+    assert_eq!(
+        vault.get_vector(&id).unwrap().unwrap(),
+        vec![1.0, 0.0, 0.0, 0.0]
+    );
+    assert_eq!(
+        vault
+            .get_raw_with_mode(&id, ReadMode::Pinned(before_metadata))
+            .unwrap(),
+        Some(pending_raw)
+    );
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    assert_eq!(
+        vault
+            .refresh_staged_indexed_at_idle(u64::MAX)
+            .unwrap()
+            .refreshed,
+        vec![(id, latest)]
+    );
+    assert_eq!(
+        vault.get_vector(&id).unwrap().unwrap(),
+        vec![0.0, 1.0, 0.0, 0.0]
+    );
+    assert_eq!(vault.search_text("stagedword", 10).unwrap()[0].id, id);
+    assert_eq!(
+        vault.query().search_phonetic(&["NEXT"]).run().unwrap()[0].id,
+        id
+    );
+    assert_eq!(
+        vault.get_raw_with_mode(&id, ReadMode::Indexed).unwrap(),
+        vault.get_raw(&id).unwrap()
+    );
+}

@@ -216,6 +216,10 @@ pub(crate) fn capture_entity_revision(
     if existing.is_none() && text_fields(&new_raw[ENTITY_METADATA_HEADER_LEN..]).is_empty() {
         return Ok(());
     }
+    let metadata_only = prior.as_deref().is_some_and(|old| {
+        old.first() == new_raw.first()
+            && old.get(ENTITY_METADATA_HEADER_LEN..) == Some(&new_raw[ENTITY_METADATA_HEADER_LEN..])
+    });
     let next = reference(id, new_raw);
     let now_ms = unix_millis_at(std::time::SystemTime::now());
     let Some(mut current) = existing else {
@@ -235,6 +239,9 @@ pub(crate) fn capture_entity_revision(
             retain_frontier(store, txn, id, current.live, &doc)?;
             save_doc(store, txn, id, &doc)?;
             current.has_doc = true;
+            if metadata_only {
+                current.indexed = current.live;
+            }
         }
         store.vault_meta().put(
             txn,
@@ -264,9 +271,20 @@ pub(crate) fn capture_entity_revision(
     let next = reference(id, &doc.oplog_frontiers().encode());
     retain_frontier(store, txn, id, next, &doc)?;
     save_doc(store, txn, id, &doc)?;
+    if metadata_only {
+        if current.live == current.indexed {
+            current.indexed = next;
+        } else {
+            // Earlier content is still pending. Preserve its staged inputs and
+            // debounce clock, but retain the exact new metadata frontier.
+            super::pending_index::retarget_revision(store, txn, id, current.live, next)?;
+            super::phonetic::retarget_revision(store, txn, id, current.live, next)?;
+        }
+    } else {
+        current.changed_at_ms = now_ms;
+    }
     current.live = next;
     current.has_doc = true;
-    current.changed_at_ms = now_ms;
     put_state(store, txn, id, &current)
 }
 
