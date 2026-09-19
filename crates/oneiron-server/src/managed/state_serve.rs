@@ -124,12 +124,23 @@ pub struct ManagedState {
     vault_name: String,
     server: Arc<SyncServer>,
     frozen: AtomicBool,
+    http_mutating_in_flight: AtomicU64,
     /// Unix seconds of the most recent sync upgrade the freeze gate admitted,
     /// or 0 if none. The handshake is the last thing that gate ever sees of a
     /// sync session, so this stamp is the only record that one exists.
     last_sync_upgrade: AtomicU64,
     alarms: Mutex<Vec<ObservedAlarm>>,
     ledger: WakeLedger,
+}
+
+struct HttpMutation(Arc<ManagedState>);
+
+impl Drop for HttpMutation {
+    fn drop(&mut self) {
+        self.0
+            .http_mutating_in_flight
+            .fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl std::fmt::Debug for ManagedState {
@@ -148,10 +159,20 @@ impl ManagedState {
             vault_name,
             server,
             frozen: AtomicBool::new(false),
+            http_mutating_in_flight: AtomicU64::new(0),
             last_sync_upgrade: AtomicU64::new(0),
             alarms: Mutex::new(Vec::new()),
             ledger,
         }
+    }
+
+    fn admit_http_mutation(self: &Arc<Self>) -> Result<HttpMutation, ManagedError> {
+        // Increment BEFORE checking freeze. A concurrent freeze must either see
+        // this writer or make this admission fail; check-then-increment races.
+        self.http_mutating_in_flight.fetch_add(1, Ordering::SeqCst);
+        let admission = HttpMutation(Arc::clone(self));
+        self.guard_write()?;
+        Ok(admission)
     }
 
     pub fn vault_name(&self) -> &str {
@@ -290,6 +311,9 @@ impl ManagedState {
     /// later rather than over a live writer.
     async fn prepare_reap(&self) -> Result<CtlResponse, ManagedError> {
         self.freeze()?;
+        // Check BEFORE drain/export. A writer finishing after export must not
+        // turn a stale exported ledger into a quiescent reply.
+        let http_drained = self.http_mutating_in_flight.load(Ordering::SeqCst) == 0;
         let drained = self.drain_lease_table().await;
         let (ledger_rev, next_wake) = self.ledger.export_at_freeze(&self.server).await?;
         // The reply carries the entries, so they are bounds-checked before
@@ -298,7 +322,7 @@ impl ManagedState {
             reason: error.to_string(),
         })?;
         Ok(CtlResponse::PrepareReap {
-            quiescent: drained && self.is_frozen() && !self.live_sync_writer(),
+            quiescent: http_drained && drained && self.is_frozen() && !self.live_sync_writer(),
             ledger_rev,
             next_wake,
         })
@@ -344,22 +368,32 @@ pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> R
 /// against — without it the engine keeps committing durable writes after
 /// reporting that it stopped.
 ///
-/// What it cannot see from here is a request that was already past this point
-/// when the flag flipped, and a sync session upgraded before it. The first is
-/// what graceful shutdown drains; the second is why an upgrade is itself
-/// treated as a write below, and why an upgrade this gate *admits* is recorded
-/// on the way through: refusing new sessions says nothing about the one that
-/// was already open, whose frames no middleware will ever see.
+/// Admitted mutations keep a guard through extraction and handler completion.
+/// Upgrades also leave a sync-session stamp: their subsequent frames do not
+/// pass through HTTP middleware.
 async fn refuse_frozen_writes(
     State(state): State<Arc<ManagedState>>,
     request: Request,
     next: Next,
 ) -> Response {
-    if !is_read_only(&request)
-        && let Err(error) = state.guard_write()
-    {
-        return writes_frozen_response(&error);
+    if is_read_only(&request) {
+        return run_admitted_request(state, request, next).await;
     }
+    let admission = match state.admit_http_mutation() {
+        Ok(admission) => admission,
+        Err(error) => return writes_frozen_response(&error),
+    };
+    // A dropped response waiter must not release admission while a handler's
+    // spawn_blocking write is still running. The owned task finishes the handler.
+    tokio::spawn(async move {
+        let _admission = admission;
+        run_admitted_request(state, request, next).await
+    })
+    .await
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+async fn run_admitted_request(state: Arc<ManagedState>, request: Request, next: Next) -> Response {
     if request.headers().contains_key(UPGRADE) {
         // Admitted, and out of sight from here on. A freeze with one of these
         // behind it is not quiescent, and `prepare_reap` is where that is

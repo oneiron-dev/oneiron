@@ -1755,3 +1755,70 @@ fn managed_failure_signal_environment_is_refused_before_configuration() {
         }
     }
 }
+
+#[tokio::test]
+async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
+    use axum::body::{Body, Bytes};
+    use axum::http::{Request, StatusCode};
+    use oneiron_vault_contract::CtlRequest;
+    use tower::ServiceExt;
+
+    let fixture = spawn_ctl_fixture();
+    let app = oneiron_server::managed::build_managed_app(
+        Arc::clone(&fixture.server),
+        Arc::clone(&fixture.state),
+    );
+    let id = probe_entity_id(0x45);
+    let entity = oneiron::EntityId::from_hex(&id).unwrap();
+    let body = serde_json::json!({"id": id, "body": {"name": "slow body"}}).to_string();
+    let len = body.len();
+    let (polled_tx, polled_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let stream = futures_util::stream::once(async move {
+        polled_tx.send(()).unwrap();
+        release_rx.await.unwrap();
+        Ok::<_, std::io::Error>(Bytes::from(body))
+    });
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/core/conversations")
+        .header("content-type", "application/json")
+        .header("content-length", len)
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let write = tokio::spawn(app.oneshot(request));
+    // The body is polled only after middleware admission, not merely after the
+    // client enqueues bytes. This deterministically holds the extractor open.
+    tokio::time::timeout(Duration::from_secs(10), polled_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .state
+            .handle_request(CtlRequest::PrepareReap)
+            .await
+            .unwrap(),
+        CtlResponse::PrepareReap {
+            quiescent: false,
+            ..
+        }
+    ));
+    assert!(fixture.server.vault().get(&entity).unwrap().is_none());
+    release_tx.send(()).unwrap();
+    assert_eq!(write.await.unwrap().unwrap().status(), StatusCode::OK);
+    assert!(fixture.server.vault().get(&entity).unwrap().is_some());
+    assert!(matches!(
+        fixture
+            .state
+            .handle_request(CtlRequest::PrepareReap)
+            .await
+            .unwrap(),
+        CtlResponse::PrepareReap {
+            quiescent: true,
+            ..
+        }
+    ));
+    fixture.shutdown.trigger();
+    fixture.task.await.unwrap();
+}
