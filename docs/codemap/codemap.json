@@ -2441,7 +2441,7 @@
      "path": "src/batch/export/provenance_import.rs",
      "purpose": "Ordered archive restore through MODEL and edge-provenance owning doors",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {

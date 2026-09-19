@@ -215,7 +215,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/foreign_stage/export_foreign_stage.rs` | src | m | 2 fn · 4 crate-vis | — | Sync-gated foreign-import staging operations and test hooks |
 | `src/batch/export/foreign_stage/mod.rs` | src | s | 2 re-export | — | Sync-gated foreign-import staging submodule |
 | `src/batch/export/mod.rs` | src | s | 7 re-export · 1 crate-vis | — | — |
-| `src/batch/export/provenance_import.rs` | src | s | 8 crate-vis | — | Ordered archive restore through MODEL and edge-provenance owning doors |
+| `src/batch/export/provenance_import.rs` | src | s | 11 crate-vis | — | Ordered archive restore through MODEL and edge-provenance owning doors |
 | `src/batch/export/tests.rs` | test | XL | — | — | — |
 | `src/batch/facet_validation.rs` | src | s | 5 crate-vis | — | — |
 | `src/batch/gate_mode.rs` | src | s | 7 crate-vis | — | — |

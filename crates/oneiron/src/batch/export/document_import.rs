@@ -99,7 +99,13 @@ impl Vault {
         }
         let model_imports = super::provenance_import::restore_models(self, &mut wtxn, &document)?;
         let models = &model_imports.map;
-        let provenance = super::provenance_import::ProvenanceImport::new(&document, models)?;
+        let mut provenance = super::provenance_import::ProvenanceImport::new(&document, models)?;
+        let edges = document
+            .evidence_ledger
+            .edges
+            .iter()
+            .map(|edge| super::provenance_import::mapped_edge(edge, models))
+            .collect::<Result<Vec<_>>>()?;
         let mut expressions = super::expression_import::ExpressionImports::new(&document, models)?;
         let skill_bundles: BTreeMap<_, _> = document
             .skills
@@ -159,13 +165,15 @@ impl Vault {
         let mut inserted_entities = pending.len() + model_imports.inserted;
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
-        while !pending.is_empty() || !expressions.is_empty() {
+        while !pending.is_empty() || !expressions.is_empty() || !provenance.is_empty() {
             let blocked: BTreeSet<_> = pending
                 .keys()
                 .copied()
                 .chain(expressions.pending_ids())
+                .chain(provenance.pending_ids())
                 .collect();
             let expression_ready = expressions.ready(&blocked);
+            let provenance_ready = provenance.ready(&blocked)?;
             let ready: Vec<_> = pending
                 .iter()
                 .filter_map(
@@ -178,8 +186,15 @@ impl Vault {
                     },
                 )
                 .collect::<Result<_>>()?;
-            if ready.is_empty() && expression_ready.is_empty() {
+            if ready.is_empty() && expression_ready.is_empty() && provenance_ready.is_empty() {
                 return Err(invalid("cyclic import subject or fork dependencies"));
+            }
+            for id in provenance_ready {
+                let (inserted, unchanged) =
+                    provenance.restore(id, self, &mut wtxn, &edges, &inserted_ids)?;
+                inserted_entities += inserted.len();
+                unchanged_entities += unchanged;
+                inserted_ids.extend(inserted);
             }
             for id in expression_ready {
                 let actor = actor.ok_or_else(|| {
@@ -266,44 +281,13 @@ impl Vault {
                 )?;
             }
         }
-        let edges = document
-            .evidence_ledger
-            .edges
-            .iter()
-            .map(|edge| super::provenance_import::mapped_edge(edge, models))
-            .collect::<Result<Vec<_>>>()?;
-        for edge in &edges {
-            let source = parse_id(&edge.source)?;
-            let target = parse_id(&edge.target)?;
-            if omitted.contains(&source)
-                || omitted.contains(&target)
-                || provenance.ids.contains(&source)
-                || provenance.ids.contains(&target)
-            {
-                continue;
-            }
-            super::provenance_import::stage_edge(self, &mut wtxn, edge, &inserted_ids)?;
-        }
-        let new_provenance: BTreeSet<_> = provenance
-            .ids
-            .iter()
-            .filter_map(|id| match self.store.entities.get(&wtxn, id.as_bytes()) {
-                Ok(None) => Some(Ok(*id)),
-                Ok(Some(_)) => None,
-                Err(error) => Some(Err(error)),
-            })
-            .collect::<std::result::Result<_, _>>()?;
-        let (inserted, unchanged) = provenance.restore(self, &mut wtxn)?;
-        inserted_entities += inserted;
-        unchanged_entities += unchanged;
-        let all_inserted = inserted_ids.union(&new_provenance).copied().collect();
         for edge in &edges {
             if omitted.contains(&parse_id(&edge.source)?)
                 || omitted.contains(&parse_id(&edge.target)?)
             {
                 continue;
             }
-            import_edge(self, &mut wtxn, edge, &all_inserted)?;
+            import_edge(self, &mut wtxn, edge, &inserted_ids)?;
         }
         wtxn.commit()?;
         Ok(WholeVaultImportReceipt {

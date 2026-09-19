@@ -441,6 +441,34 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
         .commit()?;
     source.put_edge_provenance(&withdrawn, &reversed, &record, EdgeActorClass::Human, 30)?;
     source.retract_edge_provenance(&withdrawn, 40)?;
+    let dependent = crate::EntityId::now();
+    source.put_claim(
+        &dependent,
+        &ClaimBody::new(
+            "archive.provenance_note",
+            ClaimSubject::Entity(first),
+            "retained dependent".into(),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        ),
+        range(),
+        789,
+    )?;
+    let chained = crate::EntityId::now();
+    let chained_edge = EdgeRef::new(dependent, EdgeKind::EmployedBy, to);
+    source
+        .batch()
+        .edge_with_created_at_and_vad(
+            &dependent,
+            chained_edge.kind,
+            &to,
+            0.5,
+            50,
+            crate::affect::Vad::NEUTRAL,
+        )
+        .commit()?;
+    source.put_edge_provenance(&chained, &chained_edge, &record, EdgeActorClass::Human, 60)?;
     let export = source.export_whole_vault(PackFormat::Json)?;
     assert!(
         target
@@ -501,6 +529,14 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
     assert_eq!(
         crate::provenance::decode_edge_provenance_body(&head.value)?.substrate_ref,
         Some(local_substrate)
+    );
+    assert_eq!(
+        target.get_claim(&dependent)?.unwrap().subject,
+        ClaimSubject::Entity(first)
+    );
+    assert_eq!(
+        target.get_claim(&chained)?.unwrap().lifecycle,
+        ClaimLifecycleStatus::Active
     );
     let replay = target.import_whole_vault_json(export.bytes())?;
     assert_eq!(replay.inserted_entities, 0);

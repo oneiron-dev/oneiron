@@ -75,7 +75,7 @@ pub(super) fn mapped_edge(
     Ok(edge)
 }
 pub(super) struct ProvenanceImport {
-    rows: Vec<(ExportEntity, EntityId, ClaimBody)>,
+    pending: BTreeMap<EntityId, Vec<(ExportEntity, EntityId, ClaimBody)>>,
     pub(super) ids: BTreeSet<EntityId>,
 }
 impl ProvenanceImport {
@@ -99,55 +99,143 @@ impl ProvenanceImport {
         }
         rows.sort_by_key(|(row, id, _)| (row.learned_at, *id));
         let ids = rows.iter().map(|(_, id, _)| *id).collect();
-        Ok(Self { rows, ids })
+        let mut groups: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for row in rows {
+            let ClaimSubject::Edge {
+                source,
+                kind,
+                target,
+            } = row.2.subject
+            else {
+                return Err(invalid("provenance subject must be an edge"));
+            };
+            groups
+                .entry((source, kind as u8, target))
+                .or_default()
+                .push(row);
+        }
+        let pending = groups.into_values().map(|rows| (rows[0].1, rows)).collect();
+        Ok(Self { pending, ids })
+    }
+    pub(super) fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+    pub(super) fn pending_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.pending
+            .values()
+            .flat_map(|rows| rows.iter().map(|(_, id, _)| *id))
+    }
+    pub(super) fn ready(&self, blocked: &BTreeSet<EntityId>) -> Result<Vec<EntityId>> {
+        let mut ready = Vec::new();
+        for (key, rows) in &self.pending {
+            let mut waiting = false;
+            for (_, _, body) in rows {
+                let ClaimSubject::Edge { source, target, .. } = body.subject else {
+                    return Err(invalid("provenance subject must be an edge"));
+                };
+                let record = crate::provenance::decode_edge_provenance_body(&body.value)?;
+                waiting |= [source, target, record.actor_entity_ref]
+                    .into_iter()
+                    .chain(record.substrate_ref)
+                    .any(|id| blocked.contains(&id));
+            }
+            if !waiting {
+                ready.push(*key);
+            }
+        }
+        Ok(ready)
     }
     pub(super) fn restore(
-        &self,
+        &mut self,
+        key: EntityId,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
-    ) -> Result<(usize, usize)> {
-        let mut inserted = 0;
-        let mut unchanged = 0;
-        for (row, id, body) in &self.rows {
-            let expected =
-                ExportBody::from_bytes(&crate::claim::encode_claim_body(body)?, row.entity_type);
-            if let Some(existing) = vault.store.entities.get(txn, id.as_bytes())? {
-                if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
-                    || !matches_row(row, &existing, &expected)
-                {
-                    return Err(invalid("archive provenance ID collision"));
-                }
-                unchanged += 1;
-                continue;
-            }
-            vault.restore_archived_provenance_in_txn(
-                txn,
-                id,
-                body,
-                crate::temporal::TimeRange {
-                    start: row.occurred_start,
-                    end: row.occurred_end,
+        edges: &[ExportEdge],
+        inserted_ids: &BTreeSet<EntityId>,
+    ) -> Result<(BTreeSet<EntityId>, usize)> {
+        let rows = self.pending.remove(&key).ok_or(Error::InvariantViolation(
+            "provenance import queue lost cohort",
+        ))?;
+        let ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = rows[0].2.subject
+        else {
+            return Err(invalid("provenance subject must be an edge"));
+        };
+        let edge = edges
+            .iter()
+            .find(|edge| {
+                edge.source == source.to_hex()
+                    && edge.kind == kind as u8
+                    && edge.target == target.to_hex()
+            })
+            .ok_or_else(|| invalid("provenance subject edge missing from archive"))?;
+        stage_edge(vault, txn, edge, inserted_ids)?;
+        let new_ids = rows
+            .iter()
+            .filter_map(
+                |(_, id, _)| match vault.store.entities.get(txn, id.as_bytes()) {
+                    Ok(None) => Some(Ok(*id)),
+                    Ok(Some(_)) => None,
+                    Err(error) => Some(Err(error)),
                 },
-                row.learned_at,
-            )?;
-            inserted += 1;
+            )
+            .collect::<std::result::Result<BTreeSet<_>, _>>()?;
+        let (inserted, unchanged) = restore_cohort(vault, txn, &rows)?;
+        if inserted != new_ids.len() {
+            return Err(Error::InvariantViolation("provenance import count drift"));
         }
-        // A superseded row is never silently resurrected if its closing history
-        // was absent or ambiguous. Every final lifecycle must reproduce exactly.
-        for (row, id, body) in &self.rows {
-            let actual = vault
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
-            let expected =
-                ExportBody::from_bytes(&crate::claim::encode_claim_body(body)?, row.entity_type);
-            if !matches_row(row, &actual, &expected) {
-                return Err(invalid("archive provenance lifecycle not reconstructed"));
-            }
-        }
-        Ok((inserted, unchanged))
+        Ok((new_ids, unchanged))
     }
+}
+fn restore_cohort(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    rows: &[(ExportEntity, EntityId, ClaimBody)],
+) -> Result<(usize, usize)> {
+    let mut inserted = 0;
+    let mut unchanged = 0;
+    for (row, id, body) in rows {
+        let expected =
+            ExportBody::from_bytes(&crate::claim::encode_claim_body(body)?, row.entity_type);
+        if let Some(existing) = vault.store.entities.get(txn, id.as_bytes())? {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
+                || !matches_row(row, &existing, &expected)
+            {
+                return Err(invalid("archive provenance ID collision"));
+            }
+            unchanged += 1;
+            continue;
+        }
+        vault.restore_archived_provenance_in_txn(
+            txn,
+            id,
+            body,
+            crate::temporal::TimeRange {
+                start: row.occurred_start,
+                end: row.occurred_end,
+            },
+            row.learned_at,
+        )?;
+        inserted += 1;
+    }
+    // A superseded row is never silently resurrected if its closing history
+    // was absent or ambiguous. Every final lifecycle must reproduce exactly.
+    for (row, id, body) in rows {
+        let actual = vault
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let expected =
+            ExportBody::from_bytes(&crate::claim::encode_claim_body(body)?, row.entity_type);
+        if !matches_row(row, &actual, &expected) {
+            return Err(invalid("archive provenance lifecycle not reconstructed"));
+        }
+    }
+    Ok((inserted, unchanged))
 }
 pub(super) fn stage_edge(
     vault: &Vault,
