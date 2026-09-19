@@ -230,7 +230,7 @@ pub(crate) fn check_generic_grant_write(
     }
     if let Some(raw) = vault
         .store
-        .port_entity_record(txn, &id)?
+        .port_entity_record(txn, id)?
         .map(|row| row.encode())
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_ACCESS_GRANT)
@@ -455,7 +455,7 @@ impl Vault {
             return Err(invalid_grant());
         }
         let mut txn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&txn, &share_id)?.is_some()
+        if self.store.port_entity_record(&txn, share_id)?.is_some()
             || self
                 .store
                 .vault_meta
@@ -583,7 +583,7 @@ impl Vault {
             }
             let Some(raw) = self
                 .store
-                .port_entity_record(&txn, &id)?
+                .port_entity_record(&txn, id)?
                 .map(|row| row.encode())
             else {
                 continue;

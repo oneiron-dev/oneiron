@@ -172,7 +172,7 @@ fn validated_prior_head_owner_in_txn(
     head: &EntityId,
     provider: &str,
 ) -> Result<Option<(EntityId, EntityId)>> {
-    let Some(raw) = vault.store.port_entity_record(rtxn, &head)? else {
+    let Some(raw) = vault.store.port_entity_record(rtxn, head)? else {
         return Ok(None);
     };
 
@@ -244,7 +244,7 @@ fn actor_provider_key_matches_in_txn(
     id: &EntityId,
     provider: &str,
 ) -> Result<bool> {
-    let Some(raw) = vault.store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = vault.store.port_entity_record(rtxn, id)? else {
         return Ok(false);
     };
 

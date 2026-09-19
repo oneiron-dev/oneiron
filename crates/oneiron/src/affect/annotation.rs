@@ -234,7 +234,7 @@ fn vad_annotation_claim_matches_subject(
     annotated_id: &EntityId,
 ) -> Result<bool> {
     let Some(raw) = store
-        .port_entity_record(rtxn, &claim_id)?
+        .port_entity_record(rtxn, claim_id)?
         .map(|row| row.encode())
     else {
         return Ok(false);

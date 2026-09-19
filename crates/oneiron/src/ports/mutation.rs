@@ -90,14 +90,14 @@ pub(crate) fn audit_entity_put_in_txn(
             {
                 op = ChangeOp::Supersede;
             }
-        } else if put.entity_type == crate::registry::ENTITY_TYPE_SKILL {
-            if let (Ok(before), Ok(after)) = (
+        } else if put.entity_type == crate::registry::ENTITY_TYPE_SKILL
+            && let (Ok(before), Ok(after)) = (
                 crate::skill::decode_skill_record(prior),
                 crate::skill::decode_skill_record(put.data),
-            ) && before.governance_tier != after.governance_tier
-            {
-                op = ChangeOp::TierTransition;
-            }
+            )
+            && before.governance_tier != after.governance_tier
+        {
+            op = ChangeOp::TierTransition;
         }
     }
     // Supersession's materialized envelope carries the old author's provenance,

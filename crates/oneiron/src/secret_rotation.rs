@@ -501,7 +501,7 @@ pub(crate) fn exhaust_taint_refs_in_txn(
         Some(raw) => decode_taint_refs_row(&raw)?,
         None => Vec::new(),
     };
-    if let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode())
+    if let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode())
         && let Some(header) = EntityMetadataHeader::parse(&raw)
         && header.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
     {

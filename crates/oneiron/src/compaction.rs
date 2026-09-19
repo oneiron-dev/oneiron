@@ -402,7 +402,7 @@ fn validate_turn_membership(
 
 /// Stored type byte of one entity, or `None` when it does not resolve.
 fn entity_type_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 

@@ -64,7 +64,7 @@ pub(super) fn put_preauthorized_claim_status_in_txn(
         .ok_or(Error::EntityNotFound)?;
     let raw = vault
         .store
-        .port_entity_record(&*wtxn, &id)?
+        .port_entity_record(&*wtxn, id)?
         .ok_or(Error::EntityNotFound)?;
     if raw.entity_type != ENTITY_TYPE_CLAIM
         || raw.occurred.start != occurred.start

@@ -40,7 +40,7 @@ pub(crate) fn pending_commitment_lapses_in_txn(
     let mut pending = Vec::with_capacity(ids.len());
     for id in ids {
         let raw = store
-            .port_entity_record(txn, &id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

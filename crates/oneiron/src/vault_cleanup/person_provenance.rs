@@ -59,7 +59,7 @@ impl Vault {
             return Ok(false);
         }
         let key = prefixed_key(EXTRACTION_PERSON_PREFIX, id);
-        if self.store.port_entity_record(wtxn, &id)?.is_some()
+        if self.store.port_entity_record(wtxn, id)?.is_some()
             || self.store.vault_meta.get(wtxn, &key)?.is_some()
             || self.local_hard_delete_marker_exists_in_txn(wtxn, id)?
             || self
@@ -73,7 +73,7 @@ impl Vault {
             .apply(wtxn)?;
         let raw = self
             .store
-            .port_entity_record(wtxn, &id)?
+            .port_entity_record(wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("extraction person mint"))?;
         let mut evidence = blake3::hash(&raw).as_bytes().to_vec();
@@ -115,7 +115,7 @@ pub(super) fn is_extraction_minted_person_in_txn(
     }
     let Some(raw) = vault
         .store
-        .port_entity_record(rtxn, &person)?
+        .port_entity_record(rtxn, person)?
         .map(|row| row.encode())
     else {
         return Ok(false);

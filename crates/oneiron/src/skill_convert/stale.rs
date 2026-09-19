@@ -304,7 +304,7 @@ fn read_live_skill_record_in_txn(
     txn: &heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<(SkillRecord, TimeRange)>> {
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
 

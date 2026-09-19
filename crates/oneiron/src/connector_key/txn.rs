@@ -206,7 +206,7 @@ pub(super) fn read_connector_key_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ConnectorKeyRecord>> {
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
 

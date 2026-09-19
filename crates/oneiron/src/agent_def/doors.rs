@@ -98,7 +98,7 @@ impl Vault {
     ) -> Result<AgentDefinition> {
         let raw = self
             .store
-            .port_entity_record(txn, &id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

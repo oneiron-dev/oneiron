@@ -40,7 +40,7 @@ impl Vault {
         // encode-first shape did.
         encode_counterparty_contact_body(record)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_some()
+        if self.store.port_entity_record(&wtxn, id)?.is_some()
             || self.counterparty_contact_assignment_conflict_in_txn(&wtxn, id, record)?
         {
             return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
@@ -148,7 +148,7 @@ impl Vault {
     ) -> Result<CounterpartyContactRecord> {
         let raw = self
             .store
-            .port_entity_record(wtxn, &id)?
+            .port_entity_record(wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -287,7 +287,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(&rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -432,7 +432,7 @@ impl Vault {
 
         let old_index_key = if let Some(raw) = self
             .store
-            .port_entity_record(&*wtxn, &id)?
+            .port_entity_record(&*wtxn, id)?
             .map(|row| row.encode())
         {
             let header =

@@ -252,7 +252,7 @@ impl Vault {
             self.clear_archive_tombstone_in_txn(wtxn, entity)?;
             let raw = self
                 .store
-                .port_entity_record(wtxn, &entity)?
+                .port_entity_record(wtxn, entity)?
                 .map(|row| row.encode())
                 .ok_or_else(|| {
                     Error::Maintenance(MaintenanceError::VaultCleanupRestoreNotArchived {

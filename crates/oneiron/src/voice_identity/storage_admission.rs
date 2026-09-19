@@ -182,7 +182,7 @@ pub(super) fn delete_voice_biometrics_in_txn(
 }
 
 fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 

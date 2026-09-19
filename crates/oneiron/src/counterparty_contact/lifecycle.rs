@@ -47,7 +47,7 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
     }
     let raw = vault
         .store
-        .port_entity_record(&*wtxn, &old_id)?
+        .port_entity_record(&*wtxn, old_id)?
         .ok_or(Error::EntityNotFound)?;
     if raw.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidEntityType(raw.entity_type));

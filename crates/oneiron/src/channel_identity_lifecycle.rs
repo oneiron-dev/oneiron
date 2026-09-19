@@ -538,7 +538,7 @@ impl Vault {
         identity: &ChannelIdentity,
     ) -> Result<()> {
         let data = encode_channel_identity_body(identity)?;
-        if self.store.port_entity_record(&*wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(&*wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         admit_channel_identity_transition_in_txn(
@@ -577,7 +577,7 @@ impl Vault {
     ) -> Result<ChannelIdentity> {
         let raw = self
             .store
-            .port_entity_record(txn, &id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

@@ -74,6 +74,8 @@ pub(super) fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
         )
     };
     #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // SAFETY: CString checked both paths for interior NULs; their allocations live
+    // through the call. RENAME_EXCL forbids replacing an existing destination.
     let rc = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
     if rc == 0 {
         Ok(())

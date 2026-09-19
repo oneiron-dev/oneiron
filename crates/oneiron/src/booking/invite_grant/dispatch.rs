@@ -321,7 +321,7 @@ fn booking_occurrence(vault: &Vault, booking_ref: &EntityId) -> Result<TimeRange
         .map_err(|error| engine_failure("read transaction", error))?;
     let raw = vault
         .store
-        .port_entity_record(&rtxn, &booking_ref)
+        .port_entity_record(&rtxn, booking_ref)
         .map(|row| row.map(|row| row.encode()))
         .map_err(|error| engine_failure("booking event read", error))?
         .ok_or_else(|| refused("this booking's EVENT no longer exists"))?;

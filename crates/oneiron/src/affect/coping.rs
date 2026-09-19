@@ -470,7 +470,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .port_entity_record(&wtxn, &prior_claim_id)?
+            .port_entity_record(&wtxn, prior_claim_id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

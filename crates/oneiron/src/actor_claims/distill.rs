@@ -293,7 +293,7 @@ fn turn_utterance(vault: &Vault, turn: &EntityId) -> Result<Option<SessionDistil
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault
         .store
-        .port_entity_record(&rtxn, &turn)?
+        .port_entity_record(&rtxn, turn)?
         .map(|row| row.encode())
     else {
         return Ok(None);

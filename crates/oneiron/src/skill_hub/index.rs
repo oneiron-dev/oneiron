@@ -304,7 +304,7 @@ impl Vault {
     ) -> Result<()> {
         let Some(raw) = self
             .store
-            .port_entity_record(&*wtxn, &entity)?
+            .port_entity_record(&*wtxn, entity)?
             .map(|row| row.encode())
         else {
             return Ok(());

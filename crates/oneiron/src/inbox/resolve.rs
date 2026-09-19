@@ -342,7 +342,7 @@ fn accept_member_with_amendment_in_txn(
     else {
         return Err(Error::CorruptedIndex("pending gate consent"));
     };
-    let Some(raw) = vault.store.port_entity_record(wtxn, &id)? else {
+    let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Err(Error::CorruptedIndex("pending gate consent"));
     };
 

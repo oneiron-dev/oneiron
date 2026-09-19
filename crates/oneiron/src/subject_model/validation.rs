@@ -38,10 +38,10 @@ pub(super) fn require_anchor_entities_in_txn(
     subject: &EntityId,
 ) -> Result<()> {
     let actor_raw = store
-        .port_entity_record(txn, &actor)?
+        .port_entity_record(txn, actor)?
         .map(|row| row.encode());
     let subject_raw = store
-        .port_entity_record(txn, &subject)?
+        .port_entity_record(txn, subject)?
         .map(|row| row.encode());
     require_anchor_headers(actor_raw.as_deref(), subject_raw.as_deref())
 }
@@ -102,7 +102,7 @@ pub(super) fn require_person_in_txn(
     person: &EntityId,
 ) -> Result<()> {
     let raw = store
-        .port_entity_record(txn, &person)?
+        .port_entity_record(txn, person)?
         .map(|row| row.encode());
     require_person_header(raw.as_deref())
 }

@@ -20,7 +20,7 @@ pub(super) fn candidate_matches_criticality(
     if entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
     }
-    let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(false);
     };
     let Some(body) = raw

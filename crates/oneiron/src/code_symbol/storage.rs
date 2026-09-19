@@ -410,7 +410,7 @@ pub(super) fn delete_code_symbol_manifest_in_txn(
 }
 
 fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 
@@ -423,7 +423,7 @@ fn validate_code_artifact_target(
     code_artifact_id: &EntityId,
     repo_ref: &RepoRef,
 ) -> Result<()> {
-    let Some(raw) = store.port_entity_record(rtxn, &code_artifact_id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, code_artifact_id)? else {
         return Err(Error::EntityNotFound);
     };
 
@@ -451,7 +451,7 @@ fn validate_code_artifact_entity_exists(
     rtxn: &RoTxn<'_>,
     code_artifact_id: &EntityId,
 ) -> Result<()> {
-    let Some(raw) = store.port_entity_record(rtxn, &code_artifact_id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, code_artifact_id)? else {
         return Err(Error::EntityNotFound);
     };
 

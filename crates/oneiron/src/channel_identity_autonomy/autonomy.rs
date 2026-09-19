@@ -41,7 +41,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
-            .port_entity_record(&txn, &grant_ref)?
+            .port_entity_record(&txn, grant_ref)?
             .map(|row| row.encode())
         else {
             return Ok(false);

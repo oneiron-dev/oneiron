@@ -41,7 +41,7 @@ pub(crate) fn validate_local_membership(
     }
     let is_kind = |id: &EntityId, kind| -> Result<bool> {
         Ok(store
-            .port_entity_record(txn, &id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
             .is_some_and(|raw| raw.first() == Some(&kind)))
     };

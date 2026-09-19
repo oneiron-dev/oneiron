@@ -129,7 +129,7 @@ fn parent_row_ceiling(
     parent_id: &EntityId,
 ) -> PolicyApprovalCeiling {
     let raw = match store
-        .port_entity_record(txn, &parent_id)
+        .port_entity_record(txn, parent_id)
         .map(|row| row.map(|row| row.encode()))
     {
         Ok(Some(raw)) => raw,

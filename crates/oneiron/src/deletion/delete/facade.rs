@@ -436,7 +436,9 @@ impl Vault {
             &mut wtxn,
             &receipt_id,
             RedactionReceiptInput {
-                actor_principal: gate.as_ref().map(|gate| gate.actor_principal()),
+                actor_principal: gate
+                    .as_ref()
+                    .map(super::super::gate::GatedDeletion::actor_principal),
                 request_id: request_uuid.to_string(),
                 scope,
                 reason,

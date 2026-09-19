@@ -61,7 +61,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let data = encode_skill_record(record)?;
-        if self.store.port_entity_record(&*wtxn, &id)?.is_none() {
+        if self.store.port_entity_record(&*wtxn, id)?.is_none() {
             if record.lifecycle_status != SkillLifecycle::Candidate {
                 return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "new skills are born candidate; the admission gate activates them",
@@ -95,7 +95,7 @@ impl Vault {
         }
         let Some(raw) = self
             .store
-            .port_entity_record(wtxn, &parent)?
+            .port_entity_record(wtxn, parent)?
             .map(|row| row.encode())
         else {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
@@ -374,7 +374,7 @@ impl Vault {
     ) -> Result<SkillRecord> {
         let raw = self
             .store
-            .port_entity_record(txn, &id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

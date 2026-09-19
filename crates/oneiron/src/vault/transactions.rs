@@ -48,7 +48,7 @@ impl Vault {
     /// Checks if an entity exists in the LMDB vault.
     pub fn entity_exists(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(self.store.port_entity_record(&rtxn, &id)?.is_some())
+        Ok(self.store.port_entity_record(&rtxn, id)?.is_some())
     }
 
     /// Checks if a directed edge exists in the LMDB vault.
@@ -62,7 +62,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let raw = self
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(&rtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

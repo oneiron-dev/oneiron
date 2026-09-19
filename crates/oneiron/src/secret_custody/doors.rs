@@ -61,7 +61,7 @@ pub(crate) fn read_secret_custody_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyRecord>> {
-    let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -271,7 +271,7 @@ pub(crate) fn read_secret_custody_admission_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyAdmission>> {
-    let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

@@ -622,7 +622,7 @@ fn claim_body_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> CommResult<Option<ClaimBody>> {
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
 

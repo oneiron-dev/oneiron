@@ -179,7 +179,7 @@ pub(in crate::booking) fn booker_identity(
         .map_err(|error| engine_failure("read transaction", error))?;
     let Some(raw) = vault
         .store
-        .port_entity_record(&rtxn, &contact_ref)
+        .port_entity_record(&rtxn, contact_ref)
         .map(|row| row.map(|row| row.encode()))
         .map_err(|error| engine_failure("booker contact read", error))?
     else {

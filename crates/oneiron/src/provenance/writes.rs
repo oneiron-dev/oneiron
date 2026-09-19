@@ -456,7 +456,7 @@ impl Vault {
         // "claims are never silently deleted"). The lifecycle operations
         // (retract / supersede) are the ONLY mutators of an existing
         // provenance Claim.
-        if self.store.port_entity_record(wtxn, &claim_id)?.is_some() {
+        if self.store.port_entity_record(wtxn, claim_id)?.is_some() {
             return Err(Error::Claim(ClaimError::ProvenanceClaimIdInUse));
         }
 

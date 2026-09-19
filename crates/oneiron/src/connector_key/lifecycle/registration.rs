@@ -128,7 +128,7 @@ impl Vault {
         }
 
         let data = encode_connector_key_body(record)?;
-        if self.store.port_entity_record(&*wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(&*wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));
         }
         let prefix = connector_key_index_prefix(&record.connector)?;
@@ -212,7 +212,7 @@ impl Vault {
         let new_index_key = connector_key_index_key(&new_record.connector, id)?;
         let old_index_key = if let Some(raw) = self
             .store
-            .port_entity_record(&*wtxn, &id)?
+            .port_entity_record(&*wtxn, id)?
             .map(|row| row.encode())
         {
             let Some(header) = EntityMetadataHeader::parse(&raw) else {

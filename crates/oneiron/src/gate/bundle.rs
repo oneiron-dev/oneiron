@@ -682,7 +682,7 @@ fn live_claim_parts_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<(ClaimBody, EntityMetadataHeader)> {
-    let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Err(Error::EntityNotFound);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

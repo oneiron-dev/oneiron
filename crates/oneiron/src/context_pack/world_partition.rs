@@ -189,7 +189,7 @@ pub(super) fn claim_world_by_id(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 

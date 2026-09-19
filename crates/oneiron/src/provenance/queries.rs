@@ -74,7 +74,7 @@ impl Vault {
     ) -> Result<StoredProvenanceClaim> {
         let raw = self
             .store
-            .port_entity_record(txn, &claim_id)?
+            .port_entity_record(txn, claim_id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

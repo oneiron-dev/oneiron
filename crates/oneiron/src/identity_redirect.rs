@@ -461,7 +461,7 @@ fn readable_payload_bytes_in_txn(
     id: &EntityId,
 ) -> Result<usize> {
     Ok(store
-        .port_entity_record(rtxn, &id)?
+        .port_entity_record(rtxn, id)?
         .map(|row| row.encode())
         .map_or(0, |raw| {
             raw.len().saturating_sub(ENTITY_METADATA_HEADER_LEN)

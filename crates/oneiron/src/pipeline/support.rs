@@ -20,7 +20,7 @@ pub(super) fn read_entity_metadata(
         return Ok(None);
     }
 
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 

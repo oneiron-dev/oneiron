@@ -264,7 +264,7 @@ pub(crate) fn read_counterparty_contact_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
 

@@ -112,7 +112,7 @@ fn body_entries(vault: &Vault, id: &EntityId) -> Result<Option<Vec<(Value, Value
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault
         .store
-        .port_entity_record(&rtxn, &id)?
+        .port_entity_record(&rtxn, id)?
         .map(|row| row.encode())
     else {
         return Ok(None);

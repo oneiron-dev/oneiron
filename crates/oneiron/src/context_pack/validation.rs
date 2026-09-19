@@ -41,7 +41,7 @@ pub(super) fn disclosure_admits_candidate(
     id: &EntityId,
     claim_bodies: &HashMap<EntityId, ClaimBody>,
 ) -> Result<bool> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -66,7 +66,7 @@ pub(super) fn disclosure_admits_target(
     if ctx.mode() == DisclosureMode::OwnerAlone {
         return Ok(true);
     }
-    let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -171,7 +171,7 @@ pub(super) fn validate_pack_entity_reference(
     quarantine_index: &PackQuarantineIndex,
 ) -> Result<()> {
     validate_pack_payload_reference(store, rtxn, id, quarantine_index)?;
-    let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
         return Err(context_pack_validation_error(
             *id,
             PACK_VALIDATION_MISSING_PAYLOAD,
@@ -222,7 +222,7 @@ fn validate_pack_payload_reference(
         ));
     }
 
-    if store.port_entity_record(rtxn, &id)?.is_none() {
+    if store.port_entity_record(rtxn, id)?.is_none() {
         return Err(context_pack_validation_error(
             *id,
             PACK_VALIDATION_MISSING_PAYLOAD,

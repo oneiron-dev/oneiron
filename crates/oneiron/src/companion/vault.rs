@@ -76,7 +76,7 @@ impl Vault {
         let record = record.created_at(learned_at)?;
         let data = encode_companion_record_body(&record)?;
         let key = record.key();
-        if self.store.port_entity_record(&*wtxn, &id)?.is_some()
+        if self.store.port_entity_record(&*wtxn, id)?.is_some()
             || companion_record_any_id_for_key_in_txn(&self.store, &*wtxn, &key)?.is_some()
         {
             return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
@@ -136,7 +136,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(&rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -289,7 +289,7 @@ impl Vault {
         revived_seed.lifecycle_events = retired.lifecycle_events;
         let revived = revived_seed.revived_at(revived_at)?;
         let key = revived.key();
-        if self.store.port_entity_record(&wtxn, &revived_id)?.is_some()
+        if self.store.port_entity_record(&wtxn, revived_id)?.is_some()
             || companion_record_id_for_key_in_txn(&self.store, &wtxn, &key)?.is_some()
         {
             return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
@@ -395,7 +395,7 @@ impl Vault {
     ) -> Result<CompanionRecord> {
         let raw = self
             .store
-            .port_entity_record(txn, &id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

@@ -114,7 +114,7 @@ impl Vault {
         }
         let raw = self
             .store
-            .port_entity_record(&wtxn, &id)?
+            .port_entity_record(&wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(raw.as_ref())
@@ -153,7 +153,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::InvalidClaimBody(
                 "commitment claim id already exists",
             ));

@@ -667,7 +667,7 @@ pub(super) fn read_federation_grant_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<FederationGrant>> {
-    let Some(raw) = vault.store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = vault.store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 

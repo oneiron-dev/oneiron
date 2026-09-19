@@ -299,7 +299,7 @@ fn member_claim_in_txn(
 ) -> Result<Option<(ClaimBody, CampaignMemberValue)>> {
     let Some(raw) = vault
         .store
-        .port_entity_record(txn, &claim_id)?
+        .port_entity_record(txn, claim_id)?
         .map(|row| row.encode())
     else {
         return Ok(None);

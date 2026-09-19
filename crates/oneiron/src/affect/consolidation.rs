@@ -381,7 +381,7 @@ impl Vault {
     ) -> Result<ClaimBody> {
         let raw = self
             .store
-            .port_entity_record(txn, &claim_id)?
+            .port_entity_record(txn, claim_id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -399,7 +399,7 @@ impl Vault {
     ) -> Result<Option<VadAnnotation>> {
         let Some(raw) = self
             .store
-            .port_entity_record(txn, &turn_id)?
+            .port_entity_record(txn, turn_id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -574,7 +574,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .port_entity_record(&wtxn, &id)?
+            .port_entity_record(&wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -630,7 +630,7 @@ impl Vault {
     ) -> Result<()> {
         let Some(raw) = self
             .store
-            .port_entity_record(rtxn, &claim_id)?
+            .port_entity_record(rtxn, claim_id)?
             .map(|row| row.encode())
         else {
             return Ok(());
@@ -663,7 +663,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(&rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);

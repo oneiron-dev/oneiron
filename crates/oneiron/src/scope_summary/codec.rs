@@ -46,8 +46,7 @@ pub(super) fn scope_value(scope: &ScopeSelector) -> Value {
             Value::from("session"),
             scope
                 .session
-                .map(|id| Value::from(id.to_hex()))
-                .unwrap_or(Value::Nil),
+                .map_or(Value::Nil, |id| Value::from(id.to_hex())),
         ),
         (Value::from("path"), path),
         (

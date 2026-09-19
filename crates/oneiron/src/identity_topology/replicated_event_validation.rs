@@ -29,7 +29,7 @@ impl Vault {
     ) -> Result<Option<StoredIdentityOpEvent>> {
         let Some(raw) = self
             .store
-            .port_entity_record(rtxn, &id)?
+            .port_entity_record(rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);

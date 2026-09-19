@@ -144,8 +144,8 @@ fn reconcile_shell_edges_for_sources_in_txn(
                 if *desired_kind != kind {
                     continue;
                 }
-                if store.port_entity_record(&*wtxn, &entity)?.is_none()
-                    || store.port_entity_record(&*wtxn, &target)?.is_none()
+                if store.port_entity_record(&*wtxn, entity)?.is_none()
+                    || store.port_entity_record(&*wtxn, target)?.is_none()
                 {
                     continue;
                 }
@@ -245,7 +245,7 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<BTreeSet<EntityId>>> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 

@@ -24,7 +24,7 @@ impl Vault {
         }
         if let Some(raw) = self
             .store
-            .port_entity_record(txn, &id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
             && EntityMetadataHeader::parse(&raw)
                 .is_some_and(|h| h.entity_type == ENTITY_TYPE_ACCESS_GRANT)
@@ -59,7 +59,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         self.check_channel_identity_access_write(&wtxn, id, grant)?;
         crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
         self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
@@ -87,7 +87,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .port_entity_record(&wtxn, &id)?
+            .port_entity_record(&wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -110,7 +110,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(&rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);

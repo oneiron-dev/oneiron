@@ -58,7 +58,7 @@ fn validate_time_range(range: TimeRange, field: &'static str) -> Result<()> {
 }
 
 fn entity_type_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
 

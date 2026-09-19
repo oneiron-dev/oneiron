@@ -81,7 +81,7 @@ pub(super) fn claim_body_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ClaimBody>> {
-    let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -137,7 +137,7 @@ fn person_with_party_key_in_txn(
     id: &EntityId,
     party_key: &str,
 ) -> Result<bool> {
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(false);
     };
 

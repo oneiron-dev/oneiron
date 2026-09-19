@@ -164,7 +164,7 @@ pub(super) fn read_stored_claim_body(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ClaimBody>> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     Ok(raw

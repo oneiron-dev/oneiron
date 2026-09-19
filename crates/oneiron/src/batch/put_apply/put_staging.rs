@@ -168,3 +168,22 @@ pub(in crate::batch) fn stage_edge_rows(
     }
     Ok(())
 }
+
+/// Maintains content-hash and source-message indexes beside the admitted SKILL body.
+pub(super) fn stage_skill_index_rows(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    previous: Option<&crate::skill::SkillRecord>,
+    record: &crate::skill::SkillRecord,
+) -> Result<()> {
+    crate::skill_hub::maintain_skill_content_hash_index_for_put(
+        store,
+        wtxn,
+        id,
+        previous.and_then(|previous| previous.content_hash),
+        record.content_hash,
+    )?;
+    // All put doors share this reverse index, including hub import and sync replay.
+    crate::skill_convert::maintain_skill_source_index_for_put(store, wtxn, id, previous, record)
+}

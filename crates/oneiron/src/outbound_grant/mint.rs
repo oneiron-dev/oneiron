@@ -38,7 +38,7 @@ impl Vault {
         )?;
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
@@ -67,7 +67,7 @@ impl Vault {
         )?;
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
@@ -118,7 +118,7 @@ impl Vault {
         grant.validate()?;
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
@@ -135,7 +135,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .port_entity_record(&wtxn, &id)?
+            .port_entity_record(&wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -159,7 +159,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(&rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -184,7 +184,7 @@ impl Vault {
             standing_outbound_grant_principal_index_key(&new_grant.principal_ref, id)?;
         let old_index_key = if let Some(raw) = self
             .store
-            .port_entity_record(&*wtxn, &id)?
+            .port_entity_record(&*wtxn, id)?
             .map(|row| row.encode())
         {
             let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -241,7 +241,7 @@ pub(crate) fn standing_outbound_grant_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<StandingOutboundGrant>> {
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
 

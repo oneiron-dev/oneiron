@@ -188,7 +188,7 @@ impl Vault {
         let (mut body, occurred, learned_at) = {
             let raw = self
                 .store
-                .port_entity_record(wtxn, &claim)?
+                .port_entity_record(wtxn, claim)?
                 .map(|row| row.encode())
                 .ok_or(Error::EntityNotFound)?;
             let header =

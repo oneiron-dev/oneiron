@@ -479,7 +479,7 @@ pub(super) fn ensure_agent_definition(
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(raw) = vault
             .store
-            .port_entity_record(txn, &id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
         {
             let header =

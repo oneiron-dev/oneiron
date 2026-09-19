@@ -88,7 +88,7 @@ pub(crate) fn live_entity_row_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LiveEntityRow> {
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(LiveEntityRow::Absent);
     };
 
@@ -194,7 +194,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(&rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);

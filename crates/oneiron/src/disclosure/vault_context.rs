@@ -105,7 +105,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .port_entity_record(&wtxn, &contact_id)?
+            .port_entity_record(&wtxn, contact_id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -152,7 +152,7 @@ impl Vault {
     /// owner-visible `disclosure.tier` claim, one wtxn.
     pub fn set_disclosure_tier_a(&self, id: &EntityId, marked_at: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_none() {
+        if self.store.port_entity_record(&wtxn, id)?.is_none() {
             return Err(Error::EntityNotFound);
         }
         self.store.vault_meta.put(
@@ -185,7 +185,7 @@ impl Vault {
     /// the engine-internal door below.
     pub fn clear_disclosure_tier_a(&self, id: &EntityId, cleared_at: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_none() {
+        if self.store.port_entity_record(&wtxn, id)?.is_none() {
             return Err(Error::EntityNotFound);
         }
         self.store

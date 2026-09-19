@@ -52,14 +52,7 @@ pub(super) fn timeline<'a>(
             }
         }
     }
-    fn as_slice(b: &Bound<Vec<u8>>) -> Bound<&[u8]> {
-        match b {
-            Bound::Unbounded => Bound::Unbounded,
-            Bound::Included(k) => Bound::Included(k.as_slice()),
-            Bound::Excluded(k) => Bound::Excluded(k.as_slice()),
-        }
-    }
-    let bounds = (as_slice(&lower), as_slice(&upper));
+    let bounds = (bound_as_slice(&lower), bound_as_slice(&upper));
     if let (Bound::Included(l) | Bound::Excluded(l), Bound::Included(u) | Bound::Excluded(u)) =
         bounds
         && l >= u
@@ -100,4 +93,12 @@ pub(super) fn timeline<'a>(
             .map_err(|_| Error::CorruptedIndex(context))?,
         })
     })))
+}
+
+fn bound_as_slice(b: &Bound<Vec<u8>>) -> Bound<&[u8]> {
+    match b {
+        Bound::Unbounded => Bound::Unbounded,
+        Bound::Included(k) => Bound::Included(k.as_slice()),
+        Bound::Excluded(k) => Bound::Excluded(k.as_slice()),
+    }
 }

@@ -102,7 +102,7 @@ pub(crate) fn zero_live_members_in_txn(
 ) -> Result<Option<CleanupKind>> {
     let Some(raw) = vault
         .store
-        .port_entity_record(rtxn, &entity)?
+        .port_entity_record(rtxn, entity)?
         .map(|row| row.encode())
     else {
         return Ok(None);

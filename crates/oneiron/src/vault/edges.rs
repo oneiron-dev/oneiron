@@ -390,7 +390,7 @@ impl Vault {
         id: &EntityId,
         expected_type: u8,
     ) -> Result<bool> {
-        let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
+        let Some(raw) = self.store.port_entity_record(rtxn, id)? else {
             return Ok(false);
         };
 

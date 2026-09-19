@@ -40,7 +40,7 @@ impl Vault {
     pub fn create_channel_identity(&self, id: &EntityId, identity: &ChannelIdentity) -> Result<()> {
         let data = encode_channel_identity_body(identity)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         admit_channel_identity_transition_in_txn(
@@ -111,7 +111,7 @@ impl Vault {
         request: DelegatedProvisionRequest,
         requested_at: u64,
     ) -> Result<ChannelIdentity> {
-        if self.store.port_entity_record(wtxn, &id)?.is_some() {
+        if self.store.port_entity_record(wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         // The proof borrows `wtxn`; the block ends the borrow before the write
@@ -191,7 +191,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .port_entity_record(&wtxn, &id)?
+            .port_entity_record(&wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -226,7 +226,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(&rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);

@@ -298,7 +298,7 @@ fn occurrence_in(
 ) -> Result<TimeRange, BookingError> {
     let raw = vault
         .store
-        .port_entity_record(rtxn, &event_ref)
+        .port_entity_record(rtxn, event_ref)
         .map(|row| row.map(|row| row.encode()))
         .map_err(|error| engine_failure("booking event header read", error))?
         .ok_or_else(|| refused("booking EVENT no longer exists"))?;

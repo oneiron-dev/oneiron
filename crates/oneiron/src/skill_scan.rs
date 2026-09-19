@@ -267,7 +267,7 @@ pub(crate) fn escalate_activation_approval_in_txn(
     // No stored body is a CREATE, not an activation: the birth law downstream
     // rejects a locally born `active` skill outright, so there is nothing here
     // to escalate.
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(false);
     };
 

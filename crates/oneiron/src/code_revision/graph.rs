@@ -137,7 +137,7 @@ pub(super) fn code_artifact_body_bytes(
     revision_id: &EntityId,
 ) -> Result<Vec<u8>> {
     let Some(raw) = store
-        .port_entity_record(rtxn, &revision_id)?
+        .port_entity_record(rtxn, revision_id)?
         .map(|row| row.encode())
     else {
         return Err(Error::EntityNotFound);
@@ -208,7 +208,7 @@ pub(super) fn require_entity_type(
     expected_type: u8,
     context: &'static str,
 ) -> Result<()> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Err(Error::EntityNotFound);
     };
 

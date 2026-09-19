@@ -86,7 +86,7 @@ pub(super) fn claim_status_gate_allows(
     // Claims gate on their own appr/life/stale like any other claim instead
     // of failing the decode.
     let decision = store
-        .port_entity_record(rtxn, &id)?
+        .port_entity_record(rtxn, id)?
         .map(|row| row.encode())
         .and_then(|raw| {
             raw.get(ENTITY_METADATA_HEADER_LEN..)
@@ -324,7 +324,7 @@ pub(super) fn apply_relationship_filter(
 }
 
 fn claim_rel(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 
@@ -431,7 +431,7 @@ fn drop_stale_federated_claims(
 /// through the pinned claim validator (the world key was structurally
 /// validated to 16 bytes at write time).
 fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
-    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 

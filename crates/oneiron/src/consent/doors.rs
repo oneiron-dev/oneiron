@@ -171,7 +171,7 @@ impl Vault {
 
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.port_entity_record(&rtxn, &actor)? else {
+        let Some(raw) = self.store.port_entity_record(&rtxn, actor)? else {
             return Ok(false);
         };
 

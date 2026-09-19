@@ -35,10 +35,7 @@ pub(super) fn check_append_policy(
             (Value::from("body"), Value::Binary(bytes.to_vec())),
             (
                 Value::from("parent"),
-                input
-                    .parent
-                    .map(|p| Value::from(p.to_hex()))
-                    .unwrap_or(Value::Nil),
+                input.parent.map_or(Value::Nil, |p| Value::from(p.to_hex())),
             ),
             (Value::from("advance"), Value::Boolean(input.advance)),
         ]),

@@ -53,7 +53,7 @@ pub(super) fn validate_existing_witness_turn(
     conversation_id: &EntityId,
     incoming_speaker: Option<&str>,
 ) -> MemoryResult<bool> {
-    let Some(raw) = dbs.port_entity_record(txn, &turn_id)? else {
+    let Some(raw) = dbs.port_entity_record(txn, turn_id)? else {
         return Ok(false);
     };
 
@@ -94,7 +94,7 @@ pub(super) fn validate_existing_witness_message(
     author: WitnessAuthor,
     actor: &EntityId,
 ) -> MemoryResult<bool> {
-    let Some(raw) = dbs.port_entity_record(txn, &message_id)? else {
+    let Some(raw) = dbs.port_entity_record(txn, message_id)? else {
         return Ok(false);
     };
 
@@ -103,7 +103,7 @@ pub(super) fn validate_existing_witness_message(
             "the witnessed message id resolves to a non-MESSAGE entity",
         ));
     }
-    if &raw.body != body {
+    if raw.body != body {
         return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
             "an existing MESSAGE id is bound to its original canonical body",
         ))

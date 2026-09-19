@@ -355,7 +355,7 @@ impl Vault {
         let custody_report = encode_report(&custody_report)?;
         let Some(raw) = self
             .store
-            .port_entity_record(wtxn, &code_artifact_id)?
+            .port_entity_record(wtxn, code_artifact_id)?
             .map(|row| row.encode())
         else {
             return Err(Error::EntityNotFound);

@@ -107,7 +107,7 @@ pub(crate) fn validate_thread_claim_in_txn(
     body: &ClaimBody,
     replicated: bool,
 ) -> Result<()> {
-    if let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode())
+    if let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode())
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
         && let Ok(prior) =

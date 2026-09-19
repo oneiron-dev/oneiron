@@ -626,7 +626,7 @@ fn pending_input_in_txn(
     let Some(token) = vault.store.pending_embedding_token_in_txn(wtxn, id)? else {
         return Ok(None);
     };
-    let Some(raw) = vault.store.port_entity_record(wtxn, &id)? else {
+    let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(None);
     };
 
