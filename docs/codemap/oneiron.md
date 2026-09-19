@@ -700,7 +700,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_projection/tests/test_support.rs` | test | s | 14 crate-vis | — | Shared test fixtures for the `context_projection` test suite |
 | `src/conversation/body.rs` | src | s | 1 struct · 1 enum · 7 fn · 2 crate-vis | ConversationBody, ConversationKind | Forward-compatible room body codec and the all-writer membership guard |
 | `src/conversation/dag.rs` | src | m | 1 struct · 1 enum · 7 fn · 1 const · 9 crate-vis | AppendRecord, ScopeSelector | Record-kind-independent parent edges, canonical path and scoped walks |
-| `src/conversation/membership.rs` | src | m | 2 struct · 2 enum · 8 fn · 4 crate-vis | HistoryChoice, MembershipAction, MembershipRow, MembershipWindow | Append-only membership ledger |
+| `src/conversation/membership.rs` | src | m | 2 struct · 2 enum · 8 fn · 5 crate-vis | HistoryChoice, MembershipAction, MembershipRow, MembershipWindow | Append-only membership ledger |
 | `src/conversation/mod.rs` | src | s | 5 re-export · 2 crate-vis | — | Rooms, append-only conversation DAGs, membership windows and scoped summaries |
 | `src/conversation/session.rs` | src | s | 1 struct · 1 enum · 3 fn | SessionMode, SessionPresence | Session mode persists; active participant presence belongs only to this process |
 | `src/conversation/summary.rs` | src | s | 2 fn | — | Caller-authored scoped summaries, landed as gated claim headers |
