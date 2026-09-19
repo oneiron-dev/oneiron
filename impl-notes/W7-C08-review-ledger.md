@@ -259,3 +259,45 @@ The old `w7-c08-bot-recovery-validation.service` is not the current job. Running
 or queued checks are productive waiting, not a terminal BLOCKED result. Consume
 the existing job's terminal receipts before final validation disposition; do not
 create another build or observer.
+
+### Productive-wait review refresh
+
+A complete read-only refresh captured 16 issue comments, 20 reviews, 94 inline
+comments and 40 threads at unchanged published head `8504e489`; all nested
+comment pages are complete. Raw responses and body deltas are retained under
+`bot-recovery-receipts/productive-wait-refresh/`. Source and validation custody
+were not changed. Codex has no new review or provider error. Qodo now reports
+zero bugs and zero rule violations after withdrawing its driver-import finding.
+The new C03/C04 issue-comment updates remain those tickets' evidence, not C08's.
+
+Thirteen bot follow-ups acknowledge earlier repairs or withdraw findings. The
+remaining follow-up, `4053305926`, repeats F18. Re-reading CLAUDE.md confirms that
+its consumer boundary concerns downstream products built on top of Oneiron.
+These CLI programs are upstream inference providers available to any host, and
+step 13 explicitly says the engine ships all three named runners. The source
+constructs generic sandbox connectors with caller-supplied task text and handles;
+it adds no consumer persona, product-specific endpoint, state, or write authority.
+The dismissal stands; removing these adapters would remove required support.
+
+| Follow-up comment | Original comment | Disposition |
+| --- | --- | --- |
+| 4053305535 | 4052800030 | Acknowledgement/withdrawal; no new defect. |
+| 4053305545 | 4052800038 | Acknowledgement/withdrawal; no new defect. |
+| 4053305566 | 4052800031 | Acknowledgement/withdrawal; no new defect. |
+| 4053305747 | 4052800039 | Acknowledgement/withdrawal; no new defect. |
+| 4053305762 | 4052800041 | Acknowledgement/withdrawal; no new defect. |
+| 4053305867 | 4052800044 | Acknowledgement/withdrawal; no new defect. |
+| 4053305878 | 4052800048 | Acknowledgement/withdrawal; no new defect. |
+| 4053305887 | 4052800025 | Acknowledgement/withdrawal; no new defect. |
+| 4053305926 | 4052800034 | Repeated F18 objection; dismissed for the contract and upstream/downstream distinction described above. |
+| 4053305970 | 4052800042 | Acknowledgement/withdrawal; no new defect. |
+| 4053305974 | 4052800036 | Acknowledgement/withdrawal; no new defect. |
+| 4053306067 | 4052800022 | Acknowledgement/withdrawal; no new defect. |
+| 4053306258 | 4052800032 | Acknowledgement/withdrawal; no new defect. |
+| 4053307623 | 4052784000 | Acknowledgement/withdrawal; no new defect. |
+
+`4053305535` confirms the earlier published transport split only. The local F32
+repair later moves generate to cancellable async I/O while preserving its explicit
+120-second total timeout. No bot acknowledgement is counted as validation of that
+new source. The 14 new empty review bodies are containers for these replies, not
+additional findings; their review IDs are retained in `dispositions.json`.
