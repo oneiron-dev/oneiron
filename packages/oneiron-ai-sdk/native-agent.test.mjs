@@ -1,6 +1,7 @@
 // Real AI SDK orchestration and real Oneiron native bindings. Only the external
 // model response is deterministic; no memory method or AI SDK module is mocked.
-import { test, expect } from "bun:test"
+import { test } from "node:test"
+import assert from "node:assert/strict"
 import { mkdtempSync, rmSync, realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -49,17 +50,17 @@ test("an AI SDK agent writes, recalls and reads receipts through native Memory W
       prompt: "Remember this turn, recall my travel preference, and check the receipts.",
     })
     const outputs = result.steps.flatMap(step => step.toolResults)
-    expect(outputs.map(row => row.toolName)).toEqual(["witness", "recall", "receipts"])
-    expect(outputs[0].output.receiptRef.startsWith("witness:")).toBe(true)
-    expect(outputs[0].output.messageShortIds).toHaveLength(1)
-    expect(outputs[1].output.packVersion).toBe(1)
-    expect(outputs[1].output.items.map(row => row.valueText).join(" ").toLowerCase()).toContain("window seat")
-    expect(outputs[2].output.length).toBeGreaterThan(0)
-    expect(outputs[2].output.every(row => row.receiptRef && Array.isArray(row.reasonCodes))).toBe(true)
+    assert.deepEqual(outputs.map(row => row.toolName), ["witness", "recall", "receipts"])
+    assert.ok(outputs[0].output.receiptRef.startsWith("witness:"))
+    assert.equal(outputs[0].output.messageShortIds.length, 1)
+    assert.equal(outputs[1].output.packVersion, 1)
+    assert.match(outputs[1].output.items.map(row => row.valueText).join(" ").toLowerCase(), /window seat/)
+    assert.ok(outputs[2].output.length > 0)
+    assert.ok(outputs[2].output.every(row => row.receiptRef && Array.isArray(row.reasonCodes)))
     // The next provider request really receives the engine result as a tool message.
     const memoryPrompt = model.doGenerateCalls[2].prompt.find(message => message.role === "tool")
-    expect(memoryPrompt).toBeDefined()
-    expect(result.text).toBe("You prefer a window seat.")
+    assert.ok(memoryPrompt)
+    assert.equal(result.text, "You prefer a window seat.")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

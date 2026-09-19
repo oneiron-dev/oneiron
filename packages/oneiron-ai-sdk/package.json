@@ -21,7 +21,7 @@
   },
   "scripts": {
     "test": "bun test adapter.test.js",
-    "test:native": "bun test native-agent.test.js"
+    "test:native": "node --test native-agent.test.mjs"
   },
   "devDependencies": {
     "ai": "^6.0.0",
