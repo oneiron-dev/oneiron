@@ -365,10 +365,16 @@ impl HealerRegistration<'_> {
 }
 
 fn protected_target(target: &str) -> bool {
-    let target = target.to_ascii_lowercase();
-    ["engine", "soul", "core"].iter().any(|p| {
-        target == *p || target.starts_with(&format!("{p}.")) || target.starts_with(&format!("{p}:"))
-    })
+    // Refs are opaque text, not predicates. Treat every non-identifier byte as
+    // a namespace boundary, including slash, backslash and encoded separators.
+    // Reserved components stay protected even behind a path or URI prefix.
+    target
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|component| {
+            ["engine", "soul", "core"]
+                .iter()
+                .any(|reserved| component.eq_ignore_ascii_case(reserved))
+        })
 }
 fn production_intent_allowed(vault: &Vault, proposal: &RepairProposal) -> Result<bool> {
     if protected_target(&proposal.target_predicate) {

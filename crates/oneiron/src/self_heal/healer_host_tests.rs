@@ -191,3 +191,63 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
         );
     }
 }
+
+#[test]
+fn production_refs_refuse_protected_namespaces_before_persistence() {
+    let (_d, v, _owner, actor) = fixture();
+    let prod = v.register_prod_healer(actor);
+    for namespace in ["engine", "Soul", "CORE"] {
+        for suffix in [
+            "", ".index", ":index", "/index", "\\index", " index", "%2Findex",
+        ] {
+            let target = format!("{namespace}{suffix}");
+            for op in [
+                RepairOperation::Reindex {
+                    scope_ref: target.clone(),
+                },
+                RepairOperation::Retry {
+                    run_ref: target.clone(),
+                },
+            ] {
+                let proposal = patch(op);
+                let id = proposal.proposal_id;
+                assert!(
+                    matches!(
+                        prod.submit("refusal", "session", proposal),
+                        Err(crate::Error::InvalidConfig(_))
+                    ),
+                    "protected target {target}"
+                );
+                assert!(v.healer_proposal(&id).unwrap().is_none());
+            }
+        }
+    }
+    assert!(
+        v.healer_run_receipt(&actor.entity_ref(), "refusal")
+            .unwrap()
+            .is_none()
+    );
+    for target in [
+        "memory/index",
+        "maintenance:run",
+        "engineering/index",
+        "core_notes/run",
+    ] {
+        for op in [
+            RepairOperation::Reindex {
+                scope_ref: target.into(),
+            },
+            RepairOperation::Retry {
+                run_ref: target.into(),
+            },
+        ] {
+            let proposal = patch(op);
+            let id = proposal.proposal_id;
+            prod.submit("allowed", "session", proposal).unwrap();
+            assert_eq!(
+                v.healer_proposal(&id).unwrap().unwrap().state,
+                ProposalState::Proposed
+            );
+        }
+    }
+}
