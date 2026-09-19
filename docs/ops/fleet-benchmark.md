@@ -338,3 +338,42 @@ optimizations:
   be assigned to retrieval, socket handling or storage from that receipt alone.
 
 No unmeasured throughput improvement is assigned to either follow-up.
+
+## Final cache-insert measurement — no demonstrated end-to-end gain
+
+The final release binary completed 100 exact pairs at each of 1,024, 4,096 and
+16,384 nodes. All result digests match the corresponding earlier graph-size
+receipts. The 1,024-node phase uses the same plan, host, storage and PPR function
+as the earlier Arch fleet profile, but runs without the preceding wire workload.
+The host was not isolated. Disk waits dominated this run; its process used
+1.246 CPU-user seconds and 0.521 CPU-system seconds over 550.724 wall seconds.
+
+| 1,024-node phase | Before mean ms | After mean ms | Before p99 ms | After p99 ms |
+|---|---:|---:|---:|---:|
+| ppr_full | 52.329 | 434.047 | 533.454 | 5594.652 |
+| ppr_prepare | 67.592 | 444.960 | 464.903 | 6404.892 |
+| ppr_resume | 47.247 | 433.008 | 366.054 | 6835.662 |
+
+These observed latencies are worse, not a measured gain for the fresh-insert
+change. The source removes an unnecessary full dependency scan, but this sample
+does not establish an end-to-end benefit. No floor is silently replaced with
+these slower numbers. The earlier Arch 1.1076x incremental residual-resume gain
+is separate evidence and remains explicitly qualified by preparation cost.
+
+The later phases also show strong host variation:
+
+| Nodes | Full mean ms | Resume mean ms | Resume p99 ms |
+|---|---:|---:|---:|
+| 1,024 | 434.047 | 433.008 | 6835.662 |
+| 4,096 | 908.833 | 1120.656 | 13470.830 |
+| 16,384 | 63.329 | 72.777 | 433.944 |
+
+The final/lower-size cost ratio is 0.1681 despite 16x graph growth. That decrease
+does not establish better asymptotic behavior: it reflects uncontrolled timing
+variation. Use the separately published MacBook scaling run for the stated
+observed sublinear result, and retain this unfavorable run as well.
+
+Final binary BLAKE3:
+`19a34221f48de49083abd1baff5693883efba6162a1f95789e4c1b194d04649e`.
+Raw [after receipt](evidence/W7-C10/ppr-scaling-arch-after.json) and
+[terminal outcome](evidence/W7-C10/ppr-scaling-arch-after-process.json).
