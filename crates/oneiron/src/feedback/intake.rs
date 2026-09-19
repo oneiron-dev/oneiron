@@ -33,8 +33,13 @@ impl FeedbackDedup {
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| Error::CorruptedIndex("feedback intake"))
 }
-fn decode(bytes: &[u8]) -> Result<FeedbackReviewItem> {
-    rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("feedback intake"))
+fn decode(key: &[u8], bytes: &[u8]) -> Result<FeedbackReviewItem> {
+    let item: FeedbackReviewItem =
+        rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("feedback intake"))?;
+    if key.strip_prefix(QUEUE) != Some(item.id.as_bytes().as_slice()) {
+        return Err(Error::CorruptedIndex("feedback review identity"));
+    }
+    Ok(item)
 }
 fn normalized(vector: &[f32]) -> Result<Vec<f32>> {
     let norm = vector
@@ -92,6 +97,7 @@ impl Vault {
                 }
                 let key = [QUEUE, review_id.as_ref()].concat();
                 return decode(
+                    &key,
                     &self
                         .store
                         .vault_meta
@@ -101,8 +107,8 @@ impl Vault {
             }
             let mut best: Option<(f32, FeedbackReviewItem)> = None;
             for row in self.store.vault_meta.prefix_iter(txn, QUEUE)? {
-                let (_, bytes) = row?;
-                let item = decode(&bytes)?;
+                let (key, bytes) = row?;
+                let item = decode(&key, &bytes)?;
                 if !item.open
                     || item.category != bundle.category
                     || item.centroid.len() != vector.len()
@@ -166,8 +172,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut items = Vec::new();
         for row in self.store.vault_meta.prefix_iter(&txn, QUEUE)? {
-            let (_, bytes) = row?;
-            let item = decode(&bytes)?;
+            let (key, bytes) = row?;
+            let item = decode(&key, &bytes)?;
             if item.open {
                 items.push(item);
             }
@@ -180,6 +186,7 @@ impl Vault {
         self.with_write_txn(|txn| {
             let key = [QUEUE, id.as_bytes()].concat();
             let mut item = decode(
+                &key,
                 &self
                     .store
                     .vault_meta
