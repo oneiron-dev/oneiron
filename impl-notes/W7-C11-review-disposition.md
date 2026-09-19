@@ -57,3 +57,12 @@ mistakes (one removed borrow and a nested scoped-read helper caller); both were
 fixed. Current focused test uses the installed dispatcher, MacBook exclusion,
 normal Mini/Arch capacity guards, target `/home/lexi/w7-build/target/W7-C11`, two
 compiler jobs and four test threads. No gate result or factory state is edited.
+
+The first calendar integration run passed 105 tests. The featureless core run
+passed 6,601 tests and exposed one malformed test fixture, with four pre-existing
+ignores. `c82d8809` fixes that fixture using the semantic edge codec; the stricter
+production reader stays intact. All 20 scoped-read tests then passed featureless,
+and core all-target featureless Clippy exited 0. All-features Clippy and the
+mandatory six-package run are still pending in the same serial chain. The
+refreshed all-state C11 PR lookup again returned no PR. These partial results are
+not a full validation pass.
