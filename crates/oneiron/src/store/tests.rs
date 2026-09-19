@@ -5294,3 +5294,62 @@ fn retrieval_quality_named_telemetry_round_trip_keeps_version_zero() -> Result<(
     assert_eq!(wire["confidence_adjustment"], -0.15);
     Ok(())
 }
+
+#[cfg(feature = "sync")]
+#[test]
+fn abi18_rekeys_persisted_sync_envelopes_before_replay_and_only_once() -> Result<()> {
+    use crate::sync::WindowKey;
+    use crate::sync::window::load_window_from_state;
+    use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+
+    for pending_only in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let rows: Vec<_> = legacy_rows()
+            .into_iter()
+            .filter(|row| row.kind == "PERSON")
+            .collect();
+        let row = &rows[0];
+        let before = legacy_envelope(row);
+        let key = WindowKey::new("9999-12");
+        write_v17_vault(dir.path(), &rows, |store, txn| {
+            let doc = LoroDoc::new();
+            doc.get_map("entities")
+                .insert(&row.id.to_hex(), LoroValue::Binary(before.clone().into()))
+                .unwrap();
+            doc.commit();
+            let state = doc.export(ExportMode::Snapshot).unwrap();
+            let state_key = if pending_only {
+                "u:w:9999-12:00000001"
+            } else {
+                "d:w:9999-12"
+            };
+            store.sync_state.put(txn, state_key, &state)?;
+            store.sync_state.put(txn, "svf:w:9999-12", &[1])?;
+            Ok(())
+        })?;
+        let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+        let doc = load_window_from_state(&vault, "migration", &key)?;
+        let assert_person = |doc: &LoroDoc| {
+            let Some(ValueOrContainer::Value(LoroValue::Binary(blob))) =
+                doc.get_map("entities").get(&row.id.to_hex())
+            else {
+                panic!("missing recovered person")
+            };
+            assert_eq!(blob[0], crate::registry::ENTITY_TYPE_PERSON);
+            assert_eq!(&blob[1..], &before[1..]);
+        };
+        assert_person(&doc);
+        drop(doc);
+        drop(vault);
+        let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+        let reopened = load_window_from_state(&vault, "migration", &key)?;
+        // Current PERSON=10 overlaps old ASSET_TEXT=10. A second conversion
+        // would silently produce ASSET_TEXT=31, so reopen is part of the law.
+        assert_person(&reopened);
+        assert_eq!(
+            vault.get_raw(&row.id)?.unwrap()[0],
+            crate::registry::ENTITY_TYPE_PERSON
+        );
+    }
+    Ok(())
+}

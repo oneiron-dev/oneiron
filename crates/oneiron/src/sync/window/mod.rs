@@ -20,6 +20,8 @@ use crate::Vault;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use loro::{LoroDoc, Subscription};
 
+mod abi18;
+pub(crate) use abi18::upgrade_persisted_windows;
 mod egress;
 mod forward;
 mod reverse;
@@ -386,12 +388,16 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
     // Prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
     let prefix = format!("u:w:{key}:");
     let mut applied = 0u32;
+    let mut update_keys = Vec::new();
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
-        let (_k, v) = entry?;
+        let (k, v) = entry?;
         import_doc(doc, &v)?;
+        update_keys.push(k.to_string());
         applied += 1;
     }
+    drop(rtxn);
+    abi18::upgrade_window(vault, doc, key, &update_keys)?;
     Ok(applied)
 }
 

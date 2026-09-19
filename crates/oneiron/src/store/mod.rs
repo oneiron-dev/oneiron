@@ -135,6 +135,8 @@ pub(in crate::store) use pending_embedding::*;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 pub use short_id_alias::*;
+#[cfg(feature = "sync")]
+pub(crate) use structural_kind_registry::migrated_v17_type_byte;
 use structural_kind_registry::*;
 #[cfg(test)]
 pub(crate) use structural_kind_registry::{

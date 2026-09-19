@@ -21541,7 +21541,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 9
      }
     },
@@ -21845,7 +21845,7 @@
      "path": "src/store/structural_kind_registry/mod.rs",
      "purpose": "Vault-scoped dynamic entity-type/kind registry: registration, load and rebuild, zone validation, and the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -21865,7 +21865,7 @@
      "path": "src/store/structural_kind_registry/rekey.rs",
      "purpose": "One-shot byte-space v3.1 type-byte migration over entities, type_index, counters, and registry rows",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -22877,6 +22877,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/abi18.rs",
+     "purpose": "One-shot conversion of persisted v17 live window envelopes before replay",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22936,7 +22946,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 6,
       "mod": 1,
       "re-export": 4,
@@ -26393,7 +26403,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 72,
+     "files": 73,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26528,7 +26538,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1519,
+   "source_files": 1520,
    "test_files": 539
   },
   "oneiron-bench": {

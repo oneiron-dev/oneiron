@@ -214,6 +214,14 @@ pub(in crate::store) const TYPE_BYTE_REKEY_V31: &[TypeByteRekey] = &[
     },
 ];
 
+#[cfg(feature = "sync")]
+pub(crate) fn migrated_v17_type_byte(old: u8) -> u8 {
+    TYPE_BYTE_REKEY_V31
+        .iter()
+        .find(|entry| entry.old == old)
+        .map_or(old, |entry| entry.new)
+}
+
 /// What the byte-space v3.1 pass actually moved. Returned so the caller can log
 /// it and so tests can assert on real work rather than a silent no-op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -245,7 +253,8 @@ fn rekey_corrupt(context: &'static str) -> Error {
 /// and the structural-kind registry records whose own byte is in the map.
 /// Entity ids are the `entities` keys and do not encode a type byte, so those
 /// rows are patched in place — ids, timestamps, hashes, MessagePack bodies,
-/// vectors and CRDT payloads are never rewritten. Edge keys and values carry
+/// vectors and document text are never rewritten. Persisted sync windows are
+/// marked for a one-shot live-envelope upgrade before replay or export. Edge keys and values carry
 /// entity ids and edge data, never endpoint type bytes, so `edges_out` /
 /// `edges_in` are not touched at all; the caller asserts their totals are
 /// unchanged.
@@ -596,5 +605,28 @@ pub(in crate::store) fn rekey_type_bytes_v31_in_txn(
         }
     }
 
+    // The authoritative rows are now v18, but cached Loro window values can
+    // still carry v17 envelopes. Make every persisted window cold and require
+    // its live-value upgrade before the ordinary rematerialization/export door.
+    // This marker is written even by a featureless opener.
+    let mut windows = BTreeSet::new();
+    for row in dbs.sync_state.iter(txn)? {
+        let (key, _) = row?;
+        if let Some(rest) = key
+            .strip_prefix("d:w:")
+            .or_else(|| key.strip_prefix("u:w:"))
+        {
+            let window = rest
+                .split(':')
+                .next()
+                .ok_or_else(|| rekey_corrupt("v17 sync window key"))?;
+            windows.insert(window.to_owned());
+        }
+    }
+    for window in windows {
+        dbs.sync_state
+            .put(txn, &format!("abi18:w:{window}"), &[1])?;
+        dbs.sync_state.put(txn, &format!("svf:w:{window}"), &[0])?;
+    }
     Ok(written)
 }

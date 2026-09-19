@@ -17,3 +17,6 @@ pub(crate) use self::registry::{
     STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
     structural_kind_registry_key,
 };
+
+#[cfg(feature = "sync")]
+pub(crate) use self::rekey::migrated_v17_type_byte;
