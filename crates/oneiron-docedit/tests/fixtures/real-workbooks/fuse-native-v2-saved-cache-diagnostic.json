@@ -1,0 +1,14 @@
+{
+  "mode": "saved-cache-diagnostic",
+  "fresh_excel_truth": false,
+  "executable_sha256": "3a9cb2cb63ee3743417716387e3826e8066ac0d5c06d428473e8c9cb776bd7c3",
+  "manifest_sha256": "f211b1a811d493afe0e82b5faadc6093ec5fefaff7579aa021e2de8cef438404",
+  "comparator_sha256": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+  "timeout_seconds": 120,
+  "workbooks": 10702,
+  "scored_workbooks": 3493,
+  "matching_workbooks": 442,
+  "formula_cells": 5666313,
+  "mismatches": 5554234,
+  "rows_sha256": "fa544bb8e7a06e87ed496f248f706fe9ad269e0841d9e96fb289298192ce498b"
+}

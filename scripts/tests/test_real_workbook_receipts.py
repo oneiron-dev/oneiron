@@ -115,15 +115,22 @@ class CompleteCorpusReceipts(unittest.TestCase):
 
     def test_historical_native_fuse_lane_covers_complete_cohort(self):
         manifest = self.manifest("fuse")
-        receipt = read_json("fuse-native-v1-classification.json")
-        summary = read_json("fuse-native-v1-saved-cache-diagnostic.json")
-        self.assertEqual(receipt["rows_sha256"], summary["rows_sha256"])
-        rows = read_rows("fuse-native-v1-rows.jsonl.gz", summary["rows_sha256"])
-        self.complete(rows, manifest)
-        self.classification(rows, receipt)
-        self.diagnostic(rows, summary)
-        self.assertEqual(summary["executable_sha256"], read_json("spreadsheetbench-completed-lanes.json")["retained_native"]["identity"]["executable_sha256"])
-        self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["fuse"]["manifest_sha256"])
+        executable_pins = {
+            1: read_json("spreadsheetbench-completed-lanes.json")["retained_native"]["identity"]["executable_sha256"],
+            2: read_json("retained-native-v2-executable.json")["executable_sha256"],
+        }
+        for version, executable in executable_pins.items():
+            with self.subTest(version=version):
+                prefix = f"fuse-native-v{version}"
+                receipt = read_json(prefix + "-classification.json")
+                summary = read_json(prefix + "-saved-cache-diagnostic.json")
+                self.assertEqual(receipt["rows_sha256"], summary["rows_sha256"])
+                rows = read_rows(prefix + "-rows.jsonl.gz", summary["rows_sha256"])
+                self.complete(rows, manifest)
+                self.classification(rows, receipt)
+                self.diagnostic(rows, summary)
+                self.assertEqual(summary["executable_sha256"], executable)
+                self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["fuse"]["manifest_sha256"])
 
     def test_fuse_unchanged_complete_lane_matches_pinned_extraction(self):
         manifest = self.manifest("fuse")
