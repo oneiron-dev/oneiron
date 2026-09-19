@@ -12,6 +12,7 @@ use super::types::default_limit;
 /// The daemon-only session, companion, disclosure, policy, time, and projection
 /// controls are outside this engine contract.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreContextPackRequest {
     /// Optional BM25 text seed.
     #[serde(default)]
@@ -58,6 +59,7 @@ impl CoreContextPackRequest {
 
 /// Nested edge-expansion depth controls.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextPackDepthControls {
     /// Edge expansion depth for neighbor hydration.
     #[serde(default, rename = "edge_hop", alias = "edgeHop")]
@@ -69,6 +71,7 @@ pub struct ContextPackDepthControls {
 
 /// Per-kind retrieval item budgets applied before final truncation.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextPackRetrievalBudgetControls {
     /// CLAIM item budget.
     #[serde(default)]
@@ -92,6 +95,7 @@ pub struct ContextPackRetrievalBudgetControls {
 
 /// Token and item budget controls.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextPackBudgetControls {
     /// Serialized token budget.
     #[serde(default, rename = "token_budget", alias = "tokenBudget")]

@@ -1481,3 +1481,56 @@ fn batch_aborting_error_carries_the_batch_method() {
         "the aborting error carries the BATCH method identity: {batch:?}"
     );
 }
+
+#[test]
+fn structured_requests_reject_unknown_fields_before_dispatch() {
+    for (op, request) in [
+        ("core.query", json!({"query": "test", "unrecognized": true})),
+        (
+            "core.hydrate",
+            json!({"ref": "abc:12", "unrecognized": true}),
+        ),
+        (
+            "core.batch_short_id_hydrate",
+            json!({"refs": [], "unrecognized": true}),
+        ),
+        (
+            "core.memory_timeline",
+            json!({"id": "abc", "unrecognized": true}),
+        ),
+        ("core.context_pack", json!({"unrecognized": true})),
+        (
+            "core.context_pack",
+            json!({"depth": {"unrecognized": true}}),
+        ),
+        (
+            "core.context_pack",
+            json!({"budget": {"unrecognized": true}}),
+        ),
+        (
+            "core.context_pack",
+            json!({"budget": {"retrieval": {"unrecognized": true}}}),
+        ),
+    ] {
+        let mut valid = request.clone();
+        if let Some(depth) = valid.get_mut("depth") {
+            depth.as_object_mut().unwrap().remove("unrecognized");
+        } else if let Some(budget) = valid.get_mut("budget") {
+            if let Some(retrieval) = budget.get_mut("retrieval") {
+                retrieval.as_object_mut().unwrap().remove("unrecognized");
+            } else {
+                budget.as_object_mut().unwrap().remove("unrecognized");
+            }
+        } else {
+            valid.as_object_mut().unwrap().remove("unrecognized");
+        }
+        serde_json::from_value::<VaultReadRequest>(json!({"op": op, "request": valid}))
+            .expect("control request decodes");
+        let decoded =
+            serde_json::from_value::<VaultReadRequest>(json!({"op": op, "request": request}));
+        assert!(
+            decoded.is_err(),
+            "{op} accepted an undeclared request field"
+        );
+    }
+}

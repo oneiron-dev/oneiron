@@ -97,6 +97,7 @@ pub struct CoreEntityRecord {
 
 /// Accepted `POST /v1/core/query` request body.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreQueryRequest {
     /// Optional BM25 text query.
     #[serde(default)]
@@ -143,6 +144,7 @@ pub struct CoreQueryResponse {
 
 /// Accepted `POST /v1/core/hydrate` request body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreHydrateRequest {
     /// Canonical short reference in `shortId:contentHashHex` form.
     #[serde(default, rename = "ref", alias = "short_ref", alias = "shortRef")]
@@ -195,6 +197,7 @@ pub struct CoreHydrateResponse {
 
 /// Accepted `POST /v1/core/batch/shortId/hydrate` request body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreBatchShortIdHydrateRequest {
     /// Canonical short references in `shortId:contentHashHex` form.
     #[serde(
@@ -252,6 +255,7 @@ pub struct CoreBatchShortIdHydrateResponse {
 /// query while still carrying this canonical JSON body at the `round_trip`
 /// seam.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreMemoryTimelineRequest {
     /// Hex entity id whose supersession chain is requested.
     pub id: String,
