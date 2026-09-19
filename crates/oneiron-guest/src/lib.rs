@@ -9,8 +9,12 @@ mod protocol;
 mod runtime;
 
 #[cfg(target_os = "linux")]
-pub mod boot;
-pub mod conformance;
+mod boot;
+mod conformance;
+
+#[cfg(target_os = "linux")]
+pub use boot::run as run_production;
+pub use conformance::component as conformance_component;
 
 use std::{
     io::{Read, Write},
@@ -40,7 +44,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// LOCALTEST ONLY. The caller supplies a private, empty directory with no
 /// symlink ancestors. Files received from the host are copied there, never
 /// mounted. The adapter does not fork, drop privileges, or emulate OverlayFS.
-/// Production PID 1 uses `boot::run` instead (Linux only).
+/// Production PID 1 uses `run_production` instead (Linux only).
 /// All errors attempt a nonzero finish; partial writes are scratch state only.
 pub fn serve_localtest<T: Read + Write + 'static>(channel: T, workspace: &Path) -> Result<()> {
     let mut session = protocol::Session::new(channel);

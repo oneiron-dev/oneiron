@@ -14,7 +14,7 @@ fn conformance_cli_creates_once_and_reports_the_artifact_digest() {
         .expect("run artifact generator");
     assert!(generated.status.success());
     let bytes = fs::read(&artifact).expect("generated artifact");
-    assert_eq!(bytes, oneiron_guest::conformance::component().unwrap());
+    assert_eq!(bytes, oneiron_guest::conformance_component().unwrap());
 
     let digest = Command::new(executable)
         .arg("--artifact-digest")

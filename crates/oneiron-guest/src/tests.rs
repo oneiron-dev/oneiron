@@ -100,7 +100,7 @@ fn typed_component_over_unix_stream_returns_receipt_only_and_proposes_source_byt
     // Literal fixture bytes are echoed; this is explicitly not JS execution.
     input(
         &mut host,
-        &conformance::component().expect("WAT encoding"),
+        &conformance_component().expect("WAT encoding"),
         "typed source conduit",
     );
     assert_eq!(
@@ -131,7 +131,7 @@ fn typed_fixture_refuses_secret_bearing_receipts_and_denied_credentials() {
     ] {
         let (_temp, root) = scratch();
         let mut bytes = Vec::new();
-        input(&mut bytes, &conformance::component().expect("fixture"), "");
+        input(&mut bytes, &conformance_component().expect("fixture"), "");
         put(&mut bytes, receipt);
         let (transport, output) = channel(bytes);
         assert!(serve_localtest(transport, &root).is_err());

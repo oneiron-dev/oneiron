@@ -5,7 +5,7 @@ use crate::{Error, Result};
 /// WAT fixture using the canonical credential-input and step-result records.
 /// After the metadata receipt, it proposes source bytes at result.txt, or a
 /// fixed marker when source is empty. It does not evaluate JavaScript.
-pub const WAT: &str = include_str!("conformance.wat");
+pub(super) const WAT: &str = include_str!("conformance.wat");
 
 /// Encodes the conformance WAT as an ordinary WebAssembly component binary.
 /// Artifact generation alone is not runtime or boot evidence.

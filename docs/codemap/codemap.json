@@ -28037,7 +28037,7 @@
      "path": "src/conformance.rs",
      "purpose": "Typed Component Model fixture",
      "surface": {
-      "const": 1,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -28062,7 +28062,7 @@
      "surface": {
       "enum": 1,
       "fn": 1,
-      "mod": 2,
+      "re-export": 2,
       "type": 1
      }
     },

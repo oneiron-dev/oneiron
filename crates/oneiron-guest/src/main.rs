@@ -22,7 +22,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         [mode, output] if mode == "--write-conformance" => {
-            let bytes = oneiron_guest::conformance::component()?;
+            let bytes = oneiron_guest::conformance_component()?;
             // Avoid clobbering artifacts or following a pre-existing symlink.
             let mut file = fs::OpenOptions::new()
                 .write(true)
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn production() -> Result<()> {
-    oneiron_guest::boot::run()
+    oneiron_guest::run_production()
 }
 
 #[cfg(not(target_os = "linux"))]

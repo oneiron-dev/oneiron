@@ -12,9 +12,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/boot.rs` | src | m | 1 fn | — | Linux-only PID-1 setup, isolated execution, and final-delivery custody |
-| `src/conformance.rs` | src | s | 1 fn · 1 const | — | Typed Component Model fixture |
+| `src/conformance.rs` | src | s | 1 fn · 1 crate-vis | — | Typed Component Model fixture |
 | `src/filesystem.rs` | src | m | 9 crate-vis | — | Descriptor-relative workspace access |
-| `src/lib.rs` | src | s | 1 enum · 1 fn · 1 type · 2 mod | Error | Linux microVM guest agent and an unprivileged protocol conformance adapter |
+| `src/lib.rs` | src | s | 1 enum · 1 fn · 1 type · 2 re-export | Error | Linux microVM guest agent and an unprivileged protocol conformance adapter |
 | `src/main.rs` | src | s | — | — | Guest PID-1 entry point and explicitly named, unprivileged local test tools |
 | `src/protocol.rs` | src | s | 15 crate-vis | — | Strict, bounded host/guest JSON framing and admission state machine |
 | `src/runtime.rs` | src | m | 1 crate-vis | — | Canonical typed Component Model execution with four read-only imports |

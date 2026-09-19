@@ -98,9 +98,13 @@ as PID 1 or uid 0. It uses copied scratch files, not mounts, privilege drop or K
 The public library seam is
 `serve_localtest<T: Read + Write + 'static>(channel: T, workspace: &Path) -> Result<()>`.
 It accepts an owned `UnixStream` or an injected in-memory duplex channel.
-`conformance::component() -> Result<Vec<u8>>` encodes the fixture;
-`conformance::WAT` exposes its text. `boot::run() -> Result<()>` is Linux-only.
+`conformance_component() -> Result<Vec<u8>>` encodes the fixture.
+`run_production() -> Result<()>` is Linux-only. Both functions are exported at
+the library root; their implementation modules and fixture text are not public.
 All errors attempt a nonzero finish; callers must discard scratch state on error.
 
-The tests run unprivileged on Linux or macOS. The root coordinator owns Cargo
-validation and native image/boot evidence.
+The protocol and CLI tests run unprivileged on Linux or macOS. On macOS they
+verify that production startup refuses; they do not compile or exercise Linux
+PID-1 mount and privilege setup. Native image/boot acceptance requires Linux
+and the provisioned Firecracker/KVM stack. The root coordinator owns that
+separate evidence.
