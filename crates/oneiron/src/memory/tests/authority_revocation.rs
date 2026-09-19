@@ -263,7 +263,7 @@ fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
             let deleter_gate = std::sync::Arc::clone(&gate);
             let vault_ref = &vault;
             let deleter = scope.spawn(move || {
-                vault_ref.test_hooks().install_after_header_read_signal(tx);
+                vault_ref.test_hooks().install_after_delete_probe_signal(tx);
                 deleter_gate.wait();
                 facade_for(vault_ref, owner).safe_delete(&subject.to_hex(), reason)
             });
