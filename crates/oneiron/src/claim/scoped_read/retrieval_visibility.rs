@@ -33,7 +33,9 @@ impl<'vault> ScopedRead<'vault> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<bool> {
-        if filter.deny_all || !self.is_entity_readable_with_policy_in(txn, policy, id)? {
+        if filter.deny_all
+            || !self.is_entity_readable_with_filter_in(txn, policy, id, Some(filter))?
+        {
             return Ok(false);
         }
         let Some(raw) = self.entities().get(txn, id.as_bytes())? else {
@@ -53,25 +55,13 @@ impl<'vault> ScopedRead<'vault> {
         {
             return Ok(false);
         }
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(true);
-        }
-        let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        let facets = self.claim_facet_refs_in(txn, id)?;
-        Ok(crate::pipeline::retrieval_claim_allowed(filter, &body)
-            && crate::gate::scoped_read_claim_allowed(policy, &self.actor_key, &body, &facets))
+        Ok(true)
     }
 }
 
 impl crate::ppr::PprNodeVisibility for RetrievalVisibility<'_, '_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-        if !self
-            .scoped
-            .is_entity_retrievable_with_policy_in(txn, &self.policy, &self.filter, id)?
-        {
-            return Ok(false);
-        }
         self.scoped
-            .is_entity_readable_with_policy_in(txn, &self.policy, id)
+            .is_entity_retrievable_with_policy_in(txn, &self.policy, &self.filter, id)
     }
 }

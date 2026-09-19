@@ -324,6 +324,28 @@ fn authority_stale_is_explicit_and_nonclaims_only_obey_type() -> Result<()> {
     assert!(!owner_hits.iter().any(|hit| hit.id == stale_id));
     let hits = reader(&vault).search_text("authorityneedle", 10, None)?;
     assert!(hits.iter().any(|hit| hit.id == stale_id));
+    assert!(hits.receipt.applied.include_stale);
+    assert_eq!(hits.receipt.suppressed_count, 0);
+    {
+        let read = reader(&vault);
+        let txn = vault.store.env.read_txn()?;
+        let visibility = read.retrieval_visibility_in(&txn, None)?;
+        assert!(crate::ppr::PprNodeVisibility::ppr_node_visible(
+            &visibility,
+            &txn,
+            &stale_id
+        )?);
+        let fresh_only = RetrievalFilter {
+            include_stale: Some(false),
+            ..RetrievalFilter::default()
+        };
+        let visibility = read.retrieval_visibility_in(&txn, Some(&fresh_only))?;
+        assert!(!crate::ppr::PprNodeVisibility::ppr_node_visible(
+            &visibility,
+            &txn,
+            &stale_id
+        )?);
+    }
     let request = RetrievalFilter {
         max_sensitivity_band: Some(0),
         include_stale: Some(false),

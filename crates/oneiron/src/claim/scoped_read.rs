@@ -430,6 +430,16 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
+        self.is_entity_readable_with_filter_in(rtxn, policy, id, None)
+    }
+
+    fn is_entity_readable_with_filter_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        filter: Option<&ResolvedRetrievalFilter>,
+    ) -> Result<bool> {
         let Some(raw) = self.entities().get(rtxn, id.as_bytes())? else {
             return Ok(false);
         };
@@ -452,7 +462,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
-            self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
+            self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw, filter)
         } else {
             Ok(true)
         }
@@ -464,6 +474,7 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
+        filter: Option<&ResolvedRetrievalFilter>,
     ) -> Result<bool> {
         if raw.len() == ENTITY_METADATA_HEADER_LEN
             && self.vault.store.entity_deletion_present_in_txn(
@@ -477,7 +488,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body)
+        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body, filter)
     }
 
     fn is_claim_readable_with_body_and_policy_in(
@@ -486,8 +497,13 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         body: &ClaimBody,
+        filter: Option<&ResolvedRetrievalFilter>,
     ) -> Result<bool> {
-        if !claim_surfaceable(body) || !self.relationship_claim_allowed_in(rtxn, body)? {
+        let admitted = match filter {
+            Some(filter) => crate::pipeline::retrieval_claim_allowed(filter, body),
+            None => claim_surfaceable(body),
+        };
+        if !admitted || !self.relationship_claim_allowed_in(rtxn, body)? {
             return Ok(false);
         }
         let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
