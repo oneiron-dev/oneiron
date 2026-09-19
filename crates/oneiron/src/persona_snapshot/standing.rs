@@ -105,12 +105,18 @@ impl Vault {
     /// same handle; conflicting names/floors require an explicit configuration edit.
     pub fn open_standing_block(
         &self,
-        _owner: &AuthenticatedOwner,
+        owner: &AuthenticatedOwner,
         agent: EntityId,
         world: EntityId,
         name: &str,
         token_floor: usize,
     ) -> Result<StandingBlockHandle> {
+        self.authenticate_owner(
+            owner.actor(),
+            owner.principal_ref(),
+            true,
+            owner.decision_id(),
+        )?;
         if name.trim().is_empty() || name.len() > 128 || token_floor == 0 {
             return Err(invalid());
         }
@@ -122,10 +128,24 @@ impl Vault {
             token_floor,
         };
         self.with_write_txn(|txn| {
-            if self.store.entities.get(&*txn, agent.as_bytes())?.is_none()
-                || self.store.entities.get(&*txn, world.as_bytes())?.is_none()
+            let actor_row = self
+                .store
+                .entities
+                .get(&*txn, agent.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let actor_kind = crate::batch::EntityMetadataHeader::parse(&actor_row)
+                .ok_or_else(invalid)?
+                .entity_type;
+            crate::provenance::validate_actor_class(actor_kind, EdgeActorClass::Agent)?;
+            let world_row = self
+                .store
+                .entities
+                .get(&*txn, world.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            if crate::batch::EntityMetadataHeader::parse(&world_row)
+                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_WORLD)
             {
-                return Err(Error::EntityNotFound);
+                return Err(invalid());
             }
             if let Some(raw) = self.store.vault_meta.get(&*txn, &key(&handle.handle))? {
                 let stored = decode(&raw, &handle.handle)?;
@@ -153,6 +173,22 @@ impl Vault {
             .get(&txn, &key(&reference))?
             .map(|bytes| decode(&bytes, &reference))
             .transpose()
+    }
+    /// Resolve configured worlds for one actor. Corrupt handle rows fail closed.
+    pub fn standing_blocks(&self, agent: EntityId) -> Result<Vec<StandingBlockHandle>> {
+        let txn = self.store.env.read_txn()?;
+        let mut blocks = Vec::new();
+        for row in self.store.vault_meta.prefix_iter(&txn, PREFIX)? {
+            let (stored_key, bytes) = row?;
+            let reference =
+                std::str::from_utf8(&stored_key[PREFIX.len()..]).map_err(|_| invalid())?;
+            let handle = decode(&bytes, reference)?;
+            if handle.agent == agent {
+                blocks.push(handle);
+            }
+        }
+        blocks.sort_by_key(|block| block.world);
+        Ok(blocks)
     }
     fn check_standing_handle(&self, handle: &StandingBlockHandle) -> Result<()> {
         if self.standing_block(handle.agent, handle.world)?.as_ref() != Some(handle) {
@@ -185,6 +221,7 @@ impl Vault {
             return Err(invalid());
         };
         if field.is_empty()
+            || value.as_str().is_none()
             || !field
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || c == b'_')
@@ -321,9 +358,14 @@ mod tests {
         let actor = entity(0x51);
         let world = entity(0x52);
         let at = TimeRange { start: 1, end: 1 };
-        for id in [actor, world] {
-            vault.put_entity(&id, ENTITY_TYPE_PERSON, at, 1, b"fixture")?;
-        }
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, at, 1, b"fixture")?;
+        vault.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            at,
+            1,
+            b"fixture",
+        )?;
         let owner = vault.authenticate_owner(
             actor,
             &actor.to_hex(),
@@ -358,6 +400,42 @@ mod tests {
         )]));
         let claim = entity(0x53);
         vault.put_claim(&claim, &note, at, 1)?;
+        let edit = vault.edit_standing_block(
+            &handle,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "standing-edit",
+            StandingBlockEdit::Claim {
+                field: "tone".into(),
+                value: Value::from("Be concise"),
+                evidence: crate::dreamer_consolidation::encode_consolidation_evidence(
+                    &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+                        refs: vec![claim],
+                        chain: vec![],
+                        source_meet: ClaimSource::Generated,
+                    },
+                ),
+            },
+        )?;
+        let edited = vault.get_claim(&edit)?.ok_or_else(invalid)?;
+        assert_eq!(edited.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(edited.source, Some(ClaimSource::Generated));
+        assert_eq!(edited.subject, ClaimSubject::Entity(actor));
+        assert_eq!(edited.world, Some(world));
+        assert_eq!(edited.value, Value::from("Be concise"));
+        assert!(
+            vault
+                .edit_standing_block(
+                    &handle,
+                    WriteActor::new(actor, EdgeActorClass::Agent),
+                    "standing-edit",
+                    StandingBlockEdit::Claim {
+                        field: "tone".into(),
+                        value: Value::from(42),
+                        evidence: Value::Nil
+                    },
+                )
+                .is_err()
+        );
         let reader = ScopedReadActorKey::new(actor.to_hex()).ok_or_else(invalid)?;
         let mut cache = StandingBlockCache::default();
         let first =
