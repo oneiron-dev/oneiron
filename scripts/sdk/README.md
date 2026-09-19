@@ -40,3 +40,19 @@ SDK task and room requests cannot choose another authenticated actor. MCP uses
 the same dispatcher after its family admission. Private N-API method names are
 camelCase; PyO3 method names are snake_case. The public namespaces keep
 `tasks.ask/wait/answer/outcomes` and `rooms.list/messages/claim/speak`.
+
+## Real native boundary check
+
+Build the addon and run this on the host that owns the Cargo artifact:
+
+```
+cargo build -p oneiron-napi
+node scripts/tests/test_native_agent_verbs.mjs target/debug/liboneiron_napi.so
+```
+
+On macOS, use `target/debug/liboneiron_napi.dylib` instead. The script loads the
+real library in Node. It opens an isolated vault and exercises both wait orders,
+exactly-once resume, first-answer replay, shared outcome labels and room listing.
+It needs no package installation or mock native module. This is distinct from
+the projection fixtures above. The standalone N-API Rust test binary still needs
+macOS; on Linux its Node symbols are supplied only by a real Node host (ONE-1997).
