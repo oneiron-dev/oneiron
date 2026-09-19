@@ -69,6 +69,25 @@ linked by the failing beta toolchain. Do not clean shared build caches.
 The current `dev.oneiron.workbench` bundle identifier is for this foundation. Release identity, signing, updates, installers and public
 distribution are not configured. Windows/Linux builds have not been validated.
 
+### App-only navigation and previews
+
+- Settings uses the same search/ask Palette as the app (`Cmd/Ctrl+K` or `/`
+  outside text fields). Back and Escape return to the last valid app screen in
+  this session, including its supported URL state. Escape closes the Palette
+  or current Settings layer before leaving.
+- Appearance offers an optional Recall scene: **None** (default), **Tidal
+  margin**, or **High weather**. The scene follows the app theme and appears
+  only before a question. Answers have no scene. The choice is device-local;
+  blocked storage keeps it for the current renderer session only.
+- Inbox actions settle in place with explicit local outcomes and fixed fixture
+  times. Reply fields keep one replaceable, not-sent preview on plain Enter.
+  Nothing is sent, granted, resumed, or changed in an engine. These local
+  decisions and replies reset when you leave Inbox or reload.
+- Inbox title buttons support Enter/Space. Record columns restore focus when
+  closed. The existing tuner still offers all three open laws; this pass does
+  not resolve that product choice. Edited draft text is not synchronized
+  between separate inline and column draft mounts.
+
 ### Build and runtime boundaries
 
 - `vite.config.ts` remains the web/Nitro build. `vite.desktop.config.ts` uses
