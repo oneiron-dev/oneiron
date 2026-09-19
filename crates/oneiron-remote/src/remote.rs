@@ -66,6 +66,7 @@ pub(crate) struct RemoteClient {
     base_url: Url,
     authorization: HeaderValue,
     agent: Client,
+    stream_agent: reqwest::Client,
 }
 
 /// Hand-written so the bearer cannot reach a log through a derive.
@@ -87,6 +88,7 @@ impl Clone for RemoteClient {
             base_url: self.base_url.clone(),
             authorization: self.authorization.clone(),
             agent: self.agent.clone(),
+            stream_agent: self.stream_agent.clone(),
         }
     }
 }
@@ -110,7 +112,16 @@ impl RemoteClient {
             .map_err(|error| {
                 transport_error(format!("could not build the HTTP client: {error}"))
             })?;
+        let stream_agent = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT)
+            .read_timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|error| {
+                transport_error(format!("could not build streaming client: {error}"))
+            })?;
         Ok(Self {
+            stream_agent,
             base_url,
             authorization,
             agent,
@@ -166,15 +177,10 @@ impl RemoteClient {
 
     pub(crate) fn llm_post(
         &self,
-        stream: bool,
         request: &oneiron::LlmRequest,
         lease: &oneiron::BudgetLease,
     ) -> Result<reqwest::blocking::Response, oneiron::LlmError> {
-        let path = if stream {
-            "v1/llm/stream"
-        } else {
-            "v1/llm/generate"
-        };
+        let path = "v1/llm/generate";
         let url = self
             .base_url
             .join(path)
@@ -185,17 +191,39 @@ impl RemoteClient {
             .post(url)
             .header(AUTHORIZATION, self.authorization.clone())
             .header(CONTENT_TYPE, "application/json")
-            .header(
-                ACCEPT,
-                if stream {
-                    "application/x-ndjson"
-                } else {
-                    "application/json"
-                },
-            )
+            .header(ACCEPT, "application/json")
             .header("x-oneiron-budget-lease", lease.id())
             .body(bytes)
             .send()
+            .map_err(|e| {
+                if e.is_timeout() {
+                    oneiron::RetryableLlmError::Timeout.into()
+                } else {
+                    oneiron::RetryableLlmError::StreamCut.into()
+                }
+            })
+    }
+
+    pub(crate) async fn llm_stream(
+        &self,
+        request: &oneiron::LlmRequest,
+        lease: &oneiron::BudgetLease,
+    ) -> Result<reqwest::Response, oneiron::LlmError> {
+        let url = self
+            .base_url
+            .join("v1/llm/stream")
+            .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
+        let bytes =
+            serialize_request(request).map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
+        self.stream_agent
+            .post(url)
+            .header(AUTHORIZATION, self.authorization.clone())
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/x-ndjson")
+            .header("x-oneiron-budget-lease", lease.id())
+            .body(bytes)
+            .send()
+            .await
             .map_err(|e| {
                 if e.is_timeout() {
                     oneiron::RetryableLlmError::Timeout.into()

@@ -1,11 +1,16 @@
 //! Own-server raw LLM transport over the SDK's single authenticated HTTP client.
 use crate::remote::RemoteClient;
+use futures_core::Stream;
 use oneiron::llm::BudgetDenied;
 use oneiron::{
     BudgetLease, FatalLlmError, LlmError, LlmGenerateFuture, LlmRequest, LlmStream, LlmStreamEvent,
     LlmStreamResult, RetryableLlmError,
 };
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 pub trait OwnServerTransport: Send + Sync {
     fn generate<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease)
@@ -66,7 +71,7 @@ impl OwnServerTransport for RemoteLlmClient {
         let (send, receive) = futures_channel::oneshot::channel();
         std::thread::spawn(move || {
             let result = (|| {
-                let response = check_status(remote.llm_post(false, &request, &lease)?)?;
+                let response = check_status(remote.llm_post(&request, &lease)?)?;
                 let mut bytes = Vec::new();
                 response
                     .take(32 * 1024 * 1024 + 1)
@@ -89,38 +94,98 @@ impl OwnServerTransport for RemoteLlmClient {
         let remote = self.remote.clone();
         let lease = lease.clone();
         let (send, receive) = futures_channel::mpsc::unbounded();
+        let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
         std::thread::spawn(move || {
-            let result = (|| {
-                let response = check_status(remote.llm_post(true, &request, &lease)?)?;
-                let mut reader = BufReader::new(response.take(32 * 1024 * 1024 + 1));
-                let mut total = 0;
-                loop {
-                    let mut line = Vec::new();
-                    let read = reader
-                        .read_until(b'\n', &mut line)
-                        .map_err(|_| RetryableLlmError::StreamCut)?;
-                    if read == 0 {
-                        return Err(RetryableLlmError::StreamCut.into());
-                    }
-                    total += read;
-                    if total > 32 * 1024 * 1024 {
-                        return Err(FatalLlmError::InvalidRequest.into());
-                    }
-                    if line.iter().all(u8::is_ascii_whitespace) {
-                        continue;
-                    }
-                    let event: LlmStreamEvent =
-                        serde_json::from_slice(&line).map_err(|_| FatalLlmError::InvalidRequest)?;
-                    let done = matches!(event, LlmStreamEvent::Done { .. });
-                    if send.unbounded_send(Ok(event)).is_err() || done {
-                        return Ok(());
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(_) => {
+                    let _ = send.unbounded_send(Err(RetryableLlmError::StreamCut.into()));
+                    return;
+                }
+            };
+            runtime.block_on(async {
+                tokio::select! {
+                    _ = cancelled => {},
+                    result = read_stream(&remote, &request, &lease, &send) => {
+                        if let Err(error) = result { let _ = send.unbounded_send(Err(error)); }
                     }
                 }
-            })();
-            if let Err(error) = result {
-                let _ = send.unbounded_send(Err(error));
-            }
+            });
         });
-        Ok(LlmStream::new(receive))
+        Ok(LlmStream::new(CancellableStream {
+            receive,
+            _cancel: cancel,
+        }))
     }
+}
+
+struct CancellableStream {
+    receive: futures_channel::mpsc::UnboundedReceiver<oneiron::LlmResult<LlmStreamEvent>>,
+    _cancel: tokio::sync::oneshot::Sender<()>,
+}
+impl Stream for CancellableStream {
+    type Item = oneiron::LlmResult<LlmStreamEvent>;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.receive).poll_next(cx)
+    }
+}
+async fn read_stream(
+    remote: &RemoteClient,
+    request: &LlmRequest,
+    lease: &BudgetLease,
+    send: &futures_channel::mpsc::UnboundedSender<oneiron::LlmResult<LlmStreamEvent>>,
+) -> oneiron::LlmResult<()> {
+    let mut response = remote.llm_stream(request, lease).await?;
+    let status = response.status();
+    let limit = if status.is_success() {
+        32 * 1024 * 1024
+    } else {
+        65_536
+    };
+    let mut total = 0;
+    let mut buffer = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| {
+        if e.is_timeout() {
+            RetryableLlmError::Timeout
+        } else {
+            RetryableLlmError::StreamCut
+        }
+    })? {
+        total += chunk.len();
+        if total > limit {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        buffer.extend_from_slice(&chunk);
+        if !status.is_success() {
+            continue;
+        }
+        while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
+            let line: Vec<_> = buffer.drain(..=end).collect();
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let value: serde_json::Value =
+                serde_json::from_slice(&line).map_err(|_| FatalLlmError::InvalidRequest)?;
+            if let Some(error) = value.pointer("/error/llm") {
+                return Err(serde_json::from_value(error.clone())
+                    .map_err(|_| FatalLlmError::InvalidRequest)?);
+            }
+            let event: LlmStreamEvent =
+                serde_json::from_value(value).map_err(|_| FatalLlmError::InvalidRequest)?;
+            let done = matches!(event, LlmStreamEvent::Done { .. });
+            if send.unbounded_send(Ok(event)).is_err() || done {
+                return Ok(());
+            }
+        }
+    }
+    if !status.is_success() {
+        return Err(classify_status(
+            status.as_u16(),
+            &serde_json::from_slice(&buffer).unwrap_or_default(),
+        ));
+    }
+    Err(RetryableLlmError::StreamCut.into())
 }
