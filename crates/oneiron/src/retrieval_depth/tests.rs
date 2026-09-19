@@ -909,7 +909,7 @@ fn pipeline_deadline_skips_rerank_after_admitted_text_and_keeps_best_pack() -> T
 fn depth_deadline_returns_nonempty_admitted_partial_before_expansion() -> TestResult {
     use std::sync::Arc;
     let (_dir, vault, anchor, sibling, neighbor) = seeded_vault();
-    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER)?);
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("valid reader key"));
     let deadline = Arc::new(RetrievalDeadline::at(
         std::time::Instant::now() + std::time::Duration::from_secs(60),
     ));
@@ -949,7 +949,7 @@ fn high_xhigh_max_have_distinct_depth_and_decomposition_results() -> TestResult 
             .commit()?;
         previous = *id;
     }
-    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER)?);
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("valid reader key"));
     let lease = minted_lease();
     for (effort, rounds, reach) in [
         (Effort::High, 0, 2),
