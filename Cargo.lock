@@ -6039,20 +6039,27 @@ dependencies = [
 name = "oneiron-bench"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "blake3",
  "criterion",
+ "futures-util",
  "loro",
  "oneiron",
+ "oneiron-server",
  "parking_lot",
  "rand 0.8.7",
+ "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
  "serde",
+ "serde_bytes",
  "serde_json",
  "serde_json_canonicalizer",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
 ]
 
 [[package]]
@@ -6208,6 +6215,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "blake3",
  "candle-core",
  "candle-nn",
@@ -6215,7 +6223,9 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "half",
+ "hmac",
  "jsonwebtoken",
+ "libc",
  "loro",
  "oneiron",
  "oneiron-vault-contract",
@@ -6240,6 +6250,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "utoipa",
+ "zeroize",
  "zstd",
 ]
 
@@ -6260,6 +6271,8 @@ dependencies = [
  "serde",
  "serde_json",
  "subtle",
+ "tempfile",
+ "tokio",
  "zeroize",
 ]
 
