@@ -158,6 +158,7 @@ impl<'a> ContextPackBuilder<'a> {
             let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
 
             let rtxn = self.vault.store.env.read_txn()?;
+            let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
             let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
             let mut claim_bodies = claim_bodies;
             let quarantine_index = load_pack_quarantine_index(&self.vault.store, &rtxn)?;
@@ -191,6 +192,8 @@ impl<'a> ContextPackBuilder<'a> {
             let surfaced_candidate_count = scored.len();
 
             let result_options = HydrateOptions {
+                policy: &policy,
+                criticality: self.criticality,
                 hydrate_fields: self.hydrate,
                 include_edges: hydrate_result_edges,
                 include_vectors: self.include_vectors,
@@ -292,6 +295,8 @@ impl<'a> ContextPackBuilder<'a> {
                 )?;
             }
             let neighbor_options = HydrateOptions {
+                policy: &policy,
+                criticality: self.criticality,
                 hydrate_fields: self.hydrate,
                 include_edges: self.include_edges,
                 include_vectors: self.include_vectors,
@@ -369,6 +374,8 @@ impl<'a> ContextPackBuilder<'a> {
             let mut signals_used = self.signals_used;
             signals_used.extend(pipeline_signals.into_iter().map(pack_signal_from_retrieval));
             let stats = PackStats {
+                critical_over_budget: false,
+                critical_count: 0,
                 candidates_considered,
                 signals_used: dedupe_signals(signals_used),
                 query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,

@@ -154,7 +154,7 @@ pub(super) fn verify_actor_binding_in_txn(
 /// widens pending, and refuses while any of them is load-bearing. Unlike the
 /// lost-sidecar case this clears itself: one write-path fold records the
 /// observation and the delay runs from there.
-pub(super) fn verify_owner_actor_binding_in_txn(
+pub(crate) fn verify_owner_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,

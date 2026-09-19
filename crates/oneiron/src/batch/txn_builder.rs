@@ -40,6 +40,18 @@ impl<'a> TxnBatchBuilder<'a> {
         }
     }
 
+    /// Stages lexical text in the same transaction as its owning record/document.
+    pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
+        self.ops.push(BatchOp::Text {
+            id: *id,
+            fields: fields
+                .iter()
+                .map(|(f, v)| ((*f).to_owned(), (*v).to_owned()))
+                .collect(),
+        });
+        self
+    }
+
     /// The off-record promotion entry (ARCH-0052 D4, ONE-1730).
     ///
     /// Takes an already-built replay program rather than growing verb methods:

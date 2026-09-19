@@ -84,6 +84,10 @@ pub(crate) struct CoreContextPackItemAccounting {
 /// Context-pack stats.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackStats {
+    /// Critical claims exceeded the requested budget; no ceiling was bypassed.
+    critical_over_budget: bool,
+    /// Number of eligible critical claims before budget trimming.
+    critical_count: usize,
     /// Candidate count considered by the pack.
     #[schema(example = 1)]
     candidates_considered: usize,
@@ -392,6 +396,8 @@ pub(crate) fn core_context_edge(edge: oneiron::EdgeInfo) -> CoreContextEdge {
 
 pub(crate) fn core_context_pack_stats(stats: oneiron::PackStats) -> CoreContextPackStats {
     CoreContextPackStats {
+        critical_over_budget: stats.critical_over_budget,
+        critical_count: stats.critical_count,
         candidates_considered: stats.candidates_considered,
         signals_used: stats
             .signals_used

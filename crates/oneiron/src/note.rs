@@ -1,23 +1,4 @@
-//! ARCH-0032 NOTE primitive, cut to the single kind this ticket lands:
-//! `opinion/take` (registry record OF-330).
-//!
-//! A take is an actor's *opinion about* something, written BESIDE the thing
-//! rather than into it. That placement is the point: ARCH-0003 CLAIMs are
-//! neutral subject·predicate·value records, so an actor who disagrees with a
-//! claim must not edit it — [`crate::memory::Memory::author_take`]
-//! appends a NOTE and links it with `ClaimOf`, leaving the target byte-for-byte
-//! untouched. Two actors over one claim therefore produce two NOTE entities,
-//! never an upsert keyed by `(actor, target)`.
-//!
-//! [`NoteKind`] is deliberately CLOSED at one variant. The other six ARCH-0032
-//! kinds (Scratchpad, Observation, Handoff, Research, Reflection, Diary) and
-//! pack-defined `Plugin` kinds are not designed for the live engine yet;
-//! placeholder variants would publish a wire surface nothing can honour.
-//!
-//! Byte law: the engine registers NOTE at [`crate::registry::ENTITY_TYPE_NOTE`]
-//! (86, productivity band). Canon assigns 106 under BYTE-SPACE REDESIGN v3 and
-//! ONE-1754 executes the persisted re-key as one atomic v3 map; this module
-//! never writes a migration and never names 106.
+//! Governed NOTE cores, PACK kind descriptors, and per-note editable documents.
 
 use rmpv::Value;
 
@@ -25,36 +6,25 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
 /// The pinned NOTE body ABI. A NOTE body is exactly one MessagePack map over
-/// these three string keys — no more, no fewer, no repeats.
-pub const NOTE_BODY_KEYS: [&str; 3] = ["kind", "author_ref", "markdown"];
+/// kind and author_ref plus either birth markdown or document_head.
+pub const NOTE_BODY_KEYS: [&str; 4] = ["kind", "author_ref", "markdown", "document_head"];
 
 const KEY_KIND: &str = NOTE_BODY_KEYS[0];
 const KEY_AUTHOR_REF: &str = NOTE_BODY_KEYS[1];
 const KEY_MARKDOWN: &str = NOTE_BODY_KEYS[2];
+const KEY_DOCUMENT_HEAD: &str = NOTE_BODY_KEYS[3];
 
-/// The kind discriminator of a NOTE body.
-///
-/// Closed at one variant on purpose — see the module doc. `parse` fails closed
-/// so an unknown wire string can never widen the enum by accident.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoteKind {
-    /// An actor's attributed opinion about a subject or a claim.
-    OpinionTake,
-}
+pub(crate) mod documents;
+mod id_wire;
+mod kinds;
+mod proposals;
+mod verbs;
+pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
 
-impl NoteKind {
-    /// The pinned wire literal. This string IS the storage ABI.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        "opinion/take"
-    }
-
-    /// Parses the wire literal; `None` for anything else.
-    #[must_use]
-    pub fn parse(raw: &str) -> Option<Self> {
-        (raw == Self::OpinionTake.as_str()).then_some(Self::OpinionTake)
-    }
-}
+pub use documents::{NoteAnchor, NoteDocument, NoteEdit, NoteEditOutcome, NoteVersion};
+pub use kinds::{
+    ContextDefault, ExtractionDefault, NoteKind, NoteKindDescriptor, RetentionDefault,
+};
 
 /// A decoded NOTE body.
 ///
@@ -66,6 +36,7 @@ pub struct NoteBody {
     pub kind: NoteKind,
     pub author_ref: EntityId,
     pub markdown: String,
+    pub document_head: Option<EntityId>,
 }
 
 /// What a take is about.
@@ -81,17 +52,26 @@ pub enum TakeTarget {
 
 /// Encodes a NOTE body to the pinned three-key MessagePack map.
 pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
-    validate_markdown(&body.markdown)?;
+    if body.document_head.is_none() {
+        validate_markdown(&body.markdown)?;
+    } else if !body.markdown.is_empty() {
+        return Err(
+            RecordError::InvalidNoteBody("document-backed core cannot retain markdown").into(),
+        );
+    }
     let value = Value::Map(vec![
         (Value::from(KEY_KIND), Value::from(body.kind.as_str())),
         (
             Value::from(KEY_AUTHOR_REF),
             Value::from(body.author_ref.to_hex()),
         ),
-        (
-            Value::from(KEY_MARKDOWN),
-            Value::from(body.markdown.as_str()),
-        ),
+        match body.document_head {
+            Some(head) => (Value::from(KEY_DOCUMENT_HEAD), Value::from(head.to_hex())),
+            None => (
+                Value::from(KEY_MARKDOWN),
+                Value::from(body.markdown.as_str()),
+            ),
+        },
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -103,6 +83,13 @@ pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
 /// MessagePack, trailing bytes, non-string or unknown or duplicate keys, an
 /// unknown kind, an unparseable actor ref, and blank markdown.
 pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
+    decode_note_body_using(bytes, NoteKind::parse)
+}
+
+pub(crate) fn decode_note_body_using(
+    bytes: &[u8],
+    resolve: impl Fn(&str) -> Option<NoteKind>,
+) -> Result<NoteBody> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
         Error::Record(RecordError::InvalidNoteBody(
@@ -123,6 +110,7 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
     let mut kind: Option<NoteKind> = None;
     let mut author_ref: Option<EntityId> = None;
     let mut markdown: Option<String> = None;
+    let mut document_head = None;
     let mut seen = [false; NOTE_BODY_KEYS.len()];
 
     for (key, value) in &entries {
@@ -150,9 +138,11 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
                     .ok_or(Error::Record(RecordError::InvalidNoteBody(
                         "kind must be a UTF-8 string",
                     )))?;
-                kind = Some(NoteKind::parse(raw).ok_or(Error::Record(
-                    RecordError::InvalidNoteBody("unknown NOTE kind"),
-                ))?);
+                kind = Some(
+                    resolve(raw).ok_or(Error::Record(RecordError::InvalidNoteBody(
+                        "unknown NOTE kind",
+                    )))?,
+                );
             }
             KEY_AUTHOR_REF => {
                 let raw = value
@@ -175,10 +165,22 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
                 validate_markdown(raw)?;
                 markdown = Some(raw.to_owned());
             }
+            KEY_DOCUMENT_HEAD => {
+                document_head =
+                    Some(EntityId::from_hex(value.as_str().ok_or(
+                        RecordError::InvalidNoteBody("head must be an id"),
+                    )?)?);
+            }
             _ => unreachable!("index resolved from NOTE_BODY_KEYS"),
         }
     }
 
+    if markdown.is_some() == document_head.is_some() {
+        return Err(RecordError::InvalidNoteBody(
+            "exactly one of markdown and document_head is required",
+        )
+        .into());
+    }
     Ok(NoteBody {
         kind: kind.ok_or(Error::Record(RecordError::InvalidNoteBody(
             "missing required body key kind",
@@ -186,9 +188,8 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
         author_ref: author_ref.ok_or(Error::Record(RecordError::InvalidNoteBody(
             "missing required body key author_ref",
         )))?,
-        markdown: markdown.ok_or(Error::Record(RecordError::InvalidNoteBody(
-            "missing required body key markdown",
-        )))?,
+        markdown: markdown.unwrap_or_default(),
+        document_head,
     })
 }
 
@@ -203,3 +204,6 @@ fn validate_markdown(markdown: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod document_tests;

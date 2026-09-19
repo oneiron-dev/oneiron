@@ -1,3 +1,4 @@
+use super::criticality::candidate_matches_criticality;
 use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -519,6 +520,15 @@ pub(super) fn apply_filters(
             continue;
         }
 
+        if !candidate_matches_criticality(
+            store,
+            rtxn,
+            &scored.id,
+            meta.entity_type,
+            filters.criticality,
+        )? {
+            continue;
+        }
         filtered.push(scored);
     }
 
@@ -591,6 +601,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
+    if !candidate_matches_criticality(store, rtxn, id, meta.entity_type, filters.criticality)? {
+        return Ok(false);
+    }
     if !claim_status_gate_allows(store, rtxn, id, metadata_cache, claim_gate)? {
         return Ok(false);
     }

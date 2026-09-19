@@ -165,6 +165,7 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) candidate_filter: Option<&'a CandidateFilter<'a>>,
     pub(super) type_filter: Option<&'a [u8]>,
+    pub(super) criticality: Option<bool>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,

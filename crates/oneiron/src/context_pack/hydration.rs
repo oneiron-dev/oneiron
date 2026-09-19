@@ -72,10 +72,27 @@ pub(super) fn hydrate_entity(
         }
     }
 
+    let critical = gated_claim_body.is_some_and(|body| {
+        options.policy.criticality_for_predicate(&body.predicate)
+            == crate::gate::PolicyCriticality::Critical
+    });
+    if gated_claim_body.is_some() && options.criticality.is_some_and(|tier| tier != critical) {
+        return Ok(None);
+    }
+
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
-            None => decode_entity_fields(&raw, header.entity_type).unwrap_or_default(),
+            None => {
+                let mut fields = decode_entity_fields(&raw, header.entity_type).unwrap_or_default();
+                if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+                    fields.insert(
+                        "markdown".to_owned(),
+                        serde_json::Value::String(vault.note_text_in_txn(rtxn, id)?),
+                    );
+                }
+                fields
+            }
         })
     } else {
         None
@@ -108,6 +125,7 @@ pub(super) fn hydrate_entity(
         content_hash,
         entity_type: header.entity_type,
         score,
+        critical,
         fields,
         edges,
         vector,

@@ -328,7 +328,11 @@ impl Memory<'_> {
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or_else(|| MemoryError::from(Error::CorruptedIndex("entity header")))?;
-        let body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+        let mut body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            let fields = body.as_mut().ok_or(Error::CorruptedIndex("NOTE body"))?;
+            fields["markdown"] = serde_json::Value::String(self.vault.note_text(*id)?);
+        }
         Ok(Some(EntityView {
             id_hex: id.to_hex(),
             short_ref: self.short_ref_of(id)?,

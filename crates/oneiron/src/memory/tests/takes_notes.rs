@@ -37,8 +37,15 @@ fn two_actor_divergent_takes() {
     for (receipt, author, markdown) in [(&first, ada, ada_markdown), (&second, bo, bo_markdown)] {
         let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
         let body = note_body_of(&vault, &note_id);
-        assert_eq!(body.kind, NoteKind::OpinionTake);
-        assert_eq!(body.markdown, markdown);
+        assert_eq!(
+            body.kind,
+            NoteKind::parse("opinion/take").expect("shipped kind")
+        );
+        assert!(body.markdown.is_empty());
+        assert_eq!(
+            vault.note_document(note_id).unwrap().unwrap().text(),
+            markdown
+        );
         assert_eq!(body.author_ref, author, "takes must not cross-attribute");
 
         let edges = vault.edges_out(&note_id).expect("edges");
@@ -282,7 +289,8 @@ fn raw_note_put_is_refused_at_the_batch_door() {
     let subject = put_person(&vault, 0x7B);
 
     let forged = crate::note::encode_note_body(&crate::note::NoteBody {
-        kind: NoteKind::OpinionTake,
+        document_head: None,
+        kind: NoteKind::parse("opinion/take").expect("shipped kind"),
         author_ref: impostor,
         markdown: "words the impostor never wrote".to_owned(),
     })

@@ -27,7 +27,7 @@ pub(super) fn apply_item_budget_with_depth_limit(
     stats: &mut PackStats,
     value_depth_limit: ValueDepthLimit,
 ) -> bool {
-    if max_item_tokens == 0 || is_critical_predicate_claim(entity) {
+    if max_item_tokens == 0 {
         return true;
     }
 
@@ -290,18 +290,5 @@ fn truncation_suffix(original_chars: usize) -> String {
 }
 
 pub(super) fn is_critical_predicate_claim(entity: &PreparedEntity) -> bool {
-    entity.entity_type == ENTITY_TYPE_CLAIM
-        && entity
-            .fields
-            .iter()
-            .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten())
-            .is_some_and(is_critical_claim_predicate)
-}
-
-/// Whether a CLAIM predicate is retained as critical serializer context.
-pub(crate) fn is_critical_claim_predicate(predicate: &str) -> bool {
-    predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD
-        || predicate.starts_with("profile.")
-        || predicate.starts_with("preference.")
-        || predicate.starts_with("companion.")
+    entity.entity_type == ENTITY_TYPE_CLAIM && entity.critical
 }

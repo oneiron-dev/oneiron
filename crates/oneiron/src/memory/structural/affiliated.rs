@@ -58,7 +58,8 @@ impl Memory<'_> {
         markdown: impl Into<String>,
     ) -> MemoryResult<EntityRefReceipt> {
         let body = encode_note_body(&NoteBody {
-            kind: NoteKind::OpinionTake,
+            document_head: None,
+            kind: NoteKind::parse("opinion/take").expect("shipped kind"),
             author_ref: self.actor,
             markdown: markdown.into(),
         })?;
@@ -94,6 +95,14 @@ impl Memory<'_> {
                 )
                 .edge(&note_id, link, &target_id, registered_edge_weight(link))
                 .apply(wtxn)?;
+            let birth = crate::note::decode_note_body(&body)?;
+            let doc = crate::note::documents::NoteDocument::born(
+                note_id,
+                &birth.markdown,
+                self.actor,
+                at,
+            )?;
+            crate::note::documents::store_doc(self.vault, wtxn, &doc, true)?;
             Ok(())
         })?;
         self.entity_ref_receipt(&note_id)

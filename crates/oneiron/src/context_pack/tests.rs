@@ -111,6 +111,8 @@ fn put_text_entity(
 
 fn empty_pack_stats() -> PackStats {
     PackStats {
+        critical_over_budget: false,
+        critical_count: 0,
         candidates_considered: 0,
         signals_used: Vec::new(),
         query_time_us: 0,
@@ -126,6 +128,7 @@ fn empty_pack_stats() -> PackStats {
 
 fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> ContextEntity {
     ContextEntity {
+        critical: false,
         id: crate::test_util::entity(seed),
         short_id: short_id.to_owned(),
         content_hash: seed,
@@ -738,6 +741,8 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
         id,
         0.0,
         HydrateOptions {
+            policy: &crate::gate::resolve_policy_manifest(&vault.store, &rtxn).unwrap(),
+            criticality: None,
             hydrate_fields: true,
             include_edges: false,
             include_vectors: false,
@@ -3613,6 +3618,7 @@ fn n12_validate_pack_disclosure_fails_a_tampered_pack() -> Result<()> {
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
     let smuggled = ContextEntity {
+        critical: false,
         id: marked,
         short_id: "tn_smuggled".to_owned(),
         content_hash: 0,
@@ -4233,3 +4239,5 @@ fn retrieval_quality_old_empty_context_defaults_to_passthrough() {
         ConfidenceAdjustment::PASSTHROUGH
     );
 }
+
+mod criticality;

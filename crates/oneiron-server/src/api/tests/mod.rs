@@ -335,6 +335,7 @@ pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPac
             .map(|index| {
                 let id = seeded_test_entity_id(0x0012_6400 + index as u128);
                 oneiron::ContextEntity {
+                    critical: false,
                     id,
                     short_id: id.to_hex(),
                     content_hash: index as u8,
@@ -348,6 +349,8 @@ pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPac
             .collect(),
         neighbors: Vec::new(),
         stats: oneiron::PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             candidates_considered: result_count,
             signals_used: Vec::new(),
             query_time_us: 0,

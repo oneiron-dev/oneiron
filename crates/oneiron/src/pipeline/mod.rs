@@ -4,6 +4,7 @@ mod budget;
 mod builder;
 mod channels;
 mod corpus_filter;
+mod criticality;
 mod execution;
 mod execution_binding;
 mod filters;

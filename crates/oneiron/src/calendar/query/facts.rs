@@ -2,9 +2,10 @@
 
 use crate::batch::EntityMetadataHeader;
 use crate::calendar::claims::{
-    CalendarBusyTransparency, CalendarStatus, CalendarTimeKindValue, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, decode_passport_value,
-    decode_status_value, decode_time_kind_value, is_calendar_claim_predicate,
+    CalendarBusyTransparency, CalendarOrigin, CalendarStatus, CalendarTimeKindValue,
+    PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS,
+    PREDICATE_CALENDAR_TIME_KIND, decode_passport_value, decode_status_value,
+    decode_time_kind_value, is_calendar_claim_predicate,
 };
 use crate::claim::{ClaimBody, ScopedRead, claim_surfaceable, decode_claim_body};
 use crate::entity_id::EntityId;
@@ -91,12 +92,21 @@ enum LaneFact<T> {
 /// The calendar facts one EVENT's admitted claims carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::calendar) struct CalendarEventFacts {
+    origin: LaneFact<CalendarOrigin>,
     time_kind: LaneFact<CalendarTimeKindValue>,
     status: LaneFact<CalendarStatus>,
     systems: Vec<String>,
 }
 
 impl CalendarEventFacts {
+    pub(in crate::calendar) fn origin(&self) -> Option<CalendarOrigin> {
+        match self.origin {
+            LaneFact::Absent => Some(CalendarOrigin::Dreamer),
+            LaneFact::Read(origin) => Some(origin),
+            LaneFact::Withheld => None,
+        }
+    }
+
     /// Whether this EVENT consumes availability.
     ///
     /// CAL-00 mints `busy_transparency` on `calendar.time_kind` with `busy` as
@@ -154,6 +164,7 @@ pub(crate) struct CalendarEventRow {
 /// match, so an ordinary EVENT is not silently treated as a calendar EVENT.
 fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<CalendarEventFacts>> {
     let mut family_member = false;
+    let mut origin: Option<(EntityId, LaneFact<CalendarOrigin>)> = None;
     let mut time_kind: Option<(EntityId, LaneFact<CalendarTimeKindValue>)> = None;
     let mut status: Option<(EntityId, LaneFact<CalendarStatus>)> = None;
     let mut systems = Vec::new();
@@ -167,6 +178,9 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
             // claim: an actor who can read no calendar claim on this EVENT
             // sees no calendar EVENT.
             match read.withheld_predicate(&claim_id)?.as_deref() {
+                Some(PREDICATE_CALENDAR_ORIGIN) => {
+                    replace_when_lower(&mut origin, claim_id, LaneFact::Withheld);
+                }
                 Some(PREDICATE_CALENDAR_TIME_KIND) => {
                     replace_when_lower(&mut time_kind, claim_id, LaneFact::Withheld);
                 }
@@ -182,6 +196,14 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
         }
         family_member = true;
         match body.predicate.as_str() {
+            PREDICATE_CALENDAR_ORIGIN => {
+                let value = body
+                    .value
+                    .as_str()
+                    .and_then(CalendarOrigin::parse)
+                    .ok_or(crate::Error::InvalidClaimBody("calendar origin value"))?;
+                replace_when_lower(&mut origin, claim_id, LaneFact::Read(value));
+            }
             PREDICATE_CALENDAR_TIME_KIND => {
                 let value = decode_time_kind_value(&body.value)?;
                 replace_when_lower(&mut time_kind, claim_id, LaneFact::Read(value));
@@ -203,6 +225,7 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
     systems.sort_unstable();
     systems.dedup();
     Ok(Some(CalendarEventFacts {
+        origin: origin.map_or(LaneFact::Absent, |(_, fact)| fact),
         time_kind: time_kind.map_or(LaneFact::Absent, |(_, fact)| fact),
         status: status.map_or(LaneFact::Absent, |(_, fact)| fact),
         systems,
@@ -234,6 +257,9 @@ pub(super) fn event_row(read: &CalendarRead<'_>, id: EntityId) -> Result<Option<
     let Some(facts) = event_facts(read, &id)? else {
         return Ok(None);
     };
+    if facts.origin().is_none() || crate::calendar::origin::invalidated(vault, id)? {
+        return Ok(None);
+    }
     Ok(Some(CalendarEventRow {
         id,
         occurred: occurred_range(&header),

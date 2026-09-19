@@ -29,5 +29,4 @@ pub use pack_entry::{
 // Reached only from `commitment`'s tests today; the re-export keeps the historical
 // `crate::serialize::` path resolvable for production callers.
 #[cfg_attr(not(test), allow(unused_imports))]
-pub(crate) use item_budget::is_critical_claim_predicate;
 pub(crate) use pack_entry::{SerializedPackTelemetry, serialize_pack_with_telemetry};

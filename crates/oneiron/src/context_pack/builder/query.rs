@@ -21,6 +21,7 @@ pub struct ContextPackBuilder<'a> {
     pub(super) pipeline: PipelineBuilder<'a>,
     pub(super) vault: &'a Vault,
     pub(super) hydrate: bool,
+    pub(super) criticality: Option<bool>,
     pub(super) include_edges: bool,
     pub(in crate::context_pack) edge_hop: u32,
     pub(in crate::context_pack) selected_edge_budget: usize,
@@ -48,11 +49,20 @@ pub struct ContextPackBuilder<'a> {
 }
 
 impl<'a> ContextPackBuilder<'a> {
+    /// Narrows claims to the manifest's critical (`true`) or normal (`false`)
+    /// tier. It never promotes a predicate or bypasses visibility checks.
+    pub fn criticality(mut self, critical: bool) -> Self {
+        self.criticality = Some(critical);
+        self.pipeline = self.pipeline.criticality(critical);
+        self
+    }
+
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             pipeline: vault.query().telemetry_action(RetrievalAction::ContextPack),
             vault,
             hydrate: true,
+            criticality: None,
             include_edges: false,
             edge_hop: 0,
             selected_edge_budget: DEFAULT_MAX_NEIGHBORS,

@@ -376,6 +376,7 @@ impl Vault {
         // CITED this id, not this id's own rows, and both acts belong to the
         // one transaction that destroys the evidence.
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
+        crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -394,6 +395,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool)> {
+        crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {

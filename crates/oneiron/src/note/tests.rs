@@ -11,7 +11,8 @@ fn actor(seed: u8) -> EntityId {
 
 fn take(markdown: &str) -> NoteBody {
     NoteBody {
-        kind: NoteKind::OpinionTake,
+        document_head: None,
+        kind: NoteKind::parse("opinion/take").expect("shipped kind"),
         author_ref: actor(0x7a),
         markdown: markdown.to_owned(),
     }
@@ -28,28 +29,44 @@ fn encode_map(entries: Vec<(Value, Value)>) -> Vec<u8> {
 #[test]
 fn opinion_kind_round_trip() {
     // The wire literal IS the ABI — pinned here, not derived.
-    assert_eq!(NoteKind::OpinionTake.as_str(), "opinion/take");
-    assert_eq!(NoteKind::parse("opinion/take"), Some(NoteKind::OpinionTake));
-    assert_eq!(NOTE_BODY_KEYS, ["kind", "author_ref", "markdown"]);
+    assert_eq!(
+        NoteKind::parse("opinion/take")
+            .expect("shipped kind")
+            .as_str(),
+        "opinion/take"
+    );
+    assert_eq!(
+        NoteKind::parse("opinion/take"),
+        Some(NoteKind::parse("opinion/take").expect("shipped kind"))
+    );
+    assert_eq!(
+        NOTE_BODY_KEYS,
+        ["kind", "author_ref", "markdown", "document_head"]
+    );
 
     let body = take("Disagree: the source predates the merger.");
     let decoded = decode_note_body(&encode_note_body(&body).expect("encode")).expect("decode");
     assert_eq!(decoded, body);
 
-    // Unknown kinds fail closed — the other six ARCH-0032 kinds are not
-    // implemented, so they must not decode as anything.
-    for unknown in [
+    for unknown in ["plugin/custom", "OPINION/TAKE", ""] {
+        assert_eq!(NoteKind::parse(unknown), None);
+    }
+    for kind in [
         "scratchpad",
         "observation",
         "handoff",
         "research",
         "reflection",
         "diary",
-        "plugin/custom",
-        "OPINION/TAKE",
-        "",
     ] {
-        assert_eq!(NoteKind::parse(unknown), None, "kind {unknown:?}");
+        let body = NoteBody {
+            kind: NoteKind::parse(kind).unwrap(),
+            ..take("birth")
+        };
+        assert_eq!(
+            decode_note_body(&encode_note_body(&body).unwrap()).unwrap(),
+            body
+        );
     }
 }
 
@@ -93,7 +110,7 @@ fn decode_rejects_every_abi_deviation() {
 
     // Unknown kind on the wire.
     let unknown_kind = encode_map(vec![
-        (Value::from("kind"), Value::from("scratchpad")),
+        (Value::from("kind"), Value::from("not_registered")),
         (Value::from("author_ref"), Value::from(author.to_hex())),
         (Value::from("markdown"), Value::from("solid")),
     ]);
@@ -128,7 +145,7 @@ fn decode_rejects_every_abi_deviation() {
     }
 
     // Every missing-key subset of the pinned three.
-    for omit in NOTE_BODY_KEYS {
+    for omit in ["kind", "author_ref", "markdown"] {
         let entries = vec![
             (Value::from("kind"), Value::from("opinion/take")),
             (Value::from("author_ref"), Value::from(author.to_hex())),
