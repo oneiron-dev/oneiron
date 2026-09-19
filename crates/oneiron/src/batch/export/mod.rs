@@ -1,3 +1,5 @@
+mod credential_filter;
+pub use credential_filter::{redact_credentials, redacted_memory_body};
 mod export_authority;
 mod export_companion;
 mod export_egress;

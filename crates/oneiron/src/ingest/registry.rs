@@ -28,6 +28,7 @@ pub enum IngestSourceFormat {
     // CAL-08 owns FileDropTranscript, canonical registry entry #2.
     IcsFeed,
     ImageAsset,
+    DocsExportV1,
 }
 
 /// The ARCH-0027 adapter skill a source's records came from.
@@ -223,7 +224,28 @@ static ICS_FEED_SOURCE: crate::calendar::ingest::IcsFeedSource =
 
 static IMAGE_SOURCE: image::ImageIngestSource = image::ImageIngestSource::new();
 
-static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 5] = [
+static DOCS_SOURCE: super::DocsExportSource = super::DocsExportSource;
+static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 6] = [
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: super::DOCS_EXPORT_SOURCE_ID,
+            label: "Docs export",
+            format: IngestSourceFormat::DocsExportV1,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.docs-export",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &DOCS_SOURCE,
+    ),
     IngestSourceRegistration::new(
         IngestSourceConfig {
             source_id: image::IMAGE_SOURCE_ID,

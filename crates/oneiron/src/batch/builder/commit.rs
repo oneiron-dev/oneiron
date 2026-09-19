@@ -82,14 +82,6 @@ impl BatchBuilder<'_> {
             return Err(err);
         }
 
-        // ONE-1453: the verdicts the preflight above already recorded for the
-        // local claims whose ORIGINAL gate event the burst breaker booked.
-        // Phase 2 enforces them instead of asking the gate again, so one write
-        // debits the breaker exactly once and a demotion computed in phase 1
-        // reaches the body that lands. `staged_gate_decisions` itself is
-        // retained unchanged for post-commit metric emission.
-        let staged_claim_gate = staged_claim_gate_outcomes(&staged_gate_decisions);
-
         let pending_vad_ids =
             super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, &wtxn, &self.ops)?;
 
@@ -105,8 +97,7 @@ impl BatchBuilder<'_> {
             self.ops,
             text_index_trusted,
             ApplyOpsGateMode::new(false, true)
-                .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
-                .with_staged_claim_gate(staged_claim_gate),
+                .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
         )?;
         after_apply(&mut wtxn)?;
         let approved_vad_ids = self

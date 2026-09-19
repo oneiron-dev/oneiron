@@ -700,3 +700,48 @@ fn claim_candidate_overwrite_reconciles_claim_of_edges() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn secret_scan_new_classes_reject_before_transaction_staging() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    for (payload, reason) in [
+        (
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            "gate.secret_scan.mnemonic",
+        ),
+        (
+            "DATABASE_PASSWORD=not-for-memory",
+            "gate.secret_scan.sensitive_env",
+        ),
+        ("password: not-for-memory", "gate.secret_scan.sensitive_env"),
+        (
+            "SERVICE_API_KEY=0123456789abcdef0123456789abcdef",
+            "gate.secret_scan.sensitive_env",
+        ),
+        (
+            "oneiron-secret-blocklist-fixture",
+            "gate.secret_scan.blocklist",
+        ),
+    ] {
+        let safe = EntityId::now();
+        let secret = EntityId::now();
+        let mut txn = vault.store.env.write_txn()?;
+        let error = vault
+            .batch_in()
+            .put(&safe, ENTITY_TYPE_PERSON, test_time_range(0, 0), 0, b"safe")
+            .put(
+                &secret,
+                ENTITY_TYPE_PERSON,
+                test_time_range(0, 0),
+                0,
+                payload.as_bytes(),
+            )
+            .apply(&mut txn)
+            .unwrap_err();
+        assert_secret_scan_rejected(error, reason);
+        txn.commit()?;
+        assert!(vault.get(&safe)?.is_none());
+        assert!(vault.get(&secret)?.is_none());
+    }
+    Ok(())
+}

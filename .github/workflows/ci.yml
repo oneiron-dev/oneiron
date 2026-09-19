@@ -152,6 +152,8 @@ jobs:
           cargo --version
           cargo fmt --version
           cargo clippy --version
+      - name: Secret blocklist is a policy superset
+        run: python3 scripts/check-secret-blocklist.py
       - name: Code map is current
         if: ${{ !cancelled() }}
         run: scripts/codemap/check.sh

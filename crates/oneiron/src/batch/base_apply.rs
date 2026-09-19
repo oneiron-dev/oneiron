@@ -82,7 +82,6 @@ pub(super) fn apply_ops_with_origin(
         ));
     }
     let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
-    let staged_claim_gate = gate_mode.staged_claim_gate;
 
     secret_scan::scan_batch_ops(&ops)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
@@ -162,9 +161,7 @@ pub(super) fn apply_ops_with_origin(
                     && allow_reserved_predicate
                     && matches!(
                         entity_type,
-                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-                            | ENTITY_TYPE_ACCESS_GRANT
-                            | ENTITY_TYPE_OUTBOUND_GRANT
+                        ENTITY_TYPE_ACCESS_GRANT | ENTITY_TYPE_OUTBOUND_GRANT
                     )
                 {
                     return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
@@ -229,8 +226,6 @@ pub(super) fn apply_ops_with_origin(
                     include_source_in_gate_input,
                     claim_gate_prechecked,
                     preflight_decision_id,
-                    preflight_decision_id
-                        .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                     Some(&companion_retired_histories),
                     origin,
                 )?;
@@ -359,8 +354,6 @@ pub(super) fn apply_ops_with_origin(
                     include_source_in_gate_input,
                     claim_gate_prechecked,
                     preflight_decision_id,
-                    preflight_decision_id
-                        .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                 )?;
                 if !internal_lexical_query_hint {
                     claim_materialization::bind_committed_claim(store, wtxn, &id)?;

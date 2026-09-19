@@ -163,6 +163,11 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
+    crate::ingest::reindex_identity_hints(store, wtxn, id, None)?;
+    crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
+    store
+        .sync_state
+        .delete(wtxn, &crate::gate::trusted_manifest_key(id))?;
     store.entities.delete(wtxn, id.as_bytes())?;
     neighbors.sort_unstable();
     neighbors.dedup();

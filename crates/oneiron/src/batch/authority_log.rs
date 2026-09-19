@@ -15,15 +15,6 @@ use crate::ppr;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::store::Store;
 
-pub(crate) struct ReplicatedAuthorityLogValidation {
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) signer_key: crate::authority::AuthorityKey,
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) signer_known: bool,
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) local_vault_id: crate::authority::AuthorityVaultId,
-}
-
 /// What currently occupies a validated AUTHORITY_LOG row's content-derived store
 /// key. `CrossTypeSquatter` is NOT a rejection — see
 /// [`check_authority_log_store_key`].
@@ -179,14 +170,14 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     data: &[u8],
-) -> Result<ReplicatedAuthorityLogValidation> {
+) -> Result<()> {
     crate::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = crate::authority::decode_authority_log_entry_body(data)?;
     let entry_hash = crate::authority::authority_entry_hash(&entry)?;
     // ONE-1604-D1 mirror at the replicated door: content-address + append-only
     // are STORE checks, not ancestry checks — the door stays structural +
-    // origin-sig + vault_id (ONE-1604-D2). Rejecting here (before the quota
-    // debit) quarantines hostile rows without consuming ingest quota. A
+    // origin-sig + vault_id (ONE-1604-D2). Ingest observation happens only
+    // after successful admission and never refuses rows for rate. A
     // cross-type squatter is not a rejection — this row dominates it — and
     // the eviction itself belongs to the `apply_put` chokepoint that writes
     // the row, so this validator stays a pure check.
@@ -214,11 +205,7 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
             "foreign authority log vault id",
         )));
     }
-    Ok(ReplicatedAuthorityLogValidation {
-        signer_known: local_fold.roster.contains_key(&entry.signer.public_key),
-        signer_key: entry.signer.public_key,
-        local_vault_id,
-    })
+    Ok(())
 }
 
 pub(super) fn stored_authority_log_entries(

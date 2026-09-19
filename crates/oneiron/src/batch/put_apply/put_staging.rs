@@ -42,6 +42,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
+    crate::ingest::reindex_identity_hints(store, wtxn, id, Some((entity_type, data)))?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(entity_type);
     payload.extend_from_slice(&occurred.start.to_be_bytes());

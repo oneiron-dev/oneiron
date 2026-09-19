@@ -390,3 +390,32 @@ fn blob_artifact_append_fails_closed_on_bad_input() -> Result<()> {
     assert!(vault.blob_artifact_versions(&artifact_id)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn blob_birth_four_rungs_only_normalize_transport_and_are_purged() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let artifact = put_artifact(&vault, 1)?;
+    let actor = put_actor(&vault, 1)?;
+    let append = |bytes: &[u8]| {
+        vault.append_blob_artifact_version(
+            &artifact,
+            bytes,
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            test_time(2),
+            2,
+        )
+    };
+    let first = append(b"# Page\n\nText")?;
+    let transport = append(b"# Page\r\n\r\nText")?;
+    assert_eq!(transport.version, first.version);
+    let initial = vault.blob_fingerprint(&artifact)?.unwrap();
+    let next = append(b"# Page\n\nText\n\n# Another\n\nMore")?;
+    assert_eq!(next.version, 2);
+    let changed = vault.blob_fingerprint(&artifact)?.unwrap();
+    assert_eq!(initial.blocks["1"], changed.blocks["1"]);
+    assert_eq!(append(b"# Page\n\nTEXT\n\n# Another\n\nMore")?.version, 3);
+    vault.delete_entity(&artifact)?;
+    assert!(vault.blob_fingerprint(&artifact)?.is_none());
+    Ok(())
+}

@@ -1,19 +1,78 @@
 //! `EntityId` + world-id newtypes + id parsing/hex.
 
 use crate::registry::short_id_prefix;
-use uuid::Uuid;
+use rand_core::RngCore;
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
 
-/// A time-ordered entity identifier backed by UUIDv7 bytes.
+thread_local! {
+    // Preserve the existing mint-order contract even when several ids share
+    // one millisecond. Thread-local entropy avoids a process-global lock.
+    static LAST_ULID: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+}
+
+/// An opaque time-ordered ULID. Existing 16-byte UUIDv7 rows remain valid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntityId([u8; ENTITY_ID_LEN]);
 
 impl EntityId {
-    /// Creates a new identifier using the current UUIDv7 timestamp.
+    /// Creates an opaque ULID: 48-bit Unix milliseconds and 80 random bits.
     #[must_use]
     pub fn now() -> Self {
-        Self(Uuid::now_v7().into_bytes())
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("entity ids require a clock after the Unix epoch")
+            .as_millis() as u64;
+        LAST_ULID.with(|last| {
+            let mut bytes = [0; 16];
+            bytes[..6].copy_from_slice(&millis.to_be_bytes()[2..]);
+            rand_core::OsRng.fill_bytes(&mut bytes[6..]);
+            let random = u128::from_be_bytes(bytes);
+            let prior = last.get();
+            let next = if (random >> 80) <= (prior >> 80) {
+                prior.checked_add(1).expect("ULID exhausted")
+            } else {
+                random
+            };
+            last.set(next);
+            Self(next.to_be_bytes())
+        })
+    }
+
+    /// Canonical 26-character Crockford representation. Identity is not encoded
+    /// in this string; names and aliases remain lookup hints in stored rows.
+    pub fn to_ulid(&self) -> String {
+        const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+        let mut number = u128::from_be_bytes(self.0);
+        let mut text = [b'0'; 26];
+        for character in text.iter_mut().rev() {
+            *character = ALPHABET[(number & 31) as usize];
+            number >>= 5;
+        }
+        String::from_utf8(text.to_vec()).expect("Crockford alphabet is ASCII")
+    }
+
+    /// Parses Crockford ULID text, rejecting overflow and reserved ids.
+    pub fn from_ulid(text: &str) -> crate::error::Result<Self> {
+        if text.len() != 26 {
+            return Err(crate::error::Error::InvalidKey);
+        }
+        let mut number = 0u128;
+        for byte in text.bytes() {
+            let digit = match byte.to_ascii_uppercase() {
+                b'I' | b'L' => 1,
+                b'O' => 0,
+                byte => b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+                    .iter()
+                    .position(|&c| c == byte)
+                    .ok_or(crate::error::Error::InvalidKey)? as u128,
+            };
+            number = number
+                .checked_mul(32)
+                .and_then(|n| n.checked_add(digit))
+                .ok_or(crate::error::Error::InvalidKey)?;
+        }
+        Self::from_bytes(number.to_be_bytes())
     }
 
     /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
@@ -293,6 +352,19 @@ mod tests {
         EntityId, FOREIGN_WORLD_ID_RANGE_START_BYTE, ForeignWorldId, LocalWorldId,
         parse_presentation_id, parse_short_ref_syntax,
     };
+
+    #[test]
+    fn ulid_text_roundtrips_and_orders_by_time_without_rejecting_legacy_ids() {
+        let fresh = EntityId::now();
+        assert_eq!(EntityId::from_ulid(&fresh.to_ulid()).unwrap(), fresh);
+        let early = EntityId::from_ulid("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap();
+        let later = EntityId::from_ulid("01ARZ3NDEM0000000000000000").unwrap();
+        assert!(early < later);
+        assert!(early.to_ulid() < later.to_ulid());
+        assert!(EntityId::from_ulid("81ARZ3NDEKTSV4RRFFQ69G5FAV").is_err());
+        let legacy = uuid::Uuid::now_v7().into_bytes();
+        assert_eq!(EntityId::from_bytes(legacy).unwrap().as_bytes(), &legacy);
+    }
 
     #[test]
     fn presentation_grammar_accepts_every_live_prefix_shape() {

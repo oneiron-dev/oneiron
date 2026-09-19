@@ -1,3 +1,6 @@
+mod shapes;
+mod wordlist;
+
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
@@ -75,6 +78,13 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     if let Some(reason) = detect_secret(&haystack) {
         return Err(secret_scan_error(reason));
     }
+    let mut cursor = std::io::Cursor::new(data);
+    if let Ok(value) = rmpv::decode::read_value(&mut cursor)
+        && cursor.position() == data.len() as u64
+        && structured_secret(&crate::companion::companion_value_to_json(&value))
+    {
+        return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+    }
     Ok(secrets_nulled)
 }
 
@@ -100,14 +110,80 @@ fn has_redaction_marker(haystack: &str) -> bool {
     .any(|marker| lower.contains(marker))
 }
 
-fn detect_secret(haystack: &str) -> Option<&'static str> {
+pub(crate) fn detect_secret(haystack: &str) -> Option<&'static str> {
     if contains_private_key_marker(haystack) {
         return Some(REASON_PRIVATE_KEY);
     }
 
-    haystack
+    if shapes::blocklisted(haystack) {
+        return Some("gate.secret_scan.blocklist");
+    }
+    if shapes::mnemonic(haystack) {
+        return Some("gate.secret_scan.mnemonic");
+    }
+    // Preserve precise provider reason codes before the generic env class.
+    let provider = haystack
         .split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
-        .find_map(classify_token)
+        .find_map(classify_token);
+    provider.or_else(|| {
+        shapes::sensitive_assignment(haystack).then_some("gate.secret_scan.sensitive_env")
+    })
+}
+
+fn structured_secret(value: &serde_json::Value) -> bool {
+    let mut copy = value.clone();
+    sanitize_credentials(&mut copy, false)
+}
+
+/// Recursively filters both credential field names and credential-shaped values.
+/// Returns whether any bytes were removed. `null` is the export representation;
+/// the serving representation is the fixed, non-authoritative redaction marker.
+pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) -> bool {
+    use serde_json::Value;
+    let replacement = || {
+        if null {
+            Value::Null
+        } else {
+            Value::String("[redacted]".into())
+        }
+    };
+    match value {
+        Value::String(text) if detect_secret(text).is_some() => {
+            *value = replacement();
+            true
+        }
+        Value::Array(values) => {
+            // MessagePack binary values project to JSON byte arrays. They must
+            // not become an alternate encoding around recursive redaction.
+            let bytes: Option<Vec<u8>> = values
+                .iter()
+                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
+                .collect();
+            if bytes
+                .as_ref()
+                .is_some_and(|bytes| scan_file_content("", bytes).is_some())
+            {
+                *value = replacement();
+                true
+            } else {
+                values.iter_mut().fold(false, |changed, value| {
+                    sanitize_credentials(value, null) | changed
+                })
+            }
+        }
+        Value::Object(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
+            let sensitive = shapes::sensitive_key(key)
+                && !value.is_null()
+                && !value.as_str().is_some_and(shapes::placeholder);
+            if sensitive {
+                *value = replacement();
+                true
+            } else {
+                sanitize_credentials(value, null) | changed
+            }
+        }),
+        _ => false,
+    }
 }
 
 fn contains_private_key_marker(haystack: &str) -> bool {

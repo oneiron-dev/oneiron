@@ -49,8 +49,7 @@ pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,
 };
 pub(crate) use self::gate_mode::ApplyOpsGateMode;
-pub(crate) use self::gate_staging::StagedClaimGateOutcome;
-use self::gate_staging::{stage_preflight_decision, staged_claim_gate_outcomes};
+use self::gate_staging::stage_preflight_decision;
 pub(crate) use self::ops_pipeline::{
     BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
 };

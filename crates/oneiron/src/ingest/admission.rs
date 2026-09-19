@@ -114,6 +114,24 @@ pub fn admit_imported_evidence_claim_typed(
     source_record_id: &str,
     admission: &ImportedEvidenceAdmission,
 ) -> crate::Result<()> {
+    let (candidate, envelope) = imported_candidate(predicate, value, source_record_id, admission)?;
+    vault
+        .batch()
+        .claim_candidate(
+            &admission.claim_id,
+            candidate,
+            &envelope,
+            admission.occurred,
+            admission.learned_at,
+        )
+        .commit()
+}
+fn imported_candidate(
+    predicate: &str,
+    value: MsgpackValue,
+    source_record_id: &str,
+    admission: &ImportedEvidenceAdmission,
+) -> crate::Result<(ClaimCandidate, WriteEnvelope)> {
     // `companion.expression.*` has typed doors that own its supersession
     // chain: writing a head means closing the one the family's own precedence
     // rules pick, and the candidate path below supersedes on
@@ -152,16 +170,7 @@ pub fn admit_imported_evidence_claim_typed(
         admission.approval,
     );
 
-    vault
-        .batch()
-        .claim_candidate(
-            &admission.claim_id,
-            candidate,
-            &envelope,
-            admission.occurred,
-            admission.learned_at,
-        )
-        .commit()
+    Ok((candidate, envelope))
 }
 
 /// Persists a normalized asset-text entity through the vault's normal entity
@@ -235,4 +244,52 @@ fn json_to_msgpack_value(value: &Value) -> MsgpackValue {
                 .collect(),
         ),
     }
+}
+
+/// Imported evidence with a newly encountered mention must resolve its declared
+/// identity key before the claim is admitted. The returned subject is the
+/// waterfall's hard/soft link, or a fresh opaque id on its provisional route.
+pub fn admit_imported_mention_claim(
+    vault: &crate::Vault,
+    claim: &NormalizedIngestClaim,
+    mut admission: ImportedEvidenceAdmission,
+    kind: u8,
+    mention: &str,
+    entity_body: &[u8],
+    score: impl FnOnce(&[EntityId]) -> crate::Result<Vec<super::EntityResolutionCandidate>>,
+) -> crate::Result<EntityId> {
+    let found = vault.lookup_identity_key(kind, mention)?;
+    let candidates = score(&found)?;
+    vault.with_write_txn(|txn| {
+        let (subject, _) = vault.resolve_prepared_mention_in_txn(
+            txn,
+            &super::identity_key::MentionResolution {
+                kind,
+                mention,
+                body: entity_body,
+                occurred: admission.occurred,
+                learned_at: admission.learned_at,
+                found: &found,
+                candidates: &candidates,
+            },
+        )?;
+        admission.entity_resolution = ImportedEvidenceEntityResolution::subject(subject);
+        let (candidate, envelope) = imported_candidate(
+            &claim.predicate,
+            json_to_msgpack_value(&claim.value),
+            &claim.source_record_id,
+            &admission,
+        )?;
+        vault
+            .batch_in()
+            .claim_candidate(
+                &admission.claim_id,
+                candidate,
+                &envelope,
+                admission.occurred,
+                admission.learned_at,
+            )
+            .apply(txn)?;
+        Ok(subject)
+    })
 }
