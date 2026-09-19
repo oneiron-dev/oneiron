@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute } from '@tanstack/react-router'
+import { Outlet, createFileRoute, useLocation } from '@tanstack/react-router'
 import * as React from 'react'
 import { Tuner } from '~/components/dev/Tuner'
 import { Ground } from '~/components/safelight/Ground'
@@ -12,6 +12,7 @@ import {
   useSound,
   useTheme,
 } from '~/components/safelight/hooks'
+import { rememberAppRoute } from '~/runtime/settings-nav'
 import chassisCss from '~/styles/chassis.css?url'
 
 export const Route = createFileRoute('/app')({
@@ -25,6 +26,8 @@ export const Route = createFileRoute('/app')({
    the route's pane is the one elevated sheet, and the bottom strip is the
    agent line. */
 function AppLayout() {
+  const href = useLocation({ select: (l) => l.href })
+  React.useEffect(() => rememberAppRoute(href), [href])
   const cycleTheme = useTheme()
   const toggleMute = useSound()
   const [tune, setTune] = React.useState(false)
