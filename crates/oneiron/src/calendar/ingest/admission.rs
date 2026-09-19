@@ -20,7 +20,6 @@ use crate::entity_id::EntityId;
 use crate::ingest::{
     ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
 };
-use crate::ports::EntityStore;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE};
 use crate::temporal::TimeRange;
@@ -187,47 +186,21 @@ impl PollAdmission<'_> {
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
+        let input = crate::calendar::origin::CalendarEventInput {
+            origin: Some(CalendarOrigin::Imported),
+            name: event_name(event).to_owned(),
+            import_source: Some(self.source_record_id(event)),
+            external_id: Some(event.uid.clone()),
+            ..Default::default()
+        };
         self.vault.with_write_txn(|txn| {
-            let origin = crate::calendar::origin::live_origin(&self.vault.store, txn, event_ref)?
-                .ok_or(crate::Error::InvalidClaimBody(
-                "calendar EVENT requires live calendar.origin",
-            ))?;
-            let row = self
-                .vault
-                .port_entity_get(txn, &event_ref)?
-                .ok_or(crate::Error::EntityNotFound)?;
-            let raw = row.body;
-            let mut value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
-                .map_err(|_| crate::Error::InvalidClaimBody("calendar EVENT body"))?;
-            let rmpv::Value::Map(fields) = &mut value else {
-                return Err(crate::Error::InvalidClaimBody("calendar EVENT body"));
-            };
-            let mut replace = |name: &str, value: rmpv::Value| {
-                fields.retain(|(key, _)| key.as_str() != Some(name));
-                fields.push((rmpv::Value::from(name), value));
-            };
-            replace("name", rmpv::Value::from(event_name(event)));
-            replace("origin", rmpv::Value::from(origin.as_str()));
-            if origin == CalendarOrigin::Imported {
-                replace(
-                    "importSource",
-                    rmpv::Value::from(self.source_record_id(event)),
-                );
-                replace("externalId", rmpv::Value::from(event.uid.as_str()));
-            }
-            let mut body = Vec::new();
-            rmpv::encode::write_value(&mut body, &value)
-                .map_err(|_| crate::Error::InvalidClaimBody("calendar EVENT body encode"))?;
-            self.vault
-                .batch_in()
-                .put(
-                    &event_ref,
-                    ENTITY_TYPE_EVENT,
-                    self.event_occurred(event),
-                    self.now,
-                    &body,
-                )
-                .apply(txn)
+            self.vault.update_calendar_import_in_txn(
+                txn,
+                event_ref,
+                &input,
+                self.event_occurred(event),
+                self.now,
+            )
         })?;
         Ok(())
     }
@@ -551,7 +524,10 @@ pub fn ics_import_actor_id() -> crate::Result<EntityId> {
     derive_entity_id(ICS_IMPORT_ACTOR_ID_DOMAIN, &[])
 }
 
-pub(super) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
+pub(in crate::calendar) fn ensure_ics_import_actor(
+    vault: &Vault,
+    now: u64,
+) -> crate::Result<EntityId> {
     let id = ics_import_actor_id()?;
     if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
         let mut body = Vec::new();

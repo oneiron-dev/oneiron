@@ -1,6 +1,6 @@
 //! Pull orchestration: apply, admit, enqueue, and reconcile.
 
-use super::outbound::{CalendarRemoteObjectRow, ingest_error, ingest_reason, write_remote_object};
+use super::outbound::{CalendarRemoteObjectRow, ingest_error, write_remote_object};
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
     RemoteCalendarObject, classify_remote_change, parse_remote_object,
@@ -15,11 +15,12 @@ use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence,
     CalendarPassportValue, CalendarStatus, CalendarStatusBasis, CalendarTimeKind,
-    PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS,
-    PREDICATE_CALENDAR_TIME_KIND, decode_status_value, decode_time_kind_value,
+    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
+    decode_status_value, decode_time_kind_value,
 };
 use crate::calendar::ics::ParsedVEvent;
-use crate::calendar::ingest::admit_calendar_import_claim;
+use crate::calendar::ingest::{admit_calendar_import_claim, ensure_ics_import_actor};
+use crate::calendar::origin::CalendarEventInput;
 use crate::calendar::passport::{
     all_live_inbound_passports_absent, encode_passport_value, index_passport_uid,
     live_passport_for, resolve_event_by_uid, supersede_calendar_passport,
@@ -27,9 +28,9 @@ use crate::calendar::passport::{
 use crate::calendar::safeguard::{CalendarInboundBody, screen_then_claim};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
+use crate::write_envelope::WriteActor;
 
 /// Runs one connector sync for `seat`.
 ///
@@ -245,33 +246,41 @@ fn apply_inbound_event(
     let source_record_id = pull_source_record_id(provider, seat, &parsed.uid);
     let body = inbound_body(parsed);
     let occurred = parsed_occurred(parsed, now);
-    let event_body = encode_event_body(event_display_name(parsed))?;
-
-    let (event_ref, minted) = match event_ref {
-        Some(event_ref) => {
-            // The update verdict moves the EVENT, not just the passport head.
-            vault.put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, now, &event_body)?;
-            (event_ref, false)
-        }
-        None => {
-            let event_ref = vault.store.clock.entity_id()?;
-            vault.put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, now, &event_body)?;
-            index_passport_uid(vault, &parsed.uid, &event_ref)?;
-            (event_ref, true)
-        }
+    let input = CalendarEventInput {
+        origin: Some(CalendarOrigin::Imported),
+        name: event_display_name(parsed).to_owned(),
+        import_source: Some(source_record_id.clone()),
+        external_id: Some(parsed.uid.clone()),
+        calendar_name: Some(system.to_owned()),
+        ..Default::default()
     };
+    // Origin is a recorded projector fact. Unlike semantic candidates below,
+    // it cannot be Proposed: birth must commit with a live origin in one txn.
+    let event_ref = screen_then_claim(false, None, &body, |_request| {
+        let actor = ensure_ics_import_actor(vault, now)?;
+        vault.with_write_txn(|txn| match event_ref {
+            Some(event_ref) => {
+                vault.update_calendar_import_in_txn(txn, event_ref, &input, occurred, now)?;
+                Ok(event_ref)
+            }
+            None => {
+                let event_ref = vault.store.clock.entity_id()?;
+                vault.stage_calendar_event(
+                    txn,
+                    &input,
+                    occurred,
+                    WriteActor::new(actor, crate::EdgeActorClass::System),
+                    event_ref,
+                    now,
+                )?;
+                Ok(event_ref)
+            }
+        })
+    })
+    .map_err(CalendarError::from)?
+    .value;
+    index_passport_uid(vault, &parsed.uid, &event_ref)?;
 
-    if minted {
-        admit_screened(
-            vault,
-            event_ref,
-            &body,
-            &source_record_id,
-            PREDICATE_CALENDAR_ORIGIN,
-            rmpv::Value::from(CalendarOrigin::Imported.as_str()),
-            now,
-        )?;
-    }
     admit_time_kind_if_changed(
         vault,
         event_ref,
@@ -554,17 +563,6 @@ fn inbound_body(parsed: &ParsedVEvent) -> CalendarInboundBody {
         description: parsed.description.clone().unwrap_or_default(),
         attachment_text: Vec::new(),
     }
-}
-
-/// The EVENT body row: a MessagePack map carrying only the name.
-fn encode_event_body(name: &str) -> Result<Vec<u8>, CalendarError> {
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
-    )
-    .map_err(|_| ingest_reason("event body did not encode"))?;
-    Ok(body)
 }
 
 /// Reads the EVENT body's `name` field, tolerating non-map bodies.

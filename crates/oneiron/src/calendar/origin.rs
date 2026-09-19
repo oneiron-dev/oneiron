@@ -8,7 +8,7 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::memory::MemoryResult;
 use crate::ports::EdgeStoreRead;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStore, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_TURN};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -246,6 +246,48 @@ impl Vault {
         }
         Ok(())
     }
+    /// Apply imported name/time drift without changing the EVENT's origin union.
+    /// Native and extracted fields survive; imported provenance follows the source.
+    pub(in crate::calendar) fn update_calendar_import_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        event: EntityId,
+        input: &CalendarEventInput,
+        occurred: TimeRange,
+        at: u64,
+    ) -> Result<()> {
+        let origin = live_origin(&self.store, txn, event)?
+            .ok_or(invalid("calendar EVENT requires live calendar.origin"))?;
+        let row = self
+            .port_entity_get(txn, &event)?
+            .ok_or(Error::EntityNotFound)?;
+        let mut value = rmpv::decode::read_value(&mut std::io::Cursor::new(row.body))
+            .map_err(|_| invalid("calendar EVENT body"))?;
+        let Value::Map(fields) = &mut value else {
+            return Err(invalid("calendar EVENT body"));
+        };
+        let mut replace = |key: &str, value: Value| {
+            fields.retain(|(name, _)| name.as_str() != Some(key));
+            fields.push((Value::from(key), value));
+        };
+        replace("name", Value::from(input.name.as_str()));
+        replace("origin", Value::from(origin.as_str()));
+        if origin == CalendarOrigin::Imported {
+            input.validate()?;
+            replace(
+                "importSource",
+                Value::from(input.import_source.as_deref().unwrap_or_default()),
+            );
+            replace(
+                "externalId",
+                Value::from(input.external_id.as_deref().unwrap_or_default()),
+            );
+        }
+        self.batch_in()
+            .put(&event, ENTITY_TYPE_EVENT, occurred, at, &encode(&value)?)
+            .apply(txn)
+    }
+
     pub fn create_native_calendar_event(
         &self,
         input: &CalendarEventInput,
