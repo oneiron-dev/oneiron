@@ -43,6 +43,9 @@ fn of360_metric_definitions_round_trip() {
             "overreach_rate",
             "temporal_correctness",
             "redundancy_rate",
+            "updating_accuracy",
+            "qa_accuracy",
+            "omission_rate",
         ]
     );
 }
@@ -181,6 +184,7 @@ fn parsed_smoke_run() -> Of360ExtractionRun {
         dataset_revision: OF360_GOLD_DATASET_REVISION.to_owned(),
         cases: vec![
             Of360CaseExtractionOutput {
+                qa_answers: Vec::new(),
                 case_id: "of360-seed-001-preference-temporal".to_owned(),
                 extracted_claims: vec![
                     extracted(
@@ -210,6 +214,7 @@ fn parsed_smoke_run() -> Of360ExtractionRun {
                 ],
             },
             Of360CaseExtractionOutput {
+                qa_answers: Vec::new(),
                 case_id: "of360-seed-002-update-window".to_owned(),
                 extracted_claims: vec![
                     extracted(
@@ -231,6 +236,7 @@ fn parsed_smoke_run() -> Of360ExtractionRun {
                 ],
             },
             Of360CaseExtractionOutput {
+                qa_answers: Vec::new(),
                 case_id: "of360-seed-003-relationship-event".to_owned(),
                 extracted_claims: vec![
                     extracted(
@@ -260,6 +266,7 @@ fn parsed_smoke_run() -> Of360ExtractionRun {
                 ],
             },
             Of360CaseExtractionOutput {
+                qa_answers: Vec::new(),
                 case_id: "of360-seed-004-rejected-suggestion".to_owned(),
                 extracted_claims: vec![
                     extracted(
@@ -306,4 +313,62 @@ fn extracted(
         overreach,
         dedup_key: dedup_key.map(str::to_owned),
     }
+}
+
+#[test]
+fn full_500_point_corpus_clears_seed_warning_and_scores_all_lanes() {
+    use oneiron::extraction_eval::{Of360QaAnswer, of360_gold_corpus};
+    let dataset = of360_gold_corpus().unwrap();
+    assert!(!dataset.owner_corpus_missing);
+    assert_eq!(
+        dataset
+            .cases
+            .iter()
+            .map(|c| c.gold_memory_points.len())
+            .sum::<usize>(),
+        500
+    );
+    let run = Of360ExtractionRun {
+        schema_version: OF360_SCHEMA_VERSION,
+        run_id: "full-corpus-fixture".into(),
+        system_id: "fixture".into(),
+        dataset_id: dataset.dataset_id.clone(),
+        dataset_revision: dataset.revision.clone(),
+        cases: dataset
+            .cases
+            .iter()
+            .map(|case| Of360CaseExtractionOutput {
+                case_id: case.case_id.clone(),
+                qa_answers: case
+                    .qa
+                    .iter()
+                    .map(|q| Of360QaAnswer {
+                        question_id: q.question_id.clone(),
+                        answer: q.accepted_answers[0].clone(),
+                    })
+                    .collect(),
+                extracted_claims: case
+                    .gold_memory_points
+                    .iter()
+                    .map(|memory| Of360ExtractedClaim {
+                        extraction_id: memory.memory_id.clone(),
+                        text: memory.claim.clone(),
+                        matched_gold: vec![Of360GoldMatch {
+                            memory_id: memory.memory_id.clone(),
+                            score: Of360ExtractionScore::Full,
+                        }],
+                        temporal_correct: Some(true),
+                        overreach: false,
+                        dedup_key: None,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    let report = evaluate_of360_extraction(&dataset, &run).unwrap();
+    assert!(report.warnings.is_empty());
+    assert_eq!(report.metrics.halumem_recall.value, Some(1.0));
+    assert_eq!(report.metrics.updating_accuracy.value, Some(1.0));
+    assert_eq!(report.metrics.qa_accuracy.value, Some(1.0));
+    assert_eq!(report.metrics.omission_rate.value, Some(0.0));
 }
