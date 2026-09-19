@@ -305,6 +305,12 @@ fn plain_vector_fill_does_not_clear_stale_pending_embedding_marker() -> Result<(
         None,
         "a per-operation fill cannot advance an indexed revision awaiting idle"
     );
+    vault.set_indexed_idle_delay_ms(0)?;
+    vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+    assert_eq!(
+        vault.get_vector(&claim)?.as_deref(),
+        Some([1.0, 0.0, 0.0, 0.0].as_slice())
+    );
     assert_eq!(
         raw_pending_embedding_marker(&vault, &claim)?.as_deref(),
         Some(old_token.as_slice()),

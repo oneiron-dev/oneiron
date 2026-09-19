@@ -520,7 +520,14 @@ pub(super) fn apply_ops_with_origin(
                     crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
                     text_manifest_checked = true;
                 }
-                if !crate::vault::entity_revision::entity_has_pending_revision(store, wtxn, &id)? {
+                if !crate::vault::entity_revision::defer_index_inputs(
+                    store,
+                    wtxn,
+                    &id,
+                    Some(&fields),
+                    None,
+                    None,
+                )? {
                     crate::bm25::index_text(store, wtxn, analyzer, &id, &fields)?;
                 }
             }

@@ -391,6 +391,7 @@ pub(crate) fn remove_entity_revisions(
         }
     }
     super::phonetic::clear_phonetic(store, txn, id)?;
+    super::pending_index::clear(store, txn, id)?;
     store.vault_meta().delete(txn, &key(STATE, id))?;
     store.vault_meta().delete(txn, &key(DOC, id))?;
     let prefix = key(FRONTIER, id);

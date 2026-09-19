@@ -39,6 +39,22 @@ impl Vault {
         now_ms: u64,
         embedder: &dyn IndexedRevisionEmbedder,
     ) -> Result<IndexedRefreshReport> {
+        self.refresh_indexed(now_ms, Some(embedder))
+    }
+
+    /// Publishes caller-staged text/vectors at idle without a model backend.
+    /// Configure the loop-owned delay with `set_indexed_idle_delay_ms` first.
+    /// A dirty entity with an existing vector needs a newly staged vector;
+    /// otherwise this refuses rather than pair old vectors with new content.
+    pub fn refresh_staged_indexed_at_idle(&self, now_ms: u64) -> Result<IndexedRefreshReport> {
+        self.refresh_indexed(now_ms, None)
+    }
+
+    fn refresh_indexed(
+        &self,
+        now_ms: u64,
+        embedder: Option<&dyn IndexedRevisionEmbedder>,
+    ) -> Result<IndexedRefreshReport> {
         let candidates = {
             let txn = self.store.env.read_txn()?;
             let raw = self.store.vault_meta.get(&txn, DEBOUNCE)?.ok_or_else(|| {
@@ -86,7 +102,27 @@ impl Vault {
         };
         let mut report = IndexedRefreshReport::default();
         for input in candidates {
-            let vector = embedder.embed_revision(&input)?;
+            let staged = {
+                let txn = self.store.env.read_txn()?;
+                super::pending_index::load(
+                    &self.store,
+                    &txn,
+                    &input.entity,
+                    input.source_revision_ref,
+                )?
+            };
+            let vector = match staged.vector {
+                Some(vector) => Some(vector),
+                None => match embedder {
+                    Some(embedder) => Some(embedder.embed_revision(&input)?),
+                    None if self.get_vector(&input.entity)?.is_none() => None,
+                    None => {
+                        return Err(Error::InvalidConfig(
+                            "idle index publication requires a staged vector or embedder".into(),
+                        ));
+                    }
+                },
+            };
             let mut txn = self.store.env.write_txn()?;
             let Some(mut current) = state(&self.store, &txn, &input.entity)? else {
                 report.superseded.push(input.entity);
@@ -94,6 +130,20 @@ impl Vault {
             };
             if current.live != input.source_revision_ref
                 || read_entity_revision_in_txn(self, &txn, &input.entity, ReadMode::Live)?.is_none()
+            {
+                report.superseded.push(input.entity);
+                continue;
+            }
+            let staged = super::pending_index::load(
+                &self.store,
+                &txn,
+                &input.entity,
+                input.source_revision_ref,
+            )?;
+            if let Some(token) = staged.pending_embedding_token.as_deref()
+                && !self
+                    .store
+                    .pending_embedding_matches_in_txn(&txn, &input.entity, token)?
             {
                 report.superseded.push(input.entity);
                 continue;
@@ -109,33 +159,43 @@ impl Vault {
             // transaction. On any text/vector failure LMDB rolls all back.
             current.indexed = current.live;
             put_state(&self.store, &mut txn, &input.entity, &current)?;
+            let generated_vector = staged.vector.is_none() && embedder.is_some();
+            let vector = staged.vector.or(vector);
+            let mut ops = vec![
+                BatchOp::Phonetic {
+                    id: input.entity,
+                    codes,
+                },
+                BatchOp::Text {
+                    id: input.entity,
+                    fields: staged.fields.unwrap_or(input.fields),
+                },
+            ];
+            let wrote_vector = vector.is_some();
+            if let Some(vector) = vector {
+                ops.push(BatchOp::Vector {
+                    id: input.entity,
+                    vector,
+                    pending_embedding_token: staged.pending_embedding_token,
+                });
+            }
             apply_ops(
                 &self.store,
                 &self.config,
                 &self.analyzer,
                 &mut txn,
-                vec![
-                    BatchOp::Phonetic {
-                        id: input.entity,
-                        codes,
-                    },
-                    BatchOp::Text {
-                        id: input.entity,
-                        fields: input.fields,
-                    },
-                    BatchOp::Vector {
-                        id: input.entity,
-                        vector,
-                        pending_embedding_token: None,
-                    },
-                ],
+                ops,
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
                 false,
                 false,
+                false,
             )?;
-            self.store
-                .clear_pending_embedding(&mut txn, &input.entity)?;
+            if wrote_vector && generated_vector {
+                self.store
+                    .clear_pending_embedding(&mut txn, &input.entity)?;
+            }
+            super::pending_index::clear(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
             report
                 .refreshed

@@ -4,7 +4,9 @@
 
 mod citations;
 mod idle;
+mod pending_index;
 mod phonetic;
+pub(crate) use pending_index::defer_index_inputs;
 pub(crate) use phonetic::defer_phonetic;
 mod storage;
 mod types;

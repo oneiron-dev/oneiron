@@ -11,7 +11,8 @@ fn body(text: &str) -> Vec<u8> {
 }
 
 fn put(vault: &Vault, id: &EntityId, text: &str) {
-    vault
+    let is_birth = vault.get(id).unwrap().is_none();
+    let batch = vault
         .batch()
         .put(
             id,
@@ -20,10 +21,13 @@ fn put(vault: &Vault, id: &EntityId, text: &str) {
             1,
             &body(text),
         )
-        .text(id, &[("content", text)])
-        .vector(id, &[1.0, 0.0, 0.0, 0.0])
-        .commit()
-        .unwrap();
+        .text(id, &[("content", text)]);
+    let batch = if is_birth {
+        batch.vector(id, &[1.0, 0.0, 0.0, 0.0])
+    } else {
+        batch
+    };
+    batch.commit().unwrap();
 }
 
 struct Embed {
@@ -298,4 +302,152 @@ fn phonetic_codes_advance_with_the_idle_indexed_revision() {
         .unwrap();
     assert!(search("OLD").is_empty());
     assert_eq!(search("NEW"), vec![id]);
+}
+
+#[test]
+fn habit_derived_rewrite_retains_the_indexed_body_for_default_pack() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let habit = EntityId::now();
+    let raw = rmp_serde::to_vec_named(&serde_json::json!({
+        "title": "habitreading", "role": crate::habit::TaskRole::Habit.role_byte()
+    }))
+    .unwrap();
+    vault
+        .batch()
+        .put(
+            &habit,
+            crate::registry::ENTITY_TYPE_TASK,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &raw,
+        )
+        .text(&habit, &[("title", "habitreading")])
+        .commit()
+        .unwrap();
+    let original = vault
+        .get_raw_with_mode(&habit, ReadMode::Indexed)
+        .unwrap()
+        .unwrap();
+    let revision = vault.indexed_revision(&habit).unwrap().unwrap();
+    let checkin = rmp_serde::to_vec_named(&serde_json::json!({
+        "role": crate::habit::TaskRole::HabitCheckin.role_byte()
+    }))
+    .unwrap();
+    vault
+        .put_habit_checkin(
+            &habit,
+            &EntityId::now(),
+            TimeRange { start: 2, end: 2 },
+            2,
+            &checkin,
+        )
+        .unwrap();
+    assert_ne!(vault.get_raw(&habit).unwrap().unwrap(), original);
+    assert_eq!(
+        vault
+            .get_raw_with_mode(&habit, ReadMode::Indexed)
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    assert_eq!(vault.indexed_revision(&habit).unwrap(), Some(revision));
+    let pack = vault
+        .context_pack()
+        .search_text("habitreading", 10)
+        .run()
+        .unwrap();
+    assert_eq!(pack.results.len(), 1);
+    assert_eq!(pack.results[0].id, habit);
+}
+
+#[test]
+fn staged_text_and_vector_survive_reopen_and_publish_without_embedder() {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let id = EntityId::now();
+    put(&vault, &id, "alpha");
+    put(&vault, &id, "beta");
+    let revision = vault.pin_entity_revision(&id).unwrap();
+    vault
+        .batch()
+        .text(&id, &[("content", "callerindex")])
+        .vector(&id, &[0.0, 0.0, 1.0, 0.0])
+        .commit()
+        .unwrap();
+    assert!(vault.search_text("callerindex", 10).unwrap().is_empty());
+    assert_eq!(
+        vault.get_vector(&id).unwrap().unwrap(),
+        vec![1.0, 0.0, 0.0, 0.0]
+    );
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let report = vault.refresh_staged_indexed_at_idle(u64::MAX).unwrap();
+    assert_eq!(report.refreshed, vec![(id, revision)]);
+    assert_eq!(
+        vault.get_vector(&id).unwrap().unwrap(),
+        vec![0.0, 0.0, 1.0, 0.0]
+    );
+    assert_eq!(vault.search_text("callerindex", 10).unwrap()[0].id, id);
+    assert!(vault.search_text("alpha", 10).unwrap().is_empty());
+    assert_eq!(
+        vault.get_raw_with_mode(&id, ReadMode::Indexed).unwrap(),
+        vault.get_raw(&id).unwrap()
+    );
+}
+
+#[test]
+fn staged_text_only_idle_does_not_need_an_embedding_model() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let id = EntityId::now();
+    for text in ["initial", "changed"] {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_ASSET_TEXT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &body(text),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    }
+    assert!(vault.search_text("changed", 10).unwrap().is_empty());
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    assert_eq!(
+        vault
+            .refresh_staged_indexed_at_idle(u64::MAX)
+            .unwrap()
+            .refreshed
+            .len(),
+        1
+    );
+    assert_eq!(vault.search_text("changed", 10).unwrap()[0].id, id);
+    assert_eq!(vault.get_vector(&id).unwrap(), None);
+}
+
+#[test]
+fn invalid_deferred_vector_is_refused_before_durable_staging() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let id = EntityId::now();
+    put(&vault, &id, "initial");
+    put(&vault, &id, "changed");
+    assert!(matches!(
+        vault.put_vector(&id, &[1.0]),
+        Err(crate::Error::DimensionMismatch { .. })
+    ));
+    assert!(vault.put_vector(&id, &[f32::NAN, 0.0, 0.0, 0.0]).is_err());
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    // Neither refused input may supply a vector to the model-free drain.
+    assert!(matches!(
+        vault.refresh_staged_indexed_at_idle(u64::MAX),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    assert_eq!(
+        vault.get_vector(&id).unwrap().unwrap(),
+        vec![1.0, 0.0, 0.0, 0.0]
+    );
 }

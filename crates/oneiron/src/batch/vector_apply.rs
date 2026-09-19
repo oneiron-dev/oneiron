@@ -32,7 +32,16 @@ pub(super) fn apply_vector(
             cleared_pending_embedding: false,
         });
     }
-    if crate::vault::entity_revision::entity_has_pending_revision(store, wtxn, &id)? {
+    // Reject invalid vectors before staging too; deferral is not a validation bypass.
+    validate_vector(store, config, wtxn, vector)?;
+    if crate::vault::entity_revision::defer_index_inputs(
+        store,
+        wtxn,
+        &id,
+        None,
+        Some(vector),
+        pending_embedding_token,
+    )? {
         return Ok(AppliedVector {
             wrote_vector: false,
             cleared_pending_embedding: false,
@@ -60,6 +69,19 @@ pub(super) fn stage_vector_row(
     id: &EntityId,
     vector: &[f32],
 ) -> Result<()> {
+    validate_vector(store, config, wtxn, vector)?;
+
+    let bytes = crate::store::encode_vector_row_v1(vector)?;
+    store.vectors().put(wtxn, id.as_bytes(), &bytes)?;
+    Ok(())
+}
+
+fn validate_vector(
+    store: &impl ManifestDbs,
+    config: &crate::config::VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    vector: &[f32],
+) -> Result<()> {
     crate::store::ensure_model_id_for_vector_write(store, wtxn, config.embedding_model.as_deref())?;
     if vector.len() != config.dimensions {
         return Err(Error::DimensionMismatch {
@@ -71,7 +93,5 @@ pub(super) fn stage_vector_row(
         return Err(error);
     }
 
-    let bytes = crate::store::encode_vector_row_v1(vector)?;
-    store.vectors().put(wtxn, id.as_bytes(), &bytes)?;
     Ok(())
 }
