@@ -591,20 +591,31 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
     Ok(())
 }
 
-// P1 rider + atomicity: a stale proposal (its base no longer matches the head
-// after an intervening edit) is refused, and the refused select is atomic —
-// nothing is appended and no ledger row is written.
+// Stale output is retained atomically; it never overwrites the new head.
 #[test]
-fn stale_base_select_is_refused_atomically() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+fn stale_base_select_becomes_a_durable_proposal_without_rebase() -> Result<()> {
+    let (dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
-
-    // A proposal produced from v1.
-    let prop = proposal("run:stale", b"agent edit off v1", Vec::new());
-
-    // An intervening user edit moves the head to v2 before the agent proposal
-    // settles.
+    let thread = vault.open_annotation_thread(
+        &xlsx_anchor(artifact, 1, "Sheet1", "B5:D8"),
+        actor,
+        "retained anchor",
+        test_time(10),
+        10,
+    )?;
+    let original_thread = vault
+        .get_annotation_thread(&artifact, &thread.thread_id)?
+        .unwrap();
+    let prop = proposal(
+        "run:stale",
+        b"agent edit off v1",
+        vec![EditOp::InsertRows {
+            sheet: "Sheet1".to_owned(),
+            at: 1,
+            count: 2,
+        }],
+    );
     vault.append_blob_artifact_version(
         &artifact,
         b"human edit v2",
@@ -613,26 +624,53 @@ fn stale_base_select_is_refused_atomically() -> Result<()> {
         test_time(11),
         11,
     )?;
-
-    // Settling the now-stale proposal is refused: its base (v1) no longer
-    // matches the head (v2).
-    let err = vault
-        .settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(12), 12)
-        .expect_err("a stale proposal must be refused");
-    assert_eq!(err.kind(), crate::error::ErrorKind::EditProposalStale);
-
-    // Atomic refusal: no v3 appended, no ledger row, no receipt.
+    let out =
+        vault.settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(12), 12)?;
+    let stranded = out
+        .stranded_proposal
+        .expect("stale output remains reviewable");
+    assert_eq!(out.version.version, 2);
+    assert_eq!(stranded.base_version, Some(1));
+    assert_eq!(stranded.head_version, 2);
+    assert_eq!(stranded.new_bytes, prop.new_bytes);
+    assert_eq!(stranded.manifest_bytes, prop.manifest.to_msgpack()?);
+    assert_eq!(out.receipt.outcome, "proposed");
+    assert_eq!(
+        vault
+            .get_annotation_thread(&artifact, &thread.thread_id)?
+            .unwrap()
+            .anchor,
+        original_thread.anchor
+    );
     assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 2);
-    assert!(
+    assert!(vault.settle_receipt_door(&artifact, "run:stale")?.is_none());
+    assert_eq!(
         vault
             .blob_artifact_settlement(&artifact, "run:stale")?
-            .is_none()
+            .unwrap()
+            .outcome,
+        SettleOutcomeKind::Proposed
     );
-    assert!(
+    drop(vault);
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
+    assert_eq!(
+        vault.stranded_edit_proposal(&artifact, "run:stale")?,
+        Some(stranded)
+    );
+    assert_eq!(
         vault
             .receipts(ReceiptQuery::new(50).with_kind(ReceiptKind::ArtifactSettle))?
-            .is_empty()
+            .len(),
+        1
     );
+    let err = vault
+        .settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(13), 13)
+        .unwrap_err();
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::EditProposalAlreadySettled
+    );
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 2);
     Ok(())
 }
 

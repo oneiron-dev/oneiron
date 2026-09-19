@@ -68,6 +68,7 @@ pub(super) const BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX: &[u8] = b"blob_artifact:se
 pub(super) const OUTCOME_SELECTED: &str = "selected";
 
 pub(super) const OUTCOME_DISCARDED: &str = "discarded";
+pub(super) const OUTCOME_PROPOSED: &str = "proposed";
 
 // Receipt field keys.
 
