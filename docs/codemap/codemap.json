@@ -11915,6 +11915,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/failure_ladder/oversight/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "FailureEscalationMode",
@@ -23674,7 +23682,7 @@
      "path": "src/vault/entity_revision/pending_index.rs",
      "purpose": "Caller-supplied index inputs retained until atomic idle publication",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -23684,7 +23692,7 @@
      "path": "src/vault/entity_revision/phonetic.rs",
      "purpose": "Host-derived phonetic codes publish with the same indexed text frontier",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -25808,7 +25816,7 @@
      "purpose": "—"
     },
     "failure_ladder": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -26504,7 +26512,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1522,
-   "test_files": 540
+   "test_files": 541
   },
   "oneiron-bench": {
    "files": [

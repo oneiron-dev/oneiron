@@ -195,3 +195,14 @@ Complete PR939 REST comments/reviews plus GraphQL review-thread refresh retained
 - Featureless Clippy then found a helper and its re-export that had only a sync-enabled embedding-reconciler caller. Both now use `#[cfg(feature = "sync")]`; all base-mode tests remain enabled. The all-features compiled behavior is unchanged, so its green Clippy evidence is retained while the failing and remaining compile lanes continue.
 - Complete PR939 comments, reviews, and inline threads were refreshed at 16:53:45 UTC. There are no new actionable findings. CodeRabbit remains skipped, Qodo reports zero current bugs, and Codex reports running on `42250f0`; that is pending activity, not a pass.
 - A fresh POSIX probe still fails on its second simultaneous semaphore with ENOSPC. Runtime validation remains pending capacity recovery. The workspace Clippy pass does not waive runtime or the remaining compile gates.
+
+### Additional Codex findings at `949f006b` (17:14 UTC)
+
+Complete PR939 comments/reviews/inline threads are retained in the 17:15:06 UTC refresh and `codex-949f006b-findings.json`; review `5256658024` genuinely completed. These findings add to, not replace, the previous ledger:
+
+- `4053957167` — VALID, repaired: decoder and writer require the exact `SCORE_EPSILON` bit pattern. Added a pure codec regression and aligned the residual fixture with the supported format; arbitrary persisted thresholds are not supported.
+- `4053957174` — VALID, repaired: identical type/body with changed temporal metadata creates and retains an exact frontier, and advances Indexed immediately only when previously clean. Existing pending content stays pending; staged text/vector/token/phonetic work is retargeted atomically and its debounce clock is preserved. Simply ignoring header-only writes was rejected because it breaks exact pinned/indexed reads. Added clean and already-pending regressions.
+- `4053957181` — VALID, repaired: validate caller state before the persistence-failure latch; retain in-transaction validation for session writes. Added a public pipeline regression showing later valid telemetry persists after invalid input. Existing storage-failure latch coverage stays enabled.
+- `4053957186` — VALID, repaired: both activity decode doors validate review/proposal ordering before any subtraction or mutation. Added a pure decoder regression and a stored-corruption test for aggregation and review. All four repairs await current-candidate validation; vault-dependent regressions still need host capacity recovery.
+
+The narrow `sync,test-hooks` test binaries compile at `949f006b`. Python collection initially failed because the validation runner's next source sync removed the editable extension; installing and checking in the same snapshot fixes that setup failure. All 146 Python tests collect; the 10 no-vault export/error tests pass. Vault-dependent tests and full gates remain pending POSIX semaphore recovery. These are not waived.

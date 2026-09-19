@@ -929,6 +929,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/lineage.rs` | src | s | 4 struct · 4 enum · 2 crate-vis | FailureLadderOutcome, HandleAttemptFailure, HealerCase, HealerOutcome, HealerRepairRoute, RetryLineagePathology, RetryOrdinal, SurfacedFailure | Retry-lineage walk/ordinal, healer case/route, and surfaced-failure outcome types |
 | `src/failure_ladder/mod.rs` | src | s | 1 mod · 5 re-export · 2 crate-vis | — | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
 | `src/failure_ladder/oversight.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 crate-vis | OversightCounts, OversightKind, OversightReceipt | Per-vault signed oversight over healer proposals and review decisions |
+| `src/failure_ladder/oversight/tests.rs` | test | s | — | — | — |
 | `src/failure_ladder/scope.rs` | src | s | 2 struct · 1 enum · 1 fn | FailureEscalationMode, FailureScope, FailureScopePolicy | Escalation mode, failure scope, and per-scope consecutive-transient policy |
 | `src/failure_ladder/tests.rs` | test | L | — | — | ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry… |
 | `src/failure_ladder/tests/failure_integrity.rs` | test | m | — | — | — |
@@ -1917,8 +1918,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_revision/citations.rs` | src | s | 6 fn | — | Revision-pinned short references and Loro cursor citations |
 | `src/vault/entity_revision/idle.rs` | src | s | 5 fn | — | Idle debounce and atomic BM25/vector/frontier publication |
 | `src/vault/entity_revision/mod.rs` | src | s | 1 re-export · 4 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
-| `src/vault/entity_revision/pending_index.rs` | src | s | 4 crate-vis | — | Caller-supplied index inputs retained until atomic idle publication |
-| `src/vault/entity_revision/phonetic.rs` | src | s | 3 crate-vis | — | Host-derived phonetic codes publish with the same indexed text frontier |
+| `src/vault/entity_revision/pending_index.rs` | src | s | 5 crate-vis | — | Caller-supplied index inputs retained until atomic idle publication |
+| `src/vault/entity_revision/phonetic.rs` | src | s | 4 crate-vis | — | Host-derived phonetic codes publish with the same indexed text frontier |
 | `src/vault/entity_revision/storage.rs` | src | m | 2 fn · 22 crate-vis | — | Transactional revision ledger |
 | `src/vault/entity_revision/storage/tests.rs` | test | s | — | — | Revision debounce clock precision |
 | `src/vault/entity_revision/tests.rs` | test | m | — | — | Acceptance laws exercise the existing put/index/read engines, not a side store |

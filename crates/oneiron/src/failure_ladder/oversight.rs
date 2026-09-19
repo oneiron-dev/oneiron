@@ -15,6 +15,20 @@ struct Activity {
     escalated: bool,
 }
 
+impl Activity {
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let activity: Self =
+            rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("healer activity"))?;
+        if activity
+            .reviewed_at
+            .is_some_and(|at| at < activity.proposed_at)
+        {
+            return Err(Error::CorruptedIndex("healer activity"));
+        }
+        Ok(activity)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OversightKind {
@@ -111,8 +125,7 @@ impl Vault {
                 .vault_meta
                 .get(txn, &key)?
                 .ok_or(Error::InvalidConfig("unknown healer case".into()))?;
-            let mut activity: Activity = rmp_serde::from_slice(&bytes)
-                .map_err(|_| Error::CorruptedIndex("healer activity"))?;
+            let mut activity = Activity::decode(&bytes)?;
             if now < activity.proposed_at {
                 return Err(Error::InvalidConfig("review predates proposal".into()));
             }
@@ -148,8 +161,7 @@ impl Vault {
             };
             for row in self.store.vault_meta.prefix_iter(txn, ACTIVITY)? {
                 let (_, bytes) = row?;
-                let activity: Activity = rmp_serde::from_slice(&bytes)
-                    .map_err(|_| Error::CorruptedIndex("healer activity"))?;
+                let activity = Activity::decode(&bytes)?;
                 if activity.proposed_at > now {
                     continue;
                 }
@@ -194,3 +206,6 @@ impl Vault {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
