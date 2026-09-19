@@ -4,8 +4,8 @@ use super::*;
 fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
     let (_source_dir, source) = unrooted_test_vault();
     seed(&source, writer().entity_ref(), ENTITY_TYPE_PERSON);
-    let actor = seed(&source, entity(0x42), ENTITY_TYPE_AGENT_DEF);
-    let person = seed(&source, entity(0x43), ENTITY_TYPE_PERSON);
+    let actor = seed(&source, EntityId::now(), ENTITY_TYPE_AGENT_DEF);
+    let person = seed(&source, EntityId::now(), ENTITY_TYPE_PERSON);
     let anchor = anchor_actor_subject(&source, actor, person, writer(), 100)?;
     let substrate = set_person_substrate(&source, person, PersonSubstrate::Model, writer(), 100)?;
     let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
@@ -26,7 +26,7 @@ fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
             .inserted_entities,
         0
     );
-    let stranger = seed(&target, entity(0x44), ENTITY_TYPE_PERSON);
+    let stranger = seed(&target, EntityId::now(), ENTITY_TYPE_PERSON);
     let stranger = WriteActor::new(stranger, EdgeActorClass::Human);
     assert!(
         target
@@ -64,10 +64,10 @@ fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
 #[test]
 fn a_stale_subject_review_never_supersedes_an_unreviewed_owner_change() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x51), ENTITY_TYPE_AGENT_DEF);
-    let old = seed(&vault, entity(0x52), ENTITY_TYPE_PERSON);
-    let proposed = seed(&vault, entity(0x53), ENTITY_TYPE_PERSON);
-    let latest = seed(&vault, entity(0x54), ENTITY_TYPE_PERSON);
+    let actor = seed(&vault, EntityId::now(), ENTITY_TYPE_AGENT_DEF);
+    let old = seed(&vault, EntityId::now(), ENTITY_TYPE_PERSON);
+    let proposed = seed(&vault, EntityId::now(), ENTITY_TYPE_PERSON);
+    let latest = seed(&vault, EntityId::now(), ENTITY_TYPE_PERSON);
     let head = anchor_actor_subject(&vault, actor, old, writer(), 100)?;
     let id = EntityId::now();
     let body = imported_subject_body(&subject_fact(
@@ -126,7 +126,7 @@ fn revoked_owner_cannot_complete_a_prepared_subject_restore() -> Result<()> {
     let (_dir, vault) = unrooted_test_vault();
     seed(&vault, writer().entity_ref(), ENTITY_TYPE_PERSON);
     let revoke = authorization::root_owner(&vault, writer(), 0xE3)?;
-    let person = seed(&vault, entity(0x61), ENTITY_TYPE_PERSON);
+    let person = seed(&vault, EntityId::now(), ENTITY_TYPE_PERSON);
     let id = EntityId::now();
     let body = imported_subject_body(&subject_fact(
         PREDICATE_PERSON_SUBSTRATE,
