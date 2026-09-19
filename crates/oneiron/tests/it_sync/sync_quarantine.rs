@@ -1851,8 +1851,14 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
         doc.commit();
         forward_rematerialize(&vault, &doc, &materializer, &window).unwrap();
         assert_eq!(vault.get(&good).unwrap().unwrap(), task_body());
-        for id in [bad, bad_ref, cycle, child, claim] {
-            assert!(vault.get(&id).unwrap().is_none());
+        for (case, id) in [
+            ("body", bad),
+            ("reference", bad_ref),
+            ("cycle", cycle),
+            ("pending child", child),
+            ("event claim", claim),
+        ] {
+            assert_eq!(vault.get(&id).unwrap(), None, "{case}, observer={observer}");
         }
         assert_eq!(vault.project_room(room_id).unwrap(), Some(original_room));
         let records = quarantined_records(&vault).unwrap();

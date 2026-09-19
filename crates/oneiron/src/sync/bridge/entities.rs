@@ -158,15 +158,27 @@ pub(super) fn materialize_entities_from_delta(
                             .push(CompanionCrdtScrub::new(key.as_ref(), id));
                         continue;
                     }
-                    let materialize_result = materialize_entity_blob_in_txn(
-                        vault,
-                        wtxn,
-                        &tombstones_map,
-                        window_key,
-                        key.as_ref(),
-                        blob,
-                        lease_vault_id,
-                    );
+                    // Project ancestry/room reconciliation can reject AFTER
+                    // staging a row. A remote rejection must not commit those
+                    // partial writes with its quarantine record or siblings.
+                    let materialize_result = {
+                        let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+                        match materialize_entity_blob_in_txn(
+                            vault,
+                            &mut savepoint,
+                            &tombstones_map,
+                            window_key,
+                            key.as_ref(),
+                            blob,
+                            lease_vault_id,
+                        ) {
+                            Ok(applied) => {
+                                savepoint.commit()?;
+                                Ok(applied)
+                            }
+                            Err(error) => Err(error),
+                        }
+                    };
                     match materialize_result {
                         Ok(true) => applied_ops.push((id, blob.to_vec())),
                         Ok(false) => {}

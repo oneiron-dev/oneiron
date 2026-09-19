@@ -228,6 +228,20 @@ fn unanswered_terminal_ask_refuses_both_wait_doors_without_a_trap() -> Result<()
         now,
         b"owner",
     )?;
+    // Cancellation is an external-effect door: a mode token is not a grant.
+    vault.mint_standing_outbound_grant(
+        &EntityId::now(),
+        &crate::genui::GrantMintIntent {
+            principal_ref: owner.to_hex(),
+            origin_component_id: "tasks".into(),
+            origin_action_id: "cancel".into(),
+            origin_receipt_ref: None,
+            scope: crate::genui::GrantMintIntentScope::VerbClass {
+                verb_class: TasksVerb::Cancel.as_str().into(),
+            },
+        },
+        now,
+    )?;
     let facade = vault.memory(owner, EdgeActorClass::Human);
     let (EnqueueOutcome::Enqueued(run) | EnqueueOutcome::Existing(run)) = AttemptQueue::new(&vault)
         .enqueue(EnqueueAttempt {
@@ -248,8 +262,29 @@ fn unanswered_terminal_ask_refuses_both_wait_doors_without_a_trap() -> Result<()
             .handle;
         let task = EntityId::from_hex(&handle.task_ref)?;
         if cancel {
-            facade
+            // The cancellation fact records work actually stopped. An ask with
+            // no realizing attempt has nothing for tasks.cancel to stop.
+            let (EnqueueOutcome::Enqueued(realization) | EnqueueOutcome::Existing(realization)) =
+                AttemptQueue::new(&vault).enqueue_with_task_ref(
+                    EnqueueAttempt {
+                        kind: "ask-holder-fixture".into(),
+                        payload: vec![],
+                        dedupe_key: None,
+                        run_id: None,
+                        now,
+                    },
+                    Some(task.to_hex()),
+                )?;
+            let cancelled = facade
                 .tasks_cancel_with_mode(TaskCancelTarget::Task(task), TaskCancelMode::FullAccess)?;
+            assert!(cancelled.effected);
+            assert_eq!(
+                AttemptQueue::new(&vault)
+                    .get(realization.id)?
+                    .unwrap()
+                    .state,
+                crate::attempt_queue::AttemptState::Cancelled,
+            );
             assert!(
                 vault
                     .task_authority_state(task)?
