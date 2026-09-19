@@ -111,7 +111,7 @@ fn selection_input(
     };
     Ok(SelectionCandidate {
         claim_id: candidate.claim_id,
-        first_seen_ms: earliest.unwrap_or(candidate.learned_at.saturating_mul(1_000)),
+        first_seen_ms: earliest.unwrap_or(candidate.learned_at),
         evidence_count: count,
         fan_in,
         new_refs,

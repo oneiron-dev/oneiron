@@ -141,3 +141,61 @@ fn stored_parent_scope(
     }
     Ok(bound)
 }
+
+fn execution_scope_key(attempt: crate::attempt_queue::AttemptId) -> Vec<u8> {
+    [
+        b"dreamer:selection_scope:v1:".as_slice(),
+        attempt.as_bytes(),
+    ]
+    .concat()
+}
+
+/// Persist a caller's attenuation before work can produce a scheduled retry.
+/// Queue payloads stay immutable; this private bound follows the retry chain.
+pub(super) fn pin_execution_scope(
+    vault: &crate::Vault,
+    attempt: crate::attempt_queue::AttemptId,
+    requested: Option<&Scope>,
+) -> Result<Option<Scope>> {
+    vault.with_write_txn(|txn| {
+        let key = execution_scope_key(attempt);
+        let stored: Option<Scope> = vault
+            .store
+            .vault_meta
+            .get(txn, &key)?
+            .map(|raw| {
+                serde_json::from_slice(&raw)
+                    .map_err(|_| invalid_consolidation("invalid execution scope"))
+            })
+            .transpose()?
+            .flatten();
+        let effective = effective_scope(stored, requested)?;
+        let bytes = serde_json::to_vec(&effective)
+            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
+        vault.store.vault_meta.put(txn, &key, &bytes)?;
+        Ok(effective)
+    })
+}
+
+pub(crate) fn inherit_retry_scope_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: crate::attempt_queue::AttemptId,
+    successor: crate::attempt_queue::AttemptId,
+) -> Result<()> {
+    if let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(txn, &execution_scope_key(source))?
+    {
+        let scope: Option<Scope> = serde_json::from_slice(&raw)
+            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
+        let bytes = serde_json::to_vec(&scope)
+            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
+        vault
+            .store
+            .vault_meta
+            .put(txn, &execution_scope_key(successor), &bytes)?;
+    }
+    Ok(())
+}

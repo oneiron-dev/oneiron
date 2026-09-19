@@ -918,46 +918,141 @@ fn production_epoch_timestamps_hold_then_release_and_rank_source_diversity() -> 
         epoch * 1_000 + 1_000,
     )?;
     assert_eq!(ranked.candidates[0].claim_id, recent.claim_id);
+    // Extraction timestamps are already milliseconds when no evidence supplies
+    // a stored seconds-scale timestamp (possible when the configured minimum is zero).
+    recent.evidence_turn_refs.clear();
+    recent.learned_at = epoch * 1_000;
+    diversity.evidence_minimum = 0;
+    diversity.soak_ms = 50_000;
+    vault.set_consolidation_selection(&diversity)?;
+    assert!(
+        super::super::assembly::assemble(
+            &vault,
+            &branch,
+            vec![recent.clone()],
+            epoch * 1_000 + 49_999
+        )?
+        .held
+    );
+    assert!(
+        !super::super::assembly::assemble(&vault, &branch, vec![recent], epoch * 1_000 + 50_000)?
+            .held
+    );
     Ok(())
 }
 
 #[test]
 fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
-    let (attempt, turns, conversation) =
-        admitted_attempt_fixture(&vault, &store, 0x6A, &[("user", "initial evidence")])?;
-    vault.set_consolidation_selection(&selection::SelectionConfig {
-        evidence_minimum: 2,
-        soak_ms: 0,
-        ..Default::default()
-    })?;
-    let subject = conversation;
-    let response = |ids: &[EntityId]| {
-        text_response(
-            serde_json::json!({"candidates":[{
-                "subject":subject.to_hex(),"predicate":"profile.name","value":"supported",
-                "evidence_turn_refs":ids.iter().map(EntityId::to_hex).collect::<Vec<_>>()
-            }]})
-            .to_string(),
-        )
-    };
-    let backend = ScriptedBackend::new(vec![Ok(response(&turns))]);
-    let guard = crate::BudgetGuard::with_reserve_units(
-        "wake",
-        10_000,
-        100,
-        BudgetExhaustionPolicy::Suspend,
-    );
-    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
-    let mut sink = CapturingSink::default();
-    let mut ctx = WakeAttemptContext {
-        vault: &vault,
-        deadline: &deadline,
-        budget_id: "wake",
-        now_ms: 21_000,
-    };
-    let result = {
+    for caller_bounded in [false, true] {
+        let (_dir, vault) = open_vault();
+        let store = DreamerRunnerStore::new(&vault);
+        let (attempt, turns, conversation) =
+            admitted_attempt_fixture(&vault, &store, 0x6A, &[("user", "initial evidence")])?;
+        vault.set_consolidation_selection(&selection::SelectionConfig {
+            evidence_minimum: 2,
+            soak_ms: 0,
+            ..Default::default()
+        })?;
+        let caller_scope = if caller_bounded {
+            let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+            Some(
+                BranchResources::open(
+                    &vault,
+                    vault.dreamer_authority()?,
+                    partition,
+                    &turns,
+                    attempt.status.attempt.id,
+                    None,
+                )?
+                .scope()
+                .clone(),
+            )
+        } else {
+            None
+        };
+        let subject = conversation;
+        let response = |ids: &[EntityId]| {
+            text_response(
+                serde_json::json!({"candidates":[{
+                    "subject":subject.to_hex(),"predicate":"profile.name","value":"supported",
+                    "evidence_turn_refs":ids.iter().map(EntityId::to_hex).collect::<Vec<_>>()
+                }]})
+                .to_string(),
+            )
+        };
+        let backend = ScriptedBackend::new(vec![Ok(response(&turns))]);
+        let guard = crate::BudgetGuard::with_reserve_units(
+            "wake",
+            10_000,
+            100,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+        let mut sink = CapturingSink::default();
+        let mut ctx = WakeAttemptContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms: 21_000,
+        };
+        let result = {
+            let mut executor = ConsolidationExecutor {
+                backend: &backend,
+                guard: &guard,
+                strategy: DreamerClaimAuthoringStrategy::SinglePass,
+                actor: vault.dreamer_authority()?,
+                model: crate::ModelId::new("test/model@r1").unwrap(),
+                sink: &mut sink,
+                scope: caller_scope,
+            };
+            block_on_ready(executor.execute(&attempt, &mut ctx))?
+        };
+        let DreamerAttemptExecution::Deferred {
+            completed_units,
+            retry_at,
+        } = result
+        else {
+            panic!("selection hold must defer");
+        };
+        assert!(sink.accepted.is_empty());
+        store.defer_selection(
+            &attempt,
+            crate::dreamer_runner::SettleDreamerBudget {
+                budget_id: "wake".into(),
+                child_attempt: attempt.status.attempt.id,
+                actual_units: completed_units,
+                now: 21,
+            },
+            retry_at,
+        )?;
+        let next_turn = seed_turn(
+            &vault,
+            &conversation,
+            "assistant",
+            "independent new evidence",
+            22,
+        );
+        let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+            admission: AdmitDreamerAttempt {
+                lease_owner: "worker".into(),
+                budget_id: "wake".into(),
+                budget_total_units: 10_000,
+                reserve_units: 100,
+                now: retry_at,
+                started_milestone: None,
+            },
+        })? {
+            DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+                next,
+            )) => next,
+            other => panic!("{other:?}"),
+        };
+        let backend = ScriptedBackend::new(vec![Ok(response(&[turns[0], next_turn]))]);
+        ctx.now_ms = retry_at * 1_000;
         let mut executor = ConsolidationExecutor {
             backend: &backend,
             guard: &guard,
@@ -967,69 +1062,21 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             sink: &mut sink,
             scope: None,
         };
-        block_on_ready(executor.execute(&attempt, &mut ctx))?
-    };
-    let DreamerAttemptExecution::Deferred {
-        completed_units,
-        retry_at,
-    } = result
-    else {
-        panic!("selection hold must defer");
-    };
-    assert!(sink.accepted.is_empty());
-    store.defer_selection(
-        &attempt,
-        crate::dreamer_runner::SettleDreamerBudget {
-            budget_id: "wake".into(),
-            child_attempt: attempt.status.attempt.id,
-            actual_units: completed_units,
-            now: 21,
-        },
-        retry_at,
-    )?;
-    let next_turn = seed_turn(
-        &vault,
-        &conversation,
-        "assistant",
-        "independent new evidence",
-        22,
-    );
-    let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
-        scope: DreamerConsolidationScope::Micro,
-        local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
-        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-        admission: AdmitDreamerAttempt {
-            lease_owner: "worker".into(),
-            budget_id: "wake".into(),
-            budget_total_units: 10_000,
-            reserve_units: 100,
-            now: retry_at,
-            started_milestone: None,
-        },
-    })? {
-        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
-            next,
-        )) => next,
-        other => panic!("{other:?}"),
-    };
-    let backend = ScriptedBackend::new(vec![Ok(response(&[turns[0], next_turn]))]);
-    ctx.now_ms = retry_at * 1_000;
-    let mut executor = ConsolidationExecutor {
-        backend: &backend,
-        guard: &guard,
-        strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: vault.dreamer_authority()?,
-        model: crate::ModelId::new("test/model@r1").unwrap(),
-        sink: &mut sink,
-        scope: None,
-    };
-    assert!(matches!(
-        block_on_ready(executor.execute(&next, &mut ctx))?,
-        DreamerAttemptExecution::Completed { .. }
-    ));
-    drop(executor);
-    assert_eq!(sink.accepted.len(), 1);
-    assert!(sink.accepted[0].evidence_turn_refs.contains(&next_turn));
+        let outcome = block_on_ready(executor.execute(&next, &mut ctx));
+        drop(executor);
+        if caller_bounded {
+            // A new worker supplies no caller scope, but the prior attenuation is
+            // durable. A model cannot import the newly arrived, ungranted turn.
+            assert!(outcome.is_err());
+            assert!(sink.accepted.is_empty());
+        } else {
+            assert!(matches!(
+                outcome?,
+                DreamerAttemptExecution::Completed { .. }
+            ));
+            assert_eq!(sink.accepted.len(), 1);
+            assert!(sink.accepted[0].evidence_turn_refs.contains(&next_turn));
+        }
+    }
     Ok(())
 }

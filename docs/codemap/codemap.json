@@ -9779,7 +9779,7 @@
      "path": "src/dreamer_consolidation/branch_scope.rs",
      "purpose": "Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 4
      }
     },

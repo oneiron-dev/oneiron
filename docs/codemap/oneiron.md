@@ -766,7 +766,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/distance/prepared.rs` | src | m | 4 crate-vis | — | — |
 | `src/distance/tests.rs` | test | m | — | — | — |
 | `src/dreamer_consolidation/assembly.rs` | src | s | 2 crate-vis | — | Store-backed mechanical inputs for the consolidation executor |
-| `src/dreamer_consolidation/branch_scope.rs` | src | s | 4 fn · 4 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
+| `src/dreamer_consolidation/branch_scope.rs` | src | s | 4 fn · 6 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
 | `src/dreamer_consolidation/conflict.rs` | src | m | 8 struct · 10 fn · 4 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef | — |
 | `src/dreamer_consolidation/executor.rs` | src | m | 1 struct | ConsolidationExecutor | — |
 | `src/dreamer_consolidation/executor/extraction.rs` | src | s | 2 crate-vis | — | Extraction request/response projection for one admitted branch |

@@ -98,3 +98,11 @@ it predates the completed Qodo/Codex reviews collected for this repair.
 Source commits are local; PR 934 remains open. No review or merge completion is
 claimed. Final crate test results and the GitHub explanation will be recorded
 when the queued validation completes.
+
+Follow-up before runtime validation: the first compiler run found the merge
+prior lookup was private to the resources subtree. Its visibility now reaches
+only the owning consolidation module. Scheduled retries also copy a private
+execution-scope pin in the settlement transaction, so removing an ephemeral
+caller scope on a later worker cannot widen the retry. The retry regression
+runs both unbounded and caller-attenuated branches. The timestamp test also
+covers evidence-free candidates: extraction timestamps are already milliseconds.

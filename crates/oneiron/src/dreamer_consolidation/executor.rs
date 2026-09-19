@@ -633,6 +633,11 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
 
+        let branch_scope = super::branch_scope::pin_execution_scope(
+            ctx.vault,
+            attempt.status.attempt.id,
+            branch_scope.as_ref(),
+        )?;
         let payload = retry::refreshed_input(
             ctx.vault,
             self.actor,

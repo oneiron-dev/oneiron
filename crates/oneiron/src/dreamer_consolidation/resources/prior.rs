@@ -90,7 +90,7 @@ impl BranchResources<'_> {
         Ok(())
     }
 
-    pub(super) fn matching_priors(
+    pub(in crate::dreamer_consolidation) fn matching_priors(
         &self,
         candidate: &PromotionCandidate,
         rules: &PredicateKeyRules,
