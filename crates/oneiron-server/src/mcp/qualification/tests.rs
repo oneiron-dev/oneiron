@@ -285,3 +285,25 @@ fn probes_refuse_each_broken_connector_contract() {
         Err(QualificationFailure::IdempotencyArgument)
     );
 }
+
+#[test]
+fn write_probes_refuse_request_ids_as_idempotency_keys() {
+    for timeout_retry in [false, true] {
+        let stub = Stub {
+            fault: Fault::None,
+            connections: Cell::new(0),
+            effects: Rc::default(),
+        };
+        let mut invalid = plan();
+        let call = if timeout_retry {
+            &mut invalid.timeout_retry.call
+        } else {
+            &mut invalid.write.call
+        };
+        call.arguments["idempotency_key"] = Value::String(call.id.clone());
+        assert_eq!(
+            qualify_connector(&stub, &invalid, &Oracle),
+            Err(QualificationFailure::IdempotencyArgument)
+        );
+    }
+}
