@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -38,3 +39,19 @@ class FleetProcessReceiptTests(unittest.TestCase):
             path = Path(directory) / "missing.json"
             self.assertEqual(OBSERVER.observe([str(Path(directory) / "absent")], path), 127)
             self.assertIn("launch_error", json.loads(path.read_text()))
+
+    def test_detached_measurement_has_independent_session_and_terminal_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"detached.json"
+            log=Path(directory)/"child.log"
+            identity=Path(directory)/"identity.json"
+            probe="import os,json;from pathlib import Path;Path("+repr(str(identity))+").write_text(json.dumps({'session':os.getsid(0),'group':os.getpgrp()}));raise SystemExit(7)"
+            self.assertEqual(OBSERVER.detach([sys.executable,"-c",probe],path,log),0)
+            admission=json.loads(Path(str(path)+".admission.json").read_text())
+            pid,status=os.waitpid(admission["observer_pid"],0)
+            self.assertEqual(os.waitstatus_to_exitcode(status),7)
+            self.assertNotEqual(pid,os.getsid(0))
+            self.assertEqual(json.loads(identity.read_text()),{"session":pid,"group":pid})
+            result=json.loads(path.read_text())
+            self.assertTrue(result["terminal"])
+            self.assertEqual(result["exit_code"],7)

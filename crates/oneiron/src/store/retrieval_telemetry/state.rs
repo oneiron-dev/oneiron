@@ -1,6 +1,6 @@
 //! Query-free retrieval context, preserved verbatim for offline replay.
 
-use super::types::RetrievalScoreBreakdown;
+use super::types::{RetrievalScoreBreakdown, RetrievalSignal};
 use serde::{Deserialize, Serialize};
 
 /// The sixteen ARCH-0037 inputs. Missing named-msgpack fields have zero
@@ -26,33 +26,54 @@ pub struct RetrievalState {
     pub intent_class: u8,
 }
 impl RetrievalState {
-    /// One-shot Stop decision context. Scores are normalized together rather
-    /// than mixing raw channel scales. Iterative callers carry their exact
+    /// One-shot Stop decision context. Final scores use one bounded link;
+    /// raw channel components are never added together. Iterative callers carry their exact
     /// pre-decision state through `PipelineBuilder::retrieval_state` instead.
     pub(crate) fn one_shot(scores: &[RetrievalScoreBreakdown]) -> Self {
         let mut values: Vec<f32> = scores
             .iter()
             .map(|row| row.final_score)
             .filter(|s| s.is_finite())
+            .map(|s| s.max(0.0))
             .collect();
         values.sort_by(|a, b| b.total_cmp(a));
-        let top = values.first().copied().unwrap_or(0.0).max(0.0);
-        let scale = top.max(f32::EPSILON);
-        let second = values.get(1).copied().unwrap_or(0.0).max(0.0);
+        let top = values.first().copied().unwrap_or(0.0);
+        let second = values.get(1).copied().unwrap_or(0.0);
+        // The log-blend's neutral score is 1. This bounded link retains its
+        // strength (neutral -> 0.5), unlike division by top, which always gave
+        // 1. Raw single-channel observations remain conditioned on their signal;
+        // bounding them does not make different raw channel units comparable.
+        let squash = |x: f32| x / (1.0 + x);
+        let top_row = scores.iter().min_by(|a, b| {
+            a.final_rank
+                .cmp(&b.final_rank)
+                .then_with(|| b.final_score.total_cmp(&a.final_score))
+                .then_with(|| a.result_id.cmp(&b.result_id))
+        });
+        let mut signals = Vec::new();
+        if let Some(row) = top_row {
+            for component in &row.components {
+                // HyDE retries can repeat Text. Rerank is a host override,
+                // not a corroborating retrieval/blend signal.
+                if component.signal != RetrievalSignal::Rerank
+                    && !signals.contains(&component.signal)
+                {
+                    signals.push(component.signal);
+                }
+            }
+        }
         Self {
-            top_score_norm: top / scale,
-            score_gap_ratio: ((top - second) / scale).clamp(0.0, 1.0),
+            top_score_norm: squash(top),
+            score_gap_ratio: ((top - second) / top.max(f32::EPSILON)).clamp(0.0, 1.0),
             mean_score_norm: if values.is_empty() {
                 0.0
             } else {
-                (values
-                    .iter()
-                    .map(|v| f64::from((*v / scale).clamp(0.0, 1.0)))
-                    .sum::<f64>()
-                    / values.len() as f64) as f32
+                (values.iter().map(|v| f64::from(squash(*v))).sum::<f64>() / values.len() as f64)
+                    as f32
             },
-            result_count: values.len().min(u8::MAX as usize) as u8,
-            novelty_vs_prior: if values.is_empty() { 0.0 } else { 1.0 },
+            result_count: scores.len().min(u8::MAX as usize) as u8,
+            novelty_vs_prior: if scores.is_empty() { 0.0 } else { 1.0 },
+            signal_agreement: signals.len().min(u8::MAX as usize) as u8,
             ..Default::default()
         }
     }

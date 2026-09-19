@@ -129,3 +129,111 @@ fn one_shot_baseline_is_measured_from_stored_runs_without_policy() -> crate::Res
     eprintln!("ONE-SHOT-BASELINE p50_us={p50} p95_us={p95} samples=100 bandit=disabled");
     Ok(())
 }
+
+fn breakdown(rank: u32, score: f32, signals: &[RetrievalSignal]) -> RetrievalScoreBreakdown {
+    RetrievalScoreBreakdown {
+        result_id: [rank as u8; 16],
+        final_rank: rank,
+        final_score: score,
+        components: signals
+            .iter()
+            .map(|signal| RetrievalScoreComponent {
+                signal: *signal,
+                rank,
+                score,
+            })
+            .collect(),
+        access_factor: None,
+    }
+}
+
+#[test]
+fn one_shot_strength_is_not_a_binary_flag_and_agreement_is_distinct() {
+    let weak = RetrievalState::one_shot(&[breakdown(1, 0.2, &[RetrievalSignal::Text])]);
+    let strong = RetrievalState::one_shot(&[
+        breakdown(2, 1.0, &[RetrievalSignal::Text]),
+        breakdown(
+            1,
+            55.0,
+            &[
+                RetrievalSignal::Text,
+                RetrievalSignal::Vector,
+                RetrievalSignal::Text,
+                RetrievalSignal::Salience,
+                RetrievalSignal::Rerank,
+            ],
+        ),
+    ]);
+    assert!(weak.top_score_norm > 0.0 && weak.top_score_norm < 0.5);
+    assert!(strong.top_score_norm > 0.9 && strong.top_score_norm < 1.0);
+    assert!(strong.mean_score_norm <= strong.top_score_norm);
+    assert_eq!(strong.signal_agreement, 3);
+    assert_eq!(weak.signal_agreement, 1);
+    assert_eq!(strong.result_count, 2);
+    assert_eq!(RetrievalState::one_shot(&[]), RetrievalState::default());
+    let malformed = RetrievalState::one_shot(&[
+        breakdown(1, -3.0, &[]),
+        breakdown(2, f32::NAN, &[]),
+        breakdown(3, f32::INFINITY, &[]),
+    ]);
+    assert_eq!(malformed.result_count, 3);
+    assert_eq!(malformed.top_score_norm, 0.0);
+    assert_eq!(malformed.mean_score_norm, 0.0);
+    assert_eq!(malformed.novelty_vs_prior, 1.0);
+}
+
+#[test]
+fn pipeline_persists_one_shot_signals_and_verbatim_host_override() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let id = crate::test_util::entity(0xB4);
+    vault
+        .batch()
+        .put(&id, 1, crate::TimeRange { start: 1, end: 1 }, 1, b"needle")
+        .text(&id, &[("body", "one shot needle")])
+        .commit()?;
+    let automatic = vault
+        .query()
+        .search_text("needle", 10)
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let stored = vault
+        .retrieval_run(automatic.run_id.expect("stored"))?
+        .expect("readable");
+    assert_eq!(automatic.value.len(), 1);
+    assert_eq!(stored.state.result_count, 1);
+    assert_eq!(stored.state.signal_agreement, 1);
+    assert!(stored.state.top_score_norm > 0.0 && stored.state.top_score_norm < 1.0);
+    let host = RetrievalState {
+        top_score_norm: 0.31,
+        score_gap_ratio: 0.11,
+        mean_score_norm: 0.22,
+        entity_coverage: 0.5,
+        novelty_vs_prior: 0.25,
+        signal_agreement: 4,
+        result_count: 7,
+        iteration: 2,
+        budget_remaining: 5,
+        frontier_size: 9,
+        avg_edge_weight: 0.4,
+        graph_degree: 6,
+        temporal_spread: 0.7,
+        hops: 1,
+        last_action: 2,
+        intent_class: 3,
+    };
+    let encoded = rmp_serde::to_vec_named(&host).unwrap();
+    let overridden = vault
+        .query()
+        .search_text("needle", 10)
+        .retrieval_state(host)
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let stored = vault
+        .retrieval_run(overridden.run_id.expect("stored"))?
+        .expect("readable");
+    assert_eq!(
+        rmp_serde::to_vec_named(stored.replay_state()).unwrap(),
+        encoded
+    );
+    Ok(())
+}
