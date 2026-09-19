@@ -153,7 +153,7 @@ export function Palette({
 }: {
   open: boolean
   onClose: () => void
-  onTuner: () => void
+  onTuner?: () => void
 }) {
   const navigate = useNavigate()
   const toggleSound = useSound()
@@ -311,7 +311,9 @@ export function Palette({
           setSound((s) => !s)
         },
       },
-      {
+    ]
+    if (onTuner) {
+      acts.push({
         id: 'act:tuner',
         group: 'acts',
         title: 'tuner',
@@ -321,8 +323,8 @@ export function Palette({
           onClose()
           onTuner()
         },
-      },
-    ]
+      })
+    }
     return [...pages, ...claims, ...acts]
   }, [go, onClose, onTuner, theme, sound, toggleSound])
 
@@ -585,7 +587,7 @@ const KEYS: [string, string][] = [
   ['[', 'fold the rail'],
 ]
 
-export function ShortcutSheet({ shown }: { shown: boolean }) {
+export function ShortcutSheet({ shown, includeRail = true }: { shown: boolean; includeRail?: boolean }) {
   /* the chat panel owns the bottom right corner. when it is open the
      sheet steps to its left instead of landing on top of it. */
   const [beside, setBeside] = React.useState(false)
@@ -599,7 +601,7 @@ export function ShortcutSheet({ shown }: { shown: boolean }) {
       hidden={!shown}
       aria-hidden={!shown}
     >
-      {KEYS.map(([k, what]) => (
+      {KEYS.filter(([k]) => includeRail || k !== '[').map(([k, what]) => (
         <div className="krow" key={k}>
           <kbd>{k}</kbd>
           <span className="kwhat">{what}</span>
