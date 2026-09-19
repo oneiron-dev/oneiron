@@ -55,6 +55,10 @@ pub struct NativeAudioCapabilities {
     pub python_executable: String,
     pub python_version: String,
     pub script_sha256: String,
+    #[serde(default)]
+    pub runtime_profile_sha256: Option<String>,
+    #[serde(default)]
+    pub runtime_helper_sha256: Option<String>,
 }
 impl NativeAudioCapabilities {
     fn require_artifact(&self) -> AudioResult<()> {
@@ -82,6 +86,7 @@ impl NativeAudioCapabilities {
 pub struct CommandMeetingAudioHost {
     config: CommandAudioConfig,
     route: AsrRoute,
+    runtime_profile: Option<(PathBuf, String)>,
 }
 
 impl CommandMeetingAudioHost {
@@ -101,10 +106,24 @@ impl CommandMeetingAudioHost {
         {
             return Err(AudioError::InvalidOptions);
         }
-        Ok(Self { config, route })
+        Ok(Self {
+            config,
+            route,
+            runtime_profile: None,
+        })
     }
 
-    /// Inspect only the native bridge. No audio or weights are sent to it.
+    /// Bind optional native ports to a host-owned, hash-pinned runtime profile.
+    /// The profile is data, not consent, qualification or ASR-selection authority.
+    /// The bridge requires local snapshots and exact runtime/file fingerprints.
+    pub fn with_runtime_profile(mut self, path: PathBuf, digest: String) -> AudioResult<Self> {
+        validate_runtime_profile(&path, &digest)?;
+        self.runtime_profile = Some((path, digest));
+        Ok(self)
+    }
+
+    /// Inspect the native bridge without inference. A configured profile may
+    /// hash local model files, but does not load a model or acquire any bytes.
     pub fn inspect_capabilities(&self) -> AudioResult<NativeAudioCapabilities> {
         let reply = self.call("capabilities", &[], json!({}))?;
         let capabilities: NativeAudioCapabilities = serde_json::from_value(reply.result)
@@ -116,6 +135,24 @@ impl CommandMeetingAudioHost {
             || Path::new(&capabilities.asr_snapshot) != self.config.model_snapshot
         {
             return Err(host_error("capabilities", "CapabilityBindingMismatch"));
+        }
+        if capabilities.runtime_profile_sha256.as_ref()
+            != self.runtime_profile.as_ref().map(|(_, digest)| digest)
+        {
+            return Err(host_error("capabilities", "RuntimeProfileBindingMismatch"));
+        }
+        if let Some(expected) = &capabilities.runtime_helper_sha256 {
+            let helper = self
+                .config
+                .bridge
+                .with_file_name("meeting_audio_runtime.py");
+            let bytes = std::fs::read(helper)
+                .map_err(|_| host_error("capabilities", "RuntimeHelperReadFailed"))?;
+            if &sha256(&bytes) != expected {
+                return Err(host_error("capabilities", "RuntimeHelperBindingMismatch"));
+            }
+        } else if self.runtime_profile.is_some() {
+            return Err(host_error("capabilities", "RuntimeHelperBindingMismatch"));
         }
         Ok(capabilities)
     }
@@ -157,6 +194,14 @@ impl CommandMeetingAudioHost {
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .current_dir(&self.config.workspace)
             .stdin(Stdio::from(input));
+        if let Some((path, digest)) = &self.runtime_profile {
+            validate_runtime_profile(path, digest)?;
+            command
+                .arg("--runtime-profile")
+                .arg(path)
+                .arg("--runtime-profile-sha256")
+                .arg(digest);
+        }
         let (success, output) = process::capture(
             &mut command,
             MAX_PCM + MAX_HEADER,
@@ -244,8 +289,8 @@ impl MeetingAudioHost for CommandMeetingAudioHost {
         {
             return Err(AudioError::InvalidRoute);
         }
-        // The bundled bridge executes text ASR, then refuses missing alignment.
-        // Unaligned text in its error details never becomes AsrWord values.
+        // Only acoustic word alignment can produce AsrWord values. An absent
+        // pinned runtime or unsupported alignment language refuses the call.
         let reply = self.pcm_call(
             "transcribe_pack",
             request.audio,
@@ -321,6 +366,28 @@ impl MeetingAudioHost for CommandMeetingAudioHost {
             provenance: receipt(&reply.result)?,
         })
     }
+}
+
+fn validate_runtime_profile(path: &Path, digest: &str) -> AudioResult<()> {
+    if !path.is_absolute()
+        || !path.is_file()
+        || digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || std::fs::metadata(path)
+            .map_err(|_| host_error("runtime_profile", "ProfileReadFailed"))?
+            .len()
+            > MAX_HEADER as u64
+    {
+        return Err(host_error("runtime_profile", "InvalidProfile"));
+    }
+    let bytes =
+        std::fs::read(path).map_err(|_| host_error("runtime_profile", "ProfileReadFailed"))?;
+    if sha256(&bytes) != digest {
+        return Err(host_error("runtime_profile", "ProfileDigestMismatch"));
+    }
+    Ok(())
 }
 
 struct RequestFile(PathBuf);

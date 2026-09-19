@@ -14671,7 +14671,7 @@
      "path": "src/ingest/meeting_audio/command.rs",
      "purpose": "Optional process adapter for an explicitly configured native meeting-audio host",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 3
      }
     },

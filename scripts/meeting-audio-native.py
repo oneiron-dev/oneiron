@@ -2,8 +2,8 @@
 """Offline native meeting-audio host. Uses existing ffmpeg, Silero and MLX only.
 
 One request per process: bounded JSON header + LF + exact raw input bytes.
-One response: JSON header + LF + optional raw decoded PCM. Never a transcript
-artifact: missing forced alignment/community-1 are explicit refusals.
+One response: JSON header + LF + optional raw decoded PCM. Optional local model
+ports require a hash-pinned host profile; missing ports are explicit refusals.
 Run this with an existing native interpreter, NOT an inline-metadata launcher.
 """
 from __future__ import annotations
@@ -90,7 +90,7 @@ def configure_workspace(path):
         "MPLCONFIGDIR": str(path / "matplotlib"),
         "HF_MODULES_CACHE": str(path / "hf-modules"),
         "NUMBA_CACHE_DIR": str(path / "numba"),
-        "TOKENIZERS_PARALLELISM": "false",
+        "TOKENIZERS_PARALLELISM": "false", "PYANNOTE_METRICS_ENABLED": "0",
     })
     sys.dont_write_bytecode = True
     return path
@@ -111,12 +111,34 @@ def provenance(model, body, **details):
 
 
 class NativeHost:
-    def __init__(self, workspace, ffmpeg, model_snapshot):
+    def __init__(self, workspace, ffmpeg, model_snapshot, runtime_profile=None, runtime_profile_sha256=None):
         self.workspace = workspace
         self.ffmpeg = ffmpeg
         self.model_snapshot = model_snapshot
+        self.runtime_profile = runtime_profile
+        self.runtime_profile_sha256 = runtime_profile_sha256
+        self.loaded_runtime = None
+
+    def runtime(self):
+        if self.runtime_profile is None:
+            return None
+        if self.loaded_runtime is None:
+            path = Path(__file__).with_name("meeting_audio_runtime.py")
+            spec = importlib.util.spec_from_file_location("meeting_audio_runtime", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self.loaded_runtime = module.LocalRuntime(self.runtime_profile, self.runtime_profile_sha256, error=Refusal)
+        return self.loaded_runtime
 
     def capabilities(self):
+        runtime = self.runtime()
+        ports = {"alignment": "transcribe_pack", "diarization": "community1_exclusive_full_file", "cleanup": "cleanup_turns"}
+        available = {stage: runtime is not None and runtime.available(stage) for stage in ports}
+        asr_ready = runtime is not None and runtime.available("asr")
+        if asr_ready and Path(runtime.profile["asr"]["snapshot"]) != self.model_snapshot:
+            raise Refusal("AsrSnapshotBindingMismatch")
+        decoder_ready = self.ffmpeg.is_absolute() and self.ffmpeg.is_file()
+        missing = {"alignment": "forced_word_alignment", "diarization": "community1_exclusive_full_file", "cleanup": "cleanup_model"}
         return {
             "packages": {name: package_version(name) for name in [
                 "mlx", "mlx-metal", "mlx-lm", "mlx-audio", "torch", "silero-vad",
@@ -124,10 +146,13 @@ class NativeHost:
             ]},
             "asr_model_id": ASR_MODEL,
             "asr_snapshot": str(self.model_snapshot),
-            "operations": ["decode", "silero_vad", "transcribe_text"],
-            "artifact_capable": False,
-            "missing": ["forced_word_alignment", "community1_exclusive_full_file",
-                        "cleanup_model"],
+            "operations": ["decode", "silero_vad", "transcribe_text"] + [port for stage, port in ports.items() if available[stage]],
+            "artifact_capable": all(available.values()) and asr_ready and decoder_ready,
+            "missing": [missing[stage] for stage in ports if not available[stage]]
+                       + ([] if runtime is None or asr_ready else ["pinned_asr_model"])
+                       + ([] if runtime is None or decoder_ready else ["decoder"]),
+            "runtime_profile_sha256": self.runtime_profile_sha256,
+            "runtime_helper_sha256": sha256(Path(__file__).with_name("meeting_audio_runtime.py").read_bytes()),
             "e1_e3_evidence": False,
             "python_executable": sys.executable,
             "python_version": sys.version.split()[0],
@@ -213,6 +238,9 @@ class NativeHost:
     def transcribe_text(self, body, options):
         glossary, language = self.validate_asr_options(options)
         snapshot = self.model_snapshot
+        runtime = self.runtime()
+        if runtime is not None and Path(runtime.require("asr")["snapshot"]) != snapshot:
+            raise Refusal("AsrSnapshotBindingMismatch")
         if not snapshot.is_absolute() or not snapshot.is_dir():
             raise Refusal("AsrModelUnavailable")
         required = ["config.json", "tokenizer_config.json", "preprocessor_config.json",
@@ -262,12 +290,16 @@ class NativeHost:
             return self.transcribe_text(body, options)
         if operation == "transcribe_pack":
             self.validate_asr_options(options)
-            # This bridge cannot align words. Refuse before loading weights or
-            # spending inference; transcribe_text remains an explicit probe.
-            raise Refusal("ForcedAlignmentUnavailable", {
-                "requires": "installed forced-word aligner and its local weights",
-                "artifact": None,
-            })
+            runtime = self.runtime()
+            if runtime is None:
+                raise Refusal("ForcedAlignmentUnavailable")
+            runtime.require("alignment")
+            language = runtime.alignment_language(options["language_hint"])
+            text, _ = self.transcribe_text(body, options)
+            words = runtime.align(self.pcm(body), text["text"], language, (len(body) // 2 + 15) // 16)
+            return {"words": words, "aligner_model": runtime.profile["alignment"]["model_id"],
+                    "provenance": provenance(ASR_MODEL, body, runtime_profile_sha256=self.runtime_profile_sha256,
+                                             runtime_helper_sha256=sha256(Path(__file__).with_name("meeting_audio_runtime.py").read_bytes()))}, b""
         if options:
             raise Refusal("UnexpectedOptions")
         if operation == "capabilities":
@@ -279,9 +311,23 @@ class NativeHost:
         if operation == "silero_vad":
             return self.vad(body)
         if operation == "community1_exclusive_full_file":
-            raise Refusal("Community1Unavailable", {"requires": COMMUNITY_MODEL})
+            runtime = self.runtime()
+            if runtime is None:
+                raise Refusal("Community1Unavailable")
+            tracks = runtime.diarize(self.pcm(body), (len(body) // 2 + 15) // 16)
+            return {"exclusive_tracks": tracks, "provenance": provenance(COMMUNITY_MODEL, body,
+                    runtime_profile_sha256=self.runtime_profile_sha256, full_file_samples=len(body) // 2)}, b""
         if operation == "cleanup_turns":
-            raise Refusal("CleanupBackendUnavailable")
+            runtime = self.runtime()
+            if runtime is None:
+                raise Refusal("CleanupBackendUnavailable")
+            try:
+                turns = json.loads(body)
+            except (ValueError, UnicodeError):
+                raise Refusal("InvalidCleanupInput") from None
+            texts = runtime.cleanup(turns)
+            return {"texts": texts, "provenance": provenance(runtime.profile["cleanup"]["model_id"], body,
+                    runtime_profile_sha256=self.runtime_profile_sha256)}, b""
         raise Refusal("UnknownOperation")
 
 
@@ -367,6 +413,8 @@ def main():
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--ffmpeg", type=Path)
     parser.add_argument("--model-snapshot", type=Path)
+    parser.add_argument("--runtime-profile", type=Path)
+    parser.add_argument("--runtime-profile-sha256")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -374,12 +422,15 @@ def main():
         return 0
     if args.workspace is None or args.ffmpeg is None or args.model_snapshot is None:
         parser.error("--workspace, --ffmpeg and --model-snapshot are required")
+    if (args.runtime_profile is None) != (args.runtime_profile_sha256 is None):
+        parser.error("runtime profile path and SHA-256 must be supplied together")
     try:
         workspace = configure_workspace(args.workspace)
     except Refusal as error:
         sys.stderr.write(error.code + "\n")
         return 2
-    host = NativeHost(workspace, args.ffmpeg, args.model_snapshot)
+    host = NativeHost(workspace, args.ffmpeg, args.model_snapshot,
+                      args.runtime_profile, args.runtime_profile_sha256)
     return serve(host, sys.stdin.buffer, sys.stdout.buffer)
 
 
