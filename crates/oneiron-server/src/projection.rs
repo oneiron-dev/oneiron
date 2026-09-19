@@ -246,6 +246,16 @@ fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {
             )])
         });
     }
+    if entity_type == ENTITY_TYPE_FACET {
+        let mut cursor = std::io::Cursor::new(body);
+        if rmpv::decode::read_value(&mut cursor).is_err() || cursor.position() != body.len() as u64
+        {
+            return Map::from_iter([(
+                "redacted".to_owned(),
+                Value::String("invalid_companion_register_body".to_owned()),
+            )]);
+        }
+    }
     // Companion records now live on FACET rows: a body that decodes as a
     // companion record projects through the redacting companion shape, never
     // the generic MessagePack shape that would leak private values. A FACET
