@@ -4649,13 +4649,14 @@ fn residual_cache_resume_matches_fresh_bits_on_branching_graph() -> Result<()> {
 }
 
 #[test]
-fn residual_survives_codec_and_only_pushes_above_stored_threshold() -> Result<()> {
+fn residual_survives_codec_below_canonical_threshold() -> Result<()> {
     let temp = tempdir()?;
     let vault = Vault::open(temp.path(), embedding_test_config())?;
     let a = entity(121);
     let b = entity(122);
     vault.put_edge(&a, EdgeKind::Mentions, &b, 1.0)?;
     let txn = vault.store.env.read_txn()?;
+    let mass = SCORE_EPSILON / 2.0;
     let initial = PprCacheState {
         completed_depth: 0,
         scores: vec![ScoredEntity { id: a, score: 0.1 }],
@@ -4664,9 +4665,9 @@ fn residual_survives_codec_and_only_pushes_above_stored_threshold() -> Result<()
         residual: vec![super::walk::PprFrontierEntry {
             id: a,
             structural_hops: 0,
-            score: 0.1,
+            score: mass,
         }],
-        push_threshold: 0.2,
+        push_threshold: SCORE_EPSILON,
     };
     let bytes = encode_cache_value_with_state(1, 1, 0, &initial)?;
     let roundtrip = decode_cache_state(&bytes[CACHE_HEADER_LEN..])?;
@@ -4681,18 +4682,6 @@ fn residual_survives_codec_and_only_pushes_above_stored_threshold() -> Result<()
     )?;
     assert_eq!(result.scores, vec![ScoredEntity { id: a, score: 0.1 }]);
     let bytes = encode_cache_value_with_state(1, 1, 0, &result)?;
-    let mut lowered = decode_cache_state(&bytes[CACHE_HEADER_LEN..])?;
-    lowered.push_threshold = 0.01;
-    let pushed = super::walk::ppr_resume_state_weighted(
-        &vault.store,
-        &txn,
-        &[a],
-        SeedWeighting::Uniform,
-        3,
-        PprAlphas::default_vad(0.15),
-        lowered,
-    )?;
-    assert!(score_for(&pushed.scores, b) > 0.0);
     let mut corrupt = bytes[CACHE_HEADER_LEN..].to_vec();
     corrupt[25..29].copy_from_slice(&f32::NAN.to_le_bytes());
     assert!(matches!(
@@ -4717,20 +4706,20 @@ fn cache_decoder_refuses_duplicate_scores_and_frontier_residual_keys() -> Result
             frontier: vec![entry.clone()],
             dependencies: vec![id],
             residual: vec![],
-            push_threshold: 0.2,
+            push_threshold: SCORE_EPSILON,
         };
         match duplicate {
             0 => state.scores.push(ScoredEntity { id, score: 1.0 }),
             1 => state.frontier.push(entry.clone()),
             2 => state.residual.push(super::walk::PprFrontierEntry {
-                score: 0.1,
+                score: SCORE_EPSILON / 2.0,
                 ..entry.clone()
             }),
             _ => {
                 state.frontier.clear();
                 state.residual = vec![
                     super::walk::PprFrontierEntry {
-                        score: 0.1,
+                        score: SCORE_EPSILON / 2.0,
                         ..entry.clone()
                     };
                     2
@@ -4740,6 +4729,46 @@ fn cache_decoder_refuses_duplicate_scores_and_frontier_residual_keys() -> Result
         let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
         assert!(matches!(
             decode_cache_state(&bytes[CACHE_HEADER_LEN..]),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn cache_state_threshold_is_pinned_to_writer_value() -> Result<()> {
+    let id = entity(124);
+    let mut state = PprCacheState {
+        completed_depth: 0,
+        scores: vec![ScoredEntity { id, score: 1.0 }],
+        frontier: Vec::new(),
+        dependencies: vec![id],
+        residual: vec![super::walk::PprFrontierEntry {
+            id,
+            structural_hops: 0,
+            score: SCORE_EPSILON / 2.0,
+        }],
+        push_threshold: SCORE_EPSILON,
+    };
+    let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
+    assert!(decode_cache_state(&bytes[CACHE_HEADER_LEN..]).is_ok());
+    for threshold in [
+        0.0,
+        -0.0,
+        1.0,
+        f32::from_bits(SCORE_EPSILON.to_bits() + 1),
+        f32::INFINITY,
+        f32::NAN,
+    ] {
+        let mut payload = bytes[CACHE_HEADER_LEN..].to_vec();
+        payload[25..29].copy_from_slice(&threshold.to_le_bytes());
+        assert!(matches!(
+            decode_cache_state(&payload),
+            Err(Error::CorruptedIndex(_))
+        ));
+        state.push_threshold = threshold;
+        assert!(matches!(
+            encode_cache_value_with_state(1, 1, 0, &state),
             Err(Error::CorruptedIndex(_))
         ));
     }

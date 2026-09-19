@@ -11,7 +11,7 @@ use crate::pipeline::ScoredEntity;
 use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Store};
 
 use super::query::DeferredPprCacheWrite;
-use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry};
+use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
 
 pub(super) const SEED_HASH_LEN: usize = 16;
 #[cfg(test)]
@@ -550,7 +550,7 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
 
     let residual_count = decode_u32(&payload[21..25], "ppr cache residual")? as usize;
     let push_threshold = f32::from_le_bytes(payload[25..29].try_into().expect("checked prefix"));
-    if !push_threshold.is_finite() || push_threshold < 0.0 || completed_depth > MAX_PPR_DEPTH {
+    if push_threshold.to_bits() != SCORE_EPSILON.to_bits() || completed_depth > MAX_PPR_DEPTH {
         return Err(Error::CorruptedIndex("ppr cache residual"));
     }
     let residual_bytes = residual_count
@@ -671,7 +671,7 @@ pub(super) fn encode_cache_value_with_state(
 
     let residual_count = u32::try_from(state.residual.len())
         .map_err(|_| Error::CorruptedIndex("ppr cache residual"))?;
-    if !state.push_threshold.is_finite() || state.push_threshold < 0.0 {
+    if state.push_threshold.to_bits() != SCORE_EPSILON.to_bits() {
         return Err(Error::CorruptedIndex("ppr cache residual"));
     }
     let mut value = Vec::with_capacity(
