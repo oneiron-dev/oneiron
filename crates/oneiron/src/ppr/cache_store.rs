@@ -517,7 +517,7 @@ fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
             let id = EntityId::from_bytes(id_bytes)
                 .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?;
             let score = f32::from_le_bytes([s0, s1, s2, s3]);
-            if !score.is_finite() || !seen.insert(id) {
+            if !score.is_finite() || score < 0.0 || !seen.insert(id) {
                 return Err(Error::CorruptedIndex("ppr cache scores"));
             }
             Ok(ScoredEntity { id, score })
@@ -693,6 +693,9 @@ pub(super) fn encode_cache_value_with_state(
     value.extend_from_slice(&residual_count.to_le_bytes());
     value.extend_from_slice(&state.push_threshold.to_le_bytes());
     for scored in &state.scores {
+        if !scored.score.is_finite() || scored.score < 0.0 {
+            return Err(Error::CorruptedIndex("ppr cache scores"));
+        }
         value.extend_from_slice(scored.id.as_bytes());
         value.extend_from_slice(&scored.score.to_le_bytes());
     }

@@ -4774,3 +4774,41 @@ fn cache_state_threshold_is_pinned_to_writer_value() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn cache_scores_refuse_negative_mass_at_both_codec_doors() -> Result<()> {
+    let id = entity(125);
+    let mut state = PprCacheState {
+        completed_depth: 0,
+        scores: vec![ScoredEntity { id, score: 1.0 }],
+        frontier: Vec::new(),
+        dependencies: vec![id],
+        residual: Vec::new(),
+        push_threshold: SCORE_EPSILON,
+    };
+    let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
+    for score in [-1.0, -f32::MIN_POSITIVE, -f32::from_bits(1)] {
+        let mut payload = bytes[CACHE_HEADER_LEN..].to_vec();
+        payload[45..49].copy_from_slice(&score.to_le_bytes());
+        assert!(matches!(
+            decode_cache_state(&payload),
+            Err(Error::CorruptedIndex(_))
+        ));
+        state.scores[0].score = score;
+        assert!(matches!(
+            encode_cache_value_with_state(1, 1, 0, &state),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
+    for score in [0.0, 1.0] {
+        state.scores[0].score = score;
+        let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
+        assert_eq!(
+            decode_cache_state(&bytes[CACHE_HEADER_LEN..])?.scores[0]
+                .score
+                .to_bits(),
+            score.to_bits()
+        );
+    }
+    Ok(())
+}
