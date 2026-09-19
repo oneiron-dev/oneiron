@@ -54,3 +54,28 @@ Do not post C10 changes to C08. Preserve this result with the raw API receipts.
   Preserve C15 document fields if updating against main; regenerate maps.
 
 Validation and final dispositions will be appended after implementation.
+
+
+## Publication and validation handoff — 2026-09-19
+
+After the recovery commits, C10 was published as PR #939 at
+`b4e0d63d6df2ca2dbc74b304d9475b75b31702f8`. PR #933 remains unrelated C08 custody.
+The repair/disposition explanation is posted at
+<https://github.com/oneiron-dev/oneiron/pull/939#issuecomment-5742758448>.
+
+The first complete own-PR refresh collected top-level comments, reviews, inline
+comments and GraphQL review threads. At that snapshot there were no reviews or
+inline findings. Codex comment `5742741731` reports **Running**, not quota failure;
+Qodo comment `5742743884` reports work in progress. CodeRabbit comment `5742741448`
+explicitly reports auto-review disabled. These are statuses, not clean reviews.
+Greptile is disabled and Bugbot declined this diff; neither was counted as a pass.
+The raw paginated receipts are retained with the ticket. Refresh these same
+surfaces before any additional bot-driven repair, and record provider failures
+explicitly rather than waiting on a failed request.
+
+All recovery changes are committed separately by concern. Current main is merged;
+only comment differences in the two secret fixtures needed manual resolution.
+Generated code maps were regenerated, C15 document connection state was retained,
+and the merge rehearsal returned success. Scoped and full native validation are
+queued under the existing C10 target lock and one existing MacBook slot. A pending
+job is not passing evidence; terminal results will be appended here.
