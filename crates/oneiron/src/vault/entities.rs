@@ -257,14 +257,21 @@ impl Vault {
             // full-length queries; the skip-rescore hot lane is a pipeline
             // feature (a `fast_dims`-length query is inherently prefix-only
             // on every path — no full query exists to rescore).
-            hnsw::hnsw_search(
+            let candidates = hnsw::hnsw_search(
                 &self.store,
                 &self.config,
                 &rtxn,
                 query,
                 limit,
                 /* skip_rescore = */ false,
-            )?
+            )?;
+            let mut visible = Vec::with_capacity(candidates.len());
+            for hit in candidates {
+                if crate::note::ordinary_entity_visible(&self.store, &rtxn, &hit.id)? {
+                    visible.push(hit);
+                }
+            }
+            visible
         };
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Vector,

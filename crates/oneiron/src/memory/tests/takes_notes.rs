@@ -285,6 +285,7 @@ fn raw_note_put_is_refused_at_the_batch_door() {
         kind: NoteKind::OpinionTake,
         author_ref: impostor,
         markdown: "words the impostor never wrote".to_owned(),
+        source_revision_ref: [0x42; 16],
     })
     .expect("body encodes");
 
@@ -492,5 +493,244 @@ fn facade_stale_retract_exposes_invalid_state_and_successor() {
             .expect("prior")
             .lifecycle,
         ClaimLifecycleStatus::Superseded
+    );
+}
+
+#[test]
+fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
+    use crate::claim::ScopedReadActorKey;
+    use crate::context_pack::ContextEntity;
+    use crate::note::{NoteScope, NoteWriteEnvelope};
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x61);
+    let other = put_person(&vault, 0x62);
+    let owner_memory = facade_for(&vault, owner);
+    let other_memory = facade_for(&vault, other);
+    let revision = [0x63; 16];
+    let receipt = owner_memory
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: owner },
+            source_revision_ref: revision,
+            markdown: "privatecanary journal".to_owned(),
+        })
+        .expect("diary via NOTE writer");
+    let id = EntityId::from_hex(&receipt.id_hex).expect("note id");
+    let body = note_body_of(&vault, &id);
+    assert_eq!(body.kind, NoteKind::Diary);
+    assert_eq!(body.author_ref, owner);
+    assert_eq!(body.source_revision_ref, revision);
+    assert!(
+        vault
+            .edges_out(&id)
+            .expect("edges")
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::AuthoredBy && edge.target == owner)
+    );
+    assert!(
+        owner_memory
+            .get_entity(&receipt.id_hex)
+            .expect("owner read")
+            .is_some()
+    );
+    assert!(
+        other_memory
+            .get_entity(&receipt.id_hex)
+            .expect("other read")
+            .is_none()
+    );
+    assert!(
+        other_memory
+            .hydrate(std::slice::from_ref(&receipt.entity_ref))
+            .is_err()
+    );
+
+    let owner_read = vault
+        .scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").expect("key"));
+    let other_read = vault
+        .scoped_read(ScopedReadActorKey::with_actor_class(other.to_hex(), "human").expect("key"));
+    assert_eq!(
+        crate::note::decode_note_body(&owner_read.get(&id).expect("read").expect("body"))
+            .expect("decode"),
+        body
+    );
+    assert!(other_read.get(&id).expect("read").is_none());
+    assert!(other_read.get_entity_parts(&id).expect("parts").is_none());
+    let (short, hash) =
+        crate::entity_id::parse_short_ref_syntax(&receipt.entity_ref).expect("short ref");
+    assert!(
+        owner_read
+            .hydrate_short_id(short, hash)
+            .expect("owner hydrate")
+            .is_some()
+    );
+    assert!(
+        other_read
+            .hydrate_short_id(short, hash)
+            .expect("other hydrate")
+            .is_none()
+    );
+    assert!(
+        other_read
+            .memory_timeline(&id)
+            .expect("timeline")
+            .records
+            .is_empty()
+    );
+    assert!(other_read.edges_out(&id).expect("edges").is_none());
+    let classless = vault.scoped_read(ScopedReadActorKey::new(owner.to_hex()).expect("key"));
+    assert!(classless.get(&id).expect("class required").is_none());
+    let wrong_class = vault
+        .scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "system").expect("key"));
+    assert!(wrong_class.get(&id).expect("class bound").is_none());
+
+    // A private row must stay hidden even if an index or graph nominates it.
+    vault
+        .batch()
+        .text(&id, &[("body", "privatecanary journal")])
+        .text(&other, &[("body", "publiccanary")])
+        .edge(&other, EdgeKind::About, &id, 1.0)
+        .commit()
+        .expect("index + edge");
+    assert!(
+        vault
+            .search_text("privatecanary", 10)
+            .expect("bare search")
+            .is_empty()
+    );
+    assert!(
+        other_memory
+            .query_bm25("privatecanary", 10)
+            .expect("bm25")
+            .is_empty()
+    );
+    for memory in [&owner_memory, &other_memory] {
+        for effort in [Effort::Minimal, Effort::Standard] {
+            let recalled = memory
+                .recall(
+                    "privatecanary",
+                    effort,
+                    &RecallScope::default(),
+                    10,
+                    Some("json"),
+                    None,
+                )
+                .expect("recall");
+            assert!(recalled.items.is_empty());
+            assert!(
+                !recalled
+                    .rendered
+                    .unwrap_or_default()
+                    .contains("privatecanary")
+            );
+        }
+    }
+    let pack = vault
+        .context_pack()
+        .search_text("publiccanary", 10)
+        .include_edges(true)
+        .edge_hop(2)
+        .run()
+        .expect("ordinary pack");
+    assert!(
+        !pack
+            .results
+            .iter()
+            .chain(&pack.neighbors)
+            .any(|entity| entity.id == id)
+    );
+    assert!(
+        !pack
+            .results
+            .iter()
+            .chain(&pack.neighbors)
+            .flat_map(|entity| entity.edges.iter().flatten())
+            .any(|edge| edge.target == id)
+    );
+    assert!(
+        other_memory
+            .neighbors(
+                &other.to_hex(),
+                &NeighborOpts {
+                    limit: 10,
+                    ..Default::default()
+                }
+            )
+            .expect("neighbors")
+            .iter()
+            .all(|hit| hit.short_id != receipt.entity_ref)
+    );
+
+    // A caller-supplied assembled pack is checked too, including orphaned
+    // neighbors that were reachable only from the excluded diary result.
+    let mut injected = vault
+        .context_pack()
+        .search_text("no-such-content", 10)
+        .run()
+        .expect("empty pack");
+    let entity = ContextEntity {
+        id,
+        short_id: receipt.entity_ref.clone(),
+        content_hash: hash,
+        entity_type: ENTITY_TYPE_NOTE,
+        score: 1.0,
+        fields: None,
+        edges: None,
+        vector: None,
+    };
+    injected.results = vec![entity.clone()];
+    injected.neighbors = vec![ContextEntity {
+        id: owner,
+        entity_type: ENTITY_TYPE_PERSON,
+        ..entity
+    }];
+    let mut owner_pack = injected.clone();
+    owner_read
+        .filter_context_pack(&mut owner_pack)
+        .expect("owner pack");
+    assert_eq!(owner_pack.results[0].id, id);
+    other_read
+        .filter_context_pack(&mut injected)
+        .expect("other pack");
+    assert!(injected.results.is_empty());
+    assert!(injected.neighbors.is_empty());
+}
+
+#[test]
+fn diary_note_rejects_foreign_or_public_scope_without_writing() {
+    use crate::note::{NoteScope, NoteWriteEnvelope};
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x64);
+    let other = put_person(&vault, 0x65);
+    let memory = facade_for(&vault, owner);
+    for (kind, scope) in [
+        (
+            NoteKind::Diary,
+            NoteScope::ActorPrivate { owner_ref: other },
+        ),
+        (
+            NoteKind::Diary,
+            NoteScope::About(TakeTarget::Subject(owner)),
+        ),
+        (
+            NoteKind::OpinionTake,
+            NoteScope::ActorPrivate { owner_ref: owner },
+        ),
+    ] {
+        let error = memory
+            .author_note(&NoteWriteEnvelope {
+                kind,
+                scope,
+                source_revision_ref: [0x66; 16],
+                markdown: "privatecanary".to_owned(),
+            })
+            .expect_err("scope mismatch");
+        assert_eq!(error.code, MEMORY_CODE_FORBIDDEN);
+    }
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_NOTE)
+            .expect("notes")
+            .is_empty()
     );
 }

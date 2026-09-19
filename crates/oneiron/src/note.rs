@@ -1,23 +1,5 @@
-//! ARCH-0032 NOTE primitive, cut to the single kind this ticket lands:
-//! `opinion/take` (registry record OF-330).
-//!
-//! A take is an actor's *opinion about* something, written BESIDE the thing
-//! rather than into it. That placement is the point: ARCH-0003 CLAIMs are
-//! neutral subject·predicate·value records, so an actor who disagrees with a
-//! claim must not edit it — [`crate::memory::Memory::author_take`]
-//! appends a NOTE and links it with `ClaimOf`, leaving the target byte-for-byte
-//! untouched. Two actors over one claim therefore produce two NOTE entities,
-//! never an upsert keyed by `(actor, target)`.
-//!
-//! [`NoteKind`] is deliberately CLOSED at one variant. The other six ARCH-0032
-//! kinds (Scratchpad, Observation, Handoff, Research, Reflection, Diary) and
-//! pack-defined `Plugin` kinds are not designed for the live engine yet;
-//! placeholder variants would publish a wire surface nothing can honour.
-//!
-//! Byte law: the engine registers NOTE at [`crate::registry::ENTITY_TYPE_NOTE`]
-//! (86, productivity band). Canon assigns 106 under BYTE-SPACE REDESIGN v3 and
-//! ONE-1754 executes the persisted re-key as one atomic v3 map; this module
-//! never writes a migration and never names 106.
+//! Attributed NOTE records: public opinions and actor-private diary entries.
+//! Scratchpads are Context Board blocks, never NOTE kinds.
 
 use rmpv::Value;
 
@@ -25,34 +7,44 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
 /// The pinned NOTE body ABI. A NOTE body is exactly one MessagePack map over
-/// these three string keys — no more, no fewer, no repeats.
-pub const NOTE_BODY_KEYS: [&str; 3] = ["kind", "author_ref", "markdown"];
+/// these four string keys — no more, no fewer, no repeats.
+pub const NOTE_BODY_KEYS: [&str; 4] = ["kind", "author_ref", "markdown", "source_revision_ref"];
 
 const KEY_KIND: &str = NOTE_BODY_KEYS[0];
 const KEY_AUTHOR_REF: &str = NOTE_BODY_KEYS[1];
 const KEY_MARKDOWN: &str = NOTE_BODY_KEYS[2];
+const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 
 /// The kind discriminator of a NOTE body.
 ///
-/// Closed at one variant on purpose — see the module doc. `parse` fails closed
+/// Closed to the implemented kinds. `parse` fails closed
 /// so an unknown wire string can never widen the enum by accident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteKind {
     /// An actor's attributed opinion about a subject or a claim.
     OpinionTake,
+    /// Private to the author. Ordinary retrieval never includes this kind.
+    Diary,
 }
 
 impl NoteKind {
     /// The pinned wire literal. This string IS the storage ABI.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
-        "opinion/take"
+        match self {
+            Self::OpinionTake => "opinion/take",
+            Self::Diary => "diary",
+        }
     }
 
     /// Parses the wire literal; `None` for anything else.
     #[must_use]
     pub fn parse(raw: &str) -> Option<Self> {
-        (raw == Self::OpinionTake.as_str()).then_some(Self::OpinionTake)
+        match raw {
+            "opinion/take" => Some(Self::OpinionTake),
+            "diary" => Some(Self::Diary),
+            _ => None,
+        }
     }
 }
 
@@ -66,6 +58,8 @@ pub struct NoteBody {
     pub kind: NoteKind,
     pub author_ref: EntityId,
     pub markdown: String,
+    /// Opaque source revision identity, stored as exactly 16 binary bytes.
+    pub source_revision_ref: [u8; 16],
 }
 
 /// What a take is about.
@@ -79,7 +73,26 @@ pub enum TakeTarget {
     Claim(EntityId),
 }
 
-/// Encodes a NOTE body to the pinned three-key MessagePack map.
+/// The scope a NOTE writer binds to the facade's verified actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteScope {
+    /// An opinion beside a subject or claim.
+    About(TakeTarget),
+    /// A diary belonging to exactly this actor, never a vault-wide audience.
+    ActorPrivate { owner_ref: EntityId },
+}
+
+/// A typed write request. The facade supplies author identity; callers cannot
+/// supply an independent stored author or widen a diary's scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteWriteEnvelope {
+    pub kind: NoteKind,
+    pub scope: NoteScope,
+    pub markdown: String,
+    pub source_revision_ref: [u8; 16],
+}
+
+/// Encodes a NOTE body to the pinned four-key MessagePack map.
 pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
     validate_markdown(&body.markdown)?;
     let value = Value::Map(vec![
@@ -91,6 +104,10 @@ pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
         (
             Value::from(KEY_MARKDOWN),
             Value::from(body.markdown.as_str()),
+        ),
+        (
+            Value::from(KEY_SOURCE_REVISION),
+            Value::Binary(body.source_revision_ref.to_vec()),
         ),
     ]);
     let mut out = Vec::new();
@@ -123,6 +140,7 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
     let mut kind: Option<NoteKind> = None;
     let mut author_ref: Option<EntityId> = None;
     let mut markdown: Option<String> = None;
+    let mut source_revision_ref = None;
     let mut seen = [false; NOTE_BODY_KEYS.len()];
 
     for (key, value) in &entries {
@@ -175,11 +193,26 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
                 validate_markdown(raw)?;
                 markdown = Some(raw.to_owned());
             }
+            KEY_SOURCE_REVISION => {
+                let Value::Binary(bytes) = value else {
+                    return Err(Error::Record(RecordError::InvalidNoteBody(
+                        "source_revision_ref must be 16 binary bytes",
+                    )));
+                };
+                source_revision_ref = Some(bytes.as_slice().try_into().map_err(|_| {
+                    Error::Record(RecordError::InvalidNoteBody(
+                        "source_revision_ref must be 16 binary bytes",
+                    ))
+                })?);
+            }
             _ => unreachable!("index resolved from NOTE_BODY_KEYS"),
         }
     }
 
     Ok(NoteBody {
+        source_revision_ref: source_revision_ref.ok_or(Error::Record(
+            RecordError::InvalidNoteBody("missing required body key source_revision_ref"),
+        ))?,
         kind: kind.ok_or(Error::Record(RecordError::InvalidNoteBody(
             "missing required body key kind",
         )))?,
@@ -199,6 +232,30 @@ fn validate_markdown(markdown: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Shared admission for every NOTE-bearing read. No actor means an ordinary
+/// retrieval, which excludes diaries even when the caller owns the vault.
+pub(crate) fn note_body_readable(bytes: &[u8], actor: Option<&EntityId>) -> bool {
+    decode_note_body(bytes)
+        .is_ok_and(|body| body.kind == NoteKind::OpinionTake || actor == Some(&body.author_ref))
+}
+
+/// Ordinary retrieval's NOTE privacy floor. Unrelated entity kinds and missing
+/// graph endpoints retain their existing admission semantics.
+pub(crate) fn ordinary_entity_visible(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+        return Ok(true);
+    };
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return Ok(false);
+    };
+    Ok(header.entity_type != crate::registry::ENTITY_TYPE_NOTE
+        || note_body_readable(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], None))
 }
 
 #[cfg(test)]
