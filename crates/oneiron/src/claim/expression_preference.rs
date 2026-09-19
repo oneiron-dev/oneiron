@@ -240,6 +240,7 @@ impl Vault {
         let provenance = WriteProvenance::new(Value::from("expression_preference"))?;
         let envelope = WriteEnvelope::new(*actor, source, provenance, requested);
         let mut wtxn = self.store.env.write_txn()?;
+        crate::memory::guard_existing_claim_in_txn(self, &wtxn, *actor, claim_id)?;
         let mut prior_ids = Vec::new();
         for (old_id, body) in self.claims_with_predicate_in_txn(&wtxn, predicate)? {
             if old_id == claim_id
@@ -258,6 +259,20 @@ impl Vault {
                 (Some(source), Some(change.valid_from), learned_at, claim_id),
                 (body.source, body.valid_from, old_learned_at, old_id),
             ) {
+                if change.origin == ExpressionPreferenceOrigin::ExplicitUser {
+                    crate::memory::explicit_claim_override_in_txn(
+                        self, &mut wtxn, *actor, old_id, &body, learned_at,
+                    )?;
+                } else {
+                    crate::memory::require_claim_self_grant_in_txn(
+                        self,
+                        &wtxn,
+                        *actor,
+                        old_id,
+                        &body,
+                        "memory.claim.supersede",
+                    )?;
+                }
                 prior_ids.push(old_id);
             }
         }
@@ -461,6 +476,9 @@ impl Vault {
             ));
         }
         self.verify_expression_preference_retract_actor_in_txn(&wtxn, actor, &head)?;
+        crate::memory::explicit_claim_override_in_txn(
+            self, &mut wtxn, *actor, *claim_id, &head, now,
+        )?;
 
         let prefix = edge_kind_prefix(claim_id, EdgeKind::Supersedes);
         let mut predecessors = Vec::new();

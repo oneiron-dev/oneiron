@@ -114,6 +114,43 @@ pub fn admit_imported_evidence_claim_typed(
     source_record_id: &str,
     admission: &ImportedEvidenceAdmission,
 ) -> crate::Result<()> {
+    admit_imported_evidence_claim_typed_guarded(
+        vault,
+        predicate,
+        value,
+        source_record_id,
+        admission,
+        None,
+    )
+}
+
+/// Facade-only checked import. Native projectors keep their original admission mechanics.
+pub(crate) fn admit_imported_evidence_claim_for_memory(
+    vault: &crate::Vault,
+    claim: &NormalizedIngestClaim,
+    admission: ImportedEvidenceAdmission,
+) -> crate::Result<()> {
+    admit_imported_evidence_claim_typed_guarded(
+        vault,
+        &claim.predicate,
+        json_to_msgpack_value(&claim.value),
+        &claim.source_record_id,
+        &admission,
+        Some(crate::memory::guard_existing_claim_in_txn),
+    )
+}
+
+type ClaimAuthorGuard =
+    fn(&crate::Vault, &heed::RoTxn<'_>, WriteActor, EntityId) -> crate::Result<()>;
+
+fn admit_imported_evidence_claim_typed_guarded(
+    vault: &crate::Vault,
+    predicate: &str,
+    value: MsgpackValue,
+    source_record_id: &str,
+    admission: &ImportedEvidenceAdmission,
+    guard: Option<ClaimAuthorGuard>,
+) -> crate::Result<()> {
     // `companion.expression.*` has typed doors that own its supersession
     // chain: writing a head means closing the one the family's own precedence
     // rules pick, and the candidate path below supersedes on
@@ -152,6 +189,27 @@ pub fn admit_imported_evidence_claim_typed(
         admission.approval,
     );
 
+    if let Some(guard) = guard {
+        return vault.with_write_txn(|txn| {
+            guard(vault, txn, admission.actor, admission.claim_id)?;
+            if vault.local_hard_delete_marker_exists_in_txn(txn, &admission.claim_id)? {
+                return Err(crate::error::ClaimError::ActorLacksClaimAuthority {
+                    reason: "hard-deleted claim cannot be recreated",
+                }
+                .into());
+            }
+            vault
+                .batch_in()
+                .claim_candidate(
+                    &admission.claim_id,
+                    candidate,
+                    &envelope,
+                    admission.occurred,
+                    admission.learned_at,
+                )
+                .apply(txn)
+        });
+    }
     vault
         .batch()
         .claim_candidate(

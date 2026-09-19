@@ -8,6 +8,7 @@
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
+mod self_grant;
 mod session_witness;
 mod support;
 mod takes_notes;

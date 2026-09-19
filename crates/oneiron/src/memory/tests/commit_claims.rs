@@ -1130,11 +1130,29 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
 fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     let (_dir, vault) = open_vault();
     let first_agent = put_person(&vault, 0x19);
-    let replacement_agent = put_person(&vault, 0x1A);
+    let replacement_agent = put_machine(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
-    let replacement_facade = vault.memory(replacement_agent, EdgeActorClass::Agent);
+    let replacement_facade = vault.memory(replacement_agent, EdgeActorClass::System);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
+    let owner = put_person(&vault, 0x1D);
+    root_vault_binding(&vault, 0x1E, owner, "human");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    facade_for(&vault, owner)
+        .delegate_memory_authoring(
+            &proof,
+            crate::write_envelope::WriteActor::new(replacement_agent, EdgeActorClass::System),
+            MemoryAuthoringAction::EditClaim,
+            claim_id,
+        )
+        .expect("exact delegated edit slice");
 
     let mut first = claim_input(
         "profile.mood",
@@ -1162,7 +1180,7 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
         .claim_retract_with_pre_txn_hook(&claim_id.to_hex(), || {
             replacement_facade
                 .claim_upsert(&replacement)
-                .expect("second agent replaces same id in former race window");
+                .expect("delegated daemon replaces same id in former race window");
         })
         .expect_err("prior author has no authority over same-id replacement");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);

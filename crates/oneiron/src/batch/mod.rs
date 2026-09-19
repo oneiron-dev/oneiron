@@ -36,7 +36,9 @@ use self::base_apply::apply_ops_with_origin;
 pub(crate) use self::base_apply::apply_session_bundle_claim_puts;
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::child_of_overlay::child_of_prefix;
-pub(crate) use self::claim_materialization::{ClaimMaterialization, apply_owner_bound_claim_puts};
+pub(crate) use self::claim_materialization::{
+    ClaimMaterialization, apply_owner_bound_claim_puts, authenticated_claim_author_in_txn,
+};
 #[cfg(test)]
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{deindex_entity, deindex_lexical_query_hints_for_target};
