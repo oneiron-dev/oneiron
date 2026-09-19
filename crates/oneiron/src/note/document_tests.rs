@@ -138,14 +138,16 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     let source = EntityId::from_hex(&source.id_hex).unwrap();
     let pin_a = vault.pin_note_span(source, first_claim, 0, 11).unwrap();
     let pin_b = vault.pin_note_span(source, second_claim, 14, 26).unwrap();
+    let markdown = "# Overview\nAuthored text <script>";
     let brief = memory
-        .author_brief(
-            "# Overview\nAuthored text <script>",
-            &[pin_a.clone(), pin_b],
-        )
+        .author_brief(markdown, &[pin_a.clone(), pin_b])
         .unwrap();
     let brief = EntityId::from_hex(&brief.id_hex).unwrap();
-    assert_eq!(vault.note_document(brief).unwrap().pins.len(), 2);
+    let stored_document = vault.note_document(brief).unwrap();
+    assert_eq!(stored_document.pins.len(), 2);
+    assert_eq!(stored_document.markdown, markdown);
+    let document_key = format!("d:e:{}", brief.to_hex());
+    let stored_bytes = vault.sync_state_get(&document_key).unwrap().unwrap();
     let read_key = ScopedReadActorKey::with_actor_class(author.to_hex(), "human").unwrap();
     let frame = LensRenderFrame::new(
         LensRenderId::new("brief-view").unwrap(),
@@ -228,6 +230,19 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     );
     assert!(old.quote.is_none() && old.confidence.is_none());
     assert_eq!(first.instrument.html, after.instrument.html); // flags, not regeneration
+    // Rendering is read-only: neither HTML nor escaped markdown replaces the
+    // authored body or is appended to its persisted document between views.
+    assert_eq!(vault.note_document(brief).unwrap(), stored_document);
+    assert_eq!(
+        vault.sync_state_get(&document_key).unwrap().unwrap(),
+        stored_bytes
+    );
+    assert_eq!(
+        decode_note_body(&vault.get(&brief).unwrap().unwrap())
+            .unwrap()
+            .markdown,
+        markdown
+    );
     drop(read_lane);
     let before_reopen = vault.note_document(source).unwrap();
     drop(vault);
