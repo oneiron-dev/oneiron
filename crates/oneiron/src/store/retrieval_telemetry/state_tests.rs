@@ -266,3 +266,30 @@ fn invalid_caller_state_does_not_disable_later_pipeline_telemetry() -> crate::Re
     assert_eq!(vault.retrieval_runs(10)?.len(), 1);
     Ok(())
 }
+
+#[test]
+fn persisted_nonfinite_retrieval_state_is_corruption_at_read_doors() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let mut run = record(10);
+    vault.store.record_retrieval_run(&run)?;
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        run.state.top_score_norm = value;
+        let bytes = rmp_serde::to_vec_named(&run).unwrap();
+        vault.with_write_txn(|txn| {
+            vault
+                .store
+                .vault_meta
+                .put(txn, &retrieval_run_key(run.run_id), &bytes)?;
+            Ok(())
+        })?;
+        assert!(matches!(
+            vault.retrieval_run(run.run_id),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
+        assert!(matches!(
+            vault.retrieval_runs(10),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
+    }
+    Ok(())
+}

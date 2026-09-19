@@ -670,6 +670,10 @@ pub(in crate::store) fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunR
     if record.version != RETRIEVAL_TELEMETRY_VERSION {
         return Err(Error::CorruptedIndex("retrieval run telemetry"));
     }
+    record
+        .state
+        .validate()
+        .map_err(|_| Error::CorruptedIndex("retrieval run state"))?;
     Ok(record)
 }
 
