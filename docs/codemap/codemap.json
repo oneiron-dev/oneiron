@@ -18737,7 +18737,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RestoreEpoch",
@@ -18764,7 +18764,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/checkpoint/tests.rs",
@@ -19942,7 +19942,7 @@
      "path": "src/self_heal/tripwires.rs",
      "purpose": "Closed-form T1 projections",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7,
       "struct": 5
      }

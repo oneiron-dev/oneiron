@@ -508,16 +508,17 @@ fn run(
         scope_ref: scope,
         observations: &observations,
     };
-    if super::validate_working_set(&input).is_err() {
-        return Ok(vec![]);
-    }
     run_deterministic_detectors(vault, &input, detectors)
 }
 
-/// A bounded receipt token binds the normal baseline without copying claim text.
+/// Gate receipts keep the original predicate, not the claim value. The fact
+/// survives ordinary claim edits and is cleared by receipt redaction.
 pub(crate) fn normal_baseline_token(predicate: &str) -> String {
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.tripwire.predicate-baseline.v1");
-    hash.update(predicate.as_bytes());
-    format!("tripwire_normal_{}", hash.finalize().to_hex())
+    format!("tripwire_normal_v2:{predicate}")
+}
+
+pub(crate) fn normal_baseline_predicate(token: &str) -> Option<&str> {
+    let predicate = token.strip_prefix("tripwire_normal_v2:")?;
+    crate::claim::validate_predicate(predicate, true).ok()?;
+    Some(predicate)
 }

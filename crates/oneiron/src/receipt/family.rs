@@ -437,15 +437,12 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         before = decisions.last().map(|decision| decision.decision_id);
         for decision in decisions {
             let mut receipt = gate_decision_receipt(&decision);
-            if let Some(id) = decision
-                .claim_id
-                .and_then(|id| EntityId::from_bytes(id).ok())
-                && let Some(claim) = vault.get_claim(&id)?
-                && decision.receipt_reasons.contains(
-                    &crate::self_heal::tripwires::normal_baseline_token(&claim.predicate),
-                )
+            if let Some(predicate) = decision
+                .receipt_reasons
+                .iter()
+                .find_map(|token| crate::self_heal::tripwires::normal_baseline_predicate(token))
             {
-                receipt.fields.insert("predicate".into(), claim.predicate);
+                receipt.fields.insert("predicate".into(), predicate.into());
                 receipt.fields.insert("criticality".into(), "normal".into());
             }
             if query.matches(&receipt) {

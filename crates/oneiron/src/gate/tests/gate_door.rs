@@ -1040,3 +1040,48 @@ fn gate_chokepoint_edge_provenance_supersede_checks_closed_prior_before_reput() 
     );
     Ok(())
 }
+
+#[test]
+fn gate_receipt_keeps_original_predicate_after_claim_rewrite() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xD1), &encode_policy_manifest(vec![]))?;
+    let actor = test_id(0xD2);
+    let id = test_id(0xD3);
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.approval = ClaimApprovalStatus::Proposed;
+    let (candidate, envelope) =
+        claim_candidate_write_parts_for_actor(&vault, &body, actor, EdgeActorClass::Agent)?;
+    vault
+        .batch()
+        .claim_candidate(&id, candidate, &envelope, test_time(10), 10)
+        .commit()?;
+    let query = ReceiptQuery::new(10)
+        .with_kind(ReceiptKind::Gate)
+        .with_actor(actor.to_hex());
+    let before = vault.receipts(query.clone())?;
+    let claim_ref = format!("claim:{}", id.to_hex());
+    let original = before
+        .iter()
+        .find(|r| r.trigger_ref.as_deref() == Some(claim_ref.as_str()))
+        .expect("original decision");
+    assert_eq!(original.fields.get("predicate"), Some(&body.predicate));
+    assert_eq!(
+        original.fields.get("criticality").map(String::as_str),
+        Some("normal")
+    );
+    let mut rewritten = vault.get_claim(&id)?.expect("stored proposed claim");
+    rewritten.predicate = "profile.alias".into();
+    vault.put_claim(&id, &rewritten, test_time(20), 20)?;
+    assert_eq!(vault.get_claim(&id)?.unwrap().predicate, "profile.alias");
+    let after = vault.receipts(query)?;
+    let historical = after
+        .iter()
+        .find(|r| r.receipt_id == original.receipt_id)
+        .expect("historical decision");
+    assert_eq!(historical.fields.get("predicate"), Some(&body.predicate));
+    assert_eq!(
+        historical.fields.get("criticality").map(String::as_str),
+        Some("normal")
+    );
+    Ok(())
+}

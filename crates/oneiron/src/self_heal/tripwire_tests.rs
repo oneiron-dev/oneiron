@@ -445,22 +445,6 @@ fn unavailable_or_oversized_tripwire_inputs_are_not_reported_as_healthy() {
 
 #[test]
 fn signed_detector_run_fits_a_bounded_vault_without_per_event_receipt_copies() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut config = crate::VaultConfig::device();
-    config.map_size = 8 * 1024 * 1024;
-    let v = Vault::open(dir.path(), config).unwrap();
-    let mut r = receipt("denied", crate::consent::CONSENT_CONTENT_KIND);
-    r.policy_trace
-        .push(crate::consent::CONSENT_REASON_DENIED.into());
-    let observations = [DiagnosticObservation::from_consent_receipt(&r)
-        .unwrap()
-        .unwrap()];
-    let input = DiagnosticWorkingSet {
-        scope_ref: "bounded-signed-run",
-        observations: &observations,
-    };
-    let mut event = ConsentDeniedDetector.detect(&input).pop().unwrap();
-    event.untrusted_detail = Some("x".repeat(4096));
     struct ManyEvents(DiagnosticEvent);
     impl DeterministicDetector for ManyEvents {
         fn detector_id(&self) -> &'static str {
@@ -477,6 +461,22 @@ fn signed_detector_run_fits_a_bounded_vault_without_per_event_receipt_copies() {
                 .collect()
         }
     }
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = crate::VaultConfig::device();
+    config.map_size = 8 * 1024 * 1024;
+    let v = Vault::open(dir.path(), config).unwrap();
+    let mut r = receipt("denied", crate::consent::CONSENT_CONTENT_KIND);
+    r.policy_trace
+        .push(crate::consent::CONSENT_REASON_DENIED.into());
+    let observations = [DiagnosticObservation::from_consent_receipt(&r)
+        .unwrap()
+        .unwrap()];
+    let input = DiagnosticWorkingSet {
+        scope_ref: "bounded-signed-run",
+        observations: &observations,
+    };
+    let mut event = ConsentDeniedDetector.detect(&input).pop().unwrap();
+    event.untrusted_detail = Some("x".repeat(4096));
     let run = v
         .sign_detector_run("scheduler", &input, &[&ManyEvents(event)])
         .unwrap();
@@ -515,4 +515,19 @@ fn undersized_receipt_query_is_not_reported_as_a_healthy_window() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn invalid_tripwire_scope_is_not_a_successful_empty_run() {
+    let (_dir, v) = vault();
+    for scope in ["", "bad\nscope"] {
+        assert!(matches!(
+            v.project_receipt_tripwires(scope, &[], 100),
+            Err(crate::Error::InvariantViolation(_))
+        ));
+        assert!(matches!(
+            v.run_dreamer_output_tripwires(scope, &[]),
+            Err(crate::Error::InvariantViolation(_))
+        ));
+    }
 }
