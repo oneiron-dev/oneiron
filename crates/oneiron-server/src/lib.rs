@@ -60,3 +60,6 @@ pub fn build_app(server: Arc<SyncServer>) -> Router {
         .merge(handler::ws_routes(server.clone()))
         .merge(api::api_routes(server))
 }
+
+#[cfg(test)]
+mod test_credentials;

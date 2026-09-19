@@ -1,10 +1,9 @@
-//! HTTP authentication helpers for legacy and `/v1/core` routes.
+//! HTTP authentication for log-backed version-two capability slips.
 //!
-//! One credential travels: `Authorization: Bearer`. It carries either the
-//! configured trust-root secret (owner-grade) or a minted
-//! `v2.<claims>.<mac-hex>` token whose claims are authenticated by a keyed
-//! BLAKE3 MAC. The secret is never inside a token, so a delegated token
-//! discloses no trust root and its narrowing cannot be edited off.
+//! Authorization carries the serialized slip. `x-oneiron-binding` carries
+//! the holder's short-lived Ed25519 proof. The configured retained host
+//! secret authenticates through its genuine logged root slip. Legacy
+//! string-claim MAC tokens never establish production authority.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -18,6 +17,9 @@ use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
+mod slips;
+pub(crate) use slips::BindingProof;
+
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
 
 /// Framing prefix of a v2 core token (`v2.<claims>.<mac-hex>`).
@@ -29,6 +31,7 @@ const CORE_TOKEN_V2_PREFIX: &str = "v2.";
 /// BLAKE3 use of `auth_secret` (notably the MCP connector-registry hash key)
 /// and normalizes an arbitrary-length secret to a uniform 32-byte MAC key.
 /// Changing it invalidates every minted token.
+#[cfg(test)]
 const CORE_TOKEN_V2_KDF_CONTEXT: &str = "oneiron-server 2026-07 core-token-v2 mac";
 
 /// Length of a `jti` claim: 32 lowercase hex characters.
@@ -55,12 +58,49 @@ pub(crate) trait RevokedTokenJtis {
     /// `Err` means the registry could not be read. Callers fail closed: a
     /// token whose liveness cannot be established is not authenticated.
     fn is_revoked(&self, jti: &str) -> Result<bool, ()>;
+    fn host_root(&self, _secret: &str) -> Result<oneiron::authority::VerifiedSlip, ()> {
+        Err(())
+    }
+    fn verify_slip(
+        &self,
+        _secret: &str,
+        _slip: &oneiron::authority::CapabilitySlip,
+        _challenge: &[u8],
+        _signature: &[u8],
+    ) -> Result<oneiron::authority::VerifiedSlip, ()> {
+        Err(())
+    }
 }
 
 /// The server-local persistent registry: one `sync_state` row per revoked
 /// `jti`, where the key IS the fact and the value is empty.
 impl RevokedTokenJtis for oneiron::Vault {
+    fn host_root(&self, secret: &str) -> Result<oneiron::authority::VerifiedSlip, ()> {
+        let issuer =
+            oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).map_err(drop)?;
+        self.verified_host_root_slip(&issuer).map_err(drop)
+    }
+    fn verify_slip(
+        &self,
+        secret: &str,
+        slip: &oneiron::authority::CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<oneiron::authority::VerifiedSlip, ()> {
+        let issuer =
+            oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).map_err(drop)?;
+        self.verify_capability_slip(&issuer, slip, challenge, signature)
+            .map_err(drop)
+    }
+
     fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
+        if jti.len() == 64 {
+            let id = slips::parse_slip_id(jti).map_err(drop)?;
+            return self
+                .capability_slip_id_is_live(&id)
+                .map(|live| !live)
+                .map_err(drop);
+        }
         self.sync_state_get(&revoked_token_jti_key(jti))
             .map(|row| row.is_some())
             .map_err(drop)
@@ -72,7 +112,9 @@ pub(crate) fn revoked_token_jti_key(jti: &str) -> String {
     format!("{REVOKED_TOKEN_JTI_PREFIX}{jti}")
 }
 
-/// Records `jti` as revoked. Returns whether this call was the revocation
+/// Retires a legacy 32-hex token identifier. Capability-slip ids instead need
+/// a signed `Vault::revoke_capability_slip` operation (the CLI's 64-hex branch).
+/// Returns whether this call was the revocation
 /// (`false` means it was already revoked — the op is idempotent).
 ///
 /// Rejects a malformed `jti` rather than writing a row that no token could
@@ -96,6 +138,7 @@ pub(crate) fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) -> anyhow::Res
 /// public — it travels in the token's visible claims and an operator types
 /// it into `token revoke` — and guessing one buys nothing, because forging
 /// the token carrying it still requires the MAC key.
+#[cfg(test)]
 pub(crate) fn mint_token_jti() -> String {
     oneiron::EntityId::now().to_hex()
 }
@@ -110,6 +153,7 @@ pub(crate) enum CoreScope {
     CompanionAccessGrantWrite,
     CompanionRegisterRead,
     CompanionRegisterWrite,
+    OrgAdmin(oneiron::federation::OrgAdminPower),
 }
 
 impl CoreScope {
@@ -122,6 +166,7 @@ impl CoreScope {
             Self::CompanionAccessGrantWrite => "companion:access-grant:write",
             Self::CompanionRegisterRead => "companion:register:read",
             Self::CompanionRegisterWrite => "companion:register:write",
+            Self::OrgAdmin(power) => power.as_str(),
         }
     }
 
@@ -134,7 +179,7 @@ impl CoreScope {
             "companion:access-grant:write" => Some(Self::CompanionAccessGrantWrite),
             "companion:register:read" => Some(Self::CompanionRegisterRead),
             "companion:register:write" => Some(Self::CompanionRegisterWrite),
-            _ => None,
+            value => oneiron::federation::OrgAdminPower::parse(value).map(Self::OrgAdmin),
         }
     }
 
@@ -147,6 +192,10 @@ impl CoreScope {
             Self::CompanionAccessGrantWrite,
             Self::CompanionRegisterRead,
             Self::CompanionRegisterWrite,
+            Self::OrgAdmin(oneiron::federation::OrgAdminPower::AddMember),
+            Self::OrgAdmin(oneiron::federation::OrgAdminPower::RemoveMember),
+            Self::OrgAdmin(oneiron::federation::OrgAdminPower::AssignRole),
+            Self::OrgAdmin(oneiron::federation::OrgAdminPower::ResetSharedProjectAccess),
         ]
         .into_iter()
         .collect()
@@ -171,30 +220,24 @@ pub(crate) struct CoreAuth {
     /// unchanged by its absence, which is what an owner-grade secret and a
     /// scoped non-facade slip both present.
     actor_class: Option<String>,
+    org_ref: Option<String>,
+    verified_slip: Option<oneiron::authority::VerifiedSlip>,
 }
 
 impl CoreAuth {
     /// Verifies an in-band slip through the existing MAC → claims → live-jti path.
     /// Neither the trust root (even a v2-shaped root) nor dev-mode unverified
     /// credentials may establish app-tier authority. Claim grammar is unchanged.
+    #[cfg(test)]
     pub(crate) fn from_bind_token(
         token: &str,
         config: &SyncServerConfig,
         revoked: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
-        let expected = config
-            .auth_secret
-            .as_deref()
-            .ok_or_else(ApiError::unauthorized)?;
-        if expected.is_empty()
-            || split_core_token_v2(token).is_none()
-            || constant_time_eq(token, expected)
-        {
-            return Err(ApiError::unauthorized());
-        }
-        let auth = bearer_auth(token, config, revoked)?;
-        auth.require_registered_principal()?;
-        Ok(auth)
+        let _ = (token, config, revoked);
+        // A token alone cannot bind a session: possession of the connection
+        // private key is mandatory, even for an otherwise valid v2 MAC.
+        Err(ApiError::unauthorized())
     }
 
     pub(crate) fn from_headers(
@@ -203,6 +246,22 @@ impl CoreAuth {
         revoked: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
         if let Some(token) = bearer_token(headers)? {
+            // Secrets are opaque, including one that resembles slip framing.
+            if config
+                .auth_secret
+                .as_deref()
+                .is_some_and(|secret| constant_time_eq(token, secret))
+            {
+                return bearer_auth(token, config, revoked);
+            }
+            if token.starts_with("v2.slip.") {
+                return Self::from_slip_token(
+                    token,
+                    &BindingProof::from_headers(headers)?,
+                    config,
+                    revoked,
+                );
+            }
             return bearer_auth(token, config, revoked);
         }
 
@@ -218,6 +277,8 @@ impl CoreAuth {
             implicit_all_scopes: true,
             jti: None,
             actor_class: None,
+            org_ref: None,
+            verified_slip: None,
         })
     }
 
@@ -229,10 +290,15 @@ impl CoreAuth {
             implicit_all_scopes: false,
             jti: None,
             actor_class: None,
+            org_ref: None,
+            verified_slip: None,
         }
     }
 
     pub(crate) fn require(&self, scope: CoreScope) -> Result<(), ApiError> {
+        if scope != CoreScope::Read {
+            self.require_unrestricted_record_scope()?;
+        }
         if self.scopes.contains(&scope) {
             Ok(())
         } else {
@@ -242,6 +308,10 @@ impl CoreAuth {
 
     pub(crate) fn has_scope(&self, scope: CoreScope) -> bool {
         self.scopes.contains(&scope)
+    }
+
+    pub(crate) fn verified_slip(&self) -> Option<&oneiron::authority::VerifiedSlip> {
+        self.verified_slip.as_ref()
     }
 
     pub(crate) fn principal(&self) -> &str {
@@ -260,6 +330,10 @@ impl CoreAuth {
     /// handler re-validates the string. It is still not AUTHORITY — the engine
     /// decides whether the named principal's stored entity type admits the
     /// asserted class, per write.
+    pub(crate) fn org_ref(&self) -> Option<&str> {
+        self.org_ref.as_deref()
+    }
+
     pub(crate) fn actor_class(&self) -> Option<&str> {
         self.actor_class.as_deref()
     }
@@ -281,30 +355,18 @@ impl CoreAuth {
 
     /// The credential's revocable identity, when it carries one.
     ///
-    /// A bare trust-root secret and the dev fallthrough have none: neither is
-    /// individually revocable, and rotation is the lever that retires them.
+    /// The bare secret carries the logged host-root slip id too. Only the
+    /// unauthenticated development fallthrough has no credential to revoke.
     pub(crate) fn jti(&self) -> Option<&str> {
         self.jti.as_deref()
     }
 
-    /// Returns whether this auth is an un-narrowed owner-grade credential.
-    ///
-    /// BOTH narrowing axes must be absent. `principal_ref` is the third-party
-    /// narrowing key: a bearer carrying it is scoped to that principal
-    /// (OF-365 ILD-1). A scope list is the capability narrowing key: a bearer
-    /// carrying one is a delegated instrument, and delegation of a subset of
-    /// the owner's capabilities is not evidence that the owner is the one
-    /// holding it. Reading only `principal_ref` classified an unbound
-    /// `scope=core:read` token as owner-grade, which suppressed the
-    /// disclosure absence-clamp for exactly the credentials most likely to
-    /// be handed to a third party.
-    ///
-    /// Deliberately NOT named `owner_session`: that is the engine-side ILD
-    /// flag for "the owner is in the room", asserted per assembly. This is a
-    /// property of the credential. The consent gates derive the former from
-    /// the latter and must never conflate them.
+    /// Exact, verified, unattenuated top-scope slips are owner-grade even when
+    /// bound to an identified holder. Identity is not a capability restriction.
+    /// Org-bound, caveated, record/channel-bound and single-use slips are not.
+    /// The explicit development hatch keeps its separate legacy predicate.
     pub(crate) fn is_owner_grade(&self) -> bool {
-        self.implicit_all_scopes && self.principal_ref.is_none()
+        self.implicit_all_scopes && (self.verified_slip.is_some() || self.principal_ref.is_none())
     }
 
     pub(crate) fn idempotency_principal(&self) -> String {
@@ -322,7 +384,28 @@ impl CoreAuth {
             .as_deref()
             .map(|principal_ref| format!(":principal_ref={principal_ref}"))
             .unwrap_or_default();
-        format!("core:{}{principal_ref}:scopes={scopes}", self.principal)
+        let org_ref = self
+            .org_ref
+            .as_deref()
+            .map(|org| format!(":org_ref={org}"))
+            .unwrap_or_default();
+        // All effective caveats partition cached responses, not only HTTP verbs.
+        // Derived Debug contains every typed claim and cannot drop a restriction
+        // through a serializer error. This digest is a private cache key, not wire ABI.
+        let authority = self
+            .verified_slip
+            .as_ref()
+            .map(|proof| {
+                format!(
+                    ":authority={}",
+                    blake3::hash(format!("{:?}", proof.claims()).as_bytes()).to_hex()
+                )
+            })
+            .unwrap_or_default();
+        format!(
+            "core:{}{principal_ref}{org_ref}:scopes={scopes}{authority}",
+            self.principal
+        )
     }
 }
 
@@ -340,12 +423,9 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
 
 /// Authenticates an owner-grade caller.
 ///
-/// Owner-grade means a bearer that resolves to the un-narrowed
-/// implicit-all-scopes session: the bare trust-root secret, an empty-claims
-/// v2 token, or the unauthenticated-dev fallthrough. Scoped delegation
-/// tokens do NOT pass — the full-vault surfaces (`/ws` sync, legacy
-/// `/api/*`, the non-core idempotency fallback) keep the boundary where only
-/// trust-root holders reach them; scoped tokens stay `/v1`-plane instruments.
+/// The logged host root or an exact verified top-scope instrument reaches
+/// full-vault routes. Scoped/org credentials remain `/v1`-plane instruments.
+/// The explicit unauthenticated development hatch is unchanged.
 pub(crate) fn require_owner_auth(
     headers: &HeaderMap,
     config: &SyncServerConfig,
@@ -364,6 +444,7 @@ pub(crate) fn require_owner_auth(
 /// The auth secret is MAC key material only — it appears in no token. Keyed
 /// BLAKE3 is a PRF by construction, so this is a MAC and not an ad-hoc
 /// `H(k ‖ m)`; domain separation comes from the `derive_key` context.
+#[cfg(test)]
 pub(crate) fn core_token_mac(auth_secret: &str, claims: &str) -> [u8; 32] {
     let key = blake3::derive_key(CORE_TOKEN_V2_KDF_CONTEXT, auth_secret.as_bytes());
     *blake3::keyed_hash(&key, claims.as_bytes()).as_bytes()
@@ -374,8 +455,9 @@ pub(crate) fn core_token_mac(auth_secret: &str, claims: &str) -> [u8; 32] {
 /// Claims use the existing grammar (`scope=…[;principal_ref=…][;jti=…]`) and
 /// may be empty, which mints an owner-grade token. This is the raw wire
 /// helper: it MACs exactly the claims it is handed and adds nothing. Ops
-/// mints go through [`mint_identified_core_token_v2`], which attaches the
+/// mints go through `mint_identified_core_token_v2`, which attaches the
 /// identity that makes the token individually revocable.
+#[cfg(test)]
 pub(crate) fn mint_core_token_v2(auth_secret: &str, claims: &str) -> String {
     let mac = blake3::Hash::from(core_token_mac(auth_secret, claims));
     format!("{CORE_TOKEN_V2_PREFIX}{claims}.{}", mac.to_hex())
@@ -387,6 +469,7 @@ pub(crate) fn mint_core_token_v2(auth_secret: &str, claims: &str) -> String {
 /// individually. A side effect: minting is no longer a pure function of
 /// claims and secret — two mints of identical claims produce two distinct
 /// tokens, and revoking one leaves its sibling live.
+#[cfg(test)]
 pub(crate) fn mint_identified_core_token_v2(auth_secret: &str, claims: &str) -> (String, String) {
     let jti = mint_token_jti();
     let identified = if claims.is_empty() {
@@ -399,6 +482,7 @@ pub(crate) fn mint_identified_core_token_v2(auth_secret: &str, claims: &str) -> 
 
 /// Checks a claims string against the grammar the server will enforce, so a
 /// mint surface can reject before emitting a token that would only ever 401.
+#[cfg(test)]
 pub(crate) fn validate_bearer_claims(claims: &str) -> Result<(), ApiError> {
     parse_bearer_claims(claims).map(drop)
 }
@@ -473,39 +557,26 @@ fn bearer_auth(
     // judging it as a token would compare its own tail against a MAC and
     // break owner auth outright.
     if constant_time_eq(token, expected) {
-        return Ok(CoreAuth {
-            principal: "bearer".to_owned(),
-            principal_ref: None,
-            scopes: CoreScope::all(),
-            implicit_all_scopes: true,
-            jti: None,
-            // The trust root is not an actor. An owner-grade secret binds no
-            // principal and therefore no class; facade routes refuse it for
-            // exactly that reason, while every other route is unaffected.
-            actor_class: None,
-        });
+        let verified = revoked
+            .host_root(expected)
+            .map_err(|_| ApiError::unauthorized())?;
+        let mut auth = CoreAuth::from_verified(verified, true)?;
+        if !auth.is_owner_grade() {
+            return Err(ApiError::unauthorized());
+        }
+        auth.principal = "bearer".to_owned();
+        return Ok(auth);
     }
 
-    // Not the root itself: `v2.` framing now marks a minted token.
-    let Some((claims, mac_hex)) = split_core_token_v2(token) else {
-        if config.oauth_issuer.is_some()
-            && config.oauth_jwks_uri.is_some()
-            && config.oauth_resource_indicator.is_some()
-        {
-            return crate::oauth_relay::verify_oauth_relay_token(token, config);
-        }
-        // Neither the root nor a token. The v1 `secret;scope=…` grammar
-        // lands here and is dead outright.
-        return Err(ApiError::unauthorized());
-    };
-    // Verify the literal bytes that are then parsed — no canonicalization
-    // gap between what the MAC covers and what the grammar reads.
-    let expected_mac = blake3::Hash::from(core_token_mac(expected, claims));
-    if !constant_time_eq(mac_hex, expected_mac.to_hex().as_str()) {
-        return Err(ApiError::unauthorized());
+    if config.oauth_issuer.is_some()
+        && config.oauth_jwks_uri.is_some()
+        && config.oauth_resource_indicator.is_some()
+        && !token.starts_with(CORE_TOKEN_V2_PREFIX)
+    {
+        return crate::oauth_relay::verify_oauth_relay_token(token, config);
     }
-    let claims = parse_bearer_claims(claims)?;
-    core_auth_for_live_claims("bearer", claims, revoked)
+    // String-claim tokens have neither a log mint nor a binding-key proof.
+    Err(ApiError::unauthorized())
 }
 
 /// Builds the `CoreAuth` for authenticated claims, after confirming the
@@ -532,6 +603,8 @@ fn core_auth_for_live_claims(
         implicit_all_scopes,
         jti: claims.jti,
         actor_class: claims.actor_class,
+        org_ref: claims.org_ref,
+        verified_slip: None,
     })
 }
 
@@ -557,6 +630,7 @@ struct BearerClaims {
     principal_ref: Option<String>,
     jti: Option<String>,
     actor_class: Option<String>,
+    org_ref: Option<String>,
 }
 
 fn parse_bearer_claims(token_claims: &str) -> Result<BearerClaims, ApiError> {
@@ -570,6 +644,10 @@ fn parse_bearer_claims(token_claims: &str) -> Result<BearerClaims, ApiError> {
             "scope" | "scopes" => {
                 saw_narrowing_claim = true;
                 claims.scopes = Some(parse_scope_list(value)?);
+            }
+            "org_ref" => {
+                saw_narrowing_claim = true;
+                claims.org_ref = Some(parse_principal_ref(value)?);
             }
             "principal_ref" => {
                 saw_narrowing_claim = true;
@@ -595,6 +673,23 @@ fn parse_bearer_claims(token_claims: &str) -> Result<BearerClaims, ApiError> {
     }
     if saw_narrowing_claim && claims.scopes.is_none() {
         return Err(ApiError::unauthorized());
+    }
+    if let Some(scopes) = &claims.scopes {
+        let has_admin = scopes
+            .iter()
+            .any(|scope| matches!(scope, CoreScope::OrgAdmin(_)));
+        if has_admin
+            && (claims.org_ref.is_none()
+                || claims.principal_ref.is_none()
+                || scopes
+                    .iter()
+                    .any(|scope| !matches!(scope, CoreScope::OrgAdmin(_))))
+        {
+            return Err(ApiError::unauthorized());
+        }
+        if !has_admin && claims.org_ref.is_some() {
+            return Err(ApiError::unauthorized());
+        }
     }
     Ok(claims)
 }

@@ -14,6 +14,9 @@ use tower::ServiceExt;
 mod mcp_source_gate;
 
 mod auth_idempotency;
+mod org_admin;
+mod slips;
+use crate::test_credentials as slip_credentials;
 mod billing_usage;
 mod companion;
 mod context_pack_disclosure;
@@ -290,6 +293,7 @@ pub(super) async fn route_bytes(
     server: Arc<SyncServer>,
     request: Request<Body>,
 ) -> (StatusCode, HeaderMap, Bytes) {
+    let request = slip_credentials::bind_request(&server, request);
     let response = api_routes(server)
         .oneshot(request)
         .await
@@ -370,37 +374,24 @@ pub(super) fn seed_active_claim(
     value: &str,
     learned_at: u64,
 ) {
-    #[derive(serde::Serialize)]
-    struct ClaimSeed<'a> {
-        pred: &'a str,
-        val: &'a str,
-        conf: f32,
-        #[serde(with = "serde_bytes")]
-        subj: &'a [u8],
-        appr: &'static str,
-        life: &'static str,
-    }
-
-    let body = rmp_serde::to_vec_named(&ClaimSeed {
-        pred: "profile.route_test",
-        val: value,
-        conf: 0.9,
-        subj: subject.as_bytes(),
-        appr: "auto",
-        life: "active",
-    })
-    .expect("encode claim fixture");
+    let claim = oneiron::ClaimBody::new(
+        "profile.route_test",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from(value),
+        0.9,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
     server
         .vault
-        .put_entity(
+        .put_claim(
             &id,
-            oneiron::registry::ENTITY_TYPE_CLAIM,
+            &claim,
             oneiron::TimeRange {
                 start: learned_at,
                 end: learned_at,
             },
             learned_at,
-            &body,
         )
         .expect("seed active claim");
 }
@@ -429,12 +420,10 @@ pub(super) fn json_request(method: &str, uri: &str, body: Value) -> Request<Body
         .expect("request")
 }
 
-/// Mints a v2 token against the `"secret"` these tests configure everywhere.
+/// An explicit credential recipe. `route_json`/`route_bytes` mint and bind a
+/// real logged slip in this fixture's vault before the production router runs.
 pub(super) fn test_bearer(claims: &str) -> String {
-    format!(
-        "Bearer {}",
-        crate::auth::mint_core_token_v2("secret", claims)
-    )
+    format!("{}{claims}", slip_credentials::RECIPE_PREFIX)
 }
 
 /// Owner-grade credential: the bare trust root over the standard header.
@@ -488,6 +477,7 @@ pub(super) async fn route_json(
     server: Arc<SyncServer>,
     request: Request<Body>,
 ) -> (StatusCode, Value) {
+    let request = slip_credentials::bind_request(&server, request);
     let response = api_routes(server)
         .oneshot(request)
         .await

@@ -277,6 +277,7 @@ pub(super) fn publication_input(
         confidence: 1.0,
         source: "user_stated".to_owned(),
         world_ref: None,
+        relationship_ref: None,
         scope: None,
         valid_from: Some(from),
         valid_to: Some(until),

@@ -805,7 +805,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         "subject": { "kind": "persona", "persona_ref": persona_ref },
         "value": { "style": "neutral @Oneiron" },
         "provenance": provenance.clone(),
-        "export": "portable"
+        "sensitivity": "public"
     });
     let personal_record = json!({
         "kind": "persona",
@@ -813,7 +813,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         "subject": { "kind": "persona", "persona_ref": persona_ref },
         "value": { "note": "private per-person companion note" },
         "provenance": provenance.clone(),
-        "export": "local_only"
+        "sensitivity": "restricted"
     });
     let shared_record = json!({
         "kind": "relationship",
@@ -827,7 +827,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         },
         "value": { "note": "shared-vault boundary note" },
         "provenance": provenance.clone(),
-        "export": "shared_vault"
+        "sensitivity": "private"
     });
 
     let (status, body) = route_json(
@@ -1006,7 +1006,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         "subject": { "kind": "persona", "persona_ref": persona_ref },
         "value": { "note": "updated private per-person companion note" },
         "provenance": body["record"]["provenance"].clone(),
-        "export": "local_only"
+        "sensitivity": "restricted"
     });
     let update_request = json!({ "learned_at": 34_u64, "record": updated_record });
     let (status, body) = route_json(
@@ -1071,7 +1071,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             "subject": { "kind": "persona", "persona_ref": persona_ref },
             "value": { "note": "reactivated private note" },
             "provenance": body["record"]["provenance"].clone(),
-            "export": "local_only"
+            "sensitivity": "restricted"
         }
     });
     let (status, body) = route_json(
@@ -1121,7 +1121,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         },
         "value": { "note": ending_private_note },
         "provenance": provenance.clone(),
-        "export": "local_only"
+        "sensitivity": "restricted"
     });
     let (status, _body) = route_json(
         server.clone(),

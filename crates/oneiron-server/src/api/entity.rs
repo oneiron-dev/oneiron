@@ -114,7 +114,7 @@ pub(crate) async fn get_entity(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let scoped_read = scoped_read_for_legacy_api(&server)?;
     let blob = scoped_read
         .get(&id)
         .inspect_err(|e| {
@@ -208,7 +208,7 @@ pub(crate) async fn get_edges(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let scoped_read = scoped_read_for_legacy_api(&server)?;
     let edges = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {

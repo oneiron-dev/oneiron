@@ -89,6 +89,8 @@ mod core;
 mod discover;
 mod entity;
 mod error_map;
+mod org_admin;
+mod pairing;
 // ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
 // surface, nested at `/v1/core/facade`. Its own file because it is its own
 // contract — one route per public verb, engine DTOs verbatim, and a facade
@@ -175,6 +177,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let core_mutation_routes = Router::new()
+        .route("/org-admin/{org}/policy", post(org_admin::configure))
         .route("/batch", post(core_batch))
         .route("/memory/verbs/{verb}", post(core_memory_verb))
         .route("/conversations", post(create_core_conversation))
@@ -189,6 +192,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let core_routes = Router::new()
+        .route("/org-admin/{org}/powers", get(org_admin::powers))
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
         .route("/context-board", post(context_board_hydrate))
@@ -268,6 +272,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/openapi.json", get(openapi_json))
         .route("/api/skills/oneiron.skills.md", get(skills_pack))
         .route("/api/health", get(health))
+        .route("/.well-known/oneiron", get(pairing::descriptor))
+        .route("/v1/core/pairing/links", post(pairing::create_link))
+        .route("/v1/core/pairing/redeem", post(pairing::redeem))
+        .route("/v1/core/slips/revoke", post(pairing::revoke))
         .route("/a/{artifact}", get(serve_artifact_root))
         .route("/a/{artifact}/", get(serve_artifact_root))
         .route("/a/{artifact}/{*path}", get(serve_artifact_path))

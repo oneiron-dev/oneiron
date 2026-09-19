@@ -326,7 +326,7 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         .commit()
         .unwrap();
     let short_id = oneiron::retrieval_depth::short_ref_or_hex(&server.vault, &inside).unwrap();
-    let scoped = scoped_read_for_legacy_api(&server.vault).unwrap();
+    let scoped = scoped_read_for_legacy_api(&server).unwrap();
     let unscoped = scoped.search_text("launch", 2, None).unwrap();
     assert_eq!(
         unscoped

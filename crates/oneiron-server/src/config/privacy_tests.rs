@@ -42,6 +42,17 @@ fn privacy_posture_three_layer_transitions_use_the_final_winner() {
         (None, None, Hosted),
         (None, Some(Hosted), Hosted),
         (None, Some(SelfHostLocal), SelfHostLocal),
+        (
+            None,
+            Some(HostingPrivacyPosture::Relay),
+            HostingPrivacyPosture::Relay,
+        ),
+        (Some(HostingPrivacyPosture::Relay), Some(Hosted), Hosted),
+        (
+            Some(Hosted),
+            Some(HostingPrivacyPosture::Relay),
+            HostingPrivacyPosture::Relay,
+        ),
         (Some(Hosted), None, Hosted),
         (Some(Hosted), Some(Hosted), Hosted),
         (Some(Hosted), Some(SelfHostLocal), SelfHostLocal),
@@ -60,14 +71,14 @@ fn privacy_posture_three_layer_transitions_use_the_final_winner() {
         );
         let expected_ref = match expected {
             Hosted => Some("kms://example/file-ref"),
-            SelfHostLocal => None,
+            SelfHostLocal | HostingPrivacyPosture::Relay => None,
         };
         assert_eq!(resolved.hosted_kms_key_ref.as_deref(), expected_ref);
         let privacy = resolved.vault_config().privacy;
         assert_eq!(privacy.posture, expected);
         assert_eq!(privacy.host_readable(), expected == Hosted);
         assert!(privacy.validate().is_ok());
-        if expected == SelfHostLocal {
+        if expected != Hosted {
             assert_eq!(
                 privacy.data_key_custody,
                 VaultDataKeyCustody::OwnerHeldLocal

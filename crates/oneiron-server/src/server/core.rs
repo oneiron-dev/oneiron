@@ -100,6 +100,12 @@ impl SyncServer {
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
         config.validate()?;
+        // Genuine host authority must exist before any scoped-read fail-closed
+        // policy applies. Dev/no-secret and blind-relay modes mint nothing.
+        if let Some(secret) = config.auth_secret.as_deref() {
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+            vault.ensure_host_root_slip(&issuer)?;
+        }
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,

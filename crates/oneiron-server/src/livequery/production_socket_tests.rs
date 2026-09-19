@@ -1,8 +1,7 @@
 #![allow(clippy::unwrap_used)]
 //! Full production socket + Hub + BoundSource + engine writes. No source override.
-use super::production_tests::{ACTOR, AT, JTI, SECRET, server, token, witness};
+use super::production_tests::{ACTOR, AT, SECRET, server, token, witness};
 use super::*;
-use crate::auth::revoke_token_jti;
 use crate::server::SyncServer;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -118,7 +117,7 @@ async fn connect(f: &Fixture, class: &str) -> Socket {
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":7,"method":"auth.bind","params":{"token":token(class)}}),
+        json!({"requestId":7,"method":"auth.bind","params":crate::test_credentials::bind_payload(&f.server,&token(class))}),
     )
     .await;
     assert_eq!(
@@ -236,7 +235,7 @@ async fn production_read_socket_closes_after_bound_jti_revocation() {
     let read = app(&mut socket, TAG_RPC).await;
     assert_eq!(read["result"][0]["id_hex"], ACTOR);
     assert_eq!(read["last"], true);
-    revoke_token_jti(f.server.vault(), JTI).unwrap();
+    crate::test_credentials::revoke(&f.server, &token("human"));
     send(
         &mut socket,
         TAG_RPC,
@@ -254,14 +253,14 @@ async fn production_subscription_revocation_closes_idle_socket_and_refuses_rebin
     open(&mut socket, 7, "solar", Value::Null).await;
     let initial = app(&mut socket, TAG_SUB).await;
     assert_snapshot(&initial, 7, 1);
-    revoke_token_jti(f.server.vault(), JTI).unwrap();
+    crate::test_credentials::revoke(&f.server, &token("human"));
     // No further inbound app message is needed to enforce the revocation.
     revoked_close(&mut socket).await;
     let mut reconnected = upgrade(&f).await;
     send(
         &mut reconnected,
         TAG_RPC,
-        json!({"requestId":7,"method":"auth.bind","params":{"token":token("human")}}),
+        json!({"requestId":7,"method":"auth.bind","params":crate::test_credentials::bind_payload(&f.server,&token("human"))}),
     )
     .await;
     revoked_close(&mut reconnected).await;
@@ -360,14 +359,11 @@ async fn production_sub_errors_keep_engine_codes_and_scope_refusals_are_not_clos
     assert_snapshot(&app(&mut socket, TAG_SUB).await, 7, 0);
 
     let mut write_only = upgrade(&f).await;
-    let slip = crate::auth::mint_core_token_v2(
-        SECRET,
-        &format!("scope=core:write;principal_ref={ACTOR};actor_class=human"),
-    );
+    let slip = format!("scope=core:write;principal_ref={ACTOR};actor_class=human");
     send(
         &mut write_only,
         TAG_RPC,
-        json!({"requestId":7,"method":"auth.bind","params":{"token":slip}}),
+        json!({"requestId":7,"method":"auth.bind","params":crate::test_credentials::bind_payload(&f.server,&slip)}),
     )
     .await;
     assert_eq!(

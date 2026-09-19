@@ -3922,3 +3922,16 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
     );
     decode("   ").expect_err("a blank label keeps its settled refusal");
 }
+
+#[test]
+fn claim_edit_accepts_and_preserves_relationship_scope() {
+    let args = edit_args(json!({
+        "verb": "propose_claim", "subject": { "entity": ACTOR_ID },
+        "predicate": "profile.nickname", "value": "Ada", "confidence": 1.0,
+        "relationship": RESULT_ID,
+    }));
+    assert_eq!(args.relationship.as_deref(), Some(RESULT_ID));
+    let wire = serde_json::to_value(&args).unwrap();
+    let decoded: McpEditToolArgs = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded.relationship, args.relationship);
+}

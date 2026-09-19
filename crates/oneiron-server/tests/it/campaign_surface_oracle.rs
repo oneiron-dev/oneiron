@@ -83,23 +83,34 @@ fn put_person(vault: &Vault, id: EntityId) {
         .unwrap();
 }
 
-/// Mints a v2 core token, the way `auth.rs` derives the MAC.
-///
-/// Spelled out rather than called into the crate: this is the black-box side,
-/// so the KDF context and the `v2.<claims>.<mac-hex>` framing are wire facts the
-/// oracle pins rather than borrows.
-fn token_for(principal: EntityId, scopes: &str) -> String {
-    let claims = format!("scope={scopes};principal_ref={}", principal.to_hex());
-    let key = blake3::derive_key(
-        "oneiron-server 2026-07 core-token-v2 mac",
-        SECRET.as_bytes(),
-    );
-    let mac = blake3::keyed_hash(&key, claims.as_bytes());
-    format!("v2.{claims}.{}", mac.to_hex())
+/// Mint through the authority log; the request helper proves possession of
+/// this test holder key for each fresh connection.
+fn token_for(vault:&Vault,principal:EntityId,scopes:&str)->String {
+    use oneiron::authority::HostSlipIssuer;
+    use oneiron::federation::ScopeAxis;
+    let issuer=HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let mut claims=vault.ensure_host_root_slip(&issuer).unwrap().claims;
+    let id=EntityId::now();claims.slip_id=*blake3::hash(id.as_bytes()).as_bytes();
+    claims.holder_ref=principal.to_hex();claims.actor_class=Some("human".into());
+    claims.binding_key=ed25519_dalek::SigningKey::from_bytes(&[73;32]).verifying_key().to_bytes();
+    claims.scope.verbs=ScopeAxis::Some(scopes.split(',').map(|v|v.strip_prefix("core:").unwrap_or(v).to_owned()).collect());
+    vault.mint_capability_slip(&issuer,claims).unwrap().to_token().unwrap()
 }
-
-fn owner_token(principal: EntityId) -> String {
-    token_for(principal, "core:read,core:write")
+fn owner_token(vault:&Vault,principal:EntityId)->String {
+    token_for(vault,principal,"core:read,core:write")
+}
+fn authorization(token:&str)->String {
+    use ed25519_dalek::Signer;
+    let mut headers=format!("Authorization: Bearer {token}\r\n");
+    if token!=SECRET {
+        let slip=oneiron::authority::CapabilitySlip::from_token(token).unwrap();
+        let timestamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let nonce=EntityId::now().to_hex();let challenge=format!("oneiron-request:{timestamp}:{nonce}");
+        let signature:String=ed25519_dalek::SigningKey::from_bytes(&[73;32]).sign(&slip.binding_transcript(challenge.as_bytes()).unwrap()).to_bytes().iter().map(|b|format!("{b:02x}")).collect();
+        let proof=json!({"timestamp":timestamp,"nonce":nonce,"signature":signature});
+        headers.push_str(&format!("x-oneiron-binding: {proof}\r\n"));
+    }
+    headers
 }
 
 async fn spawn_server(vault: Arc<Vault>) -> (SocketAddr, tokio::task::JoinHandle<()>) {
@@ -127,7 +138,7 @@ async fn request(
 ) -> (u16, Value) {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let auth = token
-        .map(|token| format!("Authorization: Bearer {token}\r\n"))
+        .map(authorization)
         .unwrap_or_default();
     let payload = body.map(serde_json::to_string).transpose().unwrap();
     let framing = payload.as_ref().map_or_else(String::new, |payload| {
@@ -363,7 +374,7 @@ fn campaign_surface_reaches_all_ten_verbs_through_one_engine_door() {
 async fn campaign_http_crud_matches_facade() {
     let (_dir, vault, principal) = oracle_vault();
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
-    let token = owner_token(principal);
+    let token = owner_token(&vault,principal);
 
     // CREATE: same request over both transports, compared after normalizing
     // identity and wall-clock stamps.
@@ -480,7 +491,7 @@ async fn campaign_http_crud_matches_facade() {
 async fn saved_query_http_crud_matches_facade() {
     let (_dir, vault, principal) = oracle_vault();
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
-    let token = owner_token(principal);
+    let token = owner_token(&vault,principal);
 
     let create = saved_query_body();
     let (status, over_http) =
@@ -657,7 +668,7 @@ async fn saved_query_owner_actor_is_authenticated_principal() {
     let other = seeded_id(0x02);
     put_person(&vault, other);
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
-    let token = owner_token(principal);
+    let token = owner_token(&vault,principal);
 
     // The payload names another owner in every spelling the surface could
     // plausibly have honored. None of them is read.
@@ -696,7 +707,7 @@ async fn saved_query_owner_actor_is_authenticated_principal() {
         addr,
         "GET",
         &format!("/saved-queries/{query_ref}"),
-        Some(&owner_token(other)),
+        Some(&owner_token(&vault,other)),
         None,
     )
     .await;
@@ -711,7 +722,7 @@ async fn saved_query_owner_actor_is_authenticated_principal() {
         addr,
         "PATCH",
         &format!("/saved-queries/{query_ref}"),
-        Some(&owner_token(other)),
+        Some(&owner_token(&vault,other)),
         Some(&hijack),
     )
     .await;
@@ -853,7 +864,7 @@ fn campaign_surface_write_uses_memory_gate() {
 async fn campaign_membership_routes_carry_the_engine_paging_contract() {
     let (_dir, vault, principal) = oracle_vault();
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
-    let token = owner_token(principal);
+    let token = owner_token(&vault,principal);
 
     let campaign = record_ref(
         &expect_call(
@@ -954,7 +965,7 @@ async fn campaign_membership_routes_carry_the_engine_paging_contract() {
             addr,
             "GET",
             &path,
-            Some(&token_for(principal, "core:write")),
+            Some(&token_for(&vault,principal, "core:write")),
             None,
         )
         .await;
@@ -988,7 +999,7 @@ async fn campaign_membership_routes_carry_the_engine_paging_contract() {
 async fn campaign_surface_error_parity() {
     let (_dir, vault, principal) = oracle_vault();
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
-    let token = owner_token(principal);
+    let token = owner_token(&vault,principal);
     let missing = seeded_id(0x70).to_hex();
 
     // NOT_FOUND: a write against an absent record.
@@ -1084,7 +1095,7 @@ async fn campaign_surface_error_parity() {
         addr,
         "POST",
         "/campaigns",
-        Some(&owner_token(seeded_id(0x71))),
+        Some(&owner_token(&vault,seeded_id(0x71))),
         Some(&json!({ "name": "ghost" })),
     )
     .await;
@@ -1119,7 +1130,7 @@ async fn campaign_surface_error_parity() {
         addr,
         "POST",
         "/campaigns",
-        Some(&token_for(principal, "core:read")),
+        Some(&token_for(&vault,principal, "core:read")),
         Some(&json!({ "name": "read only" })),
     )
     .await;

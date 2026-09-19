@@ -20,13 +20,30 @@ pub(super) fn scoped_read_for_core_auth<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
+    if let Some(proof) = auth.verified_slip() {
+        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(proof)
+            .ok_or_else(ApiError::unauthorized)?;
+        return Ok(vault.scoped_read(actor));
+    }
     let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
     scoped_read_for_actor_ref(vault, actor_ref)
 }
 
 pub(super) fn scoped_read_for_legacy_api(
-    vault: &oneiron::Vault,
+    server: &SyncServer,
 ) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
+    let vault = server.vault().as_ref();
+    if let Some(secret) = server.config.auth_secret.as_deref() {
+        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
+            .map_err(|_| ApiError::unauthorized())?;
+        let proof = vault
+            .verified_host_root_slip(&issuer)
+            .map_err(|_| ApiError::unauthorized())?;
+        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof)
+            .ok_or_else(ApiError::unauthorized)?;
+        return Ok(vault.scoped_read(actor));
+    }
+    // Explicit dev mode is not a production root-slip factory.
     scoped_read_for_actor_ref(vault, LEGACY_SCOPED_READ_ACTOR_REF)
 }
 

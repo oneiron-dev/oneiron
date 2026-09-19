@@ -62,11 +62,10 @@ impl Hub {
             return;
         };
         sessions.retain(|_, session| {
-            let live = self.server.upgrade().is_some_and(|server| {
-                !session.auth.jti().is_some_and(|jti| {
-                    crate::auth::is_revoked_or_unreadable(jti, server.vault().as_ref())
-                })
-            });
+            let live = self
+                .server
+                .upgrade()
+                .is_some_and(|server| session.auth.credential_is_live(server.vault().as_ref()));
             live && (session.attached.load(Ordering::Acquire) != 0
                 || session
                     .touched

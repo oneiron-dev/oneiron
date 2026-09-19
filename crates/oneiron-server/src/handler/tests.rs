@@ -231,37 +231,6 @@ async fn submit_lease_request(
     }
 }
 
-fn root_lease_record(
-    server: &SyncServer,
-    vault_id: u64,
-    client_id: u64,
-) -> oneiron::sync::LeaseRecord {
-    let key = oneiron::sync::lease::lease_registry_key(vault_id, client_id);
-    match server
-        .root_doc
-        .get_map(oneiron::sync::ROOT_LEASES_MAP)
-        .get(&key)
-    {
-        Some(ValueOrContainer::Value(LoroValue::Binary(raw))) => {
-            oneiron::sync::decode_lease_record(&raw).unwrap()
-        }
-        other => panic!("missing scoped root lease record {key}: {other:?}"),
-    }
-}
-
-fn mirror_lease_record(
-    vault: &oneiron::Vault,
-    vault_id: u64,
-    client_id: u64,
-) -> oneiron::sync::LeaseRecord {
-    let key = oneiron::sync::lease_key(vault_id, client_id);
-    let raw = vault
-        .sync_state_get(&key)
-        .unwrap()
-        .unwrap_or_else(|| panic!("missing mirrored lease row {key}"));
-    oneiron::sync::decode_lease_record(&raw).unwrap()
-}
-
 #[tokio::test]
 async fn hosted_lease_production_path_isolates_same_client_id_by_configured_vault() {
     use ed25519_dalek::{Signer, SigningKey};
@@ -277,64 +246,23 @@ async fn hosted_lease_production_path_isolates_same_client_id_by_configured_vaul
         .sign(&oneiron::sync::lease_pop_transcript(client_id, &pubkey))
         .to_bytes();
 
-    let server_a = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(submit_lease_request(&server_a, client_id, pubkey, pop_sig).await);
-
-    let server_b = test_server_with_lease_vault_id(vault.clone(), tenant_b);
-    assert!(submit_lease_request(&server_b, client_id, pubkey, pop_sig).await);
-    assert!(
-        server_b
-            .root_doc
-            .get_map(oneiron::sync::ROOT_LEASES_MAP)
-            .get(&oneiron::sync::client_id_hex(client_id))
-            .is_none(),
-        "production registration must not write the legacy subscriber-only root key"
-    );
-    assert_eq!(
-        root_lease_record(&server_b, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        root_lease_record(&server_b, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        mirror_lease_record(&vault, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        mirror_lease_record(&vault, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-
-    let server_a_revoke = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(
-        server_a_revoke
-            .revoke_lease(client_id)
-            .await
-            .unwrap()
-            .is_some()
-    );
-
-    let server_b_renew = test_server_with_lease_vault_id(vault.clone(), tenant_b);
-    assert!(submit_lease_request(&server_b_renew, client_id, pubkey, pop_sig).await);
-    assert_eq!(
-        root_lease_record(&server_b_renew, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Revoked
-    );
-    assert_eq!(
-        root_lease_record(&server_b_renew, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active,
-        "tenant A's revocation floor must not block tenant B renewal"
-    );
-
-    let server_a_retry = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(!submit_lease_request(&server_a_retry, client_id, pubkey, pop_sig).await);
-    assert_eq!(
-        root_lease_record(&server_a_retry, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Revoked,
-        "tenant A's own revoked row remains terminal"
-    );
+    for tenant in [tenant_a, tenant_b] {
+        let server = test_server_with_lease_vault_id(vault.clone(), tenant);
+        assert!(!submit_lease_request(&server, client_id, pubkey, pop_sig).await);
+        assert!(
+            vault
+                .sync_state_get(&oneiron::sync::lease_key(tenant, client_id))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            server
+                .root_doc
+                .get_map(oneiron::sync::ROOT_LEASES_MAP)
+                .get(&oneiron::sync::lease::lease_registry_key(tenant, client_id))
+                .is_none()
+        );
+    }
 }
 
 #[tokio::test]

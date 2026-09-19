@@ -168,6 +168,7 @@ pub(crate) async fn context_board_hydrate(
     payload: Result<Json<ContextBoardRequest>, JsonRejection>,
 ) -> Result<Json<ContextBoardResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let req = json_payload(payload)?;
     // Identity keys on the authenticated actor, never on a free label: the
     // same key the MEMORIES cursor store already uses.

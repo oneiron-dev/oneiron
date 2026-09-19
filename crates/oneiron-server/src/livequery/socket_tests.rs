@@ -5,7 +5,6 @@
 use super::connection::Hub;
 use super::subscriptions::*;
 use super::*;
-use crate::auth::mint_core_token_v2;
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use futures_util::{SinkExt, StreamExt};
@@ -73,7 +72,7 @@ impl Drop for Fixture {
 }
 
 fn token(actor: &str) -> String {
-    mint_core_token_v2(SECRET, &format!("scope=core:read;principal_ref={actor}"))
+    format!("scope=core:read;principal_ref={actor};actor_class=human")
 }
 
 async fn fixture() -> Fixture {
@@ -91,8 +90,19 @@ async fn fixture() -> Fixture {
         .unwrap(),
     );
     let hub = Hub::for_server(&server);
-    let auth =
-        CoreAuth::from_bind_token(&token(ACTOR), &server.config, server.vault().as_ref()).unwrap();
+    for actor in [ACTOR, OTHER] {
+        server
+            .vault()
+            .put_entity(
+                &oneiron::EntityId::from_hex(actor).unwrap(),
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"socket actor",
+            )
+            .unwrap();
+    }
+    let auth = crate::test_credentials::authenticate(&server, &token(ACTOR));
     let source = Arc::new(Source {
         doc: LoroDoc::new(),
         values: Mutex::new(BTreeMap::new()),
@@ -162,7 +172,7 @@ async fn connect(f: &Fixture, actor: &str) -> Socket {
     send(
         &mut socket,
         TAG_RPC,
-        json!({"method":"auth.bind","requestId":7,"params":{"token":token(actor)}}),
+        json!({"method":"auth.bind","requestId":7,"params":crate::test_credentials::bind_payload(&f._server,&token(actor))}),
     )
     .await;
     assert_eq!(

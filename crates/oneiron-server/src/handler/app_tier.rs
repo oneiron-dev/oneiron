@@ -168,7 +168,18 @@ pub(super) fn handle_app_message_with_connection(
             }
             let token = crate::livequery::bind_token(&request.params)
                 .map_err(|_| ProtocolError::RpcNoPrincipal)?;
-            let auth = CoreAuth::from_bind_token(&token, &server.config, server.vault().as_ref())
+            let proof: crate::auth::BindingProof = serde_json::from_value(
+                request
+                    .params
+                    .get("binding")
+                    .cloned()
+                    .ok_or(ProtocolError::RpcNoPrincipal)?,
+            )
+            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+            let auth =
+                CoreAuth::from_slip_token(&token, &proof, &server.config, server.vault().as_ref())
+                    .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+            auth.require_registered_principal()
                 .map_err(|_| ProtocolError::RpcNoPrincipal)?;
             state.bound_auth = Some(auth);
             for frame in crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?
@@ -215,7 +226,9 @@ pub(super) fn require_bound_app_auth<'a>(
         .bound_auth
         .as_ref()
         .ok_or(ProtocolError::RpcNoPrincipal)?;
-    if session_credential_revoked(server.vault().as_ref(), auth.jti()) {
+    if !auth.credential_is_live(server.vault().as_ref())
+        || session_credential_revoked(server.vault().as_ref(), auth.jti())
+    {
         return Err(ProtocolError::RpcNoPrincipal);
     }
     Ok(auth)

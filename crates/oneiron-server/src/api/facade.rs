@@ -142,6 +142,7 @@ async fn facade_recall(
     payload: Result<Json<FacadeRecallRequest>, JsonRejection>,
 ) -> Result<Json<MemoryPack>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let request = facade_json(payload)?;
     check_query(&request.query)?;
     let limit = facade_limit(request.limit, FACADE_DEFAULT_RECALL_LIMIT)?;
@@ -171,6 +172,7 @@ async fn facade_receipts(
     payload: Result<Json<FacadeReceiptsRequest>, JsonRejection>,
 ) -> Result<Json<Vec<MemoryReceipt>>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let request = facade_json(payload)?;
     let limit = facade_limit(request.limit, FACADE_DEFAULT_RECEIPTS_LIMIT)?;
     let (actor, actor_class) = facade_actor(&auth)?;

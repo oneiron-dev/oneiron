@@ -275,7 +275,7 @@ fn decode_companion_register_fields(body: &[u8]) -> Option<Map<String, Value>> {
     );
     fields.insert(
         "export".to_owned(),
-        Value::String(record.export_classification.as_str().to_owned()),
+        Value::String(record.sensitivity.as_str().to_owned()),
     );
     fields.insert(
         "provenance".to_owned(),

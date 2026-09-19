@@ -40,6 +40,7 @@ pub(super) const EDIT_ACTION_FIELDS: &[&str] = &[
     "valid_to",
     "salience",
     "world",
+    "relationship",
     "scope",
     "old_claim_id",
     "claim_id",

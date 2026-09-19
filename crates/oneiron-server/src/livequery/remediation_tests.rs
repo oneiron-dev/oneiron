@@ -214,12 +214,7 @@ async fn socket_delivery_is_disabled_until_an_open_and_after_close() {
     let hub = connection::Hub::for_server(&server);
     let mut connection = connection::Connection::new(hub, 9);
     assert!(!connection.has_active_subscriptions());
-    let auth = CoreAuth::from_bind_token(
-        &production_tests::token("human"),
-        &server.config,
-        server.vault().as_ref(),
-    )
-    .unwrap();
+    let auth = crate::test_credentials::authenticate(&server, &production_tests::token("human"));
     connection
         .control(
             &auth,

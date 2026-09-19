@@ -97,6 +97,7 @@ pub(crate) async fn list_core_conversations(
     query: Result<Query<CoreListQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let params = query_params(query)?;
     core_list_entities_by_type(&server.vault, ENTITY_TYPE_CONVERSATION, params)
 }
@@ -159,6 +160,7 @@ pub(crate) async fn list_core_conversation_turns(
     query: Result<Query<CoreListQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     require_entity_type(
         &server,
@@ -257,6 +259,7 @@ pub(crate) async fn get_core_turn(
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let id = parse_entity_id_param(&turn_id, "turn_id")?;
     require_entity_type(&server, &id, ENTITY_TYPE_TURN, "turn")?;
     let params = query_params(query)?;

@@ -269,6 +269,7 @@ pub(crate) async fn core_run_tree(
     query: Result<Query<CoreRunTreeQuery>, QueryRejection>,
 ) -> Result<Json<CoreRunTreeResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let params = query_params(query)?;
     validate_core_run_tree_query(&params)?;
 
@@ -301,6 +302,7 @@ pub(crate) async fn core_run_tree_observe(
     query: Result<Query<CoreRunTreeQuery>, QueryRejection>,
 ) -> Result<Json<CoreRunTreeResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let params = query_params(query)?;
     validate_core_run_tree_query(&params)?;
 

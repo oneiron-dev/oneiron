@@ -307,7 +307,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
             oneiron::companion_value_from_json(&json!({ "source": "test" }))
                 .expect("provenance value"),
         ),
-        oneiron::CompanionExportClassification::LocalOnly,
+        oneiron::federation::Sensitivity::Restricted,
     );
     server
         .vault

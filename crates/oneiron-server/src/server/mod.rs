@@ -24,7 +24,7 @@ use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
 #[cfg(test)]
 use oneiron::sync::WindowKey;
 #[cfg(test)]
-use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
+use oneiron::sync::lease::{self, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 #[cfg(test)]
 use oneiron::sync::schema::{read_window_list, schema_version_bytes};
 #[cfg(test)]

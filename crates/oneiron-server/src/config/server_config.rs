@@ -423,7 +423,9 @@ impl ServeConfig {
             (HostingPrivacyPosture::Hosted, None) => VaultDataKeyCustody::HostManagedKms {
                 key_ref: String::new(),
             },
-            (HostingPrivacyPosture::SelfHostLocal, None) => VaultDataKeyCustody::OwnerHeldLocal,
+            (HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay, None) => {
+                VaultDataKeyCustody::OwnerHeldLocal
+            }
         };
         VaultPrivacyConfig {
             posture: self.privacy_posture,

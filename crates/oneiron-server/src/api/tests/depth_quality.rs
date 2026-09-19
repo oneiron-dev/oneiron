@@ -144,7 +144,7 @@ async fn retrieval_quality_depth_minimal_search_keeps_existing_ranked_items() {
     let (_dir, server) = test_server();
     seed_text_turn(&server, "qualitydepth qualitydepth");
     seed_text_turn(&server, "qualitydepth other");
-    let scoped = scoped_read_for_legacy_api(&server.vault).unwrap();
+    let scoped = scoped_read_for_legacy_api(&server).unwrap();
     let expected = scoped.search_text("qualitydepth", 11, None).unwrap();
     let expected = search_response(&scoped, expected, View::Standard, 10).unwrap();
     // Apply the same JSON wire roundtrip as route_json before comparing
