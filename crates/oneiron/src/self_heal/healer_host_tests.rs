@@ -146,10 +146,12 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
     v.with_write_txn(|txn| {
         let mut key = b"healer:count:".to_vec();
         key.extend_from_slice(actor.entity_ref().as_bytes());
-        let body = rmp_serde::to_vec_named(&serde_json::json!({"count": previous, "check": null})).unwrap();
+        let body = rmp_serde::to_vec_named(&serde_json::json!({"count": previous, "check": null}))
+            .unwrap();
         v.store.vault_meta.put(txn, &key, &body)?;
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     let registration = v
         .register_dev_healer(HealerDeployment::SelfHostSingleWriter, actor)
         .unwrap();
@@ -173,7 +175,10 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
         .unwrap()
         .unwrap();
     assert_eq!(check.actor, actor.entity_ref());
-    assert_eq!(check.count, super::healer_host::PROPOSAL_BURST_THRESHOLD + 1);
+    assert_eq!(
+        check.count,
+        super::healer_host::PROPOSAL_BURST_THRESHOLD + 1
+    );
     let receipt = v
         .reverse_healer_run(&owner, &actor.entity_ref(), "burst")
         .unwrap();

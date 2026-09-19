@@ -88,7 +88,9 @@ fn closed_form_degenerate_and_silent_runs_not_healthy_runs() {
         error_count: 1,
         conversation: false,
     };
-    let ids = v.run_dreamer_output_tripwires("run", std::slice::from_ref(&r)).unwrap();
+    let ids = v
+        .run_dreamer_output_tripwires("run", std::slice::from_ref(&r))
+        .unwrap();
     assert_eq!(ids.len(), 1);
     assert_eq!(
         decode_diagnostic_event_body(&v.get(&ids[0]).unwrap().unwrap())
@@ -98,7 +100,9 @@ fn closed_form_degenerate_and_silent_runs_not_healthy_runs() {
     );
     r.conversation = true;
     r.error_count = 0;
-    let ids = v.run_dreamer_output_tripwires("run", std::slice::from_ref(&r)).unwrap();
+    let ids = v
+        .run_dreamer_output_tripwires("run", std::slice::from_ref(&r))
+        .unwrap();
     assert_eq!(
         decode_diagnostic_event_body(&v.get(&ids[0]).unwrap().unwrap())
             .unwrap()
