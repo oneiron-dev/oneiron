@@ -62,3 +62,31 @@ fn fleet_ppr_pair_checks_real_cold_and_resume_outputs() -> Result<()> {
     // No speedup claim or performance threshold is made by this correctness fixture.
     Ok(())
 }
+
+#[tokio::test]
+async fn fleet_clients_reuse_only_owned_ports_across_distinct_listeners() {
+    let sockets = super::wire::client_sockets(4, 2).unwrap();
+    let ports = sockets
+        .iter()
+        .map(|socket| socket.local_addr().unwrap().port())
+        .collect::<Vec<_>>();
+    assert_eq!(ports[0], ports[1]);
+    assert_eq!(ports[2], ports[3]);
+    assert_ne!(ports[0], ports[2]);
+    let one = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let two = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut clients = Vec::new();
+    let mut peers = Vec::new();
+    for (index, socket) in sockets.into_iter().enumerate() {
+        let listener = if index % 2 == 0 { &one } else { &two };
+        clients.push(
+            socket
+                .connect(listener.local_addr().unwrap())
+                .await
+                .unwrap(),
+        );
+        peers.push(listener.accept().await.unwrap());
+    }
+    assert_eq!(clients.len(), 4);
+    assert_eq!(peers.len(), 4);
+}

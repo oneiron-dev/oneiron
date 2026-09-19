@@ -37,7 +37,8 @@ def main():
         "deviations": ["temporary label", "owned paths", "KeepAlive=false", "loopback port"],
         "passed": False,
     }
-    label = "com.oneiron.server.w7proof." + uuid.uuid4().hex
+    label = "com.oneiron.server.w7c10.proof." + uuid.uuid4().hex
+    receipt["label"] = label
     target = f"gui/{os.getuid()}/{label}"
     (root / ".w7").mkdir(exist_ok=True)
     try:
@@ -68,6 +69,8 @@ def main():
                 raise RuntimeError("unsubstituted reference path")
             fixture = scratch / "fixture.plist"
             fixture.write_bytes(rendered)
+            fixture.chmod(0o600)
+            config.chmod(0o600)
             receipt["fixture_sha256"] = hashlib.sha256(rendered).hexdigest()
             run("plutil", "-lint", str(fixture))
             booted = False
@@ -85,18 +88,23 @@ def main():
                 receipt["passed"] = True
             finally:
                 receipt["logs"] = {p.name: p.read_text(errors="replace")[-16000:] for p in [scratch / "stdout.log", scratch / "stderr.log"] if p.exists()}
-                if booted:
+                # Even a failed bootstrap may have registered its own label.
+                present = run("launchctl", "print", target, check=False)
+                if booted or present.returncode == 0:
                     run("launchctl", "bootout", target)
-                    absent = run("launchctl", "print", target, check=False)
-                    receipt["label_removed"] = absent.returncode != 0
-                    if not receipt["label_removed"]:
-                        raise RuntimeError("temporary label survived teardown")
+                absent = run("launchctl", "print", target, check=False)
+                receipt["label_removed"] = absent.returncode != 0
+                if not receipt["label_removed"]:
+                    raise RuntimeError("temporary label survived teardown")
         receipt["scratch_removed"] = not scratch.exists()
         if reference.read_bytes() != reference_bytes:
             raise RuntimeError("reference plist changed")
     except Exception as error:
         receipt["passed"] = False
         receipt["error"] = str(error)
+        if isinstance(error, subprocess.CalledProcessError):
+            receipt["command_stdout"] = error.stdout
+            receipt["command_stderr"] = error.stderr
     with args.out.open("x") as stream:
         json.dump(receipt, stream, indent=2)
         stream.write("\n")

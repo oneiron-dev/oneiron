@@ -8,8 +8,38 @@ use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
 use super::Result;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Socket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+
+/// Reserve one kernel-selected client port per listener group. Siblings reuse
+/// only that owned port and connect to distinct destinations. macOS otherwise
+/// exhausts its ephemeral range even across several destination listeners.
+pub(super) fn client_sockets(
+    agents: usize,
+    listeners: usize,
+) -> Result<Vec<tokio::net::TcpSocket>> {
+    let mut sockets = Vec::with_capacity(agents);
+    let mut group_address = None;
+    for index in 0..agents {
+        let socket = tokio::net::TcpSocket::new_v4()?;
+        socket.set_reuseaddr(true)?;
+        #[cfg(unix)]
+        socket.set_reuseport(true)?;
+        let address = if index % listeners == 0 {
+            "127.0.0.1:0".parse()?
+        } else {
+            group_address.ok_or("missing reserved client port")?
+        };
+        socket.bind(address).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("fleet client bind {index} at {address}: {error}"),
+            )
+        })?;
+        group_address = Some(socket.local_addr()?);
+        sockets.push(socket);
+    }
+    Ok(sockets)
+}
 
 pub(super) struct Agent {
     pub index: usize,
@@ -47,6 +77,8 @@ impl Agent {
     pub(super) async fn connect(
         index: usize,
         url: &str,
+        address: std::net::SocketAddr,
+        tcp: tokio::net::TcpSocket,
         secret: &str,
         token: String,
         timeout: Duration,
@@ -56,7 +88,13 @@ impl Agent {
             request
                 .headers_mut()
                 .insert("authorization", format!("Bearer {secret}").parse()?);
-            let (mut socket, _) = tokio_tungstenite::connect_async(request).await?;
+            let tcp = tcp.connect(address).await.map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!("fleet client connect {index} to {address}: {error}"),
+                )
+            })?;
+            let (mut socket, _) = tokio_tungstenite::client_async(request, tcp).await?;
             socket
                 .send(Message::Binary(
                     vec![TAG_PROTOCOL_HELLO, APP_TIER_PROTOCOL_VERSION_VERSION].into(),

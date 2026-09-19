@@ -12,8 +12,10 @@ in-memory transport stands in for a held connection.
   benchmark process. Client and server CPU costs are both included. This is not
   a remote network benchmark, a multi-vault fleet, or an LLM benchmark.
   The explicit `listeners` ports all serve that same instance and vault; agents
-  spread evenly over those ports to avoid exhausting the loopback ephemeral-port
-  range. The receipt records the count, so comparisons cannot change it silently.
+  spread evenly over those ports. Before connecting, each listener group
+  reserves one kernel-selected loopback source port; sibling sockets reuse only
+  that owned port with SO_REUSEADDR and distinct destination ports. This avoids
+  macOS's default one-port-per-connect exhaustion without changing host sysctls. The receipt records the count, so comparisons cannot change it silently.
 - All agent sockets open and authenticate before measured traffic starts.
   Each remains allocated through every write/recall round and the hold interval.
   Matching WebSocket Ping/Pong probes before and after the interval prove the
@@ -81,8 +83,9 @@ plus HTTP and vault descriptors. Also check local ephemeral-port capacity.
 The command does not raise OS limits, alter sysctls, weaken auth, or silently
 reduce agent count. A caller can raise its own process's soft descriptor limit
 before launch (for example `ulimit -n 65536` in an isolated runner shell). This
-changes no system-wide setting. Four listeners accommodate 20k loopback agents
-on a host with a 16,384-port ephemeral range. If permitted process limits are
+changes no system-wide setting. Four listeners plus explicit owned source-port reuse accommodate 20k loopback
+agents on a host with a 16,384-port ephemeral range. Destination fan-out alone
+is insufficient on macOS; the harness explicitly binds before connecting. If permitted process limits are
 still insufficient, retain the failed receipt instead of shrinking the fleet.
 Host identity, CPU, OS/kernel, logical CPU count, FD limit, build profile and
 compiled optimization level are captured in the receipt. Labels must identify
