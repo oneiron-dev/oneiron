@@ -73,9 +73,32 @@ impl FallbackRegistry {
             || message
                 .content
                 .iter()
-                .all(|p| matches!(p, ContentPart::Text { text } if text.trim().is_empty()))
+                .all(|p| matches!(p, ContentPart::Text { text } | ContentPart::Reasoning { text, .. } if text.trim().is_empty()))
         {
             return Err(FallbackError::Empty(declared.name.clone()));
+        }
+        if message.role != LlmMessageRole::Assistant
+            || message.content.iter().any(|part| match part {
+                ContentPart::ToolCall {
+                    call_id,
+                    name,
+                    input,
+                } => call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object(),
+                ContentPart::ToolResult { call_id, .. } => call_id.trim().is_empty(),
+                ContentPart::Image { media_type, image } => {
+                    media_type.trim().is_empty()
+                        || match image {
+                            super::ImageContent::Url { url } => url.trim().is_empty(),
+                            super::ImageContent::Base64 { data } => data.trim().is_empty(),
+                        }
+                }
+                _ => false,
+            })
+        {
+            return Err(FallbackError::Failed {
+                name: declared.name.clone(),
+                reason: "invalid terminal content".into(),
+            });
         }
         Ok(LlmResponse {
             message,
