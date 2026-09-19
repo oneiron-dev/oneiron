@@ -227,6 +227,11 @@ impl Memory<'_> {
     /// addressed executor, or the owner when the assignee is the local Dreamer,
     /// which has no actor row of its own.
     fn require_execution_writer(&self, body: &TaskVerbBody) -> MemoryResult<()> {
+        if body.assignee == Some(TaskAssignee::AnswerHolders) {
+            return Err(MemoryError::bad_request(
+                "asks settle through their first-answer door",
+            ));
+        }
         let expected = match body.assignee.and_then(TaskAssignee::entity_ref) {
             Some(entity_ref) => entity_ref,
             None => EntityId::from_hex(&body.owner_ref).map_err(|_| {

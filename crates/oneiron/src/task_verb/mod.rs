@@ -87,3 +87,11 @@ pub(crate) use linear_store::{forget_task_mirror, note_task_write};
 mod production_ports_tests;
 
 pub(crate) use symbol_lease::forget_symbols;
+
+mod ask;
+mod ask_wait;
+pub use ask::{TaskAskAnswer, TaskAskHandle, TaskAskReceipt, TaskAskSpec};
+pub use ask_wait::TaskWaitOutcome;
+
+#[cfg(test)]
+mod ask_tests;
