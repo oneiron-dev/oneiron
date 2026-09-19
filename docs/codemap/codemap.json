@@ -1625,7 +1625,8 @@
      "path": "src/autoreason_campaign/beam_promotion.rs",
      "purpose": "One-shot, one-way promotion from held-out KEEP to a sealed BEAM referee",
      "surface": {
-      "fn": 4,
+      "crate-vis": 1,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -26383,7 +26384,7 @@
      "path": "src/beam/chroma.rs",
      "purpose": "Independent vanilla-RAG arm",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -26392,7 +26393,19 @@
      "notable": [],
      "path": "src/beam/chroma/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/beam/chroma/tests/support.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -26551,7 +26564,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/beam/model_scaffold/tests.rs",
@@ -27255,7 +27268,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27300,7 +27313,7 @@
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
    "source_files": 87,
-   "test_files": 16
+   "test_files": 17
   },
   "oneiron-driver": {
    "files": [
@@ -30244,7 +30257,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ApiArgs",
@@ -30295,7 +30308,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/init.rs",
@@ -31781,7 +31794,7 @@
     "cli": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "—"
     },
@@ -31905,7 +31918,7 @@
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 188,
    "test_files": 71

@@ -141,10 +141,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/tests.rs` | test | L | — | — | — |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
-| `src/cli.rs` | src | m | 9 struct · 3 enum · 2 fn | ApiArgs, ApiCommand, Cli, Command, InitArgs, ProvenanceArgs, RevokeArgs, SkillsPackArgs +4 | — |
+| `src/cli.rs` | src | L | 9 struct · 3 enum · 2 fn | ApiArgs, ApiCommand, Cli, Command, InitArgs, ProvenanceArgs, RevokeArgs, SkillsPackArgs +4 | — |
 | `src/commands.rs` | src | m | 1 struct · 9 fn · 1 const · 2 re-export | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | m | 1 fn · 10 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
-| `src/commands/init.rs` | src | s | 1 fn | — | First-run embedder choice, using the same config and provider as serve |
+| `src/commands/init.rs` | src | m | 1 fn | — | First-run embedder choice, using the same config and provider as serve |
 | `src/commands/tests.rs` | test | L | — | — | — |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
 | `src/config/embedder.rs` | src | m | 5 struct · 4 enum · 7 fn · 6 const · 2 crate-vis | EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant, EndpointEmbedderConfig +1 | The `[embedder]` section: provider selection and the keys each provider reads |

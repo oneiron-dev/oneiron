@@ -23,8 +23,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fixtures/edit_path/repo/src/math.rs` | src | s | 2 fn | — | — |
 | `src/beam/ablations.rs` | src | s | 2 crate-vis | — | Two explicit cost controls: uncapped context and neutralized OF-095 decay |
 | `src/beam/arms.rs` | src | m | 15 crate-vis | — | Deterministic and vanilla arms plus adapter dispatch |
-| `src/beam/chroma.rs` | src | s | 4 crate-vis | — | Independent vanilla-RAG arm |
-| `src/beam/chroma/tests.rs` | test | s | — | — | — |
+| `src/beam/chroma.rs` | src | s | 5 crate-vis | — | Independent vanilla-RAG arm |
+| `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
+| `src/beam/chroma/tests/support.rs` | test | s | 3 crate-vis | — | — |
 | `src/beam/citations.rs` | src | s | 3 crate-vis | — | Evidence-backed per-number citations |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
 | `src/beam/comparability.rs` | src | s | 9 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
@@ -41,7 +42,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/mod.rs` | src | s | 7 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
 | `src/beam/model_scaffold.rs` | src | m | 12 crate-vis | — | Shared measured answerer scaffold |
-| `src/beam/model_scaffold/tests.rs` | test | s | — | — | — |
+| `src/beam/model_scaffold/tests.rs` | test | m | — | — | — |
 | `src/beam/model_usage.rs` | src | s | 4 crate-vis | — | Provider usage, priced by an explicit model-and-revision price table |
 | `src/beam/nuggets.rs` | src | s | 8 crate-vis | — | D9 dual-column scorer |
 | `src/beam/ppr_vad.rs` | src | m | 22 crate-vis | — | PPR-VAD sweep arm, sampling, and gates |
