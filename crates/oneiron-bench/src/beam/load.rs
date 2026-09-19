@@ -334,6 +334,7 @@ pub(super) fn load_run_jsonl_dataset(
                 .as_ref()
                 .and_then(|metadata| metadata.get("stated_claim_predicate"))
             {
+                use sha2::{Digest, Sha256};
                 let predicate = predicate
                     .as_str()
                     .filter(|s| !s.is_empty())
@@ -354,7 +355,6 @@ pub(super) fn load_run_jsonl_dataset(
                 body.evidence = Some(rmpv::Value::Array(vec![rmpv::Value::Binary(
                     subject.as_bytes().to_vec(),
                 )]));
-                use sha2::{Digest, Sha256};
                 let digest = Sha256::digest(format!(
                     "oneiron:bench-corpus-statement:v1:{}",
                     subject.to_hex()

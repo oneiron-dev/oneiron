@@ -74,7 +74,7 @@ pub(super) fn corpus() -> BeamResult<CitationCorpus> {
             };
             match disposition {
                 CitationDisposition::Cite | CitationDisposition::CiteWithCaveat => {
-                    result.main_table.push(number)
+                    result.main_table.push(number);
                 }
                 CitationDisposition::WalledAppendix => result.appendix.push(number),
                 CitationDisposition::Dropped => result.dropped.push(number),

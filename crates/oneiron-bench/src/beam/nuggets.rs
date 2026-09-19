@@ -129,7 +129,7 @@ pub(super) fn run(path: &Path) -> BeamResult<ProofResult> {
     if score
         .beam
         .as_ref()
-        .unwrap()
+        .expect("FixedBeamScorer produces BEAM columns")
         .wedge_buckets
         .values()
         .any(Option::is_none)
@@ -158,18 +158,15 @@ pub(super) fn run(path: &Path) -> BeamResult<ProofResult> {
             reason: "proof requires a source commit".into(),
         });
     }
-    let result_path = replay
-        .output_dir
-        .join(&commit)
-        .join(&replay.dataset)
-        .join("score.json");
+    let result_dir = replay.output_dir.join(&commit).join(&replay.dataset);
+    let result_path = result_dir.join("score.json");
     let report = ProofResult {
         commit,
         dataset: replay.dataset,
         score,
         result_path,
     };
-    std::fs::create_dir_all(report.result_path.parent().unwrap())?;
+    std::fs::create_dir_all(result_dir)?;
     std::fs::write(&report.result_path, serde_json::to_vec_pretty(&report)?)?;
     Ok(report)
 }

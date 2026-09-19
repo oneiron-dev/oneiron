@@ -83,7 +83,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
     let cheap = ModelPin {
         model_id: "openai/gpt-4.1-nano@2025-04-14".parse().unwrap(),
         provider_model: "gpt-4.1-nano-2025-04-14".into(),
-        ..backbone.clone()
+        ..backbone
     };
     let judge_model = ModelPin {
         model_id: "openai/gpt-4.1-mini@2025-04-14".parse().unwrap(),

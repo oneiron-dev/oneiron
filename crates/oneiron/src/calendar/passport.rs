@@ -440,6 +440,17 @@ fn ingest(reason: &'static str) -> CalendarError {
     }
 }
 
+fn is_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
+    for id in vault.claims_for_subject(event)? {
+        if vault.get_claim(&id)?.is_some_and(|body| {
+            body.predicate == super::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::claims::CalendarPassportDirection;
@@ -515,15 +526,4 @@ mod tests {
             None
         );
     }
-}
-
-fn is_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
-    for id in vault.claims_for_subject(event)? {
-        if vault.get_claim(&id)?.is_some_and(|body| {
-            body.predicate == super::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
-        }) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

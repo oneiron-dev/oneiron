@@ -479,7 +479,14 @@ pub(super) fn run_with_session(
                 answerer_params_sha256: model_params_hash(&arm.model)?,
                 accuracy: selected
                     .iter()
-                    .map(|r| r.scoring.beam.as_ref().unwrap().aggregate.official_int_cast)
+                    .map(|r| {
+                        r.scoring
+                            .beam
+                            .as_ref()
+                            .expect("FixedBeamScorer produces BEAM columns")
+                            .aggregate
+                            .official_int_cast
+                    })
                     .sum::<f64>()
                     / n,
                 latency_us: selected
@@ -496,11 +503,11 @@ pub(super) fn run_with_session(
         let det = points
             .iter()
             .find(|p| p.effort == effort.name && p.arm == ArmKind::Deterministic)
-            .unwrap();
+            .expect("validated plan includes a deterministic arm for every effort");
         let agent = points
             .iter()
             .find(|p| p.effort == effort.name && p.arm == ArmKind::Agentic)
-            .unwrap();
+            .expect("validated plan includes an agentic arm for every effort");
         lift.insert(effort.name.clone(), agency_lift(det, agent)?);
     }
     let query_total = rows.iter().map(|r| r.query_cost.cost_usd).sum();

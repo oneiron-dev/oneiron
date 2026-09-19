@@ -44,21 +44,19 @@ impl Graduation {
         for tier in LADDER {
             let measurement = self.measurements.get(&tier);
             let gated = tier == DatasetTier::Beam10m && !self.scale_work_ready;
-            if let Some(value) = measurement {
-                if gated
+            if let Some(value) = measurement
+                && (gated
                     || !previous_cleared
                     || !value.baseline.is_finite()
                     || !value.measured.is_finite()
                     || !(0.0..=1.0).contains(&value.baseline)
                     || !(0.0..=1.0).contains(&value.measured)
                     || value.source_commit.len() != 40
-                    || !value.source_commit.bytes().all(|b| b.is_ascii_hexdigit())
-                {
-                    return Err(BeamError::Comparability {
-                        reason: "tier measurement bypassed graduation or has invalid provenance"
-                            .into(),
-                    });
-                }
+                    || !value.source_commit.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return Err(BeamError::Comparability {
+                    reason: "tier measurement bypassed graduation or has invalid provenance".into(),
+                });
             }
             let status = if gated {
                 "not-yet-run (10M-gated)"
