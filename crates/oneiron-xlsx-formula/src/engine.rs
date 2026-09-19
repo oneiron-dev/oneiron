@@ -113,6 +113,12 @@ impl RecalcEngine for FormualizerEngine {
         anchor: &str,
         read_range: Option<&str>,
     ) -> Result<RecalcReport> {
+        crate::context::inspect_formula(formula)?;
+        for value in setup.values() {
+            if let StagedValue::Formula(expression) = value {
+                crate::context::inspect_formula(expression)?;
+            }
+        }
         let mut workbook = Self::fresh_workbook()?;
         for (address, value) in setup {
             let (row, col, _, _) = parse_a1_1based(address)

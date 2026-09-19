@@ -15,8 +15,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/measure.rs` | src | s | — | — | Step-19 measurement executable: unchanged formualizer over `cases.json` |
 | `src/bin/recalc_native.rs` | src | s | — | — | Measure the shipped retained XLSX adapter without a precision fallback |
 | `src/cache.rs` | src | s | 3 crate-vis | — | Typed formula caches as checked byte patches, preserving unmodelled XML |
-| `src/context.rs` | src | s | 1 crate-vis | — | Keep ambient context out of the deterministic production recalc path |
-| `src/engine.rs` | src | s | 1 struct · 1 fn · 6 const · 1 re-export · 3 crate-vis | FormualizerEngine | Storage-independent recalc seam over the pinned upstream engine |
+| `src/context.rs` | src | s | 1 crate-vis | — | Bound formula AST evaluation and keep ambient context out of native recalc |
+| `src/engine.rs` | src | m | 1 struct · 1 fn · 6 const · 1 re-export · 3 crate-vis | FormualizerEngine | Storage-independent recalc seam over the pinned upstream engine |
 | `src/error.rs` | src | s | 1 enum · 1 fn · 1 type | FormulaError | Typed failures for the formula crate |
 | `src/lib.rs` | src | s | 7 mod · 7 re-export | — | In-process xlsx formula evaluation behind the docedit recalc seam |
 | `src/mac_parity.rs` | src | s | 1 crate-vis | — | Workbook-local Excel-for-Mac function availability, never global overrides |

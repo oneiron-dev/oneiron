@@ -702,3 +702,83 @@ fn absent_inline_string_is_blank_but_explicit_empty_text_is_not() {
         Err(FormulaError::InvalidWorkbook(_))
     ));
 }
+
+#[test]
+fn unsafe_formula_depth_refuses_before_recursive_evaluation_on_both_doors() {
+    use oneiron_xlsx_formula::engine::{RecalcEngine, StagedValue};
+    use std::collections::BTreeMap;
+    let fixture_formula = include_str!("fixtures/fuse-chain-formula.txt").trim();
+    let long_chain = std::iter::repeat_n("1", 10_000)
+        .collect::<Vec<_>>()
+        .join("+");
+    let deep_chain = std::iter::repeat_n("1", 40).collect::<Vec<_>>().join("+");
+    let nested = format!("{}1{}", "ABS(".repeat(40), ")".repeat(40));
+    for formula in [
+        fixture_formula,
+        long_chain.as_str(),
+        deep_chain.as_str(),
+        nested.as_str(),
+    ] {
+        let input = fixture(
+            "",
+            &format!(r#"<c r="A1"><f>{formula}</f><v>999</v></c>"#),
+            false,
+        );
+        assert!(matches!(
+            FormualizerEngine::new().recalculate_xlsx(&input),
+            Err(FormulaError::UnsupportedWorkbook(_))
+        ));
+        assert!(matches!(
+            FormualizerEngine::new().evaluate(&BTreeMap::new(), formula, "A1", None),
+            Err(FormulaError::UnsupportedWorkbook(_))
+        ));
+        let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(formula.into()))]);
+        assert!(matches!(
+            FormualizerEngine::new().evaluate(&setup, "B1", "A1", None),
+            Err(FormulaError::UnsupportedWorkbook(_))
+        ));
+    }
+}
+
+#[test]
+fn bounded_formula_values_stay_native_and_over_limit_preserves_fallback_identity() {
+    use oneiron_xlsx_formula::engine::{CellValue as CalcValue, RecalcEngine};
+    use std::collections::BTreeMap;
+    let normal = std::iter::repeat_n("1", 24).collect::<Vec<_>>().join("+");
+    let result = FormualizerEngine::new()
+        .evaluate(&BTreeMap::new(), &normal, "A1", None)
+        .unwrap();
+    assert_eq!(result.value, CalcValue::Number(24.0));
+    // Operators inside a quoted string do not become expression-depth budget.
+    let text = "+".repeat(1000);
+    let result = FormualizerEngine::new()
+        .evaluate(&BTreeMap::new(), &format!("LEN(\"{text}\")"), "A1", None)
+        .unwrap();
+    assert_eq!(result.value, CalcValue::Number(1000.0));
+    let input = fixture(
+        "",
+        &format!(
+            r#"<c r="A1"><f>{}</f><v>999</v></c>"#,
+            include_str!("fixtures/fuse-chain-formula.txt").trim()
+        ),
+        false,
+    );
+    let session = InProcessSession::opt_in(FixtureSession {
+        fallback: Some(input.clone()),
+        expected_fallback_input: Some(input.clone()),
+        ..FixtureSession::editor()
+    });
+    let result = run_edit_roundtrip(
+        &session,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "bounded-formula",
+    )
+    .unwrap();
+    let EditOutcome::Proposed(proposal) = result else {
+        panic!("expected fallback proposal");
+    };
+    assert_eq!(proposal.new_bytes, input);
+    assert_eq!(proposal.engine, EngineId::libreoffice("fixture-precision"));
+}

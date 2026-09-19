@@ -68,7 +68,7 @@ impl FormualizerEngine {
         for sheet in &sheets {
             for cell in &sheet.cells {
                 if let Some((_, formula)) = &cell.formula {
-                    if crate::context::requires_caller_context(formula) {
+                    if crate::context::inspect_formula(formula)? {
                         return Err(unsupported(
                             "formula needs caller context or volatile reference semantics",
                         ));

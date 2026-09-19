@@ -441,5 +441,31 @@
       "passed": 4
     },
     "acceptance_boundary": "complete historical native run and saved-cache diagnostic only; no fresh Excel accuracy or repaired-source proof"
+  },
+  "formula_stack_budget": {
+    "tests": {
+      "command": "cargo test --locked -p oneiron-xlsx-formula",
+      "passed": {
+        "library": 17,
+        "corpus": 2,
+        "session": 21
+      }
+    },
+    "format": "cargo fmt -p oneiron-xlsx-formula --check",
+    "clippy": "cargo clippy --locked -p oneiron-xlsx-formula --all-targets --all-features -- -D warnings",
+    "final_exit": 0,
+    "host": "Arch selected by normal factory wrapper, not forced",
+    "limits": {
+      "formula_bytes": 32768,
+      "tokens": 256,
+      "evaluation_depth": 32
+    },
+    "source_sha256": {
+      "crates/oneiron-xlsx-formula/src/context.rs": "882c701114a06bd2c99f0d48e8cd4c806633b59805e4bcb2b80b377fc6c3d479",
+      "crates/oneiron-xlsx-formula/src/engine.rs": "6b9b0bde22cb5f439fcca9336de3fba60550a0bfaa29eb64c83135485d1395f5",
+      "crates/oneiron-xlsx-formula/src/workbook.rs": "4530074370d5a147afe2055f36739d8f4d748d9418bcc402f8dca1bba185a1eb",
+      "crates/oneiron-xlsx-formula/tests/session.rs": "b991fd1c78330e7dd56b71b088c225ec1f248f8e2cb41ca0869b3588cf7b2c25"
+    },
+    "acceptance_boundary": "targeted safety proof only; frozen native-v2 corpus outputs do not prove this repaired candidate"
   }
 }

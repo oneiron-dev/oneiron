@@ -344,8 +344,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `cache` | file | 1 | s | Typed formula caches as checked byte patches, preserving unmodelled XML |
-| `context` | file | 1 | s | Keep ambient context out of the deterministic production recalc path |
-| `engine` | file | 1 | s | Storage-independent recalc seam over the pinned upstream engine |
+| `context` | file | 1 | s | Bound formula AST evaluation and keep ambient context out of native recalc |
+| `engine` | file | 1 | m | Storage-independent recalc seam over the pinned upstream engine |
 | `error` | file | 1 | s | Typed failures for the formula crate |
 | `mac_parity` | file | 1 | s | Workbook-local Excel-for-Mac function availability, never global overrides |
 | `measure` | file | 1 | m | Step-19 corpus runner: honest per-case results over the pinned 834 cases |

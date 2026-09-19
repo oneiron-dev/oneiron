@@ -32930,13 +32930,13 @@
      "kind": "src",
      "notable": [],
      "path": "src/context.rs",
-     "purpose": "Keep ambient context out of the deterministic production recalc path",
+     "purpose": "Bound formula AST evaluation and keep ambient context out of native recalc",
      "surface": {
       "crate-vis": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FormualizerEngine"
@@ -33092,12 +33092,12 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Keep ambient context out of the deterministic production recalc path"
+     "purpose": "Bound formula AST evaluation and keep ambient context out of native recalc"
     },
     "engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Storage-independent recalc seam over the pinned upstream engine"
     },
