@@ -19,6 +19,8 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+base64 = "0.22"
+oneiron-docedit = { path = "../oneiron-docedit" }
 heed = { workspace = true }
 half = "2"
 uuid = { workspace = true }
@@ -58,7 +60,10 @@ icu_segmenter = { version = "2.2", default-features = false, features = ["compil
 icu_properties = { version = "2.2", default-features = false, features = ["compiled_data"] }
 unicode-script = "0.5"
 unicode-segmentation = "1"
-loro = { version = "1.10", optional = true }
+# OF-248 span grain (W7-C14 steps 2-3): lens mediation derives transient span
+# documents over `LoroText` in the base build, so `loro` is unconditional. The
+# `sync` feature no longer activates it; every other manifest line is unchanged.
+loro = { version = "1.10" }
 tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
@@ -170,7 +175,6 @@ microvm-firecracker = []
 # ever hand it to a release build when this feature is explicitly on.
 microvm-dev = []
 sync = [
-    "loro",
     "dep:tokio",
     "dep:tokio-tungstenite",
     "dep:futures-util",

@@ -23,6 +23,9 @@ pub enum ArtifactError {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// An artifact birth reference, memo key, or immutable ledger binding is invalid.
+    #[error("invalid artifact birth: {0}")]
+    InvalidArtifactBirth(&'static str),
     /// A Git-LFS object did not match what the client declared about it: a
     /// malformed object id, or a body whose SHA-256 or length disagrees with
     /// the declared oid/size. Nothing was written.
@@ -62,6 +65,9 @@ pub enum ArtifactError {
     /// the settle is refused. Nothing was written.
     #[error("edit proposal is stale: its base no longer matches the artifact head")]
     EditProposalStale,
+    /// Retained bytes, base, writes, or report no longer match their preparation.
+    #[error("edit proposal no longer matches its prepared commitment")]
+    EditProposalCommitMismatch,
     /// An ARTL-4 settle was not authorized: standing-grant consent found no
     /// covering brief×verb-class bundle grant (OF-368 D6). Fail-closed —
     /// nothing was written.
@@ -149,6 +155,7 @@ impl ArtifactError {
         match self {
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::InvalidArtifactBirth(_) => ErrorKind::InvalidArtifactBirth,
             Self::InvalidLfsObject(_) => ErrorKind::InvalidLfsObject,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
@@ -156,6 +163,7 @@ impl ArtifactError {
             Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
             Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
             Self::EditProposalStale => ErrorKind::EditProposalStale,
+            Self::EditProposalCommitMismatch => ErrorKind::EditProposalCommitMismatch,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::SkillEditGateRetry(_) => ErrorKind::SkillEditGateRetry,
@@ -176,5 +184,21 @@ impl ArtifactError {
             Self::InvalidAttemptQueueTransition { .. } => ErrorKind::InvalidAttemptQueueTransition,
             Self::DeltaCaptureUnavailable(_) => ErrorKind::DeltaCaptureUnavailable,
         }
+    }
+}
+
+impl From<oneiron_docedit::Error> for super::Error {
+    fn from(error: oneiron_docedit::Error) -> Self {
+        let leaf = match error {
+            oneiron_docedit::Error::InvalidPackage(reason)
+            | oneiron_docedit::Error::EditFailed(reason) => {
+                ArtifactError::EditRoundtripFailed(reason)
+            }
+            oneiron_docedit::Error::InvalidManifest(reason) => {
+                ArtifactError::InvalidEditManifest(reason)
+            }
+            oneiron_docedit::Error::CommitMismatch => ArtifactError::EditProposalCommitMismatch,
+        };
+        Self::Artifact(leaf)
     }
 }

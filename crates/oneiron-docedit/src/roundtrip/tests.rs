@@ -3,7 +3,6 @@
 
 use super::opc::{self, OpcPackage, OpcPart};
 use super::*;
-use crate::error::ArtifactError;
 
 const SHEET_PART: &str = "xl/worksheets/sheet1.xml";
 const UNKNOWN_PART: &str = "customXml/item1.xml";
@@ -133,9 +132,9 @@ fn propose(session: &FixtureSession, input: &[u8], plan: &EditPlan, run_ref: &st
 fn round_trip_preserves_untouched_xml_byte_for_byte() {
     let input = xlsx_bytes(&base_parts());
     let original_unknown = opc::read(&input)
-        .unwrap()
+        .expect("fixture")
         .part(UNKNOWN_PART)
-        .unwrap()
+        .expect("fixture")
         .to_vec();
 
     let plan = EditPlan::new(vec![set_a1(10.0)]);
@@ -146,7 +145,7 @@ fn round_trip_preserves_untouched_xml_byte_for_byte() {
         "run:passthrough",
     );
 
-    let after = opc::read(&proposal.new_bytes).unwrap();
+    let after = opc::read(&proposal.new_bytes).expect("fixture");
     assert_eq!(
         after.part(UNKNOWN_PART),
         Some(original_unknown.as_slice()),
@@ -231,7 +230,7 @@ fn recalc_stage_updates_cached_values_via_seam() {
 
         fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
             let mut pkg = opc::read(&doc.bytes)?;
-            let sheet = String::from_utf8_lossy(pkg.part(SHEET_PART).unwrap()).replace(
+            let sheet = String::from_utf8_lossy(pkg.part(SHEET_PART).expect("fixture")).replace(
                 "<c r=\"B1\"><f>A1*2</f><v>10</v></c>",
                 "<c r=\"B1\"><f>A1*2</f><v>20</v></c>",
             );
@@ -264,22 +263,22 @@ fn recalc_stage_updates_cached_values_via_seam() {
         }
     };
     assert_eq!(proposal.recalc, RecalcStatus::Performed);
-    let package = opc::read(&proposal.new_bytes).unwrap();
-    let sheet = String::from_utf8_lossy(package.part(SHEET_PART).unwrap());
+    let package = opc::read(&proposal.new_bytes).expect("fixture");
+    let sheet = String::from_utf8_lossy(package.part(SHEET_PART).expect("fixture"));
     let cell = sheet
         .split("<c r=\"B1\">")
         .nth(1)
         .expect("formula cell is present")
         .split("</c>")
         .next()
-        .unwrap();
+        .expect("fixture");
     let cached = cell
         .split("<v>")
         .nth(1)
         .expect("formula has a cached value")
         .split("</v>")
         .next()
-        .unwrap()
+        .expect("fixture")
         .parse::<f64>()
         .expect("cached value is numeric");
     assert_eq!(cached, 20.0);
@@ -299,10 +298,7 @@ fn recalc_stage_updates_cached_values_via_seam() {
         "run:no-recalc",
     )
     .expect_err("recalc-incapable session must refuse a value-affecting edit");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditFailed(_)));
 
     // But when nothing needs recalc, the same session proposes normally.
     let add_sheet = EditPlan::new(vec![EditOp::AddSheet {
@@ -324,8 +320,8 @@ fn corruption_gate_blocks_broken_output_from_proposal() {
         mode: MockMode::DropContentTypes,
         supports_recalc: true,
     };
-    let outcome =
-        run_edit_roundtrip(&dropped, &input, OfficeFormat::Xlsx, &plan, "run:gut").unwrap();
+    let outcome = run_edit_roundtrip(&dropped, &input, OfficeFormat::Xlsx, &plan, "run:gut")
+        .expect("fixture");
     let EditOutcome::Rejected { report, .. } = outcome else {
         panic!("gutted output must be rejected, never proposed");
     };
@@ -342,8 +338,8 @@ fn corruption_gate_blocks_broken_output_from_proposal() {
         mode: MockMode::MutateUnknown,
         supports_recalc: true,
     };
-    let outcome =
-        run_edit_roundtrip(&tampered, &input, OfficeFormat::Xlsx, &plan, "run:tamper").unwrap();
+    let outcome = run_edit_roundtrip(&tampered, &input, OfficeFormat::Xlsx, &plan, "run:tamper")
+        .expect("fixture");
     let EditOutcome::Rejected { report, .. } = outcome else {
         panic!("passthrough violation must be rejected");
     };
@@ -365,14 +361,14 @@ fn cell_ref_round_trips_a1_notation() {
         ("AA10", 27, 10),
         ("AB100", 28, 100),
     ] {
-        let parsed = CellRef::parse(text).unwrap();
+        let parsed = CellRef::parse(text).expect("fixture");
         assert_eq!(parsed, CellRef::new(col, row));
         assert_eq!(parsed.to_a1(), text);
     }
     assert!(CellRef::parse("1A").is_err());
     assert!(CellRef::parse("A0").is_err());
     assert!(CellRef::parse("AB").is_err());
-    assert_eq!(RangeRef::parse("A1:B2").unwrap().to_a1(), "A1:B2");
+    assert_eq!(RangeRef::parse("A1:B2").expect("fixture").to_a1(), "A1:B2");
     assert!(RangeRef::parse("A1B2").is_err());
 }
 
@@ -391,7 +387,7 @@ fn manifest_round_trips_through_msgpack() {
             },
             EditOp::MoveRange {
                 sheet: "Sheet1".to_owned(),
-                from: RangeRef::parse("A1:B2").unwrap(),
+                from: RangeRef::parse("A1:B2").expect("fixture"),
                 to: CellRef::new(4, 1),
             },
         ],
@@ -401,8 +397,8 @@ fn manifest_round_trips_through_msgpack() {
         mutation_mode: MutationMode::Full,
         warnings: vec![EditWarning::new(WarningCode::SessionReported, "note")],
     };
-    let bytes = manifest.to_msgpack().unwrap();
-    let decoded = EditManifest::from_msgpack(&bytes).unwrap();
+    let bytes = manifest.to_msgpack().expect("fixture");
+    let decoded = EditManifest::from_msgpack(&bytes).expect("fixture");
     assert_eq!(decoded, manifest);
 }
 
@@ -412,11 +408,12 @@ fn office_format_maps_known_media_types() {
         OfficeFormat::from_media_type(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        .unwrap(),
+        .expect("fixture"),
         OfficeFormat::Xlsx
     );
     assert_eq!(
-        OfficeFormat::from_media_type("application/vnd.ms-excel.sheet.macroEnabled.12").unwrap(),
+        OfficeFormat::from_media_type("application/vnd.ms-excel.sheet.macroEnabled.12")
+            .expect("fixture"),
         OfficeFormat::Xlsx
     );
     assert!(OfficeFormat::from_media_type("text/plain").is_err());
@@ -439,7 +436,7 @@ fn inspect_detects_cross_sheet_dependency() {
             b"<worksheet><sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row></sheetData></worksheet>",
         ),
     ];
-    let pkg = opc::read(&xlsx_bytes(&parts)).unwrap();
+    let pkg = opc::read(&xlsx_bytes(&parts)).expect("fixture");
     let summary = inspect(&pkg, OfficeFormat::Xlsx);
     assert_eq!(
         summary.sheets,
@@ -476,26 +473,8 @@ fn empty_run_ref_is_rejected() {
         "   ",
     )
     .expect_err("blank run_ref must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditFailed(_)));
 }
-
-#[test]
-fn agent_run_provenance_carries_run_ref() {
-    let input = xlsx_bytes(&base_parts());
-    let plan = EditPlan::new(vec![set_a1(10.0)]);
-    let proposal = propose(&FixtureSession::faithful(), &input, &plan, "run:prov#7");
-    assert_eq!(
-        proposal.agent_run_provenance(),
-        BlobVersionProvenance::AgentRun {
-            run_ref: "run:prov#7".to_owned(),
-        }
-    );
-}
-
-// -- Format gating (docx/pptx) ----------------------------------------------
 
 #[test]
 fn docx_and_pptx_are_refused_at_the_pipeline() {
@@ -511,7 +490,7 @@ fn docx_and_pptx_are_refused_at_the_pipeline() {
         )
         .expect_err("non-spreadsheet formats are unsupported");
         assert!(
-            matches!(err, Error::Artifact(ArtifactError::InvalidEditManifest(_))),
+            matches!(err, Error::InvalidManifest(_)),
             "expected InvalidEditManifest, got {err:?}"
         );
     }
@@ -536,10 +515,7 @@ fn zero_index_cell_is_rejected() {
         "run:badcell",
     )
     .expect_err("a 0 column must be rejected");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::InvalidEditManifest(_))
-    ));
+    assert!(matches!(err, Error::InvalidManifest(_)));
 }
 
 #[test]
@@ -558,10 +534,7 @@ fn inverted_range_is_rejected() {
         "run:inverted",
     )
     .expect_err("an inverted range must be rejected");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::InvalidEditManifest(_))
-    ));
+    assert!(matches!(err, Error::InvalidManifest(_)));
 }
 
 // -- Cross-sheet scan: rels-resolved names + shared formulas ----------------
@@ -591,7 +564,7 @@ fn cross_sheet_scan_resolves_names_via_workbook_rels() {
             b"<worksheet><sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row></sheetData></worksheet>",
         ),
     ];
-    let pkg = opc::read(&xlsx_bytes(&parts)).unwrap();
+    let pkg = opc::read(&xlsx_bytes(&parts)).expect("fixture");
     let summary = inspect(&pkg, OfficeFormat::Xlsx);
     assert_eq!(
         summary.cross_sheet_dependencies,
@@ -616,7 +589,7 @@ fn resolve_part_path_collapses_relative_segments() {
         ("xl/_rels/workbook.xml.rels", "/docProps/core.xml", true),
         ("xl/_rels/workbook.xml.rels", "../../..", false),
     ] {
-        let mut package = opc::read(&xlsx_bytes(&base_parts())).unwrap();
+        let mut package = opc::read(&xlsx_bytes(&base_parts())).expect("fixture");
         package.upsert("xl/drawings/drawing1.xml", b"<drawing/>".to_vec());
         package.upsert("docProps/core.xml", b"<coreProperties/>".to_vec());
         package.upsert(
@@ -643,14 +616,14 @@ fn referential_integrity_gate_flags_dropped_referenced_part() {
         ("xl/_rels/workbook.xml.rels", rels),
         ("xl/worksheets/sheet1.xml", b"<worksheet/>"),
     ];
-    let before = opc::read(&xlsx_bytes(&full)).unwrap();
+    let before = opc::read(&xlsx_bytes(&full)).expect("fixture");
     // Output keeps the rels but drops the worksheet it points at.
     let dropped: Vec<(&str, &[u8])> = vec![
         (opc::CONTENT_TYPES_PART, b"<Types/>" as &[u8]),
         ("xl/workbook.xml", b"<workbook/>"),
         ("xl/_rels/workbook.xml.rels", rels),
     ];
-    let after = opc::read(&xlsx_bytes(&dropped)).unwrap();
+    let after = opc::read(&xlsx_bytes(&dropped)).expect("fixture");
 
     let report = validate(&before, &after, OfficeFormat::Xlsx);
     assert!(!report.ok);
@@ -681,7 +654,7 @@ fn referential_integrity_gate_flags_missing_content_type_override() {
         (opc::CONTENT_TYPES_PART, content_types),
         ("xl/workbook.xml", b"<workbook/>" as &[u8]),
     ]))
-    .unwrap();
+    .expect("fixture");
     let report = validate(&after, &after, OfficeFormat::Xlsx);
     assert!(
         report
@@ -712,13 +685,51 @@ fn minimal_mutation_mode_refuses_structural_ops() {
         "run:struct",
     )
     .expect_err("structural op in minimal mode must be refused");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::InvalidEditManifest(_))
-    ));
+    assert!(matches!(err, Error::InvalidManifest(_)));
 
     // A cell-level op on the same pivot workbook is still allowed.
     let cell = EditPlan::new(vec![set_a1(10.0)]);
     let proposal = propose(&FixtureSession::faithful(), &input, &cell, "run:cell-ok");
     assert_eq!(proposal.manifest.mutation_mode, MutationMode::Minimal);
+}
+
+#[test]
+fn storage_seam_binds_head_version_and_rejects_substituted_bytes() -> Result<()> {
+    struct Store {
+        bytes: Vec<u8>,
+        hash: [u8; 32],
+    }
+    impl DocumentStore for Store {
+        type Error = Error;
+        fn document_head(&self, _: &[u8; 16]) -> Result<Option<DocumentHead>> {
+            Ok(Some(DocumentHead {
+                version: 7,
+                content_hash: self.hash,
+                format: OfficeFormat::Xlsx,
+            }))
+        }
+        fn document_bytes(&self, _: &[u8; 16], version: u64) -> Result<Option<Vec<u8>>> {
+            assert_eq!(version, 7);
+            Ok(Some(self.bytes.clone()))
+        }
+    }
+    let bytes = xlsx_bytes(&base_parts());
+    let mut store = Store {
+        hash: *blake3::hash(&bytes).as_bytes(),
+        bytes,
+    };
+    let plan = EditPlan::new(vec![set_a1(6.0)]);
+    let result =
+        propose_document_edit(&store, &[1; 16], &FixtureSession::faithful(), &plan, "run")?;
+    let EditOutcome::Proposed(proposal) = result else {
+        panic!("valid proposal")
+    };
+    assert_eq!(proposal.base_version, Some(7));
+    assert_eq!(proposal.base_content_hash, store.hash);
+    store.bytes.push(0);
+    assert!(matches!(
+        propose_document_edit(&store, &[1; 16], &FixtureSession::faithful(), &plan, "run"),
+        Err(Error::EditFailed(_))
+    ));
+    Ok(())
 }

@@ -21,6 +21,7 @@ use crate::write_envelope::WriteActor;
 impl From<&AnchorEffect> for ReanchorOp {
     fn from(effect: &AnchorEffect) -> Self {
         match effect {
+            AnchorEffect::Docx(effect) => Self::Docx(effect.clone()),
             AnchorEffect::Shift(shift) => shift_to_reanchor_op(shift),
             AnchorEffect::RangeMoved { sheet, from, to } => Self::MoveRange {
                 sheet: sheet.clone(),
@@ -115,6 +116,9 @@ fn move_dest_to_a1(from: &RangeRef, to: CellRef) -> A1Range {
 /// silently repositioned.
 #[must_use]
 pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome {
+    if matches!(locator, Locator::Docx { .. }) {
+        return super::docx::replay_docx_locator(locator, ops);
+    }
     let Locator::Xlsx { sheet, range } = locator else {
         return ReanchorOutcome::Drifted;
     };
@@ -194,6 +198,7 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
                     return ReanchorOutcome::Drifted;
                 }
             }
+            ReanchorOp::Docx(_) => return ReanchorOutcome::Drifted,
             ReanchorOp::WriteCells { .. } => {}
             ReanchorOp::RenameSheet { to, .. } => {
                 cur_sheet = to.clone();

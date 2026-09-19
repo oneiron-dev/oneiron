@@ -48,6 +48,8 @@ pub struct CellWrite {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EditOp {
+    /// Native Word tracked change or span comment.
+    Docx(crate::docx::DocxOp),
     /// Write a single cell.
     SetCell {
         sheet: String,
@@ -96,6 +98,7 @@ impl EditOp {
     #[must_use]
     pub fn sheet(&self) -> Option<&str> {
         match self {
+            Self::Docx(_) => None,
             Self::SetCell { sheet, .. }
             | Self::SetRange { sheet, .. }
             | Self::AddFormulaColumn { sheet, .. }
@@ -113,7 +116,7 @@ impl EditOp {
     /// stage is warranted. Adding an empty sheet cannot.
     #[must_use]
     pub const fn may_affect_values(&self) -> bool {
-        !matches!(self, Self::AddSheet { .. })
+        !matches!(self, Self::AddSheet { .. } | Self::Docx(_))
     }
 
     /// Whether this op changes package structure (row/column/sheet topology)
@@ -140,6 +143,7 @@ impl EditOp {
     #[must_use]
     pub fn anchor_effect(&self) -> Option<AnchorEffect> {
         match self {
+            Self::Docx(op) => op.anchor_effect().map(AnchorEffect::Docx),
             Self::InsertRows { sheet, at, count } => Some(AnchorEffect::Shift(StructuralShift {
                 sheet: sheet.clone(),
                 axis: Axis::Row,
@@ -189,6 +193,7 @@ impl EditOp {
     #[must_use]
     pub fn render(&self) -> String {
         match self {
+            Self::Docx(op) => op.render(),
             Self::SetCell {
                 sheet,
                 cell,
@@ -266,6 +271,7 @@ pub struct StructuralShift {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AnchorEffect {
+    Docx(crate::docx::DocxAnchorEffect),
     Shift(StructuralShift),
     RangeMoved {
         sheet: String,

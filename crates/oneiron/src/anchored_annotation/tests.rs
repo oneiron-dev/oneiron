@@ -176,8 +176,24 @@ fn replay_drifts_when_region_destroyed_or_ambiguous() {
     );
     assert_eq!(ambiguous, ReanchorOutcome::Drifted);
     // Non-xlsx locators are non-mappable under the xlsx replay.
-    let docx = Locator::docx("body/p[3]", 0, 12).expect("docx");
-    assert_eq!(replay_locator(&docx, &[]), ReanchorOutcome::Drifted);
+    let docx = Locator::docx("body/p3", 0, 12).expect("docx");
+    assert_eq!(
+        replay_locator(&docx, &[]),
+        ReanchorOutcome::Mapped(docx.clone())
+    );
+    assert_eq!(
+        replay_locator(&docx, &[ReanchorOp::RemoveSheet { sheet: "S".into() }]),
+        ReanchorOutcome::Drifted
+    );
+    for path in ["body/p[3]", "body/p0", "sheet/A1", "body/p4294967296"] {
+        assert!(matches!(
+            Locator::docx(path, 0, 1),
+            Err(Error::Artifact(crate::error::ArtifactError::InvalidAnchor(
+                _
+            )))
+        ));
+    }
+    assert!(Locator::docx("body/p1", 0, u64::MAX).is_err());
 }
 
 #[test]
@@ -580,6 +596,40 @@ fn open_thread_rejects_bad_anchor_version() {
         )
         .expect_err("anchor beyond head must fail");
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAnchor);
+    let code_id = EntityId::now();
+    vault
+        .put_code_artifact(
+            &code_id,
+            &crate::code_artifact::CodeArtifactBody::new(
+                "anchor fixture",
+                [4; 32],
+                "github:example/anchor#0123456789012345678901234567890123456789",
+            ),
+            test_time(11),
+            11,
+        )
+        .expect("code family fixture");
+    for target in [actor.entity_ref(), code_id] {
+        let error = vault
+            .open_annotation_thread(
+                &xlsx_anchor(target, 1, "Sheet1", "A1"),
+                actor,
+                "wrong family for a document locator",
+                test_time(12),
+                12,
+            )
+            .expect_err("non-blob family must refuse a document locator");
+        assert!(matches!(
+            error,
+            Error::Artifact(crate::error::ArtifactError::InvalidAnchor(_))
+        ));
+        assert!(
+            vault
+                .annotation_threads_for_artifact(&target)
+                .expect("threads")
+                .is_empty()
+        );
+    }
 }
 
 // PR #397 fix 1: the live-read gate ([`claim_surfaceable`]) hides an

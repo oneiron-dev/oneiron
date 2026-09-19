@@ -47,6 +47,7 @@
 //! ([`ReanchorOp`]) is a MINIMAL local representation — see its docs for the
 //! ARTL-3 reconciliation seam.
 mod codec;
+mod docx;
 mod model;
 mod reanchor;
 mod threads;

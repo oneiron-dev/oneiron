@@ -1,0 +1,42 @@
+[package]
+name = "oneiron-xlsx-formula"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-process xlsx formula evaluation behind a storage-independent recalc seam (formualizer 0.9.3 baseline, unchanged)"
+
+[lib]
+# No doc-comment code fences in this crate; skip the doctest compile pass.
+doctest = false
+
+# Measurement only: run upstream's file adapter without changing its code.
+[features]
+xlsx-recalc = ["formualizer-workbook/xlsx-recalc"]
+
+[[bin]]
+name = "recalc_unchanged"
+path = "vendor/formualizer/formualizer-workbook/examples/cache_recalculate.rs"
+required-features = ["xlsx-recalc"]
+
+[dependencies]
+oneiron-docedit = { path = "../oneiron-docedit" }
+formualizer-workbook = { version = "=0.9.3", default-features = false }
+formualizer-common = "=3.1.2"
+formualizer-parse = "=3.1.2"
+formualizer-eval = { version = "=0.9.3", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+quick-xml = "0.41"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+oneiron = { path = "../oneiron" }
+tempfile = "3"
+proptest = "1"
+serde_json.workspace = true
+
+[lints]
+workspace = true

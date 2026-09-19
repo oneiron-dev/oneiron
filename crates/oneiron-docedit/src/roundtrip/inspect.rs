@@ -35,7 +35,7 @@ pub struct StructureSummary {
 
 /// Runs the mandatory inspect-first stage over an already-parsed package.
 #[must_use]
-pub(super) fn inspect(package: &OpcPackage, format: OfficeFormat) -> StructureSummary {
+pub(crate) fn inspect(package: &OpcPackage, format: OfficeFormat) -> StructureSummary {
     let has_pivots = package
         .names()
         .any(|n| n.starts_with("xl/pivotTables/") || n.starts_with("xl/pivotCache/"));

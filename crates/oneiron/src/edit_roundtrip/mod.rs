@@ -54,36 +54,13 @@
 //!   [`BlobVersionProvenance::AgentRun`](crate::blob_artifact::BlobVersionProvenance::AgentRun) to append, and [`EditManifest::to_msgpack`]
 //!   the manifest bytes to receipt.
 
-mod address;
-mod inspect;
-mod manifest;
-mod opc;
-mod ops;
 mod pipeline;
 mod session_validate;
-
-pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
-pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
-pub use self::manifest::{
-    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
+pub use oneiron_docedit::roundtrip::{
+    AnchorEffect, AppliedEdit, Axis, CellRef, CellValue, CellWrite, CrossSheetDep,
+    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditWarning, MutationMode,
+    OfficeDoc, OfficeFormat, RangeRef, RecalcStatus, SheetSummary, StructuralShift,
+    StructureSummary, ValidationCheck, ValidationReport, WarningCode,
 };
-pub use self::ops::{AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift};
-pub use self::pipeline::{EditOutcome, EditProposal, RecalcStatus, run_edit_roundtrip};
-pub use self::session_validate::{
-    AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport,
-};
-
-#[cfg(test)]
-mod tests;
-
-// The flat edit_roundtrip.rs module used to provide these names to the sibling
-// test module through `use super::*`: its own private crate/std import header,
-// every edit-roundtrip-internal item the tests name bare, and the crate imports
-// the tests rely on. After the directory split the seam re-imports them so
-// `tests.rs` resolves exactly as it did before.
-#[cfg(test)]
-use self::{inspect::*, session_validate::*};
-#[cfg(test)]
-use crate::blob_artifact::BlobVersionProvenance;
-#[cfg(test)]
-use crate::error::{Error, Result};
+pub use pipeline::{EditOutcome, EditProposal, run_edit_roundtrip};
+pub use session_validate::{DocumentSession, EditSession};

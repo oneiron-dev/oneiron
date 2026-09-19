@@ -6,7 +6,7 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # it must not be reformatted, relinted, or test-run as if it were our code.
 # See the `[patch.crates-io]` entry at the bottom of this file and
 # `crates/heed/PROVENANCE.md`.
-exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15"]
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma", "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-common", "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-eval", "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-macros", "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-parse", "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-workbook"]
 
 # Limited debug information keeps file/line backtraces while reducing build CPU,
 # peak memory and target size. Tests inherit this profile. For debugger locals:
@@ -106,5 +106,12 @@ too_many_lines = "deny"
 # is added. Provenance, seam, SAFETY contract, and the LMDB audit are in
 # `crates/heed/PROVENANCE.md`.
 [patch.crates-io]
+# Measured evaluator fork: retain pinned source; the document adapter owns changes.
+formualizer-common = { path = "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-common" }
+formualizer-eval = { path = "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-eval" }
+formualizer-macros = { path = "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-macros" }
+formualizer-parse = { path = "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-parse" }
+formualizer-workbook = { path = "crates/oneiron-xlsx-formula/vendor/formualizer/formualizer-workbook" }
+
 heed = { path = "crates/heed/vendor/heed-0.20.5" }
 paste = { path = "crates/paste/vendor/paste-1.0.15" }

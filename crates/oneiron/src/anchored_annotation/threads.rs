@@ -43,6 +43,8 @@ impl Vault {
         learned_at: u64,
     ) -> Result<AnnotationThread> {
         self.require_anchor_version(&anchor.artifact_id, anchor.version)?;
+        // Public enum fields are constructible without the validated builders.
+        super::codec::decode_locator(&super::codec::encode_locator(&anchor.locator))?;
         validate_comment_text(first_comment)?;
 
         let thread_id = EntityId::now();
@@ -452,6 +454,26 @@ impl Vault {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                 "anchor version must be at least 1",
             )));
+        }
+        let raw = self
+            .store
+            .entities
+            .get(rtxn, artifact_id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("anchor artifact header"))?;
+        match crate::registry::artifact_family_kind(header.entity_type) {
+            Some(crate::registry::ArtifactFamilyKind::Blob) => {}
+            Some(crate::registry::ArtifactFamilyKind::Code) => {
+                return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                    "document locators require a blob version, not a code fork",
+                )));
+            }
+            None => {
+                return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                    "anchor target is not in the artifact family",
+                )));
+            }
         }
         let head =
             crate::blob_artifact::read_blob_artifact_head_in_txn(&self.store, rtxn, artifact_id)?

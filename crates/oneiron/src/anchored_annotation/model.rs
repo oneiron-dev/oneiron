@@ -98,11 +98,9 @@ impl A1Range {
 
 /// A format-typed anchor locator.
 ///
-/// Only the xlsx locator is parsed and re-anchored in P1. The docx and pptx
-/// variants are registered locator TYPES (OF-368 D9 P2/P3) so anchors carry
-/// them losslessly, but their span parsing and re-anchoring are deferred; a
-/// version bump treats a non-xlsx locator as non-mappable (drifted) rather than
-/// guessing a new position.
+/// Xlsx ranges and docx scalar spans are parsed and replayed by their owning
+/// format. Pptx shape resolution remains deferred; an unsupported replay
+/// drifts instead of guessing a new position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Locator {
@@ -113,7 +111,7 @@ pub enum Locator {
         /// Cell range.
         range: A1Range,
     },
-    /// docx `{para_path, char_span}` — TYPE registered, parsing deferred.
+    /// docx `{para_path, char_span}` — parsed `body/pN` and Unicode scalar offsets.
     Docx {
         /// Paragraph path within the document body.
         para_path: String,
@@ -147,19 +145,16 @@ impl Locator {
         Ok(Self::Xlsx { sheet, range })
     }
 
-    /// Builds a docx locator (span parsing deferred; bounds validated only).
+    /// Builds a parsed docx locator using the native writer's `body/pN` grammar.
     pub fn docx(para_path: impl Into<String>, char_start: u64, char_end: u64) -> Result<Self> {
         let para_path = para_path.into();
         validate_locator_text(&para_path, "docx locator para_path")?;
-        if char_start > char_end {
-            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
-                "docx locator char span is inverted",
-            )));
-        }
+        let span = oneiron_docedit::docx::DocxSpan::parse(&para_path, char_start, char_end)
+            .map_err(|_| Error::Artifact(ArtifactError::InvalidAnchor("invalid docx span")))?;
         Ok(Self::Docx {
-            para_path,
-            char_start,
-            char_end,
+            para_path: span.para_path(),
+            char_start: u64::from(span.start),
+            char_end: u64::from(span.end),
         })
     }
 
@@ -337,6 +332,8 @@ pub struct TaskBrief {
 /// sheet rather than silently leaving them pinned to a stale sheet name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReanchorOp {
+    /// Native Word text movement, replayed by the document organ.
+    Docx(oneiron_docedit::docx::DocxAnchorEffect),
     /// Insert `count` rows above `at_row` on `sheet`.
     InsertRows {
         /// Target sheet.
@@ -408,6 +405,7 @@ impl ReanchorOp {
     /// current sheet. For a rename this is the pre-rename (`from`) name.
     pub(super) fn sheet(&self) -> &str {
         match self {
+            Self::Docx(_) => "",
             Self::InsertRows { sheet, .. }
             | Self::DeleteRows { sheet, .. }
             | Self::InsertCols { sheet, .. }

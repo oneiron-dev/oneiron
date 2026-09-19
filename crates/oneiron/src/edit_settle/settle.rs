@@ -79,18 +79,35 @@ impl Vault {
             // was produced from. An intervening edit changes the head hash, and
             // committing these bytes would clobber it and replay a stale manifest
             // onto newer anchors.
-            if base.content_hash != proposal.base_content_hash {
+            if base.content_hash != proposal.base_content_hash
+                || proposal.base_version != Some(base.version)
+            {
                 return Err(Error::Artifact(ArtifactError::EditProposalStale));
             }
-            let version = self.append_blob_artifact_version_in_txn(
+            proposal.prepared.verify(oneiron_docedit::PrepareInput {
+                base_content_hash: proposal.base_content_hash,
+                base_version: proposal.base_version,
+                run_ref: &proposal.run_ref,
+                output: &proposal.new_bytes,
+                writes: &proposal.manifest,
+                report: &proposal.validation,
+                engine: &proposal.engine,
+            })?;
+            if proposal.format != proposal.manifest.format {
+                return Err(Error::Artifact(ArtifactError::EditProposalCommitMismatch));
+            }
+            let version = self.append_stamped_blob_artifact_version_in_txn(
                 wtxn,
                 artifact_id,
                 &proposal.new_bytes,
                 &proposal.agent_run_provenance(),
+                &proposal.engine,
                 actor,
                 occurred,
                 learned_at,
             )?;
+            #[cfg(test)]
+            self.test_hooks().run_edit_settle_after_bytes();
             // Replay the manifest anchor effects onto threads at the prior head.
             // A dedupe no-op append (identical bytes) advances no version, so
             // there is nothing to re-anchor.
@@ -335,9 +352,17 @@ impl Vault {
         }
         // The op vocabulary and re-anchor replay are spreadsheet-specific, the
         // same gate ARTL-3 applies.
-        if !matches!(proposal.format, OfficeFormat::Xlsx) {
+        if !matches!(proposal.format, OfficeFormat::Xlsx | OfficeFormat::Docx) {
             return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                "settle supports only xlsx proposals; docx and pptx are not yet supported",
+                "settle supports xlsx and native docx proposals; pptx is not yet supported",
+            )));
+        }
+        if proposal.manifest.ops.iter().any(|op| {
+            matches!(op, crate::edit_roundtrip::EditOp::Docx(_))
+                != (proposal.format == OfficeFormat::Docx)
+        }) {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "op does not match proposal format",
             )));
         }
         Ok(())

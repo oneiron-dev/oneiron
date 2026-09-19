@@ -77,18 +77,46 @@ fn owner() -> SettleConsent {
 /// pinned to the v1 base `put_workbook` uploads, so it settles non-stale as long
 /// as no intervening edit has moved the head.
 fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
+    let manifest = EditManifest {
+        schema_version: EDIT_MANIFEST_SCHEMA_VERSION,
+        format: OfficeFormat::Xlsx,
+        ops,
+        touched_parts: BTreeSet::new(),
+        mutation_mode: MutationMode::Full,
+        warnings: Vec::new(),
+    };
+    let validation = ValidationReport {
+        ok: true,
+        checks: vec![crate::edit_roundtrip::ValidationCheck {
+            name: "fixture",
+            passed: true,
+            detail: "trusted test fixture".to_owned(),
+        }],
+    };
+    let base_content_hash = *blake3::hash(WORKBOOK_V1_BYTES).as_bytes();
+    let prepared = oneiron_docedit::prepare(oneiron_docedit::PrepareInput {
+        base_content_hash,
+        base_version: Some(1),
+        run_ref: if run_ref.trim().is_empty() {
+            "fixture"
+        } else {
+            run_ref
+        },
+        output: if new_bytes.is_empty() {
+            b"fixture"
+        } else {
+            new_bytes
+        },
+        writes: &manifest,
+        report: &validation,
+        engine: &oneiron_docedit::calc::EngineId::imported(),
+    })
+    .expect("prepare fixture");
     EditProposal {
         run_ref: run_ref.to_owned(),
         format: OfficeFormat::Xlsx,
         new_bytes: new_bytes.to_vec(),
-        manifest: EditManifest {
-            schema_version: EDIT_MANIFEST_SCHEMA_VERSION,
-            format: OfficeFormat::Xlsx,
-            ops,
-            touched_parts: BTreeSet::new(),
-            mutation_mode: MutationMode::Full,
-            warnings: Vec::new(),
-        },
+        manifest,
         inspection: StructureSummary {
             format: OfficeFormat::Xlsx,
             sheets: Vec::new(),
@@ -99,13 +127,12 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
             cross_sheet_dependencies: Vec::new(),
             unknown_parts: Vec::new(),
         },
-        validation: ValidationReport {
-            ok: true,
-            checks: Vec::new(),
-        },
+        validation,
         recalc: RecalcStatus::NotNeeded,
         base_version: Some(1),
-        base_content_hash: *blake3::hash(WORKBOOK_V1_BYTES).as_bytes(),
+        base_content_hash,
+        engine: oneiron_docedit::calc::EngineId::imported(),
+        prepared,
     }
 }
 
@@ -732,3 +759,87 @@ fn settle_standing_grant_revocation_is_atomic_with_the_settle_txn() -> Result<()
     ));
     Ok(())
 }
+
+#[test]
+fn changed_prepared_bytes_writes_or_report_refuse_without_versions_or_receipts() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    for mutation in 0..5 {
+        let mut prop = proposal(
+            &format!("run:tamper-{mutation}"),
+            b"prepared bytes",
+            vec![EditOp::AddSheet {
+                name: "Sheet2".into(),
+            }],
+        );
+        match mutation {
+            0 => prop.new_bytes.push(b'!'),
+            1 => prop.manifest.ops.push(EditOp::RemoveSheet {
+                name: "Sheet1".into(),
+            }),
+            2 => prop
+                .validation
+                .checks
+                .push(crate::edit_roundtrip::ValidationCheck {
+                    name: "substituted",
+                    passed: true,
+                    detail: "not the prepared report".into(),
+                }),
+            3 => {
+                prop.manifest.touched_parts.insert("extra.xml".into());
+            }
+            _ => prop.manifest.ops.clear(),
+        }
+        let error = vault
+            .settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(11), 11)
+            .expect_err("tampered handoff");
+        assert!(matches!(
+            error,
+            Error::Artifact(ArtifactError::EditProposalCommitMismatch)
+        ));
+        assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, &prop.run_ref)?
+                .is_none()
+        );
+        assert!(vault.read_blob_artifact_version(&artifact, 2)?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn returning_to_base_bytes_does_not_make_an_old_prepared_version_current() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    let prop = proposal("run:aba", b"future", Vec::new());
+    for (at, bytes) in [(11, b"intervening".as_slice()), (12, WORKBOOK_V1_BYTES)] {
+        vault.append_blob_artifact_version(
+            &artifact,
+            bytes,
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            test_time(at),
+            at,
+        )?;
+    }
+    let error = vault
+        .settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(13), 13)
+        .expect_err("stale version despite identical hash");
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::EditProposalStale)
+    ));
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 3);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, &prop.run_ref)?
+            .is_none()
+    );
+    Ok(())
+}
+
+mod crash;
+mod docx;

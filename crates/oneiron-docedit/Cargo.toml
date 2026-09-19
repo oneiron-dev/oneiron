@@ -1,0 +1,21 @@
+[package]
+name = "oneiron-docedit"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Storage-independent retained Office document editing substrate"
+
+[dependencies]
+oneiron-stemma = { path = "vendor/stemma", version = "=0.6.0-oneiron.1" }
+flate2 = "1"
+quick-xml = "0.41"
+thiserror.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rmp-serde.workspace = true
+
+[lints]
+workspace = true
