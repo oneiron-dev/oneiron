@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 #[cfg(feature = "sync")]
-use crate::error::StoreError;
+use crate::error::{Error, StoreError};
 
 /// Highest priority: a pending claim surfaced in user-visible retrieval.
 pub const EMBED_PRIORITY_SURFACED_HOT: u8 = 0;
