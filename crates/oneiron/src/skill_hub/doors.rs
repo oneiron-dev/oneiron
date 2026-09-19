@@ -80,7 +80,17 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         let package = adapter.fetch_package(hub_ref)?;
-        self.import_skill_from_hub(hub_ref, &package, occurred, learned_at)
+        let inventory = super::osv::dependency_inventory(&package)?;
+        Ok(self
+            .install_skill_with_advisories(
+                hub_ref,
+                &package,
+                &inventory,
+                &super::osv::OsvDevClient,
+                occurred,
+                learned_at,
+            )?
+            .entity)
     }
 
     /// Fetches an indexed adapter package and cross-checks its declared hash
@@ -104,7 +114,18 @@ impl Vault {
         let mut canonical_record = package.record.clone();
         canonical_record.content_hash = Some(canonical_hash);
         cross_check_declared_content_hash(&canonical_record, &declared_hex)?;
-        self.import_skill_from_hub_with_id(&hub_ref, &package, preferred_id, occurred, learned_at)
+        let inventory = super::osv::dependency_inventory(&package)?;
+        Ok(self
+            .import_with_advisories(
+                &hub_ref,
+                &package,
+                preferred_id,
+                &inventory,
+                &super::osv::OsvDevClient,
+                occurred,
+                learned_at,
+            )?
+            .entity)
     }
 
     pub(super) fn import_skill_from_hub_with_id(
@@ -112,6 +133,25 @@ impl Vault {
         hub_ref: &HubRef,
         package: &HubPackage,
         preferred_id: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        self.import_skill_from_hub_with_scans(
+            hub_ref,
+            package,
+            preferred_id,
+            &[],
+            occurred,
+            learned_at,
+        )
+    }
+
+    pub(super) fn import_skill_from_hub_with_scans(
+        &self,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        preferred_id: EntityId,
+        scans: &[super::SkillScanReceipt],
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
@@ -219,6 +259,16 @@ impl Vault {
             occurred,
             learned_at,
         )?;
+        for receipt in scans {
+            self.ingest_skill_scan_verdict_in_txn(
+                &mut wtxn,
+                &entity,
+                content_hash,
+                receipt,
+                occurred,
+                learned_at,
+            )?;
+        }
         wtxn.commit()?;
         Ok(entity)
     }
