@@ -525,6 +525,7 @@ impl Vault {
             // Every vault opens FULL; only an explicit ctl-driven shed parks
             // it, and only an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
+            message_streams: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]

@@ -64,6 +64,9 @@ pub struct Vault {
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
     /// outbound callback, no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
+    pub(crate) message_streams: std::sync::Mutex<
+        std::collections::BTreeMap<crate::EntityId, crate::message_stream::StreamState>,
+    >,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the
     /// production [`crate::sync::manager::WindowManager`], set by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`]. When a

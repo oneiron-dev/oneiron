@@ -84,6 +84,24 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<WitnessReceipt> {
+        self.witness_program(turn, session_route, before_txn, None)
+    }
+
+    pub(crate) fn witness_stream_finality(
+        &self,
+        turn: &WitnessTurn,
+        receipt: &crate::message_stream::MessageFinalityReceipt,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_program(turn, None, || {}, Some(receipt))
+    }
+
+    fn witness_program(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+        before_txn: impl FnOnce(),
+        stream_receipt: Option<&crate::message_stream::MessageFinalityReceipt>,
+    ) -> MemoryResult<WitnessReceipt> {
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
         }
@@ -392,6 +410,11 @@ impl Memory<'_> {
                 &turn_id,
                 membership_session,
             )?;
+            if let Some(receipt) = stream_receipt {
+                crate::message_stream::write_receipt_in_txn(
+                    self.vault, wtxn, receipt, turn, self.actor,
+                )?;
+            }
             // LAST statement in the transaction, deliberately: a session
             // witness admitted on record must not commit base rows once the
             // room has flipped back off record (K10). Every earlier row is
