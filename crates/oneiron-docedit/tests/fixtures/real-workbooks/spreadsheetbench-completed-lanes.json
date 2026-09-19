@@ -1,0 +1,46 @@
+{
+  "cohort": "SpreadsheetBench",
+  "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+  "workbooks": 5455,
+  "libreoffice": {
+    "identity": {
+      "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+      "runner_sha256": "6fc0a24776047e332d9d4557e6b3c12c0a2ccb2912e479b89df91f04da69f11a",
+      "preflight_sha256": "4457f4f2c42a49e13d1211917c4907b0b9f96b11efd0c470788965ff77ed3832",
+      "engine": "LibreOffice 25.8.2.2 d401f2107ccab8f924a8e2df40f573aab7605b6f"
+    },
+    "recalculated": 5449,
+    "refused": 6,
+    "rows_sha256": "d03854463c76c3b08adac8bd290a5757990470d1ea2be496bcfcfa12a8d977cf"
+  },
+  "retained_native": {
+    "identity": {
+      "mode": "saved-cache-diagnostic",
+      "fresh_excel_truth": false,
+      "executable_sha256": "a627b1f69e1ea86144d5ca9cc188e5aa128e350ee007db78d60f246bce5e2203",
+      "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+      "comparator_sha256": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+      "timeout_seconds": 120
+    },
+    "recalculated": 2478,
+    "refused": 2977,
+    "failure_counts": {
+      "Error: UnsupportedWorkbook(\"shared, array, or data-table formula\")\n": 894,
+      "Error: UnsupportedWorkbook(\"cell value metadata\")\n": 446,
+      "Error: UnsupportedWorkbook(\"defined names\")\n": 907,
+      "Error: UnsupportedWorkbook(\"formula needs caller context or volatile reference semantics\")\n": 39,
+      "Error: InvalidWorkbook(\"missing inline string\")\n": 53,
+      "Error: UnsupportedWorkbook(\"external-rels-target\")\n": 71,
+      "Error: UnsupportedWorkbook(\"external-links-part\")\n": 268,
+      "Error: UnsupportedWorkbook(\"iterative calculation settings\")\n": 22,
+      "Error: UnsupportedWorkbook(\"table references\")\n": 231,
+      "Error: InvalidWorkbook(\"XML node or depth limit\")\n": 4,
+      "timed-out": 3,
+      "Error: Package(InvalidPackage(\"local/central header mismatch\"))\n": 12,
+      "Error: UnsupportedWorkbook(\"precision-as-displayed\")\n": 6,
+      "Error: UnsupportedWorkbook(\"non-scalar or unrepresentable formula cache\")\n": 9,
+      "Error: Engine(\"Engine error: #CIRC!: Self-reference detected\")\n": 12
+    }
+  },
+  "accuracy_status": "Pending complete fresh Excel truth. Saved-cache diagnostic is not the release threshold."
+}

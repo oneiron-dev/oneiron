@@ -671,3 +671,34 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     );
     assert!(!output.exists());
 }
+
+#[test]
+fn absent_inline_string_is_blank_but_explicit_empty_text_is_not() {
+    for (cell, expected) in [
+        (r#"<c r="A1" t="inlineStr"/>"#, "<v>1</v>"),
+        (
+            r#"<c r="A1" t="inlineStr"><is><t></t></is></c>"#,
+            "<v>0</v>",
+        ),
+    ] {
+        let input = fixture(
+            cell,
+            r#"<c r="A1"><f>IF(ISBLANK(Input!A1),1,0)</f></c>"#,
+            false,
+        );
+        let output = FormualizerEngine::new()
+            .recalculate_xlsx(&input)
+            .expect("blank or explicit empty string");
+        assert!(part_text(&output.bytes, OUTPUT).contains(expected));
+        assert_eq!(part_text(&input, INPUT), part_text(&output.bytes, INPUT));
+    }
+    let malformed = fixture(
+        r#"<c r="A1" t="inlineStr"><v>not an inline string</v></c>"#,
+        "",
+        false,
+    );
+    assert!(matches!(
+        FormualizerEngine::new().recalculate_xlsx(&malformed),
+        Err(FormulaError::InvalidWorkbook(_))
+    ));
+}

@@ -449,12 +449,11 @@ fn cell_value(xml: &Xml, index: usize, strings: &[String]) -> Result<LiteralValu
                     .clone(),
             )
         }
-        Some("inlineStr") => {
-            let (inline, _) = xml
-                .child(index, MAIN, "is")?
-                .ok_or_else(|| invalid("missing inline string"))?;
-            LiteralValue::Text(rich_text(xml, inline)?)
-        }
+        Some("inlineStr") => match xml.child(index, MAIN, "is")? {
+            Some((inline, _)) => LiteralValue::Text(rich_text(xml, inline)?),
+            None if value.is_empty() => LiteralValue::Empty,
+            None => return Err(invalid("missing inline string")),
+        },
         Some("str") => LiteralValue::Text(value.into()),
         Some("b") => LiteralValue::Boolean(match value {
             "0" => false,
