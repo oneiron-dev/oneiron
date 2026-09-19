@@ -173,6 +173,7 @@ pub mod code_artifact;
 pub mod code_memory;
 pub mod code_revision;
 pub mod code_symbol;
+pub mod code_view;
 pub mod codebase;
 pub(crate) mod credential_door;
 pub mod edit_distance;

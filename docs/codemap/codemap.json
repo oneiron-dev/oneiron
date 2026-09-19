@@ -3570,13 +3570,51 @@
       "FrozenBuildCommand"
      ],
      "path": "src/build_cache.rs",
-     "purpose": "Vault-scoped immutable build results",
+     "purpose": "Explicit account-scoped immutable build results",
      "surface": {
       "const": 5,
       "enum": 2,
       "fn": 25,
+      "re-export": 2,
       "struct": 11,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/build_cache/account.rs",
+     "purpose": "Host-bound account cache: no process-global registry and no implicit cross-tenant lookup",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BuildLegReceipt",
+      "CachedBuildLeg"
+     ],
+     "path": "src/build_cache/leg.rs",
+     "purpose": "Build/verify runner: durable action-key reservation prevents duplicate dispatch",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReapiDigest"
+     ],
+     "path": "src/build_cache/reapi.rs",
+     "purpose": "REAPI v2 protobuf digest encoding",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -6063,6 +6101,7 @@
      "kind": "src",
      "notable": [
       "BlastRadiusWalk",
+      "CodeConsentRequest",
       "CodeEmissionAdmission",
       "CodeEmissionContext",
       "CodeSourceTrust",
@@ -6076,8 +6115,22 @@
       "const": 3,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 7,
-      "struct": 5
+      "fn": 9,
+      "re-export": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeConsentRecipe"
+     ],
+     "path": "src/code_run/consent/recipe.rs",
+     "purpose": "Configured consent explanation",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -6726,7 +6779,7 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -6738,6 +6791,20 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeContentVersion",
+      "CodeSemanticChange"
+     ],
+     "path": "src/code_symbol/semantic_diff.rs",
+     "purpose": "Content-addressed semantic changes",
+     "surface": {
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -6768,7 +6835,7 @@
      "path": "src/code_symbol/text_diff.rs",
      "purpose": "Language-agnostic chunking of a text diff into code chunks and embedding inputs",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -6779,6 +6846,7 @@
       "CodeChunk",
       "CodeEmbeddingInput",
       "CodeEmbeddingVector",
+      "CodeProducingOperation",
       "CodeSymbolBlame",
       "CodeSymbolDefinition",
       "CodeSymbolGraph",
@@ -6792,7 +6860,7 @@
      "surface": {
       "const": 7,
       "fn": 9,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -6804,6 +6872,47 @@
      "surface": {
       "crate-vis": 14
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LanguageServer",
+      "SharedLanguageServer",
+      "StdioLanguageServer"
+     ],
+     "path": "src/code_view/language_server.rs",
+     "purpose": "One LSP process per view set",
+     "surface": {
+      "fn": 7,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeViewSet",
+      "ViewReceipt",
+      "VisibleFilePolicy"
+     ],
+     "path": "src/code_view/mod.rs",
+     "purpose": "Per-agent file views over codebase blobs, with one owned shared service set",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 6,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_view/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -13157,7 +13266,7 @@
      "purpose": "Two-phase staging: stage, commit-prepared, recovery, and keep-ref naming",
      "surface": {
       "crate-vis": 1,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -14495,7 +14604,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 159,
+      "mod": 160,
       "re-export": 71
      }
     },
@@ -24890,11 +24999,11 @@
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)"
     },
     "build_cache": {
-     "files": 3,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "Vault-scoped immutable build results"
+     "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
      "files": 48,
@@ -24995,7 +25104,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25009,11 +25118,18 @@
      "purpose": "Sandbox boundary contract for code-mode execution"
     },
     "code_symbol": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
+    },
+    "code_view": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
      "files": 6,
@@ -26005,8 +26121,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1487,
-   "test_files": 532
+   "source_files": 1494,
+   "test_files": 533
   },
   "oneiron-bench": {
    "files": [

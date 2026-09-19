@@ -164,6 +164,7 @@ impl HostSelfDispatcher<'_> {
             .filter(|id| !id.is_empty())
             .ok_or(Error::Code(CodeError::CodeEmissionMissingDreamerRunId))?;
         Ok(Some(consent::CodeEmissionAdmission {
+            consent_request: None,
             lane: consent::consent_lane_for(emission.tier, emission.source_trust),
             dreamer_run_id: dreamer_run_id.to_owned(),
             candidate_evidence: None,

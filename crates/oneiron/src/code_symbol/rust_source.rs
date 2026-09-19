@@ -9,12 +9,12 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::keys::{code_symbol_entity_id, derive_symbol_fingerprint, repo_identity_key};
-use super::text_diff::{changed_line_ranges, source_end_line, subtract_line_range};
+use super::text_diff::subtract_line_range;
 use super::types::{
     CODE_SYMBOL_MANIFEST_MAX_SYMBOLS, CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk, CodeEmbeddingInput,
     CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
 };
-use super::validate::{compare_chunks, validate_manifest_path, validate_text};
+use super::validate::{validate_manifest_path, validate_text};
 use crate::error::CodeError;
 
 pub(super) const TREE_SITTER_RUST_SOURCE_KIND: &str = "rust";
@@ -185,39 +185,6 @@ fn parse_rust_source(source: &str) -> Result<tree_sitter::Tree> {
         )))
 }
 
-pub(super) fn derive_rust_code_chunks_from_text_diff(
-    path: &str,
-    old_text: &str,
-    new_text: &str,
-) -> Result<Vec<CodeChunk>> {
-    let changed_ranges = changed_line_ranges(old_text, new_text);
-    let tree = parse_rust_source(new_text)?;
-    let mut chunks = Vec::new();
-    collect_changed_rust_chunks(
-        tree.root_node(),
-        path,
-        new_text,
-        &changed_ranges,
-        &mut chunks,
-    )?;
-    chunks.sort_by(compare_chunks);
-    chunks.dedup_by(|left, right| {
-        left.path == right.path
-            && left.start_line == right.start_line
-            && left.end_line == right.end_line
-            && left.content_hash == right.content_hash
-    });
-    if chunks.is_empty() && !changed_ranges.is_empty() {
-        chunks.push(CodeChunk::from_text(
-            path,
-            1,
-            source_end_line(new_text)?,
-            new_text,
-        )?);
-    }
-    Ok(chunks)
-}
-
 pub(super) fn rust_code_embedding_inputs(
     repo_ref: &RepoRef,
     path: &str,
@@ -244,33 +211,6 @@ pub(super) fn rust_code_embedding_inputs(
             .then_with(|| left.content_hash.cmp(&right.content_hash))
     });
     Ok(inputs)
-}
-
-fn collect_changed_rust_chunks(
-    node: tree_sitter::Node<'_>,
-    path: &str,
-    source: &str,
-    changed_ranges: &[Range<usize>],
-    chunks: &mut Vec<CodeChunk>,
-) -> Result<()> {
-    if rust_definition_identity(node, source)?.is_some() {
-        let definition = rust_definition_chunk(path, source, node)?;
-        if definition_has_uncovered_changed_lines(
-            node,
-            source,
-            definition.chunk.start_line,
-            definition.chunk.end_line,
-            changed_ranges,
-        )? {
-            chunks.push(definition.chunk);
-        }
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_changed_rust_chunks(child, path, source, changed_ranges, chunks)?;
-    }
-    Ok(())
 }
 
 fn collect_changed_rust_embedding_inputs(
@@ -445,7 +385,7 @@ fn rust_definition_chunk<'a>(
     })
 }
 
-fn rust_doc_context_start_byte(node: tree_sitter::Node<'_>, source: &str) -> usize {
+pub(super) fn rust_doc_context_start_byte(node: tree_sitter::Node<'_>, source: &str) -> usize {
     let mut start_byte = node.start_byte();
     let mut previous = node.prev_named_sibling();
     while let Some(candidate) = previous {

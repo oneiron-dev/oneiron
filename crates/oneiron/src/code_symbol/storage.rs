@@ -174,6 +174,7 @@ impl Vault {
                 code_artifact_id: *code_artifact_id,
                 provenance_claim_id: symbol.provenance_claim_id,
                 source_session: symbol.source_session.clone(),
+                producing_operations: symbol.producing_operations.clone(),
             }))
     }
 
@@ -216,6 +217,7 @@ impl Vault {
                         code_artifact_id: id,
                         provenance_claim_id: symbol.provenance_claim_id,
                         source_session: symbol.source_session.clone(),
+                        producing_operations: symbol.producing_operations.clone(),
                     });
                 }
             }
