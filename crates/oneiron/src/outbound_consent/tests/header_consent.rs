@@ -225,7 +225,7 @@ fn explicit_mutation_does_not_supply_missing_consent_or_relax_sensitivity() {
         let prepared = prepare_tool_call(
             call,
             ToolCallDescriptor {
-                schema: &json!({"properties":{"tenant":{"x-mcp-header":"X-Tenant"}}}),
+                schema: &json!({"properties":{"tenant":{"x-mcp-header":"X-Tenant"},"dry_run":{"type":"boolean"}}}),
                 destructive_hint: true,
                 replay: fixture_descriptor(),
             },
