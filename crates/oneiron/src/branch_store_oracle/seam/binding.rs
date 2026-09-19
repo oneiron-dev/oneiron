@@ -181,7 +181,7 @@ pub(super) fn scoped_read_visible_claim_count(
         .vault()
         .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
     {
-        let Some(body) = read.get(&id)? else {
+        let Some(body) = read.get(&id)?.value else {
             continue;
         };
         // `ScopedRead::get` has ALREADY decoded this body under the same

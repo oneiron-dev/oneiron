@@ -364,7 +364,7 @@ mod tests {
             vault.lookup_identity_key(ENTITY_TYPE_PERSON, "Legacy Person")?,
             vec![legacy]
         );
-        assert!(vault.get_entity(&legacy)?.is_some());
+        assert_eq!(vault.get(&legacy)?, Some(body));
         assert_eq!(vault.resolve_entity(&legacy)?, vec![legacy]);
         Ok(())
     }

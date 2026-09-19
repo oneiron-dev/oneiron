@@ -145,8 +145,25 @@ fn structural_streak_survives_defer_and_success_resets_it() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let peer = test_peer(&vault);
-    record_outcome(&vault, &peer, true).unwrap();
-    record_outcome(&vault, &peer, true).unwrap();
+    let control = test_peer(&vault);
+    let baseline = prepare_selector_fetch(
+        &vault,
+        control.principal,
+        control.scope,
+        &WindowKey::new("2026-01"),
+        &request(&control),
+    )
+    .unwrap();
+    assert!(matches!(
+        baseline.decision,
+        FederationBurstDecision::Allow(_)
+    ));
+    // Choose the streak against the observable baseline, not an assumed number
+    // of seeded vault rows. The same one-row rate must now defer.
+    let expected_streak = (1.0 / inputs(baseline.decision).rate_ratio).ceil() as u32;
+    for _ in 0..expected_streak {
+        record_outcome(&vault, &peer, true).unwrap();
+    }
     let payload = request(&peer);
     let (decision, work) = admit_work_at(
         &vault,
@@ -157,7 +174,7 @@ fn structural_streak_survives_defer_and_success_resets_it() {
         (1, 10),
     )
     .unwrap();
-    assert_eq!(inputs(decision).streak, 2);
+    assert_eq!(inputs(decision).streak, expected_streak);
     assert!(matches!(decision, FederationBurstDecision::Defer { .. }));
     // A duplicate retained request does not advance the observation/streak.
     let replay = admit_work_at(
@@ -306,6 +323,7 @@ fn malformed_and_unauthorized_selector_requests_never_train_the_peer() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let peer = test_peer(&vault);
+    let control = test_peer(&vault);
     let key = WindowKey::new("2026-01");
     assert!(
         prepare_selector_fetch(&vault, peer.principal, peer.scope, &key, b"bad request").is_err()
@@ -315,10 +333,15 @@ fn malformed_and_unauthorized_selector_requests_never_train_the_peer() {
     );
     let prepared =
         prepare_selector_fetch(&vault, peer.principal, peer.scope, &key, &request(&peer)).unwrap();
-    assert_eq!(
-        inputs(prepared.decision),
-        crate::llm::normalized_burst_inputs(1, 1, 0.0, 1, 0)
-    );
+    let untouched = prepare_selector_fetch(
+        &vault,
+        control.principal,
+        control.scope,
+        &key,
+        &request(&control),
+    )
+    .unwrap();
+    assert_eq!(inputs(prepared.decision), inputs(untouched.decision));
 }
 
 #[test]
