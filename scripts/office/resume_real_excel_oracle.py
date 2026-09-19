@@ -57,9 +57,35 @@ def app_call(script, arguments, runner):
 
 
 def inventory(args, runner):
-    result = app_call(args.inventory, [], runner)
-    if result.returncode:
-        raise RuntimeError("Excel inventory failed; preserve custody")
+    # Inventory is read-only. One extra bounded read can let a busy Excel finish
+    # after the input deadline; it never authorizes closing an unidentified book.
+    expected_owner = f"W7-C14 real workbook oracle {args.output}"
+    for attempt in (1, 2):
+        if (args.lock / "owner").read_text().strip() != expected_owner:
+            raise ValueError("Office lock changed during recovery")
+        try:
+            result = app_call(args.inventory, [], runner)
+            if result.returncode == 0:
+                if (args.lock / "owner").read_text().strip() != expected_owner:
+                    raise ValueError("Office lock changed during recovery")
+                break
+            exit_code = result.returncode
+            timed_out = exit_code in (-14, 142)
+            output = dict(stdout=result.stdout, stderr=result.stderr)
+        except subprocess.TimeoutExpired as error:
+            exit_code = None
+            timed_out = True
+            output = dict(stdout=error.stdout, stderr=error.stderr)
+        failure = dict(status="inventory-timeout" if timed_out else "inventory-error",
+                       attempt=attempt, exit_code=exit_code,
+                       script_sha256=sha(args.inventory), lock_retained=True,
+                       **{key: value.decode(errors="replace") if isinstance(value, bytes)
+                          else value or "" for key, value in output.items()})
+        path = args.output / f"inventory-failure-{time.time_ns()}.json"
+        with path.open("x") as stream:
+            stream.write(json.dumps(failure, indent=2) + "\n")
+        if not timed_out or attempt == 2:
+            raise RuntimeError("Excel inventory failed; preserve custody")
     lines = result.stdout.strip().splitlines()
     if not lines or not lines[0].isdigit():
         raise ValueError("invalid workbook inventory")

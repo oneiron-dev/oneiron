@@ -530,5 +530,15 @@
     },
     "fresh_excel_truth": false,
     "native_default_promoted": false
+  },
+  "office_recovery_inventory_retry": {
+    "command": "python3 -m unittest discover -s scripts/tests -p test_excel_resume.py -v",
+    "exit_code": 0,
+    "passed": 10,
+    "supervisor_sha256": "11e7654ca2936c6781358e72805e66e6666fa121b957a0625e9e9cd09fd7ad05",
+    "behavior": "One extra bounded inventory read after a timeout only; original and outer timeout failures get durable diagnostics. Lock ownership is rechecked before and after reads. Foreign books, changed ownership and other errors refuse without close.",
+    "live_recovery_receipt": "crates/oneiron-docedit/tests/fixtures/real-workbooks/spreadsheetbench-excel-recovery-3.json",
+    "frozen_office_driver_changed": false,
+    "whole_corpus_acceptance": false
   }
 }

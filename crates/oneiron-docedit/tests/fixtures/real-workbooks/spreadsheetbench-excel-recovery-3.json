@@ -1,0 +1,31 @@
+{
+  "source_receipt_sha256": "71c36323a4e9f01418fa27f424dd38ea90029072033fe0f798b83142a9a45025",
+  "source_receipt_path": "/Users/olety/w7-oracle/W7-C14/real-workbook-oracle/sb-truth-2/recovery-1789838185431344000/receipt.json",
+  "receipt": {
+    "status": "custody-restored",
+    "timeout_row_preserved": {
+      "sha256": "d225137a9c606d38339eac9a0b5e01248887f0acc3ec6b237c7bcd6300dce64b",
+      "path": "all_data_912_v0.1/spreadsheet/413-15/1_413-15_answer.xlsx",
+      "status": "timed-out",
+      "exit_code": -14
+    },
+    "final_workbooks": 0,
+    "foreign_workbooks_touched": false,
+    "identity_unchanged": {
+      "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+      "script_sha256": "4a3227fad8f78b5b3e485c7c5c427d4dc7bc930f459f436b334f79dcf0401e56",
+      "driver_sha256": "4457f4f2c42a49e13d1211917c4907b0b9f96b11efd0c470788965ff77ed3832"
+    },
+    "supervisor_sha256": "11e7654ca2936c6781358e72805e66e6666fa121b957a0625e9e9cd09fd7ad05",
+    "completed_rows_reused": 1942,
+    "owned_workbook_closed_without_saving": true
+  },
+  "inventory_before": "1\n1_413-15_answer.xlsx\t/Users/olety/Library/Containers/com.microsoft.Excel/Data/tmp/w7-oracle/1789836626649262000-93443/d225137a9c606d38339eac9a0b5e01248887f0acc3ec6b237c7bcd6300dce64b\ttrue\n\n",
+  "inventory_after": "0\n\n",
+  "new_supervisor_job": "sb-truth-supervised-recovery-3",
+  "new_supervisor_pid": 27421,
+  "completed_after_recovery_observed": 1985,
+  "full_corpus_accepted": false,
+  "office_driver_changed": false,
+  "office_restarted": false
+}

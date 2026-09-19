@@ -28,6 +28,8 @@ class ExcelResumeTests(unittest.TestCase):
             directory.mkdir()
         self.args.driver.write_text("immutable driver")
         self.args.script.write_text("immutable script")
+        self.args.inventory.write_text("indexed read-only inventory")
+        self.args.close_owned.write_text("close only the exact owned workbook")
         self.stage = self.args.container / "owned-123"
         self.stage.mkdir()
         input_bytes = b"hash-verified staged input"
@@ -82,6 +84,65 @@ class ExcelResumeTests(unittest.TestCase):
         self.assertEqual(receipt["completed_rows_reused"], 1)
         self.assertFalse(receipt["foreign_workbooks_touched"])
         self.assertEqual(json.loads((archive / "custody.json").read_text()), self.custody)
+
+    def test_inventory_timeout_retries_once_and_retains_failed_read_receipt(self):
+        prior_rows = self.rows.read_bytes()
+        successful = self.runner([self.owned(), "0\n", "0\n"])
+        first = True
+        def busy_then_ready(command, **kwargs):
+            nonlocal first
+            if first:
+                first = False
+                self.calls.append(command)
+                return subprocess.CompletedProcess(command, -14, "", "")
+            return successful(command, **kwargs)
+        self.assertEqual(MODULE.recover(self.args, busy_then_ready), 2)
+        self.assertEqual(self.rows.read_bytes(), prior_rows)
+        self.assertFalse(self.args.lock.exists())
+        self.assertFalse(self.stage.exists())
+        failures = list(self.args.output.glob("inventory-failure-*.json"))
+        self.assertEqual(len(failures), 1)
+        failure = json.loads(failures[0].read_text())
+        self.assertEqual(failure["status"], "inventory-timeout")
+        self.assertEqual(failure["exit_code"], -14)
+        self.assertEqual(failure["script_sha256"], MODULE.sha(self.args.inventory))
+        self.assertEqual(self.calls[2][-3:], [str(self.args.close_owned), "input.xlsx", str(self.case)])
+
+    def test_inventory_failure_retry_is_bounded_and_preserves_foreign_custody(self):
+        for mode, expected_calls, expected_failures in [
+                ("error", 1, 1), ("timeout", 2, 2), ("outer-timeout", 2, 2),
+                ("changed-owner", 1, 1), ("changed-owner-success", 1, 0),
+                ("foreign-book", 2, 1)]:
+            with self.subTest(mode=mode):
+                self.calls.clear()
+                (self.args.lock / "owner").write_text(self.owner)
+                before = set(self.args.output.glob("inventory-failure-*.json"))
+                prior_rows = self.rows.read_bytes()
+                def failing(command, **kwargs):
+                    self.calls.append(command)
+                    self.assertEqual(command[-1], str(self.args.inventory))
+                    if mode in ("changed-owner", "changed-owner-success"):
+                        (self.args.lock / "owner").write_text("another Office owner")
+                    if mode == "changed-owner-success":
+                        return subprocess.CompletedProcess(command, 0, self.owned(), "")
+                    if mode == "outer-timeout":
+                        raise subprocess.TimeoutExpired(command, 130, output=b"partial inventory")
+                    if mode == "foreign-book" and len(self.calls) == 2:
+                        return subprocess.CompletedProcess(command, 0, "1\nUser.xlsx\t/foreign\ttrue\n", "")
+                    return subprocess.CompletedProcess(command, 1 if mode == "error" else -14, "", "")
+                with self.assertRaises((RuntimeError, ValueError)):
+                    MODULE.recover(self.args, failing)
+                self.assertEqual(len(self.calls), expected_calls)
+                failures = set(self.args.output.glob("inventory-failure-*.json")) - before
+                self.assertEqual(len(failures), expected_failures)
+                if mode == "outer-timeout":
+                    self.assertTrue(all(json.loads(path.read_text())["exit_code"] is None for path in failures))
+                if mode in ("changed-owner", "changed-owner-success"):
+                    self.assertEqual((self.args.lock / "owner").read_text(), "another Office owner")
+                self.assertTrue(self.input.exists())
+                self.assertTrue(self.args.lock.exists())
+                self.assertEqual(self.rows.read_bytes(), prior_rows)
+                self.assertFalse(list(self.args.output.glob("recovery-*")))
 
     def test_foreign_unsaved_recovered_and_extra_workbooks_refuse_without_close(self):
         for books in ["1\nBook1\t\tfalse\n", "1\ninput.xlsx\t/foreign\ttrue\n",
