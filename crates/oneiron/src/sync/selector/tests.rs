@@ -4740,6 +4740,12 @@ fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
         .unwrap();
     let own_body = own.get_claim(&id).unwrap().unwrap();
     assert_eq!(own_body.confidence, 0.75);
+    assert_eq!(
+        crate::provenance::decode_edge_provenance_body(&own_body.value)
+            .unwrap()
+            .confidence,
+        0.75
+    );
     assert_eq!(own_body.source, Some(ClaimSource::ToolOutput));
     assert!(matches!(
         fed_client.import_window_update(
@@ -4758,8 +4764,19 @@ fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
             ImportTier::Federated(FederationAdmissionRole::Member),
         )
         .unwrap();
+    assert!(
+        quarantined_records(&fed).unwrap().is_empty(),
+        "admitted claim must materialize: {:?}",
+        quarantined_records(&fed).unwrap()
+    );
     let body = fed.get_claim(&id).unwrap().unwrap();
     assert_eq!(body.confidence, 0.375);
+    assert_eq!(
+        crate::provenance::decode_edge_provenance_body(&body.value)
+            .unwrap()
+            .confidence,
+        0.375
+    );
     assert_eq!(body.source, Some(ClaimSource::Imported));
     let Some(Value::Map(scope)) = body.scope else {
         panic!("missing audit scope")
@@ -4799,6 +4816,13 @@ fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
             tier,
         )
         .unwrap();
-        assert_eq!(fed.get_claim(&id).unwrap().unwrap().confidence, confidence);
+        let body = fed.get_claim(&id).unwrap().unwrap();
+        assert_eq!(body.confidence, confidence);
+        assert_eq!(
+            crate::provenance::decode_edge_provenance_body(&body.value)
+                .unwrap()
+                .confidence,
+            confidence
+        );
     }
 }
