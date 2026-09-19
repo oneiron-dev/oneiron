@@ -132,6 +132,21 @@ class CompleteCorpusReceipts(unittest.TestCase):
                 self.assertEqual(summary["executable_sha256"], executable)
                 self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["fuse"]["manifest_sha256"])
 
+    def test_fuse_libreoffice_complete_lane_matches_pinned_cohort(self):
+        manifest = self.manifest("fuse")
+        receipt = read_json("fuse-libreoffice-classification.json")
+        rows = read_rows("fuse-libreoffice-rows.jsonl.gz", receipt["rows_sha256"])
+        self.complete(rows, manifest)
+        self.classification(rows, receipt)
+        self.assertEqual(receipt["workbooks"], len(manifest))
+        self.assertEqual(receipt["identity"]["engine"], read_json("engine-comparison-pins.json")["libreoffice"])
+        self.assertEqual(receipt["identity"]["manifest_sha256"], read_json("provenance.json")["fuse"]["manifest_sha256"])
+        self.assertIs(receipt["fresh_excel_truth"], False)
+        self.assertIs(receipt["native_default_eligible"], False)
+        for row in rows:
+            if row["recalc"]["ok"]:
+                self.assertRegex(row["output_sha256"], r"^[0-9a-f]{64}$")
+
     def test_fuse_unchanged_complete_lane_matches_pinned_extraction(self):
         manifest = self.manifest("fuse")
         receipt = read_json("fuse-unchanged-classification.json")

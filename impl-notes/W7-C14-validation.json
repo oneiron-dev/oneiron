@@ -540,5 +540,15 @@
     "live_recovery_receipt": "crates/oneiron-docedit/tests/fixtures/real-workbooks/spreadsheetbench-excel-recovery-3.json",
     "frozen_office_driver_changed": false,
     "whole_corpus_acceptance": false
+  },
+  "fuse_libreoffice_complete": {
+    "workbooks": 10702,
+    "recalculated": 10292,
+    "refused": 410,
+    "receipt": "crates/oneiron-docedit/tests/fixtures/real-workbooks/fuse-libreoffice-classification.json",
+    "command": "python3 -m unittest discover -s scripts/tests -p test_real_workbook_receipts.py -k fuse_libreoffice -v",
+    "exit_code": 0,
+    "fresh_excel_truth": false,
+    "native_default_eligible": false
   }
 }

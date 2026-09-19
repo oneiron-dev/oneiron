@@ -1,0 +1,21 @@
+{
+  "identity": {
+    "manifest_sha256": "f211b1a811d493afe0e82b5faadc6093ec5fefaff7579aa021e2de8cef438404",
+    "runner_sha256": "6fc0a24776047e332d9d4557e6b3c12c0a2ccb2912e479b89df91f04da69f11a",
+    "preflight_sha256": "4457f4f2c42a49e13d1211917c4907b0b9f96b11efd0c470788965ff77ed3832",
+    "engine": "LibreOffice 25.8.2.2 d401f2107ccab8f924a8e2df40f573aab7605b6f"
+  },
+  "recalculated": 10292,
+  "refused": 410,
+  "rows_sha256": "d3bde3a9a99dee69afb91b72f2d12bc4714987409954d69d045a8d8230558268",
+  "failure_counts": {
+    "active content is not allowed in the oracle": 406,
+    "timed-out": 1,
+    "not well-formed (invalid token): line 2, column 20265": 1,
+    "not well-formed (invalid token): line 2, column 16324": 1,
+    "not well-formed (invalid token): line 2, column 19396": 1
+  },
+  "workbooks": 10702,
+  "fresh_excel_truth": false,
+  "native_default_eligible": false
+}
