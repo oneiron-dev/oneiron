@@ -1,5 +1,7 @@
 # W7-C07 policy Scope storage handoff
 
+Historical implementation handoff. Final acceptance and remaining-work status are recorded in [W7-C07.md](W7-C07.md) and supersede pending statements below.
+
 Status: implementation handoff retained for design detail. Integration and current validation are tracked in [W7-C07.md](W7-C07.md).
 
 ## Storage decision

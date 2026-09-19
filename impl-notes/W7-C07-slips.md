@@ -1,5 +1,7 @@
 # W7-C07 slips / pairing implementation handoff
 
+Historical implementation handoff. Final acceptance and remaining-work status are recorded in [W7-C07.md](W7-C07.md) and supersede pending statements below.
+
 Status: implementation handoff retained for design detail. The current integration state and test evidence are in [W7-C07.md](W7-C07.md); historical tasks below have been reconciled with the integrated source.
 
 ## Built
