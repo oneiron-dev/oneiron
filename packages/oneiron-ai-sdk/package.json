@@ -20,6 +20,11 @@
     "oneiron": "^1.0.0"
   },
   "scripts": {
-    "test": "bun test"
+    "test": "bun test adapter.test.js",
+    "test:native": "bun test native-agent.test.js"
+  },
+  "devDependencies": {
+    "ai": "^6.0.0",
+    "oneiron": "file:../oneiron"
   }
 }

@@ -48,8 +48,8 @@ wait settlement remains a separate engine door.
 
 ## Build custody and evidence
 
-The pinned source and production integration are applied. Artifact builds and
-execution acceptance remain pending; no build tools were installed. The pinned
+The pinned source and production integration are applied. The initial build was pending owner provisioning; the final native
+qualification and handoff below supersede that initial status. The pinned
 QuickJS source archive is stored at
 `target/w7-validation/quickjs-2025-09-13-2.tar.xz` (SHA-256
 `996c6b5018fc955ad4d06426d0e9cb713685a00c825aa5c0418bd53f7df8b0b4`).
@@ -57,8 +57,7 @@ QuickJS source archive is stored at
 The inspected Linux host has clang, but no WASI SDK/sysroot, wit-bindgen, or
 wasm-tools binary. The controlled build requires wasi-sdk 27, wit-bindgen
 0.46.0 and wasm-tools 1.239.0 on the assigned build host. Missing native
-provisioning is separate from runtime/server implementation. No binary hash
-or successful compilation is claimed. Root owns artifact build, C/Rust
+provisioning is separate from runtime/server implementation. That initial probe did not qualify a binary. Root owns artifact build, C/Rust
 compile corrections, fixture execution, formatting and map regeneration.
 
 
@@ -80,8 +79,7 @@ No C04 file was edited and the WIT world was not forked.
 
 The C allocator handles limit subtraction without wrapping, non-byte bridge
 lists have an element cap, the guest interrupt backstop is one million ticks,
-and SDK/bootstrap internals live in one closure. Artifact-based acceptance is
-still pending the exact provisioned build tools, not substituted by WAT or Node.
+and SDK/bootstrap internals live in one closure. Artifact-based acceptance uses the provisioned toolchain below, never WAT or Node.
 
 ## Provisioned build receipt
 
@@ -93,5 +91,36 @@ additional upstream patch removes the unused dtoa `setjmp.h` include, guarded
 against any actual API usage; this avoids experimental WASM exception features.
 A second build in another output directory is byte-identical for both binaries.
 The manifest pins patched dtoa and QuickJS source separately. CI verifies
-component/file/source/WIT hashes. Real native interpreter qualification remains
-pending in `target/w7-validation/quickjs-native-qualification.*`.
+component/file/source/WIT hashes. Real native interpreter qualification passed across the two selective runs
+listed below.
+
+## Qualified C04 artifact handoff (2026-09-19)
+
+Use the complete directory, not one loose WASM binary:
+
+- Engine checkout: `components/code-run-quickjs/artifacts/`.
+- Absolute shared source: `/home/lexi/w7-build/wt/W7-C13/components/code-run-quickjs/artifacts/`.
+- Original MacBook build: `/Volumes/Cinema/w7-build/wt/W7-C13/target/w7-validation/quickjs-native/`.
+- Required files: `quickjs-first-party.wasm`, `quickjs-foreign.wasm`,
+  `manifest.json`, and upstream `LICENSE`.
+- First-party SHA-256: `3ddb36f6ca801c9b19dc59f17960ad139539a6a05a3f74d05de4220dc295f1f6`.
+- Foreign SHA-256: `4ae3c57ba74758d5669b6568c2508b76914ce036fde9389788b3704381366a07`.
+
+The canonical typed ABI remains `oneiron:code-run/guest@1.0.0`, from
+`crates/oneiron/wit/code-run.wit`. Build instructions are in
+`components/code-run-quickjs/README.md`. Each tier passed `wasm-tools validate`;
+an independent output-directory rebuild produced identical bytes.
+
+Native execution evidence (not a WAT stand-in):
+
+- `quickjs-native-qualification.log`: real HTTP `execute_code` actor binding,
+  persisted run/resume/terminal retry, fresh store, hash/instruction limits,
+  concurrent runtime isolation passed.
+- `quickjs-note-qualification2.log`: real language (Map, RegExp, BigInt, async),
+  typed writes, fixed clock/random replay, ambient escape refusal, foreign
+  zero-write import construction and both inert proposal variants passed.
+  This mixed run was 26/27 because an independent NOTE cursor regression
+  panicked; it did not fail a QuickJS case.
+
+C04 must retain canonical proposal validation and its own host-tier admission.
+This handoff does not claim C04's Firecracker integration is tested by C13.

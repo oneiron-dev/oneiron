@@ -284,19 +284,20 @@ impl NoteDocument {
         }
         let start = Cursor::decode(&pin.start_cursor).map_err(|_| invalid("NOTE start cursor"))?;
         let end = Cursor::decode(&pin.end_cursor).map_err(|_| invalid("NOTE end cursor"))?;
-        let positions = self
-            .doc
-            .get_cursor_pos(&start)
-            .ok()
-            .zip(self.doc.get_cursor_pos(&end).ok());
+        // Resolve only live character IDs. get_cursor_pos falls back to
+        // historical replay for deleted anchors, which cannot run safely on
+        // StateOnly documents whose dependencies have been erased (Loro 1.13).
+        // Its remapped neighbor would be drift anyway, even if the text matched.
+        // `false` selects Unicode scalar indices regardless of Loro's features.
+        // Keep the public with_state closure non-reentrant and read-only.
+        let positions = self.doc.with_state(|state| {
+            state
+                .get_relative_position(&start, false)
+                .zip(state.get_relative_position(&end, false))
+        });
         if let Some((start, end)) = positions
-            // A recovered cursor has lost its original character. Even an
-            // identical neighboring quote cannot restore that provenance.
-            && start.update.is_none()
-            && end.update.is_none()
-            && let Some(end) = end.current.pos.checked_add(1)
+            && let Some(end) = end.checked_add(1)
         {
-            let start = start.current.pos;
             if start < end
                 && let Ok(quote) = self.doc.get_text(BODY).slice(start, end)
                 && blake3::hash(quote.as_bytes()).as_bytes() == &pin.quote_hash

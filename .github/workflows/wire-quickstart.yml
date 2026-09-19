@@ -150,7 +150,7 @@ jobs:
         run: |
           python packages/oneiron/scripts/agent-docs.py --check
           node packages/oneiron/scripts/check-readme-snippets.mjs
-          bun test --cwd packages/oneiron-ai-sdk
+          bun test --cwd packages/oneiron-ai-sdk adapter.test.js
           python scripts/code-sandbox/generate.py --check
           node scripts/tests/test_sandbox_wit.mjs
 
@@ -164,8 +164,8 @@ jobs:
       - name: Build the npm package
         working-directory: packages/oneiron
         run: |
-          # This retained package has no lockfile. Do not request a frozen one.
-          bun install
+          # Use the pinned native build/typecheck dependencies.
+          bun install --frozen-lockfile
           bun run check:snippets
           bun run check:sdk-major
           bun run build
@@ -238,6 +238,12 @@ jobs:
       - name: Node package tests
         working-directory: packages/oneiron
         run: bun test
+
+      - name: AI SDK agent with native Memory Wire
+        working-directory: packages/oneiron-ai-sdk
+        run: |
+          bun install --frozen-lockfile
+          bun run test:native
 
       - name: Python package tests
         run: '"$WIRE_PYTHON_ENV/bin/python" -m pytest crates/oneiron-py/tests -q'
