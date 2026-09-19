@@ -62,6 +62,8 @@ pub(in crate::batch) fn apply_put(
 ) -> Result<AppliedPut> {
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
     crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
+    crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
+    let mut portable_agent_source = None;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
     store.guard_pack_instance_identity_in_txn(wtxn, &id, entity_type, data)?;
     // Publication admission reuses the write-door decode and must precede
@@ -645,7 +647,8 @@ pub(in crate::batch) fn apply_put(
                 "validated AGENT_DEF record missing",
             ))?;
         validate_local_agent_definition_create(store, wtxn, &id, created)?;
-        crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &id, created)?;
+        portable_agent_source =
+            crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &id, created)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let created = new_skill_record
             .as_ref()
@@ -740,6 +743,7 @@ pub(in crate::batch) fn apply_put(
             None
         };
     Ok(AppliedPut {
+        portable_agent_source,
         pending_embedding_token,
         cleared_pending_embedding,
         had_vector_mutation,

@@ -118,3 +118,6 @@ pub(crate) use portable::{agent_pack_files, resolve_agent_skill_refs, select_age
 pub(crate) use portable_binding::{
     agent_fork_hash_in_txn, bind_agent_birth_in_txn, import_agent_fork_hash_in_txn,
 };
+
+mod portable_source;
+pub(crate) use portable_source::{read_birth_source, validate_birth_source_put};

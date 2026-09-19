@@ -389,7 +389,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 2
      }
@@ -413,6 +413,24 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/portable_source.rs",
+     "purpose": "Immutable captured agent source",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/agent_def/portable_source/tests.rs",
+     "purpose": "Actual birth capture and replay retain bytes without granting authority",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -26418,7 +26436,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 11,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27645,8 +27663,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1589,
-   "test_files": 571
+   "source_files": 1590,
+   "test_files": 572
   },
   "oneiron-bench": {
    "files": [

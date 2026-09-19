@@ -54,6 +54,7 @@ pub(super) enum EffectiveEntity {
 }
 
 pub(super) struct AppliedPut {
+    pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
     pub(super) pending_embedding_token: Option<Vec<u8>>,
     pub(super) cleared_pending_embedding: bool,
     pub(super) had_vector_mutation: bool,

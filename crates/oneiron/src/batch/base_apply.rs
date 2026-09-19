@@ -253,6 +253,27 @@ pub(super) fn apply_ops_with_origin(
                     Some(&companion_retired_histories),
                     origin,
                 )?;
+                if let Some((source_id, source_bytes)) = applied.portable_agent_source {
+                    apply_ops_with_origin(
+                        store,
+                        config,
+                        analyzer,
+                        wtxn,
+                        vec![BatchOp::Put {
+                            id: source_id,
+                            entity_type: crate::registry::ENTITY_TYPE_ASSET,
+                            occurred,
+                            learned_at,
+                            data: source_bytes,
+                            allow_maintenance: false,
+                            allow_reserved_predicate: false,
+                            hub_sync_imported: false,
+                        }],
+                        text_index_trusted,
+                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+                        origin,
+                    )?;
+                }
                 if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                     if materialization.is_some() && !allow_reserved_predicate {
                         claim_materialization::bind_committed_claim(store, wtxn, &id)?;

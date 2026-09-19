@@ -24,10 +24,19 @@ pub(crate) fn agent_fork_hash_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SkillContentHash>> {
-    store
-        .vault_meta
-        .get(txn, &key(id))?
-        .map(|raw| decode_binding(&raw).map(|(_, hash)| hash))
+    if let Some(raw) = store.vault_meta.get(txn, &key(id))? {
+        return decode_binding(&raw).map(|(_, hash)| Some(hash));
+    }
+    super::read_birth_source(store, txn, id)?
+        .map(|source| {
+            crate::skill::SkillContentHash::parse_hex(
+                source
+                    .tree
+                    .content_hash
+                    .as_deref()
+                    .ok_or_else(|| Error::CorruptedIndex("birth source hash"))?,
+            )
+        })
         .transpose()
 }
 
@@ -62,7 +71,10 @@ pub(crate) fn bind_agent_birth_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     created: &AgentDefinition,
-) -> Result<()> {
+) -> Result<Option<(EntityId, Vec<u8>)>> {
+    if created.source == crate::claim::ClaimSource::Imported {
+        return Ok(None);
+    }
     if let Some(raw) = store.vault_meta.get(txn, &key(id))? {
         let (source, _) = decode_binding(&raw)?;
         if source != created.forked_from.unwrap_or(*id) {
@@ -70,14 +82,14 @@ pub(crate) fn bind_agent_birth_in_txn(
                 "agent fork origin cannot change after deletion".into(),
             ));
         }
-        return Ok(());
+        return Ok(None);
     }
     let (source_id, def) = if let Some(parent) = created.forked_from {
         if store.off_record_sessions.contains_entity(&parent)?
             || !crate::vault::live_entity_row_in_txn(store, txn, &parent)?.is_live()
             || !crate::secret_rotation::exhaust_taint_refs_in_txn(store, txn, &parent)?.is_empty()
         {
-            return Ok(());
+            return Ok(None);
         }
         let raw = store
             .entities
@@ -98,7 +110,7 @@ pub(crate) fn bind_agent_birth_in_txn(
     let skills = read_portable_skills(store, txn, &def)?;
     let claims = read_portable_knowledge(store, txn, &source_id)?;
     let Some(refs) = resolve_agent_skill_refs(&def, &skills) else {
-        return Ok(());
+        return Ok(None);
     };
     let files = agent_pack_files(
         &source_id,
@@ -107,16 +119,20 @@ pub(crate) fn bind_agent_birth_in_txn(
         &select_agent_knowledge(&source_id, &claims),
     )?;
     let tree = crate::serialize::export_source_tree(&files)?;
-    if let Some(hash) = tree.content_hash {
+    if let Some(hash) = &tree.content_hash {
         put_binding(
             store,
             txn,
             id,
             &source_id,
-            SkillContentHash::parse_hex(&hash)?,
+            SkillContentHash::parse_hex(hash)?,
         )?;
     }
-    Ok(())
+    if tree.content_hash.is_some() {
+        return super::portable_source::encode_birth_source(id, created, &source_id, &def, tree)
+            .map(Some);
+    }
+    Ok(None)
 }
 
 fn read_portable_skills(
