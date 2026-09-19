@@ -442,3 +442,46 @@ fn unavailable_or_oversized_tripwire_inputs_are_not_reported_as_healthy() {
         assert!(v.tripwire_bounds().unwrap().is_none());
     }
 }
+
+#[test]
+fn signed_detector_run_fits_a_bounded_vault_without_per_event_receipt_copies() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = crate::VaultConfig::device();
+    config.map_size = 8 * 1024 * 1024;
+    let v = Vault::open(dir.path(), config).unwrap();
+    let mut r = receipt("denied", crate::consent::CONSENT_CONTENT_KIND);
+    r.policy_trace
+        .push(crate::consent::CONSENT_REASON_DENIED.into());
+    let observations = [DiagnosticObservation::from_consent_receipt(&r)
+        .unwrap()
+        .unwrap()];
+    let input = DiagnosticWorkingSet {
+        scope_ref: "bounded-signed-run",
+        observations: &observations,
+    };
+    let mut event = ConsentDeniedDetector.detect(&input).pop().unwrap();
+    event.untrusted_detail = Some("x".repeat(4096));
+    struct ManyEvents(DiagnosticEvent);
+    impl DeterministicDetector for ManyEvents {
+        fn detector_id(&self) -> &'static str {
+            ConsentDeniedDetector.detector_id()
+        }
+        fn detect(&self, _: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent> {
+            (0..64)
+                .map(|offset| {
+                    let mut event = self.0.clone();
+                    event.valid_from += offset;
+                    event.valid_to = None;
+                    event
+                })
+                .collect()
+        }
+    }
+    let run = v
+        .sign_detector_run("scheduler", &input, &[&ManyEvents(event)])
+        .unwrap();
+    let ids = v.accept_signed_detector_run(&run).unwrap();
+    assert_eq!(ids.len(), 64);
+    assert!(v.is_signed_tripwire(&ids[0]).unwrap());
+    assert!(v.is_signed_tripwire(ids.last().unwrap()).unwrap());
+}

@@ -123,13 +123,20 @@ impl Vault {
             self.emit_diagnostic_event(&id, &event)?;
             ids.push(id);
         }
+        if ids.is_empty() {
+            return Ok(ids);
+        }
         let receipt = rmp_serde::to_vec_named(run)
             .map_err(|_| Error::InvariantViolation("detector receipt encode"))?;
+        let digest = blake3::hash(&receipt);
+        let mut run_key = b"self_heal:signed:v2:run:".to_vec();
+        run_key.extend_from_slice(digest.as_bytes());
         self.with_write_txn(|txn| {
+            self.store.vault_meta.put(txn, &run_key, &receipt)?;
             for id in &ids {
-                let mut key = b"self_heal:signed:v1:".to_vec();
+                let mut key = b"self_heal:signed:v2:event:".to_vec();
                 key.extend_from_slice(id.as_bytes());
-                self.store.vault_meta.put(txn, &key, &receipt)?;
+                self.store.vault_meta.put(txn, &key, digest.as_bytes())?;
             }
             Ok(())
         })?;
@@ -138,14 +145,25 @@ impl Vault {
     /// Only locally verified scheduled tripwires can feed the future auto arm.
     /// This is eligibility, not permission to execute a repair.
     pub fn is_signed_tripwire(&self, id: &EntityId) -> Result<bool> {
-        let mut key = b"self_heal:signed:v1:".to_vec();
+        let mut key = b"self_heal:signed:v2:event:".to_vec();
         key.extend_from_slice(id.as_bytes());
         let raw = {
             let txn = self.store.env.read_txn()?;
-            self.store.vault_meta.get(&txn, &key)?.map(|v| v.to_vec())
-        };
-        let Some(raw) = raw else {
-            return Ok(false);
+            let Some(digest) = self.store.vault_meta.get(&txn, &key)? else {
+                return Ok(false);
+            };
+            if digest.len() != 32 {
+                return Ok(false);
+            }
+            let mut run_key = b"self_heal:signed:v2:run:".to_vec();
+            run_key.extend_from_slice(&digest);
+            let Some(raw) = self.store.vault_meta.get(&txn, &run_key)? else {
+                return Ok(false);
+            };
+            if blake3::hash(&raw).as_bytes().as_slice() != digest.as_ref() {
+                return Ok(false);
+            }
+            raw.to_vec()
         };
         let Ok(run) = rmp_serde::from_slice::<SignedDetectorRun>(&raw) else {
             return Ok(false);
