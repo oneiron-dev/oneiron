@@ -52,6 +52,10 @@ impl Hub {
                     break;
                 }
                 worker.refresh();
+                // Refolding live authority can exceed one period. Do not replay
+                // overdue checks in a continuously-ready catch-up loop that
+                // starves socket I/O; inspect current state again after a pause.
+                tick.reset();
             }
         });
         hub

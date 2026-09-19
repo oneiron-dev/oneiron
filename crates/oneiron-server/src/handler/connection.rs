@@ -248,6 +248,10 @@ async fn handle_connection(
                         Err(_) => break,
                     }
                 }
+                // Delivery/revocation work is level-triggered. Its synchronous
+                // authority checks may outlast a period; a backlog of timer
+                // ticks must not crowd out inbound frames or queued replies.
+                app_tick.reset();
                 continue;
             }
             ConnEvent::Broadcast(broadcast_result) => {
