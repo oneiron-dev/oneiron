@@ -23,8 +23,9 @@ matching test filter are pinned beside the measured baseline; expanding it needs
 a fresh baseline receipt. `--report path/to/outcomes.json` checks a saved
 report without rerunning. Timeouts, incomplete audits, empty reports and scores
 below the checked-in floor fail. `mutation-baseline.json` explicitly distinguishes
-a required floor from a measured engine baseline. The initial real-engine audit
-is still required before setting `measured=true`.
+a required floor from a measured engine baseline. The measured sentinel run caught all 17 mutants; its score floor is 100%.
+`scripts/audit/mutation-evidence.json` records the outcomes and source hashes.
+The minimum count remains one so a touched-crate subset can run independently.
 
 `python3 scripts/audit/coverage.py --collect --toolchain nightly` collects disjoint full-tier nextest,
 featureless libtest and doctest lanes with pinned cargo-llvm-cov. The doctest lane

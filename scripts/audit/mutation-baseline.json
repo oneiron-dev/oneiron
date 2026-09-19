@@ -1,19 +1,35 @@
 {
   "schema": 1,
   "runner": "cargo-mutants 27.1.0",
-  "minimum_score": 0.8,
+  "minimum_score": 1.0,
   "minimum_tested": 1,
   "scope": [
     "oneiron",
     "oneiron-server"
   ],
-  "measured": false,
-  "note": "Initial required floor; replace measured=false with audit evidence after the first real engine run.",
+  "measured": true,
+  "note": "Measured sentinel baseline: 17/17 caught. The score floor is 100%; minimum_tested remains one because touched-crate runs legitimately select a subset of the two-crate corpus.",
   "mutant_filter": "GpuHealth::healthy|TripwireBounds::valid",
   "test_filter": "test(runtime::gpu::) | test(self_heal::tripwire_tests::)",
   "scope_note": "Initial deterministic boundary audit: GPU health conjunction and manifest tripwire bounds in the two engine crates. This is a pinned sentinel corpus, not exhaustive workspace mutation coverage.",
   "files": [
     "crates/oneiron/src/self_heal/tripwires.rs",
     "crates/oneiron-server/src/runtime/gpu.rs"
-  ]
+  ],
+  "measurement": {
+    "started_at": "2026-09-19T06:12:44.53736Z",
+    "completed_at": "2026-09-19T07:26:59.411164Z",
+    "caught": 17,
+    "tested": 17,
+    "missed": 0,
+    "timed_out": 0,
+    "unviable": 0,
+    "outcomes_sha256": "12b66602cc5460b2f98a3ff498b13ec540409eab28c8f474da3109f31d2df4a1",
+    "source_sha256": {
+      "crates/oneiron/src/self_heal/tripwires.rs": "3bc53b7a87536e8c786807c41925f4d3c283822088ae0dab5a09725ea124c132",
+      "crates/oneiron-server/src/runtime/gpu.rs": "1c0c265ccc4d81c5dff79a0c463233938b41911e3f85a633dcbd37817d6d4873",
+      "crates/oneiron/src/self_heal/tripwire_tests.rs": "30d12b5380591cdd3a82220360b460461602aa5d61ddbfcf1a9eb8c99438febe"
+    },
+    "evidence": "scripts/audit/mutation-evidence.json"
+  }
 }
