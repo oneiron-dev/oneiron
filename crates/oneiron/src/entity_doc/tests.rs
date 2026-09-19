@@ -742,7 +742,14 @@ fn text_migration_refuses_maintenance_and_semantic_records_atomically() -> Resul
                     Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
                 ));
             }
-            assert_eq!(vault.get_raw(&id)?, Some(raw));
+            // SECRET_CUSTODY deliberately has no public raw read door.
+            // Inspect persisted bytes in-txn without opening that sealed plane.
+            let txn = vault.store.env.read_txn()?;
+            assert_eq!(
+                vault.store.entities.get(&txn, id.as_bytes())?.as_deref(),
+                Some(raw.as_slice())
+            );
+            drop(txn);
             assert!(matches!(vault.entity_text(&id), Err(Error::EntityNotFound)));
         }
     }
