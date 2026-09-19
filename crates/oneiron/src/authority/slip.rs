@@ -117,8 +117,12 @@ impl SlipClaims {
             && self.holder_ref == parent.holder_ref
             && self.actor_class == parent.actor_class
             && self.org_ref == parent.org_ref
-            && self.records.is_subset(&parent.records)
-            && self.channels.is_subset(&parent.channels)
+            && (self.records == parent.records
+                || (!self.records.is_empty()
+                    && ((parent.records.is_empty() && parent.channels.is_empty())
+                        || self.records.is_subset(&parent.records))))
+            && (self.channels == parent.channels
+                || (!self.channels.is_empty() && self.channels.is_subset(&parent.channels)))
     }
 }
 
@@ -249,6 +253,9 @@ impl CapabilitySlip {
         let key = blake3::derive_key(MAC_CONTEXT, secret);
         let mut mac = *blake3::keyed_hash(&key, &canonical(&self.claims)?).as_bytes();
         let mut effective = self.claims.clone();
+        // An absent named-record bound is universal on generic record reads.
+        // Once a caveat supplies a set, its empty meet is Bottom, never universal.
+        let mut records_constrained = !effective.records.is_empty() || !effective.channels.is_empty();
         for caveat in &self.caveats {
             mac = *blake3::keyed_hash(&mac, &canonical(caveat)?).as_bytes();
             if let Some(scope) = &caveat.scope {
@@ -262,10 +269,23 @@ impl CapabilitySlip {
             }
             effective.single_use |= caveat.single_use;
             if let Some(records) = &caveat.records {
-                effective.records = effective.records.intersection(records).cloned().collect();
+                effective.records = if records_constrained {
+                    effective.records.intersection(records).cloned().collect()
+                } else {
+                    records.clone()
+                };
+                records_constrained = true;
+                if effective.records.is_empty() {
+                    effective.scope = Scope::default();
+                }
             }
             if let Some(channels) = &caveat.channels {
                 effective.channels = effective.channels.intersection(channels).cloned().collect();
+                // Empty channels carry no credential-door authority. A disjoint
+                // meet must not turn a channel-bound slip into a generic reader.
+                if effective.channels.is_empty() {
+                    effective.scope = Scope::default();
+                }
             }
         }
         // keyed_hash::Hash equality is constant time; no string-MAC comparisons.

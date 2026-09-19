@@ -330,3 +330,55 @@ fn pending_device_enrollment_cannot_delay_a_slip_withdrawal() {
         .unwrap();
     assert!(verify(&vault, &issuer, &root).is_err());
 }
+
+#[test]
+fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
+    let (_dir, vault, issuer, root) = fixture();
+    let a = SlipCaveat { records: Some(BTreeSet::from(["record:a".into()])), ..Default::default() };
+    let b = SlipCaveat { records: Some(BTreeSet::from(["record:b".into()])), ..Default::default() };
+    let mut named = root.clone();
+    named.attenuate(a.clone()).unwrap();
+    assert_eq!(verify(&vault,&issuer,&named).unwrap().claims().records, BTreeSet::from(["record:a".into()]));
+    let mut ab = named;
+    ab.attenuate(b.clone()).unwrap();
+    ab.attenuate(a.clone()).unwrap();
+    let mut ba = root.clone();
+    ba.attenuate(b).unwrap();
+    ba.attenuate(a).unwrap();
+    let denied = verify(&vault,&issuer,&ab).unwrap();
+    assert_eq!(denied,verify(&vault,&issuer,&ba).unwrap());
+    assert!(!denied.allows_verb("read"));
+    let mut empty = root.clone();
+    empty.attenuate(SlipCaveat { records: Some(BTreeSet::new()), ..Default::default() }).unwrap();
+    assert!(!verify(&vault,&issuer,&empty).unwrap().allows_verb("read"));
+
+    let mut claims = root.claims.clone();
+    claims.slip_id = [43;32];
+    claims.records = BTreeSet::from(["record:a".into()]);
+    claims.channels = BTreeSet::from(["provider:a".into()]);
+    let channel = vault.mint_capability_slip(&issuer,claims).unwrap();
+    for remove_records in [false,true] {
+        let mut wider = channel.claims.clone();
+        wider.slip_id = [44;32];
+        wider.parent_id = Some(channel.claims.slip_id);
+        if remove_records { wider.records.clear(); } else { wider.channels.clear(); }
+        assert!(vault.mint_capability_slip(&issuer,wider).is_err());
+    }
+    let mut no_records = channel.claims.clone();
+    no_records.slip_id = [45;32];
+    no_records.records.clear();
+    let no_records = vault.mint_capability_slip(&issuer,no_records).unwrap();
+    let mut wider = no_records.claims.clone();
+    wider.slip_id = [46;32];
+    wider.parent_id = Some(no_records.claims.slip_id);
+    wider.records = BTreeSet::from(["record:a".into()]);
+    assert!(vault.mint_capability_slip(&issuer,wider).is_err());
+    let mut no_records = no_records;
+    no_records.attenuate(SlipCaveat { records:Some(BTreeSet::from(["record:a".into()])), ..Default::default() }).unwrap();
+    assert!(!verify(&vault,&issuer,&no_records).unwrap().allows_verb("read"));
+    for channels in [BTreeSet::new(),BTreeSet::from(["provider:b".into()])] {
+        let mut narrowed = channel.clone();
+        narrowed.attenuate(SlipCaveat { channels: Some(channels), ..Default::default() }).unwrap();
+        assert!(!verify(&vault,&issuer,&narrowed).unwrap().allows_verb("read"));
+    }
+}
