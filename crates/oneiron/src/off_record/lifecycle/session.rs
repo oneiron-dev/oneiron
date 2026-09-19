@@ -70,6 +70,23 @@ pub struct OffRecordSession<'vault> {
 }
 
 impl<'vault> OffRecordSessionVault<'vault> {
+    /// Enters anonymous mode. No session content or receipt is retained, and
+    /// the mode cannot be flipped or promoted into persistence.
+    pub fn enter_anonymous(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+    ) -> Result<OffRecordSession<'vault>> {
+        let entry = self
+            .vault
+            .enter_anonymous_session_entry(session_ref, backend)?;
+        Ok(OffRecordSession {
+            vault: self.vault,
+            session_ref: session_ref.to_owned(),
+            entry,
+        })
+    }
+
     pub fn enter(
         &self,
         session_ref: &str,
@@ -182,10 +199,7 @@ impl OffRecordSession<'_> {
                 session_ref: self.session_ref.clone(),
             }));
         }
-        let target = match state.record.mode {
-            OffRecordMode::OffRecord => RouteTarget::Overlay,
-            OffRecordMode::OnRecord => RouteTarget::Base,
-        };
+        let target = state.record.mode.write_target();
         SessionWriteRoute::mint(&self.entry.overlay, target)
     }
 
@@ -416,8 +430,9 @@ impl OffRecordSession<'_> {
         key: &[u8],
         value: &[u8],
     ) -> Result<()> {
-        route.revalidate()?;
+        route.require_recording(&self.session_ref)?;
         match route.target() {
+            RouteTarget::Discard => unreachable!("anonymous recording refused above"),
             RouteTarget::Overlay => {
                 // Same base-writer-then-segment-permit order as the retrieval
                 // arm above: the permit is never held while waiting for the
@@ -455,8 +470,9 @@ impl OffRecordSession<'_> {
         value: &[u8],
         accepts_current: impl FnOnce(Option<&[u8]>) -> Result<()>,
     ) -> Result<()> {
-        route.revalidate()?;
+        route.require_recording(&self.session_ref)?;
         match route.target() {
+            RouteTarget::Discard => unreachable!("anonymous recording refused above"),
             RouteTarget::Overlay => {
                 // Same base-writer-then-segment-permit order as the sibling
                 // above; the composed read is taken after the segment installs
@@ -508,8 +524,9 @@ impl OffRecordSession<'_> {
         counter_key: &[u8],
         update_counter: impl FnOnce(Option<&[u8]>, Option<&[u8]>, RouteTarget) -> Result<(Vec<u8>, u64)>,
     ) -> Result<u64> {
-        route.revalidate()?;
+        route.require_recording(&self.session_ref)?;
         match route.target() {
+            RouteTarget::Discard => unreachable!("anonymous recording refused above"),
             RouteTarget::Overlay => {
                 let overlay = self.entry.overlay.clone();
                 let (segment, total) = self.vault.with_write_txn(|wtxn| {
@@ -644,7 +661,13 @@ impl OffRecordSession<'_> {
                 session_ref: self.session_ref.clone(),
             }));
         }
+        state
+            .record
+            .mode
+            .write_target()
+            .require_recording(&self.session_ref)?;
         match state.record.mode {
+            OffRecordMode::Anonymous => unreachable!("anonymous recording refused above"),
             OffRecordMode::OffRecord => state
                 .receipt_log
                 .as_mut()
@@ -692,6 +715,11 @@ impl OffRecordSession<'_> {
                     session_ref: self.session_ref.clone(),
                 }));
             }
+            state
+                .record
+                .mode
+                .write_target()
+                .require_recording(&self.session_ref)?;
             // RETRY, ahead of the journal: a promoted turn's closure has
             // already been retired from the overlay, so planning it again would
             // fail with "no journaled turn" for a turn that IS promoted. The

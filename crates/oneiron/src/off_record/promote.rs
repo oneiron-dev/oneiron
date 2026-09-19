@@ -225,6 +225,11 @@ impl FloorWrites<'_> {
         plan: &PromotePlan,
         promoted_at: u64,
     ) -> Result<PromoteOutcome> {
+        // Defense at the only overlay-to-base replay door, before even a
+        // durable retry receipt can answer on behalf of an anonymous room.
+        if let Some(record) = self.store.off_record_sessions.record(session_ref) {
+            record.mode.write_target().require_recording(session_ref)?;
+        }
         let turn = plan.turn();
         let receipt_key = off_record_promote_key(&turn);
         if let Some(stored) = self.store.vault_meta.get(wtxn, &receipt_key)? {

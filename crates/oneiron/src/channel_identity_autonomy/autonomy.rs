@@ -56,7 +56,7 @@ impl Vault {
         };
         if identity_ref != candidate.identity_ref
             || grant.principal_ref != *actor_ref
-            || grant.status != AccessGrantStatus::Active
+            || !grant.is_active()
             || grant.created_at > crate::unix_seconds_now()
             || self.autonomy_identity_actor(&txn, identity_ref)? != *actor_ref
         {
@@ -135,6 +135,7 @@ impl Vault {
             status: AccessGrantStatus::Active,
             created_at: now,
             revoked_at: None,
+            expires_at: None,
         };
         if let Some(raw) = self.store.entities.get(&txn, read_grant_ref.as_bytes())? {
             let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
@@ -145,7 +146,7 @@ impl Vault {
                 crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if existing.scope != read_grant.scope
                 || existing.principal_ref != desired.actor_ref
-                || existing.status != AccessGrantStatus::Active
+                || !existing.is_active()
             {
                 return Err(invalid_autonomy());
             }
@@ -418,7 +419,7 @@ impl Vault {
         };
         if identity_ref != mode.identity_ref
             || grant.principal_ref != actor
-            || grant.status != AccessGrantStatus::Active
+            || !grant.is_active()
             || grant.created_at > at
         {
             return Err(invalid_autonomy());

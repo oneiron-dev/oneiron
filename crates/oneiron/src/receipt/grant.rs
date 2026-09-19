@@ -465,6 +465,12 @@ fn append_access_grant_scope_fields(
     scope: &AccessGrantScope,
 ) {
     match scope {
+        AccessGrantScope::Messages { space_ref }
+        | AccessGrantScope::Summaries { space_ref }
+        | AccessGrantScope::RelationshipClaims { space_ref } => {
+            fields.insert("scope".into(), scope.required_capability().as_str().into());
+            fields.insert("space_ref".into(), space_ref.to_hex());
+        }
         AccessGrantScope::ChannelIdentity {
             identity_ref,
             envelope_ref,
