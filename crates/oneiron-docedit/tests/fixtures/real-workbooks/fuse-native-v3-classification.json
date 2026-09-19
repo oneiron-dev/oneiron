@@ -1,0 +1,39 @@
+{
+  "identity": {
+    "mode": "saved-cache-diagnostic",
+    "fresh_excel_truth": false,
+    "executable_sha256": "c54211ad849c022ac84facc4230f5e10b3cfd06a7a069460c274fe12e3c775d7",
+    "manifest_sha256": "f211b1a811d493afe0e82b5faadc6093ec5fefaff7579aa021e2de8cef438404",
+    "comparator_sha256": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+    "timeout_seconds": 120
+  },
+  "workbooks": 10702,
+  "recalculated": 3530,
+  "refused": 7172,
+  "failure_counts": {
+    "Error: UnsupportedWorkbook(\"external-rels-target\")\n": 1625,
+    "Error: UnsupportedWorkbook(\"defined names\")\n": 3753,
+    "Error: UnsupportedWorkbook(\"external-links-part\")\n": 855,
+    "Error: UnsupportedWorkbook(\"shared, array, or data-table formula\")\n": 719,
+    "Error: UnsupportedWorkbook(\"iterative calculation settings\")\n": 21,
+    "Error: UnsupportedWorkbook(\"formula evaluation depth limit\")\n": 6,
+    "timed-out": 22,
+    "Error: UnsupportedWorkbook(\"table references\")\n": 45,
+    "Error: Package(InvalidPackage(\"missing EOCD\"))\n": 43,
+    "Error: UnsupportedWorkbook(\"non-worksheet sheet\")\n": 20,
+    "Error: UnsupportedWorkbook(\"OOXML escaped input text\")\n": 17,
+    "Error: UnsupportedWorkbook(\"formula needs caller context or volatile reference semantics\")\n": 4,
+    "Error: UnsupportedWorkbook(\"external-formula-reference\")\n": 2,
+    "Error: Engine(\"Engine error: #CIRC!: Self-reference detected\")\n": 1,
+    "Error: InvalidWorkbook(\"XML node or depth limit\")\n": 25,
+    "Error: InvalidWorkbook(\"shared string index\")\n": 1,
+    "Error: InvalidWorkbook(\"duplicate or out-of-grid cell\")\n": 3,
+    "Error: InvalidWorkbook(\"attribute equals\")\n": 3,
+    "Error: UnsupportedWorkbook(\"formula token limit\")\n": 5,
+    "Error: UnsupportedWorkbook(\"precision-as-displayed\")\n": 2
+  },
+  "rows_sha256": "9d424f1db4997ec4c466441ad0333fd4405c8df89ab3c923a9b70be551518c88",
+  "fresh_excel_truth": false,
+  "native_default_eligible": false,
+  "accuracy_status": "Complete guarded native-v3 saved-cache diagnostic only; fresh Excel correctness and the full default-selection gate remain pending."
+}

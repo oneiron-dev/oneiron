@@ -493,7 +493,7 @@
       "receipt_tests_passed": 5,
       "full_cohort_measurement": {
         "spreadsheetbench": "complete, collected and checked; fresh Excel comparison pending",
-        "fuse": "queued behind existing native-v2 run"
+        "fuse": "complete, collected and checked; zero process aborts; fresh Excel comparison blocked on Office custody"
       }
     },
     "spreadsheetbench_complete": {
@@ -550,5 +550,44 @@
     "exit_code": 0,
     "fresh_excel_truth": false,
     "native_default_eligible": false
+  },
+  "fuse_native_v3_complete": {
+    "source_commit": "707eb28b",
+    "executable_sha256": "c54211ad849c022ac84facc4230f5e10b3cfd06a7a069460c274fe12e3c775d7",
+    "manifest_sha256": "f211b1a811d493afe0e82b5faadc6093ec5fefaff7579aa021e2de8cef438404",
+    "rows_sha256": "9d424f1db4997ec4c466441ad0333fd4405c8df89ab3c923a9b70be551518c88",
+    "workbooks": 10702,
+    "recalculated": 3530,
+    "refused_or_failed": 7172,
+    "timeouts": 22,
+    "process_aborts": 0,
+    "original_aborts_now_refused": 2,
+    "newly_refused_vs_v2": 9,
+    "saved_cache_matching_cells": 111399,
+    "saved_cache_formula_cells": 5666313,
+    "saved_cache_matching_workbooks": 433,
+    "saved_cache_scored_workbooks": 3493,
+    "receipt_test": {
+      "command": "python3 -m unittest discover -s scripts/tests -p test_real_workbook_receipts.py -k guarded_native_fuse -v",
+      "exit_code": 0,
+      "tests": 1
+    },
+    "fresh_excel_truth": false,
+    "native_default_eligible": false
+  },
+  "current_office_blocker": {
+    "status": "ownership-unproved-after-timeouts",
+    "corpus": "SpreadsheetBench",
+    "recorded_rows": 2128,
+    "last_input_sha256": "9d67e745514b7cf7f9bfd1056457e7faf0f53edee854b8c8f29ed47393d825de",
+    "last_status": "timed-out",
+    "supervisor_exit_code": 1,
+    "extra_indexed_inventory_exit_code": 142,
+    "read_only_window_query_exit_code": 142,
+    "lock_retained": true,
+    "staging_retained": true,
+    "workbooks_closed_during_failed_recovery": 0,
+    "source": "target/w7-checks/sb-custody-recovery-6/",
+    "required_action": "Owner restores Excel responsiveness without discarding foreign or recovered work; prove exact ownership before resuming unchanged oracle."
   }
 }

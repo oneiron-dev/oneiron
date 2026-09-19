@@ -132,6 +132,31 @@ class CompleteCorpusReceipts(unittest.TestCase):
                 self.assertEqual(summary["executable_sha256"], executable)
                 self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["fuse"]["manifest_sha256"])
 
+    def test_guarded_native_fuse_lane_covers_complete_cohort_without_process_aborts(self):
+        receipt = read_json("fuse-native-v3-classification.json")
+        summary = read_json("fuse-native-v3-saved-cache-diagnostic.json")
+        executable = read_json("retained-native-v3-executable.json")
+        self.assertEqual(receipt["rows_sha256"], summary["rows_sha256"])
+        rows = read_rows("fuse-native-v3-rows.jsonl.gz", receipt["rows_sha256"])
+        self.complete(rows, self.manifest("fuse"))
+        self.classification(rows, receipt)
+        self.diagnostic(rows, summary)
+        self.assertEqual(receipt["identity"]["executable_sha256"], executable["executable_sha256"])
+        self.assertEqual(summary["executable_sha256"], executable["executable_sha256"])
+        self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["fuse"]["manifest_sha256"])
+        self.assertIs(receipt["fresh_excel_truth"], False)
+        self.assertIs(receipt["native_default_eligible"], False)
+        # Signal exits are process failures, never typed workbook refusals.
+        for row in rows:
+            if "exit" in row["recalc"]:
+                self.assertIn(row["recalc"]["exit"], [0, 1])
+        by_hash = {row["sha256"]: row for row in rows}
+        for case in executable["cases"]:
+            row = by_hash[case["input_sha256"]]
+            self.assertFalse(row["recalc"]["ok"])
+            self.assertEqual(row["recalc"]["exit"], 1)
+            self.assertFalse(row.get("output_sha256"))
+
     def test_fuse_libreoffice_complete_lane_matches_pinned_cohort(self):
         manifest = self.manifest("fuse")
         receipt = read_json("fuse-libreoffice-classification.json")
