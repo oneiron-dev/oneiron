@@ -520,7 +520,7 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
                 .map(|result| result.map(|body| (id, body)))
         })
         .collect::<Result<Vec<_>>>()?;
-    let (_, companion) = companions
+    let (companion_id, companion) = companions
         .iter()
         .find(|(_, body)| body.predicate == "core.supersession.provenance")
         .expect("runner companion");
@@ -528,12 +528,47 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
         claim_evidence_taint(companion),
         Some(ClaimSource::ToolOutput)
     );
+    let rmpv::Value::Map(refs) = &companion.value else {
+        panic!("companion refs")
+    };
+    for (key, expected) in [("new", clean_id), ("old", head_id)] {
+        assert!(refs.iter().any(|(name, value)| name.as_str() == Some(key)
+            && *value == rmpv::Value::Binary(expected.as_bytes().to_vec())));
+    }
+    let (_replica_dir, replica) = open_auto_vault();
+    let bytes = crate::claim::encode_claim_body(companion)?;
+    replica
+        .batch()
+        .put_replicated(
+            companion_id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &bytes,
+        )
+        .commit()?;
+    assert_eq!(replica.get_claim(companion_id)?.as_ref(), Some(companion));
     let mut forged = companion.clone();
     forged.scope = None;
     assert!(
         crate::claim::validate_claim_body_bytes(&crate::claim::encode_claim_body(&forged)?, false)
             .is_err()
     );
+    let forged_id = EntityId::now();
+    assert!(
+        replica
+            .batch()
+            .put_replicated(
+                &forged_id,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                crate::TimeRange { start: 2, end: 2 },
+                2,
+                &crate::claim::encode_claim_body(&forged)?
+            )
+            .commit()
+            .is_err()
+    );
+    assert!(replica.get_claim(&forged_id)?.is_none());
     let old_head = vault.get_claim(&head_id)?.expect("old head");
     assert_eq!(
         old_head.lifecycle,

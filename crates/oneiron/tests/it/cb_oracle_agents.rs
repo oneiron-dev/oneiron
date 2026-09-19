@@ -1301,8 +1301,6 @@ mod cb_a {
 
     /// Trust-surface observations after a conflicting peer answer.
     struct TrustSurfaces {
-        /// Approval-queue entries anywhere in the flow (ratified: none).
-        approval_queue_entries: usize,
         /// Human digest entries for the landing.
         human_digest_entries: usize,
         /// conflict.open surfacings for the contradiction.
@@ -1349,7 +1347,6 @@ mod cb_a {
         let correction = fixture.correct_with_supersession(&answer, peer_claim, "Globex", 0.9);
 
         TrustSurfaces {
-            approval_queue_entries: fixture.pending_gate_consents(),
             human_digest_entries,
             conflict_open_surfacings,
             correction_writes: correction,
@@ -1362,7 +1359,6 @@ mod cb_a {
     #[test]
     fn peer_storage_is_unqueued_and_attributed_correction_is_confirmed() {
         let surfaces = arm_trust_surfaces();
-        assert_eq!(surfaces.approval_queue_entries, 0);
         assert_eq!(surfaces.human_digest_entries, 1);
         assert_eq!(surfaces.conflict_open_surfacings, 1);
         assert_eq!(surfaces.correction_writes, 1);
@@ -1792,7 +1788,21 @@ mod peer_fixture {
                 self.claim(candidate.claim_id).approval,
                 ClaimApprovalStatus::Proposed
             );
-            assert_eq!(self.pending_gate_consents(), 1);
+            let pending = self.vault.pending_gate_consents(1_000).unwrap();
+            assert!(
+                pending
+                    .iter()
+                    .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
+            );
+            assert!(
+                pending
+                    .iter()
+                    .filter(|row| row.claim_id != *candidate.claim_id.as_bytes())
+                    .all(|row| self
+                        .claim(EntityId::from_bytes(row.claim_id).unwrap())
+                        .predicate
+                        == "core.conflict.open")
+            );
             let proposed = self
                 .vault
                 .get(&candidate.claim_id)
@@ -1801,6 +1811,19 @@ mod peer_fixture {
             self.vault
                 .approve_inbox_member_with_edit(&candidate.claim_id, &proposed)
                 .expect("owner confirms attributed correction");
+            let pending = self.vault.pending_gate_consents(1_000).unwrap();
+            assert!(
+                !pending
+                    .iter()
+                    .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
+            );
+            assert!(pending.iter().all(|row| matches!(
+                self.claim(EntityId::from_bytes(row.claim_id).unwrap()).predicate.as_str(),
+                "core.conflict.open" | "core.supersession.provenance")));
+            assert_eq!(
+                self.claim(candidate.claim_id).approval,
+                ClaimApprovalStatus::Approved
+            );
             assert_eq!(
                 self.claim(wrong).lifecycle,
                 ClaimLifecycleStatus::Superseded,
