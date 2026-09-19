@@ -25,7 +25,7 @@ invented here. Required names for configured entries are:
 - Alignment: `qwen-asr`, `torch`.
 - Diarization: `pyannote.audio`, `torch` (community-1's exclusive-output API is 4.x).
 - Cleanup: `mlx-lm`, `mlx`.
-- MOSS comparison: `mlx-audio`, `mlx`.
+- MOSS comparison: `mlx-audio`, `mlx`, `mlx-lm`.
 
 Each non-null entry has exactly these fields:
 

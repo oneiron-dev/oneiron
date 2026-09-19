@@ -21,7 +21,7 @@ LANGUAGES = ("Chinese", "English", "Cantonese", "French", "German", "Italian",
              "Japanese", "Korean", "Portuguese", "Russian", "Spanish")
 REQUIREMENTS = {"asr": {"mlx-audio", "mlx", "silero-vad", "onnxruntime"}, "alignment": {"qwen-asr", "torch"},
                 "diarization": {"pyannote.audio", "torch"},
-                "cleanup": {"mlx-lm", "mlx"}, "moss": {"mlx-audio", "mlx"}}
+                "cleanup": {"mlx-lm", "mlx"}, "moss": {"mlx-audio", "mlx", "mlx-lm"}}
 
 
 class RuntimeRefusal(Exception):

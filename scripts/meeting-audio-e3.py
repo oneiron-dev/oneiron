@@ -216,7 +216,7 @@ def capture(args):
             spec = native.profile[stage]
             record["arms"][arm] = {"tracks": tracks, "tracks_sha256": checksum(encoded(tracks)),
                 "provenance": output["provenance"], "model_id": spec["model_id"],
-                "model_files_sha256": checksum(encoded(spec["files"])), "elapsed_seconds": time.monotonic() - started}
+                "model_files_sha256": checksum(encoded(spec["files"])), "runtime_sha256": checksum(encoded(capabilities)), "elapsed_seconds": time.monotonic() - started}
             with (args.output / "events.jsonl").open("ab") as events:
                 events.write(encoded({"event": "completed", "file_id": entry["file_id"], "arm": arm,
                     "tracks_sha256": record["arms"][arm]["tracks_sha256"]}) + b"\n")
@@ -224,7 +224,8 @@ def capture(args):
         write_new(args.output / path, record)
         records.append({"path": path, "sha256": checksum(encoded(record))})
     result = {"phase": "capture_complete", "schema": "oneiron.audio.e3.capture.v1", "corpus_id": cohort["corpus_id"],
-              "cohort_sha256": checksum(source), "records": records, "named_principal_scored": False,
+              "cohort_sha256": checksum(source), "capabilities_sha256": checksum(encoded(capabilities)),
+              "records": records, "named_principal_scored": False,
               "e1_e3_qualified": False, "next": "supply output-bound enrollment-matching receipts; then score"}
     write_new(args.output / "completion.json", result)
     return result
