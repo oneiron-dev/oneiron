@@ -183,8 +183,7 @@ impl JsCodeModeHost for DispatcherHost<'_> {
     }
 }
 
-#[test]
-fn component_write_enters_real_dispatcher_and_gate() -> Result<()> {
+fn gate_fixture() -> Result<(tempfile::TempDir, Vault, EntityId, EntityId, EntityId)> {
     let dir = tempfile::tempdir().expect("test fixture");
     let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config())?;
     let actor = EntityId::from_bytes([0x64; 16])?;
@@ -199,6 +198,12 @@ fn component_write_enters_real_dispatcher_and_gate() -> Result<()> {
             b"person",
         )?;
     }
+    Ok((dir, vault, actor, subject, claim))
+}
+
+#[test]
+fn component_write_enters_real_dispatcher_and_gate() -> Result<()> {
+    let (_dir, vault, actor, subject, claim) = gate_fixture()?;
     let mut host = DispatcherHost(GatedActorWrite::new(
         &vault,
         WriteActor::new(actor, EdgeActorClass::Agent),
@@ -360,4 +365,163 @@ fn non_finite_typed_claim_confidence_refuses_before_dispatch() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn shared_engine_cleanup_does_not_cancel_a_sibling_store() {
+    use crate::code_run::{SelfDispatchOutcome, SelfMemoryWriteResult};
+
+    struct Host {
+        entered: Option<mpsc::Sender<()>>,
+        release: Option<mpsc::Receiver<()>>,
+    }
+    impl JsCodeModeHost for Host {
+        fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
+            if let Some(entered) = self.entered.take() {
+                entered.send(()).expect("announce blocked host call");
+            }
+            if let Some(release) = self.release.take() {
+                release.recv().expect("release host call");
+            }
+            let SelfCall::MemoryPutClaim(call) = call else {
+                panic!("unexpected test import");
+            };
+            Ok(SelfDispatchResponse {
+                outcome: SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: call.id }),
+                budget: None,
+            })
+        }
+    }
+    let input = serde_json::json!({
+        "id": "11111111111111111111111111111111",
+        "subject": "22222222222222222222222222222222",
+        "predicate": "profile.favorite_drink",
+        "value": "sencha"
+    });
+    let component = fixture("memory-put-claim", &input, false)
+        .replace(
+            "(func (export \"run-step\") (param i32 i32) (result i32)",
+            "(func (export \"run-step\") (param i32 i32) (result i32) (local $remaining i32)",
+        )
+        .replace(
+            "i32.const 1024 i32.const 0 i32.store",
+            "local.get 1 local.set $remaining
+             (loop $after
+               local.get $remaining i32.const 1 i32.sub local.tee $remaining br_if $after)
+             i32.const 1024 i32.const 0 i32.store",
+        );
+    let mut first = WasmtimeComponentRuntime::from_component(
+        component.as_bytes(),
+        *blake3::hash(component.as_bytes()).as_bytes(),
+        ComponentBudget {
+            wall_time: Duration::from_secs(30),
+            ..ComponentBudget::default()
+        },
+    )
+    .expect("typed component");
+    let mut sibling = first.fresh();
+    let (entered, arrival) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let running = std::thread::spawn(move || {
+        sibling.run_step(
+            step("work", SandboxGuestTier::FirstPartyDreamer),
+            &mut Host {
+                entered: Some(entered),
+                release: Some(resume),
+            },
+        )
+    });
+    arrival
+        .recv_timeout(Duration::from_secs(10))
+        .expect("sibling entered guest");
+    let first_result = first.run_step(
+        step("work", SandboxGuestTier::FirstPartyDreamer),
+        &mut Host {
+            entered: None,
+            release: None,
+        },
+    );
+    // The first run has completed cleanup and incremented the shared epoch.
+    release.send(()).expect("release sibling");
+    let sibling_result = running.join().expect("sibling thread");
+    assert!(first_result.expect("first run").done);
+    assert!(
+        sibling_result
+            .expect("sibling must keep its own deadline")
+            .done
+    );
+}
+
+/// Native acceptance only. The default artifact location joins C13 at integration.
+#[test]
+#[ignore = "requires the reviewed C13 QuickJS components and manifest"]
+fn native_quickjs_component_write_lands_through_gate() -> Result<()> {
+    use sha2::{Digest, Sha256};
+    use std::path::PathBuf;
+
+    let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR").map_or_else(
+        || {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../components/code-run-quickjs/artifacts")
+        },
+        PathBuf::from,
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(directory.join("manifest.json"))
+            .expect("supply C13's reviewed QuickJS artifact manifest"),
+    )
+    .expect("QuickJS manifest JSON");
+    assert_eq!(manifest["engine"], "quickjs-2025-09-13-2");
+    assert_eq!(manifest["world"], super::super::SANDBOX_WIT_WORLD_NAME);
+    assert_eq!(
+        manifest["wit_sha256"],
+        format!("{:x}", Sha256::digest(GUEST_WIT.as_bytes()))
+    );
+    let artifact = &manifest["artifacts"]["first-party"];
+    let bytes = std::fs::read(directory.join(artifact["file"].as_str().unwrap()))
+        .expect("real QuickJS component binary");
+    assert!(bytes.starts_with(b"\0asm\x0d\0\x01\0"));
+    assert_eq!(artifact["sha256"], format!("{:x}", Sha256::digest(&bytes)));
+    let mut runtime = WasmtimeComponentRuntime::from_component(
+        &bytes,
+        *blake3::hash(&bytes).as_bytes(),
+        // Explicit native-interpreter budget, not a change to other lanes.
+        ComponentBudget {
+            fuel: 100_000_000,
+            ..ComponentBudget::default()
+        },
+    )?;
+    let (_dir, vault, actor, subject, claim) = gate_fixture()?;
+    let input = serde_json::json!({
+        "id": claim.to_hex(),
+        "subject": serde_json::to_string(&subject.to_hex()).unwrap(),
+        "predicate": "profile.favorite_drink",
+        "value": "null",
+        "confidence": 0.9
+    });
+    let script = format!(
+        "const input = {input}; input.value = JSON.stringify('blend-' + [1,2,3].reduce((a,b) => a+b,0)); \
+         const written = await self.memory.put_claim(input); finish(written.id);"
+    );
+    let mut host = DispatcherHost(GatedActorWrite::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "native-quickjs-gated-write",
+    )?);
+    let outcome = runtime.run_step(
+        step(&script, SandboxGuestTier::FirstPartyDreamer),
+        &mut host,
+    )?;
+    assert!(outcome.done);
+    assert_eq!(outcome.observation, claim.to_hex());
+    let stored = vault.get_claim(&claim)?.expect("native guest claim");
+    assert_eq!(stored.value, rmpv::Value::from("blend-6"));
+    assert_eq!(stored.source, Some(ClaimSource::Generated));
+    assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
+    let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
+    assert!(receipts.iter().any(|receipt| {
+        receipt.actor.as_deref() == Some(actor.to_hex().as_str())
+            && receipt.trigger_ref.as_deref() == Some(format!("claim:{}", claim.to_hex()).as_str())
+    }));
+    Ok(())
 }

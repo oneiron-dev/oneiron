@@ -6947,7 +6947,7 @@
      "purpose": "Pinned, in-process Component Model execution for host-trusted code",
      "surface": {
       "const": 1,
-      "fn": 2,
+      "fn": 3,
       "mod": 1,
       "struct": 2
      }

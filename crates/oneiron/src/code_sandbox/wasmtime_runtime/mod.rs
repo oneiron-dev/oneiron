@@ -56,7 +56,7 @@ pub struct WasmtimeComponentRuntime {
     engine: Engine,
     component: Component,
     budget: ComponentBudget,
-    adapter: Option<Box<dyn SandboxBoundaryAdapter>>,
+    adapter: Option<Box<dyn SandboxBoundaryAdapter + Send>>,
 }
 
 impl WasmtimeComponentRuntime {
@@ -90,10 +90,22 @@ impl WasmtimeComponentRuntime {
         })
     }
 
+    /// Shares pinned compiled code, but never a Store or attached capabilities.
+    /// Each store checks its own deadline when the shared epoch counter advances.
+    #[must_use]
+    pub fn fresh(&self) -> Self {
+        Self {
+            engine: self.engine.clone(),
+            component: self.component.clone(),
+            budget: self.budget,
+            adapter: None,
+        }
+    }
+
     /// Binds host-owned virtual file and handle-only credential services.
     /// When absent, those imports exist but refuse before accessing any resource.
     #[must_use]
-    pub fn with_adapter(mut self, adapter: Box<dyn SandboxBoundaryAdapter>) -> Self {
+    pub fn with_adapter(mut self, adapter: Box<dyn SandboxBoundaryAdapter + Send>) -> Self {
         self.adapter = Some(adapter);
         self
     }
@@ -177,6 +189,15 @@ fn execute_component(
         .set_fuel(budget.fuel)
         .map_err(|_| failure("fuel setup failed"))?;
     store.set_epoch_deadline(1);
+    // Epochs belong to the Engine, not a Store. A sibling's cleanup can wake
+    // this store, but must not cancel it before its own host-owned deadline.
+    store.epoch_deadline_callback(move |_| {
+        if Instant::now() >= deadline {
+            Err(wasmtime::Error::msg("component deadline exceeded"))
+        } else {
+            Ok(wasmtime::UpdateDeadline::Continue(1))
+        }
+    });
     if Instant::now() >= deadline {
         return Err(failure("component deadline exceeded before execution"));
     }
@@ -240,7 +261,7 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
 
 struct Bridge<'a> {
     host: &'a mut dyn JsCodeModeHost,
-    adapter: Option<&'a mut (dyn SandboxBoundaryAdapter + 'static)>,
+    adapter: Option<&'a mut (dyn SandboxBoundaryAdapter + Send + 'static)>,
     determinism: crate::code_run::CodeRunDeterminism,
     step_seq: u64,
     random_counter: u64,
