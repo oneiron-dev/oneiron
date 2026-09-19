@@ -4701,3 +4701,47 @@ fn residual_survives_codec_and_only_pushes_above_stored_threshold() -> Result<()
     ));
     Ok(())
 }
+
+#[test]
+fn cache_decoder_refuses_duplicate_scores_and_frontier_residual_keys() -> Result<()> {
+    let id = entity(123);
+    let entry = super::walk::PprFrontierEntry {
+        id,
+        structural_hops: 0,
+        score: 0.5,
+    };
+    for duplicate in 0..4 {
+        let mut state = PprCacheState {
+            completed_depth: 1,
+            scores: vec![ScoredEntity { id, score: 1.0 }],
+            frontier: vec![entry.clone()],
+            dependencies: vec![id],
+            residual: vec![],
+            push_threshold: 0.2,
+        };
+        match duplicate {
+            0 => state.scores.push(ScoredEntity { id, score: 1.0 }),
+            1 => state.frontier.push(entry.clone()),
+            2 => state.residual.push(super::walk::PprFrontierEntry {
+                score: 0.1,
+                ..entry.clone()
+            }),
+            _ => {
+                state.frontier.clear();
+                state.residual = vec![
+                    super::walk::PprFrontierEntry {
+                        score: 0.1,
+                        ..entry.clone()
+                    };
+                    2
+                ];
+            }
+        }
+        let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
+        assert!(matches!(
+            decode_cache_state(&bytes[CACHE_HEADER_LEN..]),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
+    Ok(())
+}

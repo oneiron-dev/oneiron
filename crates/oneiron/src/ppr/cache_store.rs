@@ -510,13 +510,14 @@ fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
 
     let (chunks, rem) = payload.as_chunks::<CACHE_ENTRY_LEN>();
     debug_assert!(rem.is_empty());
+    let mut seen = HashSet::new();
     chunks
         .iter()
         .map(|&[id_bytes @ .., s0, s1, s2, s3]| {
             let id = EntityId::from_bytes(id_bytes)
                 .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?;
             let score = f32::from_le_bytes([s0, s1, s2, s3]);
-            if !score.is_finite() {
+            if !score.is_finite() || !seen.insert(id) {
                 return Err(Error::CorruptedIndex("ppr cache scores"));
             }
             Ok(ScoredEntity { id, score })
@@ -582,6 +583,7 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
 
     let scores = decode_legacy_cache_scores(&payload[scores_start..frontier_start])?;
     let mut frontier = Vec::with_capacity(frontier_count);
+    let mut frontier_keys = HashSet::new();
     for chunk in payload[frontier_start..dependency_start].chunks_exact(CACHE_FRONTIER_ENTRY_LEN) {
         let id = EntityId::from_bytes(
             chunk[..ENTITY_ID_LEN]
@@ -596,7 +598,11 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("ppr cache state"))?,
         );
-        if !score.is_finite() || score < 0.0 || structural_hops > 2 {
+        if !score.is_finite()
+            || score < 0.0
+            || structural_hops > 2
+            || !frontier_keys.insert((id, structural_hops))
+        {
             return Err(Error::CorruptedIndex("ppr cache state"));
         }
         frontier.push(PprFrontierEntry {
