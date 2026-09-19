@@ -217,28 +217,12 @@ pub(in crate::batch) fn apply_put(
                 )?;
             } else if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, write_envelope, policy)?;
-            } else if let Some(write_envelope) = write_envelope {
-                crate::gate::check_claim_policy_for_write_with_preflight_decision(
-                    store,
-                    wtxn,
-                    &id,
-                    crate::gate::ClaimGateWrite::plain(&body, Some(write_envelope)),
-                    policy,
-                    crate::gate::GateWriteMode {
-                        record_decision: record_gate_decisions,
-                        persist_pending_consent: persist_gate_pending_consent,
-                        resolve_pending: true,
-                        can_resolve_pending_consent,
-                        include_source_in_gate_input,
-                    },
-                    preflight_gate_decision_id,
-                )?;
             } else {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,
                     wtxn,
                     &id,
-                    crate::gate::ClaimGateWrite::plain(&body, None),
+                    crate::gate::ClaimGateWrite::plain(&body, write_envelope),
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,
