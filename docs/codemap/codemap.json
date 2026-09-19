@@ -348,7 +348,17 @@
      "path": "src/agent_def/birth_custody.rs",
      "purpose": "Physical custody of captured agent source, without authorship or delete grants",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/birth_dependencies.rs",
+     "purpose": "Retirement of copied agent source when a captured input is erased",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -399,7 +409,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 1,
       "re-export": 2
      }
@@ -431,7 +441,7 @@
      "path": "src/agent_def/portable_source.rs",
      "purpose": "Immutable captured agent source",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -26516,7 +26526,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27743,7 +27753,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1595,
+   "source_files": 1596,
    "test_files": 575
   },
   "oneiron-bench": {

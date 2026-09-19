@@ -677,7 +677,7 @@ impl Vault {
                 wtxn,
                 &holder,
             )?);
-            ids.extend(crate::agent_def::birth_carriers_for_holder_in_txn(
+            ids.extend(crate::agent_def::birth_carriers_for_erased_entity_in_txn(
                 &self.store,
                 wtxn,
                 &holder,

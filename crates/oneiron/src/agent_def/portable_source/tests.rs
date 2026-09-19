@@ -312,3 +312,169 @@ fn retained_birth_hash_without_captured_bytes_is_an_explicit_archive_omission() 
     );
     Ok(())
 }
+
+fn captured_knowledge() -> Result<(
+    tempfile::TempDir,
+    crate::Vault,
+    EntityId,
+    EntityId,
+    EntityId,
+    Vec<u8>,
+)> {
+    let (dir, vault) = open();
+    let parent = EntityId::now();
+    let child = EntityId::now();
+    let claim = EntityId::now();
+    let at = crate::TimeRange { start: 10, end: 10 };
+    vault.put_agent_definition(&parent, &definition("birth.knowledge-parent", None), at, 10)?;
+    let body = crate::ClaimBody::new(
+        "test.source_note",
+        crate::ClaimSubject::Entity(parent),
+        Value::from("A private source fact"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&claim, &body, at, 10)?;
+    vault.put_agent_definition(
+        &child,
+        &definition("birth.knowledge-child", Some(parent)),
+        at,
+        10,
+    )?;
+    let asset = birth_source_id(&child)?;
+    let bytes = vault.get_raw(&asset)?.unwrap()[ENTITY_METADATA_HEADER_LEN..].to_vec();
+    assert!(
+        std::str::from_utf8(&bytes)
+            .unwrap()
+            .contains("A private source fact")
+    );
+    Ok((dir, vault, child, claim, asset, bytes))
+}
+#[test]
+fn erased_knowledge_removes_copied_birth_bytes_without_erasing_the_agent() -> Result<()> {
+    use crate::deletion::DeleteReason;
+    for reason in [DeleteReason::UserDelete, DeleteReason::GdprDelete] {
+        let (_dir, vault, child, claim, asset, bytes) = captured_knowledge()?;
+        let outcome = vault.delete_entity_with_reason(&claim, reason)?;
+        assert!(vault.get_raw(&asset)?.is_none());
+        assert_eq!(vault.get_entity_type(&child)?, Some(ENTITY_TYPE_AGENT_DEF));
+        assert!(
+            vault
+                .batch()
+                .put_replicated(
+                    &asset,
+                    ENTITY_TYPE_ASSET,
+                    crate::TimeRange { start: 10, end: 10 },
+                    10,
+                    &bytes
+                )
+                .commit()
+                .is_err()
+        );
+        if let Some(receipt) = outcome.receipt_id {
+            let raw = vault.get_raw(&receipt)?.unwrap();
+            let receipt = crate::deletion::decode_redaction_audit_receipt(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            assert!(receipt.scope.entity_ids.contains(&asset.to_hex()));
+            assert!(!receipt.scope.entity_ids.contains(&child.to_hex()));
+        }
+    }
+    Ok(())
+}
+#[test]
+fn source_input_tombstones_win_in_both_replay_orders() -> Result<()> {
+    let (_dir, _source, _child, claim, asset, bytes) = captured_knowledge()?;
+    for first in [true, false] {
+        let (_dir, target) = open();
+        if first {
+            target
+                .batch()
+                .put_replicated(
+                    &asset,
+                    ENTITY_TYPE_ASSET,
+                    crate::TimeRange { start: 10, end: 10 },
+                    10,
+                    &bytes,
+                )
+                .commit()?;
+        }
+        target.apply_replayed_tombstone(
+            &claim,
+            &tombstone(crate::deletion::TombstoneReason::GdprDelete),
+        )?;
+        assert!(target.get_raw(&asset)?.is_none());
+        assert!(
+            target
+                .batch()
+                .put_replicated(
+                    &asset,
+                    ENTITY_TYPE_ASSET,
+                    crate::TimeRange { start: 10, end: 10 },
+                    10,
+                    &bytes
+                )
+                .commit()
+                .is_err()
+        );
+    }
+    Ok(())
+}
+#[cfg(feature = "sync")]
+#[test]
+fn historical_copied_knowledge_is_scrubbed_without_foreign_edge_authority() -> Result<()> {
+    let (_dir, _source, child, claim, asset, bytes) = captured_knowledge()?;
+    let (_dir, target) = open();
+    // No live carrier ever arrived here: only a historical window carries it.
+    target.apply_replayed_tombstone(
+        &claim,
+        &tombstone(crate::deletion::TombstoneReason::GdprDelete),
+    )?;
+    let label = crate::deletion::window_label_from_timestamp(1_771_027_200);
+    let doc = crate::sync::schema::create_window_doc(
+        "knowledge-source-fixture",
+        &crate::sync::types::WindowKey::new(&label),
+    );
+    let mut blob = vec![ENTITY_TYPE_ASSET];
+    for stamp in [10_u64, 10, 10] {
+        blob.extend_from_slice(&stamp.to_be_bytes());
+    }
+    blob.extend_from_slice(&bytes);
+    crate::sync::loro_support::map_insert_bytes(&doc.get_map("entities"), &asset.to_hex(), &blob)?;
+    blob.truncate(blob.len() - 10);
+    let unrelated = EntityId::now();
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("entities"),
+        &unrelated.to_hex(),
+        &blob,
+    )?;
+    let edge =
+        crate::sync::bridge::format_edge_key(&unrelated, crate::edge::EdgeKind::Mentions, &child);
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("edges"),
+        &edge,
+        b"retain-unrelated-edge",
+    )?;
+    doc.commit();
+    let snapshot = crate::sync::loro_support::export_snapshot(&doc)?;
+    target.with_write_txn(|txn| {
+        target
+            .store
+            .sync_state
+            .put(txn, &format!("d:w:{label}"), &snapshot)?;
+        Ok(())
+    })?;
+    crate::sweep::run_hard_erase_sweep(&target)?;
+    let txn = target.store.env.read_txn()?;
+    let bytes = target
+        .store
+        .sync_state
+        .get(&txn, &format!("d:w:{label}"))?
+        .unwrap();
+    let doc = crate::sync::loro_support::doc_from_snapshot(&bytes)?;
+    assert!(doc.get_map("entities").get(&asset.to_hex()).is_none());
+    assert!(doc.get_map("entities").get(&unrelated.to_hex()).is_none());
+    assert!(doc.get_map("edges").get(&edge).is_some());
+    Ok(())
+}

@@ -392,6 +392,14 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
         return Ok(());
     }
 
+    let erased_hex: std::collections::HashSet<[u8; 32]> = erased
+        .iter()
+        .map(|id| {
+            let mut hex = [0; 32];
+            hex.copy_from_slice(id.to_hex().as_bytes());
+            hex
+        })
+        .collect();
     let entities = doc.get_map("entities");
     let mut source_ids = BTreeSet::new();
     let mut doomed_entities = BTreeSet::new();
@@ -406,11 +414,18 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
         let skill_holder = crate::skill_hub::source_carrier_holder(body);
         let agent_holder = crate::agent_def::birth_source_holder(body);
         let holder = skill_holder.or(agent_holder);
-        if holder.is_some_and(|holder| erased.contains(&holder)) {
-            // Drop a malformed historical source at any key, but never let its
-            // forged identity widen erasure to unrelated edges at that key.
+        let holder_erased = holder.is_some_and(|holder| erased.contains(&holder));
+        let copied_input_erased = agent_holder.is_some_and(|child| {
+            crate::agent_def::birth_source_id(&child).is_ok_and(|id| erased.contains(&id))
+                || birth_payload_contains_erased_id(body, &erased_hex)
+        });
+        if holder_erased || copied_input_erased {
+            // Payload copies are scrubbed even at forged keys. Only actual
+            // erased-holder ownership can widen the graph erase set; a copied
+            // reference or arbitrary text in an unadmitted payload cannot.
             doomed_entities.insert(key.to_owned());
-            if let Ok(id) = EntityId::from_hex(key)
+            if holder_erased
+                && let Ok(id) = EntityId::from_hex(key)
                 && (crate::skill_hub::source_carrier_matches_id(body, &id)
                     || agent_holder.is_some_and(|child| {
                         crate::agent_def::birth_source_matches_id(&child, &id)
@@ -450,4 +465,23 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
     }
     doc.commit();
     Ok(())
+}
+
+/// Deletion-only scan of the already-recognized birth-source namespace. It
+/// also covers truncated historical payloads; it never grants graph erasure.
+#[cfg(feature = "sync")]
+fn birth_payload_contains_erased_id(
+    body: &[u8],
+    erased: &std::collections::HashSet<[u8; 32]>,
+) -> bool {
+    body.windows(32).any(|window| {
+        if !window.iter().all(u8::is_ascii_hexdigit) {
+            return false;
+        }
+        let mut lower = [0; 32];
+        for (dst, src) in lower.iter_mut().zip(window) {
+            *dst = src.to_ascii_lowercase();
+        }
+        erased.contains(&lower)
+    })
 }

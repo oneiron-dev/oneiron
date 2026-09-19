@@ -57,6 +57,30 @@ impl AgentBirthSource {
     pub(crate) fn child(&self) -> Result<EntityId> {
         EntityId::from_hex(&self.child_id)
     }
+    pub(super) fn dependencies(&self) -> Result<std::collections::BTreeSet<EntityId>> {
+        let mut dependencies =
+            std::collections::BTreeSet::from([self.child()?, EntityId::from_hex(&self.source_id)?]);
+        let files = self.tree.import_files()?;
+        let knowledge = files
+            .iter()
+            .find(|file| file.path == "knowledge/selected.json")
+            .ok_or_else(|| invalid("knowledge facet"))?;
+        let knowledge: Vec<ExportEntity> =
+            serde_json::from_slice(&knowledge.content).map_err(|_| invalid("knowledge facet"))?;
+        for row in knowledge {
+            dependencies.insert(EntityId::from_hex(&row.id)?);
+        }
+        let skills = files
+            .iter()
+            .find(|file| file.path == "skills.json")
+            .ok_or_else(|| invalid("skill facet"))?;
+        let skills: Vec<super::portable::AgentSkillReference> =
+            serde_json::from_slice(&skills.content).map_err(|_| invalid("skill facet"))?;
+        for row in skills {
+            dependencies.insert(EntityId::from_hex(&row.entity_id)?);
+        }
+        Ok(dependencies)
+    }
     fn validate(&self) -> Result<()> {
         let child = EntityId::from_hex(&self.child_id)?;
         let source = EntityId::from_hex(&self.source_id)?;
@@ -138,6 +162,7 @@ pub(crate) fn validate_birth_source_put(
         && let Some(source) = decode_birth_source(bytes)?
     {
         super::birth_custody::check_birth_custody(store, txn, &source.child()?)?;
+        super::birth_dependencies::check_inputs(store, txn, &source.dependencies()?)?;
         if birth_source_id(&EntityId::from_hex(&source.child_id)?)? != *id {
             return Err(invalid("asset identity"));
         }
@@ -159,10 +184,6 @@ pub(crate) fn birth_source_exportable(
     txn: &heed::RoTxn<'_>,
     bytes: &[u8],
 ) -> Result<bool> {
-    #[derive(Deserialize)]
-    struct Ref {
-        entity_id: String,
-    }
     let Some(source) = decode_birth_source(bytes)? else {
         return Ok(true);
     };
@@ -170,26 +191,7 @@ pub(crate) fn birth_source_exportable(
     if read_birth_source(store, txn, &child)?.is_none() {
         return Ok(false);
     }
-    let files = source.tree.import_files()?;
-    let knowledge = files
-        .iter()
-        .find(|file| file.path == "knowledge/selected.json")
-        .ok_or_else(|| invalid("knowledge facet"))?;
-    let knowledge: Vec<ExportEntity> =
-        serde_json::from_slice(&knowledge.content).map_err(|_| invalid("knowledge facet"))?;
-    let mut dependencies = vec![EntityId::from_hex(&source.source_id)?];
-    for row in knowledge {
-        dependencies.push(EntityId::from_hex(&row.id)?);
-    }
-    let skills = files
-        .iter()
-        .find(|file| file.path == "skills.json")
-        .ok_or_else(|| invalid("skill facet"))?;
-    let skills: Vec<Ref> =
-        serde_json::from_slice(&skills.content).map_err(|_| invalid("skill facet"))?;
-    for skill in skills {
-        dependencies.push(EntityId::from_hex(&skill.entity_id)?);
-    }
+    let dependencies = source.dependencies()?;
     for dependency in dependencies {
         if store.off_record_sessions.contains_entity(&dependency)?
             || !crate::vault::live_entity_row_in_txn(store, txn, &dependency)?.is_live()

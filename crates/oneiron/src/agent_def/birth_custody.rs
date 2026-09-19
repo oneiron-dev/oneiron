@@ -20,6 +20,13 @@ fn invalid() -> Error {
         "agent birth source custody retired or mismatched",
     ))
 }
+pub(super) fn birth_source_retired(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    child: &EntityId,
+) -> Result<bool> {
+    Ok(store.vault_meta.get(txn, &key(RETIRED, child))?.is_some())
+}
 pub(super) fn check_birth_custody(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -72,6 +79,7 @@ pub(crate) fn stage_birth_custody_put(
         && let Some(source) = decode_birth_source(bytes)?
     {
         let child = source.child()?;
+        super::birth_dependencies::bind_inputs(store, txn, &source)?;
         store
             .vault_meta
             .put(txn, &key(OWNED, &child), id.as_bytes())?;
@@ -105,7 +113,8 @@ pub(crate) fn birth_custody_exists_in_txn(
     txn: &heed::RoTxn<'_>,
     child: &EntityId,
 ) -> Result<bool> {
-    for id in birth_carriers_for_holder_in_txn(store, txn, child)? {
+    for id in super::birth_dependencies::birth_carriers_for_erased_entity_in_txn(store, txn, child)?
+    {
         if store.entities.get(txn, id.as_bytes())?.is_some() {
             return Ok(true);
         }
@@ -160,12 +169,16 @@ pub(crate) fn remove_birth_custody_in_txn(
             store
                 .vault_meta
                 .put(txn, &key(RETIRED, &source.child()?), &[])?;
+            super::birth_dependencies::retire_input(store, txn, id)?;
             return Ok(());
         }
         if header.entity_type == ENTITY_TYPE_AGENT_DEF {
-            return retire_birth_source_holder_in_txn(store, txn, id);
+            return super::birth_dependencies::retire_birth_sources_for_entity_in_txn(
+                store, txn, id,
+            );
         }
     }
+    super::birth_dependencies::retire_input(store, txn, id)?;
     if store.vault_meta.get(txn, &key(OWNED, id))?.is_some() {
         retire_birth_source_holder_in_txn(store, txn, id)?;
     }

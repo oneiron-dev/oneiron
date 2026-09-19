@@ -549,7 +549,7 @@ impl Vault {
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
             let had_birth_sources =
                 crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
-            crate::agent_def::retire_birth_source_holder_in_txn(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             let had_body = self
                 .store
                 .entities
@@ -577,7 +577,7 @@ impl Vault {
         // `delete_entity_without_header` semantics.
         if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
-            crate::agent_def::retire_birth_source_holder_in_txn(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             // Hard-once-seen is durable LOCAL truth even when nothing local
             // was erased (never-materialized id): the permanent `dt:` marker
             // still gates a future re-put after hostile tombstone-map

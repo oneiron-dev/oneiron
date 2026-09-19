@@ -125,9 +125,12 @@ pub(crate) use portable_source::{
 };
 
 mod birth_custody;
+mod birth_dependencies;
 pub(crate) use birth_custody::{
-    birth_carriers_for_holder_in_txn, birth_custody_exists_in_txn, remove_birth_custody_in_txn,
-    retire_birth_source_holder_in_txn, stage_birth_custody_put,
+    birth_custody_exists_in_txn, remove_birth_custody_in_txn, stage_birth_custody_put,
+};
+pub(crate) use birth_dependencies::{
+    birth_carriers_for_erased_entity_in_txn, retire_birth_sources_for_entity_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use portable_source::{birth_source_holder, birth_source_matches_id};

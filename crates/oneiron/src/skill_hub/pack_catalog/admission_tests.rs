@@ -127,7 +127,7 @@ fn all_tiers_require_consent_and_bundled_skills_remain_candidates() -> Result<()
         assert_eq!(receipt.wake_subscriptions, ["mail.arrived"]);
         assert_eq!(
             vault.pack_for_predicate("alice.tools.topic")?,
-            Some(receipt.clone())
+            Some((*receipt).clone())
         );
         assert_eq!(
             vault
@@ -147,7 +147,7 @@ fn all_tiers_require_consent_and_bundled_skills_remain_candidates() -> Result<()
         config.dimensions = 4;
         config.map_size = 16 * 1024 * 1024;
         let reopened = Vault::open(dir.path(), config)?;
-        assert_eq!(reopened.installed_pack("alice.tools")?, Some(receipt));
+        assert_eq!(reopened.installed_pack("alice.tools")?, Some(*receipt));
     }
     Ok(())
 }
