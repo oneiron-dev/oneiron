@@ -24,7 +24,7 @@ fn server() -> (tempfile::TempDir, SyncServer) {
 }
 
 fn state(version: u8) -> ConnState {
-    ConnState::new(1000, version, FederationQuotaConfig::new(10, 1))
+    ConnState::new(1000, version)
 }
 
 fn token() -> String {

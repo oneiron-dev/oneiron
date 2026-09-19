@@ -173,14 +173,6 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_windows_per_connection: Option<usize>,
 
-    /// Maximum distinct valid windows one federated selector connection may touch.
-    #[arg(long)]
-    pub max_federation_windows_per_connection: Option<usize>,
-
-    /// Seconds to pause a federated selector connection after quota overflow.
-    #[arg(long)]
-    pub federation_flood_pause_secs: Option<u64>,
-
     /// Maximum inbound protocol messages per connection per second.
     #[arg(long)]
     pub max_messages_per_sec: Option<u32>,
@@ -301,14 +293,6 @@ impl fmt::Debug for ServeArgs {
             .field(
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
-            )
-            .field(
-                "max_federation_windows_per_connection",
-                &self.max_federation_windows_per_connection,
-            )
-            .field(
-                "federation_flood_pause_secs",
-                &self.federation_flood_pause_secs,
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)

@@ -192,34 +192,26 @@ fn env_allowed_origins_are_split_and_trimmed() {
 }
 
 #[test]
-fn federation_quota_config_merges_into_sync_server_config() {
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("oneiron.toml");
-    std::fs::write(
-        &config_path,
-        r#"
-max_federation_windows_per_connection = 5
-federation_flood_pause_secs = 20
-"#,
-    )
-    .unwrap();
-    let env = EnvConfig::from_pairs([
-        ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
-        ("ONEIRON_MAX_FEDERATION_WINDOWS_PER_CONNECTION", "6"),
-    ])
-    .unwrap();
-    let flags = ServeArgs {
-        federation_flood_pause_secs: Some(7),
-        ..Default::default()
-    };
-
-    let resolved = resolve_serve_config_with_sources(&flags, env, None).unwrap();
-    let sync = resolved.sync_server_config();
-
-    assert_eq!(resolved.max_federation_windows_per_connection, 6);
-    assert_eq!(resolved.federation_flood_pause_secs, 7);
-    assert_eq!(sync.max_federation_windows_per_connection, 6);
-    assert_eq!(sync.federation_flood_pause_secs, 7);
+fn retired_federation_quota_flags_and_file_keys_fail_closed() {
+    for flag in [
+        "--max-federation-windows-per-connection",
+        "--federation-flood-pause-secs",
+    ] {
+        assert!(TestCli::try_parse_from(["oneiron-server", flag, "0"]).is_err());
+    }
+    for key in [
+        "max_federation_windows_per_connection",
+        "federation_flood_pause_secs",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        std::fs::write(&path, format!("{key} = 0\n")).unwrap();
+        let args = ServeArgs {
+            config: Some(path),
+            ..Default::default()
+        };
+        assert!(resolve_serve_config_with_sources(&args, EnvConfig::default(), None).is_err());
+    }
 }
 
 #[test]

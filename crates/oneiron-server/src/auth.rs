@@ -104,6 +104,7 @@ pub(crate) fn mint_token_jti() -> String {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CoreScope {
     Read,
+    Propose,
     Write,
     Auth,
     CompanionProfileRead,
@@ -116,6 +117,7 @@ impl CoreScope {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Read => "core:read",
+            Self::Propose => "core:propose",
             Self::Write => "core:write",
             Self::Auth => "core:auth",
             Self::CompanionProfileRead => "companion:profile:read",
@@ -128,6 +130,7 @@ impl CoreScope {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "core:read" => Some(Self::Read),
+            "core:propose" => Some(Self::Propose),
             "core:write" => Some(Self::Write),
             "core:auth" => Some(Self::Auth),
             "companion:profile:read" => Some(Self::CompanionProfileRead),
@@ -141,6 +144,7 @@ impl CoreScope {
     fn all() -> BTreeSet<Self> {
         [
             Self::Read,
+            Self::Propose,
             Self::Write,
             Self::Auth,
             Self::CompanionProfileRead,
@@ -221,11 +225,11 @@ impl CoreAuth {
         })
     }
 
-    pub(crate) fn from_oauth_relay(subject: String) -> Self {
+    pub(crate) fn from_oauth_relay(subject: String, scopes: BTreeSet<CoreScope>) -> Self {
         Self {
             principal: format!("oauth-relay:{subject}"),
             principal_ref: None,
-            scopes: BTreeSet::from([CoreScope::Read]),
+            scopes,
             implicit_all_scopes: false,
             jti: None,
             actor_class: None,

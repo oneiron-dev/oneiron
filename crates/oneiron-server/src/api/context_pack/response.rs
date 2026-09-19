@@ -189,6 +189,13 @@ pub(crate) struct CoreContextPackEvidence {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
+    /// Authorized ids; withheld ids are not returned.
+    #[serde(flatten)]
+    #[schema(value_type = crate::api::core::read_receipt::GrantedDataSchema)]
+    access: oneiron::access_grant::GrantedData<String>,
+    /// Requested scope, actor ceiling and applied intersection on every read.
+    #[schema(value_type = crate::api::core::read_receipt::ReadReceiptSchema)]
+    narrowing: oneiron::claim::ScopedReadReceipt,
     /// Execution quality projected from the engine's shared report.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
@@ -219,6 +226,10 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Vec<CoreInterlocutorStamp>>)]
     pub(super) interlocutors: Option<Vec<oneiron::InterlocutorStamp>>,
+    /// Separate authority receipts for explicitly pinned rows outside the query scope.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<super::super::core::read_receipt::ReadReceiptSchema>)]
+    pin_narrowing: Vec<oneiron::claim::ScopedReadReceipt>,
     /// Disclosure block for the clamp applied to this assembly (OF-365
     /// ILD-2); present under the same rule as `interlocutors`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -251,7 +262,7 @@ pub(crate) async fn run_context_pack_builder(
         core_engine_error("core context-pack failed", error)
     })?;
     let clamped_out = pack.clamped_out();
-    scoped_read
+    let narrowing = scoped_read
         .filter_context_pack(&mut pack.value)
         .map_err(|error| {
             pack.discard_telemetry();
@@ -265,16 +276,27 @@ pub(crate) async fn run_context_pack_builder(
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
+    let mut pin_narrowing = Vec::new();
     let (section, cursor) = match memories.as_ref() {
         Some(request) => {
-            let section = request.memory_board_budget.map(|budget| {
-                oneiron::context_board::project_memories_section(
-                    &pack,
-                    budget,
-                    request.companion.clone(),
-                    assembly.clone(),
-                )
-            });
+            let mut section = request
+                .memory_board_budget
+                .map(|budget| {
+                    vault.project_memories_section(
+                        &pack,
+                        budget,
+                        request.companion.clone(),
+                        assembly.clone(),
+                        &BTreeSet::new(),
+                    )
+                })
+                .transpose()
+                .map_err(|error| core_engine_error("memory provenance projection failed", error))?;
+            if let Some(section) = &mut section {
+                pin_narrowing = section
+                    .include_pinned_refs(scoped_read, &request.pinned_refs)
+                    .map_err(|error| core_engine_error("memory pin read failed", error))?;
+            }
             let cursor = advance_memories_cursor(
                 vault,
                 &request.session_scope_id,
@@ -287,11 +309,9 @@ pub(crate) async fn run_context_pack_builder(
         }
         None => (None, None),
     };
-    Ok((
-        core_context_pack_response(pack, evidence, assembly),
-        section,
-        cursor,
-    ))
+    let mut response = core_context_pack_response(pack, evidence, assembly, narrowing);
+    response.pin_narrowing = pin_narrowing;
+    Ok((response, section, cursor))
 }
 
 pub(crate) fn field_profile_for_view(view: View) -> oneiron::FieldProfile {
@@ -340,9 +360,20 @@ pub(crate) fn core_context_pack_response(
     pack: oneiron::ContextPack,
     evidence: CoreContextPackEvidence,
     disclosure: Option<oneiron::DisclosureAssembly>,
+    narrowing: oneiron::claim::ScopedReadReceipt,
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        pin_narrowing: Vec::new(),
+        access: oneiron::access_grant::GrantedData::new(
+            pack.results
+                .iter()
+                .chain(&pack.neighbors)
+                .map(|row| row.id.to_hex())
+                .collect(),
+            narrowing.suppressed_count,
+        ),
+        narrowing,
         quality: Some(pack.retrieval_quality.quality),
         degradation: (!pack.retrieval_quality.degradation.is_empty())
             .then_some(pack.retrieval_quality.degradation),
@@ -371,7 +402,16 @@ pub(crate) fn core_context_entity(entity: oneiron::ContextEntity) -> CoreContext
         content_hash: format!("{:02x}", entity.content_hash),
         entity_type: entity.entity_type,
         score: entity.score,
-        fields: entity.fields.map(BTreeMap::from_iter),
+        fields: entity.fields.map(|fields| {
+            let mut object = Value::Object(fields.into_iter().collect());
+            oneiron::batch::export::redact_credentials(&mut object);
+            object
+                .as_object()
+                .expect("redactor preserves object")
+                .clone()
+                .into_iter()
+                .collect()
+        }),
         edges: entity
             .edges
             .map(|edges| edges.into_iter().map(core_context_edge).collect()),

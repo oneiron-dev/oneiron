@@ -196,6 +196,9 @@ pub(crate) struct MemoryReasonTrace {
     "tokensUsed": 0
 }))]
 pub(crate) struct MemoryReasonResponse {
+    /// Receipts for every executed retrieval and evidence projection.
+    #[schema(value_type = Vec<crate::api::core::read_receipt::ReadReceiptSchema>)]
+    pub(crate) narrowing: Vec<oneiron::claim::ScopedReadReceipt>,
     /// The answer text. Never blank on a successful read: a read with no
     /// admissible evidence answers with a gap, not with an empty string.
     pub(crate) answer: String,
@@ -383,13 +386,18 @@ pub(crate) async fn companion_memory_reason(
                 |retrieved| retrieved.tokens_used,
             ));
         }
-        let retrieved = retrieved.map_err(|failure| depth_search_error(failure.error))?;
+        let mut retrieved = retrieved.map_err(|failure| depth_search_error(failure.error))?;
         let remaining = (token_budget as u64)
             .checked_sub(retrieved.tokens_used)
             .ok_or_else(|| {
                 ApiError::bad_request("retrieval exceeded tokenBudget", Some("tokenBudget"))
             })?;
-        let evidence = collect_evidence(&server.vault, &scoped_read, retrieved.hits.clone())?;
+        let evidence = collect_evidence(
+            &server.vault,
+            &scoped_read,
+            retrieved.hits.clone(),
+            &mut retrieved.narrowing,
+        )?;
         let answered = answer_from(&request, &query, remaining, &evidence, admission.as_ref())?;
         let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
         Ok(Json(reason_response(
@@ -417,6 +425,7 @@ fn reason_response(
     tokens_used: u64,
 ) -> MemoryReasonResponse {
     MemoryReasonResponse {
+        narrowing: retrieved.narrowing.clone(),
         answer: answered.answer,
         sources: answered.sources,
         confidence: answered.confidence,
@@ -500,6 +509,7 @@ fn collect_evidence(
     vault: &oneiron::Vault,
     scoped_read: &ScopedRead<'_>,
     hits: Vec<ScoredEntity>,
+    narrowing: &mut Vec<oneiron::claim::ScopedReadReceipt>,
 ) -> Result<Vec<MemoryReasonEvidence>, ApiError> {
     let mut evidence = Vec::with_capacity(hits.len());
     for hit in hits {
@@ -509,7 +519,8 @@ fn collect_evidence(
                 tracing::error!(error = %error, "memory reason projection failed");
                 ApiError::internal_server_error("memory reason projection failed")
             })?;
-        let Some(Value::Object(fields)) = projected else {
+        narrowing.push(projected.receipt);
+        let Some(Value::Object(fields)) = projected.value else {
             continue;
         };
         let short_id = short_ref_or_hex(vault, &id).map_err(|error| {

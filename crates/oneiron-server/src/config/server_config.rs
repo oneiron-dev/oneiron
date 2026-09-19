@@ -24,9 +24,6 @@ use crate::usage::UsageMode;
 ///   distinct-window touch cap. The default is intentionally high enough for
 ///   legitimate historical-window tombstone sync; it stops fabricated-key
 ///   floods, not real history.
-/// - `max_federation_windows_per_connection` — ENFORCED on grant-backed
-///   selector connections as a tighter distinct-window quota with temporary
-///   pause instead of closing the socket.
 /// - `max_ephemeral_payload_bytes` / `max_ephemeral_snapshot_bytes` —
 ///   ENFORCED before ephemeral hub mutation and before late-join snapshot
 ///   send. Oversized late-join snapshots are skipped, not connection-fatal.
@@ -70,10 +67,6 @@ pub struct SyncServerConfig {
     pub max_update_payload: usize,
     /// Maximum distinct valid windows one connection may touch.
     pub max_windows_per_connection: usize,
-    /// Maximum distinct valid windows one federated selector connection may touch.
-    pub max_federation_windows_per_connection: usize,
-    /// Seconds to pause a federated selector connection after quota overflow.
-    pub federation_flood_pause_secs: u64,
     /// Maximum inbound protocol messages per connection per second.
     pub max_messages_per_sec: u32,
     /// Loro ephemeral-store inactivity timeout in milliseconds.
@@ -108,9 +101,6 @@ impl Default for SyncServerConfig {
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
             max_update_payload: 2 * 1024 * 1024, // 2 MB
             max_windows_per_connection: 4096,
-            max_federation_windows_per_connection:
-                oneiron::sync::DEFAULT_MAX_FEDERATION_WINDOWS_PER_CONNECTION,
-            federation_flood_pause_secs: oneiron::sync::DEFAULT_FEDERATION_FLOOD_PAUSE_SECS,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,
             max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
@@ -174,14 +164,6 @@ impl fmt::Debug for SyncServerConfig {
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
             )
-            .field(
-                "max_federation_windows_per_connection",
-                &self.max_federation_windows_per_connection,
-            )
-            .field(
-                "federation_flood_pause_secs",
-                &self.federation_flood_pause_secs,
-            )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field(
@@ -228,8 +210,6 @@ pub struct ServeConfig {
     pub max_frame_size: usize,
     pub max_update_payload: usize,
     pub max_windows_per_connection: usize,
-    pub max_federation_windows_per_connection: usize,
-    pub federation_flood_pause_secs: u64,
     pub max_messages_per_sec: u32,
     pub ephemeral_timeout_ms: i64,
     pub max_ephemeral_payload_bytes: usize,
@@ -277,8 +257,6 @@ impl Default for ServeConfig {
             max_frame_size: server.max_frame_size,
             max_update_payload: server.max_update_payload,
             max_windows_per_connection: server.max_windows_per_connection,
-            max_federation_windows_per_connection: server.max_federation_windows_per_connection,
-            federation_flood_pause_secs: server.federation_flood_pause_secs,
             max_messages_per_sec: server.max_messages_per_sec,
             ephemeral_timeout_ms: server.ephemeral_timeout_ms,
             max_ephemeral_payload_bytes: server.max_ephemeral_payload_bytes,
@@ -323,14 +301,6 @@ impl fmt::Debug for ServeConfig {
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
             )
-            .field(
-                "max_federation_windows_per_connection",
-                &self.max_federation_windows_per_connection,
-            )
-            .field(
-                "federation_flood_pause_secs",
-                &self.federation_flood_pause_secs,
-            )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field(
@@ -371,8 +341,6 @@ impl ServeConfig {
             max_frame_size: self.max_frame_size,
             max_update_payload: self.max_update_payload,
             max_windows_per_connection: self.max_windows_per_connection,
-            max_federation_windows_per_connection: self.max_federation_windows_per_connection,
-            federation_flood_pause_secs: self.federation_flood_pause_secs,
             max_messages_per_sec: self.max_messages_per_sec,
             ephemeral_timeout_ms: self.ephemeral_timeout_ms,
             max_ephemeral_payload_bytes: self.max_ephemeral_payload_bytes,

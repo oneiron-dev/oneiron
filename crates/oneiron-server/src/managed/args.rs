@@ -435,16 +435,6 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
     (
-        "max-federation-windows-per-connection",
-        |args| args.max_federation_windows_per_connection.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
-    ),
-    (
-        "federation-flood-pause-secs",
-        |args| args.federation_flood_pause_secs.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
-    ),
-    (
         "max-messages-per-sec",
         |args| args.max_messages_per_sec.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),

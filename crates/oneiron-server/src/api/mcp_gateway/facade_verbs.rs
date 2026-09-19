@@ -5,7 +5,6 @@ use super::{
     mcp_text_content,
 };
 use crate::api::CORE_MAX_LIST_LIMIT;
-use crate::api::hydrate_short_id_response;
 use crate::api::parse_entity_id_param;
 use crate::api::parse_short_ref;
 use crate::api::unix_seconds_now;
@@ -163,21 +162,35 @@ pub(crate) fn execute_mcp_nav(
             let results = scoped_read
                 .search_text(query, limit, None)
                 .map_err(|error| mcp_engine_error("mcp nav search failed", error))?;
+            let mut narrowing = results.receipt;
+            let projected = scoped_read
+                .get_entities_parts_with_receipt(
+                    &results.value.iter().map(|row| row.id).collect::<Vec<_>>(),
+                    Some(&narrowing.applied.as_filter()),
+                )
+                .map_err(|error| mcp_engine_error("mcp nav projection failed", error))?;
+            narrowing.restrict_with(&projected.receipt);
             let items = results
+                .value
                 .into_iter()
-                .map(|result| {
-                    projection::project_search_result(scoped_read.vault(), result, View::Summary)
-                        .map_err(|error| mcp_engine_error("mcp nav projection failed", error))
+                .zip(projected.value)
+                .filter_map(|(row, parts)| {
+                    let (kind, learned_at, body) = parts?;
+                    Some(projection::project_entity_parts(
+                        &row.id,
+                        kind,
+                        learned_at,
+                        &body,
+                        View::Summary,
+                    ))
                 })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
                 .collect::<Vec<_>>();
             Ok(json!({
                 "content": [mcp_text_content(format!("{} result(s)", items.len()))],
                 "structuredContent": {
                     "tool": McpToolName::Nav.as_str(),
                     "mode": "search",
+                    "narrowing": narrowing,
                     "items": items,
                 },
                 "isError": false,
@@ -203,17 +216,18 @@ pub(crate) fn execute_mcp_read(
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
     if let Some(entity_ref) = args.target.entity_ref.as_deref() {
         let id = parse_entity_id_param(entity_ref, "target.entity_ref").map_err(mcp_api_error)?;
-        let item = scoped_read
-            .get_entity_parts(&id)
-            .map_err(|error| mcp_engine_error("mcp read failed", error))?
-            .map(|(entity_type, learned_at, body)| {
-                projection::project_entity_parts(&id, entity_type, learned_at, &body, View::Full)
-            });
+        let read = scoped_read
+            .get_entity_parts_with_receipt(&id, None)
+            .map_err(|error| mcp_engine_error("mcp read failed", error))?;
+        let item = read.value.map(|(entity_type, learned_at, body)| {
+            projection::project_entity_parts(&id, entity_type, learned_at, &body, View::Full)
+        });
         return Ok(json!({
             "content": [mcp_text_content(if item.is_some() { "entity found" } else { "entity not found" })],
             "structuredContent": {
                 "tool": McpToolName::Read.as_str(),
                 "target": { "entity_ref": entity_ref },
+                "narrowing": read.receipt,
                 "found": item.is_some(),
                 "item": item,
             },
@@ -222,13 +236,22 @@ pub(crate) fn execute_mcp_read(
     }
     if let Some(short_ref) = args.target.short_ref.as_deref() {
         let (short_id, content_hash) = parse_short_ref(short_ref).map_err(mcp_api_error)?;
-        let item = hydrate_short_id_response(&scoped_read, short_id, content_hash, View::Full)
-            .map_err(mcp_api_error)?;
+        let read = scoped_read
+            .hydrate_short_id(&short_id, content_hash)
+            .map_err(|error| mcp_engine_error("mcp hydrate failed", error))?;
+        let item = crate::api::core::project_hydrated_short_id(
+            short_id,
+            content_hash,
+            View::Full,
+            read.value,
+            read.receipt.clone(),
+        );
         return Ok(json!({
             "content": [mcp_text_content(if item.is_some() { "short ref found" } else { "short ref not found" })],
             "structuredContent": {
                 "tool": McpToolName::Read.as_str(),
                 "target": { "short_ref": short_ref },
+                "narrowing": read.receipt,
                 "found": item.is_some(),
                 "item": item,
             },

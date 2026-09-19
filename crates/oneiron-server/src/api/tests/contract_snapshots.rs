@@ -989,3 +989,63 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         Value::from(default_limit()),
     );
 }
+
+#[test]
+fn read_receipt_schema_is_mandatory_and_query_is_not_an_opaque_object() {
+    let spec = generated_spec();
+    assert_eq!(
+        spec["paths"]["/v1/core/query"]["post"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/CoreScopedQueryResponse"
+    );
+    let receipt = openapi_component_schema(&spec, "ReadReceiptSchema");
+    for field in [
+        "requested",
+        "actor_ceiling",
+        "applied",
+        "narrowed_axes",
+        "suppressed_count",
+        "replan_hint",
+    ] {
+        assert!(
+            receipt["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(field))
+        );
+    }
+    // A flattened access projection can use allOf. Follow schema composition,
+    // not Rust source text, to assert the consumer-visible required field.
+    fn requires_receipt(schema: &Value) -> bool {
+        schema["required"]
+            .as_array()
+            .is_some_and(|fields| fields.contains(&json!("narrowing")))
+            || schema["allOf"]
+                .as_array()
+                .is_some_and(|parts| parts.iter().any(requires_receipt))
+    }
+    for name in [
+        "CoreScopedQueryResponse",
+        "CoreHydrateResponse",
+        "CoreBatchShortIdHydrateResponse",
+        "CoreContextPackResponse",
+    ] {
+        assert!(
+            requires_receipt(openapi_component_schema(&spec, name)),
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn core_hydrate_absence_retains_receipt_without_counting_missing_refs() {
+    let (_dir, server) = test_server();
+    let (status, body) = route_json(
+        server,
+        json_request("POST", "/v1/core/hydrate", json!({"ref": "cl999999:00"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["narrowing"]["suppressed_count"], 0);
+    assert!(body["narrowing"]["applied"].is_object());
+}

@@ -2288,6 +2288,9 @@
       },
       "CoreBatchShortIdHydrateResponse": {
         "properties": {
+          "narrowing": {
+            "$ref": "#/components/schemas/ReadReceiptSchema"
+          },
           "results": {
             "items": {
               "$ref": "#/components/schemas/CoreBatchShortIdHydrateItem"
@@ -2296,7 +2299,8 @@
           }
         },
         "required": [
-          "results"
+          "results",
+          "narrowing"
         ],
         "type": "object"
       },
@@ -2591,6 +2595,9 @@
               "null"
             ]
           },
+          "narrowing": {
+            "$ref": "#/components/schemas/ReadReceiptSchema"
+          },
           "neighbors": {
             "items": {
               "$ref": "#/components/schemas/CoreContextEntity"
@@ -2621,7 +2628,8 @@
           "neighbors",
           "stats",
           "state",
-          "evidence"
+          "evidence",
+          "narrowing"
         ],
         "type": "object"
       },
@@ -3043,6 +3051,9 @@
               "null"
             ]
           },
+          "narrowing": {
+            "$ref": "#/components/schemas/ReadReceiptSchema"
+          },
           "short_id": {
             "type": "string"
           },
@@ -3053,7 +3064,8 @@
         "required": [
           "status",
           "short_id",
-          "content_hash"
+          "content_hash",
+          "narrowing"
         ],
         "type": "object"
       },
@@ -3636,9 +3648,6 @@
                 "$ref": "#/components/schemas/CoreRunTreeFailure"
               }
             ]
-          },
-          "gate_breaker_paused": {
-            "type": "boolean"
           },
           "job_id": {
             "type": "string"
@@ -5061,7 +5070,7 @@
           "200": {
             "description": "Projected query results.",
             "schema": {
-              "type": "object"
+              "$ref": "#/components/schemas/CoreScopedQueryResponse"
             }
           },
           "400": {

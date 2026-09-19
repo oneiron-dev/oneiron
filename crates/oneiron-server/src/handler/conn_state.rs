@@ -1,11 +1,10 @@
 //! Per-connection budgets, quotas, rate limit, and sync-mode binding.
 
 use std::collections::HashSet;
-use std::time::Instant as StdInstant;
 
 use tokio::time::{Duration, Instant};
 
-use oneiron::sync::{AllowBlock, FederationConnectionQuota, FederationQuotaConfig, WindowKey};
+use oneiron::sync::WindowKey;
 
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError};
@@ -14,7 +13,6 @@ use crate::protocol::{self, ProtocolError};
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
 pub(super) struct ConnState {
     windows_touched: HashSet<WindowKey>,
-    federation_quota: FederationConnectionQuota,
     rate_limiter: MessageRateLimiter,
     pub(super) window_sync_mode: WindowSyncMode,
     pub(super) protocol_version: u8,
@@ -23,14 +21,9 @@ pub(super) struct ConnState {
 }
 
 impl ConnState {
-    pub(super) fn new(
-        max_messages_per_sec: u32,
-        protocol_version: u8,
-        federation_quota: FederationQuotaConfig,
-    ) -> Self {
+    pub(super) fn new(max_messages_per_sec: u32, protocol_version: u8) -> Self {
         Self {
             windows_touched: HashSet::new(),
-            federation_quota: FederationConnectionQuota::new(federation_quota),
             rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
             window_sync_mode: WindowSyncMode::Unbound,
             protocol_version,
@@ -61,14 +54,6 @@ impl ConnState {
         Ok(key)
     }
 
-    pub(super) fn allow_federation_window(&mut self, key: &WindowKey) -> AllowBlock {
-        self.federation_quota.allow_window(key, StdInstant::now())
-    }
-
-    pub(super) fn federation_quota_snapshot(&self) -> oneiron::sync::FederationQuotaSnapshot {
-        self.federation_quota.snapshot(StdInstant::now())
-    }
-
     pub(super) fn bind_window_sync_mode(
         &mut self,
         mode: WindowSyncMode,
@@ -77,10 +62,7 @@ impl ConnState {
             return Ok(());
         }
         match mode {
-            WindowSyncMode::Selector
-                if self.protocol_version != protocol::PROTOCOL_VERSION
-                    && self.protocol_version != protocol::LEGACY_SELECTOR_PROTOCOL_VERSION =>
-            {
+            WindowSyncMode::Selector if self.protocol_version != protocol::PROTOCOL_VERSION => {
                 return Err(ProtocolError::InvalidPayload(
                     "selector sync requires the current selector protocol",
                 ));

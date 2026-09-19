@@ -29,6 +29,20 @@ use std::sync::Arc;
 use utoipa::IntoParams;
 use utoipa::ToSchema;
 
+/// Search responses always preserve each executed read receipt.
+#[derive(Serialize)]
+pub(crate) struct ScopedSearchResponse {
+    #[serde(flatten)]
+    response: super::SearchResponse,
+    narrowing: Vec<oneiron::claim::ScopedReadReceipt>,
+}
+impl std::ops::Deref for ScopedSearchResponse {
+    type Target = super::SearchResponse;
+    fn deref(&self) -> &Self::Target {
+        &self.response
+    }
+}
+
 /// Query parameters for vector similarity search.
 #[derive(Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -143,7 +157,7 @@ pub(crate) async fn search_vector(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
-) -> Result<Json<SearchResponse>, ApiError> {
+) -> Result<Json<ScopedSearchResponse>, ApiError> {
     check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
@@ -191,7 +205,12 @@ pub(crate) async fn search_vector(
     let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
     let response = search_response(&scoped_read, results.hits, view, params.limit)?;
 
-    Ok(Json(PaginatedResponse::new(response, None, meta)))
+    let mut narrowing = results.narrowing;
+    narrowing.push(response.receipt);
+    Ok(Json(ScopedSearchResponse {
+        response: PaginatedResponse::new(response.value, None, meta),
+        narrowing,
+    }))
 }
 
 /// Query parameters for BM25 text search.
@@ -284,7 +303,7 @@ pub(crate) async fn search_text(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TextSearchQuery>, QueryRejection>,
-) -> Result<Json<SearchResponse>, ApiError> {
+) -> Result<Json<ScopedSearchResponse>, ApiError> {
     check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
@@ -307,7 +326,12 @@ pub(crate) async fn search_text(
     let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
     let response = search_response(&scoped_read, results.hits, view, params.limit)?;
 
-    Ok(Json(PaginatedResponse::new(response, None, meta)))
+    let mut narrowing = results.narrowing;
+    narrowing.push(response.receipt);
+    Ok(Json(ScopedSearchResponse {
+        response: PaginatedResponse::new(response.value, None, meta),
+        narrowing,
+    }))
 }
 
 /// A blank `queryText` is an ABSENT one.
@@ -336,7 +360,14 @@ fn run_depth_search(
     // A zero-limit page was an empty 200 on this endpoint before the dial
     // existed, and the dial is not the place to turn it into a refusal.
     if limit == 0 {
-        return Ok(DepthSearchResult::default());
+        return Ok(DepthSearchResult {
+            narrowing: vec![
+                scoped_read
+                    .read_receipt(None, 0)
+                    .map_err(|_| ApiError::internal_server_error("read receipt failed"))?,
+            ],
+            ..Default::default()
+        });
     }
     let request = DepthSearchRequest {
         probe,
@@ -382,38 +413,24 @@ pub(crate) fn search_response(
     results: Vec<oneiron::ScoredEntity>,
     view: View,
     page_limit: usize,
-) -> Result<Vec<Value>, ApiError> {
-    let mut response = Vec::with_capacity(results.len().min(page_limit));
-    for result in results {
-        match project_scoped_search_result(scoped_read, result, view) {
-            Ok(Some(value)) if response.len() < page_limit => response.push(value),
-            Ok(Some(_)) => continue,
-            Ok(None) => continue,
-            Err(e) => {
-                tracing::error!(error = %e, "search projection failed");
-                return Err(ApiError::internal_server_error("search projection failed"));
+) -> Result<oneiron::claim::ScopedReadResult<Vec<Value>>, ApiError> {
+    let read = scoped_read
+        .get_entities_parts_with_receipt(
+            &results.iter().map(|row| row.id).collect::<Vec<_>>(),
+            None,
+        )
+        .map_err(|error| {
+            tracing::error!(error = %error, "search projection failed");
+            ApiError::internal_server_error("search projection failed")
+        })?;
+    let value = results
+        .into_iter()
+        .zip(read.value)
+        .filter_map(|(result, parts)| {
+            let (entity_type, learned_at, body) = parts?;
+            if matches!(view, View::Standard) {
+                return Some(json!({"id": result.id.to_hex(), "score": result.score}));
             }
-        }
-    }
-    Ok(response)
-}
-
-pub(crate) fn project_scoped_search_result(
-    scoped_read: &oneiron::claim::ScopedRead<'_>,
-    result: oneiron::ScoredEntity,
-    view: View,
-) -> oneiron::Result<Option<Value>> {
-    let id_hex = result.id.to_hex();
-    match view {
-        View::Standard => Ok(Some(json!({
-            "id": id_hex,
-            "score": result.score,
-        }))),
-        View::Summary | View::Full => {
-            let Some((entity_type, learned_at, body)) = scoped_read.get_entity_parts(&result.id)?
-            else {
-                return Ok(None);
-            };
             let mut value =
                 projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view);
             if matches!(view, View::Full)
@@ -421,9 +438,39 @@ pub(crate) fn project_scoped_search_result(
             {
                 object.insert("score".to_owned(), json!(result.score));
             }
-            Ok(Some(value))
+            Some(value)
+        })
+        .take(page_limit)
+        .collect();
+    Ok(oneiron::claim::ScopedReadResult {
+        value,
+        receipt: read.receipt,
+    })
+}
+
+pub(crate) fn project_scoped_search_result(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    result: oneiron::ScoredEntity,
+    view: View,
+) -> oneiron::Result<oneiron::claim::ScopedReadResult<Option<Value>>> {
+    let read = scoped_read.get_entity_parts_with_receipt(&result.id, None)?;
+    let value = read.value.map(|(entity_type, learned_at, body)| {
+        if matches!(view, View::Standard) {
+            return json!({"id": result.id.to_hex(), "score": result.score});
         }
-    }
+        let mut value =
+            projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view);
+        if matches!(view, View::Full)
+            && let Value::Object(object) = &mut value
+        {
+            object.insert("score".to_owned(), json!(result.score));
+        }
+        value
+    });
+    Ok(oneiron::claim::ScopedReadResult {
+        value,
+        receipt: read.receipt,
+    })
 }
 
 /// Maximum request text for a semantic read. A query is a question, not a
@@ -581,8 +628,13 @@ pub(crate) async fn search_semantic(
     let total = results.hits.len();
     let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
     let items = search_response(&scoped_read, results.hits, view, params.limit)?;
-    let mut response = serde_json::to_value(PaginatedResponse::new(items, None, meta))
-        .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
+    let mut narrowing = results.narrowing;
+    narrowing.push(items.receipt);
+    let mut response = serde_json::to_value(ScopedSearchResponse {
+        response: PaginatedResponse::new(items.value, None, meta),
+        narrowing,
+    })
+    .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
     if let Value::Object(object) = &mut response {
         object.insert(
             "embedder".to_owned(),

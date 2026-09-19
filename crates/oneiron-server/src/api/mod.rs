@@ -176,6 +176,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         ));
     let core_mutation_routes = Router::new()
         .route("/batch", post(core_batch))
+        .route("/propose", post(core_propose))
         .route("/memory/verbs/{verb}", post(core_memory_verb))
         .route("/conversations", post(create_core_conversation))
         .route(

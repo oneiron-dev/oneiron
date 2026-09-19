@@ -51,6 +51,12 @@ pub(crate) struct ContextBoardMemoriesControls {
     /// Exact per-slot row caps for the MEMORIES section.
     #[serde(default)]
     pub(crate) slots: Option<ContextBoardMemoriesSlotControls>,
+    /// One row cap across every active world (pinned rows remain).
+    #[serde(default)]
+    pub(crate) shared_total: Option<usize>,
+    /// Explicit engine-issued short refs. These bypass query scope, never read authority.
+    #[serde(default)]
+    pub(crate) pinned_refs: Vec<String>,
 }
 
 /// Session controls for the MEMORIES cursor.
@@ -82,6 +88,7 @@ pub(crate) struct ContextBoardCompanionControls {
 
 pub(crate) struct MemoriesRequest {
     pub(crate) memory_board_budget: Option<oneiron::MemoriesBudget>,
+    pub(crate) pinned_refs: Vec<String>,
     pub(crate) session_scope_id: String,
     pub(crate) session_id: String,
     pub(crate) companion: Option<oneiron::CompanionAssembly>,
@@ -130,6 +137,8 @@ pub(crate) struct ContextBoardMemoriesBudget {
     /// Row cap for all other entity types.
     #[schema(example = 2)]
     other: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shared_total: Option<usize>,
 }
 
 /// Companion assembly metadata echoed with a MEMORIES section.
@@ -191,6 +200,14 @@ pub(crate) struct ContextBoardMemoryRow {
     /// Retrieval score.
     #[schema(example = 0.87)]
     score: f32,
+    /// Canonical engine-issued source-trust label, never inferred from prose.
+    claim_source: Option<String>,
+    /// World partition; foreign ids render outside the first-party wrapper.
+    world: Option<String>,
+    /// pinned, snippet, or index_only.
+    tier: String,
+    /// Escaped only at rendering, absent for foreign index-only rows.
+    snippet: Option<String>,
 }
 
 /// MEMORIES section envelope.
@@ -263,10 +280,20 @@ pub(crate) fn resolve_memories_request(
         .unwrap_or(true)
         .then(|| memories_budget(memories, budget_shape.0, budget_shape.1));
 
+    let pinned_refs = memories
+        .map(|controls| controls.pinned_refs.clone())
+        .unwrap_or_default();
+    if pinned_refs.len() > 128 || pinned_refs.iter().any(|reference| reference.len() > 128) {
+        return Err(ApiError::bad_request(
+            "memory pins exceed the bounded reference list",
+            Some("memories.pinned_refs"),
+        ));
+    }
     let companion = resolve_companion_assembly(vault, companion, session_id, auth)?;
 
     Ok(MemoriesRequest {
         memory_board_budget,
+        pinned_refs,
         session_scope_id: session_scope_id.to_owned(),
         session_id: session_id.to_owned(),
         companion: Some(companion),
@@ -428,19 +455,24 @@ pub(crate) fn memories_budget(
         retrieval_defaults.other,
     );
     let Some(slots) = controls.and_then(|controls| controls.slots.as_ref()) else {
-        return defaults;
+        return controls
+            .and_then(|controls| controls.shared_total)
+            .map_or(defaults, |total| defaults.with_shared_total(total));
     };
 
     let companions = slots.companions.unwrap_or(defaults.companions);
     let other = slots
         .other
         .unwrap_or_else(|| retrieval_defaults.other.saturating_sub(companions));
-    oneiron::MemoriesBudget::new(
+    let selected = oneiron::MemoriesBudget::new(
         slots.claims.unwrap_or(defaults.claims),
         slots.turns.unwrap_or(defaults.turns),
         slots.summaries.unwrap_or(defaults.summaries),
         slots.facets.unwrap_or(defaults.facets),
         companions,
         other,
-    )
+    );
+    controls
+        .and_then(|controls| controls.shared_total)
+        .map_or(selected, |total| selected.with_shared_total(total))
 }

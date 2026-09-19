@@ -481,6 +481,8 @@ fn memories_budget_default_other_matches_retrieval_budget() {
 
     let split = memories_budget(
         Some(&ContextBoardMemoriesControls {
+            pinned_refs: Vec::new(),
+            shared_total: None,
             enabled: None,
             slots: Some(ContextBoardMemoriesSlotControls {
                 companions: Some(2),

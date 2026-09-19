@@ -92,10 +92,6 @@ impl EnvConfig {
         values.max_update_payload = lookup_parse(&mut lookup, "ONEIRON_MAX_UPDATE_PAYLOAD")?;
         values.max_windows_per_connection =
             lookup_parse(&mut lookup, "ONEIRON_MAX_WINDOWS_PER_CONNECTION")?;
-        values.max_federation_windows_per_connection =
-            lookup_parse(&mut lookup, "ONEIRON_MAX_FEDERATION_WINDOWS_PER_CONNECTION")?;
-        values.federation_flood_pause_secs =
-            lookup_parse(&mut lookup, "ONEIRON_FEDERATION_FLOOD_PAUSE_SECS")?;
         values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
         values.ephemeral_timeout_ms = lookup_parse(&mut lookup, "ONEIRON_EPHEMERAL_TIMEOUT_MS")?;
         values.max_ephemeral_payload_bytes =
@@ -368,8 +364,6 @@ struct FileServeConfig {
     max_frame_size: Option<usize>,
     max_update_payload: Option<usize>,
     max_windows_per_connection: Option<usize>,
-    max_federation_windows_per_connection: Option<usize>,
-    federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
     max_ephemeral_payload_bytes: Option<usize>,
@@ -407,8 +401,6 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_frame_size: value.max_frame_size,
             max_update_payload: value.max_update_payload,
             max_windows_per_connection: value.max_windows_per_connection,
-            max_federation_windows_per_connection: value.max_federation_windows_per_connection,
-            federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
             max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
@@ -447,8 +439,6 @@ struct PartialServeConfig {
     max_frame_size: Option<usize>,
     max_update_payload: Option<usize>,
     max_windows_per_connection: Option<usize>,
-    max_federation_windows_per_connection: Option<usize>,
-    federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
     max_ephemeral_payload_bytes: Option<usize>,
@@ -491,14 +481,6 @@ impl fmt::Debug for PartialServeConfig {
             .field(
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
-            )
-            .field(
-                "max_federation_windows_per_connection",
-                &self.max_federation_windows_per_connection,
-            )
-            .field(
-                "federation_flood_pause_secs",
-                &self.federation_flood_pause_secs,
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
@@ -591,12 +573,6 @@ impl PartialServeConfig {
         if let Some(value) = self.max_windows_per_connection {
             resolved.max_windows_per_connection = value;
         }
-        if let Some(value) = self.max_federation_windows_per_connection {
-            resolved.max_federation_windows_per_connection = value;
-        }
-        if let Some(value) = self.federation_flood_pause_secs {
-            resolved.federation_flood_pause_secs = value;
-        }
         if let Some(value) = self.max_messages_per_sec {
             resolved.max_messages_per_sec = value;
         }
@@ -666,8 +642,6 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_frame_size: value.max_frame_size,
             max_update_payload: value.max_update_payload,
             max_windows_per_connection: value.max_windows_per_connection,
-            max_federation_windows_per_connection: value.max_federation_windows_per_connection,
-            federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
             max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,

@@ -247,13 +247,9 @@ fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {
         });
     }
 
-    match rmp_serde::from_slice::<Value>(body) {
-        Ok(Value::Object(fields)) => fields,
-        Ok(value) => Map::from_iter([("body".to_owned(), value)]),
-        Err(_) => Map::from_iter([(
-            "bodyBytes".to_owned(),
-            Value::Array(body.iter().map(|byte| json!(byte)).collect()),
-        )]),
+    match oneiron::batch::export::redacted_memory_body(body) {
+        Value::Object(fields) => fields,
+        value => Map::from_iter([("body".to_owned(), value)]),
     }
 }
 

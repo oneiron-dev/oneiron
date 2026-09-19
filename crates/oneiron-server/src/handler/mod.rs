@@ -10,6 +10,7 @@ mod app_tier;
 mod conn_state;
 mod connection;
 mod ephemeral;
+mod federation;
 mod hello;
 mod transport;
 mod window_sync;
@@ -44,7 +45,7 @@ use futures_util::StreamExt;
 #[cfg(test)]
 use loro::VersionVector;
 #[cfg(test)]
-use oneiron::sync::{AllowBlock, FederationQuotaConfig, WindowKey};
+use oneiron::sync::WindowKey;
 #[cfg(test)]
 use std::sync::Arc;
 #[cfg(test)]
