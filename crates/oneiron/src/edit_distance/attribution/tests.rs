@@ -873,6 +873,24 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
         assert_eq!(body.evidence, before.evidence);
         assert_eq!(body.source, Some(ClaimSource::Imported));
         assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+        for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Approved] {
+            let mut forged = body.clone();
+            forged.approval = approval;
+            let bytes = crate::claim::encode_claim_body(&forged)?;
+            assert!(
+                target
+                    .batch()
+                    .put_replicated(
+                        &EntityId::now(),
+                        crate::registry::ENTITY_TYPE_CLAIM,
+                        t(70),
+                        70,
+                        &bytes
+                    )
+                    .commit()
+                    .is_err()
+            );
+        }
         preserved.push(body);
     }
     assert_eq!(edit_cost_for(&target, &actor, "outbound")?, None);
