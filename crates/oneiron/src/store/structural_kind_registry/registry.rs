@@ -121,6 +121,22 @@ impl Store {
         )
     }
 
+    pub(crate) fn register_structural_kind_in_family(
+        &self,
+        type_byte: u8,
+        short_id_prefix: impl Into<String>,
+        family: TypeByteFamily,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.register_kind_slot(
+            Some(type_byte),
+            short_id_prefix.into(),
+            family.allocation().zone,
+            pack.into(),
+            Some(family),
+        )
+    }
+
     pub(crate) fn allocate_structural_kind(
         &self,
         family: TypeByteFamily,
@@ -364,12 +380,6 @@ fn vet_structural_kind_registration_zone_consistency(
     registration: &StructuralKindRegistration,
 ) -> Result<()> {
     let actual_zone = zone_of(registration.type_byte);
-    if let Some(family) = registration.family {
-        let family_zone = family.allocation().zone;
-        if family_zone != actual_zone {
-            return Err(Error::CorruptedIndex("structural kind family zone"));
-        }
-    }
     if actual_zone != registration.zone {
         return Err(Error::Registry(
             RegistryError::StructuralKindZoneViolation {
@@ -379,6 +389,12 @@ fn vet_structural_kind_registration_zone_consistency(
                 reason: "type byte is outside the declared zone",
             },
         ));
+    }
+    if let Some(family) = registration.family {
+        let family_zone = family.allocation().zone;
+        if family_zone != actual_zone {
+            return Err(Error::CorruptedIndex("structural kind family zone"));
+        }
     }
     Ok(())
 }

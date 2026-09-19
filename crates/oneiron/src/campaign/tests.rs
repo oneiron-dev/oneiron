@@ -43,6 +43,7 @@ fn campaign_kind_registers_runtime_assigned_crm_byte() -> crate::Result<()> {
     assert_eq!(registration.zone, TypeByteZone::CompiledProduct);
     assert_eq!(registration.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
     assert_eq!(registration.pack, CRM_PACK_ID);
+    assert_eq!(registration.family, Some(TypeByteFamily::Crm));
 
     let persisted = vault
         .structural_kind_registration(assigned)
@@ -51,6 +52,7 @@ fn campaign_kind_registers_runtime_assigned_crm_byte() -> crate::Result<()> {
     assert_eq!(persisted.zone, TypeByteZone::CompiledProduct);
     assert_eq!(persisted.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
     assert_eq!(persisted.pack, CRM_PACK_ID);
+    assert_eq!(persisted.family, Some(TypeByteFamily::Crm));
     Ok(())
 }
 
@@ -73,6 +75,7 @@ fn campaign_kind_registration_persists_across_reopen() -> crate::Result<()> {
     assert_eq!(persisted.zone, TypeByteZone::CompiledProduct);
     assert_eq!(persisted.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
     assert_eq!(persisted.pack, CRM_PACK_ID);
+    assert_eq!(persisted.family, Some(TypeByteFamily::Crm));
     assert!(
         reopened
             .structural_kind_registrations()
@@ -193,5 +196,22 @@ fn campaign_short_id_uses_ca_prefix() -> crate::Result<()> {
         format!("{CAMPAIGN_SHORT_ID_PREFIX}1"),
         "the first CAMPAIGN entity must take counter 1 in the `ca` namespace"
     );
+    Ok(())
+}
+
+#[test]
+fn crm_pack_refuses_to_reuse_a_slot_without_its_declared_family() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let campaign_byte = crm_band_byte(0);
+    let query_byte = crm_band_byte(1);
+    vault.register_structural_kind(
+        campaign_byte,
+        CAMPAIGN_SHORT_ID_PREFIX,
+        TypeByteZone::CompiledProduct,
+        CRM_PACK_ID,
+    )?;
+    let error = register_crm_pack(&vault, campaign_byte, query_byte).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::StructuralKindCollision);
+    assert!(vault.structural_kind_registration(query_byte).is_none());
     Ok(())
 }

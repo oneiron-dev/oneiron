@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::campaign::CRM_PACK_ID;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{StructuralKindRegistration, TypeByteZone};
+use crate::registry::{StructuralKindRegistration, TypeByteFamily};
 
 // Referenced only by an intra-doc link on `QueryScope::admits`; gated so the
 // name is in scope for rustdoc without being an unused import.
@@ -38,10 +38,10 @@ pub fn register_saved_query_kind(
     vault: &Vault,
     assigned_type_byte: u8,
 ) -> Result<StructuralKindRegistration> {
-    vault.register_structural_kind(
+    vault.register_structural_kind_in_family(
         assigned_type_byte,
         SAVED_QUERY_SHORT_ID_PREFIX,
-        TypeByteZone::CompiledProduct,
+        TypeByteFamily::Crm,
         CRM_PACK_ID,
     )
 }

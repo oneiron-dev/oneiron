@@ -4754,3 +4754,55 @@ fn selector_roundtrips_every_classification_family_and_rejects_retired_schema() 
         assert!(decode_sync_selector(&retired).is_err());
     }
 }
+
+#[test]
+fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
+    use crate::registry::{
+        TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START,
+        TypeByteFamily, TypeByteZone, entity_type_registry_entry,
+    };
+    let member = entity_id(0xD1);
+    let (dir, vault, grant_id) = test_vault_with_grant(member);
+    let slots: Vec<_> =
+        (TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+            .filter(|byte| entity_type_registry_entry(*byte).is_none())
+            .take(3)
+            .collect();
+    let pack = crate::campaign::register_crm_pack(&vault, slots[0], slots[1]).unwrap();
+    // Whole-pack retry preserves the same declared family and assigned slots.
+    assert_eq!(
+        crate::campaign::register_crm_pack(&vault, slots[0], slots[1]).unwrap(),
+        pack
+    );
+    vault
+        .register_structural_kind(slots[2], "qx", TypeByteZone::CompiledProduct, "local-only")
+        .unwrap();
+    let ids = [entity_id(0xD2), entity_id(0xD3), entity_id(0xD4)];
+    for (id, kind) in ids.iter().zip(&slots) {
+        vault.put_entity(id, *kind, TimeRange { start: 1, end: 1 }, 1, b"record").unwrap();
+    }
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let window = WindowKey::new("2026-03");
+    let doc = create_window_doc("source", &window);
+    for id in &ids {
+        insert_blob(&doc, *id, &vault.get_raw(id).unwrap().unwrap());
+    }
+    doc.commit();
+    for bands in [vec![], vec![SelectorRange::Family(TypeByteFamily::Crm)]] {
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], bands);
+        let filtered = filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector)
+            .unwrap();
+        let exported = import_ids(&filtered.export(ExportMode::all_updates()).unwrap());
+        assert!(exported.contains(&ids[0]));
+        assert!(exported.contains(&ids[1]));
+        assert!(!exported.contains(&ids[2]));
+    }
+    let other_family = SyncSelector::new(
+        grant_id, member, SyncSelectorWorld::All, vec![],
+        vec![SelectorRange::Family(TypeByteFamily::Documents)],
+    );
+    let filtered = filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &other_family)
+        .unwrap();
+    assert!(import_ids(&filtered.export(ExportMode::all_updates()).unwrap()).is_empty());
+}

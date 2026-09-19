@@ -18,7 +18,7 @@ use crate::Vault;
 use crate::error::{Error, RegistryError, Result};
 use crate::registry::{
     StructuralKindRegistration, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
-    TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteZone,
+    TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteFamily, TypeByteZone,
 };
 
 /// The CRM pack's claim families: `campaign.member`, `crm.fit`, `crm.stage`,
@@ -96,10 +96,10 @@ pub fn register_campaign_kind(
     vault: &Vault,
     assigned_type_byte: u8,
 ) -> Result<StructuralKindRegistration> {
-    vault.register_structural_kind(
+    vault.register_structural_kind_in_family(
         assigned_type_byte,
         CAMPAIGN_SHORT_ID_PREFIX,
-        TypeByteZone::CompiledProduct,
+        TypeByteFamily::Crm,
         CRM_PACK_ID,
     )
 }
@@ -213,6 +213,7 @@ fn slot_matches(existing: &StructuralKindRegistration, type_byte: u8, prefix: &s
         && existing.short_id_prefix == prefix
         && existing.zone == TypeByteZone::CompiledProduct
         && existing.pack == CRM_PACK_ID
+        && existing.family == Some(TypeByteFamily::Crm)
 }
 
 #[cfg(test)]
