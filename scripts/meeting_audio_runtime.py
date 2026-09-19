@@ -16,11 +16,12 @@ import unicodedata
 ASR = "mlx-community/Qwen3-ASR-1.7B-8bit"
 ALIGNER = "Qwen/Qwen3-ForcedAligner-0.6B"
 COMMUNITY = "pyannote/speaker-diarization-community-1"
+MOSS = "OpenMOSS-Team/MOSS-Transcribe-Diarize"
 LANGUAGES = ("Chinese", "English", "Cantonese", "French", "German", "Italian",
              "Japanese", "Korean", "Portuguese", "Russian", "Spanish")
 REQUIREMENTS = {"asr": {"mlx-audio", "mlx", "silero-vad", "onnxruntime"}, "alignment": {"qwen-asr", "torch"},
                 "diarization": {"pyannote.audio", "torch"},
-                "cleanup": {"mlx-lm", "mlx"}}
+                "cleanup": {"mlx-lm", "mlx"}, "moss": {"mlx-audio", "mlx"}}
 
 
 class RuntimeRefusal(Exception):
@@ -121,10 +122,12 @@ class LocalRuntime:
             profile = strict_json(data)
         except (ValueError, UnicodeError):
             raise error("InvalidRuntimeProfile") from None
-        if (not isinstance(profile, dict) or set(profile) != {"version", "packages", "asr", "alignment", "diarization", "cleanup"}
+        if (not isinstance(profile, dict) or set(profile) not in [{"version", "packages", "asr", "alignment", "diarization", "cleanup"},
+                    {"version", "packages", "asr", "alignment", "diarization", "cleanup", "moss"}]
                 or type(profile["version"]) is not int or profile["version"] != 1
                 or not isinstance(profile["packages"], dict)):
             raise error("InvalidRuntimeProfile")
+        profile.setdefault("moss", None)
         packages = profile["packages"]
         if any(not isinstance(v, str) or not v.strip() for v in packages.values()):
             raise error("InvalidRuntimeProfile")
@@ -133,6 +136,8 @@ class LocalRuntime:
             if spec is None:
                 continue
             fields = {"model_id", "snapshot", "files", "access_ref"}
+            if stage == "moss":
+                fields |= {"max_tokens"}
             if stage == "cleanup":
                 fields |= {"instructions", "instructions_sha256", "max_tokens", "max_input_tokens"}
             if (not isinstance(spec, dict) or set(spec) != fields
@@ -147,6 +152,9 @@ class LocalRuntime:
                 if (not name or "\\" in name or any(p in {"", ".", ".."} for p in parts)
                         or not hash_string(checksum)):
                     raise error("InvalidRuntimeProfile")
+            if stage == "moss" and (spec["model_id"] != MOSS or type(spec["max_tokens"]) is not int
+                    or not 1 <= spec["max_tokens"] <= 65536):
+                raise error("UnsupportedMossConfiguration")
             if stage == "asr" and spec["model_id"] != ASR:
                 raise error("UnsupportedAsrModel")
             if stage == "alignment" and spec["model_id"] != ALIGNER:
@@ -198,7 +206,7 @@ class LocalRuntime:
     def require(self, stage):
         if not self.available(stage):
             raise self.error({"asr": "AsrModelUnavailable", "alignment": "ForcedAlignmentUnavailable", "diarization": "Community1Unavailable",
-                              "cleanup": "CleanupBackendUnavailable"}[stage])
+                              "cleanup": "CleanupBackendUnavailable", "moss": "MossBackendUnavailable"}[stage])
         return self.profile[stage]
 
     def instructions(self, spec):
@@ -247,6 +255,40 @@ class LocalRuntime:
         if exclusive is None:
             raise self.error("ExclusiveDiarizationUnavailable")
         return exclusive_tracks(exclusive.itertracks(yield_label=True), duration_ms, self.error)
+
+    def moss(self, audio, duration_ms):
+        spec = self.require("moss")
+        from mlx_audio.stt.utils import load_model
+        model = load_model(Path(spec["snapshot"]), strict=True)
+        if not type(model).__module__.startswith("mlx_audio.stt.models.moss_transcribe_diarize."):
+            raise self.error("MossApiMismatch")
+        if model.sample_rate != 16000:
+            raise self.error("MossSampleRateMismatch")
+        # One autoregressive decode of the complete file. The SDK may partition
+        # encoder features internally, but we never decode/recluster by pack.
+        output = model.generate(audio, max_tokens=spec["max_tokens"], temperature=0.0,
+                                verbose=False, stream=False)
+        count = getattr(output, "generation_tokens", None)
+        if type(count) is not int or count >= spec["max_tokens"]:
+            raise self.error("MossTokenBudgetExhausted")
+        segments = getattr(output, "segments", None)
+        if not isinstance(segments, list) or not segments:
+            raise self.error("InvalidMossOutput")
+        tracks = []
+        previous_start = 0
+        for segment in segments:
+            if not isinstance(segment, dict) or not {"start", "end", "text", "speaker_id"} <= segment.keys():
+                raise self.error("InvalidMossOutput")
+            start = milliseconds(segment["start"], duration_ms, self.error)
+            end = milliseconds(segment["end"], duration_ms, self.error)
+            speaker = segment["speaker_id"]
+            if (end <= start or start < previous_start or not isinstance(segment["text"], str)
+                    or not isinstance(speaker, str) or not speaker.strip()):
+                raise self.error("InvalidMossOutput")
+            tracks.append({"start_ms": start, "end_ms": end, "speaker_cluster": speaker,
+                           "text": segment["text"]})
+            previous_start = start
+        return tracks
 
     def cleanup(self, turns):
         spec = self.require("cleanup")

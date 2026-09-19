@@ -168,6 +168,46 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(runtime.RuntimeRefusal, "CleanupInstructionsDigestMismatch"):
             loaded.instructions(self.profile["cleanup"])
 
+    def test_moss_is_one_global_decode_and_never_invents_word_timestamps(self):
+        self.configure("moss", runtime.MOSS)
+        self.profile["moss"]["max_tokens"] = 128
+        loaded = self.load()
+        calls = []
+        class FixtureModel:
+            sample_rate = 16000
+            def generate(self, audio, **options):
+                calls.append((len(audio), options))
+                return SimpleNamespace(generation_tokens=12, segments=[
+                    {"start": 0.0, "end": 0.2, "text": "[S01] hello", "speaker_id": "S01"},
+                    {"start": 0.2, "end": 0.4, "text": "[S02] there", "speaker_id": "S02"}])
+        FixtureModel.__module__ = "mlx_audio.stt.models.moss_transcribe_diarize.moss_transcribe_diarize"
+        def load_model(path, strict):
+            self.assertEqual(path, self.snapshot)
+            self.assertTrue(strict)
+            return FixtureModel()
+        with patch.object(runtime, "version", return_value="fixture"), patch.dict("sys.modules", {
+                "mlx_audio.stt.utils": SimpleNamespace(load_model=load_model)}):
+            tracks = loaded.moss([0.0] * 6400, 400)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], 6400)
+        self.assertFalse(calls[0][1]["stream"])
+        self.assertEqual(tracks[0]["speaker_cluster"], "S01")
+        self.assertEqual(tracks[1]["speaker_cluster"], "S02")
+        self.assertEqual(tracks[1]["start_ms"], 200)
+        self.assertNotIn("words", tracks[0])
+        # The installed SDK's no-match fallback has full-file start/end but no
+        # speaker_id. It is not a real parsed speaker segment and must refuse.
+        FixtureModel.generate = lambda *args, **kwargs: SimpleNamespace(generation_tokens=12,
+            segments=[{"start":0.0,"end":0.4,"text":"unparsed output"}])
+        with patch.object(runtime, "version", return_value="fixture"), patch.dict("sys.modules", {
+                "mlx_audio.stt.utils": SimpleNamespace(load_model=load_model)}):
+            with self.assertRaisesRegex(runtime.RuntimeRefusal, "InvalidMossOutput"):
+                loaded.moss([0.0]*6400,400)
+        self.profile["moss"]["model_id"] = "unrelated-model"
+        with self.assertRaisesRegex(runtime.RuntimeRefusal, "UnsupportedMossConfiguration"):
+            self.load()
+
+
 
 if __name__ == "__main__":
     unittest.main()

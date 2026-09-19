@@ -146,7 +146,8 @@ class NativeHost:
             ]},
             "asr_model_id": ASR_MODEL,
             "asr_snapshot": str(self.model_snapshot),
-            "operations": ["decode", "silero_vad", "transcribe_text"] + [port for stage, port in ports.items() if available[stage]],
+            "operations": ["decode", "silero_vad", "transcribe_text"] + [port for stage, port in ports.items() if available[stage]]
+                          + (["moss_e3_full_file"] if runtime is not None and runtime.available("moss") else []),
             "artifact_capable": all(available.values()) and asr_ready and decoder_ready,
             "missing": [missing[stage] for stage in ports if not available[stage]]
                        + ([] if runtime is None or asr_ready else ["pinned_asr_model"])
@@ -317,6 +318,14 @@ class NativeHost:
             tracks = runtime.diarize(self.pcm(body), (len(body) // 2 + 15) // 16)
             return {"exclusive_tracks": tracks, "provenance": provenance(COMMUNITY_MODEL, body,
                     runtime_profile_sha256=self.runtime_profile_sha256, full_file_samples=len(body) // 2)}, b""
+        if operation == "moss_e3_full_file":
+            runtime = self.runtime()
+            if runtime is None:
+                raise Refusal("MossBackendUnavailable")
+            tracks = runtime.moss(self.pcm(body), (len(body) // 2 + 15) // 16)
+            return {"segment_tracks": tracks, "timestamp_kind": "segment_not_word",
+                    "provenance": provenance(runtime.profile["moss"]["model_id"], body,
+                        runtime_profile_sha256=self.runtime_profile_sha256, full_file_samples=len(body) // 2)}, b""
         if operation == "cleanup_turns":
             runtime = self.runtime()
             if runtime is None:

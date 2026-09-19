@@ -16,8 +16,8 @@ not a licence, consent, E1/E3 result, or an OF-133 default-selection act.
 
 ## Version 1 shape
 
-Top-level keys are exactly `version` (integer 1), `packages`, `asr`, `alignment`,
-`diarization`, and `cleanup`. Each port entry may be `null` (unavailable).
+Required top-level keys are `version` (integer 1), `packages`, `asr`, `alignment`,
+`diarization`, and `cleanup`. Optional `moss` enables the E3 comparison port. Each port entry may be `null` (unavailable).
 `packages` maps distribution names to exact installed versions. No version is
 invented here. Required names for configured entries are:
 
@@ -25,6 +25,7 @@ invented here. Required names for configured entries are:
 - Alignment: `qwen-asr`, `torch`.
 - Diarization: `pyannote.audio`, `torch` (community-1's exclusive-output API is 4.x).
 - Cleanup: `mlx-lm`, `mlx`.
+- MOSS comparison: `mlx-audio`, `mlx`.
 
 Each non-null entry has exactly these fields:
 
@@ -72,18 +73,69 @@ fix-don't-invent validator still checks the returned text against aligned words.
   must be complete, ordered and strict JSON; the core validates lexical changes.
 
 The Qwen and pyannote API lookup was documentation research, not native execution
-against provisioned models. Seven standard-library synthetic tests exercise the
+against provisioned models. Eight standard-library synthetic runtime tests exercise the
 pins, SDK call shapes, output conversion, language refusal, global-pass rule and
-cleanup grouping. No test package is a real model or an E1/E3 benchmark.
+cleanup grouping. Five harness tests cover output-bound enrollment mapping and
+separate setup/failure/capture/scoring states. No test package is a real model or an E1/E3 benchmark.
 
 ## Exact remaining qualification inputs
 
 Use the existing MacBook interpreter recorded in `impl-notes/W7-C02.md`; do not
 run an inline launcher. The owner must provision compatible licensed runtimes,
 full immutable snapshot/file hashes and access records for alignment, community-1
-and cleanup. MOSS comparison needs its own pinned runtime/snapshot and genuine
-full-file output. The recorded-output evaluation interface accepts those outputs
-but does not run MOSS or turn synthetic outputs into E3 evidence. E1 additionally
+and cleanup. MOSS comparison needs its own pinned snapshot and genuine full-file output.
+The new E3 capture CLI below runs its native port, but no such inference has been
+claimed here. Synthetic outputs never become E3 evidence. E1 additionally
 needs the consented JP/EN/UK corpus, reference/tokenization policy and arm pins.
+ARCH-0061 §8 fixes its comparison to Qwen3-ASR-1.7B versus Soniox async; the Soniox
+arm is not optional and MOSS is not a substitute. Soniox needs approved hosted
+processing/region, the existing credential-custody path and a real role-bound call.
 E3 needs real word/time/two-speaker labels. A completed E1 report still does not
 change the ASR default: the caller must supply the authenticated OF-133 act.
+
+## MOSS and the live E3 harness
+
+A `moss` descriptor has the same four common fields plus `max_tokens` (1..65536).
+Its `model_id` is `OpenMOSS-Team/MOSS-Transcribe-Diarize`. Local MLX weights must
+be separately provisioned and pinned. The installed MacBook `mlx-audio 0.4.7`
+source was read without importing a model: its parsed segments use **speaker_id**,
+not `speaker`; the no-parse fallback lacks that field and must refuse. The adapter
+checks the MOSS implementation class and 16 kHz rate, sends the full waveform to
+one `generate` call and refuses token-budget exhaustion. SDK encoder-feature
+chunks feed that one decode; the bridge never reclusters by ASR pack. Segment
+times and speaker IDs stay segment data, never fabricated word timestamps.
+
+`meeting-audio-e3.py capture` takes `--workspace`, `--ffmpeg`, `--model-snapshot`,
+`--runtime-profile`, `--runtime-profile-sha256`, `--cohort` and `--output` (new
+private directory). Run with the existing interpreter itself. Each model port
+gets a separate bounded framed process. Capture writes setup first, then actual
+per-arm start/completion events, and only after both arms on every file writes
+`completion.json` with `phase: capture_complete`. Failure is `phase: failed`.
+An existing output directory is never overwritten. Capture is not named-identity
+scoring or qualification.
+
+The cohort JSON has `schema: oneiron.audio.e3.cohort.v1`, `corpus_id`, and `files`.
+Each file has `file_id`, `audio_path`, `audio_sha256`, `reference_path`,
+`reference_sha256`, and `consent_ref`. Paths are relative to the cohort file unless
+absolute. Audio and exact reference bytes are hashed before inference. References
+have `language`, `tokenizer`, and `words`; each word has `word_id`, integer
+`start_ms`/`end_ms` and `principal_id`. IDs must be unique, durations valid and each
+file must contain at least two labelled principals. These are supplied ground
+truth, not generated labels.
+
+After approved enrollment/centroid matching, run `meeting-audio-e3.py score
+--capture <directory> --matches <receipts.json>`. Matching JSON has:
+
+- `schema: oneiron.audio.e3.enrollment_matches.v1`;
+- `enrollment_sha256`, `enrollment_consent_ref`, `matcher_model_sha256`,
+  `matcher_runtime_sha256`;
+- `matches`: one entry per file/arm with `file_id`, `arm` (`community1` or `moss`),
+  `audio_sha256`, `tracks_sha256`, `receipt_ref` and `cluster_to_principal`.
+
+Mappings must name clusters that the bound output actually contains. They are
+host-supplied matching receipts, not proof the engine performed enrollment. No
+truth-fitted permutation or invented speaker identity is allowed. Timestamp-IoU
+selects each reference word's predicted cluster; missing and wrong principals
+are counted. Scoring verifies captured bytes and output bindings. Its report is
+still evidence for human qualification, never a self-issued pass or a default
+selection. The harness writes no voice-identity claim or consent grant.
