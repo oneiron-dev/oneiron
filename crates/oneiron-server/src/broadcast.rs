@@ -146,30 +146,26 @@ fn persistent_change(data: &[u8]) -> Option<ReactiveChange> {
             sub_tag,
             ..
         }) if sub_tag == window_sub_tags::UPDATE => Some(ReactiveChange::Window { window_key }),
-        Ok(SyncMessage::Doc { entity, kind, .. })
-            if matches!(
-                kind,
+        Ok(SyncMessage::Doc {
+            entity,
+            kind:
                 oneiron::sync::transport::document_sub_tags::UPDATE
-                    | oneiron::sync::transport::document_sub_tags::STATE
-            ) =>
-        {
-            Some(ReactiveChange::Doc {
-                entities: vec![entity],
-            })
-        }
+                | oneiron::sync::transport::document_sub_tags::STATE,
+            ..
+        }) => Some(ReactiveChange::Doc {
+            entities: vec![entity],
+        }),
         Ok(SyncMessage::Batch(docs)) => {
             let entities: Vec<_> = docs
                 .into_iter()
                 .filter_map(|doc| match doc {
-                    SyncMessage::Doc { entity, kind, .. }
-                        if matches!(
-                            kind,
+                    SyncMessage::Doc {
+                        entity,
+                        kind:
                             oneiron::sync::transport::document_sub_tags::UPDATE
-                                | oneiron::sync::transport::document_sub_tags::STATE
-                        ) =>
-                    {
-                        Some(entity)
-                    }
+                            | oneiron::sync::transport::document_sub_tags::STATE,
+                        ..
+                    } => Some(entity),
                     _ => None,
                 })
                 .collect();

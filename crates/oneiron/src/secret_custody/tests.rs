@@ -1143,7 +1143,7 @@ fn custody_replay_name_index_is_atomic_and_cannot_displace_live_name() -> crate:
         b"first",
         vec![],
     );
-    let live = vault.register_secret(original.clone())?;
+    let live = vault.register_secret(original)?;
     let incoming = record(
         "shared-name",
         CustodyClass::CustodyPortable,

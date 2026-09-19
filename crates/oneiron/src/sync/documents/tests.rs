@@ -22,7 +22,7 @@ fn document_crash_child() {
     let vault = Arc::new(Vault::open(path, VaultConfig::device()).unwrap());
     let id = EntityId::from_bytes([3; 16]).unwrap();
     seed(&vault, id);
-    let registry = DocumentRegistry::new(vault.clone());
+    let registry = DocumentRegistry::new(vault);
     let doc = registry.open(id).unwrap();
     doc.edit_text(0, 0, "snapshot").unwrap();
     drop(doc);
@@ -119,7 +119,7 @@ fn offline_document_journal_survives_eviction_and_clears_only_on_covering_ack() 
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     let id = EntityId::now();
     seed(&vault, id);
-    let registry = DocumentRegistry::new(vault.clone());
+    let registry = DocumentRegistry::new(vault);
     let doc = registry.open(id).unwrap();
     doc.edit_text(0, 0, "offline").unwrap();
     drop(doc);

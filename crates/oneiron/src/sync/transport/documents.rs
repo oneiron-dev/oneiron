@@ -147,7 +147,7 @@ mod tests {
             ]
         );
         assert!(
-            encode_document_batch(&[batch.clone()])
+            encode_document_batch(std::slice::from_ref(&batch))
                 .into_result()
                 .is_err()
         );

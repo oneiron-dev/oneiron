@@ -178,12 +178,12 @@ pub(crate) enum SyncMessage {
 
 /// Parses a raw wire message into a typed SyncMessage.
 pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
-    if data.is_empty() {
-        return Err(ProtocolError::InvalidPayload("empty message"));
-    }
     use oneiron::sync::transport::{
         TAG_BATCH, TAG_DOCUMENT, decode_document, decode_document_batch,
     };
+    if data.is_empty() {
+        return Err(ProtocolError::InvalidPayload("empty message"));
+    }
     let tag = data[0];
     let payload = &data[1..];
 
