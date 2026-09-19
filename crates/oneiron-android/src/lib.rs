@@ -95,8 +95,8 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_getNative(
 ) -> jbyteArray {
     run(&mut env, |env| {
         let id: String = env.get_string(&id).map_err(display)?.into();
-        // SAFETY: same synchronized, private instance field as putNative.
         let bytes = {
+            // SAFETY: same synchronized, private instance field as putNative.
             let vault: MutexGuard<'_, NativeVault> =
                 unsafe { env.get_rust_field(&object, "nativeHandle") }.map_err(display)?;
             vault.get(&id)?
@@ -104,7 +104,7 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_getNative(
         match bytes {
             Some(bytes) => env
                 .byte_array_from_slice(&bytes)
-                .map(|array| array.into_raw())
+                .map(JByteArray::into_raw)
                 .map_err(display),
             None => Ok(std::ptr::null_mut()),
         }
