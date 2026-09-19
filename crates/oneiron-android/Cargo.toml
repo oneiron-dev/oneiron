@@ -1,0 +1,21 @@
+[package]
+name = "oneiron-android"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Android JNI adapter for the embedded Oneiron engine"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+oneiron = { path = "../oneiron" }
+jni = "0.21.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
