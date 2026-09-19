@@ -46,6 +46,7 @@ pub fn forward_rematerialize(
     materializer: &Materializer,
     window_key: &WindowKey,
 ) -> Result<u32> {
+    let documents = crate::recovery::validate_window_documents(doc)?;
     let _guard = materializer.lock();
     let lease_vault_id = materializer.lease_vault_id();
     let entities_map = doc.get_map("entities");
@@ -81,6 +82,7 @@ pub fn forward_rematerialize(
     // tombstones, then the marker settle below. The tombstone call has no
     // `?`: its error stays deferred past the marker txn (Trap 2).
     entity_pass::run(&ctx, &mut ledger)?;
+    crate::recovery::materialize_retained_shells(vault, doc)?;
     edge_pass::run(&ctx, &mut ledger)?;
     let tombstone_outcome = tombstone_pass::run(&ctx, &mut ledger);
 
@@ -223,5 +225,6 @@ pub fn forward_rematerialize(
         );
     }
 
+    crate::recovery::materialize_window_documents(vault, doc, &documents)?;
     Ok(ledger.count)
 }

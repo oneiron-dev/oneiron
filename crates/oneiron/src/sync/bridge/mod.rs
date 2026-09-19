@@ -22,6 +22,8 @@ mod companion_identity;
 mod edges;
 mod entities;
 mod observers;
+mod recovery;
+pub(crate) use recovery::preflight_canonical_recovery;
 mod tombstones;
 
 // Anchor for the unchanged `super::diagnostic_ingest` body path in entities.rs:

@@ -272,6 +272,14 @@ pub enum ErrorKind {
     VaultCleanupProposalNotFound,
     VaultCleanupWakeTriggerRejected,
     VaultRead,
+    StreamAlreadyActive,
+    StreamNotActive,
+    StreamLimit,
+    DagParentOutsideConversation,
+    HeadAdvanceOffTrunk,
+    InvalidConversationDag,
+    InvalidScopeSummary,
+    OverlayLimit,
 }
 
 /// Crate error type.
@@ -521,7 +529,9 @@ impl Error {
             // ONE-1449: the gate committed nothing, so the same call over a
             // settled ledger is the whole remedy. This is the one arm a
             // scheduler reads to tell "retry me" from "answered no".
-            Self::Artifact(ArtifactError::SkillEditGateRetry(_)) => true,
+            Self::Artifact(
+                ArtifactError::SkillEditGateRetry(_) | ArtifactError::OverlayLimit { .. },
+            ) => true,
             // Transient by construction: the refusal clears once the last
             // external window handle drops (ONE-1150).
             #[cfg(feature = "sync")]

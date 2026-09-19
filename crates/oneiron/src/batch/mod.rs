@@ -17,6 +17,10 @@ mod lexical_query_hints;
 mod ops_pipeline;
 mod phonetic_apply;
 mod put_apply;
+#[cfg(feature = "sync")]
+mod recovery_shell;
+#[cfg(feature = "sync")]
+pub(crate) use recovery_shell::restore_recovery_shell_in_txn;
 mod short_id;
 mod thread_claim_index;
 mod txn_builder;
