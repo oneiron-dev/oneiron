@@ -362,6 +362,7 @@ fn normalized_error(error: &VaultReadError) -> String {
             format!("invalid_request:{method:?}:{field}")
         }
         VaultReadError::Engine {
+            narrowing: None,
             method,
             engine_code,
             ..
@@ -857,6 +858,7 @@ fn serialization_round_trip() {
     let envelope = VaultReadResponse::Query(query_response);
     assert_eq!(round_trip(&envelope), envelope);
     let error = VaultReadError::Engine {
+        narrowing: None,
         method: VaultReadMethod::Hydrate,
         engine_code: "NOT_FOUND".to_owned(),
         message: "short_id was not found".to_owned(),

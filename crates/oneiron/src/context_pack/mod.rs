@@ -33,3 +33,5 @@ pub use types::{
     PackStats, PackTokenStats, TokenAllocation,
 };
 pub use world_partition::WORLD_STALE_FIELD;
+
+pub(crate) use hydration::context_entity_matches_read_snapshot;

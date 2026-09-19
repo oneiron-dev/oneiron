@@ -28,6 +28,7 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) scores: Vec<ScoredEntity>,
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(super) claim_gate: ClaimStatusGateCache,
+    pub(super) read_suppressed: usize,
     pub(super) deferred_ppr_cache_writes: Vec<crate::ppr::DeferredPprCacheWrite>,
     pub(super) cosine_ghosts_dampened: usize,
     pub(super) total_in_scope: usize,

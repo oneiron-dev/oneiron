@@ -24,6 +24,7 @@ fn error_variants(method: VaultReadMethod) -> [VaultReadError; 6] {
             method,
         },
         VaultReadError::Engine {
+            narrowing: None,
             method,
             engine_code: "CUSTOM_ENGINE_CODE".to_owned(),
             message: "preserve the engine detail".to_owned(),

@@ -87,7 +87,12 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                         vec![
                             GraphFsEntry::directory("claims"),
                             GraphFsEntry::directory("backlinks"),
-                            GraphFsEntry::file("body", self.scoped_read.get(&id)?.map(|b| b.len())),
+                            GraphFsEntry::file(
+                                "body",
+                                self.scoped_read
+                                    .get_entity_parts(&id)?
+                                    .map(|(_, _, b)| b.len()),
+                            ),
                         ],
                         cursor,
                     ))
@@ -133,7 +138,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
-                let Some(bytes) = self.scoped_read.get(&id)? else {
+                let Some((_, _, bytes)) = self.scoped_read.get_entity_parts(&id)? else {
                     return Ok(None);
                 };
                 Ok(Some(GraphFsFile {

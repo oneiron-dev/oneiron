@@ -664,13 +664,12 @@ impl<'a> PipelineBuilder<'a> {
         // pending vectors to the caller for inline handling and never writes
         // a `pe:` marker or an embed job row — there is no overlay `pe:`
         // keyspace, so redirecting is not an option and skipping is the rule.
-        // The test is whether rows STAGE, not whether a session is attached:
-        // an on-record room's retrieval is an ordinary base one and enqueues
-        // like any other.
+        // Absence of an overlay is not permission to persist: anonymous
+        // routes discard all writes. Only an explicit Base route enqueues.
         #[cfg(feature = "sync")]
-        let enqueue = !self
+        let enqueue = self
             .session
-            .is_some_and(crate::off_record::SessionRetrievalTelemetry::stages_in_overlay);
+            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base);
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
         #[cfg(feature = "sync")]

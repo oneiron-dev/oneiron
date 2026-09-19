@@ -132,6 +132,11 @@ pub struct CoreQueryMeta {
 /// Query response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreQueryResponse {
+    /// Authorized references plus a typed withheld-data notice.
+    #[serde(flatten)]
+    pub access: crate::access_grant::GrantedData<String>,
+    /// Mandatory read clamp receipt, including un-narrowed reads.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Projected page of admitted entities.
     pub items: Vec<CoreEntityRecord>,
     /// Reserved cursor field; this contract version never paginates.
@@ -171,6 +176,8 @@ pub enum CoreHydrateStatus {
 /// Hydrate response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreHydrateResponse {
+    /// Mandatory read clamp receipt, including un-narrowed reads.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Hydrate state for the resolved short ref.
     pub status: CoreHydrateStatus,
     /// Requested short id without content hash.
@@ -241,6 +248,8 @@ pub struct CoreBatchShortIdHydrateItem {
 /// Batch hydrate response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreBatchShortIdHydrateResponse {
+    /// Mandatory read clamp receipt, including un-narrowed reads.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Per-input results, in caller order.
     pub results: Vec<CoreBatchShortIdHydrateItem>,
 }

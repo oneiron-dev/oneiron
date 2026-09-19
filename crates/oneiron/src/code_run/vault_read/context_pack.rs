@@ -302,6 +302,11 @@ pub struct CoreContextPackEmpty {
 /// Field-for-field local projection of the public `ContextPack`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreContextPackProjection {
+    /// Authorized references plus a typed withheld-data notice.
+    #[serde(flatten)]
+    pub access: crate::access_grant::GrantedData<String>,
+    /// Mandatory actor-ceiling intersection receipt.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Primary results.
     pub results: Vec<CoreContextPackEntityRecord>,
     /// Edge-walk neighbors.

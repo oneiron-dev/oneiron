@@ -394,12 +394,21 @@ impl Vault {
         content_hash: u8,
     ) -> Result<Option<HydratedShortId>> {
         let rtxn = self.store.env.read_txn()?;
+        self.hydrate_short_id_in(&rtxn, short_id, content_hash)
+    }
+
+    pub(crate) fn hydrate_short_id_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        short_id: &str,
+        content_hash: u8,
+    ) -> Result<Option<HydratedShortId>> {
         let forward_key = encode_short_id_forward_key(short_id, content_hash);
-        let raw_id = match self.store.short_ids.get(&rtxn, &forward_key)? {
+        let raw_id = match self.store.short_ids.get(rtxn, &forward_key)? {
             Some(raw_id) => raw_id.to_vec(),
             None => {
                 let Some(ShortIdAliasTarget::EntityForwardKey(canonical_key)) =
-                    self.store.resolve_short_id_alias(&rtxn, short_id)?
+                    self.store.resolve_short_id_alias(rtxn, short_id)?
                 else {
                     // No alias, or one naming a vault — neither resolves to an
                     // entity here.
@@ -411,7 +420,7 @@ impl Vault {
                 if target_hash != content_hash {
                     return Ok(None);
                 }
-                let Some(raw_id) = self.store.short_ids.get(&rtxn, &canonical_key)? else {
+                let Some(raw_id) = self.store.short_ids.get(rtxn, &canonical_key)? else {
                     return Ok(None);
                 };
                 raw_id.to_vec()
@@ -426,7 +435,7 @@ impl Vault {
         )
         .map_err(|_| Error::CorruptedIndex("short id entity id"))?;
 
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(Some(HydratedShortId {
                 id,
                 entity_type: 0,
@@ -448,7 +457,7 @@ impl Vault {
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-        if self.archive_tombstone_in_txn(&rtxn, &id)?.is_some() {
+        if self.archive_tombstone_in_txn(rtxn, &id)?.is_some() {
             return Ok(Some(HydratedShortId {
                 id,
                 entity_type,
@@ -457,10 +466,9 @@ impl Vault {
                 body: None,
             }));
         }
-        drop(rtxn);
 
         if body.is_empty()
-            && let Some(deletion) = self.entity_deletion_metadata(&id, learned_at)?
+            && let Some(deletion) = self.entity_deletion_metadata_in(rtxn, &id, learned_at)?
         {
             return Ok(Some(HydratedShortId {
                 id,

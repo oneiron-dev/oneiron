@@ -22,6 +22,60 @@ use super::builder::HydrateOptions;
 use super::edge_walk::load_entity_edges;
 use super::types::ContextEntity;
 
+/// A final scoped filter may run after hydration's snapshot. Never authorize
+/// old projected bytes using a newly changed row. Clipped text is safe only
+/// when it is still a prefix of the currently authorized value.
+pub(crate) fn context_entity_matches_read_snapshot(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    entity: &ContextEntity,
+) -> Result<bool> {
+    let Some(raw) = vault.store.entities.get(txn, entity.id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != entity.entity_type {
+        return Ok(false);
+    }
+    if let Some(fields) = &entity.fields {
+        let current = if header.entity_type == ENTITY_TYPE_CLAIM {
+            claim_fields_to_json(&crate::claim::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )?)
+        } else {
+            decode_entity_fields(&raw, header.entity_type).unwrap_or_default()
+        };
+        for (key, value) in fields {
+            if key == super::WORLD_STALE_FIELD {
+                continue;
+            }
+            let Some(now) = current.get(key) else {
+                return Ok(false);
+            };
+            if value == now {
+                continue;
+            }
+            let safe_prefix = value.as_str().zip(now.as_str()).is_some_and(|(old, now)| {
+                let old = old
+                    .strip_suffix('…')
+                    .or_else(|| old.strip_suffix("..."))
+                    .unwrap_or(old);
+                now.starts_with(old)
+            });
+            if !safe_prefix {
+                return Ok(false);
+            }
+        }
+    }
+    if let Some(vector) = &entity.vector {
+        if read_vector(vault, txn, &entity.id)?.as_ref() != Some(vector) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Hydrates one entity for the context pack.
 ///
 /// Type-0 (CLAIM) records pass through the D19 status gate here too — pack

@@ -6,7 +6,11 @@ mod agents;
 mod frame;
 mod hydration;
 mod memories;
+mod memories_frame;
 mod memories_projection;
+mod memory_pins;
+pub use memories::MemoryTier;
+pub use memories_frame::assemble_memories_sections;
 mod plugin;
 mod stream;
 
@@ -112,7 +116,6 @@ mod test_support {
             failure: None,
             events: Vec::new(),
             children: Vec::new(),
-            gate_breaker_paused: false,
         }
     }
 }

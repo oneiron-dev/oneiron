@@ -6,8 +6,6 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-#[cfg(feature = "sync")]
-use crate::error::SyncError;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
@@ -265,41 +263,56 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
+        let txn = self.store.env.read_txn()?;
+        self.entity_deletion_metadata_in(&txn, id, learned_at)
+    }
+
+    pub(crate) fn entity_deletion_metadata_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+    ) -> Result<Option<HydratedShortIdDeletion>> {
         let window_label = window_label_from_timestamp(learned_at);
         let pending_key = pending_tombstone_key(&window_label, id);
-        let rtxn = self.store.env.read_txn()?;
-        if let Some(value) = self.store.sync_state.get(&rtxn, pending_key.as_str())? {
+        if let Some(value) = self.store.sync_state.get(txn, pending_key.as_str())? {
             return Ok(Some(Self::deletion_metadata_from_tombstone_value(
                 HydratedShortIdDeletionSource::PendingTombstone,
                 &value,
             )));
         }
-        drop(rtxn);
-
         #[cfg(feature = "sync")]
         {
-            use crate::sync::loro_support::tombstone_values_for_id;
-            use crate::sync::types::WindowKey;
-
-            let window_key = WindowKey::from_timestamp(learned_at);
-            match crate::sync::window::load_window_from_state(self, "local", &window_key) {
-                Ok(doc) => Ok(
-                    Self::select_tombstone_metadata_value(&tombstone_values_for_id(
-                        &doc.get_map("tombstones"),
-                        id,
-                    ))
-                    .map(|value| {
-                        Self::deletion_metadata_from_tombstone_value(
-                            HydratedShortIdDeletionSource::Tombstone,
-                            value,
-                        )
-                    }),
-                ),
-                Err(Error::Sync(SyncError::WindowNotFound { .. })) => Ok(None),
-                Err(error) => Err(error),
+            use crate::sync::loro_support::{
+                doc_from_snapshot, import_doc, tombstone_values_for_id,
+            };
+            let snapshot_key = format!("d:w:{window_label}");
+            let Some(snapshot) = self.store.sync_state.get(txn, snapshot_key.as_str())? else {
+                return Ok(None);
+            };
+            let doc = doc_from_snapshot(&snapshot)?;
+            let update_prefix = format!("u:w:{window_label}:");
+            for entry in self
+                .store
+                .sync_state
+                .prefix_iter(txn, update_prefix.as_str())?
+            {
+                let (_, update) = entry?;
+                import_doc(&doc, &update)?;
             }
+            Ok(
+                Self::select_tombstone_metadata_value(&tombstone_values_for_id(
+                    &doc.get_map("tombstones"),
+                    id,
+                ))
+                .map(|value| {
+                    Self::deletion_metadata_from_tombstone_value(
+                        HydratedShortIdDeletionSource::Tombstone,
+                        value,
+                    )
+                }),
+            )
         }
-
         #[cfg(not(feature = "sync"))]
         {
             Ok(None)

@@ -182,6 +182,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
             },
             "rows": [
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 0,
                     "slot": "claims",
                     "source": "result",
@@ -192,6 +196,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 1.0
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 1,
                     "slot": "claims",
                     "source": "result",
@@ -202,6 +210,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 0.50
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 2,
                     "slot": "turns",
                     "source": "result",
@@ -212,6 +224,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 0.25
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 3,
                     "slot": "companions",
                     "source": "result",

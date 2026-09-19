@@ -84,6 +84,7 @@ fn put_indexed_manifest_at_two(vault: &Vault, id: EntityId, data: &[u8]) -> Resu
     );
 
     let mut wtxn = vault.store.env.write_txn()?;
+    crate::gate::stamp_manifest_origin(&vault.store, &mut wtxn, &id, data, false)?;
     vault
         .store
         .entities

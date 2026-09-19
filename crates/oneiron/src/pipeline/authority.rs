@@ -42,11 +42,12 @@ pub(super) fn apply_types(
 ) -> crate::Result<()> {
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        if metadata
-            .get(store, txn, &scored.id)?
-            .is_some_and(|meta| type_allowed(filter, store, meta.entity_type))
-        {
-            kept.push(scored);
+        if let Some(meta) = metadata.get(store, txn, &scored.id)? {
+            if type_allowed(filter, store, meta.entity_type) {
+                kept.push(scored);
+            } else {
+                metadata.read_suppressed.insert(scored.id);
+            }
         }
     }
     *scores = kept;
@@ -65,6 +66,7 @@ pub(super) fn candidate_allowed(
         return Ok(false);
     };
     if !type_allowed(filter, store, meta.entity_type) {
+        metadata.read_suppressed.insert(*id);
         return Ok(false);
     }
     if meta.entity_type != ENTITY_TYPE_CLAIM {
@@ -73,11 +75,15 @@ pub(super) fn candidate_allowed(
     if !claim_status_gate_allows(store, txn, id, metadata, gate)? {
         return Ok(false);
     }
-    Ok(gate
+    let allowed = gate
         .decisions
         .get(id)
         .and_then(Option::as_ref)
-        .is_some_and(|body| claim_allowed(filter, body)))
+        .is_some_and(|body| claim_allowed(filter, body));
+    if !allowed {
+        metadata.read_suppressed.insert(*id);
+    }
+    Ok(allowed)
 }
 
 pub(super) fn apply(

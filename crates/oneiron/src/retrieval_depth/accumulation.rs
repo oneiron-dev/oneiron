@@ -5,6 +5,7 @@ use super::*;
 /// Ordered, deduplicated merge of every channel a read ran.
 #[derive(Default)]
 pub(super) struct DepthAccumulator {
+    pub(super) narrowing: Vec<crate::claim::ScopedReadReceipt>,
     /// Entity ids in first-seen order; the read's ranking before any rerank.
     pub(super) order: Vec<EntityId>,
     /// Best engine score seen for each id, across channels.
@@ -90,16 +91,17 @@ impl DepthAccumulator {
     /// actor-keyed door the hits came from, so a rerank cannot see a body the
     /// ranking itself was not allowed to.
     pub(super) fn candidate_claim_bodies(
-        &self,
+        &mut self,
         scoped: &ScopedRead<'_>,
     ) -> Result<Vec<Option<crate::claim::ClaimBody>>> {
+        let read = scoped.get_entities_parts_with_receipt(&self.order, None)?;
+        self.narrowing.push(read.receipt);
         let mut bodies = Vec::with_capacity(self.order.len());
-        for id in &self.order {
-            let decoded = match scoped.get_entity_parts(id)? {
+        for parts in read.value {
+            bodies.push(match parts {
                 Some((ENTITY_TYPE_CLAIM, _, body)) => Some(decode_claim_body(&body, true)?),
                 _ => None,
-            };
-            bodies.push(decoded);
+            });
         }
         Ok(bodies)
     }
@@ -133,6 +135,18 @@ impl DepthAccumulator {
         self.order = ranked.into_iter().map(|(_, id)| id).collect();
     }
 
+    pub(super) fn finish_scoped(
+        self,
+        scoped: &ScopedRead<'_>,
+        limit: usize,
+    ) -> Result<DepthSearchResult> {
+        let mut result = self.finish(limit);
+        let filtered = scoped.filter_scored_entities(result.hits)?;
+        result.narrowing.push(filtered.receipt);
+        result.hits = filtered.value;
+        Ok(result)
+    }
+
     pub(super) fn finish(self, limit: usize) -> DepthSearchResult {
         let hits = self
             .order
@@ -145,6 +159,7 @@ impl DepthAccumulator {
             .collect();
         let retrieval_quality = classify_retrieval_quality(&self.retrieval_diagnostics);
         DepthSearchResult {
+            narrowing: self.narrowing,
             hits,
             queries_run: self.queries_run,
             signals_used: self.signals,

@@ -151,6 +151,7 @@ pub struct BoardSection {
     detail_rows: Vec<String>,
     count_rows: Vec<String>,
     policy: SectionPolicy,
+    foreign_host: Option<String>,
 }
 
 impl BoardSection {
@@ -203,7 +204,16 @@ impl BoardSection {
             detail_rows,
             count_rows,
             policy,
+            foreign_host: None,
         })
+    }
+
+    /// Foreign-vault sections render outside the authoritative memory wrapper.
+    /// Host attribution is a typed leaf, never parsed from rendered content.
+    #[must_use]
+    pub fn with_foreign_host(mut self, host: impl Into<String>) -> Self {
+        self.foreign_host = Some(host.into());
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -469,11 +479,26 @@ fn render_candidate(
         budget.cap_tok
     ));
     lines.push(format!("legend: {}", xml_text_token(frame.legend.as_str())));
-    for section in sections {
+    for (section, original) in sections.iter().zip(frame.sections) {
+        if original.foreign_host.is_some() {
+            continue;
+        }
         lines.push(xml_text_token(&section.name));
         lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
     }
     lines.push("</memory>".to_owned());
+    for (section, original) in sections.iter().zip(frame.sections) {
+        let Some(host) = original.foreign_host.as_deref() else {
+            continue;
+        };
+        lines.push(format!(
+            "<evidence role=\"guest\" host=\"{}\" consolidatable=\"false\">",
+            xml_attr_token(host)
+        ));
+        lines.push(xml_text_token(&section.name));
+        lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
+        lines.push("</evidence>".to_owned());
+    }
     lines.join("\n")
 }
 

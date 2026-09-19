@@ -1022,3 +1022,37 @@ fn eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index() {
     assert!(matches!(exit, ExitCode::FAILURE));
     assert_eq!(stored_analyzer_manifest_hash(&vault_path, &config), before);
 }
+
+#[test]
+fn scoped_read_receipt_drives_a_non_widening_replan() {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = open_vault(dir.path());
+    let reader = vault.scoped_read(oneiron::claim::ScopedReadActorKey::new("eval-reader").unwrap());
+    let request = oneiron::gate::RetrievalFilter {
+        include_stale: Some(true),
+        ..Default::default()
+    };
+    let first = reader
+        .search_text("receipt-replan-absent", 1, Some(&request))
+        .unwrap();
+    assert!(
+        first
+            .receipt
+            .replan_hint
+            .iter()
+            .any(|axis| axis == "include_stale")
+    );
+    let mut replanned = request;
+    // The benchmark consumer acts on the typed hint rather than parsing prose.
+    for axis in &first.receipt.replan_hint {
+        if axis == "include_stale" {
+            replanned.include_stale = Some(first.receipt.applied.include_stale);
+        }
+    }
+    let second = reader
+        .search_text("receipt-replan-absent", 1, Some(&replanned))
+        .unwrap();
+    assert!(second.receipt.replan_hint.is_empty());
+    assert_eq!(second.receipt.requested, second.receipt.applied);
+    assert_eq!(second.receipt.applied, first.receipt.applied);
+}

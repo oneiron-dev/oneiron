@@ -165,6 +165,9 @@ pub struct DepthSearchRequest<'a> {
 /// The result of one effort-dialed read, plus what it cost to produce.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DepthSearchResult {
+    /// In-memory receipts for executed channels and the final restrictive read.
+    /// Counts are per evaluation; the same row can be excluded by two channels.
+    pub narrowing: Vec<crate::claim::ScopedReadReceipt>,
     /// Admitted hits, best first, at most `limit` of them.
     pub hits: Vec<ScoredEntity>,
     /// The text queries this read actually executed, in order.
@@ -349,7 +352,7 @@ pub(crate) fn execute(
     run_direct_channel(scoped, request, &mut acc)?;
 
     if request.effort == Effort::Minimal {
-        return Ok(acc.finish(request.limit));
+        return acc.finish_scoped(scoped, request.limit).map_err(Into::into);
     }
 
     run_subquery_channels(scoped, request, &mut acc)?;
@@ -357,7 +360,7 @@ pub(crate) fn execute(
     acc.fuse();
 
     if request.effort == Effort::Standard {
-        return Ok(acc.finish(request.limit));
+        return acc.finish_scoped(scoped, request.limit).map_err(Into::into);
     }
 
     let backend = request
@@ -372,7 +375,7 @@ pub(crate) fn execute(
             failure.tokens_used = failure.tokens_used.saturating_add(acc.tokens_used);
             failure
         })?;
-    Ok(acc.finish(request.limit))
+    acc.finish_scoped(scoped, request.limit).map_err(Into::into)
 }
 
 /// Fail-closed preflight. The HTTP surface checks the same three things to
@@ -417,7 +420,8 @@ fn run_direct_channel(
             acc.mark(SIGNAL_TEXT);
             acc.attempt(RetrievalSignal::Text);
             let hits = scoped.search_text(query, request.channel_limit(scoped, true)?, None)?;
-            acc.merge(request.narrow_hits(scoped, hits)?);
+            acc.narrowing.push(hits.receipt);
+            acc.merge(request.narrow_hits(scoped, hits.value)?);
             acc.complete(RetrievalSignal::Text);
             acc.record_query(query.clone());
         }
@@ -426,7 +430,8 @@ fn run_direct_channel(
             acc.attempt(RetrievalSignal::Vector);
             let hits =
                 scoped.search_vector(embedding, request.channel_limit(scoped, false)?, None)?;
-            acc.merge(request.narrow_hits(scoped, hits)?);
+            acc.narrowing.push(hits.receipt);
+            acc.merge(request.narrow_hits(scoped, hits.value)?);
             acc.complete(RetrievalSignal::Vector);
             // No query recorded: a float vector is not a string a later
             // channel could compare against, and `signals_used` is where a
@@ -457,7 +462,8 @@ fn run_subquery_channels(
         acc.mark(SIGNAL_SUBQUERIES);
         acc.attempt(RetrievalSignal::Text);
         let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
-        acc.merge(request.narrow_hits(scoped, hits)?);
+        acc.narrowing.push(hits.receipt);
+        acc.merge(request.narrow_hits(scoped, hits.value)?);
         acc.complete(RetrievalSignal::Text);
         acc.record_query(subquery);
     }
@@ -534,7 +540,8 @@ fn run_deep_rounds(
         for subquery in round {
             acc.attempt(RetrievalSignal::Text);
             let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
-            acc.merge(request.narrow_hits(scoped, hits)?);
+            acc.narrowing.push(hits.receipt);
+            acc.merge(request.narrow_hits(scoped, hits.value)?);
             acc.complete(RetrievalSignal::Text);
             acc.record_query(subquery);
         }
