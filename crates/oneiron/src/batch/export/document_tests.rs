@@ -536,7 +536,10 @@ fn whole_vault_model_restore_reports_local_creation_and_repeat_mapping() -> Resu
     );
     let second = target.import_whole_vault_json(bytes.bytes())?;
     assert_eq!(second.inserted_entities, 0);
-    assert_eq!(second.unchanged_entities, 2);
+    assert_eq!(
+        second.unchanged_entities,
+        first.inserted_entities + first.unchanged_entities
+    );
     assert_eq!(
         target.get_claim(&claim)?.unwrap().subject,
         ClaimSubject::Entity(local)
