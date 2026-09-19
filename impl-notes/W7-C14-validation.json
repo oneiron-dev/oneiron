@@ -193,5 +193,72 @@
     "command": "python3 -m unittest discover -s scripts/tests -p test_office_staging.py -v",
     "passed": 4,
     "failed": 0
+  },
+  "retained_native_cli": {
+    "test": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "test",
+        "--locked",
+        "-p",
+        "oneiron-xlsx-formula",
+        "--test",
+        "session",
+        "native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback"
+      ],
+      "exit_code": 0
+    },
+    "clippy": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron-xlsx-formula",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0
+    },
+    "fmt": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "fmt",
+        "-p",
+        "oneiron-xlsx-formula",
+        "--check"
+      ],
+      "exit_code": 0,
+      "started_at": 1789816315.61102,
+      "finished_at": 1789816828.705085
+    },
+    "test_summary": "1 passed, 0 failed; 17 unchanged session tests filtered",
+    "executable": {
+      "executable_sha256": "a627b1f69e1ea86144d5ca9cc188e5aa128e350ee007db78d60f246bce5e2203",
+      "source_commit": "276943eb",
+      "adapter": "oneiron-xlsx-formula 0.1.0+formualizer.0.9.3",
+      "precision_fallback": false
+    }
   }
 }
