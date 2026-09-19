@@ -48,6 +48,10 @@ pub fn forward_rematerialize(
 ) -> Result<u32> {
     let documents = crate::recovery::validate_window_documents(doc)?;
     let _guard = materializer.lock();
+    {
+        let txn = vault.store.env.read_txn()?;
+        documents.preflight_note_recovery(vault, &txn)?;
+    }
     let lease_vault_id = materializer.lease_vault_id();
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");

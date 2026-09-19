@@ -1,7 +1,9 @@
-//! Canonical entity-local documents and their bound head-move receipts.
+//! Canonical entity-local documents and their bound workflows.
 
 #[cfg(feature = "sync")]
-use loro::ExportMode;
+mod materialize;
+mod workflow;
+
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -141,6 +143,7 @@ pub(super) fn capture(
         .sort_by_key(|row| (row.entity_id, row.head));
     snapshot.document_heads.sort_by_key(|row| row.entity_id);
     snapshot.head_move_receipts.sort_by_key(|row| row.id);
+    workflow::capture(vault, txn, snapshot, &ids)?;
     Ok(())
 }
 pub(super) fn from_doc(
@@ -196,6 +199,8 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         doc_snapshots: Vec::new(),
         document_heads: Vec::new(),
         head_move_receipts: Vec::new(),
+        note_forks: Vec::new(),
+        note_proposals: Vec::new(),
         container_manifests: Vec::new(),
         schema_manifest: super::CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
@@ -228,15 +233,45 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         }
         snapshot.head_move_receipts.push(value);
     }
+    for (key, bytes) in super::canonical::binary_rows(doc, "note_forks")? {
+        let value: crate::note::NoteFork = workflow::decode(&bytes)?;
+        if parse_id(&key)? != *value.fork.as_bytes() {
+            return Err(invalid("fork carrier key"));
+        }
+        snapshot.note_forks.push(value);
+    }
+    for (key, bytes) in super::canonical::binary_rows(doc, "note_proposals")? {
+        let value: crate::note::NoteReviewBundle = workflow::decode(&bytes)?;
+        if parse_id(&key)? != *value.id.as_bytes() {
+            return Err(invalid("proposal carrier key"));
+        }
+        snapshot.note_proposals.push(value);
+    }
     // Only source owners referenced by a document are needed for its validation.
     // Other entity validation remains at the existing forward entity door.
-    let owners: BTreeSet<_> = snapshot
+    let mut owners: BTreeSet<_> = snapshot
         .doc_snapshots
         .iter()
         .map(|row| row.entity_id)
         .chain(snapshot.document_heads.iter().map(|row| row.entity_id))
         .chain(snapshot.head_move_receipts.iter().map(|row| row.entity_id))
+        .chain(snapshot.note_forks.iter().map(|row| *row.note.as_bytes()))
+        .chain(
+            snapshot
+                .note_proposals
+                .iter()
+                .flat_map(workflow::bundle_notes),
+        )
         .collect();
+    if let LoroValue::Map(roots) = doc.get_value()
+        && roots.contains_key("documents")
+    {
+        for (key, blob) in super::canonical::binary_rows(doc, "entities")? {
+            if blob.len() > crate::batch::ENTITY_METADATA_HEADER_LEN {
+                owners.insert(parse_id(&key)?);
+            }
+        }
+    }
     for owner in owners {
         let Some(ValueOrContainer::Value(LoroValue::Binary(blob))) =
             doc.get_map("entities").get(&id(owner)?.to_hex())
@@ -263,89 +298,9 @@ pub(crate) fn materialize_window_documents(
     doc: &LoroDoc,
     snapshot: &CanonicalSnapshot,
 ) -> Result<()> {
-    // Construct all fresh document exports before taking a write transaction.
-    let exports = snapshot
-        .doc_snapshots
-        .iter()
-        .map(|row| {
-            Ok((
-                row,
-                row.rebuild()?
-                    .export(ExportMode::Snapshot)
-                    .map_err(|_| invalid("document export"))?,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    vault.with_write_txn(|txn| {
-        let mut admitted = BTreeSet::new();
-        for entity in &snapshot.entity_blobs {
-            let owner = id(entity.id)?;
-            if crate::sync::loro_support::tombstone_map_contains_id(
-                &doc.get_map("tombstones"),
-                &owner,
-            ) || vault.local_hard_delete_marker_exists_in_txn(txn, &owner)?
-            {
-                continue;
-            }
-            let Some(raw) = vault.store.entities.get(txn, owner.as_bytes())? else {
-                continue;
-            };
-            // A quarantined/divergent core cannot lend authority to document bytes.
-            if raw.as_ref() != entity.blob.as_slice() {
-                return Err(invalid("document core was not admitted"));
-            }
-            admitted.insert(entity.id);
-        }
-        for (row, bytes) in &exports {
-            if !admitted.contains(&row.entity_id) {
-                continue;
-            }
-            let same = vault
-                .store
-                .sync_state
-                .get(txn, &row.key())?
-                .is_some_and(|current| {
-                    LoroDoc::from_snapshot(&current)
-                        .ok()
-                        .and_then(|old| from_doc(row.entity_id, row.head, &old).ok())
-                        .as_ref()
-                        == Some(*row)
-                });
-            if !same {
-                vault.store.sync_state.put(txn, &row.key(), bytes)?;
-            }
-        }
-        for head in &snapshot.document_heads {
-            if !admitted.contains(&head.entity_id) {
-                continue;
-            }
-            vault
-                .store
-                .vault_meta
-                .put(txn, &head_key(head.entity_id), &head.head)?;
-            let text = &snapshot
-                .doc_snapshots
-                .iter()
-                .find(|row| row.entity_id == head.entity_id && row.head == head.head)
-                .ok_or(invalid("missing head document"))?
-                .text;
-            vault
-                .batch_in()
-                .text(&id(head.entity_id)?, &[("markdown", text.as_str())])
-                .apply(txn)?;
-        }
-        for receipt in &snapshot.head_move_receipts {
-            if !admitted.contains(&receipt.entity_id) {
-                continue;
-            }
-            let key = receipt_key(receipt.id);
-            if let Some(previous) = vault.store.vault_meta.get(txn, &key)?
-                && previous.as_ref() != receipt.receipt.as_slice()
-            {
-                return Err(invalid("immutable head receipt divergence"));
-            }
-            vault.store.vault_meta.put(txn, &key, &receipt.receipt)?;
-        }
-        Ok(())
-    })
+    materialize::run(vault, doc, snapshot)
+}
+
+pub(super) fn validate_workflows(snapshot: &CanonicalSnapshot) -> Result<()> {
+    workflow::validate(snapshot)
 }

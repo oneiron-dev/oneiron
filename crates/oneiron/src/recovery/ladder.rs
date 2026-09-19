@@ -41,6 +41,8 @@ impl RecoveryManifest {
         add("tombstones", pack(&snapshot.tombstones)?);
         add("document_heads", pack(&snapshot.document_heads)?);
         add("head_move_receipts", pack(&snapshot.head_move_receipts)?);
+        add("note_forks", pack(&snapshot.note_forks)?);
+        add("note_proposals", pack(&snapshot.note_proposals)?);
         add("schema", pack(&snapshot.schema_manifest)?);
         add("containers", pack(&snapshot.container_manifests)?);
         for document in &snapshot.doc_snapshots {

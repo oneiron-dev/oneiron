@@ -398,3 +398,405 @@ fn canonical_capture_preserves_absent_roots_and_refuses_nonmap_carriers() -> Res
     assert_eq!(window.get_deep_value(), before);
     Ok(())
 }
+
+fn note_window(vault: &Vault, entities: &[EntityId]) -> Result<LoroDoc> {
+    let window = LoroDoc::new();
+    let txn = vault.store.env.read_txn()?;
+    for entity in entities {
+        canonical::insert(
+            &window,
+            "entities",
+            &entity.to_hex(),
+            &vault.get_raw(entity)?.unwrap(),
+        )?;
+        if vault.get_entity_type(entity)? != Some(crate::registry::ENTITY_TYPE_NOTE) {
+            continue;
+        }
+        for row in vault.store.edges_out.prefix_iter(&txn, entity.as_bytes())? {
+            let (key, value) = row?;
+            let target = EntityId::from_bytes(key[17..].try_into().unwrap())?;
+            canonical::insert(
+                &window,
+                "edges",
+                &format!("{}:{:02}:{}", entity.to_hex(), key[16], target.to_hex()),
+                &value,
+            )?;
+        }
+    }
+    window.commit();
+    Ok(window)
+}
+
+#[test]
+fn canonical_workflows_bind_membership_and_refuse_partial_window_bundles() -> Result<()> {
+    let fixture = fixture()?;
+    let owner = fixture.vault.ensure_embedded_owner_actor().unwrap();
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let second = fixture
+        .vault
+        .create_note("research", "second", actor)
+        .unwrap();
+    let mut forks = Vec::new();
+    for note in [fixture.note, second] {
+        forks.push(
+            fixture
+                .vault
+                .fork_note(
+                    note,
+                    &NoteEdit::Rewrite {
+                        text: "pending".into(),
+                    },
+                    actor,
+                )
+                .unwrap(),
+        );
+    }
+    let bundle = fixture
+        .vault
+        .open_note_proposal(&forks, "two notes", actor)
+        .unwrap();
+    let partial = note_window(&fixture.vault, &[owner, fixture.note])?;
+    assert!(matches!(
+        capture_canonical_window(&fixture.vault, "2026-09", &partial),
+        Err(Error::Artifact(ArtifactError::InvalidRecoveryArtifact(_)))
+    ));
+    let complete = note_window(&fixture.vault, &[owner, fixture.note, second])?;
+    let snapshot = capture_canonical_window(&fixture.vault, "2026-09", &complete)?;
+    assert_eq!(CanonicalSnapshot::decode(&snapshot.encode()?)?, snapshot);
+    let mut bad = snapshot.clone();
+    bad.note_proposals
+        .iter_mut()
+        .find(|row| row.id == bundle.id)
+        .unwrap()
+        .waiting
+        .pop();
+    assert!(bad.validate().is_err());
+    bad = snapshot.clone();
+    bad.note_forks
+        .iter_mut()
+        .find(|row| row.fork == forks[0])
+        .unwrap()
+        .proposal = None;
+    assert!(bad.validate().is_err());
+    bad = snapshot.clone();
+    bad.note_proposals
+        .iter_mut()
+        .find(|row| row.id == bundle.id)
+        .unwrap()
+        .waiting[0]
+        .actor = EntityId::now();
+    assert!(bad.validate().is_err());
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()> {
+    let fixture = fixture()?;
+    let owner = fixture.vault.ensure_embedded_owner_actor().unwrap();
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let agent = EntityId::now();
+    fixture.vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"reviewer",
+    )?;
+    let agent_actor = WriteActor::new(agent, EdgeActorClass::Agent);
+    let second = fixture
+        .vault
+        .create_note("research", "second base", actor)
+        .unwrap();
+    let text_source = EntityId::now();
+    fixture.vault.put_entity(
+        &text_source,
+        crate::registry::ENTITY_TYPE_ASSET_TEXT,
+        TimeRange { start: 2, end: 2 },
+        2,
+        b"inline text",
+    )?;
+    let inline = fixture
+        .vault
+        .create_from_entity(text_source, "research", actor)
+        .unwrap();
+    let mut forks = Vec::new();
+    for note in [fixture.note, second] {
+        let doc = fixture.vault.note_document(note)?.unwrap();
+        forks.push(
+            fixture
+                .vault
+                .fork_note(
+                    note,
+                    &NoteEdit::InsertAfter {
+                        anchor: doc.anchor(doc.text().chars().count())?,
+                        text: " proposed".into(),
+                    },
+                    agent_actor,
+                )
+                .unwrap(),
+        );
+    }
+    let pending = fixture
+        .vault
+        .open_note_proposal(&forks, "unresolved review", agent_actor)
+        .unwrap();
+    assert_eq!(pending.waiting.len(), 2);
+    let doc = fixture.vault.note_document(fixture.note)?.unwrap();
+    fixture
+        .vault
+        .edit_note(
+            fixture.note,
+            &NoteEdit::InsertAfter {
+                anchor: doc.anchor(0)?,
+                text: "concurrent ".into(),
+            },
+            actor,
+        )
+        .unwrap();
+    let unassigned = fixture
+        .vault
+        .fork_note(
+            second,
+            &NoteEdit::Rewrite {
+                text: "standalone rewrite".into(),
+            },
+            actor,
+        )
+        .unwrap();
+    let window = note_window(
+        &fixture.vault,
+        &[owner, agent, fixture.note, second, text_source, inline],
+    )?;
+    let snapshot = capture_canonical_window(&fixture.vault, "2026-09", &window)?;
+    // The native CRDT review is the oracle, including edits made after forking.
+    fixture
+        .vault
+        .review_note_proposal(pending.id, NoteVerdict::Merge, actor)
+        .unwrap();
+    let expected = fixture.vault.note_text(fixture.note)?;
+    let expected_second = fixture.vault.note_text(second)?;
+
+    let dir = tempfile::tempdir()?;
+    let target = Vault::open(dir.path(), VaultConfig::default())?;
+    let path = dir.path().join("manifest");
+    let materializer = crate::sync::bridge::Materializer::new();
+    let recover = || {
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &snapshot,
+            RecoveryBudget::default(),
+        )
+    };
+    let first = recover()?;
+    let target_actor = WriteActor::new(
+        target.ensure_embedded_owner_actor().unwrap(),
+        EdgeActorClass::Human,
+    );
+    let outside = target
+        .create_note("research", "outside", target_actor)
+        .unwrap();
+    let outside_fork = target
+        .fork_note(
+            outside,
+            &NoteEdit::Rewrite {
+                text: "outside replacement".into(),
+            },
+            target_actor,
+        )
+        .unwrap();
+    let outside_bundle = target
+        .open_note_proposal(&[outside_fork], "outside pending", target_actor)
+        .unwrap();
+    let outside_window = note_window(&target, &[target_actor.entity_ref(), outside])?;
+    let outside_before = capture_canonical_window(&target, "2026-10", &outside_window)?;
+    assert_eq!(target.note_proposal(pending.id)?.waiting.len(), 2);
+    assert_eq!(
+        capture_canonical_window(&target, "2026-09", &first.window)?,
+        snapshot
+    );
+
+    // Stale fork, proposal and receipt rows, changed document text, and a
+    // mismatched head pointer must be replaced only inside the admitted scope.
+    let doc = target.note_document(fixture.note)?.unwrap();
+    let stale = target
+        .fork_note(
+            fixture.note,
+            &NoteEdit::InsertAfter {
+                anchor: doc.anchor(0)?,
+                text: "stale ".into(),
+            },
+            target_actor,
+        )
+        .unwrap();
+    let stale_bundle = target
+        .open_note_proposal(&[stale], "stale landed", target_actor)
+        .unwrap();
+    assert_eq!(stale_bundle.landed.len(), 1);
+    let extra = target
+        .fork_note(
+            fixture.note,
+            &NoteEdit::Rewrite {
+                text: "unassigned stale".into(),
+            },
+            target_actor,
+        )
+        .unwrap();
+    target.with_write_txn(|txn| {
+        target.store.vault_meta.put(
+            txn,
+            &document::head_key(*fixture.note.as_bytes()),
+            extra.as_bytes(),
+        )
+    })?;
+    let stray_doc = snapshot.doc_snapshots[0]
+        .rebuild()?
+        .export(loro::ExportMode::Snapshot)
+        .unwrap();
+    target.with_write_txn(|txn| {
+        target.store.sync_state.put(
+            txn,
+            &format!("note_doc:v1:{}:{}", inline.to_hex(), extra.to_hex()),
+            &stray_doc,
+        )?;
+        target.store.vault_meta.put(
+            txn,
+            &document::head_key(*inline.as_bytes()),
+            extra.as_bytes(),
+        )
+    })?;
+    let repaired = recover()?;
+    assert!(target.note_document(inline)?.is_none());
+    assert_eq!(target.note_text(inline)?, "inline text");
+    assert_eq!(
+        capture_canonical_window(&target, "2026-09", &repaired.window)?,
+        snapshot
+    );
+    assert!(target.note_proposal(stale_bundle.id).is_err());
+    assert_eq!(
+        capture_canonical_window(&target, "2026-10", &outside_window)?,
+        outside_before
+    );
+    assert_eq!(target.note_proposal(outside_bundle.id)?.waiting.len(), 1);
+    let repeated = recover()?;
+    assert_eq!(repeated.tier, RecoveryTier::Healthy);
+    assert_eq!(
+        capture_canonical_window(&target, "2026-09", &repeated.window)?.encode()?,
+        snapshot.encode()?
+    );
+
+    // A new disjoint edit after recovery is not overwritten by landing the
+    // recovered fork. No original peer histories exist in this fresh target.
+    let doc = target.note_document(fixture.note)?.unwrap();
+    target
+        .edit_note(
+            fixture.note,
+            &NoteEdit::InsertAfter {
+                anchor: doc.anchor(0)?,
+                text: "post ".into(),
+            },
+            target_actor,
+        )
+        .unwrap();
+    let landed = target
+        .review_note_proposal(pending.id, NoteVerdict::Merge, target_actor)
+        .unwrap();
+    assert!(landed.waiting.is_empty());
+    assert_eq!(landed.landed.len(), 2);
+    assert_eq!(target.note_text(fixture.note)?, format!("post {expected}"));
+    assert_eq!(target.note_text(second)?, expected_second);
+    assert_eq!(target.note_text(outside)?, "outside");
+    let reopened = target
+        .open_note_proposal(&[unassigned], "recovered unassigned fork", target_actor)
+        .unwrap();
+    assert_eq!(reopened.waiting.len(), 1);
+    target
+        .review_note_proposal(reopened.id, NoteVerdict::Switch, target_actor)
+        .unwrap();
+    assert_eq!(target.note_text(second)?, "standalone rewrite");
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn rejected_fork_without_document_recovers_and_divergent_workflow_fails_preflight() -> Result<()> {
+    let fixture = fixture()?;
+    let owner = fixture.vault.ensure_embedded_owner_actor().unwrap();
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let fork = fixture
+        .vault
+        .fork_note(
+            fixture.note,
+            &NoteEdit::Rewrite {
+                text: "discarded".into(),
+            },
+            actor,
+        )
+        .unwrap();
+    let bundle = fixture
+        .vault
+        .open_note_proposal(&[fork], "reject", actor)
+        .unwrap();
+    fixture
+        .vault
+        .review_note_proposal(bundle.id, NoteVerdict::Reject, actor)
+        .unwrap();
+    let window = note_window(&fixture.vault, &[owner, fixture.note])?;
+    let snapshot = capture_canonical_window(&fixture.vault, "2026-09", &window)?;
+    assert!(
+        !snapshot
+            .doc_snapshots
+            .iter()
+            .any(|row| row.head == *fork.as_bytes())
+    );
+    let dir = tempfile::tempdir()?;
+    let target = Vault::open(dir.path(), VaultConfig::default())?;
+    let path = dir.path().join("manifest");
+    let materializer = crate::sync::bridge::Materializer::new();
+    let repaired = recover_vault_window(
+        &target,
+        &materializer,
+        &path,
+        &snapshot,
+        RecoveryBudget::default(),
+    )?;
+    let restored = target.note_proposal(bundle.id)?;
+    assert!(restored.waiting.is_empty());
+    assert_eq!(restored.landed[0].verdict, NoteVerdict::Reject);
+    assert_eq!(
+        capture_canonical_window(&target, "2026-09", &repaired.window)?,
+        snapshot
+    );
+    let key = [b"note_fork:v1:".as_slice(), fork.as_bytes()].concat();
+    let mut divergent = snapshot
+        .note_forks
+        .iter()
+        .find(|row| row.fork == fork)
+        .unwrap()
+        .clone();
+    divergent.actor = EntityId::now();
+    target.with_write_txn(|txn| {
+        target
+            .store
+            .vault_meta
+            .put(txn, &key, &canonical::pack(&divergent)?)
+    })?;
+    fs::write(&path, b"do not quarantine on preflight error")?;
+    let before = target.note_text(fixture.note)?;
+    assert!(
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &snapshot,
+            RecoveryBudget::default()
+        )
+        .is_err()
+    );
+    assert_eq!(target.note_text(fixture.note)?, before);
+    assert_eq!(fs::read(&path)?, b"do not quarantine on preflight error");
+    assert!(!invalid_artifact_path(&path, 1).exists());
+    Ok(())
+}

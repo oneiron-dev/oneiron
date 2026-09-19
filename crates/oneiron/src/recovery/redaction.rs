@@ -54,6 +54,15 @@ impl CanonicalSnapshot {
                 .head_move_receipts
                 .iter()
                 .any(|row| copied(&row.receipt))
+            || next.note_forks.iter().any(|row| {
+                row.recovery_merge
+                    .as_ref()
+                    .is_some_and(|(base, merged)| base.contains(&span) || merged.contains(&span))
+            })
+            || next
+                .note_proposals
+                .iter()
+                .any(|row| row.explainer.contains(&span))
         {
             return Err(invalid("redacted span remains in another source carrier"));
         }

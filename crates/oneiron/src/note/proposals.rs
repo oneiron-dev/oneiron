@@ -17,6 +17,9 @@ pub struct NoteFork {
     #[serde(with = "crate::entity_id::serde_hex")]
     pub parent: EntityId,
     pub frontier: Vec<u8>,
+    /// Recovery-only value basis: (parent text at capture, exact merged text).
+    /// No old CRDT operation identity is assumed after canonical reconstruction.
+    pub recovery_merge: Option<(String, String)>,
     #[serde(with = "crate::entity_id::serde_hex")]
     pub actor: EntityId,
     pub rewrite: bool,
@@ -47,7 +50,7 @@ pub struct NoteLandingReceipt {
     pub actor: EntityId,
     pub at: u64,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteReviewBundle {
     #[serde(with = "crate::entity_id::serde_hex")]
     pub id: EntityId,
@@ -98,6 +101,7 @@ pub(super) fn remember_fork(
         fork: fork.head,
         parent: parent.head,
         frontier: parent.doc.state_frontiers().encode(),
+        recovery_merge: None,
         actor,
         rewrite,
         proposal: None,
@@ -272,10 +276,31 @@ fn land(
             if current.head != fork.parent {
                 return Err(invalid("head changed; explicit switch required"));
             }
-            current
-                .doc
-                .import(&super::documents::snapshot(&proposed.doc)?)
-                .map_err(|_| invalid("fork merge"))?;
+            if let Some((base, merged)) = &fork.recovery_merge {
+                let merged = recovered_merge(base, merged, &current.text())?;
+                current
+                    .doc
+                    .get_text("body")
+                    .update(
+                        &merged,
+                        loro::UpdateOptions {
+                            timeout_ms: Some(1000.0),
+                            use_refined_diff: true,
+                        },
+                    )
+                    .map_err(|_| invalid("recovered fork diff"))?;
+                super::documents::stamp(
+                    &current.doc,
+                    actor.entity_ref(),
+                    mutation_recorded_at,
+                    "merge",
+                );
+            } else {
+                current
+                    .doc
+                    .import(&super::documents::snapshot(&proposed.doc)?)
+                    .map_err(|_| invalid("fork merge"))?;
+            }
             store_doc(vault, txn, &current, true)?;
         }
         NoteVerdict::Switch => {
@@ -290,6 +315,7 @@ fn land(
         }
     }
     fork.decided = true;
+    fork.recovery_merge = None;
     put(vault, txn, &fork_key(fork.fork), fork)?;
     let receipt = NoteLandingReceipt {
         id: vault.store.clock.entity_id()?,
@@ -308,4 +334,50 @@ fn land(
         &receipt,
     )?;
     Ok(receipt)
+}
+
+/// A recovery merge carries the exact pre-recovery CRDT result. Subsequent,
+/// disjoint edits are retained. Ambiguous overlaps need an explicit switch,
+/// never a guessed import of unrelated fresh Loro histories.
+fn recovered_merge(base: &str, proposed: &str, current: &str) -> Result<String> {
+    if current == base || current == proposed {
+        return Ok(proposed.to_owned());
+    }
+    if proposed == base {
+        return Ok(current.to_owned());
+    }
+    let base: Vec<_> = base.chars().collect();
+    let proposed: Vec<_> = proposed.chars().collect();
+    let current: Vec<_> = current.chars().collect();
+    let span = |changed: &[char]| {
+        let start = base.iter().zip(changed).take_while(|(a, b)| a == b).count();
+        let suffix = base[start..]
+            .iter()
+            .rev()
+            .zip(changed[start..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        (
+            start,
+            base.len() - suffix,
+            changed[start..changed.len() - suffix].to_vec(),
+        )
+    };
+    let mut edits = [span(&proposed), span(&current)];
+    edits.sort_by_key(|(start, end, _)| (*start, *end));
+    let [
+        (left_start, left_end, left),
+        (right_start, right_end, right),
+    ] = edits;
+    // Boundary insertions have no surviving cursor order after recovery.
+    if left_end >= right_start {
+        return Err(invalid("recovered fork overlap; explicit switch required"));
+    }
+    Ok(base[..left_start]
+        .iter()
+        .chain(&left)
+        .chain(&base[left_end..right_start])
+        .chain(&right)
+        .chain(&base[right_end..])
+        .collect())
 }

@@ -83,6 +83,9 @@ pub struct CanonicalSnapshot {
     pub doc_snapshots: Vec<CanonicalDocument>,
     pub document_heads: Vec<CanonicalHead>,
     pub head_move_receipts: Vec<CanonicalHeadMove>,
+    /// Durable workflows, with value-based merge bases instead of old frontiers.
+    pub note_forks: Vec<crate::note::NoteFork>,
+    pub note_proposals: Vec<crate::note::NoteReviewBundle>,
     pub container_manifests: Vec<CanonicalContainerManifest>,
     pub schema_manifest: CanonicalSchemaManifest,
 }
@@ -129,6 +132,8 @@ impl CanonicalSnapshot {
             "documents",
             "document_heads",
             "head_move_receipts",
+            "note_forks",
+            "note_proposals",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
@@ -170,6 +175,8 @@ pub fn capture_canonical_window(
             "documents",
             "document_heads",
             "head_move_receipts",
+            "note_forks",
+            "note_proposals",
         ]
         .contains(&name.as_str())
     }) {
@@ -183,6 +190,8 @@ pub fn capture_canonical_window(
         doc_snapshots: Vec::new(),
         document_heads: Vec::new(),
         head_move_receipts: Vec::new(),
+        note_forks: Vec::new(),
+        note_proposals: Vec::new(),
         container_manifests: Vec::new(),
         schema_manifest: CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
@@ -369,6 +378,9 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
             &tombstone.value,
         )?;
     }
+    // An explicit document carrier scopes replacement even for an inline NOTE
+    // with no document rows. Ordinary sync windows have no such carrier.
+    doc.get_map("documents");
     // Documents are canonical records inside the window; each is reconstructed
     // into its own fresh LoroDoc by the ordinary forward document pass.
     for document in &snapshot.doc_snapshots {
@@ -389,6 +401,12 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
             &id(receipt.id)?.to_hex(),
             &pack(receipt)?,
         )?;
+    }
+    for fork in &snapshot.note_forks {
+        insert(&doc, "note_forks", &fork.fork.to_hex(), &pack(fork)?)?;
+    }
+    for bundle in &snapshot.note_proposals {
+        insert(&doc, "note_proposals", &bundle.id.to_hex(), &pack(bundle)?)?;
     }
     doc.commit();
     Ok(doc)

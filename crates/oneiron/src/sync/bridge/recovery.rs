@@ -30,17 +30,7 @@ pub(crate) fn preflight_canonical_recovery(
     let _guard = materializer.lock();
     let mut txn = vault.store.env.write_txn()?;
     crate::recovery::validate_window_documents(doc)?;
-    for row in &snapshot.head_move_receipts {
-        let key = [b"note_receipt:v1:".as_slice(), &row.id].concat();
-        if let Some(previous) = vault.store.vault_meta.get(&txn, &key)?
-            && previous.as_ref() != row.receipt.as_slice()
-        {
-            return Err(ArtifactError::InvalidRecoveryArtifact(
-                "immutable head receipt divergence",
-            )
-            .into());
-        }
-    }
+    snapshot.preflight_note_recovery(vault, &txn)?;
     for entity in &snapshot.entity_blobs {
         let id = EntityId::from_bytes(entity.id)?;
         if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &id) {

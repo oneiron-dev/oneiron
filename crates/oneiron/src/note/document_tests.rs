@@ -532,3 +532,82 @@ fn append_to_section_uses_its_unicode_anchor_after_another_edit() {
         read.head()
     );
 }
+
+#[test]
+fn recovered_merge_refuses_ambiguous_overlap_without_losing_bundle_members() {
+    let (_dir, vault, owner) = fixture();
+    let first = vault.create_note("research", "alpha beta", owner).unwrap();
+    let second = vault.create_note("research", "gamma delta", owner).unwrap();
+    let agent_id = EntityId::now();
+    vault
+        .put_entity(
+            &agent_id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )
+        .unwrap();
+    let agent = WriteActor::new(agent_id, EdgeActorClass::Agent);
+    let mut forks = Vec::new();
+    for note in [first, second] {
+        let read = vault.note_document(note).unwrap().unwrap();
+        let fork = vault
+            .fork_note(
+                note,
+                &NoteEdit::InsertAfter {
+                    anchor: read.anchor(0).unwrap(),
+                    text: "proposed ".into(),
+                },
+                agent,
+            )
+            .unwrap();
+        forks.push(fork);
+    }
+    let bundle = vault
+        .open_note_proposal(&forks, "both pending", agent)
+        .unwrap();
+    // Seed only the value-based metadata used by a canonical recovery. This
+    // storage fixture keeps the atomic review law covered without sync enabled.
+    vault
+        .with_write_txn(|txn| {
+            let mut bundle = bundle.clone();
+            for fork in &mut bundle.waiting {
+                let base = vault.note_text_in_txn(txn, fork.note)?;
+                fork.rewrite = false;
+                fork.frontier.clear();
+                fork.recovery_merge = Some((base.clone(), format!("proposed {base}")));
+                let key = [b"note_fork:v1:".as_slice(), fork.fork.as_bytes()].concat();
+                vault
+                    .store
+                    .vault_meta
+                    .put(txn, &key, &rmp_serde::to_vec_named(fork).unwrap())?;
+            }
+            let key = [b"note_proposal:v1:".as_slice(), bundle.id.as_bytes()].concat();
+            vault
+                .store
+                .vault_meta
+                .put(txn, &key, &rmp_serde::to_vec_named(&bundle).unwrap())
+        })
+        .unwrap();
+    let read = vault.note_document(second).unwrap().unwrap();
+    vault
+        .edit_note(
+            second,
+            &NoteEdit::InsertAfter {
+                anchor: read.anchor(0).unwrap(),
+                text: "conflict ".into(),
+            },
+            owner,
+        )
+        .unwrap();
+    assert!(
+        vault
+            .review_note_proposal(bundle.id, NoteVerdict::Merge, owner)
+            .is_err()
+    );
+    assert_eq!(vault.note_text(first).unwrap(), "alpha beta");
+    assert_eq!(vault.note_text(second).unwrap(), "conflict gamma delta");
+    assert_eq!(vault.note_proposal(bundle.id).unwrap().waiting.len(), 2);
+    assert!(vault.note_proposal(bundle.id).unwrap().landed.is_empty());
+}

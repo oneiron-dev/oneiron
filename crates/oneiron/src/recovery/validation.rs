@@ -163,7 +163,8 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
         if !cores.contains_key(&row.entity_id) {
             return Err(invalid("receipt owner"));
         }
-        if !docs.contains(&(row.entity_id, *receipt.fork.as_bytes()))
+        if (receipt.verdict != crate::note::NoteVerdict::Reject
+            && !docs.contains(&(row.entity_id, *receipt.fork.as_bytes())))
             || !docs.contains(&(row.entity_id, *receipt.previous_head.as_bytes()))
             || !docs.contains(&(row.entity_id, *receipt.head.as_bytes()))
         {
@@ -195,7 +196,7 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
             return Err(invalid("head differs from NOTE core"));
         }
     }
-    Ok(())
+    super::document::validate_workflows(snapshot)
 }
 pub(super) fn strict<T: Ord>(values: impl IntoIterator<Item = T>) -> Result<()> {
     let mut previous = None;
