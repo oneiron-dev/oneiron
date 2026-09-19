@@ -1,6 +1,6 @@
 use super::tripwires::*;
 use super::*;
-use crate::receipt::{ReceiptKind, ReceiptRecord};
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 fn vault() -> (tempfile::TempDir, Vault) {
     let d = tempfile::tempdir().unwrap();
     let v = Vault::open(d.path(), crate::VaultConfig::device()).unwrap();
