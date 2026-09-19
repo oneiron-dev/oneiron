@@ -35,7 +35,21 @@ impl Vault {
         Ok(id)
     }
     pub fn get_pack_source(&self, id: &EntityId) -> Result<Option<PackSource>> {
-        let Some(raw) = self.get_raw(id)? else {
+        let txn = self.store.env.read_txn()?;
+        self.pack_source_in_txn(&txn, id)
+    }
+
+    pub(crate) fn pack_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<PackSource>> {
+        if self.store.off_record_sessions.contains_entity(id)?
+            || !crate::vault::live_entity_row_in_txn(&self.store, txn, id)?.is_live()
+        {
+            return Ok(None);
+        }
+        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
             return Ok(None);
         };
         let header =
@@ -43,7 +57,13 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_ASSET {
             return Ok(None);
         }
-        codec::decode(&raw[ENTITY_METADATA_HEADER_LEN..])
+        let source = codec::decode(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if let Some(source) = &source
+            && codec::source_id(source)? != *id
+        {
+            return Err(invalid("stored source identity drift"));
+        }
+        Ok(source)
     }
     pub fn list_pack_sources(&self) -> Result<Vec<(EntityId, PackSource)>> {
         let txn = self.store.env.read_txn()?;

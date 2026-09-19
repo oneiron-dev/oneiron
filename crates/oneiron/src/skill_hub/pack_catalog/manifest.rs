@@ -105,7 +105,16 @@ impl PackManifest {
             .map(|value| -> Result<_> {
                 let value = scalar(value)?;
                 if let Some(name) = value.strip_prefix("built-in:") {
-                    validate_name(name)?;
+                    if name.is_empty()
+                        || name.len() > 256
+                        || !name.bytes().all(|b| {
+                            b.is_ascii_lowercase()
+                                || b.is_ascii_digit()
+                                || matches!(b, b'.' | b'_' | b'-')
+                        })
+                    {
+                        return Err(invalid("invalid built-in adapter name"));
+                    }
                     Ok(PackAdapter::Builtin(name.to_owned()))
                 } else if let Some(path) = value.strip_prefix("script:") {
                     if !path.starts_with("scripts/") {

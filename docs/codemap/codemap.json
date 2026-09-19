@@ -21597,7 +21597,7 @@
      "path": "src/skill_hub/pack_catalog/doors.rs",
      "purpose": "Source staging/readback",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },

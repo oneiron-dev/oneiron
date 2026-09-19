@@ -128,6 +128,15 @@ fn missing_script_namespace_collision_and_tree_aliases_are_refused() -> Result<(
     assert!(PackSource::from_files(source.clone()).is_err());
     source.push(HubFile::new("scripts/adapter.py", b"print(1)\n".to_vec()));
     assert!(PackSource::from_files(source.clone()).is_ok());
+    let mut builtin = source.clone();
+    builtin[0].content = String::from_utf8(builtin[0].content.clone())
+        .unwrap()
+        .replace("script:scripts/adapter.py", "built-in:email")
+        .into_bytes();
+    assert!(matches!(
+        PackSource::from_files(builtin)?.manifest().adapter,
+        Some(PackAdapter::Builtin(_))
+    ));
     source.push(HubFile::new(
         "scripts/adapter.py/child",
         b"aliased".to_vec(),
