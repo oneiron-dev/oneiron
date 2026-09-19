@@ -188,7 +188,8 @@ fn unanchored_absolute_declaration_falls_back_to_hash_only() {
 fn absolute_t2_registration_excludes_relative_snapshot_entry_after_recovery() -> crate::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(temp_dir.path(), crate::config::VaultConfig::default())?;
-    let target_path = temp_dir.path().join(".secrets/api.key");
+    // Resolve the owned temp root, not the intentionally guarded secret path.
+    let target_path = temp_dir.path().canonicalize()?.join(".secrets/api.key");
     std::fs::create_dir_all(target_path.parent().expect("target parent"))?;
     let content = b"t2-registered-secret-fixture".to_vec();
     vault.register_secret(SecretCustodyRecord {
