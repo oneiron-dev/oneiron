@@ -1,30 +1,20 @@
 //! Fail-closed operating-system evidence for real managed tenants.
 
-use std::path::Path;
+use std::fs::File;
 
 pub(super) trait IsolationProbe {
-    fn fscrypt(&self, path: &Path) -> bool;
-    fn dedicated_uid(&self, path: &Path, vault_name: &str) -> bool;
+    fn fscrypt(&self, directory: &File) -> bool;
+    fn dedicated_uid(&self, directory: &File, vault_name: &str) -> bool;
 }
 
 pub(super) struct NativeIsolation;
 
 #[cfg(target_os = "linux")]
 impl IsolationProbe for NativeIsolation {
-    fn fscrypt(&self, path: &Path) -> bool {
-        use std::{
-            fs::OpenOptions,
-            os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
-        };
-        // Refuse links and require an existing directory. The kernel, not a
-        // marker file or environment variable, answers whether it is encrypted.
-        let Ok(dir) = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
-            .open(path)
-        else {
-            return false;
-        };
+    fn fscrypt(&self, directory: &File) -> bool {
+        use std::os::fd::AsRawFd;
+        // The vault's writer lease pins this same directory for LMDB open.
+        // No pathname is reopened between the encryption and ownership checks.
         #[repr(C)]
         struct Policy {
             size: u64,
@@ -37,16 +27,21 @@ impl IsolationProbe for NativeIsolation {
         // Linux UAPI FS_IOC_GET_ENCRYPTION_POLICY_EX = _IOWR('f', 22, __u8[9]).
         // SAFETY: fd is owned and live; Policy has the UAPI header and enough
         // space for both v1 and v2 policy payloads, with size initialized.
-        let result =
-            unsafe { libc::ioctl(dir.as_raw_fd(), 0xc009_6616 as libc::c_ulong, &mut policy) };
+        let result = unsafe {
+            libc::ioctl(
+                directory.as_raw_fd(),
+                0xc009_6616 as libc::c_ulong,
+                &mut policy,
+            )
+        };
         result == 0 && matches!((policy.policy[0], policy.size), (0, 12) | (2, 24))
     }
-    fn dedicated_uid(&self, path: &Path, vault_name: &str) -> bool {
+    fn dedicated_uid(&self, directory: &File, vault_name: &str) -> bool {
         use std::{ffi::CString, os::unix::fs::MetadataExt};
         if !oneiron_vault_contract::valid_vault_name(vault_name) {
             return false;
         }
-        let Ok(meta) = std::fs::symlink_metadata(path) else {
+        let Ok(meta) = directory.metadata() else {
             return false;
         };
         if !meta.is_dir() || meta.mode() & 0o077 != 0 {
@@ -80,10 +75,10 @@ impl IsolationProbe for NativeIsolation {
 
 #[cfg(not(target_os = "linux"))]
 impl IsolationProbe for NativeIsolation {
-    fn fscrypt(&self, _: &Path) -> bool {
+    fn fscrypt(&self, _: &File) -> bool {
         false
     }
-    fn dedicated_uid(&self, _: &Path, _: &str) -> bool {
+    fn dedicated_uid(&self, _: &File, _: &str) -> bool {
         false
     }
 }

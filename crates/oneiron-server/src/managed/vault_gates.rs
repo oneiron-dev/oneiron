@@ -162,9 +162,21 @@ fn open_with_probe(
     credentials: &Credentials,
     probe: &impl super::isolation::IsolationProbe,
 ) -> Result<oneiron::Vault, ManagedError> {
-    let isolated = probe.fscrypt(data_dir) && probe.dedicated_uid(data_dir, vault_name);
-    let vault = oneiron::Vault::open(data_dir, vault_config)
+    let vault = oneiron::Vault::open_owned(data_dir, vault_config)
         .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+    let lease = vault
+        .writer_lease()
+        .ok_or_else(|| ManagedError::VaultMeta("managed vault has no writer lease".into()))?;
+    let directory = lease.directory_handle();
+    let isolated = probe.fscrypt(directory) && probe.dedicated_uid(directory, vault_name);
+    // The evidence and the Linux LMDB environment share the lease descriptor.
+    // Also refuse a renamed root, even if a canary marker would waive isolation.
+    lease
+        .validate_directory(data_dir)
+        .map_err(|_| ManagedError::ManagedRealTenantRefused {
+            vault: vault_name.to_owned(),
+            marker: CANARY_MARKER_KEY,
+        })?;
     check_gates_with_isolation(&vault, vault_name, credentials, isolated)?;
     Ok(vault)
 }
@@ -174,10 +186,10 @@ mod tests {
     use super::*;
     struct Probe(bool, bool);
     impl super::super::isolation::IsolationProbe for Probe {
-        fn fscrypt(&self, _: &Path) -> bool {
+        fn fscrypt(&self, _: &std::fs::File) -> bool {
             self.0
         }
-        fn dedicated_uid(&self, _: &Path, _: &str) -> bool {
+        fn dedicated_uid(&self, _: &std::fs::File, _: &str) -> bool {
             self.1
         }
     }
@@ -219,5 +231,49 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn managed_isolation_refuses_directory_swapped_during_probe() {
+        struct SwapProbe {
+            path: std::path::PathBuf,
+            moved: std::path::PathBuf,
+        }
+        impl super::super::isolation::IsolationProbe for SwapProbe {
+            fn fscrypt(&self, directory: &std::fs::File) -> bool {
+                use std::os::unix::fs::MetadataExt;
+                let pinned = directory.metadata().unwrap();
+                std::fs::rename(&self.path, &self.moved).unwrap();
+                std::fs::create_dir(&self.path).unwrap();
+                assert_eq!(directory.metadata().unwrap().ino(), pinned.ino());
+                assert_ne!(std::fs::metadata(&self.path).unwrap().ino(), pinned.ino());
+                true
+            }
+            fn dedicated_uid(&self, _: &std::fs::File, _: &str) -> bool {
+                true
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("vault");
+        let probe = SwapProbe {
+            path: path.clone(),
+            moved: root.path().join("original"),
+        };
+        let credentials = Credentials {
+            dek: [7; 32],
+            token: [8; 32],
+        };
+        assert!(matches!(
+            open_with_probe(
+                &path,
+                oneiron::VaultConfig::server(),
+                "tenant",
+                &credentials,
+                &probe
+            ),
+            Err(ManagedError::ManagedRealTenantRefused { .. })
+        ));
+        assert!(std::fs::read_dir(&path).unwrap().next().is_none());
+        let original = oneiron::Vault::open(&probe.moved, oneiron::VaultConfig::server()).unwrap();
+        assert!(original.sync_state_get(DEK_MAC_KEY).unwrap().is_none());
     }
 }
