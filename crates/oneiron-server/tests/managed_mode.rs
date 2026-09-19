@@ -113,6 +113,8 @@ fn managed_argv(root: &Path) -> Vec<String> {
         CONTRACT_VERSION.to_string(),
         "--vault-name".to_owned(),
         VAULT_NAME.to_owned(),
+        "--derivation-owner".to_owned(),
+        "09".repeat(32),
         "--data-dir".to_owned(),
         path("data"),
         "--http-socket".to_owned(),
@@ -400,6 +402,7 @@ fn each_missing_required_flag_fails_loudly() {
     for dropped in [
         "--contract-version",
         "--vault-name",
+        "--derivation-owner",
         "--data-dir",
         "--http-socket",
         "--ctl-socket",
@@ -1709,4 +1712,31 @@ fn signal_ready_writes_the_contract_byte() {
     let fd = std::fs::File::create(&path).unwrap().into_raw_fd();
     signal_ready(fd).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), vec![READY_BYTE]);
+}
+
+#[test]
+fn managed_owner_is_supplied_explicitly_and_malformed_ids_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = managed_argv(dir.path());
+    let parsed = ManagedArgs::from_serve_args(&parse_serve(&full))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        parsed.derivation_owner,
+        oneiron::federation::derivation::DerivationOwner([9; 32])
+    );
+    for malformed in [
+        "",
+        "abc",
+        &"gg".repeat(32),
+        &"+9".repeat(32),
+        &"09".repeat(31),
+        &"09".repeat(33),
+    ] {
+        let argv = with_flag_value(&full, "--derivation-owner", malformed);
+        assert!(matches!(
+            ManagedArgs::from_serve_args(&parse_serve(&argv)),
+            Err(ManagedError::InvalidDerivationOwner)
+        ));
+    }
 }

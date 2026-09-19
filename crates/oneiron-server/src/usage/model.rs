@@ -1,20 +1,13 @@
-//! Usage domain model: modes, events, costs, rollups, counters, and money helpers.
-use std::collections::BTreeMap;
-use std::fmt;
-use std::str::FromStr;
-
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
-
-use super::codec::UsageError;
-use super::keys::{
-    MAX_DIMENSION_LEN, MAX_IDEMPOTENCY_KEY_LEN, validate_dimension, validate_non_negative_finite,
-    validate_optional_dimension,
+//! Provider-list money facts and per-vault usage counters.
+use super::{
+    codec::UsageError,
+    keys::{
+        MAX_DIMENSION_LEN, MAX_IDEMPOTENCY_KEY_LEN, validate_dimension, validate_optional_dimension,
+    },
 };
-
-pub const CREDIT_UNIT_USD: f64 = 0.01;
-
-const TOKENS_PER_MILLION: f64 = 1_000_000.0;
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, fmt, str::FromStr};
+use utoipa::ToSchema;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -76,16 +69,6 @@ pub enum UsageEventType {
     Service,
 }
 
-impl UsageEventType {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Inference => "inference",
-            Self::Cache => "cache",
-            Self::Service => "service",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageTokenCounts {
@@ -95,123 +78,83 @@ pub struct UsageTokenCounts {
     pub cache_write_tokens: u64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+/// Fixed-point provider money: one amount unit is 10^-9 of the named currency.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Money {
+    pub amount: u64,
+    pub currency: String,
+    pub price_table_snapshot: String,
+}
+impl Money {
+    pub(super) fn validate(&self) -> Result<(), UsageError> {
+        if self.currency.len() != 3 || !self.currency.bytes().all(|b| b.is_ascii_uppercase()) {
+            return Err(UsageError::InvalidField {
+                field: "currency",
+                message: "expected a three-letter currency",
+            });
+        }
+        validate_dimension(
+            "priceTableSnapshot",
+            &self.price_table_snapshot,
+            MAX_DIMENSION_LEN,
+        )
+    }
+}
+
+/// Provider list rates in nano-currency units per million tokens.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageCostRates {
-    pub input_token_usd_per_million: f64,
-    pub output_token_usd_per_million: f64,
-    pub cache_read_token_usd_per_million: f64,
-    pub cache_write_token_usd_per_million: f64,
+    pub currency: String,
+    pub price_table_snapshot: String,
+    pub input_per_million: u64,
+    pub output_per_million: u64,
+    pub cache_read_per_million: u64,
+    pub cache_write_per_million: u64,
 }
-
-impl UsageCostRates {
-    fn validate(&self) -> Result<(), UsageError> {
-        validate_non_negative_finite(
-            "costRates.inputTokenUsdPerMillion",
-            self.input_token_usd_per_million,
-        )?;
-        validate_non_negative_finite(
-            "costRates.outputTokenUsdPerMillion",
-            self.output_token_usd_per_million,
-        )?;
-        validate_non_negative_finite(
-            "costRates.cacheReadTokenUsdPerMillion",
-            self.cache_read_token_usd_per_million,
-        )?;
-        validate_non_negative_finite(
-            "costRates.cacheWriteTokenUsdPerMillion",
-            self.cache_write_token_usd_per_million,
-        )?;
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageServiceCost {
-    pub service: String,
-    pub cost_usd: f64,
-}
-
-impl UsageServiceCost {
-    fn validate(&self) -> Result<(), UsageError> {
-        validate_dimension("serviceCosts.service", &self.service, MAX_DIMENSION_LEN)?;
-        validate_non_negative_finite("serviceCosts.costUsd", self.cost_usd)
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageCostInput {
-    #[serde(default)]
     pub token_counts: UsageTokenCounts,
-    #[serde(default)]
     pub cost_rates: UsageCostRates,
+    /// Additional provider list cost in the rate table's currency.
     #[serde(default)]
-    pub service_cost_usd: f64,
-    #[serde(default)]
-    pub service_costs: Vec<UsageServiceCost>,
+    pub service_amount: u64,
 }
-
 impl UsageCostInput {
-    pub fn calculate(&self) -> Result<UsageCost, UsageError> {
-        self.cost_rates.validate()?;
-        validate_non_negative_finite("serviceCostUsd", self.service_cost_usd)?;
-
-        let token_cost_usd = normalize_money(
-            per_million_cost(
-                self.token_counts.input_tokens,
-                self.cost_rates.input_token_usd_per_million,
-            ) + per_million_cost(
-                self.token_counts.output_tokens,
-                self.cost_rates.output_token_usd_per_million,
-            ),
-        );
-        let cache_cost_usd = normalize_money(
-            per_million_cost(
-                self.token_counts.cache_read_tokens,
-                self.cost_rates.cache_read_token_usd_per_million,
-            ) + per_million_cost(
-                self.token_counts.cache_write_tokens,
-                self.cost_rates.cache_write_token_usd_per_million,
-            ),
-        );
-
-        let mut service_cost_usd = self.service_cost_usd;
-        for service_cost in &self.service_costs {
-            service_cost.validate()?;
-            service_cost_usd += service_cost.cost_usd;
-        }
-        let service_cost_usd = normalize_money(service_cost_usd);
-        validate_non_negative_finite("serviceCostUsd", service_cost_usd)?;
-
-        let cost_usd = normalize_money(token_cost_usd + cache_cost_usd + service_cost_usd);
-        validate_non_negative_finite("costUsd", cost_usd)?;
-
-        Ok(UsageCost {
-            token_cost_usd,
-            cache_cost_usd,
-            service_cost_usd,
-            cost_usd,
-            credit_units: credit_units(cost_usd),
-        })
+    pub fn calculate(&self) -> Result<Money, UsageError> {
+        let t = &self.token_counts;
+        let r = &self.cost_rates;
+        let numerator = [
+            (t.input_tokens, r.input_per_million),
+            (t.output_tokens, r.output_per_million),
+            (t.cache_read_tokens, r.cache_read_per_million),
+            (t.cache_write_tokens, r.cache_write_per_million),
+        ]
+        .into_iter()
+        .try_fold(0u128, |sum, (qty, rate)| {
+            sum.checked_add(u128::from(qty) * u128::from(rate))
+                .ok_or(UsageError::Overflow)
+        })?;
+        let tokens = numerator.div_ceil(1_000_000);
+        let amount = u64::try_from(tokens)
+            .map_err(|_| UsageError::Overflow)?
+            .checked_add(self.service_amount)
+            .ok_or(UsageError::Overflow)?;
+        let money = Money {
+            amount,
+            currency: r.currency.clone(),
+            price_table_snapshot: r.price_table_snapshot.clone(),
+        };
+        money.validate()?;
+        Ok(money)
     }
 }
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageCost {
-    pub token_cost_usd: f64,
-    pub cache_cost_usd: f64,
-    pub service_cost_usd: f64,
-    pub cost_usd: f64,
-    pub credit_units: f64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageEvent {
-    pub tenant_id: String,
+    pub owner: String,
     pub vault_id: String,
     pub idempotency_key: String,
     #[serde(default)]
@@ -230,123 +173,91 @@ pub struct UsageEvent {
     pub service: Option<String>,
     #[serde(default)]
     pub token_counts: UsageTokenCounts,
-    #[serde(default)]
     pub cost_rates: UsageCostRates,
     #[serde(default)]
-    pub service_cost_usd: f64,
-    #[serde(default)]
-    pub service_costs: Vec<UsageServiceCost>,
+    pub service_amount: u64,
 }
-
 impl UsageEvent {
-    pub fn resolved_source(&self, configured_mode: UsageMode) -> UsageMode {
-        self.source.unwrap_or(configured_mode)
+    pub fn resolved_source(&self, configured: UsageMode) -> UsageMode {
+        self.source.unwrap_or(configured)
     }
-
     pub fn cost_input(&self) -> UsageCostInput {
         UsageCostInput {
             token_counts: self.token_counts.clone(),
             cost_rates: self.cost_rates.clone(),
-            service_cost_usd: self.service_cost_usd,
-            service_costs: self.service_costs.clone(),
+            service_amount: self.service_amount,
         }
     }
-
     pub(super) fn validate(&self) -> Result<(), UsageError> {
-        validate_dimension("tenantId", &self.tenant_id, MAX_DIMENSION_LEN)?;
+        validate_dimension("owner", &self.owner, MAX_DIMENSION_LEN)?;
         validate_dimension("vaultId", &self.vault_id, MAX_DIMENSION_LEN)?;
         validate_dimension(
             "idempotencyKey",
             &self.idempotency_key,
             MAX_IDEMPOTENCY_KEY_LEN,
         )?;
-        validate_optional_dimension("role", self.role.as_deref())?;
-        validate_optional_dimension("agentId", self.agent_id.as_deref())?;
-        validate_optional_dimension("model", self.model.as_deref())?;
-        validate_optional_dimension("service", self.service.as_deref())?;
-        Ok(())
+        for (field, value) in [
+            ("role", &self.role),
+            ("agentId", &self.agent_id),
+            ("model", &self.model),
+            ("service", &self.service),
+        ] {
+            validate_optional_dimension(field, value.as_deref())?;
+        }
+        super::keys::validate_key(&super::keys::usage_event_key(
+            &self.owner,
+            &self.vault_id,
+            &self.idempotency_key,
+        ))
     }
 }
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageDebit {
-    pub idempotency_key: String,
-    pub cost_usd: f64,
-    pub credit_units: f64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageRecordResult {
     pub recorded: bool,
     pub replayed: bool,
     pub source: UsageMode,
-    pub cost: UsageCost,
-    pub debit: Option<UsageDebit>,
-    pub tenant_rollup: Option<UsageRollup>,
+    pub cost: Money,
     pub vault_rollup: Option<UsageRollup>,
 }
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageRollup {
-    pub tenant_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vault_id: Option<String>,
+    pub owner: String,
+    pub vault_id: String,
     pub counters: UsageCounter,
     pub agents: BTreeMap<String, UsageCounter>,
     pub models: BTreeMap<String, UsageCounter>,
     pub services: BTreeMap<String, UsageCounter>,
 }
-
 impl UsageRollup {
-    pub fn tenant(tenant_id: impl Into<String>) -> Self {
+    pub fn vault(owner: impl Into<String>, vault_id: impl Into<String>) -> Self {
         Self {
-            tenant_id: tenant_id.into(),
-            vault_id: None,
+            owner: owner.into(),
+            vault_id: vault_id.into(),
             counters: UsageCounter::default(),
             agents: BTreeMap::new(),
             models: BTreeMap::new(),
             services: BTreeMap::new(),
         }
     }
-
-    pub fn vault(tenant_id: impl Into<String>, vault_id: impl Into<String>) -> Self {
-        Self {
-            tenant_id: tenant_id.into(),
-            vault_id: Some(vault_id.into()),
-            counters: UsageCounter::default(),
-            agents: BTreeMap::new(),
-            models: BTreeMap::new(),
-            services: BTreeMap::new(),
+    pub(super) fn add_event(&mut self, event: &UsageEvent, cost: &Money) -> Result<(), UsageError> {
+        self.counters.add(&event.token_counts, cost)?;
+        for (map, key) in [
+            (&mut self.agents, &event.agent_id),
+            (&mut self.models, &event.model),
+            (&mut self.services, &event.service),
+        ] {
+            if let Some(key) = key {
+                map.entry(key.clone())
+                    .or_default()
+                    .add(&event.token_counts, cost)?;
+            }
         }
-    }
-
-    pub(super) fn add_event(&mut self, event: &UsageEvent, cost: &UsageCost) {
-        self.counters.add(&event.token_counts, cost);
-        add_breakdown(
-            &mut self.agents,
-            event.agent_id.as_deref(),
-            &event.token_counts,
-            cost,
-        );
-        add_breakdown(
-            &mut self.models,
-            event.model.as_deref(),
-            &event.token_counts,
-            cost,
-        );
-        add_breakdown(
-            &mut self.services,
-            event.service.as_deref(),
-            &event.token_counts,
-            cost,
-        );
+        Ok(())
     }
 }
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageCounter {
     pub event_count: u64,
@@ -354,56 +265,27 @@ pub struct UsageCounter {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
-    pub token_cost_usd: f64,
-    pub cache_cost_usd: f64,
-    pub service_cost_usd: f64,
-    pub cost_usd: f64,
-    pub credit_units: f64,
+    /// Different currencies are never added together.
+    pub amounts_by_currency: BTreeMap<String, u64>,
 }
-
 impl UsageCounter {
-    fn add(&mut self, tokens: &UsageTokenCounts, cost: &UsageCost) {
-        self.event_count = self.event_count.saturating_add(1);
-        self.input_tokens = self.input_tokens.saturating_add(tokens.input_tokens);
-        self.output_tokens = self.output_tokens.saturating_add(tokens.output_tokens);
-        self.cache_read_tokens = self
-            .cache_read_tokens
-            .saturating_add(tokens.cache_read_tokens);
-        self.cache_write_tokens = self
-            .cache_write_tokens
-            .saturating_add(tokens.cache_write_tokens);
-        self.token_cost_usd = normalize_money(self.token_cost_usd + cost.token_cost_usd);
-        self.cache_cost_usd = normalize_money(self.cache_cost_usd + cost.cache_cost_usd);
-        self.service_cost_usd = normalize_money(self.service_cost_usd + cost.service_cost_usd);
-        self.cost_usd = normalize_money(self.cost_usd + cost.cost_usd);
-        self.credit_units = credit_units(self.cost_usd);
+    fn add(&mut self, t: &UsageTokenCounts, cost: &Money) -> Result<(), UsageError> {
+        for (dest, value) in [
+            (&mut self.event_count, 1),
+            (&mut self.input_tokens, t.input_tokens),
+            (&mut self.output_tokens, t.output_tokens),
+            (&mut self.cache_read_tokens, t.cache_read_tokens),
+            (&mut self.cache_write_tokens, t.cache_write_tokens),
+        ] {
+            *dest = dest.checked_add(value).ok_or(UsageError::Overflow)?;
+        }
+        let amount = self
+            .amounts_by_currency
+            .entry(cost.currency.clone())
+            .or_default();
+        *amount = amount
+            .checked_add(cost.amount)
+            .ok_or(UsageError::Overflow)?;
+        Ok(())
     }
-}
-
-pub(super) fn per_million_cost(tokens: u64, usd_per_million: f64) -> f64 {
-    tokens as f64 * usd_per_million / TOKENS_PER_MILLION
-}
-
-pub(super) fn credit_units(cost_usd: f64) -> f64 {
-    normalize_money(cost_usd / CREDIT_UNIT_USD)
-}
-
-pub(super) fn normalize_money(value: f64) -> f64 {
-    const SCALE: f64 = 1_000_000_000_000.0;
-    (value * SCALE).round() / SCALE
-}
-
-fn add_breakdown(
-    breakdown: &mut BTreeMap<String, UsageCounter>,
-    dimension: Option<&str>,
-    tokens: &UsageTokenCounts,
-    cost: &UsageCost,
-) {
-    let Some(dimension) = dimension else {
-        return;
-    };
-    breakdown
-        .entry(dimension.to_owned())
-        .or_default()
-        .add(tokens, cost);
 }

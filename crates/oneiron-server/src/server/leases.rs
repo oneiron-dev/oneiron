@@ -389,7 +389,7 @@ impl LeaseDecision {
         }
     }
 
-    const fn rejected() -> Self {
+    pub(super) const fn rejected() -> Self {
         Self {
             granted: false,
             expires_at: 0,

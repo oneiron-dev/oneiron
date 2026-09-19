@@ -390,3 +390,15 @@ pub(super) fn append_connector_key_op_record(
         },
     )
 }
+
+pub(crate) fn rebuild_checkpoint_connector_index(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    body: &[u8],
+) -> Result<()> {
+    let record = decode_connector_key_body(body)?;
+    let key = connector_key_index_key(&record.connector, &id)?;
+    store.vault_meta.put(txn, &key, b"")?;
+    Ok(())
+}

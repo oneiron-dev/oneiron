@@ -284,6 +284,9 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(false);
     };
+    if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+        return Ok(true);
+    }
     if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
         return Ok(false);
     }
@@ -291,11 +294,12 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
         .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
 }
 
-/// Credentials refused by the shared same-vault locality predicate.
+/// Local-only diagnostics and credentials refused by the same-vault locality predicate.
 pub(super) fn is_unsyncable_secret_custody(raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw).is_some_and(|header| {
-        header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
-            && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..])
+        header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
+            || (header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
+                && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..]))
     })
 }
 

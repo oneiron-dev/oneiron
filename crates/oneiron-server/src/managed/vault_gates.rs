@@ -3,14 +3,14 @@
 use std::os::fd::{FromRawFd, RawFd};
 use std::path::Path;
 
+use oneiron::federation::derivation::DerivationOwner;
 use oneiron_vault_contract::{Credentials, DEK_LEN, read_credentials};
 use subtle::ConstantTimeEq;
 
 use super::args::ManagedError;
 
 /// Marks a vault as a synthetic canary: the only thing a contract-v1 managed
-/// open will accept in place of the (unimplemented) hardened-tenant
-/// preconditions.
+/// open will accept in place of the probed hardened-tenant preconditions.
 pub const CANARY_MARKER_KEY: &str = "managed:canary:v1";
 
 /// Value the canary marker row must carry, so a blank or truncated row is not
@@ -70,18 +70,6 @@ fn canary_marker_present(vault: &oneiron::Vault) -> Result<bool, ManagedError> {
     Ok(row.is_some_and(|raw| raw.as_slice() == CANARY_MARKER_VALUE))
 }
 
-/// The waiver's other half: an fscrypt policy on the data directory AND a
-/// dedicated per-vault UID owning it.
-///
-/// Neither is implemented in contract v1 and neither can be probed here, so
-/// this is a constant `false` on purpose. Making it a named function rather
-/// than an inline `false` is what keeps the missing work addressable: when the
-/// preconditions land, this is the one place that learns to say yes, and the
-/// canary marker stops being the only way through.
-fn hardened_tenant_preconditions_present(_vault: &oneiron::Vault) -> bool {
-    false
-}
-
 /// Verifies the delivered DEK against the vault's sealed MAC, or seals it on
 /// a vault that has never been opened in managed mode.
 ///
@@ -133,7 +121,16 @@ pub fn check_managed_open_gates(
     vault_name: &str,
     credentials: &Credentials,
 ) -> Result<(), ManagedError> {
-    if !canary_marker_present(vault)? && !hardened_tenant_preconditions_present(vault) {
+    check_gates_with_isolation(vault, vault_name, credentials, false)
+}
+
+fn check_gates_with_isolation(
+    vault: &oneiron::Vault,
+    vault_name: &str,
+    credentials: &Credentials,
+    isolated: bool,
+) -> Result<(), ManagedError> {
+    if !canary_marker_present(vault)? && !isolated {
         return Err(ManagedError::ManagedRealTenantRefused {
             vault: vault_name.to_owned(),
             marker: CANARY_MARKER_KEY,
@@ -148,9 +145,140 @@ pub fn open_managed_vault(
     vault_config: oneiron::VaultConfig,
     vault_name: &str,
     credentials: &Credentials,
+    owner: DerivationOwner,
 ) -> Result<oneiron::Vault, ManagedError> {
-    let vault = oneiron::Vault::open(data_dir, vault_config)
+    open_probed_vault(
+        data_dir,
+        vault_config,
+        vault_name,
+        credentials,
+        super::isolation::probe(data_dir, vault_name),
+        owner,
+    )
+}
+
+fn open_probed_vault(
+    data_dir: &Path,
+    vault_config: oneiron::VaultConfig,
+    vault_name: &str,
+    credentials: &Credentials,
+    evidence: super::isolation::IsolationEvidence,
+    owner: DerivationOwner,
+) -> Result<oneiron::Vault, ManagedError> {
+    let isolated = evidence.admits();
+    let vault = oneiron::Vault::open_owned(data_dir, vault_config)
         .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
-    check_managed_open_gates(&vault, vault_name, credentials)?;
+    check_gates_with_isolation(&vault, vault_name, credentials, isolated)?;
+    // Bind before any managed caller can enqueue or serve derived content.
+    vault
+        .bind_derivation_owner(owner)
+        .map_err(|error| ManagedError::DerivationOwnerRejected {
+            vault: vault_name.to_owned(),
+            reason: error.to_string(),
+        })?;
     Ok(vault)
+}
+
+/// Real managed vaults cannot inherit the local-development scope-zero bypass.
+/// The generated identity is canonical and survives reopen, wake, and restore.
+pub(super) fn managed_lease_scope(vault: &oneiron::Vault) -> Result<u64, ManagedError> {
+    if canary_marker_present(vault)? {
+        return Ok(0);
+    }
+    vault
+        .with_write_txn(|txn| {
+            const KEY: &str = "managed:lease_scope:v1";
+            if let Some(raw) = vault.sync_state_get_in_write_txn(txn, KEY)? {
+                let bytes = raw
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| oneiron::Error::CorruptedIndex("managed vault scope"))?;
+                let id = u64::from_be_bytes(bytes);
+                if id == 0 {
+                    return Err(oneiron::Error::CorruptedIndex("managed vault scope"));
+                }
+                return Ok(id);
+            }
+            let digest = blake3::hash(oneiron::EntityId::now().as_bytes());
+            let mut bytes = [0; 8];
+            bytes.copy_from_slice(&digest.as_bytes()[..8]);
+            let id = u64::from_be_bytes(bytes).max(1);
+            vault.sync_state_put_in_write_txn(txn, KEY, &id.to_be_bytes())?;
+            Ok(id)
+        })
+        .map_err(|error| ManagedError::VaultMeta(error.to_string()))
+}
+
+#[cfg(test)]
+mod isolation_gate_tests {
+    use super::*;
+    #[test]
+    fn real_vault_opens_only_with_both_isolation_proofs_and_keeps_its_lease_scope() {
+        let root = tempfile::tempdir().unwrap();
+        let credentials = Credentials {
+            dek: [7; DEK_LEN],
+            token: [8; 32],
+        };
+        for (index, (fscrypt, dedicated_uid)) in
+            [(false, false), (true, false), (false, true), (true, true)]
+                .into_iter()
+                .enumerate()
+        {
+            let path = root.path().join(index.to_string());
+            let evidence = super::super::isolation::IsolationEvidence {
+                fscrypt,
+                dedicated_uid,
+            };
+            let result = open_probed_vault(
+                &path,
+                oneiron::VaultConfig::device(),
+                "real-vault",
+                &credentials,
+                evidence,
+                DerivationOwner([9; 32]),
+            );
+            if fscrypt && dedicated_uid {
+                let vault = result.unwrap();
+                assert_eq!(
+                    vault.derivation_scope().unwrap().owner(),
+                    DerivationOwner([9; 32])
+                );
+                let scope = managed_lease_scope(&vault).unwrap();
+                assert_ne!(scope, 0);
+                assert!(vault.sync_state_get(DEK_MAC_KEY).unwrap().is_some());
+                drop(vault);
+                let reopened = open_probed_vault(
+                    &path,
+                    oneiron::VaultConfig::device(),
+                    "real-vault",
+                    &credentials,
+                    evidence,
+                    DerivationOwner([9; 32]),
+                )
+                .unwrap();
+                assert_eq!(managed_lease_scope(&reopened).unwrap(), scope);
+                assert_eq!(
+                    reopened.derivation_scope().unwrap().owner(),
+                    DerivationOwner([9; 32])
+                );
+                drop(reopened);
+                assert!(matches!(
+                    open_probed_vault(
+                        &path,
+                        oneiron::VaultConfig::device(),
+                        "real-vault",
+                        &credentials,
+                        evidence,
+                        DerivationOwner([10; 32]),
+                    ),
+                    Err(ManagedError::DerivationOwnerRejected { .. })
+                ));
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(ManagedError::ManagedRealTenantRefused { .. })
+                ));
+            }
+        }
+    }
 }

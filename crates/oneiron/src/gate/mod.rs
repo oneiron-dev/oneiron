@@ -32,7 +32,7 @@ pub use self::bundle::{
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
 };
 pub(crate) use self::ceiling::{
-    OwnerRowAction, PolicyApprovalCeiling, dispatched_agent_effective_ceiling,
+    OwnerRowAction, PolicyApprovalCeiling, PolicyCriticality, dispatched_agent_effective_ceiling,
 };
 pub use self::confirm::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,

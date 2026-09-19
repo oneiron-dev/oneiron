@@ -52,6 +52,12 @@ pub struct ServeArgs {
     #[arg(long = "vault-name")]
     pub vault_name: Option<String>,
 
+    /// Non-secret account or organization id (32 bytes in hexadecimal), supplied
+    /// by the trusted supervisor. Required in managed mode. Never derived from
+    /// the vault name, per-vault key, or a tenant request.
+    #[arg(long = "derivation-owner")]
+    pub derivation_owner: Option<String>,
+
     /// Vault data directory. Managed mode's spelling of `--vault-path`, which
     /// stays available as the alias; unmanaged serve keeps using either.
     #[arg(long = "data-dir")]

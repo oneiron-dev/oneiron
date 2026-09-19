@@ -278,3 +278,23 @@ pub(crate) fn read_counterparty_contact_in_txn(
     }
     decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
 }
+
+pub(crate) fn rebuild_checkpoint_contact_index(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    body: &[u8],
+) -> Result<()> {
+    let record = decode_counterparty_contact_body(body)?;
+    let key = counterparty_contact_index_key_for_record(&record)?;
+    if let Some(previous) = store.vault_meta.get(txn, &key)?
+        && previous.as_ref() != id.as_bytes()
+    {
+        return Err(Error::CorruptedIndex("ambiguous restored contact index"));
+    }
+    store.vault_meta.put(txn, &key, id.as_bytes())?;
+    if let Some(class) = counterparty_contact_channel_class(store, txn, &record)? {
+        put_counterparty_contact_party_channel_index(store, txn, &record.counterparty, &class, id)?;
+    }
+    Ok(())
+}

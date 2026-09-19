@@ -61,6 +61,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// contributes NO candidate to the cross-manifest fold and never makes the
     /// manifest itself malformed.
     pub(in crate::gate) actor_burst_breaker: Option<GateBreakerThresholds>,
+    pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -104,6 +105,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | GATE_BREAKER_POLICY_KEY
+                | "diagnostic_bounds"
         ) {
             return None;
         }
@@ -221,6 +223,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
     let actor_burst_breaker = super::breaker::decode_gate_breaker_override(&entries);
+    let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => {
+            Some(crate::self_heal::tripwires::TripwireBounds::decode(value)?)
+        }
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -250,6 +259,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         auto_checker,
         budget_policy,
         actor_burst_breaker,
+        diagnostic_bounds,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

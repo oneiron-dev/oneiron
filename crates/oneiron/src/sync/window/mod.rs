@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use super::bridge::{self, Materializer, ObserverAState, OutboundSink};
-use super::diagnostic_ingest;
 use super::loro_support::{
     self, doc_from_snapshot, doc_version_vector, export_snapshot, import_doc,
 };
@@ -20,6 +19,7 @@ use crate::Vault;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use loro::{LoroDoc, Subscription};
 
+mod admission;
 mod egress;
 mod forward;
 mod reverse;
@@ -28,6 +28,7 @@ mod reverse;
 pub mod test_hooks;
 mod tombstones;
 
+pub use self::admission::validate_window_update_locality;
 pub(crate) use self::egress::export_history_free_window_snapshot;
 pub(in crate::sync) use self::egress::export_scrubbed_window_snapshot;
 use self::egress::window_packing_excludes_entity;

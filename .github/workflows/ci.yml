@@ -146,6 +146,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -212,9 +219,13 @@ jobs:
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_codemap.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
+          python3 -m unittest discover -s scripts/audit -p 'test_*.py' -v
 
       # Keep dependency artifacts when workspace cleanup is enough to meet
       # the unchanged cap. Runs after a failure too; never changes the verdict.
+      - name: Compiler cache statistics
+        if: always()
+        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
@@ -251,6 +262,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -300,6 +318,9 @@ jobs:
         run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
       # Bound the host's persistent build cache (see ci.yml `checks`).
+      - name: Compiler cache statistics
+        if: always()
+        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
@@ -332,6 +353,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -379,6 +407,13 @@ jobs:
         with:
           persist-credentials: false
           clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -393,3 +428,53 @@ jobs:
           package_manifest="$(find "${package_dir}" -mindepth 2 -maxdepth 2 -path "${package_dir}/oneiron-server-*/Cargo.toml" -print -quit)"
           test -n "${package_manifest}"
           cargo test --manifest-path "${package_manifest}" --all-features --config "${LOCAL_ONEIRON_PATCH}"
+
+  mutation-audit:
+    name: Mutation audit
+    permissions:
+      contents: read
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 180
+    needs: changes
+    if: >-
+      always()
+      && vars.CI_PAUSED != 'true'
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
+      - name: Pinned mutant runner
+        run: |
+          cargo install --locked cargo-mutants@27.1.0 --root "$HOME/ci/tools"
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+      - name: Enforce touched-engine mutation baseline
+        env:
+          AUDIT_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          AUDIT_EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$AUDIT_EVENT" = workflow_dispatch ]; then
+            python3 scripts/audit/mutation.py --all-engine
+          else
+            python3 scripts/audit/mutation.py --base "$AUDIT_BASE" --allow-no-changes
+          fi
+      - name: Compiler cache statistics
+        if: always()
+        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
+      - name: Mutation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-audit-${{ github.sha }}
+          path: target/mutation-audit/outcomes.json
+          if-no-files-found: ignore

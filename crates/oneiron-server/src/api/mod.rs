@@ -170,6 +170,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
         // device's lease binding (terminal)
         .route("/api/lease/revoke", post(lease_revoke))
+        .route("/api/lease/register", post(lease_register))
+        .route("/api/lease/rotate", post(lease_rotate))
         .route_layer(middleware::from_fn_with_state(
             idempotency.clone(),
             idempotency_middleware,
@@ -317,18 +319,20 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // limit stays a property of this nest alone.
         .nest("/v1/core/facade", self::facade::facade_routes())
         .nest("/v1/companion", companion_routes)
-        .route("/v1/consumer/usage", get(get_consumer_usage))
-        .route(
-            "/v1/consumer/usage/details",
-            get(get_consumer_usage_details),
-        )
-        .route("/v1/consumer/top-up", post(top_up_consumer))
         .route("/v1/usage/events", post(record_usage_event))
         .route(
-            "/v1/usage/tenants/{tenant_id}/rollup",
+            "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
             get(get_usage_rollup),
         )
         .merge(legacy_mutation_routes)
+        .layer(axum::middleware::from_fn_with_state(
+            server.clone(),
+            hosted_vault_binding,
+        ))
+        // Published anonymous booking capabilities are not tenant-device access.
+        // Their closed router validates a live owner publication and scoped tokens;
+        // keep it outside the tenant lease layer, never a generic path exemption.
+        .merge(self::booking::public_booking_router())
         .with_state(server)
 }
 
@@ -432,3 +436,20 @@ fn require_entity_type(
 
 #[cfg(test)]
 mod tests;
+
+async fn hosted_vault_binding(
+    axum::extract::State(server): axum::extract::State<Arc<SyncServer>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // Bootstrap is owner-authenticated and never returns vault data.
+    if !matches!(
+        request.uri().path(),
+        "/api/lease/register" | "/api/lease/rotate" | "/api/lease/revoke" | "/api/health"
+    ) && let Err(error) = server.require_vault_binding(request.headers())
+    {
+        return error.into_response();
+    }
+    next.run(request).await
+}

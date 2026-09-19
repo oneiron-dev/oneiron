@@ -1,4 +1,4 @@
-//! Window egress: packing policy, secret scrub, exports, and mirror replay.
+//! Window egress: packing policy, local-only scrub, exports, and mirror replay.
 
 use std::collections::HashSet;
 
@@ -67,10 +67,10 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
     })
 }
 
-/// Removes any SECRET_CUSTODY carrier resident in the window doc and returns
-/// whether one was found. ONE-1865 arm-pending seal: the type byte is sealed
-/// from the CRDT plane, so a custody body must never ship in an exported
-/// update. The write-side mirror (`reverse_rematerialize`) already refuses to
+/// Removes local-only diagnostic and secret-custody carriers from the window
+/// doc. Diagnostic observations never sync; secret custody follows its
+/// same-vault locality predicate. Neither refused body may ship in an update.
+/// The write-side mirror (`reverse_rematerialize`) already refuses to
 /// insert one; this is the export-side backstop for a carrier that landed
 /// before the seal or arrived from a peer. Deleting the row does not erase its
 /// prior set-op bytes from ordinary Loro history, so any removal forces the
@@ -82,7 +82,7 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 /// type byte is not. A malformed key cannot name an entity to scrub by id, so
 /// that row is deleted by its raw key and quarantined as the protocol violation
 /// it is.
-fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
+fn scrub_local_only_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
@@ -90,9 +90,13 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     let mut portable_ids = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
-        if crate::batch::EntityMetadataHeader::parse(blob)
-            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
-        {
+        if crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|h| {
+            !matches!(
+                h.entity_type,
+                crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                    | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+            )
+        }) {
             return;
         }
         match EntityId::from_hex(raw_key) {
@@ -114,17 +118,30 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
             custody_ids.insert(id);
         }
     }
+    // Pin before touching the live map. If storage fails, the carrier stays
+    // visible to the next scrub instead of leaving unpinned private history.
+    if !custody_ids.is_empty() || !malformed_key_carriers.is_empty() {
+        require_history_free_window(vault, key)?;
+    }
     let mut removed = false;
     for raw_key in &malformed_key_carriers {
         // Quarantine keeps hashed evidence (never the bytes); the delete is
         // what stops the body from reaching an exported update.
+        let blob = map_get_bytes(&entities_map, raw_key).unwrap_or_default();
+        let rejection = if crate::batch::EntityMetadataHeader::parse(&blob)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
+        {
+            Error::InvalidKey
+        } else {
+            crate::secret_custody::reject_secret_custody_byte()
+        };
         quarantine::quarantine_rejected_op(
             vault,
             key.as_str(),
             QuarantineContainer::Entities,
             raw_key,
-            &crate::secret_custody::reject_secret_custody_byte(),
-            &map_get_bytes(&entities_map, raw_key).unwrap_or_default(),
+            &rejection,
+            &blob,
         )?;
         map_delete(&entities_map, raw_key)?;
         removed = true;
@@ -134,7 +151,6 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     }
     if removed {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-        require_history_free_window(vault, key)?;
     }
     Ok(removed)
 }
@@ -154,7 +170,7 @@ pub fn export_window_updates_since(
             source,
         })
     })?;
-    let scrubbed = scrub_secret_custody_carriers(vault, key, doc)?;
+    let scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {

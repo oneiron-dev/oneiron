@@ -40,3 +40,15 @@ pub(crate) fn standing_outbound_grant_principal_index_entity_id(
     EntityId::from_bytes(raw_id)
         .map_err(|_| Error::CorruptedIndex("outbound grant principal index key"))
 }
+
+pub(crate) fn rebuild_checkpoint_grant_index(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    body: &[u8],
+) -> Result<()> {
+    let record = super::decode_standing_outbound_grant_body(body)?;
+    let key = standing_outbound_grant_principal_index_key(&record.principal_ref, &id)?;
+    store.vault_meta.put(txn, &key, b"")?;
+    Ok(())
+}

@@ -27,7 +27,8 @@ const VALUE_V2: &[u8] = b"wave5-lease-test-value-v2";
 const EFFECTOR: &str = "connector:test";
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
-    // Keep vault and declared paths under the real macOS temporary root.
+    // Resolve the OS temp root, not the declared targets: tests below deliberately
+    // plant symlinks under this directory to exercise the no-follow policy.
     let temp_root = std::env::temp_dir().canonicalize().expect("real temp root");
     let tmp = tempfile::tempdir_in(temp_root).expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
