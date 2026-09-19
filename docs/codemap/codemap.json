@@ -30257,7 +30257,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ApiArgs",
@@ -30280,6 +30280,14 @@
       "fn": 2,
       "struct": 9
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/cli/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -31792,10 +31800,10 @@
      "purpose": "Broadcast group for multi-device fan-out with echo suppression"
     },
     "cli": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
@@ -31918,10 +31926,10 @@
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     }
    },
-   "over_bar": 1,
+   "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 188,
-   "test_files": 71
+   "test_files": 72
   },
   "oneiron-uniffi": {
    "files": [
