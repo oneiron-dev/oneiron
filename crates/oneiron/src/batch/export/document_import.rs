@@ -267,6 +267,8 @@ fn imported_body(row: &ExportEntity) -> Result<Vec<u8>> {
         ENTITY_TYPE_SKILL => {
             let mut body = crate::skill::decode_skill_record(&bytes)?;
             body.source = ClaimSource::Imported;
+            body.generated = false;
+            body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
             body.lifecycle_status = crate::skill::SkillLifecycle::Candidate;
             crate::skill::encode_skill_record(&body)
@@ -274,6 +276,8 @@ fn imported_body(row: &ExportEntity) -> Result<Vec<u8>> {
         ENTITY_TYPE_AGENT_DEF => {
             let mut body = crate::agent_def::decode_agent_definition(&bytes)?;
             body.source = ClaimSource::Imported;
+            body.generated = false;
+            body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
             body.enabled = false;
             body.ceiling = crate::agent_def::AgentCeiling::Proposed;

@@ -84,7 +84,11 @@ fn source_bundles_all_five_formats_and_native_json_reimport() -> Result<()> {
     let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
     let skill = install(&source)?;
     let agent_id = EntityId::now();
-    source.put_agent_definition(&agent_id, &agent("fixture.agent", None), time(), 130)?;
+    let mut generated_agent = agent("fixture.agent", None);
+    generated_agent.source = ClaimSource::Generated;
+    generated_agent.generated = true;
+    generated_agent.human_authored = false;
+    source.put_agent_definition(&agent_id, &generated_agent, time(), 130)?;
     let selected = EntityId::now();
     source.put_claim(
         &selected,
@@ -196,6 +200,8 @@ fn assert_native_reimport(
     assert!(!imported_agent.enabled);
     assert_eq!(imported_agent.ceiling, AgentCeiling::Proposed);
     assert_eq!(imported_agent.source, ClaimSource::Imported);
+    assert!(!imported_agent.generated);
+    assert!(imported_agent.human_authored);
     assert_eq!(
         imported_agent.approval_status,
         ClaimApprovalStatus::Proposed

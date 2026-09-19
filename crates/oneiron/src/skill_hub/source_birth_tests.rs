@@ -240,10 +240,10 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
         "1",
         ClaimApprovalStatus::Approved,
         SkillLifecycle::Candidate,
-        ClaimSource::UserStated,
+        ClaimSource::Generated,
         1.0,
-        false,
         true,
+        false,
         vec![],
         rmpv::Value::Map(vec![(
             rmpv::Value::from("source"),
@@ -337,6 +337,8 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
     for id in [parent, fork_id] {
         let imported = target.get_skill_record(&id)?.expect("imported skill");
         assert_eq!(imported.source, ClaimSource::Imported);
+        assert!(!imported.generated);
+        assert!(imported.human_authored);
         assert_eq!(imported.approval_status, ClaimApprovalStatus::Proposed);
         assert_eq!(imported.lifecycle_status, SkillLifecycle::Candidate);
         assert!(
