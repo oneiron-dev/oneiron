@@ -136,7 +136,7 @@ impl LiveQuerySource for Source {
                 version_vector: self.doc.oplog_vv().encode(),
                 batch: 0,
             },
-            dependencies: BTreeSet::from(["w:".to_owned()]),
+            dependencies: BTreeSet::from(["e:11111111111111111111111111111111".to_owned()]),
         })
     }
     fn can_resume(&self, _: &Cursor) -> Result<bool, AppError> {

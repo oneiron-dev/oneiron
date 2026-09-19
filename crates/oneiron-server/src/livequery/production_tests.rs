@@ -676,3 +676,107 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
         assert!(rows.iter().all(|row| row["world"].is_null()));
     }
 }
+
+#[tokio::test]
+async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
+    use oneiron::sync::bridge::LiveQueryTee;
+    let (_dir, server) = server();
+    let window_key = oneiron::sync::WindowKey::from_timestamp(AT);
+    let window = server.get_or_create_window(&window_key).await.unwrap();
+    let auth = auth(&server, "human");
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth,
+        "entity-read-set".into(),
+    ));
+    let queries = Arc::new(subscriptions::LiveQueries::new(1, source.clone()));
+    let tee: Arc<dyn LiveQueryTee> = queries.clone();
+    server
+        .reassert_manager
+        .materializer()
+        .attach_live_query_tee(&tee);
+    let author = EntityId::from_hex(ACTOR).unwrap();
+    let a = EntityId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+    let b = EntityId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+    let put = |id: EntityId, predicate: &str, value: &str| {
+        server
+            .vault()
+            .memory(author, EdgeActorClass::Human)
+            .claim_upsert(&ClaimInput {
+                id: Some(id.to_hex()),
+                predicate: predicate.into(),
+                subject_ref: ACTOR.into(),
+                value: json!(value),
+                confidence: 1.0,
+                source: "user_stated".into(),
+                world_ref: None,
+                scope: None,
+                valid_from: None,
+                valid_to: None,
+                occurred_at: Some(AT),
+                learned_at: Some(AT),
+                salience: None,
+            })
+            .unwrap();
+        server
+            .vault()
+            .batch()
+            .text(&id, &[("body", &format!("readsetneedle {value}"))])
+            .commit()
+            .unwrap();
+        oneiron::sync::window::reverse_rematerialize(server.vault(), &window, &window_key).unwrap();
+    };
+    let view = |predicate: &str| ScopedView {
+        query: Some("readsetneedle".into()),
+        filter: Some(json!({"kind":"CLAIM", "predicate":predicate})),
+        ..Default::default()
+    };
+    put(a, "profile.alpha", "first");
+    put(b, "profile.beta", "second");
+    for (id, predicate, entity) in [(1, "profile.alpha", a), (2, "profile.beta", b)] {
+        let derived = source.derive(&view(predicate), Channel::View).unwrap();
+        assert!(
+            derived
+                .dependencies
+                .contains(&format!("e:{}", entity.to_hex()))
+        );
+        assert!(
+            derived
+                .dependencies
+                .iter()
+                .all(|dependency| !dependency.starts_with("w:"))
+        );
+        let frames = queries
+            .open(id, view(predicate), Channel::View, None, None)
+            .unwrap();
+        assert!(
+            !frames[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        queries.ack(id, &frames[0].cursor).unwrap();
+    }
+    queries.refresh().unwrap();
+    let a_next = EntityId::from_hex("cccccccccccccccccccccccccccccccc").unwrap();
+    put(a_next, "profile.alpha", "new first");
+    queries.refresh().unwrap();
+    assert_eq!(queries.pending(1).unwrap().len(), 1);
+    assert!(queries.pending(2).unwrap().is_empty());
+    // A third, initially empty view learns a new member without a window wildcard.
+    let frames = queries
+        .open(3, view("profile.gamma"), Channel::View, None, None)
+        .unwrap();
+    queries.ack(3, &frames[0].cursor).unwrap();
+    put(
+        EntityId::from_hex("dddddddddddddddddddddddddddddddd").unwrap(),
+        "profile.gamma",
+        "third",
+    );
+    queries.refresh().unwrap();
+    assert_eq!(queries.pending(3).unwrap().len(), 1);
+    assert!(queries.pending(2).unwrap().is_empty());
+}
