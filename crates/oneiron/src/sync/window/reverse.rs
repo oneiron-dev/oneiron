@@ -280,6 +280,9 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(false);
     };
+    if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+        return Ok(true);
+    }
     if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
         return Ok(false);
     }
@@ -296,8 +299,12 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
 /// module owns the rejection constructor; this is a pure type-byte read, so a
 /// malformed row simply does not skip (it is handled by the ordinary paths).
 pub(super) fn is_secret_custody_record(raw: &[u8]) -> bool {
-    EntityMetadataHeader::parse(raw)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_SECRET_CUSTODY)
+    EntityMetadataHeader::parse(raw).is_some_and(|header| {
+        matches!(
+            header.entity_type,
+            ENTITY_TYPE_SECRET_CUSTODY | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+        )
+    })
 }
 
 /// Quarantines every CRDT tombstone aliasing a locally available,

@@ -436,7 +436,18 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         let page_len = decisions.len();
         before = decisions.last().map(|decision| decision.decision_id);
         for decision in decisions {
-            let receipt = gate_decision_receipt(&decision);
+            let mut receipt = gate_decision_receipt(&decision);
+            if let Some(id) = decision
+                .claim_id
+                .and_then(|id| EntityId::from_bytes(id).ok())
+                && let Some(claim) = vault.get_claim(&id)?
+                && decision.receipt_reasons.contains(
+                    &crate::self_heal::tripwires::normal_baseline_token(&claim.predicate),
+                )
+            {
+                receipt.fields.insert("predicate".into(), claim.predicate);
+                receipt.fields.insert("criticality".into(), "normal".into());
+            }
             if query.matches(&receipt) {
                 if query.job_ref.is_none() {
                     // Decision ids define ledger traversal, but connector-key

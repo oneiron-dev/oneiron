@@ -126,6 +126,13 @@ pub(crate) fn resolve_policy_manifest(
                 if let Some(thresholds) = decoded.actor_burst_breaker {
                     actor_burst_breaker_candidates.push(thresholds);
                 }
+                if let Some(bounds) = decoded.diagnostic_bounds {
+                    match resolution.diagnostic_bounds {
+                        None => resolution.diagnostic_bounds = Some(bounds),
+                        Some(existing) if existing == bounds => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

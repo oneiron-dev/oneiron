@@ -416,7 +416,10 @@ pub(super) fn entity_selector_decision(
     // this blanket exclusion with `portable ∧ !device_only` respect. Without
     // this the class contract ("device-bound never leaves the device",
     // "cross-vault never replicated") would be false from merge until 1865.
-    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+    if matches!(
+        header.entity_type,
+        crate::registry::ENTITY_TYPE_SECRET_CUSTODY | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+    ) {
         return None;
     }
     if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER

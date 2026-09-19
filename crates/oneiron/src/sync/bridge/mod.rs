@@ -72,12 +72,12 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 #[cfg(test)]
 use crate::sync::loro_support::map_get_bytes;
 #[cfg(test)]
-use crate::sync::quarantine::{QuarantineContainer, remote_rejection_reason};
+use crate::sync::quarantine::QuarantineContainer;
 #[cfg(test)]
 use crate::sync::quota;
 #[cfg(test)]
-use crate::{Error, Result, Vault};
+use crate::{Error, Result};
 #[cfg(test)]
 use loro::LoroDoc;
 #[cfg(test)]
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;

@@ -215,6 +215,12 @@ fn valid_gate_notice_token(value: &str, max_len: usize) -> bool {
 }
 
 pub(in crate::store) fn valid_gate_receipt_reason(reason: &str) -> bool {
+    if let Some(hash) = reason.strip_prefix("tripwire_normal_") {
+        return hash.len() == 64
+            && hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    }
     if let Some(rest) = reason.strip_prefix("gate.allow.") {
         return !rest.is_empty()
             && rest.len() <= GATE_RECEIPT_REASON_MAX_LEN
