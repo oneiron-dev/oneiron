@@ -8,6 +8,7 @@ use super::super::bridge::{self, BRIDGE_ORIGIN};
 use super::super::diagnostic_ingest;
 use super::super::egress::push_terminal_quarantine_marker;
 use super::super::loro_support::{map_delete, map_for_each_value_bytes, tombstone_map_contains_id};
+use super::super::pack_sync;
 use super::super::quarantine::{self, QuarantineContainer};
 use super::super::quota;
 use super::super::reverse::delete_edges_touching_entities;
@@ -196,7 +197,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             );
             if !byte_compare_in_door {
                 if let Some(latest) = materialized_blobs.get(&id) {
-                    if latest.as_slice() == blob {
+                    if latest.as_slice() == blob || pack_sync::pack_echo_equal(latest, blob) {
                         return;
                     }
                 } else {
@@ -208,6 +209,16 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         }
                     };
                     if lmdb_blob.as_deref() == Some(blob) {
+                        return;
+                    }
+                    // Pack echo: the local row holds receiver-local bytes
+                    // (local handle/generation) while the CRDT carrier holds
+                    // canonical origin bytes. Byte-equality never holds after
+                    // a name-based remap; canonical/local mapping decides, and
+                    // an echo skips without a repeated healing write.
+                    if let Some(local) = &lmdb_blob
+                        && pack_sync::pack_echo_equal(local, blob)
+                    {
                         return;
                     }
                     // SoftErase shell guard: `user_delete` truncates the
@@ -283,6 +294,27 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     QuarantineContainer::Entities,
                     key,
                     &err,
+                    blob,
+                ) {
+                    entity_error = Some(q_err);
+                } else {
+                    terminal_quarantines.push(id);
+                }
+                return;
+            }
+            // Pack remote preflight: a malformed REMOTE envelope quarantines
+            // here, before the name-based remap reads the local map. A later
+            // `InvalidPackByteMap` from the remap is then LOCAL corruption
+            // and fails closed via the classifier (never quarantined).
+            if pack_sync::is_pack_handle(header.entity_type)
+                && let Some(remote_err) = pack_sync::remote_pack_envelope_error(data)
+            {
+                if let Err(q_err) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Entities,
+                    key,
+                    &remote_err,
                     blob,
                 ) {
                     entity_error = Some(q_err);
@@ -503,7 +535,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         || matches!(
                             err,
                             Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })
-                        );
+                        )
+                        || pack_sync::pack_rejection_keeps_retry_marker(&err);
                     if let Err(q_err) = quarantine::quarantine_rejected_op(
                         vault,
                         window_key.as_str(),

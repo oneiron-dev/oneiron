@@ -7,6 +7,7 @@ use super::loro_support::{
     map_contains_binary, map_delete, map_for_each_tombstone_value, map_for_each_value_bytes,
     map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
 };
+use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::types::WindowKey;
 use super::window_packing_excludes_entity;
@@ -189,7 +190,15 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // preserving.
             let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw);
             if !map_contains_binary(&entities_map, &hex_id) || dominates {
-                map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+                // Pack rows mirror the canonical wire header/body (origin
+                // handle/generation, exact identity/payload), not the
+                // receiver-local materialization. A corrupt local pack row
+                // fails closed here; it is never quarantined as remote.
+                if let Some(canonical) = pack_sync::canonical_outbound_blob(&raw)? {
+                    map_insert_bytes(&entities_map, hex_id.as_str(), &canonical)?;
+                } else {
+                    map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+                }
                 wrote_any = true;
                 count += 1;
             }

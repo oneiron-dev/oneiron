@@ -11,6 +11,7 @@ use super::diagnostic_ingest;
 use super::loro_support::{
     self, doc_from_snapshot, doc_version_vector, export_snapshot, import_doc,
 };
+use super::pack_sync;
 use super::quarantine;
 use super::queue;
 use super::quota;

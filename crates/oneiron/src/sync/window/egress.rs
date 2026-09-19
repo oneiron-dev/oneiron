@@ -8,6 +8,7 @@ use super::loro_support::{
     export_snapshot, map_contains_binary, map_delete, map_for_each_value_bytes, map_get_bytes,
     map_insert_bytes, tombstone_map_contains_id,
 };
+use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::reverse::{
     delete_edges_touching_entities, is_secret_custody_record,
@@ -257,9 +258,16 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        // Byte-compare with existing CRDT value
+        // Canonical outbound bytes for pack rows (origin handle/generation);
+        // non-pack rows mirror byte-exactly. A corrupt local pack row fails
+        // closed here, never quarantined as remote.
+        let outbound = pack_sync::canonical_outbound_blob(&raw)?.unwrap_or_else(|| raw.clone());
+        // Byte-compare with existing CRDT value. Pack carriers compare
+        // canonical-to-canonical, with a canonical/local echo fallback so a
+        // stale pre-canonical carrier does not rewrite every boot.
         if let Some(existing) = map_get_bytes(&entities_map, &hex_id)
-            && existing.as_slice() == raw.as_slice()
+            && (existing.as_slice() == outbound.as_slice()
+                || pack_sync::pack_echo_equal(&raw, &existing))
         {
             // The entity bytes already reached the CRDT, but the marker may
             // cover a crash between the entity insert and its edge inserts
@@ -326,7 +334,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             })?;
             continue;
         }
-        map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+        map_insert_bytes(&entities_map, hex_id.as_str(), outbound.as_slice())?;
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {

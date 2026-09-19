@@ -12,6 +12,7 @@
 //! # Modules
 //!
 //! - `loro_support` — internal Loro-native byte map and encoding helpers
+//! - `pack_sync` — PackByteMap canonical wire form, echo mapping, and remote validation
 //! - `types` — Sync configuration, window keys
 //! - `schema` — CRDT Doc schema creation (root + window)
 //! - `bridge` — Observer-based CRDT ↔ LMDB materialization
@@ -34,6 +35,7 @@ mod diagnostic_ingest;
 pub mod lease;
 pub(crate) mod loro_support;
 pub mod manager;
+pub(crate) mod pack_sync;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;
