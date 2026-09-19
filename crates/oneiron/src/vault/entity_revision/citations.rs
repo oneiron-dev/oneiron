@@ -106,13 +106,10 @@ impl Vault {
             return Err(Error::InvalidConfig("citation quote hash mismatch".into()));
         }
         let txn = self.store.env.read_txn()?;
-        // Deletion never becomes an old-body read. The caller-supplied quote
-        // is retained for drift display, but erased document bytes stay erased.
+        // Deletion erases the binding needed to authenticate caller-supplied
+        // citation fields. A self-consistent quote hash is not that evidence.
         if read_entity_revision_in_txn(self, &txn, &citation.entity, ReadMode::Live)?.is_none() {
-            return Ok(ResolvedCitation {
-                quote: citation.quote.clone(),
-                drifted: true,
-            });
+            return Err(Error::EntityNotFound);
         }
         if resolve_reference(
             self,

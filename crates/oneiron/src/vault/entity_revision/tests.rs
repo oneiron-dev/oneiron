@@ -132,13 +132,17 @@ fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
             .unwrap(),
         original
     );
-    assert_eq!(
-        vault.resolve_citation(&citation).unwrap(),
-        ResolvedCitation {
-            quote: "alpha".into(),
-            drifted: true
-        }
-    );
+    assert!(matches!(
+        vault.resolve_citation(&citation),
+        Err(crate::Error::EntityNotFound)
+    ));
+    let mut forged = citation;
+    forged.quote = "text never present in the deleted entity".into();
+    forged.quote_hash = *blake3::hash(forged.quote.as_bytes()).as_bytes();
+    assert!(matches!(
+        vault.resolve_citation(&forged),
+        Err(crate::Error::EntityNotFound)
+    ));
     let memory = vault.memory(EntityId::now(), crate::EdgeActorClass::Human);
     assert_eq!(
         memory
@@ -220,13 +224,17 @@ fn old_citation_survives_reopen_but_delete_cannot_resurrect_document() {
             .unwrap()
             .is_none()
     );
-    assert_eq!(
-        vault.resolve_citation(&citation).unwrap(),
-        ResolvedCitation {
-            quote: "alpha".into(),
-            drifted: true
-        }
-    );
+    assert!(matches!(
+        vault.resolve_citation(&citation),
+        Err(crate::Error::EntityNotFound)
+    ));
+    let mut forged = citation;
+    forged.quote = "text never present in the deleted entity".into();
+    forged.quote_hash = *blake3::hash(forged.quote.as_bytes()).as_bytes();
+    assert!(matches!(
+        vault.resolve_citation(&forged),
+        Err(crate::Error::EntityNotFound)
+    ));
 }
 
 #[test]
