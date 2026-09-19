@@ -115,3 +115,23 @@ fn configured_scraper_diffs_only_changes_and_only_nominates() -> Result<()> {
     assert!(vault.model_manifest()?.is_none());
     Ok(())
 }
+
+#[test]
+fn unchanged_observation_advances_watermark_without_diff_and_blocks_stale_change() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let row = row("one");
+    vault.put_model_registry_row(&row)?;
+    let model = row.catalog.model.clone();
+    let snapshot = |at, score| ScoreSnapshot {
+        source: "bench".into(), fetched_at: at,
+        observations: vec![ScoreObservation { model: model.clone(), benchmark: "quality".into(), score }],
+    };
+    assert_eq!(vault.apply_model_scores(&snapshot(100, 50.0))?.len(), 1);
+    assert!(vault.apply_model_scores(&snapshot(160, 50.0))?.is_empty());
+    assert!(vault.apply_model_scores(&snapshot(120, 60.0)).is_err());
+    let current = vault.model_registry_row(&model)?.expect("row");
+    assert_eq!(current.scores["bench"]["quality"], 50.0);
+    assert_eq!(current.fetched_at["bench"], 160);
+    assert_eq!(vault.model_score_diffs(&model)?.len(), 1);
+    Ok(())
+}

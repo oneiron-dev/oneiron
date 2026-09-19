@@ -225,6 +225,11 @@ impl Vault {
             let scores = row.scores.entry(snapshot.source.clone()).or_default();
             let previous = scores.get(&observation.benchmark).copied();
             if previous == Some(observation.score) {
+                // Observation recency is independent of score changes. An
+                // identical newer snapshot still fences out older replays,
+                // but must not append a spurious change record.
+                row.fetched_at.insert(snapshot.source.clone(), snapshot.fetched_at);
+                self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
                 continue;
             }
             scores.insert(observation.benchmark.clone(), observation.score);
