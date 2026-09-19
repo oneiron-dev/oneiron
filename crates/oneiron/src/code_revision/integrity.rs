@@ -319,7 +319,8 @@ pub(super) fn ensure_code_revision_integrity_record_in_txn(
     }
 
     let artifact_body = code_artifact_body_bytes(store, wtxn, &revision.revision_id)?;
-    let artifact_hash = sha256_bytes(&artifact_body);
+    let artifact_hash =
+        super::file_frontiers::artifact_hash(store, wtxn, &revision, &artifact_body)?;
     let revision_fold = compute_code_revision_fold(
         revision.kind,
         &artifact_hash,
@@ -355,7 +356,7 @@ pub(super) fn build_code_revision_integrity_record(
     revision: &CodeRevision,
     artifact_body: &[u8],
 ) -> Result<CodeRevisionIntegrityRecord> {
-    let artifact_hash = sha256_bytes(artifact_body);
+    let artifact_hash = super::file_frontiers::artifact_hash(store, rtxn, revision, artifact_body)?;
     let parent_fold = revision
         .parent_revision_id
         .map(|parent_id| require_code_revision_fold(store, rtxn, &parent_id))
@@ -429,7 +430,8 @@ pub(super) fn verify_or_build_code_revision_integrity_record_in_txn(
         }
 
         let artifact_body = code_artifact_body_bytes(store, rtxn, &revision.revision_id)?;
-        let artifact_hash = sha256_bytes(&artifact_body);
+        let artifact_hash =
+            super::file_frontiers::artifact_hash(store, rtxn, revision, &artifact_body)?;
         if let Some(record) = &record
             && artifact_hash != record.artifact_hash
         {
@@ -615,8 +617,4 @@ fn update_optional_hash(hasher: &mut Sha256, value: Option<&[u8; CODE_REVISION_H
         }
         None => hasher.update([0]),
     }
-}
-
-fn sha256_bytes(bytes: &[u8]) -> [u8; CODE_REVISION_HASH_LEN] {
-    Sha256::digest(bytes).into()
 }

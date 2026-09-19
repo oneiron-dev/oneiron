@@ -1261,11 +1261,13 @@ fn code_integrity_divergent_root_conflicts_after_frontier_exists() -> Result<()>
     put_artifact(&vault, second_root, 0xA2, 30)?;
 
     vault.commit_code_revision(&CodeRevision::commit(first, session, 100))?;
-    let err = vault
-        .commit_code_revision(&CodeRevision::commit(second_root, session, 200))
-        .expect_err("second divergent root must report a frontier conflict");
-
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+    let outcome = vault.commit_code_revision(&CodeRevision::commit(second_root, session, 200))?;
+    let CodeRevisionWriteOutcome::Proposed(proposal) = outcome else {
+        panic!("divergent root is a proposal");
+    };
+    assert_eq!(proposal.head_revision_id, first);
+    assert_eq!(proposal.revision.revision_id, second_root);
+    assert_eq!(vault.code_revision_proposal(&second_root)?, Some(*proposal));
     assert!(vault.get_code_revision(&second_root)?.is_none());
     Ok(())
 }
@@ -1293,16 +1295,18 @@ fn code_integrity_independent_trace_entries_converge_or_conflict() -> Result<()>
         300,
     ))?;
 
-    let err = vault
-        .commit_code_revision(&CodeRevision::commit_child(
-            conflicting_child,
-            session,
-            root,
-            400,
-        ))
-        .expect_err("same-parent divergent trace must report a conflict");
-
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+    let outcome = vault.commit_code_revision(&CodeRevision::commit_child(
+        conflicting_child,
+        session,
+        root,
+        400,
+    ))?;
+    let CodeRevisionWriteOutcome::Proposed(proposal) = outcome else {
+        panic!("divergence stays reviewable");
+    };
+    assert_eq!(proposal.head_revision_id, first_child);
+    assert_eq!(proposal.revision.parent_revision_id, Some(root));
+    assert_eq!(vault.code_revision_proposals(&session)?, vec![*proposal]);
     let revision = vault
         .get_code_revision(&convergent_child)?
         .expect("convergent revision");
@@ -1689,5 +1693,208 @@ fn code_revision_rejects_unfinalized_parent_without_writing() -> Result<()> {
             .targets(&child, EdgeKind::Supersedes, None)?
             .is_empty()
     );
+    Ok(())
+}
+
+#[test]
+fn tested_file_frontiers_roundtrip_and_full_fold_verification_catches_substitution() -> Result<()> {
+    use crate::code_document::CodeFileEdit;
+    use crate::edge::EdgeActorClass;
+    use crate::write_envelope::WriteActor;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let session = entity(0x60);
+    let revision_id = entity(0x21);
+    put_session(&vault, session, 10)?;
+    put_artifact(&vault, revision_id, 0xA1, 20)?;
+    let actor = WriteActor::new(session, EdgeActorClass::Agent);
+    let mut file = vault.open_code_document("repo", "main.rs", "fn a() {}", session)?;
+    let edit = CodeFileEdit::between("main.rs", "fn a() {}", "fn b() {}");
+    let first = vault.apply_code_file_edit(&mut file, &edit, actor)?.after;
+    let revision =
+        CodeRevision::commit(revision_id, session, 100).with_file_frontier(first.clone());
+    assert_eq!(
+        decode_code_revision(&encode_code_revision(&revision)?)?,
+        revision
+    );
+    assert_eq!(
+        vault.commit_code_revision(&revision)?,
+        CodeRevisionWriteOutcome::Finalized
+    );
+    let second = vault
+        .apply_code_file_edit(
+            &mut file,
+            &CodeFileEdit::between("main.rs", "fn b() {}", "fn c() {}"),
+            actor,
+        )?
+        .after;
+    assert_eq!(
+        vault.get_code_revision(&revision_id)?,
+        Some(revision.clone())
+    );
+    assert_eq!(vault.code_document_at(&first)?, "fn b() {}");
+    // Both file frontiers are individually genuine. Substituting the untested
+    // state must still break the revision's persisted fold.
+    let tampered = revision.with_file_frontier(second);
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(
+        &mut txn,
+        &code_revision_record_key(&revision_id),
+        &encode_code_revision(&tampered)?,
+    )?;
+    txn.commit()?;
+    assert_eq!(
+        vault.get_code_revision(&revision_id).unwrap_err().kind(),
+        ErrorKind::InvalidCodeArtifactBody
+    );
+    assert_eq!(
+        vault
+            .code_revisions_for_session(&session)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidCodeArtifactBody
+    );
+    Ok(())
+}
+
+#[test]
+fn file_map_fold_is_order_independent_and_rejects_unpersisted_frontiers() -> Result<()> {
+    use crate::code_document::CodeFileEdit;
+    use crate::edge::EdgeActorClass;
+    use crate::write_envelope::WriteActor;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let session = entity(0x60);
+    let first_id = entity(0x21);
+    let duplicate_id = entity(0x22);
+    let forged_id = entity(0x23);
+    put_session(&vault, session, 10)?;
+    for id in [first_id, duplicate_id, forged_id] {
+        put_artifact(&vault, id, 0xA1, 20)?;
+    }
+    let actor = WriteActor::new(session, EdgeActorClass::Agent);
+    let mut a = vault.open_code_document("repo", "a.rs", "a", session)?;
+    let mut b = vault.open_code_document("repo", "b.rs", "b", session)?;
+    let a = vault
+        .apply_code_file_edit(&mut a, &CodeFileEdit::between("a.rs", "a", "aa"), actor)?
+        .after;
+    let b = vault
+        .apply_code_file_edit(&mut b, &CodeFileEdit::between("b.rs", "b", "bb"), actor)?
+        .after;
+    let one = CodeRevision::commit(first_id, session, 100)
+        .with_file_frontier(a.clone())
+        .with_file_frontier(b.clone());
+    let two = CodeRevision::commit(duplicate_id, session, 200)
+        .with_file_frontier(b.clone())
+        .with_file_frontier(a.clone());
+    assert_eq!(
+        vault.commit_code_revision(&one)?,
+        CodeRevisionWriteOutcome::Finalized
+    );
+    // Equal independently ordered maps converge at the same root fold.
+    assert_eq!(
+        vault.commit_code_revision(&two)?,
+        CodeRevisionWriteOutcome::Finalized
+    );
+    let mut bad = a;
+    bad.op_fold[0] ^= 1;
+    let bad = CodeRevision::commit(forged_id, session, 300)
+        .with_file_frontier(bad)
+        .with_file_frontier(b);
+    assert_eq!(
+        vault.commit_code_revision(&bad).unwrap_err().kind(),
+        ErrorKind::InvalidCodeArtifactBody
+    );
+    assert!(vault.code_revision_proposal(&forged_id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn stranded_revision_persists_without_rebase_and_resolution_needs_a_new_identity() -> Result<()> {
+    let (dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let session = entity(0x60);
+    let base = entity(0x21);
+    let head = entity(0x22);
+    let stranded = entity(0x23);
+    let resolved = entity(0x24);
+    put_session(&vault, session, 10)?;
+    for (id, tag) in [
+        (base, 0xA1),
+        (head, 0xA2),
+        (stranded, 0xA3),
+        (resolved, 0xA4),
+    ] {
+        put_artifact(&vault, id, tag, 20)?;
+    }
+    vault.commit_code_revision(&CodeRevision::commit(base, session, 100))?;
+    vault.commit_code_revision(&CodeRevision::commit_child(head, session, base, 200))?;
+    let original = CodeRevision::commit_child(stranded, session, base, 300);
+    let outcome = vault.commit_code_revision(&original)?;
+    let CodeRevisionWriteOutcome::Proposed(proposal) = &outcome else {
+        panic!("must propose");
+    };
+    assert_eq!(proposal.head_revision_id, head);
+    assert_eq!(proposal.revision.parent_revision_id, Some(base));
+    assert_eq!(vault.code_revisions_for_session(&session)?.len(), 2);
+    assert!(
+        vault
+            .targets(&stranded, EdgeKind::Supersedes, None)?
+            .is_empty()
+    );
+    drop(vault);
+    let vault = Vault::open(dir.path(), test_config())?;
+    assert_eq!(
+        vault.code_revision_proposal(&stranded)?,
+        Some((**proposal).clone())
+    );
+    assert_eq!(vault.commit_code_revision(&original)?, outcome);
+    let changed_parent = CodeRevision::commit_child(stranded, session, head, 300);
+    assert!(vault.commit_code_revision(&changed_parent).is_err());
+    assert_eq!(
+        vault.commit_code_revision(&CodeRevision::commit_child(resolved, session, head, 400))?,
+        CodeRevisionWriteOutcome::Finalized
+    );
+    assert_eq!(
+        vault.code_revision_proposal(&stranded)?,
+        Some((**proposal).clone())
+    );
+    assert!(vault.get_code_revision(&stranded)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn canonical_commit_message_and_modes_are_authenticated_by_the_revision_fold() -> Result<()> {
+    use crate::code_document::CodeFileEdit;
+    use crate::edge::EdgeActorClass;
+    use crate::write_envelope::WriteActor;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let session = entity(0x60);
+    let id = entity(0x21);
+    put_session(&vault, session, 10)?;
+    put_artifact(&vault, id, 0xA1, 20)?;
+    let mut file = vault.open_code_document("repo", "run.sh", "", session)?;
+    let file = vault
+        .apply_code_file_edit(
+            &mut file,
+            &CodeFileEdit::between("run.sh", "", "echo ok\n"),
+            WriteActor::new(session, EdgeActorClass::Human),
+        )?
+        .after;
+    let revision = CodeRevision::commit(id, session, 30)
+        .with_file_frontier(file.clone())
+        .with_commit_metadata(
+            CodeCommitMetadata::new(session, "Run the script")
+                .with_file_mode(file.document_id, 0o100755),
+        );
+    vault.commit_code_revision(&revision)?;
+    assert_eq!(vault.get_code_revision(&id)?, Some(revision.clone()));
+    let mut forged = revision;
+    forged.commit_metadata.as_mut().unwrap().message = "Another message".into();
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(
+        &mut txn,
+        &code_revision_record_key(&id),
+        &encode_code_revision(&forged)?,
+    )?;
+    txn.commit()?;
+    assert!(vault.get_code_revision(&id).is_err());
     Ok(())
 }

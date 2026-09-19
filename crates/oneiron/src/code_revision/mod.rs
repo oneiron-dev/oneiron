@@ -1,8 +1,12 @@
+mod commit_metadata;
+pub use commit_metadata::CodeCommitMetadata;
 mod codec;
+mod file_frontiers;
 mod frontier;
 mod graph;
 mod integrity;
 mod keys;
+mod proposals;
 mod storage;
 mod types;
 
@@ -11,6 +15,7 @@ pub use self::codec::{
     CODE_REVISION_FORK_KEYS, CODE_REVISION_RECORD_KEYS, decode_code_revision,
     decode_code_revision_fork, encode_code_revision, encode_code_revision_fork,
 };
+pub use self::proposals::{CodeRevisionProposal, CodeRevisionWriteOutcome};
 pub(crate) use self::storage::{
     delete_code_revision_lifecycle_in_txn, has_finalized_code_revision_in_txn,
 };
