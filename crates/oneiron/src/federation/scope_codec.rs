@@ -63,7 +63,7 @@ pub(crate) fn legacy_read_scope(value: Option<&Value>) -> Option<Scope> {
                     2 => super::Sensitivity::Sensitive,
                     3 => super::Sensitivity::Restricted,
                     _ => return None,
-                })
+                });
             }
             "scopeProjectId" => out.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(id(v)?)])),
             // Legacy constraints are still checked conjunctively by their owning door.

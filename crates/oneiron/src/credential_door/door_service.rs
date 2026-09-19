@@ -516,6 +516,8 @@ impl CredentialDoorService {
         lifetime_secs: u64,
         _now: u64,
     ) -> DoorResult<DoorCredential> {
+        use rand_core::{OsRng, RngCore};
+
         let issuer = self
             .issuer
             .as_ref()
@@ -532,8 +534,7 @@ impl CredentialDoorService {
             return Err(CredentialDoorError::MintUnavailable);
         }
         let root = self.vault.ensure_host_root_slip(issuer).map_err(custody)?;
-        let mut claims = root.claims.clone();
-        use rand_core::{OsRng, RngCore};
+        let mut claims = root.claims;
         OsRng.fill_bytes(&mut claims.slip_id);
         // Host-root is the issuer, not a same-holder secret-record delegation.
         claims.parent_id = None;

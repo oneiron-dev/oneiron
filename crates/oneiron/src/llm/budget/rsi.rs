@@ -85,12 +85,12 @@ impl Line {
         for row in self.reservations.values().filter(|row| accepts(row)) {
             match row.settlement {
                 Some(RsiSettlement::Spent(units)) => {
-                    spent = spent.checked_add(units).ok_or(RsiBudgetError::Exhausted)?
+                    spent = spent.checked_add(units).ok_or(RsiBudgetError::Exhausted)?;
                 }
                 None => {
                     reserved = reserved
                         .checked_add(row.units)
-                        .ok_or(RsiBudgetError::Exhausted)?
+                        .ok_or(RsiBudgetError::Exhausted)?;
                 }
                 Some(RsiSettlement::Refunded) => {}
             }
@@ -119,8 +119,7 @@ fn load(vault: &Vault, txn: &heed::RoTxn<'_>) -> RsiResult<Line> {
     let raw = vault
         .store
         .vault_meta
-        .get(txn, LINE_KEY)
-        .map_err(crate::Error::from)?
+        .get(txn, LINE_KEY)?
         .ok_or(RsiBudgetError::Unconfigured)?;
     serde_json::from_slice(&raw)
         .map_err(|_| crate::Error::CorruptedIndex("RSI budget ledger").into())
@@ -128,11 +127,7 @@ fn load(vault: &Vault, txn: &heed::RoTxn<'_>) -> RsiResult<Line> {
 fn save(vault: &Vault, txn: &mut heed::RwTxn<'_>, line: &Line) -> RsiResult<()> {
     let raw = serde_json::to_vec(line)
         .map_err(|_| crate::Error::InvariantViolation("RSI ledger encoding"))?;
-    vault
-        .store
-        .vault_meta
-        .put(txn, LINE_KEY, &raw)
-        .map_err(crate::Error::from)?;
+    vault.store.vault_meta.put(txn, LINE_KEY, &raw)?;
     Ok(())
 }
 
@@ -148,13 +143,7 @@ impl Vault {
             return Err(RsiBudgetError::InvalidConfig);
         }
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
-        if self
-            .store
-            .vault_meta
-            .get(&txn, LINE_KEY)
-            .map_err(crate::Error::from)?
-            .is_some()
-        {
+        if self.store.vault_meta.get(&txn, LINE_KEY)?.is_some() {
             return Err(RsiBudgetError::InvalidConfig);
         }
         save(

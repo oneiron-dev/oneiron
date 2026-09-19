@@ -114,21 +114,14 @@ impl Vault {
         )?;
         let key = format!("org.admin.v1.{}", policy.org_ref.0.to_hex());
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
-        if self
-            .store
-            .vault_meta
-            .get(&txn, key.as_bytes())
-            .map_err(crate::Error::from)?
-            .is_some()
-        {
+        if self.store.vault_meta.get(&txn, key.as_bytes())?.is_some() {
             return Err(OrgAdminError::AlreadyConfigured);
         }
         let bytes = serde_json::to_vec(policy)
             .map_err(|_| crate::Error::InvariantViolation("org admin policy encoding"))?;
         self.store
             .vault_meta
-            .put(&mut txn, key.as_bytes(), &bytes)
-            .map_err(crate::Error::from)?;
+            .put(&mut txn, key.as_bytes(), &bytes)?;
         txn.commit().map_err(crate::Error::from)?;
         Ok(())
     }
@@ -139,8 +132,7 @@ impl Vault {
         let bytes = self
             .store
             .vault_meta
-            .get(&txn, key.as_bytes())
-            .map_err(crate::Error::from)?
+            .get(&txn, key.as_bytes())?
             .ok_or(OrgAdminError::Denied)?;
         let policy: OrgAdminPolicy = serde_json::from_slice(&bytes)
             .map_err(|_| crate::Error::InvariantViolation("org admin policy decoding"))?;

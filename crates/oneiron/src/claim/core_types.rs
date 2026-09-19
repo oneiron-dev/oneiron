@@ -350,9 +350,10 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     ));
     entries.push((
         Value::from(KEY_REL),
-        body.rel
-            .map(|id| Value::Array(vec![super::scope_stamp::id_value(id)]))
-            .unwrap_or_else(|| Value::from("all")),
+        body.rel.map_or_else(
+            || Value::from("all"),
+            |id| Value::Array(vec![super::scope_stamp::id_value(id)]),
+        ),
     ));
     entries.push((Value::from(KEY_SUBJ), Value::Binary(body.subject.encode())));
     if let Some(scope) = &body.scope {

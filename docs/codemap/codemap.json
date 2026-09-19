@@ -2357,6 +2357,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/put_apply/lexical_hint.rs",
+     "purpose": "Validation of synthetic lexical query hint CLAIMs at the shared write door",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/put_apply/mod.rs",
      "purpose": "Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers",
      "surface": {
@@ -25395,7 +25405,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26552,7 +26562,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1519,
+   "source_files": 1520,
    "test_files": 547
   },
   "oneiron-bench": {

@@ -196,7 +196,7 @@ pub(super) fn policy_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ConsultF
         .get(txn, POLICY_KEY)?
         .map(|raw| decode(&raw))
         .transpose()
-        .map(|policy| policy.unwrap_or_default())
+        .map(Option::unwrap_or_default)
 }
 
 /// The caller commits this transaction before returning any durable ref.

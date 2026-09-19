@@ -365,16 +365,21 @@ fn authored_key(id: &EntityId) -> Vec<u8> {
     key
 }
 
-/// Called only after a gated ClaimCandidate or a consumed lifecycle binding.
+/// Binds a gated ClaimCandidate or a consumed lifecycle binding. An unbound
+/// write invalidates any prior authored digest.
 /// Read the finalized row, including its body and metadata, rather than the
 /// pre-serialization candidate. A newly authorized writer replaces the prior
 /// binding atomically; the old writer's sealed operation still pins its prior
 /// row and therefore cannot consume the new writer's authority.
-pub(super) fn bind_committed_claim(
+pub(super) fn record_committed_claim(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
+    authored: bool,
 ) -> Result<()> {
+    if !authored {
+        return invalidate_authored_claim(store, txn, id);
+    }
     let raw = store
         .entities
         .get(txn, id.as_bytes())?

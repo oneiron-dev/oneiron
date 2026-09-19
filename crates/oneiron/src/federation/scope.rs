@@ -25,17 +25,13 @@ impl<'de> Deserialize<'de> for ScopeId {
 }
 
 /// Powerset axis. Empty sets normalize to bottom, never to all.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "kind", content = "values", rename_all = "snake_case")]
 pub enum ScopeAxis<T: Ord> {
+    #[default]
     Bottom,
     All,
     Some(BTreeSet<T>),
-}
-impl<T: Ord> Default for ScopeAxis<T> {
-    fn default() -> Self {
-        Self::Bottom
-    }
 }
 #[derive(Deserialize)]
 #[serde(

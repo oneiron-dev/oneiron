@@ -365,7 +365,7 @@ impl Vault {
             .store
             .vault_meta
             .get(&txn, HEAD)?
-            .map(|bytes| bytes.into_owned());
+            .map(std::borrow::Cow::into_owned);
         let parent_hashes = head
             .as_ref()
             .map(|bytes| {
@@ -405,7 +405,7 @@ impl Vault {
             .store
             .vault_meta
             .get(&txn, HEAD)?
-            .map(|bytes| bytes.into_owned())
+            .map(std::borrow::Cow::into_owned)
             != head
         {
             return Err(invalid_authority());

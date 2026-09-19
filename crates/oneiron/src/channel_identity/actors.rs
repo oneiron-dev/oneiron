@@ -134,9 +134,7 @@ impl Vault {
             (Value::from("actor_class"), Value::from("system")),
             (
                 Value::from("route_target_ref"),
-                route_target
-                    .map(|id| Value::from(id.to_hex()))
-                    .unwrap_or(Value::Nil),
+                route_target.map_or(Value::Nil, |id| Value::from(id.to_hex())),
             ),
         ]);
         let mut actor_bytes = Vec::new();
@@ -178,7 +176,7 @@ impl Vault {
             encode_channel_identity_body(&identity)?,
         )?;
         let connector =
-            ConnectorKeyRecord::active(identity.channel.clone(), Some(actor_ref), Vec::new(), now);
+            ConnectorKeyRecord::active(identity.channel, Some(actor_ref), Vec::new(), now);
         self.register_connector_key_in_txn(&mut txn, &connector_key_ref, &connector)?;
         let prior_claim_ref = crate::provider_confidence::write_provider_prior_in_txn(
             self,

@@ -1,6 +1,7 @@
 //! Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers.
 
 mod apply;
+mod lexical_hint;
 mod put_entity_update;
 mod put_staging;
 

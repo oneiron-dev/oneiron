@@ -807,8 +807,8 @@ async fn selector_vv_request_sends_filtered_update_only() {
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
         vec![
-            oneiron::sync::SelectorRange::Semantic,
-            oneiron::sync::SelectorRange::Core,
+            oneiron::federation::SelectorRange::Semantic,
+            oneiron::federation::SelectorRange::Core,
         ],
     );
     let client_doc = client_window_doc();
@@ -1255,8 +1255,8 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
         vec![
-            oneiron::sync::SelectorRange::Semantic,
-            oneiron::sync::SelectorRange::Core,
+            oneiron::federation::SelectorRange::Semantic,
+            oneiron::federation::SelectorRange::Core,
         ],
     );
     let client_doc = client_window_doc();

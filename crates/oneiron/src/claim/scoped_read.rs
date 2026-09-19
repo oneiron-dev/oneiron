@@ -70,7 +70,9 @@ impl ScopedReadActorKey {
     }
 
     pub(crate) fn authority_scope(&self) -> Option<&crate::federation::Scope> {
-        self.proof.as_ref().map(|proof| proof.scope())
+        self.proof
+            .as_ref()
+            .map(crate::authority::VerifiedSlip::scope)
     }
 
     #[must_use]

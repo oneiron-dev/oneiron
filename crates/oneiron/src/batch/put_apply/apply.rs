@@ -9,10 +9,9 @@ use super::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
     StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
     check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, index_thread_claim_subject,
-    lexical_query_hint_claim_id, parse_entity_metadata, plan_short_id_update,
-    reject_overlay_member_base_write, stage_entity_body_row, stage_entity_index_rows,
-    stage_optimizer_birth_marker_row, validate_companion_register_put,
+    evict_authority_log_store_key_squatter, index_thread_claim_subject, parse_entity_metadata,
+    plan_short_id_update, reject_overlay_member_base_write, stage_entity_body_row,
+    stage_entity_index_rows, stage_optimizer_birth_marker_row, validate_companion_register_put,
     validate_local_agent_definition_create, validate_local_skill_create,
     validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
     validate_task_checkin_immutable,
@@ -124,64 +123,7 @@ pub(in crate::batch) fn apply_put(
         crate::thread_passport::validate_thread_claim_in_txn(store, wtxn, &id, &body, replicated)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {
-            if !id
-                .as_bytes()
-                .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint claim id must use LH prefix",
-                ));
-            }
-            let hint_value = crate::claim::decode_lexical_query_hint_value(&body.value)?;
-            let target = hint_value.target;
-            let expected_id = lexical_query_hint_claim_id(&target, &hint_value.query)?;
-            if expected_id != id {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint claim id must match target and query",
-                ));
-            }
-            if !body.stale {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint claims must be stale",
-                ));
-            }
-            if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint claims must be active",
-                ));
-            }
-            if target == id {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint target must not be self",
-                ));
-            }
-            if let Some(target_raw) = store.entities.get(wtxn, target.as_bytes())? {
-                let Some(target_header) = EntityMetadataHeader::parse(&target_raw) else {
-                    return Err(Error::CorruptedIndex("entity header"));
-                };
-                if target_header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-                    return Err(Error::InvalidClaimBody(
-                        "lexical query hint target must be claim",
-                    ));
-                }
-                let Ok(target_body) = crate::claim::decode_claim_body(
-                    &target_raw[ENTITY_METADATA_HEADER_LEN..],
-                    true,
-                ) else {
-                    return Err(Error::InvalidClaimBody(
-                        "lexical query hint target must be claim",
-                    ));
-                };
-                if target_body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
-                    return Err(Error::InvalidClaimBody(
-                        "lexical query hint target must not be synthetic hint",
-                    ));
-                }
-            } else if !replicated {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint target must be claim",
-                ));
-            }
+            super::lexical_hint::validate_lexical_query_hint(store, wtxn, id, &body, replicated)?;
         }
         if body.session_tag.is_some()
             && !replicated

@@ -124,9 +124,8 @@ pub(crate) fn upgrade_pre_scope_body(data: &[u8]) -> Result<Vec<u8>> {
             .map(|i| entries.remove(i).1)
     };
     let world = take(&mut entries, "world").unwrap_or_else(|| id_value(base_world_id()));
-    let rel = take(&mut entries, "rel")
-        .map(|v| Value::Array(vec![v]))
-        .unwrap_or_else(|| Value::from("all"));
+    let rel =
+        take(&mut entries, "rel").map_or_else(|| Value::from("all"), |v| Value::Array(vec![v]));
     let legacy_scope = entries
         .iter()
         .find(|(k, _)| k.as_str() == Some("scope"))

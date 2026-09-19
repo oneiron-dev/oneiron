@@ -86,23 +86,23 @@ pub(crate) fn stamp_put(
     } else {
         default_stamp(id, kind)
     };
-    if kind == crate::registry::ENTITY_TYPE_FACET {
-        if let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..]) {
-            let bands: Vec<_> = entries
-                .iter()
-                .filter(|(k, _)| k.as_str() == Some("sensitivity"))
-                .collect();
-            if let [(_, value)] = bands.as_slice() {
-                scope.sensitivity = SensitivityCeiling::AtMost(match value.as_str() {
-                    Some("public") => Sensitivity::Public,
-                    Some("private") => Sensitivity::Private,
-                    Some("sensitive") => Sensitivity::Sensitive,
-                    Some("restricted") => Sensitivity::Restricted,
-                    _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
-                });
-            } else if !bands.is_empty() {
-                return Err(Error::InvalidClaimBody("duplicate facet sensitivity"));
-            }
+    if kind == crate::registry::ENTITY_TYPE_FACET
+        && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
+    {
+        let bands: Vec<_> = entries
+            .iter()
+            .filter(|(k, _)| k.as_str() == Some("sensitivity"))
+            .collect();
+        if let [(_, value)] = bands.as_slice() {
+            scope.sensitivity = SensitivityCeiling::AtMost(match value.as_str() {
+                Some("public") => Sensitivity::Public,
+                Some("private") => Sensitivity::Private,
+                Some("sensitive") => Sensitivity::Sensitive,
+                Some("restricted") => Sensitivity::Restricted,
+                _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
+            });
+        } else if !bands.is_empty() {
+            return Err(Error::InvalidClaimBody("duplicate facet sensitivity"));
         }
     }
     scope.verbs = ScopeAxis::Bottom;

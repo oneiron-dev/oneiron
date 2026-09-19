@@ -235,11 +235,8 @@ pub(super) fn apply_ops_with_origin(
                     origin,
                 )?;
                 if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                    if materialization.is_some() && !allow_reserved_predicate {
-                        claim_materialization::bind_committed_claim(store, wtxn, &id)?;
-                    } else {
-                        claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
-                    }
+                    let authored = materialization.is_some() && !allow_reserved_predicate;
+                    claim_materialization::record_committed_claim(store, wtxn, &id, authored)?;
                 }
                 evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
@@ -363,7 +360,7 @@ pub(super) fn apply_ops_with_origin(
                         .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                 )?;
                 if !internal_lexical_query_hint {
-                    claim_materialization::bind_committed_claim(store, wtxn, &id)?;
+                    claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
                 }
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
