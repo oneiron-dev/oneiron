@@ -366,17 +366,36 @@ impl Vault {
             .iter()
             .filter_map(DiagnosticObservation::from_consolidation_receipt)
             .collect();
+        // Pending receipts are immutable history. Count only the current tray
+        // row for that exact decision, once, even if an adapter repeats it.
+        let txn = self.store.env.read_txn()?;
+        let mut seen = std::collections::BTreeSet::new();
         for receipt in receipts {
-            if receipt.receipt_kind == ReceiptKind::Gate
-                && receipt.outcome == "pending"
-                && receipt.fields.get("content_kind").map(String::as_str)
-                    == Some(crate::consent::CONSENT_CONTENT_KIND)
-                && let Some(id) = receipt_id(receipt)
-                && let Some(o) = observation(id, "consent_pending", receipt.occurred_at, receipt)
+            if receipt.receipt_kind != ReceiptKind::Gate || receipt.outcome != "pending" {
+                continue;
+            }
+            let Some(claim) = receipt
+                .trigger_ref
+                .as_deref()
+                .and_then(|r| r.strip_prefix("claim:"))
+                .and_then(|r| EntityId::from_hex(r).ok())
+            else {
+                continue;
+            };
+            let Some(id) = receipt_id(receipt) else {
+                continue;
+            };
+            let Some(pending) = self.store.pending_gate_consent_in_txn(&txn, &claim)? else {
+                continue;
+            };
+            if pending.decision_id.as_bytes() == id.as_bytes()
+                && seen.insert(id)
+                && let Some(o) = observation(id, "consent_pending", pending.created_at, &pending)
             {
                 observations.push(o);
             }
         }
+        drop(txn);
         let mut ids = run(
             self,
             scope,

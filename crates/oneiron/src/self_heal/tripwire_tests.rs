@@ -55,23 +55,22 @@ fn manifest_bound_fires_at_equality_and_window_excludes_old_receipts() {
             actor_writes: 3,
         },
     );
-    let r = receipt("pending", crate::consent::CONSENT_CONTENT_KIND);
+    let r = pending_receipt(&v);
     assert!(
         v.project_receipt_tripwires("run", std::slice::from_ref(&r), 100)
             .unwrap()
             .is_empty()
     );
-    let mut second = r.clone();
-    second.receipt_id = format!("gate:{}", EntityId::now().to_hex());
+    let second = pending_receipt(&v);
     assert_eq!(
         v.project_receipt_tripwires("run", &[r.clone(), second.clone()], 100)
             .unwrap()
             .len(),
         1
     );
-    second.occurred_at = 40;
+    // Windowing uses the stored pending time, not a caller-provided timestamp.
     assert!(
-        v.project_receipt_tripwires("run", &[r, second], 100)
+        v.project_receipt_tripwires("run", &[r, second], 161)
             .unwrap()
             .is_empty()
     );
@@ -119,19 +118,13 @@ fn closed_form_degenerate_and_silent_runs_not_healthy_runs() {
 #[test]
 fn signed_runs_persist_but_unsigned_tampered_and_foreign_runs_are_silent() {
     let (_d, v) = vault();
-    let observations = [DiagnosticObservation {
-        source_ref: EntityId::now(),
-        kind: "consent.denied",
-        payload_digest: [1; 32],
-        observed_at: 100,
-    }];
     // Use the canonical consent detector token from the receipt projector.
     let mut r = receipt("denied", crate::consent::CONSENT_CONTENT_KIND);
     r.policy_trace
         .push(crate::consent::CONSENT_REASON_DENIED.into());
     let observations = [DiagnosticObservation::from_consent_receipt(&r)
         .unwrap()
-        .unwrap_or(observations[0])];
+        .expect("canonical denied receipt projects an observation")];
     let input = DiagnosticWorkingSet {
         scope_ref: "scheduled-run",
         observations: &observations,
@@ -327,4 +320,91 @@ fn malformed_manifest_bounds_never_create_tripwires() {
                 .is_empty()
         );
     }
+}
+
+fn pending_receipt(v: &Vault) -> ReceiptRecord {
+    let claim = EntityId::now();
+    let mut r = receipt("pending", crate::consent::CONSENT_CONTENT_KIND);
+    let decision = crate::store::GateDecisionId::from_bytes(
+        *EntityId::from_hex(r.receipt_id.strip_prefix("gate:").unwrap())
+            .unwrap()
+            .as_bytes(),
+    );
+    r.trigger_ref = Some(format!("claim:{}", claim.to_hex()));
+    v.with_write_txn(|txn| {
+        v.store.put_pending_gate_consent_in_txn(
+            txn,
+            &crate::store::PendingGateConsentRecord {
+                version: crate::store::PENDING_GATE_CONSENT_VERSION,
+                claim_id: *claim.as_bytes(),
+                decision_id: decision,
+                created_at: r.occurred_at,
+                diff_handle: vec![1],
+                read_frontier_hash: [1; 32],
+                reason_codes: vec!["gate.pending.test".into()],
+                dreamer_run_id: None,
+            },
+        )
+    })
+    .unwrap();
+    r
+}
+
+#[test]
+fn resolved_or_replaced_consents_and_duplicate_receipts_do_not_inflate_depth() {
+    let (_d, v) = vault();
+    set_bounds(
+        &v,
+        TripwireBounds {
+            window_secs: 60,
+            consent_depth: 2,
+            actor_writes: 3,
+        },
+    );
+    let first = pending_receipt(&v);
+    let second = pending_receipt(&v);
+    assert!(
+        v.project_receipt_tripwires("duplicate", &[first.clone(), first.clone()], 100)
+            .unwrap()
+            .is_empty()
+    );
+    let claim = EntityId::from_hex(
+        second
+            .trigger_ref
+            .as_deref()
+            .unwrap()
+            .strip_prefix("claim:")
+            .unwrap(),
+    )
+    .unwrap();
+    // Resolution consumes the tray row; the immutable receipt remains.
+    v.with_write_txn(|txn| v.store.delete_pending_gate_consent_in_txn(txn, &claim))
+        .unwrap();
+    assert!(
+        v.project_receipt_tripwires("resolved", &[first.clone(), second.clone()], 100)
+            .unwrap()
+            .is_empty()
+    );
+    // A different decision for the same claim cannot reactivate the old receipt.
+    v.with_write_txn(|txn| {
+        v.store.put_pending_gate_consent_in_txn(
+            txn,
+            &crate::store::PendingGateConsentRecord {
+                version: crate::store::PENDING_GATE_CONSENT_VERSION,
+                claim_id: *claim.as_bytes(),
+                decision_id: crate::store::GateDecisionId::now(),
+                created_at: 100,
+                diff_handle: vec![1],
+                read_frontier_hash: [1; 32],
+                reason_codes: vec!["gate.pending.test".into()],
+                dreamer_run_id: None,
+            },
+        )
+    })
+    .unwrap();
+    assert!(
+        v.project_receipt_tripwires("replaced", &[first, second], 100)
+            .unwrap()
+            .is_empty()
+    );
 }
