@@ -122,7 +122,8 @@ pub(crate) struct LeaseRegisterRequest {
 }
 #[derive(Serialize, ToSchema)]
 pub(crate) struct LeaseRegisterResponse {
-    vault_id: u64,
+    /// Opaque vault scope, lossless in JavaScript and ready for x-oneiron-vault.
+    vault_id: String,
     granted: bool,
     expires_at: u64,
 }
@@ -177,7 +178,7 @@ async fn lease_intake(
         );
     }
     Ok(Json(LeaseRegisterResponse {
-        vault_id: server.config.lease_vault_id,
+        vault_id: format!("{:016x}", server.config.lease_vault_id),
         granted: decision.granted,
         expires_at: decision.expires_at,
     }))

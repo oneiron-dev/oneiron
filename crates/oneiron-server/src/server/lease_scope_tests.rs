@@ -281,3 +281,54 @@ async fn granted_world_is_read_locally_but_never_by_a_cross_vault_lease() {
         .is_err()
     );
 }
+
+#[tokio::test]
+async fn lease_registration_returns_lossless_header_ready_vault_id() {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+    let dir = tempfile::tempdir().unwrap();
+    let vault_id = 0xfedc_ba98_7654_3210;
+    let server = Arc::new(
+        SyncServer::new(
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap()),
+            SyncServerConfig {
+                lease_vault_id: vault_id,
+                auth_secret: Some("owner-secret".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let key = SigningKey::from_bytes(&[51; 32]);
+    let body = serde_json::json!({
+        "client_id": 22,
+        "pubkey": hex(&key.verifying_key().to_bytes()),
+        "proof": hex(&proof(22, &key)),
+    });
+    let app = crate::build_app(server.clone());
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/lease/register")
+                .header("authorization", "Bearer owner-secret")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["granted"], true);
+    let scope = body["vault_id"].as_str().expect("opaque scope is a string");
+    assert_eq!(scope, "fedcba9876543210");
+    let mut binding = headers(vault_id, 22, &key);
+    binding.insert("x-oneiron-vault", scope.parse().unwrap());
+    assert!(server.require_vault_binding(&binding).is_ok());
+}
