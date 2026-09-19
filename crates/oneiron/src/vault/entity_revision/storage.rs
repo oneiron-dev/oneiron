@@ -300,6 +300,23 @@ pub(crate) fn revision_for_mode_in_txn(
     }))
 }
 
+/// A pack-level pin selects only its owning entity; unrelated hits are not errors.
+pub(crate) fn entity_owns_revision_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    revision: RevisionRef,
+) -> Result<bool> {
+    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    Ok(reference(id, &raw) == revision
+        || store
+            .vault_meta()
+            .get(txn, &frontier_key(id, revision))?
+            .is_some())
+}
+
 pub(crate) fn read_entity_revision_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,

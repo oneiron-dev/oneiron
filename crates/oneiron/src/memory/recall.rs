@@ -504,7 +504,9 @@ impl Memory<'_> {
                 let total = hits.len() as u64;
                 let mut items = Vec::new();
                 for hit in hits.into_iter().take(limit) {
-                    if let Some(item) = self.memory_item_for(&hit.id, Some(facet_id))? {
+                    if let Some(item) =
+                        self.memory_item_for(&hit.id, Some(facet_id), crate::vault::ReadMode::Live)?
+                    {
                         items.push(item);
                     }
                 }
@@ -582,7 +584,13 @@ impl Memory<'_> {
                 });
                 let mut items = Vec::new();
                 for entity in pack.results.iter().take(limit) {
-                    if let Some(item) = self.memory_item_for(&entity.id, None)? {
+                    let mode = entity.source_revision_ref.map_or(
+                        crate::vault::ReadMode::Indexed,
+                        |revision| {
+                            crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
+                        },
+                    );
+                    if let Some(item) = self.memory_item_for(&entity.id, None, mode)? {
                         items.push(item);
                     }
                 }
@@ -619,6 +627,7 @@ impl Memory<'_> {
         &self,
         id: &EntityId,
         facet_hint: Option<EntityId>,
+        mode: crate::vault::ReadMode,
     ) -> MemoryResult<Option<MemoryItem>> {
         let Some(entity_type) = self.vault.get_entity_type(id)? else {
             return Ok(None);
@@ -637,12 +646,29 @@ impl Memory<'_> {
                 .find(|edge| edge.kind == EdgeKind::HasFacet)
                 .map(|edge| edge.target.to_hex())
         });
-        let short_id = self.short_ref_or_hex(id)?;
+        let Some(view) = self.entity_view_with_mode(id, mode)? else {
+            return Ok(None);
+        };
+        let short_id = view.short_ref.clone().unwrap_or_else(|| id.to_hex());
         let kind = kind_string_for_type(entity_type);
 
         if entity_type == ENTITY_TYPE_CLAIM {
-            let Some(body) = self.vault.get_claim(id)? else {
+            let Some(live_body) = self.vault.get_claim(id)? else {
                 return Ok(None);
+            };
+            if !claim_surfaceable(&live_body) {
+                return Ok(None);
+            }
+            let body = if mode == crate::vault::ReadMode::Live {
+                live_body
+            } else {
+                let Some(raw) = self.vault.get_raw_with_mode(id, mode)? else {
+                    return Ok(None);
+                };
+                crate::claim::decode_claim_body(
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                    true,
+                )?
             };
             if !claim_surfaceable(&body) {
                 return Ok(None);
@@ -667,9 +693,6 @@ impl Memory<'_> {
                 salience: body.salience,
             }))
         } else {
-            let Some(view) = self.entity_view(id)? else {
-                return Ok(None);
-            };
             let value_text = view
                 .body
                 .as_ref()

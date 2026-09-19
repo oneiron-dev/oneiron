@@ -347,7 +347,8 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Selects the hydration frontier. Retrieval defaults to INDEXED.
-    /// An explicit pin must exist for every hydrated entity; it never approximates.
+    /// An explicit entity-bound pin selects only its owning result/neighbor;
+    /// unrelated entities are omitted and no history is approximated.
     pub fn read_mode(mut self, mode: crate::vault::ReadMode) -> Self {
         self.read_mode = mode;
         self

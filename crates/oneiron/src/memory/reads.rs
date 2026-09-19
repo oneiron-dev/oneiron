@@ -371,7 +371,7 @@ impl Memory<'_> {
         self.entity_view_with_mode(id, crate::vault::ReadMode::Live)
     }
 
-    fn entity_view_with_mode(
+    pub(super) fn entity_view_with_mode(
         &self,
         id: &EntityId,
         mode: crate::vault::ReadMode,
@@ -387,7 +387,12 @@ impl Memory<'_> {
             let hash =
                 (xxhash_rust::xxh32::xxh32(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], 0)
                     % 256) as u8;
-            format!("{short}:{hash:02x}")
+            match mode {
+                crate::vault::ReadMode::Pinned(revision) => {
+                    format!("{short}:{hash:02x}@{}", revision.to_hex())
+                }
+                _ => format!("{short}:{hash:02x}"),
+            }
         });
         Ok(Some(EntityView {
             id_hex: id.to_hex(),

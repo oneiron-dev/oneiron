@@ -451,3 +451,44 @@ fn invalid_deferred_vector_is_refused_before_durable_staging() {
         vec![1.0, 0.0, 0.0, 0.0]
     );
 }
+
+#[test]
+fn pack_level_pin_selects_its_entity_from_multiple_hits_and_neighbors() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let a = EntityId::now();
+    let b = EntityId::now();
+    put(&vault, &a, "shared alpha");
+    put(&vault, &b, "shared beta");
+    vault
+        .put_edge(&a, crate::EdgeKind::Mentions, &b, 1.0)
+        .unwrap();
+    let pin = vault.pin_entity_revision(&a).unwrap();
+    put(&vault, &a, "changed alpha");
+    assert_eq!(
+        vault
+            .context_pack()
+            .search_text("shared", 10)
+            .run()
+            .unwrap()
+            .results
+            .len(),
+        2
+    );
+    let pack = vault
+        .context_pack()
+        .search_text("shared", 10)
+        .read_mode(ReadMode::Pinned(pin))
+        .include_edges(true)
+        .edge_hop(1)
+        .run()
+        .unwrap();
+    assert_eq!(pack.results.len(), 1);
+    assert_eq!(pack.results[0].id, a);
+    assert_eq!(pack.results[0].source_revision_ref, Some(pin.0));
+    assert_eq!(
+        pack.results[0].fields.as_ref().unwrap()["content"],
+        serde_json::json!("shared alpha")
+    );
+    assert!(pack.neighbors.iter().all(|entity| entity.id == a));
+}

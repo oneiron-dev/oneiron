@@ -50,6 +50,16 @@ pub(super) fn hydrate_entity(
     else {
         return Ok(None);
     };
+    if let crate::vault::ReadMode::Pinned(revision) = options.read_mode
+        && !crate::vault::entity_revision::entity_owns_revision_in_txn(
+            &vault.store,
+            rtxn,
+            &id,
+            revision,
+        )?
+    {
+        return Ok(None);
+    }
     let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
         vault,
         rtxn,

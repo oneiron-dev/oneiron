@@ -13,8 +13,9 @@ mod types;
 
 pub(crate) use storage::{
     capture_entity_revision, ensure_document, entity_has_pending_revision,
-    read_entity_revision_from_store_in_txn, read_entity_revision_in_txn, remove_entity_revisions,
-    revision_for_mode_in_txn, storage_manages_text,
+    entity_owns_revision_in_txn, read_entity_revision_from_store_in_txn,
+    read_entity_revision_in_txn, remove_entity_revisions, revision_for_mode_in_txn,
+    storage_manages_text,
 };
 pub use types::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
