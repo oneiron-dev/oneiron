@@ -157,7 +157,7 @@ fn owner_presentation_is_frozen_gated_space_local_and_revocable_on_recovery()
     crate::outbound_chokepoint::BEFORE_NEW_ADMISSION.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(move || {
             v.revoke_consent_grant(&o, &grant_ref).unwrap();
-        }))
+        }));
     });
     assert_eq!(
         vault.dispatch_outbound_intent(retry, &mut sink)?.outcome,

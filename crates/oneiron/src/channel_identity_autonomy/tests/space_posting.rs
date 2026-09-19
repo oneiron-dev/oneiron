@@ -42,7 +42,7 @@ fn owner_dial_is_space_local_receipted_and_never_expands_room_or_grants_send() -
             .preset,
         GroupPostingPreset::NamedParticipant
     );
-    vault.create_standing_grant(&owner, bound.clone())?;
+    vault.create_standing_grant(&owner, bound)?;
     assert!(
         vault
             .space_posting_plan(identity, "group:one", room.clone())?

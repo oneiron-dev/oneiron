@@ -395,7 +395,7 @@ fn tampered_files_facets_paths_and_omissions_are_not_admitted() -> Result<()> {
                     .as_mut()
                     .expect("bundle fixture")
                     .files[0]
-                    .content = Some("changed instructions".into())
+                    .content = Some("changed instructions".into());
             }
             1 => {
                 changed.skills[0]
@@ -403,7 +403,7 @@ fn tampered_files_facets_paths_and_omissions_are_not_admitted() -> Result<()> {
                     .as_mut()
                     .expect("bundle fixture")
                     .files[0]
-                    .path = "../SKILL.md".into()
+                    .path = "../SKILL.md".into();
             }
             2 => {
                 changed
@@ -415,7 +415,7 @@ fn tampered_files_facets_paths_and_omissions_are_not_admitted() -> Result<()> {
                     .as_mut()
                     .expect("bundle fixture")
                     .files[0]
-                    .content = Some("forged policy".into())
+                    .content = Some("forged policy".into());
             }
             3 => changed.manifest.import_omissions.clear(),
             _ => changed.manifest.source_boundaries.clear(),
