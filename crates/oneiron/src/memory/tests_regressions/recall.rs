@@ -717,3 +717,55 @@ fn recall_raw_deadline_cuts_graph_expansion_but_keeps_direct_hits() {
             .any(|item| item.value_text.contains("graphneighbor"))
     );
 }
+
+#[test]
+fn recall_sparse_reports_completed_vector_execution_in_both_paths() {
+    use crate::retrieval_depth::{RecallExecution, RetrievalDeadline};
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let facade = facade_for(&vault, actor);
+    let facet = EntityId::now();
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
+    let embedding = vec![1.0; vault.config.dimensions];
+    for facet in [None, Some(facet.to_hex())] {
+        let scope = RecallScope {
+            facet,
+            ..Default::default()
+        };
+        for mode in [0, 1, 2] {
+            let deadline = RetrievalDeadline::at(if mode == 0 {
+                std::time::Instant::now() - std::time::Duration::from_secs(1)
+            } else {
+                std::time::Instant::now() + std::time::Duration::from_secs(60)
+            });
+            if mode == 1 {
+                deadline.cancel();
+            }
+            let pack = facade
+                .recall_with_execution(
+                    "no matching text",
+                    Effort::Light,
+                    &scope,
+                    10,
+                    None,
+                    None,
+                    &RecallExecution {
+                        embedding: Some(&embedding),
+                        deadline: Some(&deadline),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(pack.retrieval_meta.sparse, Some(mode != 2));
+            assert_eq!(pack.retrieval_meta.partial, mode != 2);
+        }
+    }
+}

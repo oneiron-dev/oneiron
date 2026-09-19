@@ -34,6 +34,7 @@ impl PipelineBuilder<'_> {
             .is_some_and(|filter| filter.deny_all)
         {
             return Ok(PipelineOutput {
+                vector_completed: false,
                 revisions: HashMap::new(),
                 // No channel ran: an authority refusal is not a cache failure.
                 retrieval_quality: Default::default(),
@@ -192,6 +193,10 @@ impl PipelineBuilder<'_> {
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
+                vector_completed: attempt
+                    .diagnostics
+                    .succeeded
+                    .contains(&RetrievalSignal::Vector),
                 revisions: HashMap::new(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
                 scores: Vec::new(),
@@ -411,6 +416,7 @@ impl PipelineBuilder<'_> {
         };
 
         Ok(PipelineOutput {
+            vector_completed: diagnostics.succeeded.contains(&RetrievalSignal::Vector),
             revisions,
             retrieval_quality,
             scores,

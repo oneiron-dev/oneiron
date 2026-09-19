@@ -50,6 +50,12 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn run_with_telemetry(self) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        Ok(self.run_with_vector_status()?.0)
+    }
+
+    pub(crate) fn run_with_vector_status(
+        self,
+    ) -> Result<(RetrievalWithTelemetry<ContextPack>, bool)> {
         let run = self.run_unfinalized()?;
         let surfaced_result_ids: Vec<[u8; 16]> = run
             .pack
@@ -66,11 +72,14 @@ impl<'a> ContextPackBuilder<'a> {
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
         )?;
-        Ok(RetrievalWithTelemetry {
-            retrieval_quality: run.pack.retrieval_quality.clone(),
-            value: run.pack,
-            run_id: telemetry_run_id,
-        })
+        Ok((
+            RetrievalWithTelemetry {
+                retrieval_quality: run.pack.retrieval_quality.clone(),
+                value: run.pack,
+                run_id: telemetry_run_id,
+            },
+            run.vector_completed,
+        ))
     }
 
     pub fn run_projected_json_with_telemetry(
@@ -397,6 +406,7 @@ impl<'a> ContextPackBuilder<'a> {
             );
 
             Ok(ContextPackRun {
+                vector_completed: pipeline_output.vector_completed,
                 pack: ContextPack {
                     retrieval_quality,
                     results,

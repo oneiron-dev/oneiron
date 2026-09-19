@@ -457,150 +457,164 @@ impl Memory<'_> {
             Vec::new()
         };
 
-        let (items, total_candidates, rendered, retrieval_quality) = match &scope.facet {
-            Some(facet_ref) => {
-                // Facet-strict narrowing rides the raw retrieval pipeline:
-                // ContextPackBuilder exposes no facet passthrough and
-                // pipeline.rs/context_pack.rs are consume-only for this
-                // chain. No pack rendering on this path.
-                let facet_id = self.resolve_ref(facet_ref)?;
-                let mut pipeline = self
-                    .vault
-                    .query()
-                    .search_text(query, limit)
-                    .facet(&facet_id, FacetMode::Strict)
-                    .world(world_scope)
-                    .retrieval_effort(effective, &seeds);
-                if let Some(filter) = candidate_filter {
-                    pipeline = pipeline.filter_candidates(filter);
-                }
-                if let Some(telemetry) = session_telemetry.as_ref() {
-                    pipeline = pipeline.in_session(telemetry);
-                }
-                if let Some(deadline) = execution.deadline {
-                    pipeline = pipeline.deadline(deadline);
-                }
-                if let Some(vector) = execution.embedding {
-                    pipeline = pipeline.search_vector(vector, limit);
-                }
-                if !execution.phonetic_codes.is_empty() {
-                    pipeline = pipeline.search_phonetic(execution.phonetic_codes);
-                }
-                if effective.requires_rerank() {
-                    pipeline = pipeline.rerank(
-                        execution.reranker.expect("validated reranker"),
-                        RerankOptions {
-                            top_n: effective.rerank_top_n(),
-                            query: Some(query.to_owned()),
-                        },
-                    );
-                }
-                if effective != Effort::Light {
-                    pipeline = pipeline
-                        .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
-                        .boost_salience()
-                        .boost_confidence();
-                }
-                let retrieval = pipeline.run_for_pack()?;
-                let hits = retrieval.scores;
-                let total = hits.len() as u64;
-                let mut items = Vec::new();
-                for hit in hits.into_iter().take(limit) {
-                    let Some(revision) = retrieval.revisions.get(&hit.id) else {
-                        continue;
-                    };
-                    let mode = crate::vault::ReadMode::Pinned(*revision);
-                    if let Some(item) = self.memory_item_for(&hit.id, Some(facet_id), mode)? {
-                        items.push(item);
+        let (items, total_candidates, rendered, retrieval_quality, vector_completed) =
+            match &scope.facet {
+                Some(facet_ref) => {
+                    // Facet-strict narrowing rides the raw retrieval pipeline:
+                    // ContextPackBuilder exposes no facet passthrough and
+                    // pipeline.rs/context_pack.rs are consume-only for this
+                    // chain. No pack rendering on this path.
+                    let facet_id = self.resolve_ref(facet_ref)?;
+                    let mut pipeline = self
+                        .vault
+                        .query()
+                        .search_text(query, limit)
+                        .facet(&facet_id, FacetMode::Strict)
+                        .world(world_scope)
+                        .retrieval_effort(effective, &seeds);
+                    if let Some(filter) = candidate_filter {
+                        pipeline = pipeline.filter_candidates(filter);
                     }
-                }
-                (items, total, None, retrieval.retrieval_quality)
-            }
-            None => {
-                let mut builder = self
-                    .vault
-                    .context_pack()
-                    .search_text(query, limit)
-                    .limit(limit)
-                    .world(world_scope)
-                    .retrieval_effort(effective, &seeds);
-                if let Some(filter) = candidate_filter {
-                    builder = builder.filter_candidates(filter);
-                }
-                if let Some(telemetry) = session_telemetry.as_ref() {
-                    builder = builder.in_session(telemetry);
-                }
-                if let Some(deadline) = execution.deadline {
-                    builder = builder.deadline(deadline);
-                }
-                if let Some(vector) = execution.embedding {
-                    builder = builder.search_vector(vector, limit);
-                }
-                if !execution.phonetic_codes.is_empty() {
-                    builder = builder.search_phonetic(execution.phonetic_codes);
-                }
-                if effective.requires_rerank() {
-                    builder = builder.rerank(
-                        execution.reranker.expect("validated reranker"),
-                        RerankOptions {
-                            top_n: effective.rerank_top_n(),
-                            query: Some(query.to_owned()),
-                        },
-                    );
-                }
-                match effective {
-                    Effort::Light => {
-                        builder = builder
-                            .hydrate(false)
-                            .include_edges(false)
-                            .field_profile(FieldProfile::Minimal);
+                    if let Some(telemetry) = session_telemetry.as_ref() {
+                        pipeline = pipeline.in_session(telemetry);
                     }
-                    Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
-                        builder = builder
-                            .include_edges(true)
-                            .edge_hop(1)
-                            .hydrate(true)
-                            .field_profile(FieldProfile::Standard)
+                    if let Some(deadline) = execution.deadline {
+                        pipeline = pipeline.deadline(deadline);
+                    }
+                    if let Some(vector) = execution.embedding {
+                        pipeline = pipeline.search_vector(vector, limit);
+                    }
+                    if !execution.phonetic_codes.is_empty() {
+                        pipeline = pipeline.search_phonetic(execution.phonetic_codes);
+                    }
+                    if effective.requires_rerank() {
+                        pipeline = pipeline.rerank(
+                            execution.reranker.expect("validated reranker"),
+                            RerankOptions {
+                                top_n: effective.rerank_top_n(),
+                                query: Some(query.to_owned()),
+                            },
+                        );
+                    }
+                    if effective != Effort::Light {
+                        pipeline = pipeline
                             .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
                             .boost_salience()
                             .boost_confidence();
                     }
-                }
-                let pack = builder.run()?;
-                let total = pack.stats.candidates_considered as u64;
-                let rendered = pack_format.map(|fmt| {
-                    let config = SerializeConfig {
-                        format: fmt,
-                        profile: match effective {
-                            Effort::Light => FieldProfile::Minimal,
-                            Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
-                                FieldProfile::Standard
-                            }
-                        },
-                        budget: RECALL_TOKEN_BUDGET,
-                        allocation: crate::context_pack::TokenAllocation::default(),
-                        include_stats: false,
-                        merge_neighbors: true,
-                        max_field_chars: DEFAULT_MAX_FIELD_CHARS,
-                        max_item_tokens: 0,
-                    };
-                    String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned()
-                });
-                let mut items = Vec::new();
-                for entity in pack.results.iter().take(limit) {
-                    let mode = entity.source_revision_ref.map_or(
-                        crate::vault::ReadMode::Indexed,
-                        |revision| {
-                            crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
-                        },
-                    );
-                    if let Some(item) = self.memory_item_for(&entity.id, None, mode)? {
-                        items.push(item);
+                    let retrieval = pipeline.run_for_pack()?;
+                    let hits = retrieval.scores;
+                    let total = hits.len() as u64;
+                    let mut items = Vec::new();
+                    for hit in hits.into_iter().take(limit) {
+                        let Some(revision) = retrieval.revisions.get(&hit.id) else {
+                            continue;
+                        };
+                        let mode = crate::vault::ReadMode::Pinned(*revision);
+                        if let Some(item) = self.memory_item_for(&hit.id, Some(facet_id), mode)? {
+                            items.push(item);
+                        }
                     }
+                    (
+                        items,
+                        total,
+                        None,
+                        retrieval.retrieval_quality,
+                        retrieval.vector_completed,
+                    )
                 }
-                (items, total, rendered, pack.retrieval_quality)
-            }
-        };
+                None => {
+                    let mut builder = self
+                        .vault
+                        .context_pack()
+                        .search_text(query, limit)
+                        .limit(limit)
+                        .world(world_scope)
+                        .retrieval_effort(effective, &seeds);
+                    if let Some(filter) = candidate_filter {
+                        builder = builder.filter_candidates(filter);
+                    }
+                    if let Some(telemetry) = session_telemetry.as_ref() {
+                        builder = builder.in_session(telemetry);
+                    }
+                    if let Some(deadline) = execution.deadline {
+                        builder = builder.deadline(deadline);
+                    }
+                    if let Some(vector) = execution.embedding {
+                        builder = builder.search_vector(vector, limit);
+                    }
+                    if !execution.phonetic_codes.is_empty() {
+                        builder = builder.search_phonetic(execution.phonetic_codes);
+                    }
+                    if effective.requires_rerank() {
+                        builder = builder.rerank(
+                            execution.reranker.expect("validated reranker"),
+                            RerankOptions {
+                                top_n: effective.rerank_top_n(),
+                                query: Some(query.to_owned()),
+                            },
+                        );
+                    }
+                    match effective {
+                        Effort::Light => {
+                            builder = builder
+                                .hydrate(false)
+                                .include_edges(false)
+                                .field_profile(FieldProfile::Minimal);
+                        }
+                        Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
+                            builder = builder
+                                .include_edges(true)
+                                .edge_hop(1)
+                                .hydrate(true)
+                                .field_profile(FieldProfile::Standard)
+                                .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+                                .boost_salience()
+                                .boost_confidence();
+                        }
+                    }
+                    let (pack, vector_completed) = builder.run_with_vector_status()?;
+                    let pack = pack.value;
+                    let total = pack.stats.candidates_considered as u64;
+                    let rendered = pack_format.map(|fmt| {
+                        let config = SerializeConfig {
+                            format: fmt,
+                            profile: match effective {
+                                Effort::Light => FieldProfile::Minimal,
+                                Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
+                                    FieldProfile::Standard
+                                }
+                            },
+                            budget: RECALL_TOKEN_BUDGET,
+                            allocation: crate::context_pack::TokenAllocation::default(),
+                            include_stats: false,
+                            merge_neighbors: true,
+                            max_field_chars: DEFAULT_MAX_FIELD_CHARS,
+                            max_item_tokens: 0,
+                        };
+                        String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned()
+                    });
+                    let mut items = Vec::new();
+                    for entity in pack.results.iter().take(limit) {
+                        let mode = entity.source_revision_ref.map_or(
+                            crate::vault::ReadMode::Indexed,
+                            |revision| {
+                                crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
+                            },
+                        );
+                        if let Some(item) = self.memory_item_for(&entity.id, None, mode)? {
+                            items.push(item);
+                        }
+                    }
+                    (
+                        items,
+                        total,
+                        rendered,
+                        pack.retrieval_quality,
+                        vector_completed,
+                    )
+                }
+            };
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         Ok(MemoryPack {
@@ -611,7 +625,7 @@ impl Memory<'_> {
                 quality: retrieval_quality.quality,
                 degradation: retrieval_quality.degradation,
                 confidence_adjustment: retrieval_quality.confidence_adjustment,
-                sparse: Some(execution.embedding.is_none()),
+                sparse: Some(!vector_completed),
                 partial: execution
                     .deadline
                     .is_some_and(crate::retrieval_depth::RetrievalDeadline::was_cut_short),
