@@ -162,6 +162,46 @@ impl crate::Vault {
         })
     }
 }
+/// Shared read primitive for derivation-bearing storage codecs.
+pub(crate) fn owner_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Option<DerivationOwner>> {
+    store
+        .vault_meta
+        .get(txn, b"derivation:owner:v1")?
+        .map(|raw| {
+            raw.as_ref()
+                .try_into()
+                .map(DerivationOwner)
+                .map_err(|_| crate::Error::CorruptedIndex("derivation owner binding"))
+        })
+        .transpose()
+}
+pub(crate) fn sealed_digest(
+    owner: DerivationOwner,
+    kind: DerivationKind,
+    computation: &[u8],
+    content: &[u8],
+) -> [u8; 32] {
+    key(Some(owner), kind, computation, content).0
+}
+
+impl crate::Vault {
+    /// Construct a derivation key from this holding vault's bytes and owner.
+    pub fn derivation_key_for_entity(
+        &self,
+        kind: DerivationKind,
+        computation: &[u8],
+        entity: &crate::EntityId,
+    ) -> crate::Result<Option<DerivationKey>> {
+        let scope = self.derivation_scope()?;
+        Ok(self
+            .get(entity)?
+            .map(|body| scope.key(kind, computation, &body)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,42 +268,3 @@ mod tests {
     }
 }
 
-/// Shared read primitive for derivation-bearing storage codecs.
-pub(crate) fn owner_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-) -> crate::Result<Option<DerivationOwner>> {
-    store
-        .vault_meta
-        .get(txn, b"derivation:owner:v1")?
-        .map(|raw| {
-            raw.as_ref()
-                .try_into()
-                .map(DerivationOwner)
-                .map_err(|_| crate::Error::CorruptedIndex("derivation owner binding"))
-        })
-        .transpose()
-}
-pub(crate) fn sealed_digest(
-    owner: DerivationOwner,
-    kind: DerivationKind,
-    computation: &[u8],
-    content: &[u8],
-) -> [u8; 32] {
-    key(Some(owner), kind, computation, content).0
-}
-
-impl crate::Vault {
-    /// Construct a derivation key from this holding vault's bytes and owner.
-    pub fn derivation_key_for_entity(
-        &self,
-        kind: DerivationKind,
-        computation: &[u8],
-        entity: &crate::EntityId,
-    ) -> crate::Result<Option<DerivationKey>> {
-        let scope = self.derivation_scope()?;
-        Ok(self
-            .get(entity)?
-            .map(|body| scope.key(kind, computation, &body)))
-    }
-}

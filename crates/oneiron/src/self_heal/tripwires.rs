@@ -108,7 +108,7 @@ impl Default for TripwireBounds {
         Self {
             window_secs: 600,
             consent_depth: 1_000,
-            actor_writes: 100_000,
+            actor_writes: 100,
         }
     }
 }

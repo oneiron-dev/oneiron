@@ -140,18 +140,16 @@ fn deployment_and_production_capabilities_refuse_code_at_admission() {
 #[test]
 fn counted_burst_stays_proposed_one_check_and_one_reversal() {
     let (_d, v, owner, actor) = fixture();
-    let body=rmp_serde::to_vec_named(&serde_json::json!({"diagnostic_bounds":{"window_secs":600,"consent_depth":1000,"actor_writes":2}})).unwrap();
-    // Add only the diagnostic field to the existing valid policy, so gates remain valid.
-    let policy_id = crate::gate::default_policy_manifest_id().unwrap();
-    let mut policy =
-        rmpv::decode::read_value(&mut Cursor::new(v.get(&policy_id).unwrap().unwrap())).unwrap();
-    let extra = rmpv::decode::read_value(&mut Cursor::new(body)).unwrap();
-    if let Value::Map(entries) = &mut policy {
-        entries.extend(extra.as_map().unwrap().clone());
-    }
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &policy).unwrap();
-    super::test_support::replace_default_manifest(&v, &bytes);
+    // Seed already-recorded prior submissions; four new calls cross the real
+    // fleet-scale threshold without making this fixture perform 100,000 writes.
+    let previous = super::healer_host::PROPOSAL_BURST_THRESHOLD - 2;
+    v.with_write_txn(|txn| {
+        let mut key = b"healer:count:".to_vec();
+        key.extend_from_slice(actor.entity_ref().as_bytes());
+        let body = rmp_serde::to_vec_named(&serde_json::json!({"count": previous, "check": null})).unwrap();
+        v.store.vault_meta.put(txn, &key, &body)?;
+        Ok(())
+    }).unwrap();
     let registration = v
         .register_dev_healer(HealerDeployment::SelfHostSingleWriter, actor)
         .unwrap();
@@ -175,7 +173,7 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
         .unwrap()
         .unwrap();
     assert_eq!(check.actor, actor.entity_ref());
-    assert_eq!(check.count, 3);
+    assert_eq!(check.count, super::healer_host::PROPOSAL_BURST_THRESHOLD + 1);
     let receipt = v
         .reverse_healer_run(&owner, &actor.entity_ref(), "burst")
         .unwrap();

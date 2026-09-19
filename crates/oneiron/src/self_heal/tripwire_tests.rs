@@ -27,12 +27,12 @@ fn consolidation_receipt_is_stable_and_malformed_input_is_silent() {
     r.policy_trace
         .push("gate.deny.dreamer_precommit.degenerate_output".into());
     let ids = v
-        .project_receipt_tripwires("run", &[r.clone()], 100)
+        .project_receipt_tripwires("run", std::slice::from_ref(&r), 100)
         .unwrap();
     assert_eq!(ids.len(), 1);
     assert_eq!(
         ids,
-        v.project_receipt_tripwires("run", &[r.clone()], 100)
+        v.project_receipt_tripwires("run", std::slice::from_ref(&r), 100)
             .unwrap()
     );
     let e = decode_diagnostic_event_body(&v.get(&ids[0]).unwrap().unwrap()).unwrap();
@@ -57,7 +57,7 @@ fn manifest_bound_fires_at_equality_and_window_excludes_old_receipts() {
     );
     let r = receipt("pending", crate::consent::CONSENT_CONTENT_KIND);
     assert!(
-        v.project_receipt_tripwires("run", &[r.clone()], 100)
+        v.project_receipt_tripwires("run", std::slice::from_ref(&r), 100)
             .unwrap()
             .is_empty()
     );
@@ -88,7 +88,7 @@ fn closed_form_degenerate_and_silent_runs_not_healthy_runs() {
         error_count: 1,
         conversation: false,
     };
-    let ids = v.run_dreamer_output_tripwires("run", &[r.clone()]).unwrap();
+    let ids = v.run_dreamer_output_tripwires("run", std::slice::from_ref(&r)).unwrap();
     assert_eq!(ids.len(), 1);
     assert_eq!(
         decode_diagnostic_event_body(&v.get(&ids[0]).unwrap().unwrap())
@@ -98,7 +98,7 @@ fn closed_form_degenerate_and_silent_runs_not_healthy_runs() {
     );
     r.conversation = true;
     r.error_count = 0;
-    let ids = v.run_dreamer_output_tripwires("run", &[r.clone()]).unwrap();
+    let ids = v.run_dreamer_output_tripwires("run", std::slice::from_ref(&r)).unwrap();
     assert_eq!(
         decode_diagnostic_event_body(&v.get(&ids[0]).unwrap().unwrap())
             .unwrap()
@@ -217,69 +217,71 @@ fn retrieval_miss_reads_native_telemetry_and_malformed_projection_is_silent() {
 
 #[test]
 fn predicate_write_rate_uses_manifest_criticality_actor_and_fixed_window() {
-    let (_d, v) = vault();
-    set_bounds(
-        &v,
-        TripwireBounds {
-            window_secs: 60,
-            consent_depth: 10,
-            actor_writes: 3,
-        },
-    );
-    let policy_id = crate::gate::default_policy_manifest_id().unwrap();
-    let mut policy = rmpv::decode::read_value(&mut std::io::Cursor::new(
-        v.get(&policy_id).unwrap().unwrap(),
-    ))
-    .unwrap();
-    let Value::Map(entries) = &mut policy else {
-        panic!("manifest map")
-    };
-    let rules = entries
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some("rules"))
+    for bound in [3, TripwireBounds::default().actor_writes] {
+        let (_d, v) = vault();
+        set_bounds(
+            &v,
+            TripwireBounds {
+                window_secs: 60,
+                consent_depth: 10,
+                actor_writes: bound,
+            },
+        );
+        let policy_id = crate::gate::default_policy_manifest_id().unwrap();
+        let mut policy = rmpv::decode::read_value(&mut std::io::Cursor::new(
+            v.get(&policy_id).unwrap().unwrap(),
+        ))
         .unwrap();
-    let Value::Array(rules) = &mut rules.1 else {
-        panic!("rules array")
-    };
-    rules.push(Value::Map(vec![
-        (Value::from("prefix"), Value::from("memory.fact")),
-        (Value::from("exact"), Value::from(true)),
-        (
-            Value::from("axes"),
-            Value::Map(vec![(Value::from("criticality"), Value::from("critical"))]),
-        ),
-    ]));
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &policy).unwrap();
-    super::test_support::replace_default_manifest(&v, &bytes);
-    let actor = EntityId::now();
-    let mut receipts: Vec<_> = (0..3)
-        .map(|_| {
-            let mut r = receipt("allow", "claim");
-            r.actor = Some(actor.to_hex());
-            r.fields.insert("predicate".into(), "memory.fact".into());
-            r.fields.insert("criticality".into(), "normal".into());
-            r
-        })
-        .collect();
-    assert!(
-        v.project_receipt_tripwires("drift", &receipts[..2], 100)
-            .unwrap()
-            .is_empty()
-    );
-    let ids = v
-        .project_receipt_tripwires("drift", &receipts, 100)
-        .unwrap();
-    assert_eq!(ids.len(), 1);
-    let event = decode_diagnostic_event_body(&v.get(&ids[0]).unwrap().unwrap()).unwrap();
-    assert_eq!(event.actor_ref, Some(actor));
-    assert_eq!(event.actual, Value::from(3));
-    receipts[0].occurred_at = 40;
-    assert!(
-        v.project_receipt_tripwires("drift", &receipts, 100)
-            .unwrap()
-            .is_empty()
-    );
+        let Value::Map(entries) = &mut policy else {
+            panic!("manifest map")
+        };
+        let rules = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("rules"))
+            .unwrap();
+        let Value::Array(rules) = &mut rules.1 else {
+            panic!("rules array")
+        };
+        rules.push(Value::Map(vec![
+            (Value::from("prefix"), Value::from("memory.fact")),
+            (Value::from("exact"), Value::from(true)),
+            (
+                Value::from("axes"),
+                Value::Map(vec![(Value::from("criticality"), Value::from("critical"))]),
+            ),
+        ]));
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &policy).unwrap();
+        super::test_support::replace_default_manifest(&v, &bytes);
+        let actor = EntityId::now();
+        let mut receipts: Vec<_> = (0..bound)
+            .map(|_| {
+                let mut r = receipt("allow", "claim");
+                r.actor = Some(actor.to_hex());
+                r.fields.insert("predicate".into(), "memory.fact".into());
+                r.fields.insert("criticality".into(), "normal".into());
+                r
+            })
+            .collect();
+        assert!(
+            v.project_receipt_tripwires("drift", &receipts[..receipts.len() - 1], 100)
+                .unwrap()
+                .is_empty()
+        );
+        let ids = v
+            .project_receipt_tripwires("drift", &receipts, 100)
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+        let event = decode_diagnostic_event_body(&v.get(&ids[0]).unwrap().unwrap()).unwrap();
+        assert_eq!(event.actor_ref, Some(actor));
+        assert_eq!(event.actual, Value::from(bound));
+        receipts[0].occurred_at = 40;
+        assert!(
+            v.project_receipt_tripwires("drift", &receipts, 100)
+                .unwrap()
+                .is_empty()
+        );
+    }
 }
 
 #[test]
