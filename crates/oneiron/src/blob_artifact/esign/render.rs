@@ -1,17 +1,23 @@
-//! Bounded static-PDF preparation shared by signing previews and native seal jobs.
-//!
-//! This is not an HTML renderer or a general AcroForm flattener. Unsupported
-//! visual constructs fail closed. Only the native seal engine signs these bytes.
+//! Lossless bounded PDF preparation and shared field presentation.
+//! Unsafe dynamic or ambiguous visual constructs fail closed. Only the native
+//! seal engine signs these bytes; ordinary compressed PDF structures are retained.
 use super::model::*;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId, Stream, dictionary};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod appearance;
+mod presentation;
+pub use presentation::{
+    FieldControl, FieldLayout, FieldMark, FieldPresentation, PageGeometry, layout_field,
+    present_field,
+};
 mod evidence;
 mod fields;
 mod preflight;
 mod source;
+mod streams;
 
 use evidence::{certificate, evidence};
 use fields::burn_fields;
@@ -94,7 +100,8 @@ pub struct PreparedEsignPdf {
     pub appendix_pages: u32,
 }
 /// PDF user-space rectangle, with a bottom-left origin.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PdfFieldRect {
     pub x: f64,
     pub y: f64,
@@ -102,7 +109,7 @@ pub struct PdfFieldRect {
     pub height: f64,
 }
 /// Shared geometry for editor, ceremony and export. Page numbers are one-based.
-/// The preparation profile admits only unrotated pages with unit scale.
+/// Use `PageGeometry` to convert rotated/scaled page displays before placement.
 pub fn render_field_geometry(g: &FieldGeometry, crop: [f64; 4]) -> Result<PdfFieldRect> {
     let [left, bottom, right, top] = crop;
     if g.page == 0
@@ -136,58 +143,25 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
     if !original.starts_with(b"%PDF-") {
         return Err(PdfPreparationError::MalformedPdf);
     }
-    let live_ids = preflight::inspect(original)?;
-    let source = Document::load_mem_with_options(
-        original,
-        LoadOptions {
-            strict: true,
-            filter: Some(preflight::exclude_object_streams),
-            max_decompressed_size: Some(MAX_INPUT),
-            ..Default::default()
-        },
-    )?;
-    // The loader drops filtered object streams AND their xref entries. Compare
-    // with the original framing, not its already-filtered reference table.
-    if live_ids.iter().any(|id| !source.objects.contains_key(id)) {
-        return Err(PdfPreparationError::UnsupportedPdf);
-    }
-    if source.is_encrypted() || source.was_encrypted() {
-        return Err(PdfPreparationError::EncryptedPdf);
-    }
-    if source.objects.len() > MAX_OBJECTS {
-        return Err(PdfPreparationError::Limit);
-    }
-    if source.trailer.has(b"XRefStm") {
-        return Err(PdfPreparationError::UnsupportedPdf);
-    }
-    for (id, entry) in &source.reference_table.entries {
-        if let lopdf::xref::XrefEntry::Normal { offset, generation } = entry {
-            if !source.objects.contains_key(&(*id, *generation)) {
-                return Err(PdfPreparationError::UnsupportedPdf);
-            }
-            let header = format!("{id} {generation} obj");
-            let start = usize::try_from(*offset).map_err(|_| PdfPreparationError::MalformedPdf)?;
-            if start
-                .checked_add(header.len())
-                .and_then(|end| original.get(start..end))
-                != Some(header.as_bytes())
-            {
-                return Err(PdfPreparationError::MalformedPdf);
-            }
-        }
-    }
+    let source = preflight::load(original)?;
     reject_signatures(&source)?;
     let catalog = source.catalog()?;
-    if [
-        b"AcroForm".as_slice(),
-        b"OCProperties",
-        b"OutputIntents",
-        b"AlternatePresentations",
-    ]
-    .iter()
-    .any(|key| catalog.has(key))
+    if [b"OCProperties".as_slice(), b"AlternatePresentations"]
+        .iter()
+        .any(|key| catalog.has(key))
     {
         return Err(PdfPreparationError::UnsupportedPdf);
+    }
+    if let Ok(form) = catalog.get(b"AcroForm") {
+        let form = source::resolved(&source, form)?.as_dict()?;
+        if form.has(b"XFA")
+            || form
+                .get(b"NeedAppearances")
+                .ok()
+                .is_some_and(|v| v.as_bool().ok() != Some(false))
+        {
+            return Err(PdfPreparationError::UnsupportedPdf);
+        }
     }
     let mut input_pages = Vec::new();
     pages(
@@ -232,14 +206,8 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
             page.get(b"MediaBox".as_slice())
                 .ok_or(PdfPreparationError::MalformedPdf)?,
         )?;
-        let crop = page
-            .get(b"CropBox".as_slice())
-            .map(|v| pdf_box(&source, v))
-            .transpose()?
-            .unwrap_or(media);
-        if crop[0] < media[0] || crop[1] < media[1] || crop[2] > media[2] || crop[3] > media[3] {
-            return Err(PdfPreparationError::InvalidGeometry);
-        }
+        let geometry = source::page_geometry(&source, page)?;
+        let crop = geometry.crop;
         let mut content = Vec::new();
         if let Some(value) = page.get(b"Contents".as_slice()) {
             page_content(&source, value, &mut content, 0, &mut 0)?;
@@ -253,15 +221,25 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
             Some(v) => copier.resources(&mut out, v, 0)?,
             None => Dictionary::new(),
         };
-        let ops = burn_fields(
+        let mut ops = appearance::flatten(
+            &source,
+            page.get(b"Annots".as_slice()),
+            &mut copier,
             &mut out,
             &mut resources,
-            crop,
+        )?;
+        fields::op(&mut ops, "q", &[]);
+        fields::op(&mut ops, "cm", &geometry.to_pdf()?);
+        ops.extend(burn_fields(
+            &mut out,
+            &mut resources,
+            geometry.display_box()?,
             index as u32 + 1,
             &request,
             font,
             &mut images,
-        )?;
+        )?);
+        fields::op(&mut ops, "Q", &[]);
         let mut flattened = b"q\n".to_vec();
         flattened.extend(content);
         flattened.extend(b"\nQ\nn\n");
@@ -270,6 +248,8 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         let mut new_page = dictionary! { "Type" => "Page", "Parent" => parent,
         "MediaBox" => media.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(),
         "CropBox" => crop.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(), "Resources" => resources, "Contents" => stream };
+        new_page.set("Rotate", i64::from(geometry.rotation));
+        new_page.set("UserUnit", Object::Real(geometry.user_unit as f32));
         for key in [b"Group".as_slice(), b"TrimBox", b"BleedBox", b"ArtBox"] {
             if let Some(value) = page.get(key) {
                 new_page.set(key, copier.copy(&mut out, value, 0)?);
@@ -291,7 +271,11 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         parent,
         dictionary! { "Type" => "Pages", "Count" => kids.len() as i64, "Kids" => kids }.into(),
     );
-    let root = out.add_object(dictionary! { "Type" => "Catalog", "Pages" => parent });
+    let mut catalog_out = dictionary! { "Type" => "Catalog", "Pages" => parent };
+    if let Ok(intents) = catalog.get(b"OutputIntents") {
+        catalog_out.set("OutputIntents", copier.copy(&mut out, intents, 0)?);
+    }
+    let root = out.add_object(catalog_out);
     out.trailer.set("Root", root);
     if out.objects.len() > MAX_OBJECTS {
         return Err(PdfPreparationError::Limit);
@@ -306,6 +290,30 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         original_pages,
         appendix_pages,
     })
+}
+/// Read actual inherited page boxes/rotation for editor and signing overlays.
+pub fn inspect_pdf_pages(bytes: &[u8]) -> Result<Vec<PageGeometry>> {
+    if bytes.is_empty() || bytes.len() > MAX_INPUT {
+        return Err(PdfPreparationError::Limit);
+    }
+    let source = preflight::load(bytes)?;
+    reject_signatures(&source)?;
+    let mut input = Vec::new();
+    pages(
+        &source,
+        source.catalog()?.get(b"Pages")?.as_reference()?,
+        BTreeMap::new(),
+        &mut BTreeSet::new(),
+        &mut input,
+        0,
+    )?;
+    if input.is_empty() {
+        return Err(PdfPreparationError::MalformedPdf);
+    }
+    input
+        .iter()
+        .map(|page| source::page_geometry(&source, page))
+        .collect()
 }
 struct BoundedOutput(Vec<u8>);
 impl std::io::Write for BoundedOutput {

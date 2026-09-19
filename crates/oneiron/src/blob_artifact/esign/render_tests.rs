@@ -544,11 +544,8 @@ fn encrypted_and_signed_inputs_refuse_before_any_rewrite() {
 fn unsupported_visual_constructs_and_resource_cycles_fail_closed() {
     let evidence = Evidence::new(false, false);
     for feature in [
-        "AcroForm",
         "OCProperties",
         "Annots",
-        "Rotate",
-        "UserUnit",
         "PS",
         "external",
         "cycle",
@@ -628,13 +625,14 @@ fn broken_trees_unsupported_revisions_and_parser_recovery_never_succeed() {
     input.pdf.trailer.set("Prev", 0);
     assert_eq!(
         evidence.prepare(&mut input).unwrap_err(),
-        PdfPreparationError::UnsupportedPdf
+        PdfPreparationError::MalformedPdf
     );
     let mut input = Input::new();
     // lopdf's writer silently omits ObjStm objects. Write an equal-length
     // placeholder and patch the bytes without changing any xref offset.
+    // N deliberately disagrees with the one-entry object index.
     input.pdf.add_object(Stream::new(
-        dictionary! { "Type" => "RawStm", "N" => 1, "First" => 4 },
+        dictionary! { "Type" => "RawStm", "N" => 2, "First" => 4 },
         b"1 0 null".to_vec(),
     ));
     let mut bytes = input.bytes();
@@ -642,7 +640,7 @@ fn broken_trees_unsupported_revisions_and_parser_recovery_never_succeed() {
     bytes[offset..offset + 7].copy_from_slice(b"/ObjStm");
     assert_eq!(
         prepare_esign_pdf(&bytes, evidence.request()).unwrap_err(),
-        PdfPreparationError::UnsupportedPdf
+        PdfPreparationError::MalformedPdf
     );
     let mut input = Input::new();
     input.content().set_plain_content(b"Q".to_vec());
@@ -697,7 +695,7 @@ fn evidence_unicode_overflow_and_page_bounds_are_enforced() {
         evidence.prepare(&mut Input::new()).unwrap_err(),
         PdfPreparationError::InvalidEvidence
     );
-    for value in ["nonascii é".to_owned(), "X".repeat(80)] {
+    for value in ["nonansi 漢".to_owned(), "X".repeat(80)] {
         let mut evidence = Evidence::new(false, false);
         let EsignEvent::FieldSaved { signature } = &mut evidence.audit[3].event else {
             unreachable!()
@@ -748,4 +746,200 @@ fn evidence_unicode_overflow_and_page_bounds_are_enforced() {
         render_field_geometry(&geometry, [0., 0., 100., 100.]).unwrap_err(),
         PdfPreparationError::InvalidGeometry
     );
+}
+
+#[test]
+fn modern_compressed_objects_and_inherited_rotated_scaled_pages_are_retained() {
+    let mut input = Input::new();
+    input
+        .pdf
+        .get_dictionary_mut(input.parent)
+        .unwrap()
+        .set("Rotate", 90);
+    input.page().set("UserUnit", 2);
+    input.content().compress().unwrap();
+    let mut bytes = Vec::new();
+    input.pdf.save_modern(&mut bytes).unwrap();
+    let source = Document::load_mem(&bytes).unwrap();
+    assert!(
+        source
+            .reference_table
+            .entries
+            .values()
+            .any(|v| matches!(v, lopdf::xref::XrefEntry::Compressed { .. }))
+    );
+    let geometries = inspect_pdf_pages(&bytes).unwrap();
+    assert_eq!(
+        geometries[0],
+        PageGeometry {
+            crop: [10., 20., 610., 820.],
+            rotation: 90,
+            user_unit: 2.
+        }
+    );
+    assert_eq!(geometries[0].display_box().unwrap(), [0., 0., 1600., 1200.]);
+    let evidence = Evidence::new(false, false);
+    let prepared = prepare_esign_pdf(&bytes, evidence.request()).unwrap();
+    let pdf = Document::load_mem(&prepared.bytes).unwrap();
+    let page = pdf.get_dictionary(pdf.get_pages()[&1]).unwrap();
+    assert_eq!(page.get(b"Rotate").unwrap().as_i64().unwrap(), 90);
+    assert_eq!(page.get(b"UserUnit").unwrap().as_float().unwrap(), 2.);
+    let ops = pdf
+        .get_and_decode_page_content(pdf.get_pages()[&1])
+        .unwrap()
+        .operations;
+    assert!(ops.iter().any(|op| {
+        op.operator == "cm"
+            && op
+                .operands
+                .iter()
+                .map(|n| n.as_float().unwrap())
+                .collect::<Vec<_>>()
+                == [0., 0.5, -0.5, 0., 610., 20.]
+    }));
+    assert!(all_text(&pdf, 1, 2).contains("Original page one"));
+    assert!(all_text(&pdf, 1, 2).contains("Accepted terms"));
+}
+#[test]
+fn safe_widget_appearance_is_flattened_without_retaining_actions_or_form_state() {
+    let mut input = Input::new();
+    let font = input
+        .pdf
+        .add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Courier"});
+    let appearance=input.pdf.add_object(Stream::new(dictionary!{"Type"=>"XObject","Subtype"=>"Form","BBox"=>vec![0.into(),0.into(),100.into(),20.into()],"Resources"=>dictionary!{"Font"=>dictionary!{"F"=>font}}},b"BT /F 10 Tf (Existing name) Tj ET".to_vec()));
+    let widget=input.pdf.add_object(dictionary!{"Type"=>"Annot","Subtype"=>"Widget","FT"=>"Tx","Rect"=>vec![30.into(),400.into(),230.into(),440.into()],"AP"=>dictionary!{"N"=>appearance},"A"=>dictionary!{"S"=>"JavaScript","JS"=>Object::string_literal("never()")}});
+    input.page().set("Annots", vec![Object::Reference(widget)]);
+    input.pdf.catalog_mut().unwrap().set(
+        "AcroForm",
+        dictionary! {"Fields"=>vec![Object::Reference(widget)],"NeedAppearances"=>false},
+    );
+    let prepared = Evidence::new(false, false).prepare(&mut input).unwrap();
+    let pdf = Document::load_mem(&prepared.bytes).unwrap();
+    assert!(!pdf.catalog().unwrap().has(b"AcroForm"));
+    let page = pdf.get_dictionary(pdf.get_pages()[&1]).unwrap();
+    assert!(!page.has(b"Annots"));
+    let resources = resolved_dict(&pdf, page.get(b"Resources").unwrap());
+    let xobjects = resolved_dict(&pdf, resources.get(b"XObject").unwrap());
+    assert!(xobjects.iter().any(|(_, v)| {
+        pdf.dereference(v)
+            .unwrap()
+            .1
+            .as_stream()
+            .is_ok_and(|s| s.content == b"BT /F 10 Tf (Existing name) Tj ET")
+    }));
+    let ops = pdf
+        .get_and_decode_page_content(pdf.get_pages()[&1])
+        .unwrap()
+        .operations;
+    assert!(ops.iter().any(|o| {
+        o.operator == "cm"
+            && o.operands
+                .iter()
+                .map(|v| v.as_float().unwrap())
+                .collect::<Vec<_>>()
+                == [2., 0., 0., 2., 30., 400.]
+    }));
+    input
+        .pdf
+        .get_object_mut(widget)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .remove(b"AP");
+    assert_eq!(
+        Evidence::new(false, false).prepare(&mut input).unwrap_err(),
+        PdfPreparationError::UnsupportedPdf
+    );
+}
+#[test]
+fn shared_field_marks_match_export_text_baseline_and_browser_geometry() {
+    let evidence = Evidence::new(false, false);
+    let field = &evidence.state.document.fields[0];
+    let value = &evidence.state.signatures[&field.id].value;
+    let page = PageGeometry {
+        crop: [10., 20., 610., 820.],
+        rotation: 0,
+        user_unit: 1.,
+    };
+    let layout = layout_field(field, Some(value), page).unwrap();
+    let FieldMark::Text { x, y, size, .. } = &layout.marks[0] else {
+        panic!("missing text mark")
+    };
+    assert_eq!(
+        layout.rect,
+        render_field_geometry(&field.geometry, page.crop).unwrap()
+    );
+    let wire = serde_json::to_value(&layout).unwrap();
+    assert_eq!(wire["presentation"]["control"]["kind"], "text");
+    assert_eq!(wire["marks"][0]["size"], *size);
+    let output = evidence.prepare(&mut Input::new()).unwrap();
+    let pdf = Document::load_mem(&output.bytes).unwrap();
+    let ops = pdf
+        .get_and_decode_page_content(pdf.get_pages()[&1])
+        .unwrap()
+        .operations;
+    assert!(ops.iter().any(|o| {
+        o.operator == "Tm"
+            && o.operands
+                .iter()
+                .map(|v| v.as_float().unwrap())
+                .collect::<Vec<_>>()
+                == [1., 0., 0., 1., *x as f32, *y as f32]
+    }));
+    for rotation in [0, 90, 180, 270] {
+        let page = PageGeometry { rotation, ..page };
+        let rect = layout.presentation.rectangle(page).unwrap();
+        let display = page.display_box().unwrap();
+        assert!(
+            (rect.width / (display[2] - display[0]) * 100. - field.geometry.width_percent).abs()
+                < 1e-9
+        );
+        assert!(
+            (rect.height / (display[3] - display[1]) * 100. - field.geometry.height_percent).abs()
+                < 1e-9
+        );
+    }
+}
+
+#[test]
+fn regenerated_html_original_uses_the_same_preseal_field_and_evidence_pipeline() {
+    use crate::blob_artifact::esign::template::{
+        HtmlContentTemplate, TemplatePage, render_html_template,
+    };
+    let template=HtmlContentTemplate{html:"<h1>{{heading}}</h1><p>Original terms</p><div style='break-before:page'>Signature page</div>".into(),page:TemplatePage::default()};
+    let bytes = render_html_template(
+        &template,
+        &BTreeMap::from([("heading".into(), "Agreement".into())]),
+    )
+    .unwrap();
+    let evidence = Evidence::new(false, false);
+    let prepared = prepare_esign_pdf(&bytes, evidence.request()).unwrap();
+    assert_eq!(prepared.original_pages, 2);
+    let pdf = Document::load_mem(&prepared.bytes).unwrap();
+    let content = all_text(&pdf, 1, 2);
+    assert!(content.contains("Agreement"));
+    assert!(content.contains("Original terms"));
+    assert!(content.contains("Accepted terms"));
+    assert!(all_text(&pdf, 3, 4).contains("esign_certificate.v1"));
+}
+
+#[test]
+fn link_border_style_overrides_legacy_border_before_flattening() {
+    let evidence = Evidence::new(false, false);
+    let mut input = Input::new();
+    let zero = input.pdf.add_object(Object::Real(0.0));
+    let link = input.pdf.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Link", "Rect" => vec![10.into(),20.into(),30.into(),40.into()],
+        "BS" => dictionary! {"W" => zero},
+        "A" => dictionary! {"S" => "URI", "URI" => Object::string_literal("https://example.invalid/")}
+    });
+    input.page().set("Annots", vec![Object::Reference(link)]);
+    let prepared = evidence.prepare(&mut input).unwrap();
+    let pdf = Document::load_mem(&prepared.bytes).unwrap();
+    assert!(all_text(&pdf, 1, 2).contains("Original page one"));
+    assert!(!pdf.get_dictionary(pdf.get_pages()[&1]).unwrap().has(b"Annots"));
+    let annotation = input.pdf.get_object_mut(link).unwrap().as_dict_mut().unwrap();
+    annotation.set("BS", dictionary! {"W" => 1});
+    annotation.set("Border", vec![0.into(),0.into(),0.into()]);
+    assert!(matches!(evidence.prepare(&mut input), Err(PdfPreparationError::UnsupportedPdf)));
 }

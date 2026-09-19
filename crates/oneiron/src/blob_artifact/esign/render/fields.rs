@@ -17,7 +17,7 @@ pub(super) fn text(ops: &mut Vec<Operation>, font: &[u8], value: &str, x: f64, y
     ops.push(Operation::new("Tj", vec![Object::string_literal(value)]));
     op(ops, "ET", &[]);
 }
-fn resource(resources: &mut Dictionary, kind: &[u8], id: ObjectId) -> Result<Vec<u8>> {
+pub(super) fn resource(resources: &mut Dictionary, kind: &[u8], id: ObjectId) -> Result<Vec<u8>> {
     // Resource category maps are already copied into direct dictionaries.
     // Mutate them in place: cloning the entire map for every field is quadratic.
     if !resources.has(kind) {
@@ -60,33 +60,6 @@ fn raster(doc: &mut Document, image: &SignatureRaster) -> Result<ObjectId> {
         "Height" => image.height, "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8, "SMask" => alpha,
     }, image.rgba.chunks_exact(4).flat_map(|p| p[..3].iter().copied()).collect())))
 }
-fn burn_text(ops: &mut Vec<Operation>, font: &[u8], value: &str, rect: PdfFieldRect) -> Result<()> {
-    if value
-        .bytes()
-        .any(|b| !(b == b'\n' || (32..=126).contains(&b)))
-    {
-        return Err(PdfPreparationError::UnsupportedText);
-    }
-    let lines: Vec<_> = value.split('\n').collect();
-    let columns = lines.iter().map(|l| l.len()).max().unwrap_or(0).max(1);
-    let size = 12.0f64
-        .min((rect.width - 4.0) / (columns as f64 * 0.6))
-        .min((rect.height - 4.0) / (lines.len() as f64 * 1.2));
-    if size < 6.0 {
-        return Err(PdfPreparationError::FieldOverflow);
-    }
-    for (i, line) in lines.iter().enumerate() {
-        text(
-            ops,
-            font,
-            line,
-            rect.x + 2.0,
-            rect.y + rect.height - 2.0 - size * (1.0 + i as f64 * 1.2),
-            size,
-        );
-    }
-    Ok(())
-}
 #[derive(Default)]
 pub(super) struct BurnImages {
     ids: BTreeMap<String, ObjectId>,
@@ -110,74 +83,96 @@ pub(super) fn burn_fields(
         .iter()
         .filter(|f| f.item == request.item && f.geometry.page == page)
     {
-        let rect = render_field_geometry(&field.geometry, crop)?;
-        let Some(signature) = request.state.signatures.get(&field.id) else {
+        let presentation = present_field(
+            field,
+            request.state.signatures.get(&field.id).map(|s| &s.value),
+        )?;
+        let rect = render_field_geometry(&presentation.geometry, crop)?;
+        if presentation.value.is_none() {
             continue;
-        };
-        crate::blob_artifact::esign::fold::validate_value(field, &signature.value)
-            .map_err(|_| PdfPreparationError::InvalidField)?;
+        }
         op(&mut ops, "q", &[]);
         op(&mut ops, "re", &[rect.x, rect.y, rect.width, rect.height]);
         op(&mut ops, "W", &[]);
         op(&mut ops, "n", &[]);
         op(&mut ops, "g", &[0.0]);
-        match &signature.value {
-            FieldValue::Text(value) => burn_text(&mut ops, &font_name, value, rect)?,
-            FieldValue::Checked(checked) => {
-                let side = rect.width.min(rect.height) - 2.0;
-                if side < 2.0 {
-                    return Err(PdfPreparationError::InvalidGeometry);
+        op(&mut ops, "w", &[1.0]);
+        for mark in presentation.marks(PageGeometry {
+            crop,
+            rotation: 0,
+            user_unit: 1.,
+        })? {
+            match mark {
+                FieldMark::Text { value, x, y, size } => {
+                    op(&mut ops, "BT", &[]);
+                    ops.push(Operation::new(
+                        "Tf",
+                        vec![Object::Name(font_name.clone()), Object::Real(size as f32)],
+                    ));
+                    op(&mut ops, "Tm", &[1., 0., 0., 1., x, y]);
+                    ops.push(Operation::new(
+                        "Tj",
+                        vec![Object::String(
+                            presentation::encoded_text(&value)?,
+                            lopdf::StringFormat::Literal,
+                        )],
+                    ));
+                    op(&mut ops, "ET", &[]);
                 }
-                op(&mut ops, "w", &[1.0]);
-                op(&mut ops, "re", &[rect.x + 1.0, rect.y + 1.0, side, side]);
-                op(&mut ops, "S", &[]);
-                if *checked {
-                    op(&mut ops, "m", &[rect.x + 1.0, rect.y + 1.0]);
-                    op(&mut ops, "l", &[rect.x + 1.0 + side, rect.y + 1.0 + side]);
-                    op(&mut ops, "m", &[rect.x + 1.0, rect.y + 1.0 + side]);
-                    op(&mut ops, "l", &[rect.x + 1.0 + side, rect.y + 1.0]);
+                FieldMark::Rectangle {
+                    x,
+                    y,
+                    width,
+                    height,
+                } => {
+                    op(&mut ops, "re", &[x, y, width, height]);
                     op(&mut ops, "S", &[]);
                 }
-            }
-            FieldValue::Signature { image_ref } => {
-                let image = request
-                    .signature_images
-                    .get(image_ref)
-                    .ok_or(PdfPreparationError::InvalidSignatureImage)?;
-                let id = if let Some(id) = images.ids.get(image_ref) {
-                    *id
-                } else {
-                    images.bytes = images
-                        .bytes
-                        .checked_add(image.rgba.len())
-                        .ok_or(PdfPreparationError::Limit)?;
-                    if images.bytes > MAX_OUTPUT {
-                        return Err(PdfPreparationError::Limit);
-                    }
-                    let id = raster(out, image)?;
-                    images.ids.insert(image_ref.clone(), id);
-                    id
-                };
-                let name = resource(resources, b"XObject", id)?;
-                let scale = (rect.width / f64::from(image.width))
-                    .min(rect.height / f64::from(image.height));
-                let (w, h) = (
-                    f64::from(image.width) * scale,
-                    f64::from(image.height) * scale,
-                );
-                op(
-                    &mut ops,
-                    "cm",
-                    &[
-                        w,
-                        0.0,
-                        0.0,
-                        h,
-                        rect.x + (rect.width - w) / 2.0,
-                        rect.y + (rect.height - h) / 2.0,
-                    ],
-                );
-                ops.push(Operation::new("Do", vec![Object::Name(name)]));
+                FieldMark::Line { x1, y1, x2, y2 } => {
+                    op(&mut ops, "m", &[x1, y1]);
+                    op(&mut ops, "l", &[x2, y2]);
+                    op(&mut ops, "S", &[]);
+                }
+                FieldMark::Signature { image_ref, rect } => {
+                    let image = request
+                        .signature_images
+                        .get(&image_ref)
+                        .ok_or(PdfPreparationError::InvalidSignatureImage)?;
+                    let id = if let Some(id) = images.ids.get(&image_ref) {
+                        *id
+                    } else {
+                        images.bytes = images
+                            .bytes
+                            .checked_add(image.rgba.len())
+                            .ok_or(PdfPreparationError::Limit)?;
+                        if images.bytes > MAX_OUTPUT {
+                            return Err(PdfPreparationError::Limit);
+                        }
+                        let id = raster(out, image)?;
+                        images.ids.insert(image_ref.clone(), id);
+                        id
+                    };
+                    let name = resource(resources, b"XObject", id)?;
+                    let scale = (rect.width / f64::from(image.width))
+                        .min(rect.height / f64::from(image.height));
+                    let (w, h) = (
+                        f64::from(image.width) * scale,
+                        f64::from(image.height) * scale,
+                    );
+                    op(
+                        &mut ops,
+                        "cm",
+                        &[
+                            w,
+                            0.0,
+                            0.0,
+                            h,
+                            rect.x + (rect.width - w) / 2.0,
+                            rect.y + (rect.height - h) / 2.0,
+                        ],
+                    );
+                    ops.push(Operation::new("Do", vec![Object::Name(name)]));
+                }
             }
         }
         op(&mut ops, "Q", &[]);

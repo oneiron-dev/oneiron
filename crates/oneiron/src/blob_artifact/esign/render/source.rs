@@ -1,4 +1,5 @@
 //! Static page-tree and resource-graph admission and copying.
+use super::streams::decode_stream;
 use super::*;
 
 pub(super) fn resolved<'a>(doc: &'a Document, object: &'a Object) -> Result<&'a Object> {
@@ -10,7 +11,7 @@ fn name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Result<Optio
         .map(|v| Ok(resolved(doc, v)?.as_name()?))
         .transpose()
 }
-fn number(doc: &Document, value: &Object) -> Result<f64> {
+pub(super) fn number(doc: &Document, value: &Object) -> Result<f64> {
     match resolved(doc, value)? {
         Object::Integer(v) => Ok(*v as f64),
         Object::Real(v) if v.is_finite() => Ok(f64::from(*v)),
@@ -115,32 +116,10 @@ pub(super) fn pages<'a>(
             if out.len() >= MAX_PAGES {
                 return Err(PdfPreparationError::Limit);
             }
-            if node
-                .get(b"Annots")
-                .ok()
-                .map(|v| {
-                    resolved(doc, v)?
-                        .as_array()
-                        .map_err(PdfPreparationError::from)
-                })
-                .transpose()?
-                .is_some_and(|v| !v.is_empty())
-                || node
-                    .get(b"UserUnit")
-                    .ok()
-                    .map(|v| number(doc, v))
-                    .transpose()?
-                    .is_some_and(|v| v != 1.0)
-                || inherited
-                    .get(b"Rotate".as_slice())
-                    .map(|v| number(doc, v))
-                    .transpose()?
-                    .is_some_and(|v| v != 0.0)
-            {
-                return Err(PdfPreparationError::UnsupportedPdf);
-            }
             for key in [
                 b"Contents".as_slice(),
+                b"Annots",
+                b"UserUnit",
                 b"Group",
                 b"TrimBox",
                 b"BleedBox",
@@ -349,10 +328,13 @@ impl VisualCopy<'_> {
             )
             || matches!(
                 name(self.source, dict, b"Subtype")?,
-                Some(b"Type3" | b"PS" | b"RichMedia" | b"Movie" | b"Sound" | b"Screen" | b"3D")
+                Some(b"PS" | b"RichMedia" | b"Movie" | b"Sound" | b"Screen" | b"3D")
             )
-            || name(self.source, dict, b"S")?
-                .is_some_and(|s| !matches!(s, b"Transparency" | b"Alpha" | b"Luminosity"))
+            || name(self.source, dict, b"S")?.is_some_and(|s| {
+                !matches!(s, b"Transparency" | b"Alpha" | b"Luminosity")
+                    && !(dict.has_type(b"OutputIntent")
+                        && matches!(s, b"GTS_PDFX" | b"GTS_PDFA1" | b"ISO_PDFE1"))
+            })
         {
             return Err(PdfPreparationError::UnsupportedPdf);
         }
@@ -362,6 +344,17 @@ impl VisualCopy<'_> {
             if !matches!(key.as_slice(), b"Length" | b"Metadata" | b"PieceInfo") {
                 let object = if key == b"Resources" {
                     self.resources(out, value, depth + 1)?.into()
+                } else if key == b"CharProcs" {
+                    let mut glyphs = Dictionary::new();
+                    for (name, glyph) in resolved(self.source, value)?.as_dict()?.iter() {
+                        self.charge(name.len())?;
+                        let mut content = Vec::new();
+                        page_content(self.source, glyph, &mut content, 0, &mut 0)?;
+                        self.charge(content.len())?;
+                        check_content(&content)?;
+                        glyphs.set(name.clone(), self.copy(out, glyph, depth + 1)?);
+                    }
+                    glyphs.into()
                 } else {
                     self.copy(out, value, depth + 1)?
                 };
@@ -405,58 +398,8 @@ pub(super) fn page_content(
     }
     Ok(())
 }
-// lopdf's Flate helper deliberately accepts truncated data/checksum errors.
-// Preparation must not turn recovered partial content into a signed original.
-// Reuse the existing native flate2 decoder and require an actual stream end.
-fn decode_stream(stream: &Stream, limit: usize) -> Result<Vec<u8>> {
-    if !stream.dict.has(b"Filter") {
-        if stream.content.len() > limit {
-            return Err(PdfPreparationError::Limit);
-        }
-        return Ok(stream.content.clone());
-    }
-    if stream.filters()?.as_slice() != [b"FlateDecode".as_slice()] {
-        return Err(PdfPreparationError::UnsupportedPdf);
-    }
-    if let Ok(params) = stream.dict.get(b"DecodeParms") {
-        let params = params.as_dict()?;
-        if params
-            .get(b"Predictor")
-            .ok()
-            .is_some_and(|v| v.as_i64().ok() != Some(1))
-        {
-            return Err(PdfPreparationError::UnsupportedPdf);
-        }
-    }
-    let mut decoder = flate2::Decompress::new(true);
-    let mut output = Vec::new();
-    loop {
-        let (before_in, before_out) = (decoder.total_in(), decoder.total_out());
-        let mut buffer = [0; 8192];
-        let status = decoder
-            .decompress(
-                &stream.content[before_in as usize..],
-                &mut buffer,
-                flate2::FlushDecompress::None,
-            )
-            .map_err(|_| PdfPreparationError::MalformedPdf)?;
-        let count = (decoder.total_out() - before_out) as usize;
-        if count > limit.saturating_sub(output.len()) {
-            return Err(PdfPreparationError::Limit);
-        }
-        output.extend_from_slice(&buffer[..count]);
-        if status == flate2::Status::StreamEnd {
-            if decoder.total_in() as usize != stream.content.len() {
-                return Err(PdfPreparationError::MalformedPdf);
-            }
-            return Ok(output);
-        }
-        if decoder.total_in() == before_in && count == 0 {
-            return Err(PdfPreparationError::MalformedPdf);
-        }
-    }
-}
 pub(super) fn check_content(bytes: &[u8]) -> Result<()> {
+    reject_inline_images(bytes)?;
     let content = Content::decode_strict(bytes)?;
     let (mut graphics, mut marked, mut text) = (0i32, 0i32, false);
     for op in content.operations {
@@ -489,4 +432,109 @@ pub(super) fn check_content(bytes: &[u8]) -> Result<()> {
         return Err(PdfPreparationError::MalformedPdf);
     }
     Ok(())
+}
+
+// lopdf's inline-image parser can recover by skipping bytes and assumes some
+// dimensions/colorspaces. Refuse that grammar before invoking it, not after.
+pub(super) fn reject_inline_images(bytes: &[u8]) -> Result<()> {
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                while i < bytes.len() && !matches!(bytes[i], b'\r' | b'\n') {
+                    i += 1;
+                }
+            }
+            b'(' => {
+                i += 1;
+                let mut depth = 1;
+                while i < bytes.len() && depth > 0 {
+                    match bytes[i] {
+                        b'\\' => {
+                            i += 1;
+                        }
+                        b'(' => depth += 1,
+                        b')' => depth -= 1,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            b'<' if bytes.get(i + 1) != Some(&b'<') => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'>' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'/' => {
+                i += 1;
+                while i < bytes.len()
+                    && !bytes[i].is_ascii_whitespace()
+                    && !b"()<>[]{}/%".contains(&bytes[i])
+                {
+                    i += 1;
+                }
+            }
+            b if b.is_ascii_whitespace() || b"<>[]{}".contains(&b) => {
+                i += 1;
+            }
+            _ => {
+                let start = i;
+                i += 1;
+                while i < bytes.len()
+                    && !bytes[i].is_ascii_whitespace()
+                    && !b"()<>[]{}/%".contains(&bytes[i])
+                {
+                    i += 1;
+                }
+                if &bytes[start..i] == b"BI" {
+                    return Err(PdfPreparationError::UnsupportedPdf);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Visible boxes are the CropBox/MediaBox intersection (PDF 32000-1 14.11.2).
+pub(super) fn page_geometry(
+    doc: &Document,
+    page: &BTreeMap<&[u8], &Object>,
+) -> Result<PageGeometry> {
+    let media = pdf_box(
+        doc,
+        page.get(b"MediaBox".as_slice())
+            .ok_or(PdfPreparationError::MalformedPdf)?,
+    )?;
+    let mut crop = page
+        .get(b"CropBox".as_slice())
+        .map(|v| pdf_box(doc, v))
+        .transpose()?
+        .unwrap_or(media);
+    crop = [
+        crop[0].max(media[0]),
+        crop[1].max(media[1]),
+        crop[2].min(media[2]),
+        crop[3].min(media[3]),
+    ];
+    let rotation = page
+        .get(b"Rotate".as_slice())
+        .map(|v| number(doc, v))
+        .transpose()?
+        .unwrap_or(0.);
+    if rotation.fract() != 0. || rotation % 90. != 0. {
+        return Err(PdfPreparationError::InvalidGeometry);
+    }
+    let geometry = PageGeometry {
+        crop,
+        rotation: rotation.rem_euclid(360.) as u16,
+        user_unit: page
+            .get(b"UserUnit".as_slice())
+            .map(|v| number(doc, v))
+            .transpose()?
+            .unwrap_or(1.),
+    };
+    geometry.display_box()?;
+    Ok(geometry)
 }

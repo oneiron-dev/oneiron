@@ -123,6 +123,8 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-native-roots",
 ] }
 dom_smoothie = "0.18"
+# Same HTML5 parser already used by web_fetch; native template DOM, no browser.
+dom_query = "=0.28.0"
 # The bounded body is decoded by this module rather than by `Response::text`,
 # which buffers the whole body before it can be bounded. `encoding_rs` is the
 # WHATWG encoding standard's implementation and is already in the resolved

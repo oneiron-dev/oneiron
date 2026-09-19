@@ -37,3 +37,5 @@ mod seal_tests;
 mod public_read;
 
 mod artifact_actor;
+
+pub mod template;

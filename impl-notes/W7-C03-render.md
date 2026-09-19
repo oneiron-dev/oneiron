@@ -54,3 +54,54 @@ Budgets: input 16 MiB, serialized output 64 MiB, copied-resource bytes 64 MiB, d
 - valid compressed content, truncated Flate, expansion bombs, chain/projection forgery, unsupported field Unicode, overflow, invalid page and URL/geometry bounds.
 
 Ran only scoped rustfmt (success). No Cargo build or tests were run by this child, per the assigned sole-target boundary. Parent should run the scoped render tests and compile/clippy gates on the Mac target, then the native preparation-to-PAdES integration test. Do not record these source-level checks as a green runtime gate.
+
+
+## Completion update: SGN-07 general content and shared presentation
+
+This section supersedes the initial static-profile limitations above.
+
+- `template.rs` and `template/{html,layout}.rs` implement a native HTML5 DOM to
+  paginated PDF path. Reuses the existing `dom_query`/`html5ever` dependency
+  graph rather than adding a browser, process service, or host font dependency.
+- `{{repo.key}}` substitution occurs only in DOM text. Caller values never become
+  markup, attributes, CSS, or external resource URLs. Missing keys refuse.
+- Supports paragraphs, inline runs, headings, lists, tables, horizontal rules,
+  preformatted text, fixed Courier regular/bold/italic faces, Windows-1252 text,
+  safe simple CSS selectors, inline typography, margins and explicit page breaks.
+  Unknown tags/styles/unsupported font repertoires refuse, rather than changing
+  what the author asked to render. Output bytes are deterministic and reparsed in tests.
+- `FieldGeographyPack` is separate serde data. `prepare_content` validates its
+  page placement against the real output. `ContentSource::Upload` preserves the
+  exact uploaded PDF bytes and does not evaluate templates or merge fields.
+- PDF admission now handles xref streams, compressed object streams, and safe
+  incremental histories. Eager ObjStm inflation is deferred until exact bounded
+  decoding and aggregate accounting. Old revisions are signature-scanned too.
+  Inherited CropBox/MediaBox/resources/rotation and UserUnit survive the rewrite.
+- Explicit normal annotation/widget appearance streams are burned with their
+  BBox/Matrix and annotation Rect mapping. Missing or ambiguous appearance still
+  refuses. AcroForm actions and state do not survive. OutputIntents survive.
+- `FieldPresentation` chooses controls once. `FieldMark` chooses text baseline,
+  size, checkbox strokes and signature bounds once. Native export and browser SVG
+  consume this same program. The editor can create, import, move, and export
+  field-geography data; the ceremony can resume its recipient-owned raster preview.
+- `/sign/layout` and `/sign/geometry` are stateless, bounded transforms over caller
+  bytes/data. They grant no vault rights. `/sign/preview` and `/sign/signature`
+  retain capability, turn, expiry, revocation, and per-recipient image boundaries.
+- Native seal orchestration and both post-seal verification checks are unchanged.
+
+Remaining typed unsafe-input refusals are not claimed as universal browser/PDF
+support: encryption, existing signatures/history, optional content, missing AP,
+inline-image grammar with the current parser's recovery/panic hazards, external
+streams, executable PostScript, resource cycles, unsupported styles, and font
+repertoires beyond the fixed fonts. All fail before a successful sealed result.
+
+Canon was stale on the absence of a signing implementation in the context packet.
+ARCH-0064 names the ANT-6 template but the exact downstream template source is not
+in the mirror. The engine now takes that repo HTML and merge map as data; it must
+not hardcode product text or legal principal names. Host dogfood still owns the
+solicitor-review and naming gates.
+
+This completion child ran no Cargo, formatter, or host installs under the
+parent-owned build-target boundary. The integration packet and exact test filters
+are in `.w7/render-completion.md`. Parent must record compile/test results before
+claiming this source change green; prior unchanged-byte green evidence is retained.

@@ -160,3 +160,42 @@ impl Vault {
         })
     }
 }
+
+impl Vault {
+    /// Read only a canonical raster uploaded by this capability's recipient.
+    pub fn esign_signature_image_for_capability(
+        &self,
+        token: &EsignCapability,
+        image_ref: &str,
+    ) -> Result<Vec<u8>> {
+        reference(image_ref)?;
+        let now = crate::unix_seconds_now();
+        self.with_write_txn(|txn| {
+            let cap = binding(self, txn, token)?;
+            super::rate::admit(self, txn, &cap.document, &cap.recipient, now)
+        })?;
+        let txn = self.store.env.read_txn()?;
+        let cap = binding(self, &txn, token)?;
+        let id = EntityId::from_hex(&cap.document)?;
+        let state = state_in(self, &txn, id)?;
+        let recipient = state
+            .recipients
+            .get(&cap.recipient)
+            .ok_or_else(|| invalid("invalid capability"))?;
+        if cap.revoked_at.is_some()
+            || now >= cap.hard_expires_at
+            || now >= recipient.expires_at
+            || state.status != DocumentStatus::Pending
+            || recipient.signing != SigningStatus::Ready
+            || self
+                .store
+                .vault_meta
+                .get(&txn, &image_binding_key(id, &cap.recipient, image_ref))?
+                .is_none()
+        {
+            return Err(invalid("signature image is unavailable"));
+        }
+        self.read_blob_artifact_version_in_txn(&txn, &EntityId::from_hex(image_ref)?, 1)?
+            .ok_or_else(|| invalid("signature image is unavailable"))
+    }
+}

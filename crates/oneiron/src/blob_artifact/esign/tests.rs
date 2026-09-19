@@ -396,6 +396,26 @@ fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -
             .is_err()
     );
     let image = vault.upload_esign_signature_image(first, image_bytes.get_ref())?;
+    let preview = vault.esign_signature_image_for_capability(first, &image)?;
+    assert_eq!(
+        image::load_from_memory(&preview)
+            .unwrap()
+            .to_rgba8()
+            .get_pixel(0, 0)
+            .0,
+        [1, 2, 3, 255]
+    );
+    assert!(
+        vault
+            .esign_signature_image_for_capability(second, &image)
+            .is_err()
+    );
+    assert!(
+        vault
+            .esign_signature_image_for_capability(first, &EntityId::now().to_hex())
+            .is_err()
+    );
+
     let image_version = vault
         .blob_artifact_head(&EntityId::from_hex(&image)?)?
         .unwrap();
@@ -507,6 +527,11 @@ fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -
             .count(),
         1
     );
+    assert!(
+        vault
+            .esign_signature_image_for_capability(first, &image)
+            .is_err()
+    );
     vault.revoke_esign_capability(&owner, second)?;
     assert!(
         vault
@@ -617,5 +642,47 @@ fn read_only_recipient_cannot_own_unfillable_fields() -> Result<()> {
     let (_dir, vault, id, mut doc) = setup()?;
     doc.recipients[0].role = RecipientRole::Cc;
     assert!(event(&vault, id, EsignEvent::Drafted { document: doc }, 3).is_err());
+    Ok(())
+}
+
+#[test]
+fn resumed_signature_preview_uses_the_ceremony_rate_budget() -> Result<()> {
+    let (_dir, vault, id, _doc, owner) = ceremony_setup()?;
+    let tokens = vault.issue_esign_capabilities(&owner, id)?;
+    let command = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: 2,
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    vault
+        .dispatch_esign(
+            send_request(id, owner.actor(), command.verb, "image-rate"),
+            &command,
+            None,
+            None,
+        )
+        .unwrap();
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        1,
+        1,
+        image::Rgba([1, 2, 3, 255]),
+    ))
+    .write_to(&mut bytes, image::ImageFormat::Png)
+    .unwrap();
+    let token = &tokens[0].1;
+    let image = vault.upload_esign_signature_image(token, bytes.get_ref())?;
+    assert!(
+        !vault
+            .esign_signature_image_for_capability(token, &image)?
+            .is_empty()
+    );
+    // Allow a minute boundary without depending on the private counter layout.
+    assert!((0..300).any(|_| {
+        vault
+            .esign_signature_image_for_capability(token, &image)
+            .is_err()
+    }));
     Ok(())
 }

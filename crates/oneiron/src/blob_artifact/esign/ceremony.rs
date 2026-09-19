@@ -22,6 +22,7 @@ pub struct SigningPage {
     pub title: String,
     pub recipient: String,
     pub fields: Vec<EsignField>,
+    pub presentations: Vec<super::render::FieldPresentation>,
     pub values: BTreeMap<String, SignatureRow>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -238,8 +239,22 @@ impl Vault {
                     return Ok(SigningOutcome::AwaitingSeal);
                 }
             }
+            let presentations = state
+                .document
+                .fields
+                .iter()
+                .filter(|f| f.recipient == recipient.id)
+                .map(|field| {
+                    super::render::present_field(
+                        field,
+                        state.signatures.get(&field.id).map(|s| &s.value),
+                    )
+                    .map_err(|_| invalid("field cannot be presented"))
+                })
+                .collect::<Result<Vec<_>>>()?;
             Ok(SigningOutcome::Page(SigningPage {
                 item_count: state.document.items.len(),
+                presentations,
                 title: state.document.title,
                 recipient: recipient.id.clone(),
                 fields: state

@@ -5977,6 +5977,7 @@ dependencies = [
  "blake3",
  "chrono",
  "chrono-tz",
+ "dom_query 0.28.0",
  "dom_smoothie",
  "ed25519-dalek",
  "encoding_rs",

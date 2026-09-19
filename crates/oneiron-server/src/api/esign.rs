@@ -1,5 +1,6 @@
 //! Public session-less signing lens. The capability is in POST, never the URL.
 use crate::server::SyncServer;
+mod presentation;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -20,6 +21,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/sign/action", post(action))
         .route("/sign/pdf", post(pdf))
         .route("/sign/image", post(image))
+        .route("/sign/preview", post(presentation::preview))
+        .route("/sign/signature", post(presentation::signature))
+        .route("/sign/editor", get(presentation::editor))
+        .route("/sign/layout", post(presentation::layout))
+        .route(
+            "/sign/geometry",
+            post(presentation::upload_geometry).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route("/sign/field-renderer.js", get(presentation::field_script))
+        .route("/sign/editor.js", get(presentation::editor_script))
         .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
         .layer(axum::middleware::from_fn(private_response))
 }
@@ -173,16 +184,20 @@ async fn image(
     }
 }
 async fn page() -> Response {
-    let script = include_str!("esign/ceremony.js");
+    let script = [
+        include_str!("esign/field-renderer.js"),
+        include_str!("esign/ceremony.js"),
+    ]
+    .join("\n");
     use base64::Engine;
     use sha2::{Digest, Sha256};
     let digest =
         base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes()));
     let csp = format!(
-        "default-src 'none'; script-src 'sha256-{digest}'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        "default-src 'none'; script-src 'sha256-{digest}'; connect-src 'self'; style-src 'unsafe-inline'; img-src blob:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     );
     let html = format!(
-        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><title>Signing request</title><main><h1 id=title>Signing request</h1><p id=status></p><section id=fields></section><select id=item aria-label=Document></select><button id=download>Download PDF</button><label><input id=consent type=checkbox>I agree to sign this document.</label><button id=complete>Complete</button><button id=reject>Reject</button></main><script>{script}</script></html>"
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><title>Signing request</title><main><h1 id=title>Signing request</h1><p id=status></p><section id=fields></section><section id=preview></section><select id=item aria-label=Document></select><button id=download>Download PDF</button><label><input id=consent type=checkbox>I agree to sign this document.</label><button id=complete>Complete</button><button id=reject>Reject</button></main><script>{script}</script></html>"
     );
     (
         [
@@ -279,6 +294,39 @@ mod tests {
             assert!(!String::from_utf8_lossy(&bytes).contains(&"11".repeat(32)));
         }
     }
+    #[tokio::test]
+    async fn geometry_upload_accepts_the_full_renderer_input_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server = Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
+        let app = routes().with_state(server);
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, body) in [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
+            "<< /Length 0 >>\nstream\nendstream",
+        ].into_iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, body).as_bytes());
+        }
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(b"5 0 obj\n(");
+        pdf.extend(std::iter::repeat_n(b'x', 4 * 1024 * 1024));
+        pdf.extend_from_slice(b")\nendobj\n");
+        let xref = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
+        for offset in offsets { pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes()); }
+        pdf.extend_from_slice(format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes());
+        let response = app.oneshot(Request::builder().method("POST").uri("/sign/geometry")
+            .header(header::CONTENT_TYPE, "application/pdf").body(Body::from(pdf)).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(body["pages"][0]["crop"], serde_json::json!([0.0,0.0,100.0,100.0]));
+    }
+
 }
 
 fn unavailable() -> Response {
