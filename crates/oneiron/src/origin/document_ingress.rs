@@ -1,6 +1,6 @@
 //! Crash-idempotent push-to-document lowering under the origin single-writer lock.
 use super::smart_http::{ReceivePackAttribution, RefUpdate};
-use crate::code_document::{CodeEditReceipt, CodeFileEdit};
+use crate::code_document::{CodeEditReceipt, CodeFileEdit, CodeFileIngress};
 use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -65,6 +65,7 @@ impl Vault {
             Some(_) => return Err(Error::CorruptedIndex("push session identity occupied")),
         }
         let mut operations = Vec::new();
+        let mut ingress = Vec::new();
         {
             let old = update
                 .old_oid
@@ -109,21 +110,14 @@ impl Vault {
                     if let (Ok(before), Ok(after)) =
                         (std::str::from_utf8(before), std::str::from_utf8(after))
                     {
-                        let mut document =
-                            self.open_code_document(&scope, &path, before, session)?;
-                        if self.code_file_edit_receipt(operation)?.is_none()
-                            && document.text() != before
-                        {
-                            return Err(Error::ConcurrentWrite(
-                                "pushed file diverged from its document; reconcile explicitly",
-                            ));
-                        }
-                        self.apply_code_file_edit_once(
+                        let document = self.open_code_document(&scope, &path, before, session)?;
+                        ingress.push(CodeFileIngress {
                             operation,
-                            &mut document,
-                            &CodeFileEdit::between(&path, before, after),
-                            WriteActor::new(attribution.actor_id, EdgeActorClass::System),
-                        )?;
+                            session: document,
+                            edit: CodeFileEdit::between(&path, before, after),
+                            actor: WriteActor::new(attribution.actor_id, EdgeActorClass::System),
+                            expected_text: before.to_owned(),
+                        });
                         true
                     } else {
                         false
@@ -145,6 +139,10 @@ impl Vault {
                 });
             }
         }
+        // Validate every exact base and persist this ref's operations together.
+        // A process death before the aggregate receipt is safe: each operation
+        // has its durable identity in this same document transaction.
+        self.apply_code_file_ingress_exact(&mut ingress)?;
         let encoded = rmp_serde::to_vec(&operations)
             .map_err(|_| Error::CorruptedIndex("push operations encode"))?;
         let receipt_key = [

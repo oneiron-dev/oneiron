@@ -1,6 +1,6 @@
 //! Review-approved repository file updates lower to idempotent document edits.
 use super::mount::RepoMountRef;
-use crate::code_document::CodeFileEdit;
+use crate::code_document::{CodeFileEdit, CodeFileIngress};
 use crate::codebase::RepoRef;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -22,19 +22,13 @@ pub(super) fn land_reviewed_document(vault: &Vault, proposal_id: EntityId) -> Re
         return Ok(());
     }
     let scope = super::oplog::repo_mutation_repo_key(&repo);
-    let mut session = vault.open_code_document(&scope, &proposal.path, old, proposal.session)?;
-    // A document can be ahead of its last commit. Do not reinterpret an old
-    // whole-file proposal as deletion of unseen live operations.
-    if vault.code_file_edit_receipt(proposal_id)?.is_none() && session.text() != old {
-        return Err(Error::ConcurrentWrite(
-            "document changed since review; no automatic rebase",
-        ));
-    }
-    vault.apply_code_file_edit_once(
-        proposal_id,
-        &mut session,
-        &CodeFileEdit::between(&proposal.path, old, new),
-        WriteActor::new(proposal.actor, EdgeActorClass::Agent),
-    )?;
+    let session = vault.open_code_document(&scope, &proposal.path, old, proposal.session)?;
+    vault.apply_code_file_ingress_exact(&mut [CodeFileIngress {
+        operation: proposal_id,
+        session,
+        edit: CodeFileEdit::between(&proposal.path, old, new),
+        actor: WriteActor::new(proposal.actor, EdgeActorClass::Agent),
+        expected_text: old.to_owned(),
+    }])?;
     Ok(())
 }

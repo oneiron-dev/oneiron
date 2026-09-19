@@ -49,6 +49,17 @@ struct ReceiptRow {
     after: CodeDocumentFrontier,
 }
 
+/// A host-approved exact-base ingress item. Cooperative editor sessions use
+/// the merging primitive instead; pushes and reviewed file replacements cannot
+/// silently incorporate operations they did not test.
+pub(crate) struct CodeFileIngress {
+    pub operation: EntityId,
+    pub session: CodeDocumentSession,
+    pub edit: CodeFileEdit,
+    pub actor: WriteActor,
+    pub expected_text: String,
+}
+
 impl ReceiptRow {
     fn receipt(&self) -> Result<CodeEditReceipt> {
         Ok(CodeEditReceipt {
@@ -226,6 +237,88 @@ impl Vault {
         }
         result
     }
+    /// Applies all file operations of one ref atomically, with base validation
+    /// under the same writer transaction. Durable replays do not append edits.
+    pub(crate) fn apply_code_file_ingress_exact(
+        &self,
+        items: &mut [CodeFileIngress],
+    ) -> Result<Vec<CodeEditReceipt>> {
+        let original: Vec<_> = items.iter().map(|item| item.session.doc.clone()).collect();
+        let mut txn = self.store.env.write_txn()?;
+        let result = (|| {
+            let mut receipts = Vec::with_capacity(items.len());
+            for item in items.iter_mut() {
+                let key = [
+                    b"code_document:ingress:v1:".as_slice(),
+                    item.operation.as_bytes(),
+                ]
+                .concat();
+                if let Some(raw) = self.store.vault_meta.get(&txn, &key)? {
+                    let row: ReceiptRow = decode(&raw)?;
+                    let receipt = row.receipt()?;
+                    if receipt.document_id != item.session.document_id
+                        || receipt.session_id != item.session.session_id
+                        || receipt.actor != item.actor
+                        || receipt.edit != item.edit
+                        || receipt.before.text_hash != hash(item.expected_text.as_bytes())
+                    {
+                        return Err(invalid());
+                    }
+                    let head = load_head(&self.store, &txn, &item.session.document_id)?
+                        .ok_or_else(invalid)?;
+                    if head.initial_hash != item.session.initial_hash
+                        || head.state.frontier.repo != item.session.repo
+                    {
+                        return Err(invalid());
+                    }
+                    let doc = checked_snapshot(&head.state)?;
+                    doc.set_peer_id(item.session.doc.peer_id())
+                        .map_err(|_| invalid())?;
+                    item.session.doc = doc;
+                    receipts.push(receipt);
+                    continue;
+                }
+                let before = item.session.frontier()?;
+                let head = load_head(&self.store, &txn, &item.session.document_id)?;
+                if item.session.text() != item.expected_text
+                    || head.is_some_and(|row| row.state.frontier != before)
+                {
+                    return Err(crate::Error::ConcurrentWrite(
+                        "document changed since ingress base; no automatic rebase",
+                    ));
+                }
+                let receipt = self.apply_code_file_edit_in_txn(
+                    &mut txn,
+                    &mut item.session,
+                    &item.edit,
+                    item.actor,
+                )?;
+                let row = ReceiptRow {
+                    session: receipt.session_id.to_hex(),
+                    actor: receipt.actor.entity_ref().to_hex(),
+                    actor_class: receipt.actor.actor_class() as u8,
+                    sequence: receipt.sequence,
+                    peer_id: receipt.peer_id,
+                    counter_start: receipt.counter_start,
+                    counter_end: receipt.counter_end,
+                    edit: receipt.edit.clone(),
+                    before: receipt.before.clone(),
+                    after: receipt.after.clone(),
+                };
+                self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
+                receipts.push(receipt);
+            }
+            txn.commit()?;
+            Ok(receipts)
+        })();
+        if result.is_err() {
+            for (item, doc) in items.iter_mut().zip(original) {
+                item.session.doc = doc;
+            }
+        }
+        result
+    }
+
     fn apply_code_file_edit_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,

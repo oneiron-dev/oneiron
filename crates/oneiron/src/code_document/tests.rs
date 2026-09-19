@@ -286,3 +286,87 @@ fn durable_ingress_identity_replays_without_a_second_operation() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn exact_ingress_rejects_a_concurrent_base_and_rolls_back_every_file() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let owner = actor();
+    let first = EntityId::now();
+    let second = EntityId::now();
+    let mut items = vec![
+        CodeFileIngress {
+            operation: first,
+            session: vault.open_code_document("repo", "a.rs", "ab", EntityId::now())?,
+            edit: CodeFileEdit::between("a.rs", "ab", "aXb"),
+            actor: owner,
+            expected_text: "ab".into(),
+        },
+        CodeFileIngress {
+            operation: second,
+            session: vault.open_code_document("repo", "b.rs", "ab", EntityId::now())?,
+            edit: CodeFileEdit::between("b.rs", "ab", "aYb"),
+            actor: owner,
+            expected_text: "ab".into(),
+        },
+    ];
+    // This edit lands after ingress sessions observed their base. The old
+    // check-before-transaction path silently merged it with the approved file.
+    let mut other = vault.open_code_document("repo", "b.rs", "ab", EntityId::now())?;
+    vault.apply_code_file_edit(
+        &mut other,
+        &CodeFileEdit::between("b.rs", "ab", "ab!"),
+        actor(),
+    )?;
+    assert!(matches!(
+        vault.apply_code_file_ingress_exact(&mut items),
+        Err(crate::Error::ConcurrentWrite(_))
+    ));
+    assert!(vault.code_document_frontier("repo", "a.rs")?.is_none());
+    assert!(vault.code_file_edit_receipt(first)?.is_none());
+    assert!(vault.code_file_edit_receipt(second)?.is_none());
+    assert_eq!(
+        vault
+            .open_code_document("repo", "b.rs", "ignored", EntityId::now())?
+            .text(),
+        "ab!"
+    );
+    assert_eq!(items[0].session.text(), "ab");
+    assert_eq!(items[1].session.text(), "ab");
+    Ok(())
+}
+
+#[test]
+fn exact_ingress_replays_receipts_without_reapplying_or_hiding_new_edits() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let mut items = vec![CodeFileIngress {
+        operation: EntityId::now(),
+        session: vault.open_code_document("repo", "a.rs", "ab", EntityId::now())?,
+        edit: CodeFileEdit::between("a.rs", "ab", "aXb"),
+        actor: actor(),
+        expected_text: "ab".into(),
+    }];
+    let receipts = vault.apply_code_file_ingress_exact(&mut items)?;
+    let mut other = vault.open_code_document("repo", "a.rs", "ignored", EntityId::now())?;
+    vault.apply_code_file_edit(
+        &mut other,
+        &CodeFileEdit::between("a.rs", "aXb", "aXb!"),
+        actor(),
+    )?;
+    assert_eq!(vault.apply_code_file_ingress_exact(&mut items)?, receipts);
+    assert_eq!(items[0].session.text(), "aXb!");
+    assert_eq!(
+        vault
+            .code_document_receipts(&items[0].session.document_id())?
+            .len(),
+        2
+    );
+    items[0].expected_text = "different full base".into();
+    assert!(vault.apply_code_file_ingress_exact(&mut items).is_err());
+    assert_eq!(
+        vault
+            .code_document_receipts(&items[0].session.document_id())?
+            .len(),
+        2
+    );
+    Ok(())
+}

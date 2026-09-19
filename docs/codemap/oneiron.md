@@ -480,8 +480,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_document/codec.rs` | src | s | 10 crate-vis | — | Strict durable document rows and canonical operation folds |
 | `src/code_document/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | Base-mode live code files: actor-stamped Loro operations and verified tested frontiers |
 | `src/code_document/session.rs` | src | s | 1 struct · 7 fn | CodeDocumentSession | Private Loro forks and persistent cursor-anchored symbol spans |
-| `src/code_document/storage.rs` | src | m | 9 fn · 1 crate-vis | — | Atomic merge-before-persist of live file edits and immutable tested snapshots |
-| `src/code_document/tests.rs` | test | s | — | — | — |
+| `src/code_document/storage.rs` | src | m | 9 fn · 3 crate-vis | — | Atomic merge-before-persist of live file edits and immutable tested snapshots |
+| `src/code_document/tests.rs` | test | m | — | — | — |
 | `src/code_document/types.rs` | src | s | 4 struct · 1 enum · 2 fn | CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeSpanAnchor, CodeSpanResolution | File edit verbs, cursor spans, operation receipts and tested frontiers |
 | `src/code_memory.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/code_memory/implementation.rs` | src | s | — | — | ARCH-0050 R6 L2 memory-over-code attachment mechanics (ONE-1608) |

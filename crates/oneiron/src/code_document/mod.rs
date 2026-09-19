@@ -10,7 +10,7 @@ mod storage;
 mod types;
 
 pub use session::CodeDocumentSession;
-pub(crate) use storage::verify_frontier_in_txn;
+pub(crate) use storage::{CodeFileIngress, verify_frontier_in_txn};
 pub use types::{
     CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeSpanAnchor, CodeSpanResolution,
 };
