@@ -250,6 +250,19 @@ pub fn prepare_tool_call(
     }
     let mut body: BTreeMap<String, Value> =
         args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    if destructive_hint && declares_preview {
+        if body.get("dry_run").is_some_and(|value| !value.is_boolean()) {
+            return Err(invalid_schema());
+        }
+        body.insert(
+            "dry_run".into(),
+            Value::Bool(mutation == MutationIntent::Preview),
+        );
+    }
+    super::tool_schema::validate(
+        schema,
+        &serde_json::to_value(&body).map_err(|_| invalid_schema())?,
+    )?;
     let mut headers = BTreeMap::new();
     let mut requirements = Vec::new();
     for (parameter, property) in properties {
@@ -303,7 +316,7 @@ pub fn prepare_tool_call(
         frozen,
     })
 }
-fn invalid_schema() -> Error {
+pub(super) fn invalid_schema() -> Error {
     Error::InvalidConfig("tool schema or resolved header parameters are invalid".into())
 }
 fn reject_unresolved(value: &Value) -> Result<()> {
@@ -381,6 +394,48 @@ mod tests {
             arguments,
             mutation,
         )
+    }
+    #[test]
+    fn schema_validation_precedes_header_extraction_and_freezing() {
+        let schema = json!({"type":"object","required":["tenant","record"],"additionalProperties":false,
+            "properties":{"tenant":{"type":"string","x-mcp-header":"x-tenant"},
+                "record":{"type":"object","required":["ids"],"additionalProperties":false,
+                    "properties":{"ids":{"type":"array","items":{"type":"integer"}}}},
+                "dry_run":{"type":"boolean"}}});
+        for args in [
+            json!({"record":{"ids":[1]}}),
+            json!({"tenant":7,"record":{"ids":[1]}}),
+            json!({"tenant":"a","record":{"ids":[1]},"secret":"leak"}),
+            json!({"tenant":"a","record":{"ids":["wrong"]}}),
+            json!({"tenant":"a","record":{"ids":[1],"extra":true}}),
+        ] {
+            assert!(prepare(&schema, &args, true, MutationIntent::Preview).is_err());
+        }
+        let valid = prepare(
+            &schema,
+            &json!({"tenant":"a","record":{"ids":[1]}}),
+            true,
+            MutationIntent::Preview,
+        )
+        .unwrap();
+        let wire: Value = serde_json::from_slice(valid.frozen_bytes()).unwrap();
+        assert_eq!(wire["headers"]["x-tenant"], "a");
+        assert_eq!(
+            wire["arguments"],
+            json!({"record":{"ids":[1]},"dry_run":true})
+        );
+        let open =
+            json!({"type":"object","properties":{},"additionalProperties":{"type":"string"}});
+        assert!(
+            prepare(
+                &open,
+                &json!({"extra":"allowed"}),
+                false,
+                MutationIntent::Preview
+            )
+            .is_ok()
+        );
+        assert!(prepare(&open, &json!({"extra":1}), false, MutationIntent::Preview).is_err());
     }
     #[test]
     fn an_unsupported_preview_refuses_instead_of_sending_an_ignored_flag() {
