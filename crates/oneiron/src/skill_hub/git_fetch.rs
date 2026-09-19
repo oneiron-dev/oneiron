@@ -47,7 +47,7 @@ impl GitEndpointSkillHubAdapter {
     pub fn resolved_commit(&self) -> &str {
         &self.commit
     }
-    fn fetch_tree(&self, reference: &HubRef) -> Result<HubPackage> {
+    fn fetch_tree(&self, reference: &HubRef) -> Result<Vec<HubFile>> {
         if reference.hub_id != self.hub_id {
             return Err(invalid("cross-hub fetch refused"));
         }
@@ -134,13 +134,22 @@ impl GitEndpointSkillHubAdapter {
             2 * 1024 * 1024,
         )?;
         let files = read_blobs(&repo, &listing)?;
-        let package = super::folder::package_from_files(files)?;
+        let actual = crate::skill::canonical_skill_tree_hash(
+            files
+                .iter()
+                .map(|f| (f.path.as_str(), f.content.as_slice())),
+        )?;
         if let HubPin::ContentHash(hash) = &reference.pin
-            && package.content_hash()? != crate::skill::SkillContentHash::parse_hex(hash)?
+            && actual != crate::skill::SkillContentHash::parse_hex(hash)?
         {
             return Err(invalid("Git subtree content hash drift"));
         }
-        Ok(package)
+        Ok(files)
+    }
+}
+impl super::pack_catalog::PackSourceAdapter for GitEndpointSkillHubAdapter {
+    fn fetch_pack_source(&self, reference: &HubRef) -> Result<super::pack_catalog::PackSource> {
+        super::pack_catalog::PackSource::from_files(self.fetch_tree(reference)?)
     }
 }
 impl SkillHubAdapter for GitEndpointSkillHubAdapter {
@@ -154,7 +163,7 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
         SkillHubKind::Git
     }
     fn fetch_package(&self, reference: &HubRef) -> Result<HubPackage> {
-        self.fetch_tree(reference)
+        super::folder::package_from_files(self.fetch_tree(reference)?)
     }
     fn discover(&self) -> Result<Vec<HubIndexEntry>> {
         // No repository-wide checkout or scan. Hosts select a subtree explicitly.

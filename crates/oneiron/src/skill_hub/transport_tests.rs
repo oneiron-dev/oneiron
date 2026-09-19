@@ -350,3 +350,86 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
     assert_eq!(vault.skill_hub_provenance_count(&imported[0])?, 2);
     Ok(())
 }
+
+#[test]
+fn generic_transports_capture_real_pack_sources_without_installing() -> Result<()> {
+    use super::pack_catalog::{PackSource, PackSourceAdapter};
+    let tree = vec![HubFile::new("PACK.md", b"---\nname: alice.mail\ndescription: fixture\nversion: 1\nkind: connector\nadapter: built-in:email\n---\nReal source bytes\n".to_vec()),
+        HubFile::new("knowledge/guide.md", b"Imported content is evidence.\n".to_vec())];
+    let source = PackSource::from_files(tree.clone())?;
+    let repository = tempfile::tempdir()?;
+    git(repository.path(), &["init", "--quiet"]);
+    populate(repository.path(), &tree);
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-qm", "pack"]);
+    let commit = git(repository.path(), &["rev-parse", "HEAD"]);
+    let hub = EntityId::now();
+    let git_adapter =
+        GitEndpointSkillHubAdapter::new(hub, repository.path().to_str().unwrap(), &commit)?;
+    let git_ref = HubRef::new(hub, "skills/example", HubPin::Commit(commit))?;
+    assert_eq!(git_adapter.fetch_pack_source(&git_ref)?, source);
+    let entries: Vec<_> = tree
+        .iter()
+        .map(|f| serde_json::json!({"path":f.path,"url":f.path}))
+        .collect();
+    let index = serde_json::json!({"schema":1,"packages":[{"name":"alice.mail","description":"fixture","version":"1",
+        "content_hash":source.content_hash().to_hex(),"ref_string":"pack","files":entries}]});
+    let mut routes = BTreeMap::from([(
+        "/index.json".into(),
+        (200, serde_json::to_vec(&index).unwrap()),
+    )]);
+    for file in &tree {
+        routes.insert(format!("/{}", file.path), (200, file.content.clone()));
+    }
+    let server = StaticHttp::new(routes.clone());
+    let http = HttpEndpointSkillHubAdapter::new(hub, &server.index_url())?;
+    let reference = HubRef::new(
+        hub,
+        "pack",
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    let mut config = crate::VaultConfig::device();
+    config.dimensions = 4;
+    config.map_size = 16 * 1024 * 1024;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let owner_id = EntityId::now();
+    let at = crate::temporal::TimeRange { start: 4, end: 4 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        4,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:pack-transport",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.configure_skill_hub(
+        &owner,
+        &hub,
+        &SkillHubRecord::new(
+            SkillHubKind::HttpIndex,
+            server.index_url(),
+            SkillHubTrustTier::Community,
+            HubSyncPolicy::ContentHashFrozen,
+        )?,
+        at,
+        4,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:pack", hub)?;
+    let (id, pinned) = vault.fetch_pack_from_adapter(&http, &reference, &publisher, at, 4)?;
+    assert_eq!(pinned, reference);
+    assert_eq!(vault.get_pack_source(&id)?, Some(source));
+    assert!(vault.installed_pack("alice.mail")?.is_none());
+    routes.insert("/knowledge/guide.md".into(), (200, b"drift".to_vec()));
+    let drift = StaticHttp::new(routes);
+    assert!(
+        HttpEndpointSkillHubAdapter::new(hub, &drift.index_url())?
+            .fetch_pack_source(&reference)
+            .is_err()
+    );
+    Ok(())
+}

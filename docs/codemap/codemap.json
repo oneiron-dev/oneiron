@@ -21776,7 +21776,7 @@
      "path": "src/skill_hub/pack_catalog/doors.rs",
      "purpose": "Source staging/readback",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -21804,7 +21804,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -21837,6 +21837,19 @@
      "path": "src/skill_hub/pack_catalog/tests.rs",
      "purpose": "Source custody tests: exact bytes, inert imports, generic/replay parity and rollback",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackSourceAdapter"
+     ],
+     "path": "src/skill_hub/pack_catalog/transport.rs",
+     "purpose": "Generic Git/HTTP source fetch composes with inert pack staging, never install",
+     "surface": {
+      "fn": 1,
+      "trait": 1
+     }
     },
     {
      "bucket": "s",
@@ -27341,7 +27354,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27546,7 +27559,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1582,
+   "source_files": 1583,
    "test_files": 569
   },
   "oneiron-bench": {

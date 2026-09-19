@@ -144,6 +144,33 @@ impl SkillHubAdapter for HttpEndpointSkillHubAdapter {
             .collect()
     }
     fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage> {
+        let (entry, files) = self.fetch_tree(hub_ref)?;
+        let package = super::folder::package_from_files(files)?;
+        if package.record.skill_id != entry.name
+            || package.record.version != entry.version
+            || package.record.desc != entry.description
+        {
+            return Err(invalid("package identity or index metadata drift"));
+        }
+        Ok(package)
+    }
+}
+impl super::pack_catalog::PackSourceAdapter for HttpEndpointSkillHubAdapter {
+    fn fetch_pack_source(&self, reference: &HubRef) -> Result<super::pack_catalog::PackSource> {
+        let (entry, files) = self.fetch_tree(reference)?;
+        let source = super::pack_catalog::PackSource::from_files(files)?;
+        let manifest = source.manifest();
+        if manifest.name != entry.name
+            || manifest.version != entry.version
+            || manifest.description != entry.description
+        {
+            return Err(invalid("pack identity or index metadata drift"));
+        }
+        Ok(source)
+    }
+}
+impl HttpEndpointSkillHubAdapter {
+    fn fetch_tree(&self, hub_ref: &HubRef) -> Result<(Entry, Vec<HubFile>)> {
         if hub_ref.hub_id != self.hub_id {
             return Err(invalid("cross-hub fetch refused"));
         }
@@ -164,7 +191,7 @@ impl SkillHubAdapter for HttpEndpointSkillHubAdapter {
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         let mut files = Vec::new();
         let mut remaining = MAX_HUB_PACKAGE_TOTAL_BYTES;
-        for file in entry.files {
+        for file in &entry.files {
             if std::time::Instant::now() > deadline {
                 return Err(invalid("package fetch deadline exceeded"));
             }
@@ -178,16 +205,16 @@ impl SkillHubAdapter for HttpEndpointSkillHubAdapter {
             }
             let bytes = self.fetch(&url, MAX_HUB_FILE_BYTES.min(remaining))?;
             remaining -= bytes.len();
-            files.push(HubFile::new(file.path, bytes));
+            files.push(HubFile::new(file.path.clone(), bytes));
         }
-        let package = super::folder::package_from_files(files)?;
-        if package.content_hash()? != expected
-            || package.record.skill_id != entry.name
-            || package.record.version != entry.version
-            || package.record.desc != entry.description
-        {
-            return Err(invalid("package identity or index metadata drift"));
+        let actual = crate::skill::canonical_skill_tree_hash(
+            files
+                .iter()
+                .map(|f| (f.path.as_str(), f.content.as_slice())),
+        )?;
+        if actual != expected {
+            return Err(invalid("package content hash drift"));
         }
-        Ok(package)
+        Ok((entry, files))
     }
 }

@@ -13,13 +13,21 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        self.with_write_txn(|txn| self.stage_pack_source_in_txn(txn, source, occurred, learned_at))
+    }
+    pub(super) fn stage_pack_source_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source: &PackSource,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
         let bytes = codec::encode(source)?;
         let id = codec::source_id(source)?;
-        let mut txn = self.store.env.write_txn()?;
-        if let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? {
+        if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or_else(|| invalid("invalid source row header"))?;
-            if !crate::vault::live_entity_row_in_txn(&self.store, &txn, &id)?.is_live() {
+            if !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
                 return Err(invalid("source is deleted; explicit restore required"));
             }
             if header.entity_type != ENTITY_TYPE_ASSET || raw[ENTITY_METADATA_HEADER_LEN..] != bytes
@@ -30,8 +38,7 @@ impl Vault {
         }
         self.batch_in()
             .put(&id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
-            .apply(&mut txn)?;
-        txn.commit()?;
+            .apply(txn)?;
         Ok(id)
     }
     pub fn get_pack_source(&self, id: &EntityId) -> Result<Option<PackSource>> {
