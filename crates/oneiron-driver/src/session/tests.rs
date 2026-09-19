@@ -25,6 +25,26 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+// The driver and vault use the same clock, in their respective ms/sec units.
+struct RecordedDriverClock(NowMillis);
+impl oneiron::ports::Clock for RecordedDriverClock {
+    fn now_recorded_at(&self) -> u64 {
+        (self.0)() / 1_000
+    }
+}
+fn open_vault_with_clock(clock: NowMillis) -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = VaultConfig {
+        store_clock: oneiron::ports::StoreClock::new(
+            Arc::new(RecordedDriverClock(clock)),
+            oneiron::ports::ManualClock::new(0),
+        ),
+        ..VaultConfig::device()
+    };
+    let vault = Vault::open(dir.path(), config).expect("vault");
+    (dir, vault)
+}
+
 /// Manually-advanced millisecond clock for the sync policy tests.
 fn manual_clock(start_ms: u64) -> (Arc<AtomicU64>, NowMillis) {
     let now = Arc::new(AtomicU64::new(start_ms));
@@ -1147,8 +1167,8 @@ async fn session_ticks_explicit_end_reaches_the_meso_deadline_without_a_micro_pa
 
 #[tokio::test(start_paused = true)]
 async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
-    let (_dir, vault) = open_vault();
     let clock = tokio_clock(1_000_000_000);
+    let (_dir, vault) = open_vault_with_clock(Arc::clone(&clock));
     let lifecycle = driver(
         &vault,
         SessionLifecycleConfig::new(FLOOR, CEILING),
@@ -1549,8 +1569,8 @@ async fn retry_slot_applies_before_newer_buffered_hints() {
 
 #[tokio::test(start_paused = true)]
 async fn ready_meso_deadline_beats_an_applied_pending_hint() {
-    let (_dir, vault) = open_vault();
     let clock = tokio_clock(1_000_000_000);
+    let (_dir, vault) = open_vault_with_clock(Arc::clone(&clock));
     let lifecycle = driver(
         &vault,
         SessionLifecycleConfig::new(FLOOR, CEILING),
@@ -1631,8 +1651,8 @@ async fn ready_wake_beats_an_applied_pending_hint() {
 async fn sustained_session_hints_cannot_starve_a_due_meso_deadline() {
     const CYCLES: usize = 4;
 
-    let (_dir, vault) = open_vault();
     let clock = tokio_clock(1_000_000_000);
+    let (_dir, vault) = open_vault_with_clock(Arc::clone(&clock));
     let lifecycle = driver(
         &vault,
         SessionLifecycleConfig::new(FLOOR, CEILING),
@@ -1683,8 +1703,8 @@ async fn sustained_session_hints_cannot_starve_a_due_meso_deadline() {
 
 #[tokio::test(start_paused = true)]
 async fn app_open_arriving_past_the_idle_floor_mints_a_replacement_sitting() {
-    let (_dir, vault) = open_vault();
     let clock = tokio_clock(1_000_000_000);
+    let (_dir, vault) = open_vault_with_clock(Arc::clone(&clock));
     let lifecycle = driver(
         &vault,
         SessionLifecycleConfig::new(FLOOR, CEILING),
