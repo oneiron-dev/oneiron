@@ -491,7 +491,21 @@
       "positive_probe_value": 3,
       "precision_fallback": false,
       "receipt_tests_passed": 5,
-      "full_cohort_measurement": "admitted, not complete"
+      "full_cohort_measurement": {
+        "spreadsheetbench": "complete, collected and checked; fresh Excel comparison pending",
+        "fuse": "queued behind existing native-v2 run"
+      }
+    },
+    "spreadsheetbench_complete": {
+      "workbooks": 5455,
+      "recalculated": 2525,
+      "refused_or_failed": 2930,
+      "timeouts": 3,
+      "process_abort_rows": 0,
+      "rows_sha256": "561b4a48230b49c1c5ef850aa2217b88faaf39b2d6391b8cbac16adcf194f165",
+      "per_input_outcome_changes_from_v2": 0,
+      "receipt_tests_passed": 5,
+      "fresh_excel_truth": false
     }
   }
 }

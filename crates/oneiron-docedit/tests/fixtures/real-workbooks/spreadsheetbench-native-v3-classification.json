@@ -1,0 +1,31 @@
+{
+  "identity": {
+    "mode": "saved-cache-diagnostic",
+    "fresh_excel_truth": false,
+    "executable_sha256": "c54211ad849c022ac84facc4230f5e10b3cfd06a7a069460c274fe12e3c775d7",
+    "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+    "comparator_sha256": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+    "timeout_seconds": 120
+  },
+  "workbooks": 5455,
+  "recalculated": 2525,
+  "refused": 2930,
+  "failure_counts": {
+    "Error: UnsupportedWorkbook(\"shared, array, or data-table formula\")\n": 897,
+    "Error: UnsupportedWorkbook(\"cell value metadata\")\n": 446,
+    "Error: UnsupportedWorkbook(\"defined names\")\n": 907,
+    "Error: UnsupportedWorkbook(\"formula needs caller context or volatile reference semantics\")\n": 42,
+    "Error: UnsupportedWorkbook(\"external-rels-target\")\n": 71,
+    "Error: UnsupportedWorkbook(\"external-links-part\")\n": 268,
+    "Error: UnsupportedWorkbook(\"iterative calculation settings\")\n": 22,
+    "Error: UnsupportedWorkbook(\"table references\")\n": 231,
+    "Error: InvalidWorkbook(\"XML node or depth limit\")\n": 4,
+    "timed-out": 3,
+    "Error: Package(InvalidPackage(\"local/central header mismatch\"))\n": 12,
+    "Error: UnsupportedWorkbook(\"precision-as-displayed\")\n": 6,
+    "Error: UnsupportedWorkbook(\"non-scalar or unrepresentable formula cache\")\n": 9,
+    "Error: Engine(\"Engine error: #CIRC!: Self-reference detected\")\n": 12
+  },
+  "rows_sha256": "561b4a48230b49c1c5ef850aa2217b88faaf39b2d6391b8cbac16adcf194f165",
+  "accuracy_status": "Saved-cache diagnostic only. Complete fresh Excel comparisons remain pending."
+}

@@ -83,18 +83,20 @@ class CompleteCorpusReceipts(unittest.TestCase):
             self.assertEqual(identity["manifest_sha256"], receipt["manifest_sha256"])
         self.assertEqual(native["identity"]["executable_sha256"], summary["executable_sha256"])
 
-    def test_repaired_native_candidate_covers_complete_spreadsheetbench_cohort(self):
+    def test_native_candidates_cover_complete_spreadsheetbench_cohort(self):
         manifest = self.manifest("spreadsheetbench")
-        receipt = read_json("spreadsheetbench-native-v2-classification.json")
-        summary = read_json("retained-native-v2-saved-cache-diagnostic.json")
-        self.assertEqual(receipt["rows_sha256"], summary["rows_sha256"])
-        rows = read_rows("spreadsheetbench-retained-native-v2-rows.jsonl.gz", summary["rows_sha256"])
-        self.complete(rows, manifest)
-        self.classification(rows, receipt)
-        self.diagnostic(rows, summary)
-        self.assertEqual(summary["executable_sha256"], read_json("retained-native-v2-executable.json")["executable_sha256"])
-        self.assertEqual(receipt["identity"]["executable_sha256"], summary["executable_sha256"])
-        self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["spreadsheetbench"]["manifest_sha256"])
+        for version in [2, 3]:
+            with self.subTest(version=version):
+                receipt = read_json(f"spreadsheetbench-native-v{version}-classification.json")
+                summary = read_json(f"retained-native-v{version}-saved-cache-diagnostic.json")
+                self.assertEqual(receipt["rows_sha256"], summary["rows_sha256"])
+                rows = read_rows(f"spreadsheetbench-retained-native-v{version}-rows.jsonl.gz", summary["rows_sha256"])
+                self.complete(rows, manifest)
+                self.classification(rows, receipt)
+                self.diagnostic(rows, summary)
+                self.assertEqual(summary["executable_sha256"], read_json(f"retained-native-v{version}-executable.json")["executable_sha256"])
+                self.assertEqual(receipt["identity"]["executable_sha256"], summary["executable_sha256"])
+                self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["spreadsheetbench"]["manifest_sha256"])
 
     def test_current_native_candidate_refuses_crashing_inputs_and_still_recalculates(self):
         receipt = read_json("retained-native-v3-executable.json")
