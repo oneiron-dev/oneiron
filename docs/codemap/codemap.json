@@ -12800,7 +12800,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 3
      }
     },
