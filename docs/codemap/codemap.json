@@ -5887,6 +5887,77 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_document/codec.rs",
+     "purpose": "Strict durable document rows and canonical operation folds",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_document/mod.rs",
+     "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeDocumentSession"
+     ],
+     "path": "src/code_document/session.rs",
+     "purpose": "Private Loro forks and persistent cursor-anchored symbol spans",
+     "surface": {
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_document/storage.rs",
+     "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_document/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeDocumentFrontier",
+      "CodeEditReceipt",
+      "CodeFileEdit",
+      "CodeSpanAnchor",
+      "CodeSpanResolution"
+     ],
+     "path": "src/code_document/types.rs",
+     "purpose": "File edit verbs, cursor spans, operation receipts and tested frontiers",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_memory.rs",
      "purpose": "—",
      "surface": {
@@ -5998,13 +6069,37 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeCommitMetadata"
+     ],
+     "path": "src/code_revision/commit_metadata.rs",
+     "purpose": "Authorship, message and file modes are canonical revision data, not export input",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/file_frontiers.rs",
+     "purpose": "Canonical tested-file maps and their fold input, verified from persisted operations",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_revision/frontier.rs",
      "purpose": "Per-session frontier rows and session-trace verification over them",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -6045,7 +6140,36 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "re-export": 2
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeSessionRun"
+     ],
+     "path": "src/code_revision/promotion.rs",
+     "purpose": "Session provenance claims and promotion guarded by verified revision history",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRevisionProposal",
+      "CodeRevisionWriteOutcome"
+     ],
+     "path": "src/code_revision/proposals.rs",
+     "purpose": "Durable stranded revisions against the new head; reconciliation is explicit",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -6055,7 +6179,7 @@
      "path": "src/code_revision/storage.rs",
      "purpose": "Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 8
      }
     },
@@ -6080,7 +6204,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 5,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -6593,12 +6717,73 @@
       "FirecrackerBackend"
      ],
      "path": "src/code_sandbox/firecracker.rs",
-     "purpose": "Firecracker microVM backend (Linux only, feature `microvm-firecracker`)",
+     "purpose": "Host-configured jailer execution with a bounded vsock guest-agent protocol",
      "surface": {
-      "const": 3,
-      "fn": 2,
+      "const": 4,
+      "fn": 4,
+      "re-export": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FirecrackerHostConfig",
+      "GuestArtifactPins"
+     ],
+     "path": "src/code_sandbox/firecracker/config.rs",
+     "purpose": "Host-only image pins and jailer profile validation",
+     "surface": {
+      "crate-vis": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/launch.rs",
+     "purpose": "Jailer launch, resource ceilings and process custody for one microVM",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/protocol.rs",
+     "purpose": "Bounded guest-agent framing; no host filesystem or credential capabilities",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/protocol/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/snapshot.rs",
+     "purpose": "Descriptor-relative, no-symlink source snapshot for a foreign VM",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -6638,15 +6823,16 @@
       "CredentialDestination",
       "CredentialEgressProxy",
       "CredentialInjection",
+      "CredentialReadTransport",
       "CredentialResolver"
      ],
      "path": "src/code_sandbox/microvm/credential.rs",
      "purpose": "Destination allowlisting, resolution and the egress proxy that injects a credential outside the guest",
      "surface": {
       "const": 3,
-      "fn": 17,
+      "fn": 18,
       "struct": 4,
-      "trait": 1
+      "trait": 2
      }
     },
     {
@@ -6701,7 +6887,7 @@
      "path": "src/code_sandbox/mod.rs",
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
-      "mod": 2,
+      "mod": 3,
       "re-export": 5
      }
     },
@@ -6727,6 +6913,7 @@
      "kind": "src",
      "notable": [
       "SandboxClaimProposal",
+      "SandboxFileEditProposal",
       "SandboxFileWriteProposal",
       "SandboxProposalDelta",
       "SandboxProposalKind",
@@ -6737,8 +6924,8 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 9,
-      "struct": 3
+      "fn": 10,
+      "struct": 4
      }
     },
     {
@@ -6748,6 +6935,39 @@
      "path": "src/code_sandbox/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ComponentBudget",
+      "WasmtimeComponentRuntime"
+     ],
+     "path": "src/code_sandbox/wasmtime_runtime/mod.rs",
+     "purpose": "Pinned, in-process Component Model execution for host-trusted code",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire.rs",
+     "purpose": "Strict JSON payloads carried by separately linked WIT functions",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "m",
@@ -9015,6 +9235,81 @@
      "purpose": "Shared test fixtures for the `context_projection` test suite",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AffectedTests",
+      "WorkspaceGraph"
+     ],
+     "path": "src/contract_oracle/graph.rs",
+     "purpose": "Workspace dependency closure from resolved `cargo metadata --format-version 1` JSON",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/contract_oracle/mod.rs",
+     "purpose": "Persisted, deterministic Rust API, schema and command-output contracts",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/contract_oracle/rust_api.rs",
+     "purpose": "Tree-sitter public-name extraction over a crate's module tree",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContractOracle"
+     ],
+     "path": "src/contract_oracle/storage.rs",
+     "purpose": "Immutable baseline and verdict rows, and structural contract diffs",
+     "surface": {
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/contract_oracle/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommandOutput",
+      "ContractBaseline",
+      "ContractDiff",
+      "ContractSnapshot",
+      "ContractSpec",
+      "ContractVerdict"
+     ],
+     "path": "src/contract_oracle/types.rs",
+     "purpose": "Contract input, snapshot and persisted verdict types",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 5
      }
     },
     {
@@ -11302,7 +11597,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -11313,7 +11608,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
       "crate-vis": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -11355,6 +11650,20 @@
      "purpose": "Settle Vault transactions",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StrandedEditProposal"
+     ],
+     "path": "src/edit_settle/stranded.rs",
+     "purpose": "Stale retained outputs stay durable proposals against the observed new head",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -13253,7 +13562,7 @@
      "path": "src/git_wire/wire_reads.rs",
      "purpose": "The `GitWire` handle, its constructors, the process seam, and the read path",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 14,
       "struct": 1
      }
@@ -14604,7 +14913,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 160,
+      "mod": 163,
       "re-export": 71
      }
     },
@@ -15972,6 +16281,112 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/checks.rs",
+     "purpose": "Out-of-order check completion, all-path agreement and red-batch diagnosis",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/landing.rs",
+     "purpose": "Crash-consistent gated landing and trailing-check green/rollback transitions",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MergeQueue"
+     ],
+     "path": "src/merge_queue/mod.rs",
+     "purpose": "Durable batched speculation over real detached worktrees",
+     "surface": {
+      "fn": 1,
+      "re-export": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReviewedProposalLanding"
+     ],
+     "path": "src/merge_queue/reviewed.rs",
+     "purpose": "Production landing through immutable multi-critic proposal approvals",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/staging.rs",
+     "purpose": "Bounded speculation, materialization and cleanup through the shared repo writer",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/storage.rs",
+     "purpose": "Repo-scoped queue/batch rows; every transition is under the repo single writer",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/merge_queue/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BatchState",
+      "CheckInvocation",
+      "CheckPhase",
+      "CheckReport",
+      "LandingPermit",
+      "MergeBatch",
+      "MergeFile",
+      "MergeLanding",
+      "MergeProposal",
+      "MergeQueuePointers",
+      "Quarantine",
+      "SpeculativePath",
+      "TestedBatch"
+     ],
+     "path": "src/merge_queue/types.rs",
+     "purpose": "Persisted queue records and sealed landing/check boundaries",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 6,
+      "struct": 10,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "NoteBody",
       "NoteKind",
@@ -16127,6 +16542,63 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "OriginChange"
+     ],
+     "path": "src/origin/change_index.rs",
+     "purpose": "Commit-hash keyed LEDGER change identities",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConflictTreeExport"
+     ],
+     "path": "src/origin/conflict_tree.rs",
+     "purpose": "Draft-v1 `.jjconflict`-shape export",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReceivedFileOperation"
+     ],
+     "path": "src/origin/document_ingress.rs",
+     "purpose": "Crash-idempotent push-to-document lowering under the origin single-writer lock",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EngineCommitExport"
+     ],
+     "path": "src/origin/export.rs",
+     "purpose": "Export finalized engine commits through GitWire objects and the origin CAS protocol",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/origin/lfs/mod.rs",
      "purpose": "Vault-LFS: the Git-LFS object plane over the vault's EXISTING ASSET byte plane (ARCH-0068 RA1, ONE-1909)",
@@ -16211,7 +16683,8 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "mod": 3
+      "mod": 8,
+      "re-export": 1
      }
     },
     {
@@ -16306,6 +16779,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginAuthority",
+      "OriginAuthorityLease",
+      "OriginResidence"
+     ],
+     "path": "src/origin/residence.rs",
+     "purpose": "Explicit owner-controlled origin epochs",
+     "surface": {
+      "crate-vis": 9,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -16375,6 +16865,14 @@
     },
     {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/epoch_tests.rs",
+     "purpose": "Epoch-bound receive-pack admission, landing and crash recovery",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ObservedRef",
@@ -16385,7 +16883,7 @@
      "path": "src/origin/smart_http/evidence.rs",
      "purpose": "Receive-pack wire types and the admission/outcome evidence claims: producer receipts plus the…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "struct": 4
      }
@@ -16414,7 +16912,7 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -16494,7 +16992,7 @@
      "purpose": "One-request orchestration: coordinator lock, reconcile, threaded exchange, finish",
      "surface": {
       "crate-vis": 4,
-      "fn": 2,
+      "fn": 3,
       "struct": 1,
       "trait": 1
      }
@@ -16523,6 +17021,19 @@
      "purpose": "Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin",
      "surface": {
       "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginTreeFile"
+     ],
+     "path": "src/origin/tree.rs",
+     "purpose": "Bounded, byte-preserving projection of Git trees",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -18935,6 +19446,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/repo_mutation/document.rs",
+     "purpose": "Review-approved repository file updates lower to idempotent document edits",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/repo_mutation/git.rs",
      "purpose": "—",
      "surface": {
@@ -18949,7 +19470,23 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
+      "mod": 2,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoMount",
+      "RepoMountRef"
+     ],
+     "path": "src/repo_mutation/mount.rs",
+     "purpose": "One immutable read path for committed head, recovery forks and codebase snapshots",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -18967,12 +19504,39 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "RepoProposal",
+      "RepoProposalOperation",
+      "RepoProposalStatus"
+     ],
+     "path": "src/repo_mutation/proposal.rs",
+     "purpose": "Durable per-operation code proposals",
+     "surface": {
+      "crate-vis": 14,
+      "enum": 2,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/repo_mutation/queue.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 20,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/reviewed_stack.rs",
+     "purpose": "Atomic critic admission and exact-prefix replay for a tested proposal stack",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -18982,7 +19546,7 @@
      "path": "src/repo_mutation/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -19000,6 +19564,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/repo_mutation/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/repo_mutation/tests/reviewed_stack.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -22799,6 +23371,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/reconciliation.rs",
+     "purpose": "Repository conflicts mint one linked reconciliation TASK and realizing attempt",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "TaskAckReceipt",
       "TaskCancelMode",
@@ -25089,6 +25672,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "code_document": {
+     "files": 6,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers"
+    },
     "code_memory": {
      "files": 7,
      "impl_vault": false,
@@ -25097,7 +25687,7 @@
      "purpose": "—"
     },
     "code_revision": {
-     "files": 9,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25111,7 +25701,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 15,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25250,6 +25840,13 @@
      "layout": "dir",
      "purpose": "Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead…"
     },
+    "contract_oracle": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
+    },
     "corpus": {
      "files": 2,
      "impl_vault": false,
@@ -25384,7 +25981,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25621,6 +26218,13 @@
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
+    "merge_queue": {
+     "files": 8,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Durable batched speculation over real detached worktrees"
+    },
     "note": {
      "files": 2,
      "impl_vault": false,
@@ -25636,7 +26240,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 33,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25776,7 +26380,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 12,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26000,8 +26604,8 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 30,
-     "impl_vault": false,
+     "files": 31,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
@@ -26121,8 +26725,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1494,
-   "test_files": 533
+   "source_files": 1533,
+   "test_files": 541
   },
   "oneiron-bench": {
    "files": [
