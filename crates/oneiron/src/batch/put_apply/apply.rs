@@ -62,6 +62,7 @@ pub(in crate::batch) fn apply_put(
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
     crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
     crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::validate_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
     let mut portable_agent_source = None;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
     store.guard_pack_instance_identity_in_txn(wtxn, &id, entity_type, data)?;
@@ -703,6 +704,7 @@ pub(in crate::batch) fn apply_put(
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
     crate::agent_def::stage_birth_custody_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::stage_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;

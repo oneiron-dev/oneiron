@@ -413,13 +413,16 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
         let body = &bytes[crate::batch::ENTITY_METADATA_HEADER_LEN..];
         let skill_holder = crate::skill_hub::source_carrier_holder(body);
         let agent_holder = crate::agent_def::birth_source_holder(body);
-        let holder = skill_holder.or(agent_holder);
+        let receipt_holder = crate::receipt::receipt_archive_holder(body);
+        let holder = skill_holder.or(agent_holder).or(receipt_holder);
         let holder_erased = holder.is_some_and(|holder| erased.contains(&holder));
         let copied_input_erased = agent_holder.is_some_and(|child| {
             crate::agent_def::birth_source_id(&child).is_ok_and(|id| erased.contains(&id))
                 || birth_payload_contains_erased_id(body, &erased_hex)
         });
-        if holder_erased || copied_input_erased {
+        let archived_receipt_copy_erased = crate::receipt::is_receipt_archive_source(body)
+            && birth_payload_contains_erased_id(body, &erased_hex);
+        if holder_erased || copied_input_erased || archived_receipt_copy_erased {
             // Payload copies are scrubbed even at forged keys. Only actual
             // erased-holder ownership can widen the graph erase set; a copied
             // reference or arbitrary text in an unadmitted payload cannot.
@@ -427,6 +430,7 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
             if holder_erased
                 && let Ok(id) = EntityId::from_hex(key)
                 && (crate::skill_hub::source_carrier_matches_id(body, &id)
+                    || crate::receipt::receipt_archive_matches_id(body, &id)
                     || agent_holder.is_some_and(|child| {
                         crate::agent_def::birth_source_matches_id(&child, &id)
                     }))

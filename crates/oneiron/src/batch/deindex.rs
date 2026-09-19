@@ -39,6 +39,7 @@ pub(crate) fn deindex_entity(
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
     crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;
+    crate::receipt::remove_receipt_archive_custody(store, wtxn, id)?;
     crate::skill_hub::remove_hub_package_in_txn(store, wtxn, id)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
         deindex_lexical_query_hints_for_target(store, wtxn, id)?;

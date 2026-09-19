@@ -682,6 +682,11 @@ impl Vault {
                 wtxn,
                 &holder,
             )?);
+            ids.extend(crate::receipt::receipt_archives_for_holder(
+                &self.store,
+                wtxn,
+                &holder,
+            )?);
         }
         input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
         let sweep_key = if let Some(queued_at) = input.sweep_queued_at {

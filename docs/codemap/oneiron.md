@@ -220,7 +220,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/mod.rs` | src | s | 8 re-export · 2 crate-vis | — | — |
 | `src/batch/export/provenance_import.rs` | src | s | 11 crate-vis | — | Ordered archive restore through MODEL and edge-provenance owning doors |
 | `src/batch/export/receipt_source_tests.rs` | test | s | — | — | Readable task trace sources are data, never local receipt authority |
-| `src/batch/export/receipt_sources.rs` | src | s | 2 enum · 2 fn · 5 crate-vis | ExportReceiptSource, ReceiptSourceOmission | Actual cited pack receipts in an archive |
+| `src/batch/export/receipt_sources.rs` | src | s | 3 enum · 2 fn · 6 crate-vis | ExportReceiptSource, ReceiptSourceOmission, ReceiptSourceOrigin | Actual cited pack receipts in an archive |
 | `src/batch/export/tests.rs` | test | XL | — | — | — |
 | `src/batch/facet_validation.rs` | src | s | 5 crate-vis | — | — |
 | `src/batch/gate_mode.rs` | src | s | 7 crate-vis | — | — |
@@ -1575,6 +1575,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/psych_profile/tests.rs` | test | m | — | — | — |
 | `src/query_expansion.rs` | src | s | 6 struct · 1 enum · 1 trait · 1 fn · 3 const · 2 crate-vis | CompletionCandidate, CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander, HydeExpansion, HydeOptions, HydeRequest | Host-injected HyDE query-expansion seam |
 | `src/query_expansion/tests.rs` | test | s | — | — | — |
+| `src/receipt/archive_source/access.rs` | src | s | 2 crate-vis | — | Archive receipt I/O through ordinary ASSET admission, not terminal ledgers |
+| `src/receipt/archive_source/codec.rs` | src | s | 15 crate-vis | — | Canonical claim-bound archived receipt data, never a native terminal stamp |
+| `src/receipt/archive_source/custody.rs` | src | s | 8 crate-vis | — | Identifier-only source custody |
+| `src/receipt/archive_source/mod.rs` | src | s | 4 crate-vis | — | Imported receipt source artifacts and their physical, non-authoritative custody |
+| `src/receipt/archive_source/tests.rs` | test | s | — | — | Public storage/export outcomes for explicitly untrusted receipt source data |
 | `src/receipt/brief_share.rs` | src | s | 1 crate-vis | — | The brief-share projection |
 | `src/receipt/family.rs` | src | m | 2 struct · 13 fn · 4 crate-vis | PendingTrayAsk, PendingTrayQuery | — |
 | `src/receipt/field_set.rs` | src | m | 1 struct · 13 fn · 1 crate-vis | ContextReceiptFields | — |
@@ -1582,7 +1587,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/identity_kind.rs` | src | m | 2 fn · 3 crate-vis | — | — |
 | `src/receipt/kernel.rs` | src | m | 6 struct · 1 enum · 10 fn · 4 const · 89 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | — |
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 14 crate-vis | — | — |
-| `src/receipt/mod.rs` | src | s | 8 re-export · 8 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
+| `src/receipt/mod.rs` | src | s | 8 re-export · 10 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
 | `src/receipt/send_receipt_txn.rs` | src | s | 1 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
 | `src/receipt/session.rs` | src | s | 2 struct · 7 fn | SessionLocalReceiptLog, SessionReceiptClose | — |

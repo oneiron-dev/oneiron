@@ -2487,13 +2487,14 @@
      "kind": "src",
      "notable": [
       "ExportReceiptSource",
-      "ReceiptSourceOmission"
+      "ReceiptSourceOmission",
+      "ReceiptSourceOrigin"
      ],
      "path": "src/batch/export/receipt_sources.rs",
      "purpose": "Actual cited pack receipts in an archive",
      "surface": {
-      "crate-vis": 5,
-      "enum": 2,
+      "crate-vis": 6,
+      "enum": 3,
       "fn": 2
      }
     },
@@ -19609,6 +19610,54 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/receipt/archive_source/access.rs",
+     "purpose": "Archive receipt I/O through ordinary ASSET admission, not terminal ledgers",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/archive_source/codec.rs",
+     "purpose": "Canonical claim-bound archived receipt data, never a native terminal stamp",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/archive_source/custody.rs",
+     "purpose": "Identifier-only source custody",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/archive_source/mod.rs",
+     "purpose": "Imported receipt source artifacts and their physical, non-authoritative custody",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/receipt/archive_source/tests.rs",
+     "purpose": "Public storage/export outcomes for explicitly untrusted receipt source data",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/receipt/brief_share.rs",
      "purpose": "The brief-share projection",
      "surface": {
@@ -19712,7 +19761,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "re-export": 8
      }
     },
@@ -27460,7 +27509,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "receipt": {
-     "files": 12,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27826,8 +27875,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1602,
-   "test_files": 576
+   "source_files": 1606,
+   "test_files": 577
   },
   "oneiron-bench": {
    "files": [

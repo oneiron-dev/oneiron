@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1602 | 576 | 2 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1606 | 577 | 2 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 70 | 12 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
@@ -158,7 +158,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `provider_confidence` | file+dir | 4 | m | — | Provider confidence priors and read-time confidence composition (ES-09) |
 | `psych_profile` | dir | 7 | m | — | PsychProfile snapshot record substrate |
 | `query_expansion` | file+dir | 2 | s | — | Host-injected HyDE query-expansion seam |
-| `receipt` | dir | 12 | m | yes | Unified receipt-family query surface over existing receipt emitters |
+| `receipt` | dir | 17 | m | yes | Unified receipt-family query surface over existing receipt emitters |
 | `recovery` | file+dir | 2 | m | — | Canonical recovery artifact loader shell |
 | `registry` | dir | 13 | m | yes | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `repo_mutation` | dir | 12 | m | yes | — |

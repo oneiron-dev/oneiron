@@ -59,7 +59,7 @@ pub use bundle_types::*;
 mod bundle_tests;
 
 mod receipt_sources;
-pub use receipt_sources::{ExportReceiptSource, ReceiptSourceOmission};
+pub use receipt_sources::{ExportReceiptSource, ReceiptSourceOmission, ReceiptSourceOrigin};
 
 pub(crate) use receipt_sources::receipt_sources_for_body;
 

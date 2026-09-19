@@ -185,6 +185,8 @@ pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
     pub inserted_entities: usize,
     pub unchanged_entities: usize,
+    /// New inert source ASSETs; these never count as native terminal receipts.
+    pub archived_receipt_sources: usize,
     /// Archived rows intentionally not restored as local authority or verdicts.
     pub omitted_entities: usize,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.

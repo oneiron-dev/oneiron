@@ -178,3 +178,70 @@ fn missing_or_credential_bearing_receipt_sources_are_explicit_never_fabricated()
     );
     Ok(())
 }
+
+#[test]
+fn real_cited_receipt_source_survives_import_reopen_and_reexport_without_native_authority()
+-> Result<()> {
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let (target_dir, target) = open_test_vault_with(VaultConfig::default());
+    let (claim, receipt) = fixture(&source)?;
+    let archive = source.export_whole_vault(PackFormat::Json)?;
+    let imported = target.import_whole_vault_json(archive.bytes())?;
+    assert_eq!(imported.archived_receipt_sources, 1);
+    assert_eq!(
+        target
+            .import_whole_vault_json(archive.bytes())?
+            .archived_receipt_sources,
+        0
+    );
+    assert_eq!(attempt_pack_receipt(&target, &receipt.receipt_id)?, None);
+    drop(target);
+    let target = Vault::open(target_dir.path(), VaultConfig::default())?;
+    let reexport = target.export_whole_vault(PackFormat::Json)?;
+    let document = target.read_whole_vault_json(reexport.bytes())?;
+    let row = document
+        .derivation_envelopes
+        .iter()
+        .find(|row| row.id == claim.to_hex())
+        .unwrap();
+    assert_eq!(row.receipts[0].record()?, Some(receipt.clone()));
+    assert!(matches!(
+        row.receipts[0],
+        ExportReceiptSource::Preserved {
+            origin: ReceiptSourceOrigin::ImportedArchive,
+            ..
+        }
+    ));
+    let (_third_dir, third) = open_test_vault_with(VaultConfig::default());
+    third.import_whole_vault_json(reexport.bytes())?;
+    assert_eq!(attempt_pack_receipt(&third, &receipt.receipt_id)?, None);
+    // Receipt contents cannot change while their holder/body/reference remains identical.
+    let mut forged = source.read_whole_vault_json(archive.bytes())?;
+    let mut different = receipt.clone();
+    different.outcome = "foreign altered outcome".into();
+    forged
+        .derivation_envelopes
+        .iter_mut()
+        .find(|row| row.id == claim.to_hex())
+        .unwrap()
+        .receipts[0] =
+        ExportReceiptSource::from_record(receipt.receipt_id.clone(), Some(&different))?;
+    assert!(
+        target
+            .import_whole_vault_json(&serde_json::to_vec(&forged).unwrap())
+            .is_err()
+    );
+    let after = target.export_whole_vault(PackFormat::Json)?;
+    let after = target.read_whole_vault_json(after.bytes())?;
+    assert_eq!(
+        after
+            .derivation_envelopes
+            .iter()
+            .find(|row| row.id == claim.to_hex())
+            .unwrap()
+            .receipts[0]
+            .record()?,
+        Some(receipt)
+    );
+    Ok(())
+}

@@ -25,6 +25,7 @@ pub(crate) struct ExportSnapshot {
     pub(crate) agent_fork_hashes: BTreeMap<EntityId, String>,
     pub(crate) pack_sources: BTreeMap<EntityId, crate::skill_hub::pack_catalog::PackSource>,
     pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
+    pub(crate) archived_receipts: BTreeMap<EntityId, BTreeMap<String, super::ExportReceiptSource>>,
 }
 
 pub(crate) struct ExportSnapshotEntity {
@@ -49,6 +50,7 @@ impl Vault {
         let mut skill_packages = BTreeMap::new();
         let mut agent_fork_hashes = BTreeMap::new();
         let mut task_receipts = BTreeMap::new();
+        let mut archived_receipts = BTreeMap::new();
         for entry in self.store.entities.iter(&rtxn)? {
             let (key, raw) = entry?;
             let id = crate::entity_id::parse_entity_id(&key, "whole-vault entity id")?;
@@ -60,6 +62,11 @@ impl Vault {
             // Check the type BEFORE reading or transforming the custody body.
             if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
                 || !live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+            {
+                continue;
+            }
+            if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
+                && crate::receipt::is_receipt_archive_source(&raw[ENTITY_METADATA_HEADER_LEN..])
             {
                 continue;
             }
@@ -101,6 +108,10 @@ impl Vault {
                 && let Ok(claim) =
                     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
             {
+                archived_receipts.insert(
+                    id,
+                    crate::receipt::archived_receipt_sources_in_txn(&self.store, &rtxn, &id)?,
+                );
                 for receipt_id in super::receipt_sources::task_receipt_refs(&claim) {
                     if !task_receipts.contains_key(&receipt_id)
                         && let Some(receipt) = crate::receipt::attempt_pack_receipt_in_txn(
@@ -169,6 +180,7 @@ impl Vault {
                 agent_fork_hashes,
                 pack_sources,
                 task_receipts,
+                archived_receipts,
             },
             format,
         )

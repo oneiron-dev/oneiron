@@ -76,6 +76,7 @@ pub(crate) fn serialize_vault_snapshot(
                     receipts: crate::batch::export::receipt_sources_for_body(
                         &body,
                         &snapshot.task_receipts,
+                        snapshot.archived_receipts.get(&raw.id),
                     )?,
                 });
         }

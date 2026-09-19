@@ -14,6 +14,8 @@ use std::collections::BTreeSet;
 pub enum ExportReceiptSource {
     Preserved {
         receipt_id: String,
+        /// This describes capture location, not authenticated claim grounding.
+        origin: ReceiptSourceOrigin,
         body: ExportBody,
     },
     Unavailable {
@@ -27,7 +29,28 @@ pub enum ReceiptSourceOmission {
     NotStored,
     CredentialRedaction,
 }
+/// Origin remains data on an untrusted archive, never a replay capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptSourceOrigin {
+    CapturedLocalTerminal,
+    ImportedArchive,
+}
+
 impl ExportReceiptSource {
+    pub(crate) fn as_imported_archive(&self) -> Self {
+        match self {
+            Self::Preserved {
+                receipt_id, body, ..
+            } => Self::Preserved {
+                receipt_id: receipt_id.clone(),
+                body: body.clone(),
+                origin: ReceiptSourceOrigin::ImportedArchive,
+            },
+            Self::Unavailable { .. } => self.clone(),
+        }
+    }
+
     #[must_use]
     pub fn receipt_id(&self) -> &str {
         match self {
@@ -71,7 +94,11 @@ impl ExportReceiptSource {
                 reason: ReceiptSourceOmission::CredentialRedaction,
             });
         }
-        Ok(Self::Preserved { receipt_id, body })
+        Ok(Self::Preserved {
+            receipt_id,
+            origin: ReceiptSourceOrigin::CapturedLocalTerminal,
+            body,
+        })
     }
     pub(crate) fn validate(&self) -> Result<()> {
         let Some(id) = self.receipt_id().strip_prefix("attempt:") else {
@@ -80,7 +107,10 @@ impl ExportReceiptSource {
         if crate::EntityId::from_hex(id)?.to_hex() != id {
             return Err(invalid());
         }
-        if let Self::Preserved { receipt_id, body } = self {
+        if let Self::Preserved {
+            receipt_id, body, ..
+        } = self
+        {
             body.validate(crate::registry::ENTITY_TYPE_ASSET)?;
             let record: ReceiptRecord =
                 rmp_serde::from_slice(&body.to_bytes()?).map_err(|_| invalid())?;
@@ -138,11 +168,17 @@ fn invalid() -> Error {
 pub(crate) fn receipt_sources_for_body(
     body: &ExportBody,
     receipts: &std::collections::BTreeMap<String, ReceiptRecord>,
+    archived: Option<&std::collections::BTreeMap<String, ExportReceiptSource>>,
 ) -> Result<Vec<ExportReceiptSource>> {
     task_receipt_refs_from_body(body)
         .into_iter()
         .map(|id| {
             let record = receipts.get(&id);
+            if record.is_none()
+                && let Some(source) = archived.and_then(|rows| rows.get(&id))
+            {
+                return Ok(source.clone());
+            }
             ExportReceiptSource::from_record(id, record)
         })
         .collect()

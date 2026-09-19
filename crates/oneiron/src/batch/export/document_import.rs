@@ -315,11 +315,23 @@ impl Vault {
             }
             import_edge(self, &mut wtxn, edge, &inserted_ids)?;
         }
+        let mut archived_receipt_sources = 0;
+        for envelope in &document.derivation_envelopes {
+            let holder = parse_id(&envelope.id)?;
+            if !omitted.contains(&holder) {
+                archived_receipt_sources += self.restore_claim_receipt_sources_in_txn(
+                    &mut wtxn,
+                    &holder,
+                    &envelope.receipts,
+                )?;
+            }
+        }
         wtxn.commit()?;
         Ok(WholeVaultImportReceipt {
             authority,
             inserted_entities,
             unchanged_entities,
+            archived_receipt_sources,
             omitted_entities: omitted.len(),
             remapped_entities: models
                 .iter()
