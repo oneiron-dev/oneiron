@@ -1,10 +1,38 @@
 //! The write-time projector shared by local batches and sync materialization.
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
+use crate::error::RecordError;
 use crate::store::Store;
 
+fn invalid() -> Error {
+    RecordError::InvalidProjectBody("invalid project or ancestry").into()
+}
+fn invalid_room() -> Error {
+    RecordError::InvalidProjectRoomBody("invalid derived home room").into()
+}
+fn dependency(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<ProjectRecord> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Err(RecordError::ProjectDependencyPending.into());
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("project dependency header"))?;
+    if header.entity_type != kind {
+        return Err(invalid());
+    }
+    if raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Err(RecordError::ProjectDependencyPending.into());
+    }
+    rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map_err(|_| Error::CorruptedIndex("project dependency body"))
+}
+
 pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
-    let body: ProjectRecord = decode(bytes)?;
+    let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     if body.schema_version != 1
         || body.home_room != home_room_id(id).to_hex()
         || body.roster.is_empty()
@@ -31,7 +59,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     }
     let mut ids = Vec::new();
     for value in refs {
-        let id = EntityId::from_hex(value)?;
+        let id = EntityId::from_hex(value).map_err(|_| invalid())?;
         if id.to_hex() != *value {
             return Err(invalid());
         }
@@ -59,11 +87,13 @@ pub(crate) fn reconcile_project_rooms(
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             continue;
         };
-        let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("project projection header"))?;
         if header.entity_type != project_kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
             continue;
         }
-        let body: ProjectRecord = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let body: ProjectRecord = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
+            .map_err(|_| Error::CorruptedIndex("project projection body"))?;
         // Fail closed on cycles, dangling parents, and non-project parents.
         let mut visited = BTreeSet::from([id.to_hex()]);
         let mut parent = body.parent.clone();
@@ -71,9 +101,12 @@ pub(crate) fn reconcile_project_rooms(
             if !visited.insert(next.clone()) || visited.len() > 256 {
                 return Err(invalid());
             }
-            let parent_body: ProjectRecord =
-                record(store, txn, EntityId::from_hex(&next)?, project_kind)?
-                    .ok_or_else(invalid)?;
+            let parent_body = dependency(
+                store,
+                txn,
+                EntityId::from_hex(&next).map_err(|_| invalid())?,
+                project_kind,
+            )?;
             parent = parent_body.parent;
         }
         let room_id = EntityId::from_hex(&body.home_room)?;
@@ -84,7 +117,11 @@ pub(crate) fn reconcile_project_rooms(
             member_ids: body.roster.clone(),
             claims_scope_ref: body.claims_scope_ref.clone(),
         };
-        let previous: Option<ProjectRoom> = record(store, txn, room_id, ENTITY_TYPE_CONVERSATION)?;
+        let previous: Option<ProjectRoom> =
+            match record(store, txn, room_id, ENTITY_TYPE_CONVERSATION) {
+                Err(Error::InvalidConfig(_)) => return Err(invalid_room()),
+                other => other?,
+            };
         if previous
             .as_ref()
             .is_some_and(|old| old.project_id != id.to_hex())
@@ -136,7 +173,8 @@ pub(crate) fn reconcile_project_rooms(
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             continue;
         };
-        let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("project projection header"))?;
         if header.entity_type != ENTITY_TYPE_CONVERSATION {
             continue;
         }
@@ -144,16 +182,15 @@ pub(crate) fn reconcile_project_rooms(
             // Non-project conversations keep their own established body shape.
             continue;
         };
-        let project_id = EntityId::from_hex(&room.project_id)?;
-        let project: ProjectRecord =
-            record(store, txn, project_id, project_kind)?.ok_or_else(invalid)?;
+        let project_id = EntityId::from_hex(&room.project_id).map_err(|_| invalid_room())?;
+        let project = dependency(store, txn, project_id, project_kind)?;
         if room.schema_version != 1
             || room.kind != "channel"
             || project.home_room != id.to_hex()
             || project.roster != room.member_ids
             || project.claims_scope_ref != room.claims_scope_ref
         {
-            return Err(invalid());
+            return Err(invalid_room());
         }
     }
     Ok(())
@@ -170,9 +207,9 @@ pub(crate) fn validate_room_body(
         .get(txn, &[ROOM_PROJECT, id.as_bytes()].concat())?
         .is_some()
     {
-        let room: ProjectRoom = decode(data)?;
+        let room: ProjectRoom = rmp_serde::from_slice(data).map_err(|_| invalid_room())?;
         if room.schema_version != 1 || room.kind != "channel" {
-            return Err(invalid());
+            return Err(invalid_room());
         }
     }
     Ok(())

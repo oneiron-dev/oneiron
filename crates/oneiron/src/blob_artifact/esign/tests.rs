@@ -1,6 +1,6 @@
 use super::ledger::append;
 use super::*;
-use crate::{EntityId, Result, TimeRange, Vault, VaultConfig};
+use crate::{EntityId, Error, Result, TimeRange, Vault, VaultConfig};
 fn actor() -> EsignAuditActor {
     EsignAuditActor {
         actor: "test-owner".into(),
@@ -314,7 +314,7 @@ fn send_request(
 fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -> Result<()> {
     let (_dir, vault, id, doc, owner) = ceremony_setup()?;
     let tokens = vault.issue_esign_capabilities(&owner, id)?;
-    assert!(vault.issue_esign_capabilities(&owner, id).is_err());
+    assert!(vault.issue_esign_capabilities(&owner, id)?.is_empty());
     let command = EsignOutboundCommand {
         document: id.to_hex(),
         recipient_count: 2,
@@ -550,6 +550,25 @@ fn outbound_gate_and_resend_count_are_not_bypassable() -> Result<()> {
         crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
     );
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Draft);
+    let unminted = vault
+        .dispatch_esign(
+            send_request(id, owner.actor(), command.verb, "unminted-send"),
+            &command,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_ne!(
+        unminted.outcome,
+        crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Draft);
+    assert!(
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .list()?
+            .is_empty()
+    );
+    vault.issue_esign_capabilities(&owner, id)?;
     let sent = vault
         .dispatch_esign(
             send_request(id, owner.actor(), command.verb, "allowed-send"),
@@ -758,5 +777,150 @@ fn audit_chain_survives_document_deletion_and_reopen() -> Result<()> {
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
     assert!(reopened.get_blob_artifact(&id)?.is_none());
     assert_eq!(reopened.esign_audit(id)?, audit);
+    Ok(())
+}
+
+#[test]
+fn added_draft_recipients_get_only_missing_capabilities_and_preview_admits_once() -> Result<()> {
+    let (_dir, vault, id, mut doc, owner) = ceremony_setup()?;
+    let original = vault.issue_esign_capabilities(&owner, id)?;
+    let mut added = doc.recipients[1].clone();
+    added.id = EntityId::now().to_hex();
+    added.order = 2;
+    doc.recipients.push(added.clone());
+    let now = crate::unix_seconds_now();
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        now,
+    )?;
+    let issued = vault.issue_esign_capabilities(&owner, id)?;
+    assert_eq!(issued.len(), 1);
+    assert_eq!(issued[0].0, added.id);
+    let command = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: 3,
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    assert_eq!(
+        vault
+            .dispatch_esign(
+                send_request(id, owner.actor(), command.verb, "added-send"),
+                &command,
+                None,
+                None
+            )
+            .unwrap()
+            .outcome,
+        crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+    );
+    // More than half the 120-load minute budget must succeed: double admission
+    // would refuse preview 61. The old bearer remains usable after the edit.
+    for _ in 0..61 {
+        let (page, bytes) = vault.esign_preview_for_capability(&original[0].1, 0, None, None)?;
+        assert_eq!(page.recipient, doc.recipients[0].id);
+        assert_eq!(bytes, b"%PDF-1.7\n");
+    }
+    assert!(vault.issue_esign_capabilities(&owner, id).is_err());
+    Ok(())
+}
+
+#[test]
+fn seal_backstop_obeys_both_time_bounds_and_expiry_stays_unsealed() -> Result<()> {
+    for (age, expected) in [(899, 0), (900, 1), (21600, 1), (21601, 0)] {
+        let (_dir, vault, id, _doc) = setup()?;
+        event(&vault, id, EsignEvent::Sent, 3)?;
+        let first = vault.esign_document(id)?.document.recipients[0].id.clone();
+        event(
+            &vault,
+            id,
+            EsignEvent::Viewed {
+                recipient: first.clone(),
+            },
+            4,
+        )?;
+        event(
+            &vault,
+            id,
+            EsignEvent::Declined {
+                recipient: first,
+                reason: "declined".into(),
+            },
+            5,
+        )?;
+        assert_eq!(vault.sweep_esign_seals(&[id], 5 + age)?, expected);
+        assert_eq!(vault.sweep_esign_seals(&[id], 5 + age)?, expected);
+        assert_eq!(
+            crate::attempt_queue::AttemptQueue::new(&vault)
+                .list()?
+                .iter()
+                .filter(|a| a.kind == ESIGN_SEAL_ATTEMPT_KIND)
+                .count(),
+            expected
+        );
+    }
+    let (_dir, vault, id, doc) = setup()?;
+    event(&vault, id, EsignEvent::Sent, 3)?;
+    vault.expire_esign_document(id, doc.expires_at - 1)?;
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Pending);
+    vault.expire_esign_document(id, doc.expires_at)?;
+    let audit = vault.esign_audit(id)?;
+    vault.expire_esign_document(id, doc.expires_at + 1)?;
+    assert_eq!(vault.esign_audit(id)?, audit);
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Expired);
+    assert!(vault.esign_document(id)?.sealed_sha256.is_empty());
+    assert_eq!(vault.sweep_esign_seals(&[id], doc.expires_at + 900)?, 0);
+    assert!(
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .list()?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn individual_events_cannot_be_deleted_or_retyped_but_subject_erasure_retains_audit() -> Result<()>
+{
+    let (_dir, vault, id, _) = setup()?;
+    event(&vault, id, EsignEvent::Sent, 3)?;
+    let state = vault.esign_document(id)?;
+    let audit = vault.esign_audit(id)?;
+    let (claim_id, body) = vault
+        .claims_for_subject(&id)?
+        .into_iter()
+        .map(|claim| Ok((claim, vault.get_claim(&claim)?.expect("claim"))))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .find(|(_, body)| body.predicate == "esign.sent")
+        .expect("sent event");
+    assert!(matches!(
+        vault.batch().delete(&claim_id).commit(),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    for reason in [
+        crate::DeleteReason::UserDelete,
+        crate::DeleteReason::UserHardDelete,
+    ] {
+        assert!(matches!(
+            vault.delete_entity_with_reason(&claim_id, reason),
+            Err(Error::InvalidClaimBody(_))
+        ));
+    }
+    let mut changed = body.clone();
+    changed.predicate = "other.fact".into();
+    assert!(
+        vault
+            .put_claim(&claim_id, &changed, TimeRange { start: 3, end: 3 }, 3)
+            .is_err()
+    );
+    assert_eq!(vault.get_claim(&claim_id)?, Some(body));
+    assert_eq!(vault.esign_document(id)?, state);
+    assert_eq!(vault.esign_audit(id)?, audit);
+    assert!(vault.delete_entity(&id)?);
+    assert_eq!(vault.esign_audit(id)?, audit);
     Ok(())
 }

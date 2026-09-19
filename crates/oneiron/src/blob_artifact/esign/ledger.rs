@@ -227,7 +227,24 @@ impl Vault {
 
 pub(crate) fn validate_event_claim(body: &ClaimBody) -> Result<()> {
     if body.predicate.starts_with("esign.") {
-        decode_event(body)?;
+        decode_event(body).map_err(|_| Error::InvalidClaimBody("invalid esign event body"))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn reject_event_delete(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+        && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && let Ok(body) =
+            crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+        && body.predicate.starts_with("esign.")
+    {
+        return Err(Error::InvalidClaimBody("esign events are append-only"));
     }
     Ok(())
 }

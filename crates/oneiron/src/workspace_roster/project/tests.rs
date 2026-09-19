@@ -100,3 +100,62 @@ fn project_binding_does_not_hijack_a_preexisting_crm_slot() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
+    for door in [0, 1, 2] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let root = vault.root_project()?;
+        let owner = EntityId::now();
+        vault.put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"member",
+        )?;
+        let id = EntityId::now();
+        let project = ProjectRecord::new(id, Some(root), root, owner);
+        vault.put_project(id, &project, 2)?;
+        let room = EntityId::from_hex(&project.home_room)?;
+        let memory = vault.memory(owner, crate::edge::EdgeActorClass::Human);
+        assert!(
+            memory
+                .rooms_list()
+                .unwrap()
+                .iter()
+                .any(|(id, _)| *id == room)
+        );
+        if door == 0 {
+            vault.batch().delete(&id).commit()?;
+        } else if door == 1 {
+            vault.delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)?;
+        } else {
+            assert!(vault.delete_entity(&id)?);
+        }
+        if door != 1 {
+            assert!(vault.project(id)?.is_none());
+        }
+        assert!(vault.get(&room)?.is_none());
+        assert!(vault.project_room(room)?.is_none());
+        assert!(
+            !memory
+                .rooms_list()
+                .unwrap()
+                .iter()
+                .any(|(id, _)| *id == room)
+        );
+        assert!(memory.rooms_messages(room).is_err());
+        assert!(vault.bind_room_handle(room, "@old", owner).is_err());
+        // No stale owner marker treats a reused ordinary conversation as a room.
+        vault.put_entity(
+            &room,
+            ENTITY_TYPE_CONVERSATION,
+            TimeRange { start: 3, end: 3 },
+            3,
+            b"ordinary conversation",
+        )?;
+    }
+    Ok(())
+}

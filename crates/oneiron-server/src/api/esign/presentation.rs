@@ -1,7 +1,7 @@
 //! Stateless field editor and capability-scoped ceremony presentation adapters.
 use super::*;
 use oneiron::blob_artifact::esign::render::{self, PageGeometry};
-use oneiron::blob_artifact::esign::{EsignField, FieldValue, SigningOutcome};
+use oneiron::blob_artifact::esign::{EsignField, FieldValue};
 use std::collections::BTreeMap;
 
 #[derive(Deserialize)]
@@ -55,15 +55,7 @@ pub(super) async fn preview(
         .and_then(|v| v.to_str().ok())
         .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
-    let Ok(SigningOutcome::Page(page)) = server.vault.execute_signing_action(
-        &token,
-        &SigningAction::Load,
-        Some(peer.ip().to_string()),
-        ua.clone(),
-    ) else {
-        return refused();
-    };
-    let Ok(bytes) = server.vault.esign_pdf_for_capability(
+    let Ok((page, bytes)) = server.vault.esign_preview_for_capability(
         &token,
         request.item,
         Some(peer.ip().to_string()),
@@ -104,11 +96,19 @@ pub(super) async fn editor_script() -> Response {
     )
         .into_response()
 }
-pub(super) async fn upload_geometry(body: axum::body::Bytes) -> Response {
+pub(super) async fn upload_geometry(
+    axum::Extension(permit): axum::Extension<Arc<tokio::sync::OwnedSemaphorePermit>>,
+    body: axum::body::Bytes,
+) -> Response {
     // Byte-only inspection, no template parse, blob write, or outbound effects.
-    match render::inspect_pdf_pages(&body) {
-        Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
-        Err(_) => refused(),
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        render::inspect_pdf_pages(&body)
+    })
+    .await
+    {
+        Ok(Ok(pages)) => Json(serde_json::json!({"pages":pages})).into_response(),
+        _ => refused(),
     }
 }
 

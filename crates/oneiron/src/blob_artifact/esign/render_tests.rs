@@ -953,3 +953,65 @@ fn link_border_style_overrides_legacy_border_before_flattening() {
         Err(PdfPreparationError::UnsupportedPdf)
     ));
 }
+
+#[test]
+fn dictionary_framing_handles_nested_literals_and_refuses_unterminated_candidates() {
+    let mut input = Input::new();
+    input.pdf.trailer.set("Nested", dictionary! {
+        "Text" => Object::string_literal("literal >> (nested) \\ text"),
+        "Array" => vec![Object::Dictionary(dictionary! {"Hex" => Object::String(vec![0x3e, 0x3e], lopdf::StringFormat::Hexadecimal)})],
+    });
+    assert_eq!(inspect_pdf_pages(&input.bytes()).unwrap().len(), 2);
+    let mut bad = b"%PDF-1.7\nxref\n0 1\n0000000000 65535 f\ntrailer\n<< /Size 1 /Text (".to_vec();
+    bad.extend_from_slice(&b">>".repeat(32 * 1024));
+    bad.extend_from_slice(b"\nstartxref\n9\n%%EOF\n");
+    assert_eq!(
+        inspect_pdf_pages(&bad).unwrap_err(),
+        PdfPreparationError::MalformedPdf
+    );
+}
+
+#[test]
+fn prior_revision_parsing_has_an_aggregate_byte_budget() {
+    let mut input = Input::new();
+    input
+        .pdf
+        .add_object(Object::string_literal(vec![b'a'; 3 * 1024 * 1024]));
+    let mut bytes = input.bytes();
+    assert_eq!(inspect_pdf_pages(&bytes).unwrap().len(), 2);
+    let tail = bytes.windows(9).rposition(|v| v == b"startxref").unwrap();
+    let mut previous: usize = std::str::from_utf8(&bytes[tail + 9..])
+        .unwrap()
+        .split_ascii_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let root = input
+        .pdf
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let size = input.pdf.max_id + 1;
+    // One small legitimate update is still accepted; many full snapshots are not.
+    for revision in 0..22 {
+        let object = size + revision;
+        bytes.push(b'\n');
+        let object_offset = bytes.len();
+        bytes.extend_from_slice(
+            format!("{object} 0 obj\n<< /Revision {revision} >>\nendobj\n").as_bytes(),
+        );
+        let offset = bytes.len();
+        bytes.extend_from_slice(format!("xref\n{object} 1\n{object_offset:010} 00000 n \ntrailer\n<< /Size {} /Root {} {} R /Prev {previous} >>\nstartxref\n{offset}\n%%EOF\n", object + 1, root.0, root.1).as_bytes());
+        previous = offset;
+        if revision == 0 {
+            assert_eq!(inspect_pdf_pages(&bytes).unwrap().len(), 2);
+        }
+    }
+    assert_eq!(
+        inspect_pdf_pages(&bytes).unwrap_err(),
+        PdfPreparationError::Limit
+    );
+}

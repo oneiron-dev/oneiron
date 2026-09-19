@@ -210,21 +210,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/vector_apply.rs` | src | s | 3 crate-vis | — | — |
 | `src/blob_artifact/body.rs` | src | s | 1 struct · 4 fn · 4 const · 2 crate-vis | BlobArtifactBody | Blob artifact body: pinned body keys, body type, MessagePack codec, and validators |
 | `src/blob_artifact/esign/artifact_actor.rs` | src | s | 1 crate-vis | — | Vault-local machine identity for capability uploads and verified seal output |
-| `src/blob_artifact/esign/capability.rs` | src | s | 1 struct · 4 fn · 2 crate-vis | EsignCapability | Session-less, high-entropy capabilities |
+| `src/blob_artifact/esign/capability.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | EsignCapability | Session-less, high-entropy capabilities |
 | `src/blob_artifact/esign/ceremony.rs` | src | s | 1 struct · 2 enum · 1 fn · 1 const · 1 crate-vis | SigningAction, SigningOutcome, SigningPage | One public signing executor: turn, access, viewed, terminal, then action |
 | `src/blob_artifact/esign/fold.rs` | src | s | 1 fn · 3 crate-vis | — | Pure projection of the append-only esign claim family |
-| `src/blob_artifact/esign/ledger.rs` | src | s | 3 fn · 7 crate-vis | — | Claims are the document state machine |
+| `src/blob_artifact/esign/ledger.rs` | src | s | 3 fn · 8 crate-vis | — | Claims are the document state machine |
 | `src/blob_artifact/esign/mod.rs` | src | s | 2 mod · 6 re-export · 1 crate-vis | — | Native signing requests on versioned blob artifacts; claims are the state machine |
 | `src/blob_artifact/esign/model.rs` | src | m | 10 struct · 9 enum · 4 crate-vis | AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignDocument, EsignEvent, EsignEventRow +11 | Typed document, recipient, field and event vocabulary for ARCH-0064 |
 | `src/blob_artifact/esign/outbound.rs` | src | s | 1 struct · 1 enum · 3 fn | EsignOutboundCommand, EsignOutboundVerb | SGN-02 uses the ordinary OF-327 gate and durable intent ledger |
 | `src/blob_artifact/esign/principals.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SigningAutonomy, SigningPrincipal | Owner-editable principal set and the legal-reality-gated D6 action dial |
-| `src/blob_artifact/esign/public_read.rs` | src | s | 1 fn | — | Capability-scoped PDF bytes |
+| `src/blob_artifact/esign/public_read.rs` | src | s | 2 fn | — | Capability-scoped PDF bytes |
 | `src/blob_artifact/esign/rate.rs` | src | s | 1 crate-vis | — | Vault-local ceremony rate accounting; no process-global counters |
 | `src/blob_artifact/esign/render.rs` | src | m | 4 struct · 1 enum · 3 fn · 1 re-export | PdfFieldRect, PdfPreparation, PdfPreparationError, PreparedEsignPdf, SignatureRaster | Lossless bounded PDF preparation and shared field presentation |
 | `src/blob_artifact/esign/render/appearance.rs` | src | s | 1 crate-vis | — | Flatten explicit static annotation appearances; never invent missing glyphs |
 | `src/blob_artifact/esign/render/evidence.rs` | src | s | 2 crate-vis | — | Audit replay and certificate/complete-trail PDF appendices |
 | `src/blob_artifact/esign/render/fields.rs` | src | s | 5 crate-vis | — | Flattened e-sign field text, marks and signature pixels |
 | `src/blob_artifact/esign/render/preflight.rs` | src | m | 1 crate-vis | — | Budgeted xref framing and lossless object-stream expansion before rewriting |
+| `src/blob_artifact/esign/render/preflight/dictionary.rs` | src | s | 1 crate-vis | — | Linear lexical framing; the PDF parser validates the single bounded operand |
 | `src/blob_artifact/esign/render/presentation.rs` | src | s | 3 struct · 2 enum · 5 fn · 2 crate-vis | FieldControl, FieldLayout, FieldMark, FieldPresentation, PageGeometry | The field presentation contract consumed by editor, ceremony, and PDF export |
 | `src/blob_artifact/esign/render/source.rs` | src | m | 12 crate-vis | — | Static page-tree and resource-graph admission and copying |
 | `src/blob_artifact/esign/render/streams.rs` | src | s | 1 crate-vis | — | Exact, budgeted decoding for PDF content and structural streams |
@@ -237,7 +238,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/template/html.rs` | src | m | 2 crate-vis | — | HTML5 DOM merge and safe, deterministic document typography |
 | `src/blob_artifact/esign/template/layout.rs` | src | m | 11 crate-vis | — | Deterministic paginated HTML flow; fixed PDF standard fonts and no host state |
 | `src/blob_artifact/esign/template_tests.rs` | test | s | — | — | Parsed output tests of the actual native HTML renderer and upload bypass |
-| `src/blob_artifact/esign/tests.rs` | test | m | — | — | — |
+| `src/blob_artifact/esign/tests.rs` | test | L | — | — | — |
 | `src/blob_artifact/lifecycle.rs` | src | s | 2 crate-vis | — | Blob artifact delete path: version-chain, head, and asset-ref cleanup |
 | `src/blob_artifact/mod.rs` | src | s | 1 mod · 4 re-export · 4 crate-vis | — | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `src/blob_artifact/provenance.rs` | src | s | 1 enum · 2 fn · 7 crate-vis | BlobVersionProvenance | Blob version provenance: producer enum and claim-envelope value constructors |
@@ -462,7 +463,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity_provider/inbound_types.rs` | src | s | 4 struct · 1 enum · 1 trait · 9 fn | ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, ChannelIdentityProviderProvision, EmailProviderInbound, LineOfficialAccountInbound, SlackProviderInbound | Shared provider envelope: inbound payload structs, provision result, and the adapter trait |
 | `src/channel_identity_provider/line_adapter.rs` | src | s | 2 struct · 1 enum · 10 fn | LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier | LINE Official Account adapter: plan tier, config, and trait impl |
 | `src/channel_identity_provider/mod.rs` | src | s | 2 mod · 5 re-export | — | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
-| `src/channel_identity_provider/native_mail.rs` | src | s | 1 struct · 1 enum · 1 trait · 4 fn | NativeMailAdapter, NativeMailHost, NativeMailRunMode | Native mail fulfillment adapter |
+| `src/channel_identity_provider/native_mail.rs` | src | m | 1 struct · 1 enum · 1 trait · 4 fn | NativeMailAdapter, NativeMailHost, NativeMailRunMode | Native mail fulfillment adapter |
 | `src/channel_identity_provider/shared_validate.rs` | src | m | 9 const · 37 crate-vis | — | Cross-channel provision guards, email/LINE normalizers, and blank/bytes primitives |
 | `src/channel_identity_provider/slack_adapter.rs` | src | m | 5 struct · 20 fn | SlackOutboundMessage, SlackPersonaAttribution, SlackPersonaOutbound, SlackSharedPresenceAdapter, SlackSharedPresenceAdapterConfig | Slack shared-presence adapter: config, persona/outbound types, impls, and inbound normalizer |
 | `src/channel_identity_provider/slack_validate.rs` | src | s | 12 crate-vis | — | Slack key, workspace, and field normalizers shared by the Slack adapter paths |
@@ -1213,7 +1214,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/outcomes.rs` | src | s | 2 fn | — | Idempotent outcome projection over durable facts and immutable question versions |
 | `src/llm/decision/questions/records.rs` | src | s | 7 struct · 2 enum · 2 fn · 1 crate-vis | AnswerRecord, CalibrationPair, OutcomeBinding, OutcomeLabel, OutcomeSource, QuestionDefinition, QuestionRecord, RefreshPolicy +1 | Immutable definitions and typed outcome bindings |
 | `src/llm/decision/questions/store.rs` | src | s | 4 fn · 8 crate-vis | — | Immutable question versions and a CAS-updated scheduling head in vault_meta |
-| `src/llm/decision/questions/task_ask.rs` | src | s | 2 crate-vis | — | Transactional tasks.ask adapter to the shared versioned question substrate |
+| `src/llm/decision/questions/task_ask.rs` | src | s | 3 crate-vis | — | Transactional tasks.ask adapter to the shared versioned question substrate |
 | `src/llm/decision/types.rs` | src | s | 6 struct · 5 enum · 6 fn · 1 crate-vis | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung +3 | Closed answer contracts and engine-owned decision receipts |
 | `src/llm/error.rs` | src | s | 1 struct · 4 enum | BudgetDenied, FatalLlmError, LlmError, RetryableLlmError, UnsupportedCapability | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
 | `src/llm/mod.rs` | src | s | 1 mod · 10 re-export · 4 crate-vis | — | Engine-facing LLM invocation seam |
@@ -1278,7 +1279,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/tests/authority_revocation.rs` | test | L | — | — | Owner bindings, rooting, revocation, revocation-vs-delete races, rotation, and sidecars |
 | `src/memory/tests/commit_claims.rs` | test | L | — | — | Commit gating and trust ceiling, claim upsert/supersede/retract, structural puts, blobs, and edge names |
 | `src/memory/tests/delete_tombstone.rs` | test | L | — | — | Safe-delete receipts, crash recovery, tombstone publish boundary, and soft-erase edge cases |
-| `src/memory/tests/mod.rs` | test | m | 24 crate-vis | — | BRIDGE-01 acceptance tests, engine side |
+| `src/memory/tests/mod.rs` | test | m | 25 crate-vis | — | BRIDGE-01 acceptance tests, engine side |
 | `src/memory/tests/session_witness.rs` | test | L | — | — | Session overlay witness, room-shell claims, flip/replay races, and promoted turns |
 | `src/memory/tests/support.rs` | test | m | 17 crate-vis | — | Shared harnesses and fixtures for the memory acceptance tests |
 | `src/memory/tests/takes_notes.rs` | test | m | — | — | Note takes on claims, author binding, and stale upsert/retract conflicts |
@@ -1858,9 +1859,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/tests.rs` | test | XL | — | — | — |
 | `src/sync/window/tombstones.rs` | src | s | 3 fn · 4 crate-vis | — | Tombstone apply/export/replay plus window rebuild from updates |
 | `src/task_authority.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 const · 6 crate-vis | TaskAuthorityFact, TaskAuthorityFactKind, TaskAuthorityState | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
-| `src/task_verb/ask.rs` | src | s | 4 struct · 3 fn · 5 crate-vis | TaskAskAnswer, TaskAskHandle, TaskAskReceipt, TaskAskSpec | Immediate ask handles, immutable responder sets, and first-answer CAS |
+| `src/task_verb/ask.rs` | src | m | 4 struct · 3 fn · 5 crate-vis | TaskAskAnswer, TaskAskHandle, TaskAskReceipt, TaskAskSpec | Immediate ask handles, immutable responder sets, and first-answer CAS |
 | `src/task_verb/ask_outcome_tests.rs` | test | m | — | — | — |
-| `src/task_verb/ask_tests.rs` | test | s | — | — | — |
+| `src/task_verb/ask_tests.rs` | test | m | — | — | — |
 | `src/task_verb/ask_wait.rs` | src | s | 1 enum · 2 fn · 1 crate-vis | TaskWaitOutcome | A wait suspends its calling C9 step, never the enclosing attempt or run |
 | `src/task_verb/consts.rs` | src | s | 1 const · 14 crate-vis | — | Module-level constants shared across the task-verb files |
 | `src/task_verb/consult_fanout_facade.rs` | src | m | 2 fn | — | — |
@@ -2002,7 +2003,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/codec.rs` | src | m | 36 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
 | `src/workspace_roster/intent.rs` | src | s | 5 struct · 3 crate-vis | CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent, WorkspaceRosterPreset | Onboarding request shapes and their structural validation |
 | `src/workspace_roster/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
-| `src/workspace_roster/project/mod.rs` | src | s | 3 struct · 7 fn · 1 const · 9 crate-vis | ProjectRecord, ProjectRoom, ProjectRoomChange | Project responsibility records and their derived home-room membership |
+| `src/workspace_roster/project/deletion.rs` | src | s | 1 crate-vis | — | Delete the derived home room at the common entity deindex door |
+| `src/workspace_roster/project/mod.rs` | src | s | 3 struct · 7 fn · 1 const · 10 crate-vis | ProjectRecord, ProjectRoom, ProjectRoomChange | Project responsibility records and their derived home-room membership |
 | `src/workspace_roster/project/projection.rs` | src | s | 3 crate-vis | — | The write-time projector shared by local batches and sync materialization |
 | `src/workspace_roster/project/tests.rs` | test | s | — | — | — |
 | `src/workspace_roster/records.rs` | src | s | 2 struct · 2 enum · 4 fn · 4 const · 5 crate-vis | MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterRole | Pinned vault-meta prefixes, the step ladder, and stored roster/journal records |

@@ -76,6 +76,7 @@ pub(crate) fn mcp_admit_scoped_call(
             | crate::mcp::McpVerbBinding::TasksOutcomes
             | crate::mcp::McpVerbBinding::TasksAnswer
             | crate::mcp::McpVerbBinding::TasksAsk
+            | crate::mcp::McpVerbBinding::TasksWait
             | crate::mcp::McpVerbBinding::RoomsList
             | crate::mcp::McpVerbBinding::RoomsMessages
             | crate::mcp::McpVerbBinding::RoomsSpeak

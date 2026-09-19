@@ -211,3 +211,98 @@ fn first_answer_and_both_wait_orders_resume_only_the_calling_step_once() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn unanswered_terminal_ask_refuses_both_wait_doors_without_a_trap() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    let now = crate::unix_seconds_now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        b"owner",
+    )?;
+    let facade = vault.memory(owner, EdgeActorClass::Human);
+    let (EnqueueOutcome::Enqueued(run) | EnqueueOutcome::Existing(run)) = AttemptQueue::new(&vault)
+        .enqueue(EnqueueAttempt {
+            kind: "terminal-ask-fixture".into(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now,
+        })?;
+    for cancel in [true, false] {
+        let handle = facade
+            .tasks_ask(&TaskAskSpec {
+                question: serde_json::json!({"text":"Unanswerable"}),
+                holders: [owner.to_hex()].into(),
+                idempotency_key: format!("terminal-{cancel}"),
+                outcome_binding: None,
+            })?
+            .handle;
+        let task = EntityId::from_hex(&handle.task_ref)?;
+        if cancel {
+            facade
+                .tasks_cancel_with_mode(TaskCancelTarget::Task(task), TaskCancelMode::FullAccess)?;
+            assert!(
+                vault
+                    .task_authority_state(task)?
+                    .is_some_and(|state| state.cancelled)
+            );
+        } else {
+            // A non-answer terminal TASK is a separate authoritative refusal.
+            let mut body = super::wire_decode::task_verb_body(&vault, task)?.unwrap();
+            body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+                disposition: TaskTerminalDisposition::Completed,
+                result_ref: Some(owner),
+                summary: None,
+                finished_at: now,
+                ladder: None,
+                counter_task_ref: None,
+            }));
+            vault.put_entity(
+                &task,
+                crate::registry::ENTITY_TYPE_TASK,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &super::wire_encode::encode_task_verb_body(body),
+            )?;
+        }
+        let before = vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+            .len();
+        let ctx = DurableStepContext {
+            vault: &vault,
+            attempt_id: run.id,
+            run_id: None,
+            envelope_actor: WriteActor::new(owner, EdgeActorClass::Human),
+            subject: owner,
+            pinned_config: None,
+            deadline: None,
+            now_ms: now * 1000,
+        };
+        assert!(facade.tasks_wait(&handle, &ctx, [9; 32]).is_err());
+        assert!(
+            facade
+                .tasks_wait_external(&handle, "cancelled-step")
+                .is_err()
+        );
+        assert!(facade.tasks_answer(&handle, owner).is_err());
+        assert_eq!(
+            vault
+                .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+                .len(),
+            before
+        );
+    }
+    Ok(())
+}

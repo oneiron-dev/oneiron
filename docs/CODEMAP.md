@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1545 | 546 | 2 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1547 | 546 | 2 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 70 | 12 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 2 | 0 | 0 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 7 | 8 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 31 | 9 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 190 | 71 | 0 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 191 | 71 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 5 | 1 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 8 | 1 | 0 |
 
@@ -46,7 +46,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `authority` | dir | 37 | m | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 6 | m | — | Engine-side AR-3 autoreason campaign configuration and report join |
 | `batch` | dir | 59 | m | yes | — |
-| `blob_artifact` | dir | 36 | m | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
+| `blob_artifact` | dir | 37 | m | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 9 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | m | — | — |
 | `booking` | dir | 75 | m | — | Engine-generic booking module |
@@ -208,7 +208,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `voice_segment` | file | 1 | s | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `wave_orchestration` | file+dir | 2 | m | — | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `web_fetch` | file+dir | 4 | m | — | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
-| `workspace_roster` | dir | 18 | m | yes | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
+| `workspace_roster` | dir | 19 | m | yes | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `write_envelope` | file+dir | 2 | m | — | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
 
 ## oneiron-bench
@@ -291,7 +291,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `api` | dir | 130 | m | HTTP query routes for web dashboard access |
+| `api` | dir | 131 | m | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 2 | m | HTTP authentication helpers for legacy and `/v1/core` routes |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
 | `cli` | file | 1 | m | — |

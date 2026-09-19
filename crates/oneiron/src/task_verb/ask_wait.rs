@@ -51,6 +51,28 @@ pub(super) fn signal_waiters(
     }
     Ok(())
 }
+fn require_answerable(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    answered: bool,
+) -> MemoryResult<()> {
+    if !answered {
+        let body = super::create_validation::task_body_in_txn(vault, txn, task)?;
+        if body
+            .state
+            .as_ref()
+            .is_some_and(|state| state.terminal().is_some())
+            || vault
+                .task_authority_state_in(txn, task)?
+                .is_some_and(|state| state.cancelled)
+        {
+            return Err(MemoryError::bad_request("ask is terminal"));
+        }
+    }
+    Ok(())
+}
+
 impl Memory<'_> {
     pub fn tasks_wait(
         &self,
@@ -70,6 +92,7 @@ impl Memory<'_> {
             if ask.owner != self.actor().to_hex() {
                 return Err(MemoryError::bad_request("only the asking step may wait"));
             }
+            require_answerable(self.vault(), txn, task, ask.answer.is_some())?;
             let key = [
                 prefix(task).as_slice(),
                 ctx.attempt_id.as_bytes(),
@@ -156,6 +179,7 @@ impl Memory<'_> {
             if ask.owner != self.actor().to_hex() {
                 return Err(MemoryError::bad_request("only the asking step may wait"));
             }
+            require_answerable(self.vault(), txn, task, ask.answer.is_some())?;
             crate::llm::register_detached_step_in_txn(self.vault(), txn, &ctx, step_hash)?;
             Ok(())
         })?;

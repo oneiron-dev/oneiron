@@ -14,6 +14,15 @@ use super::ErrorKind;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RecordError {
+    /// A project or its derived home-room payload failed write admission.
+    #[error("invalid project body: {0}")]
+    InvalidProjectBody(&'static str),
+    #[error("invalid project home room: {0}")]
+    InvalidProjectRoomBody(&'static str),
+    /// A well-formed project reference has not materialized yet.
+    #[error("project dependency is not materialized")]
+    ProjectDependencyPending,
+
     /// AccessGrant creation attempted to reuse an existing entity id.
     #[error("access grant already exists")]
     AccessGrantAlreadyExists,
@@ -168,6 +177,9 @@ impl RecordError {
     #[must_use]
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
+            Self::InvalidProjectBody(_) => ErrorKind::InvalidProjectBody,
+            Self::InvalidProjectRoomBody(_) => ErrorKind::InvalidProjectRoomBody,
+            Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
             Self::OutboundGrantAlreadyExists => ErrorKind::OutboundGrantAlreadyExists,
             Self::ConnectorKeyAlreadyExists => ErrorKind::ConnectorKeyAlreadyExists,

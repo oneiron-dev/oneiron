@@ -1,5 +1,6 @@
 //! Public session-less signing lens. The capability is in POST, never the URL.
 use crate::server::SyncServer;
+mod editor_budget;
 mod presentation;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -16,7 +17,18 @@ struct SigningRequest {
     action: SigningAction,
 }
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
+    let editor = Router::new()
+        .route("/sign/layout", post(presentation::layout))
+        .route(
+            "/sign/geometry",
+            post(presentation::upload_geometry).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            editor_budget::EditorBudget::new(),
+            editor_budget::admit,
+        ));
     Router::new()
+        .merge(editor)
         .route("/sign", get(page))
         .route("/sign/action", post(action))
         .route("/sign/pdf", post(pdf))
@@ -24,11 +36,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/sign/preview", post(presentation::preview))
         .route("/sign/signature", post(presentation::signature))
         .route("/sign/editor", get(presentation::editor))
-        .route("/sign/layout", post(presentation::layout))
-        .route(
-            "/sign/geometry",
-            post(presentation::upload_geometry).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
-        )
         .route("/sign/field-renderer.js", get(presentation::field_script))
         .route("/sign/editor.js", get(presentation::editor_script))
         .layer(DefaultBodyLimit::max(3 * 1024 * 1024))

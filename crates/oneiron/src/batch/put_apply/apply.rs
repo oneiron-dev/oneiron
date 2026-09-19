@@ -115,6 +115,11 @@ pub(in crate::batch) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
+        if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+            && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
+        {
+            crate::blob_artifact::esign::reject_event_delete(store, wtxn, &id)?;
+        }
         if body.predicate.starts_with("esign.") {
             if replicated {
                 return Err(Error::InvalidClaimBody(

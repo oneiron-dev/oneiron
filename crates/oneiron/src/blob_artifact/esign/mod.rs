@@ -4,7 +4,7 @@ mod ledger;
 mod model;
 #[cfg(test)]
 mod tests;
-pub(crate) use ledger::validate_event_claim;
+pub(crate) use ledger::{reject_event_delete, validate_event_claim};
 pub use model::{
     AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignDocument,
     EsignEvent, EsignEventRow, EsignField, EsignItem, EsignRecipient, EsignState, FieldGeometry,

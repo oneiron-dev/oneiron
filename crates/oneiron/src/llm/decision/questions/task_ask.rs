@@ -34,25 +34,8 @@ pub(crate) fn bind_task_answer_in_txn(
     if load::<QuestionHead>(vault, txn, &key(input.task, b"head", &[]))?.is_some() {
         return Err(Error::ConcurrentWrite("ask question already bound"));
     }
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-    for principal in [input.principal, actor.entity_ref()] {
-        let reader = ScopedReadActorKey::new(principal.to_hex()).expect("canonical principal");
-        if !arrival::readable(&vault.store, txn, &policy, &reader, &input.unit)? {
-            return Err(Error::EntityNotFound);
-        }
-    }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, input.unit.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
-    let header =
-        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("ask result header"))?;
-    // Custody records are not decision evidence even in a default-open vault.
-    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-        return Err(Error::EntityNotFound);
-    }
-    let source = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let (source_kind, source) =
+        validate_task_answer_unit(vault, txn, input.principal, actor.entity_ref(), input.unit)?;
     let choice = input.unit.to_hex();
     let band = DecisionBand::default();
     let record = QuestionRecord {
@@ -107,7 +90,7 @@ pub(crate) fn bind_task_answer_in_txn(
             human_ask: None,
         },
         frontier: *blake3::hash(&source).as_bytes(),
-        source_kind: header.entity_type,
+        source_kind,
         answered_at: input.now,
     };
     let encoded = encode(&answer)?;
@@ -120,7 +103,7 @@ pub(crate) fn bind_task_answer_in_txn(
         1.0,
     );
     let mut taint = ClaimSource::Imported;
-    if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+    if source_kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(&source, true)?;
         taint = body.source.unwrap_or(ClaimSource::Imported);
         if let Some(inherited) = crate::claim::claim_evidence_taint(&body) {
@@ -177,4 +160,36 @@ pub(crate) fn bind_task_answer_in_txn(
     )?;
     arrival::watch(&vault.store, txn, &record)?;
     Ok(answer)
+}
+
+/// Shared current visibility and secret-custody admission before first-answer CAS.
+pub(crate) fn validate_task_answer_unit(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    holder: EntityId,
+    unit: EntityId,
+) -> Result<(u8, Vec<u8>)> {
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    for principal in [principal, holder] {
+        let reader = ScopedReadActorKey::new(principal.to_hex()).expect("canonical principal");
+        if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)? {
+            return Err(Error::EntityNotFound);
+        }
+    }
+    let raw = vault
+        .store
+        .entities
+        .get(txn, unit.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("ask result header"))?;
+    // Custody records are not decision evidence even in a default-open vault.
+    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+        return Err(Error::EntityNotFound);
+    }
+    Ok((
+        header.entity_type,
+        raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+    ))
 }

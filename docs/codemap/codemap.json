@@ -2338,7 +2338,7 @@
      "path": "src/blob_artifact/esign/capability.rs",
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
      }
@@ -2379,7 +2379,7 @@
      "path": "src/blob_artifact/esign/ledger.rs",
      "purpose": "Claims are the document state machine",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -2465,7 +2465,7 @@
      "path": "src/blob_artifact/esign/public_read.rs",
      "purpose": "Capability-scoped PDF bytes",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -2533,6 +2533,16 @@
      "notable": [],
      "path": "src/blob_artifact/esign/render/preflight.rs",
      "purpose": "Budgeted xref framing and lossless object-stream expansion before rewriting",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/render/preflight/dictionary.rs",
+     "purpose": "Linear lexical framing; the PDF parser validates the single bounded operand",
      "surface": {
       "crate-vis": 1
      }
@@ -2677,7 +2687,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/blob_artifact/esign/tests.rs",
@@ -5647,7 +5657,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "NativeMailAdapter",
@@ -15468,7 +15478,7 @@
      "path": "src/llm/decision/questions/task_ask.rs",
      "purpose": "Transactional tasks.ask adapter to the shared versioned question substrate",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -16272,7 +16282,7 @@
      "path": "src/memory/tests/mod.rs",
      "purpose": "BRIDGE-01 acceptance tests, engine side",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -23087,7 +23097,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TaskAskAnswer",
@@ -23112,7 +23122,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_tests.rs",
@@ -24773,6 +24783,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/deletion.rs",
+     "purpose": "Delete the derived home room at the common entity deindex door",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ProjectRecord",
       "ProjectRoom",
@@ -24782,7 +24802,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 7,
       "struct": 3
      }
@@ -25739,7 +25759,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26873,7 +26893,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26889,7 +26909,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1545,
+   "source_files": 1547,
    "test_files": 546
   },
   "oneiron-bench": {
@@ -30017,6 +30037,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/esign/editor_budget.rs",
+     "purpose": "Router-owned admission for public, capability-free editor computation",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/esign/presentation.rs",
      "purpose": "Stateless field editor and capability-scoped ceremony presentation adapters",
      "surface": {
@@ -32241,7 +32271,7 @@
    ],
    "modules": {
     "api": {
-     "files": 130,
+     "files": 131,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -32390,7 +32420,7 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 190,
+   "source_files": 191,
    "test_files": 71
   },
   "oneiron-uniffi": {

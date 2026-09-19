@@ -209,12 +209,14 @@ impl Memory<'_> {
             if let Some(answer) = row.answer {
                 return Ok(answer);
             }
-            if self
-                .vault()
-                .get_entity_type_in_txn(txn, &result_ref)?
-                .is_none()
-            {
-                return Err(Error::EntityNotFound.into());
+            if row.spec.outcome_binding.is_none() {
+                crate::llm::decision::questions::validate_task_answer_unit(
+                    self.vault(),
+                    txn,
+                    EntityId::from_hex(&row.owner)?,
+                    self.actor(),
+                    result_ref,
+                )?;
             }
             let mut body = task_body_in_txn(self.vault(), txn, id)?;
             if body.state.as_ref().is_some_and(|s| s.terminal().is_some())

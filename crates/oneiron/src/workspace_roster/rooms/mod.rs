@@ -27,13 +27,21 @@ fn invalid() -> Error {
     Error::InvalidConfig("invalid room operation".into())
 }
 fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<ProjectRoom> {
-    super::project::record(
+    let room: ProjectRoom = super::project::record(
         &vault.store,
         txn,
         room,
         crate::registry::ENTITY_TYPE_CONVERSATION,
     )?
-    .ok_or_else(invalid)
+    .ok_or_else(invalid)?;
+    let project_id = EntityId::from_hex(&room.project_id)?;
+    let project: super::ProjectRecord =
+        super::project::record(&vault.store, txn, project_id, vault.project_type_byte()?)?
+            .ok_or_else(invalid)?;
+    if project.roster != room.member_ids || project.claims_scope_ref != room.claims_scope_ref {
+        return Err(invalid());
+    }
+    Ok(room)
 }
 fn require_member(
     vault: &Vault,

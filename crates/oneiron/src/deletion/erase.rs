@@ -369,6 +369,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
         // ONE-1741 removed the verdict relocation that this hook also carried.
         //
@@ -394,6 +395,13 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool)> {
+        crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        let (room_had_vector, room_had_graph, room_neighbors) =
+            crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
+        if room_had_graph {
+            ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {
@@ -410,7 +418,8 @@ impl Vault {
         }
         self.store.clear_pending_embedding(wtxn, id)?;
         let entity_had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
-        let mut had_vector = hint_had_vector | entity_had_vector | blob_cleanup.had_vector;
+        let mut had_vector =
+            hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
         crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
@@ -518,6 +527,7 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
+        crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         let decoded = decode_tombstone_value(raw_value);
         // Cleanup is local visibility, never a replicated deletion intent.
         // Accepting byte 5 here would irreversibly scrub a retained archive

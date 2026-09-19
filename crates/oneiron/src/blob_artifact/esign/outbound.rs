@@ -61,7 +61,9 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 if original.version != item.original_version { return Err(invalid("original PDF changed after admission")); }
             }
             match self.command.verb {
-                EsignOutboundVerb::SendForSignature => { append(self.vault, txn, id, EsignEvent::Sent, self.actor.clone(), self.now)?; }
+                EsignOutboundVerb::SendForSignature => {
+                    super::capability::require_recipient_capabilities(self.vault, txn, id, &state, self.now)?;
+                    append(self.vault, txn, id, EsignEvent::Sent, self.actor.clone(), self.now)?; }
                 EsignOutboundVerb::Remind => {
                     if state.status != DocumentStatus::Pending || state.rejection.is_some() { return Err(invalid("document cannot be reminded")); }
                 }

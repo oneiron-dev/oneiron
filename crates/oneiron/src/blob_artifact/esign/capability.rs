@@ -55,8 +55,43 @@ pub(super) fn binding(
         .ok_or_else(|| invalid("invalid capability"))?;
     serde_json::from_slice(&raw).map_err(|_| invalid("capability record"))
 }
+pub(super) fn require_recipient_capabilities(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+    state: &EsignState,
+    now: u64,
+) -> Result<()> {
+    for recipient in &state.document.recipients {
+        let key = [RECIPIENT, document.as_bytes(), recipient.id.as_bytes()].concat();
+        let digest = vault
+            .store
+            .vault_meta
+            .get(txn, &key)?
+            .ok_or_else(|| invalid("mint recipient capabilities before send"))?;
+        let raw = vault
+            .store
+            .vault_meta
+            .get(txn, &[TOKENS, digest.as_ref()].concat())?
+            .ok_or_else(|| invalid("missing recipient capability"))?;
+        let cap: CapabilityBinding =
+            serde_json::from_slice(&raw).map_err(|_| invalid("capability record"))?;
+        if cap.document != document.to_hex()
+            || cap.recipient != recipient.id
+            || cap.revoked_at.is_some()
+            || now >= cap.hard_expires_at
+            || cap.hard_expires_at < state.document.expires_at
+        {
+            return Err(invalid("recipient capability is unavailable"));
+        }
+    }
+    Ok(())
+}
+
 impl Vault {
-    /// Mint once in DRAFT. Re-sends reuse the delivered token, never rotate it.
+    /// Mint missing recipients in DRAFT. Existing tokens are never rotated or
+    /// returned again. An unchanged draft returns an empty list; re-sends reuse
+    /// tokens held by the secret-aware delivery adapter.
     /// The caller passes raw tokens only to its secret-aware delivery adapter.
     pub fn issue_esign_capabilities(
         &self,
@@ -74,7 +109,7 @@ impl Vault {
                 let recipient_key =
                     [RECIPIENT, document.as_bytes(), recipient.id.as_bytes()].concat();
                 if self.store.vault_meta.get(txn, &recipient_key)?.is_some() {
-                    return Err(invalid("recipient already has an active capability"));
+                    continue;
                 }
                 let mut entropy = [0u8; 32];
                 OsRng

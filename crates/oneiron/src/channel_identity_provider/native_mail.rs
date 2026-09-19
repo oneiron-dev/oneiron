@@ -156,19 +156,25 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel_identity::ChannelIdentityState;
+    use crate::channel_identity_lifecycle::ChannelIdentityLifecycleActor;
+    use crate::surface_event::SurfaceEventHandoffState;
+
     struct Host {
         inbound: EmailProviderInbound,
     }
     impl NativeMailHost for Host {
-        fn provision(&self, intent: &ProvisionIntent, _: NativeMailRunMode) -> Result<String> {
-            Ok(format!("mailbox:{}", intent.identity_id.to_hex()))
+        fn provision(&self, intent: &ProvisionIntent, mode: NativeMailRunMode) -> Result<String> {
+            Ok(format!("{mode:?}:{}", intent.identity_id.to_hex()))
         }
         fn verify_webhook(
             &self,
             body: &[u8],
-            _: &BTreeMap<String, String>,
+            headers: &BTreeMap<String, String>,
         ) -> Result<EmailProviderInbound> {
-            if body != b"authenticated fixture" {
+            if body != b"authenticated fixture"
+                || headers.get("signature").map(String::as_str) != Some("fixture")
+            {
                 return Err(Error::InvalidConfig("webhook signature refused".into()));
             }
             Ok(self.inbound.clone())
@@ -176,41 +182,79 @@ mod tests {
     }
     #[test]
     fn native_modes_conform_and_unauthenticated_ingress_writes_nothing() -> Result<()> {
+        let id = EntityId::from_hex("abababababababababababababababab")?;
+        let address = "mail-abababababababababababababababab@side.example.test";
         for mode in [NativeMailRunMode::SelfRun, NativeMailRunMode::CloudRun] {
-            let id = EntityId::now();
             let agent = EntityId::now();
             let adapter = NativeMailAdapter::new(
-                "side.example.test",
+                "SIDE.EXAMPLE.TEST",
                 mode,
                 Host {
                     inbound: EmailProviderInbound::new(
                         "native-mail-event",
-                        format!("mail-{}@side.example.test", id.to_hex()),
-                        "sender@example.test",
+                        address,
+                        "Sender@EXAMPLE.TEST",
                         10,
-                    ),
+                    )
+                    .with_payload_ref("mail:body"),
                 },
             )?;
+            assert_eq!(adapter.address_for_identity(id), address);
+            assert_eq!(adapter.provider_key(), "native_mail");
+            assert_eq!(
+                adapter.fulfillment_mode(ChannelIdentityLifecycleVerb::Provision),
+                Some(ChannelIdentityFulfillment::Api)
+            );
+            assert_eq!(
+                adapter.fulfillment_mode(ChannelIdentityLifecycleVerb::Bind),
+                None
+            );
             let intent = ProvisionIntent {
                 identity_id: id,
                 identity: adapter.requested_identity(id, agent, 1),
                 fulfillment_mode: ChannelIdentityFulfillment::Api,
             };
             let fulfilled = adapter.provision(&intent, 2)?;
+            assert_eq!(fulfilled.address_or_handle, address);
+            assert_eq!(fulfilled.channel, "email");
             assert_eq!(
-                fulfilled.address_or_handle,
-                intent.identity.address_or_handle
+                fulfilled.provider_identity_ref,
+                format!("{mode:?}:abababababababababababababababab")
             );
-            assert_eq!(fulfilled.provider_key, "native_mail");
+            let fulfillment =
+                fulfilled.fulfillment_input(ChannelIdentityLifecycleActor::agent(agent));
+            assert_eq!(fulfillment.identity_id, id);
             let input = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(
                 adapter.host.inbound.clone(),
             ))?;
+            assert_eq!(input.receiving_address_or_handle, address);
+            assert_eq!(input.channel, "email");
+            assert_eq!(
+                input.counterparty,
+                SurfaceCounterpartyStamp::unknown("email:sender@example.test")
+            );
+            assert_eq!(input.payload_ref.as_deref(), Some("mail:body"));
             assert!(input.foreign_inbound);
             let dir = tempfile::tempdir()?;
             let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+            vault.create_channel_identity(&id, &intent.identity)?;
+            vault.transition_channel_identity(
+                &id,
+                ChannelIdentityState::PendingFulfillment,
+                Some(ChannelIdentityFulfillment::Api),
+                2,
+                None,
+            )?;
+            vault.fulfill_channel_identity(fulfillment)?;
+            let headers = BTreeMap::from([("signature".into(), "fixture".into())]);
             assert!(
                 adapter
-                    .accept_webhook(&vault, b"forged", &BTreeMap::new(), 10)
+                    .accept_webhook(&vault, b"forged", &headers, 10)
+                    .is_err()
+            );
+            assert!(
+                adapter
+                    .accept_webhook(&vault, b"authenticated fixture", &BTreeMap::new(), 10)
                     .is_err()
             );
             assert!(
@@ -218,7 +262,70 @@ mod tests {
                     .list()?
                     .is_empty()
             );
+            let SurfaceEventAdmission::Accepted(ack) =
+                adapter.accept_webhook(&vault, b"authenticated fixture", &headers, 10)?
+            else {
+                panic!("live identity must accept verified ingress")
+            };
+            assert_eq!(ack.state, SurfaceEventHandoffState::Queued);
+            assert!(!ack.replayed);
+            let SurfaceEventAdmission::Accepted(replay) =
+                adapter.accept_webhook(&vault, b"authenticated fixture", &headers, 11)?
+            else {
+                panic!("verified retry must be acknowledged")
+            };
+            assert!(replay.replayed);
+            assert_eq!(ack.attempt_ref, replay.attempt_ref);
+            assert_eq!(
+                crate::attempt_queue::AttemptQueue::new(&vault)
+                    .list()?
+                    .len(),
+                1
+            );
         }
+        Ok(())
+    }
+    #[test]
+    fn native_mail_refuses_foreign_malformed_and_non_email_envelopes() -> Result<()> {
+        let adapter = NativeMailAdapter::new(
+            "side.example.test",
+            NativeMailRunMode::SelfRun,
+            Host {
+                inbound: EmailProviderInbound::new("unused", "unused", "unused", 10),
+            },
+        )?;
+        let normalized = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(
+            EmailProviderInbound::new(
+                "case",
+                "mail-ABABABABABABABABABABABABABABABAB@SIDE.EXAMPLE.TEST",
+                "Sender@EXAMPLE.TEST",
+                10,
+            ),
+        ))?;
+        assert_eq!(
+            normalized.receiving_address_or_handle,
+            "mail-abababababababababababababababab@side.example.test"
+        );
+        for address in [
+            "mail-abababababababababababababababab@foreign.example.test",
+            "other-abababababababababababababababab@side.example.test",
+            "mail-not-a-uuid@side.example.test",
+        ] {
+            assert!(
+                adapter
+                    .parse_inbound(ChannelIdentityProviderInbound::Email(
+                        EmailProviderInbound::new("event", address, "sender@example.test", 10)
+                    ))
+                    .is_err()
+            );
+        }
+        assert!(
+            adapter
+                .parse_inbound(ChannelIdentityProviderInbound::Slack(
+                    super::super::SlackProviderInbound::new("event", "T1", "C1", "U1", "agent", 10)
+                ))
+                .is_err()
+        );
         Ok(())
     }
 }

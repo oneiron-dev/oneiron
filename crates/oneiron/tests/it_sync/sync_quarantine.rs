@@ -1780,3 +1780,113 @@ fn forward_remat_quarantines_uppercase_alias_entity_key() {
     assert_eq!(rec.reason_code, "InvalidKey");
     assert_eq!(rec.payload_hash, xxh3_64(&alias_blob));
 }
+
+#[test]
+fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
+    use oneiron::registry::ENTITY_TYPE_CONVERSATION;
+    use oneiron::workspace_roster::ProjectRecord;
+    for observer in [false, true] {
+        let (_dir, vault) = test_vault_with_dir();
+        let window = WindowKey::new(WINDOW);
+        let doc = create_window_doc("test-user", &window);
+        let materializer = Arc::new(Materializer::new());
+        let _subs = observer.then(|| register_observer_b(&doc, &vault, &materializer, WINDOW));
+        let root_id = vault.root_project().unwrap();
+        let root = vault.project(root_id).unwrap().unwrap();
+        let leader = EntityId::from_hex(&root.leader).unwrap();
+        let kind = vault.project_type_byte().unwrap();
+        let bad = EntityId::now();
+        let bad_ref = EntityId::now();
+        let cycle = EntityId::now();
+        let child = EntityId::now();
+        let parent = EntityId::now();
+        let claim = EntityId::now();
+        let good = EntityId::now();
+        let room_id = EntityId::from_hex(&root.home_room).unwrap();
+        let original_room = vault.project_room(room_id).unwrap().unwrap();
+        let mut room = original_room.clone();
+        room.member_ids.push(EntityId::now().to_hex());
+        let mut malformed = ProjectRecord::new(bad, None, root_id, leader);
+        malformed.roster.clear();
+        let mut invalid_ref = ProjectRecord::new(bad_ref, None, root_id, leader);
+        invalid_ref.goal = Some("not-an-id".into());
+        let cyclic = ProjectRecord::new(cycle, Some(cycle), root_id, leader);
+        let waiting = ProjectRecord::new(child, Some(parent), root_id, leader);
+        let mut body =
+            rmpv::decode::read_value(&mut claim_body_with_bad_predicate().as_slice()).unwrap();
+        let rmpv::Value::Map(fields) = &mut body else {
+            panic!("claim map")
+        };
+        for (key, value) in fields {
+            if key.as_str() == Some("pred") {
+                *value = rmpv::Value::from("esign.sent");
+            }
+        }
+        let mut bad_claim = Vec::new();
+        rmpv::encode::write_value(&mut bad_claim, &body).unwrap();
+        let entities = doc.get_map("entities");
+        for (id, kind, bytes) in [
+            (bad, kind, rmp_serde::to_vec_named(&malformed).unwrap()),
+            (
+                bad_ref,
+                kind,
+                rmp_serde::to_vec_named(&invalid_ref).unwrap(),
+            ),
+            (cycle, kind, rmp_serde::to_vec_named(&cyclic).unwrap()),
+            (child, kind, rmp_serde::to_vec_named(&waiting).unwrap()),
+            (
+                room_id,
+                ENTITY_TYPE_CONVERSATION,
+                rmp_serde::to_vec_named(&room).unwrap(),
+            ),
+            (claim, ENTITY_TYPE_CLAIM, bad_claim),
+            (good, ENTITY_TYPE_TASK, task_body()),
+        ] {
+            insert_bytes(
+                &entities,
+                &id.to_hex(),
+                &entity_blob(kind, valid_time_range(), LEARNED_AT, &bytes),
+            );
+        }
+        doc.commit();
+        forward_rematerialize(&vault, &doc, &materializer, &window).unwrap();
+        assert_eq!(vault.get(&good).unwrap().unwrap(), task_body());
+        for id in [bad, bad_ref, cycle, child, claim] {
+            assert!(vault.get(&id).unwrap().is_none());
+        }
+        assert_eq!(vault.project_room(room_id).unwrap(), Some(original_room));
+        let records = quarantined_records(&vault).unwrap();
+        for (id, reason) in [
+            (bad, "InvalidProjectBody"),
+            (bad_ref, "InvalidProjectBody"),
+            (cycle, "InvalidProjectBody"),
+            (child, "ProjectDependencyPending"),
+            (room_id, "InvalidProjectRoomBody"),
+            (claim, "InvalidClaimBody"),
+        ] {
+            assert!(
+                records.iter().any(|(_, record)| record.crdt_key_hash
+                    == xxh3_64(id.to_hex().as_bytes())
+                    && record.reason_code == reason),
+                "missing quarantine for {reason}: {records:?}"
+            );
+        }
+        let parent_body = ProjectRecord::new(parent, Some(root_id), root_id, leader);
+        insert_bytes(
+            &entities,
+            &parent.to_hex(),
+            &entity_blob(
+                kind,
+                valid_time_range(),
+                LEARNED_AT,
+                &rmp_serde::to_vec_named(&parent_body).unwrap(),
+            ),
+        );
+        doc.commit();
+        // Traversal order is not ancestry order. A second pass can admit a child
+        // that was visited before its newly arrived parent in the first pass.
+        forward_rematerialize(&vault, &doc, &materializer, &window).unwrap();
+        forward_rematerialize(&vault, &doc, &materializer, &window).unwrap();
+        assert_eq!(vault.project(child).unwrap(), Some(waiting));
+    }
+}

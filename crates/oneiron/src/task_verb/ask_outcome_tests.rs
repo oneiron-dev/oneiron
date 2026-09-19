@@ -309,32 +309,40 @@ fn invalid_binding_and_unreadable_result_do_not_bind_an_ask() -> Result<()> {
         },
         now,
     )?;
-    let ask = spec(holder);
-    let handle = facade.tasks_ask(&ask)?.handle;
-    assert!(
-        vault
+    for bound in [false, true] {
+        let mut ask = spec(holder);
+        ask.idempotency_key = format!("private-{bound}");
+        if !bound {
+            ask.outcome_binding = None;
+        }
+        let handle = facade.tasks_ask(&ask)?.handle;
+        assert!(
+            vault
+                .memory(holder, EdgeActorClass::Human)
+                .tasks_answer(&handle, private)
+                .is_err()
+        );
+        let task = EntityId::from_hex(&handle.task_ref)?;
+        assert!(read_question(&vault, owner, task, None)?.is_none());
+        assert!(matches!(
+            facade.tasks_wait_external(&handle, "retry")?,
+            TaskWaitOutcome::Pending { .. }
+        ));
+        // Rejection rolled back every piece. A readable answer still wins later.
+        let answer = vault
             .memory(holder, EdgeActorClass::Human)
-            .tasks_answer(&handle, private)
-            .is_err()
-    );
-    let task = EntityId::from_hex(&handle.task_ref)?;
-    assert!(read_question(&vault, owner, task, None)?.is_none());
-    assert!(matches!(
-        facade.tasks_wait_external(&handle, "retry")?,
-        TaskWaitOutcome::Pending { .. }
-    ));
-    // Rejection rolled back every piece. A readable answer still wins later.
-    let answer = vault
-        .memory(holder, EdgeActorClass::Human)
-        .tasks_answer(&handle, holder)?;
-    assert_eq!(answer.question_version, Some(1));
-    assert_eq!(
-        facade.tasks_wait_external(&handle, "retry")?,
-        TaskWaitOutcome::Ready(answer)
-    );
-    let mut changed = ask;
-    changed.outcome_binding.as_mut().unwrap().noise_weight = 0.4;
-    assert!(facade.tasks_ask(&changed).is_err());
+            .tasks_answer(&handle, holder)?;
+        assert_eq!(answer.question_version, bound.then_some(1));
+        assert_eq!(
+            facade.tasks_wait_external(&handle, "retry")?,
+            TaskWaitOutcome::Ready(answer)
+        );
+        if bound {
+            let mut changed = ask;
+            changed.outcome_binding.as_mut().unwrap().noise_weight = 0.4;
+            assert!(facade.tasks_ask(&changed).is_err());
+        }
+    }
     Ok(())
 }
 

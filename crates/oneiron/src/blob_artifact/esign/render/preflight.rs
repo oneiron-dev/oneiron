@@ -2,6 +2,8 @@
 use super::streams::decode_stream;
 use super::*;
 use lopdf::xref::XrefEntry;
+mod dictionary;
+use dictionary::leading_dictionary;
 
 struct Frame {
     entries: BTreeMap<u32, XrefEntry>,
@@ -37,6 +39,16 @@ pub(super) fn load(bytes: &[u8]) -> Result<Document> {
         nodes: 0,
     };
     frame.read(bytes, offset, &mut BTreeSet::new())?;
+    // Bound total full-document parsing, not just each input or inflated stream.
+    // Every prior snapshot below is the input plus a short startxref trailer.
+    let parse_work = bytes
+        .len()
+        .checked_add(64)
+        .and_then(|size| size.checked_mul(frame.revisions.len()))
+        .ok_or(PdfPreparationError::Limit)?;
+    if parse_work > MAX_OUTPUT {
+        return Err(PdfPreparationError::Limit);
+    }
     let mut remaining = MAX_OUTPUT;
     // Inspect superseded revisions too: rewriting must not erase a prior seal.
     for previous in frame.revisions.iter().skip(1) {
@@ -410,19 +422,4 @@ fn operand(bytes: &[u8]) -> Result<Object> {
         return Err(PdfPreparationError::MalformedPdf);
     }
     Ok(operation.operands.remove(0))
-}
-fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
-    // Let the PDF parser recognize strings, escaped names and nested dictionaries.
-    // A candidate ending inside a string is not a complete single operand.
-    for (end, _) in bytes
-        .iter()
-        .enumerate()
-        .take(64 * 1024)
-        .filter(|(i, _)| *i > 0 && bytes[*i - 1..=*i] == *b">>")
-    {
-        if let Ok(Object::Dictionary(dict)) = operand(&bytes[..=end]) {
-            return Ok((dict, end + 1));
-        }
-    }
-    Err(PdfPreparationError::MalformedPdf)
 }

@@ -18,6 +18,25 @@ impl Vault {
         user_agent: Option<String>,
     ) -> Result<Vec<u8>> {
         self.execute_signing_action(token, &SigningAction::Load, ip, user_agent)?;
+        self.esign_pdf_after_admission(token, item)
+    }
+    /// One capability admission for a page and its pinned PDF, for preview callers.
+    pub fn esign_preview_for_capability(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<(super::SigningPage, Vec<u8>)> {
+        let super::SigningOutcome::Page(page) =
+            self.execute_signing_action(token, &SigningAction::Load, ip, user_agent)?
+        else {
+            return Err(invalid("preview is unavailable"));
+        };
+        let bytes = self.esign_pdf_after_admission(token, item)?;
+        Ok((page, bytes))
+    }
+    fn esign_pdf_after_admission(&self, token: &EsignCapability, item: usize) -> Result<Vec<u8>> {
         let now = crate::unix_seconds_now();
         let txn = self.store.env.read_txn()?;
         let cap = binding(self, &txn, token)?;
