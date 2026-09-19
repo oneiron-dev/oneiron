@@ -230,6 +230,42 @@ pub(super) fn scan_attempt_pack_receipts(vault: &Vault) -> Result<ReceiptScan> {
     Ok(scan)
 }
 
+/// Forward, continuation-bearing scan for production receipt consumers. One extra
+/// key proves completeness; unlike the UI lens this can reach older receipts.
+pub(crate) fn attempt_pack_receipt_page(
+    vault: &Vault,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<(Vec<ReceiptRecord>, bool)> {
+    if !(1..=1024).contains(&limit) {
+        return Err(Error::InvalidConfig(
+            "receipt page limit must be in 1..=1024".to_owned(),
+        ));
+    }
+    if after.is_some_and(|id| !id.starts_with(ATTEMPT_PACK_RECEIPT_ID_PREFIX)) {
+        return Err(Error::CorruptedIndex("receipt sweep cursor"));
+    }
+    let start = after.map(attempt_pack_receipt_key);
+    let end = attempt_pack_receipt_key_range_end();
+    let bounds = (
+        start.as_deref().map_or(
+            std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
+            std::ops::Bound::Excluded,
+        ),
+        std::ops::Bound::Excluded(end.as_slice()),
+    );
+    let txn = vault.store.env.read_txn()?;
+    let mut records = Vec::new();
+    for row in vault.store.vault_meta.range(&txn, &bounds)?.take(limit + 1) {
+        let (_, raw) = row?;
+        if records.len() == limit {
+            return Ok((records, false));
+        }
+        records.push(decode_attempt_pack_receipt(&raw)?);
+    }
+    Ok((records, true))
+}
+
 /// Surfaces an attempt pack receipt scan that stopped at the work cap.
 ///
 /// The discarded remainder is unbounded by construction, so it is never

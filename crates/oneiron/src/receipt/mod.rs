@@ -109,3 +109,5 @@ use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, SEND_RECEIPT_RECO
 use serde::Serialize;
 #[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
+
+pub(crate) use ledgers::attempt_pack_receipt_page;
