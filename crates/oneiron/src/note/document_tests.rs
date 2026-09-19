@@ -276,3 +276,220 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
         && !citation.stale
         && !citation.drifted));
 }
+
+#[test]
+fn quoted_character_endpoints_survive_boundary_edits_and_state_only_reopen() {
+    let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    // Include a one-character span, interior and end-of-body spans, and
+    // non-BMP text. All offsets and the exclusive end remain scalar indices.
+    for (start, end) in [(0, 1), (1, 3), (0, 4), (3, 4)] {
+        let id = EntityId::now();
+        let claim = EntityId::now();
+        let doc = NoteDocument::birth(id, "α🦀bç", &actor).unwrap();
+        let pin = doc.pin(claim, start, end).unwrap();
+        doc.add_pin(&pin, &actor).unwrap();
+        let before = doc.view().unwrap();
+        assert!(
+            doc.edit(
+                &before.frontier,
+                &[
+                    NoteEdit {
+                        start: end,
+                        delete: 0,
+                        insert: " suffix".into(),
+                    },
+                    NoteEdit {
+                        start,
+                        delete: 0,
+                        insert: "prefix ".into(),
+                    },
+                ],
+                &actor,
+                &[],
+            )
+            .unwrap()
+        );
+        let mut expected: Vec<_> = "α🦀bç".chars().collect();
+        expected.splice(end..end, " suffix".chars());
+        expected.splice(start..start, "prefix ".chars());
+        let after = doc.view().unwrap();
+        assert_eq!(after.markdown, expected.into_iter().collect::<String>());
+        assert_eq!(after.pins, before.pins);
+        assert_eq!(after.authorship, before.authorship);
+        for bytes in [
+            doc.snapshot().unwrap(),
+            crate::sync::documents::storage::state_copy(&doc.doc).unwrap(),
+        ] {
+            let reopened = NoteDocument::load(id, &bytes).unwrap();
+            assert_eq!(reopened.view().unwrap(), after);
+            assert_eq!(
+                reopened.resolve(&pin).unwrap(),
+                NoteSpanResolution::Mapped {
+                    start: start + 7,
+                    end: end + 7,
+                    claim,
+                    quote: pin.quote_text.clone(),
+                }
+            );
+            assert!(
+                !reopened
+                    .edit(
+                        &after.frontier,
+                        &[NoteEdit {
+                            start: start + 7,
+                            delete: 1,
+                            insert: "replacement".into(),
+                        }],
+                        &actor,
+                        &[],
+                    )
+                    .unwrap()
+            );
+            assert_eq!(reopened.view().unwrap(), after);
+        }
+    }
+}
+
+#[test]
+fn deleted_quote_anchor_drifts_instead_of_remapping_identical_neighbor() {
+    let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    let id = EntityId::now();
+    let claim = EntityId::now();
+    let doc = NoteDocument::birth(id, "aaa", &actor).unwrap();
+    let pin = doc.pin(claim, 1, 2).unwrap();
+    doc.add_pin(&pin, &actor).unwrap();
+    // Model out-of-band source drift. The normal edit door rejects this touch.
+    doc.doc.get_text("body").delete(1, 1).unwrap();
+    doc.doc.commit();
+    for bytes in [
+        doc.snapshot().unwrap(),
+        crate::sync::documents::storage::state_copy(&doc.doc).unwrap(),
+    ] {
+        let reopened = NoteDocument::load(id, &bytes).unwrap();
+        assert_eq!(reopened.view().unwrap().pins, vec![pin.clone()]);
+        assert_eq!(
+            reopened.resolve(&pin).unwrap(),
+            NoteSpanResolution::Drifted {
+                claim,
+                quote: "a".into(),
+            }
+        );
+    }
+}
+
+#[test]
+fn shallow_note_admits_only_available_edit_and_citation_frontiers() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    let author = person(&vault, 0x51);
+    let claim = EntityId::now();
+    let memory = vault.memory(author, EdgeActorClass::Human);
+    memory
+        .claim_upsert(&claim_input(claim, author, "Ada"))
+        .unwrap();
+    let note = EntityId::from_hex(
+        &memory
+            .author_take(TakeTarget::Subject(author), "quote")
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    let old_pin = vault.pin_note_span(note, claim, 0, 5).unwrap();
+    let old_base = vault.note_document(note).unwrap().frontier;
+    let NoteEditOutcome::Applied(before) = memory
+        .apply_note_ops(
+            note,
+            &old_base,
+            &[NoteEdit {
+                start: 0,
+                delete: 0,
+                insert: "prefix ".into(),
+            }],
+        )
+        .unwrap()
+    else {
+        panic!("uncited prose")
+    };
+    // Use the same carrier compaction as citation erasure, without fabricating
+    // erased dependencies. Old and current offsets now name different text.
+    vault
+        .with_write_txn(|txn| {
+            let doc = crate::sync::documents::storage::load(&vault, txn, note)?;
+            crate::sync::documents::storage::snapshot(&vault, txn, note, &doc, true)
+        })
+        .unwrap();
+    assert_eq!(vault.note_document(note).unwrap(), before);
+    assert!(
+        memory
+            .apply_note_ops(
+                note,
+                &old_base,
+                &[NoteEdit {
+                    start: 0,
+                    delete: 1,
+                    insert: "wrong base".into(),
+                }],
+            )
+            .is_err()
+    );
+    // A quote still resolving now cannot prove its discarded source frontier.
+    assert!(matches!(
+        vault.resolve_note_pin(&old_pin).unwrap(),
+        NoteSpanResolution::Mapped { .. }
+    ));
+    assert!(memory.cite_note_span(note, &old_pin).is_err());
+    assert_eq!(vault.note_document(note).unwrap(), before);
+    let pin = vault.pin_note_span(note, claim, 7, 12).unwrap();
+    memory.cite_note_span(note, &pin).unwrap();
+    let cited = vault.note_document(note).unwrap();
+    let NoteEditOutcome::Applied(after) = memory
+        .apply_note_ops(
+            note,
+            &cited.frontier,
+            &[NoteEdit {
+                start: 12,
+                delete: 0,
+                insert: " suffix".into(),
+            }],
+        )
+        .unwrap()
+    else {
+        panic!("free prose after compaction")
+    };
+    assert_eq!(after.markdown, "prefix quote suffix");
+    assert_eq!(after.pins, vec![pin.clone()]);
+    assert_eq!(after.authorship.len(), cited.authorship.len() + 1);
+    assert!(
+        cited
+            .authorship
+            .iter()
+            .all(|record| after.authorship.contains(record))
+    );
+    assert!(matches!(
+        memory
+            .apply_note_ops(
+                note,
+                &after.frontier,
+                &[NoteEdit {
+                    start: 7,
+                    delete: 1,
+                    insert: "Q".into(),
+                }],
+            )
+            .unwrap(),
+        NoteEditOutcome::Proposed(_)
+    ));
+    assert_eq!(vault.note_document(note).unwrap(), after);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    assert_eq!(reopened.note_document(note).unwrap(), after);
+    assert_eq!(
+        reopened.resolve_note_pin(&pin).unwrap(),
+        NoteSpanResolution::Mapped {
+            start: 7,
+            end: 12,
+            claim,
+            quote: "quote".into(),
+        }
+    );
+}

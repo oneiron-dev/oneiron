@@ -204,9 +204,10 @@ fn foreign_proposal_paths_and_claims_are_validated_without_writing() {
         assert!(validate_step_result(&file(path), SandboxGuestTier::FirstPartyDreamer).is_err());
     }
     let mut claim = bindings::ClaimInput {
-        id: "01010101010101010101010101010101e1".into(),
+        id: crate::EntityId::from_bytes([1; 16]).unwrap().to_hex(),
         predicate: "test.proposal".into(),
-        subject: "\"01010101010101010101010101010101e2\"".into(),
+        subject: serde_json::to_string(&crate::EntityId::from_bytes([2; 16]).unwrap().to_hex())
+            .unwrap(),
         value: "{\"value\":1}".into(),
         confidence: Some(0.8),
         occurred: None,

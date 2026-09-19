@@ -790,7 +790,13 @@ fn competing_valid_heads_still_fail_loudly_without_picking_a_winner() {
         .get_claim(&EntityId::from_hex(&receipt.item.revision).unwrap())
         .unwrap()
         .unwrap();
-    replay_keyed_body(&vault, EntityId::now(), &body);
+    let competing = EntityId::now();
+    replay_keyed_body(&vault, competing, &body);
+    vault
+        .batch()
+        .edge(&competing, crate::EdgeKind::ClaimOf, &owner, 1.0)
+        .commit()
+        .unwrap();
     let key = address(&["private"], "k");
     assert_eq!(
         memory.key_value_get(&key).unwrap_err().code,
@@ -857,6 +863,7 @@ fn replacement_keeps_source_trust_and_refuses_generated_over_user_truth_atomical
         .key_value_put(&input(&["private"], "truth", "one", 1))
         .unwrap();
     let before = memory.receipts(100).unwrap();
+    let pending_before = memory.pending_writes(100).unwrap();
     let mut generated = input(&["private"], "truth", "two", 2);
     generated.source = "generated".into();
     let error = memory.key_value_put(&generated).unwrap_err();
@@ -869,7 +876,7 @@ fn replacement_keeps_source_trust_and_refuses_generated_over_user_truth_atomical
         Some(first.item.clone())
     );
     assert_eq!(memory.receipts(100).unwrap(), before);
-    assert!(memory.pending_writes(100).unwrap().is_empty());
+    assert_eq!(memory.pending_writes(100).unwrap(), pending_before);
     let next = memory
         .key_value_put(&input(&["private"], "truth", "three", 3))
         .unwrap();

@@ -16,12 +16,12 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
         } else {
             ClaimApprovalStatus::Approved
         };
-        let skill = SkillRecord::new(
+        let mut skill = SkillRecord::new(
             format!("skill.channel.{index}"),
             "channel",
             "v1",
             status,
-            SkillLifecycle::Active,
+            SkillLifecycle::Candidate,
             ClaimSource::UserStated,
             1.0,
             false,
@@ -43,6 +43,9 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
             )
             .text(&id, &[("body", "channel")])
             .commit()?;
+        skill.lifecycle_status = SkillLifecycle::Active;
+        vault.update_skill_record(&id, &skill, TimeRange { start: 1, end: 1 }, 1)?;
+        vault.batch().text(&id, &[("body", "channel")]).commit()?;
     }
     let agent_id = crate::test_util::entity(40);
     // Agent definitions remain discovery candidates even when not approved/active.

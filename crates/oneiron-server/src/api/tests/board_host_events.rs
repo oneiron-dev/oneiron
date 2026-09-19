@@ -3,12 +3,12 @@ use super::*;
 use oneiron::context_board::{BoardStreamFrame, DeltaRow, FrameKind};
 
 fn seed_board_skill(server: &SyncServer, id: oneiron::EntityId, needle: &str) -> String {
-    let record = oneiron::skill::SkillRecord::new(
+    let mut record = oneiron::skill::SkillRecord::new(
         "skill.board-fixture",
         needle,
         "v2",
         oneiron::ClaimApprovalStatus::Approved,
-        oneiron::skill::SkillLifecycle::Active,
+        oneiron::skill::SkillLifecycle::Candidate,
         oneiron::ClaimSource::UserStated,
         1.0,
         false,
@@ -30,6 +30,17 @@ fn seed_board_skill(server: &SyncServer, id: oneiron::EntityId, needle: &str) ->
         .text(&id, &[("body", needle)])
         .commit()
         .expect("seed skill");
+    record.lifecycle_status = oneiron::skill::SkillLifecycle::Active;
+    server
+        .vault
+        .update_skill_record(&id, &record, oneiron::TimeRange { start: 1, end: 1 }, 1)
+        .expect("admit user skill");
+    server
+        .vault
+        .batch()
+        .text(&id, &[("body", needle)])
+        .commit()
+        .expect("index admitted skill");
     oneiron::retrieval_depth::short_ref_or_hex(&server.vault, &id).expect("skill short ref")
 }
 

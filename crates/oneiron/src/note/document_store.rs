@@ -263,21 +263,11 @@ pub(super) fn validate_pin_source(
         return Err(invalid("citation target is not a CLAIM"));
     }
     let source = load(vault, txn, pin.document)?;
-    let doc = match source.doc.fork_at(&frontier(&pin.frontier)?) {
-        Ok(doc) => doc,
-        Err(_) if matches!(source.resolve(pin)?, NoteSpanResolution::Mapped { .. }) => {
-            return Ok(());
-        }
-        Err(_) => return Err(invalid("citation frontier unavailable")),
-    };
-    if !matches!(
-        (NoteDocument {
-            doc,
-            id: pin.document
-        })
-        .resolve(pin)?,
-        NoteSpanResolution::Mapped { .. }
-    ) {
+    // Admission proves the claimed source version, not merely that the same
+    // quote happens to be present now. The live-fork path is limited to an
+    // exact current frontier, including after an erasure rebuild.
+    let source = source.fork_at(&pin.frontier)?;
+    if !matches!(source.resolve(pin)?, NoteSpanResolution::Mapped { .. }) {
         return Err(invalid("citation quote does not match its source frontier"));
     }
     Ok(())

@@ -16315,7 +16315,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -16333,7 +16333,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/note/document_tests.rs",

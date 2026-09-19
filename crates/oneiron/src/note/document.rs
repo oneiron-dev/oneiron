@@ -87,10 +87,18 @@ impl NotePin {
             return Err(invalid("NOTE citation exceeds bound"));
         }
         frontier(&self.frontier)?;
-        for bytes in [&self.start_cursor, &self.end_cursor] {
+        for (bytes, side) in [
+            (&self.start_cursor, Side::Left),
+            (&self.end_cursor, Side::Right),
+        ] {
             let cursor = Cursor::decode(bytes).map_err(|_| invalid("invalid NOTE cursor"))?;
             if cursor.container != loro::ContainerID::new_root(BODY, loro::ContainerType::Text) {
                 return Err(invalid("NOTE cursor is not in the body"));
+            }
+            // Both endpoints name quoted characters, never a moving document
+            // boundary. The sides describe the edges of those characters.
+            if cursor.id.is_none() || cursor.side != side {
+                return Err(invalid("NOTE cursor is not a quoted character boundary"));
             }
         }
         if self.quote_hash != *blake3::hash(self.quote_text.as_bytes()).as_bytes() {
@@ -177,6 +185,22 @@ impl NoteDocument {
         Ok(Self { doc, id })
     }
 
+    pub(super) fn fork_at(&self, base: &[u8]) -> Result<Self> {
+        let base = frontier(base)?;
+        // Loro's historical SnapshotAt path does not support shallow docs.
+        // Its live fork preserves their state, operation IDs and shallow floor.
+        // Only an exact current frontier can use it: old offsets must never be
+        // silently applied to the current body after their history was erased.
+        let doc = if base == self.doc.oplog_frontiers() {
+            self.doc.fork()
+        } else {
+            self.doc
+                .fork_at(&base)
+                .map_err(|_| invalid("NOTE base frontier unavailable"))?
+        };
+        Ok(Self { doc, id: self.id })
+    }
+
     pub(super) fn snapshot(&self) -> Result<Vec<u8>> {
         self.doc
             .export(ExportMode::Snapshot)
@@ -232,11 +256,14 @@ impl NoteDocument {
             .slice(start, end)
             .map_err(|_| invalid("NOTE quote slice"))?;
         let start_cursor = text
-            .get_cursor(start, Side::Right)
+            .get_cursor(start, Side::Left)
             .ok_or_else(|| invalid("NOTE start cursor"))?
             .encode();
+        // get_cursor(len, _) is Loro's moving end-of-document sentinel.
+        // Anchor to the last quoted character instead, including for an
+        // interior span: insertions just after the quote must stay outside it.
         let end_cursor = text
-            .get_cursor(end, Side::Left)
+            .get_cursor(end - 1, Side::Right)
             .ok_or_else(|| invalid("NOTE end cursor"))?
             .encode();
         Ok(NotePin {
@@ -262,9 +289,15 @@ impl NoteDocument {
             .get_cursor_pos(&start)
             .ok()
             .zip(self.doc.get_cursor_pos(&end).ok());
-        if let Some((start, end)) = positions {
-            let (start, end) = (start.current.pos, end.current.pos);
-            if start <= end
+        if let Some((start, end)) = positions
+            // A recovered cursor has lost its original character. Even an
+            // identical neighboring quote cannot restore that provenance.
+            && start.update.is_none()
+            && end.update.is_none()
+            && let Some(end) = end.current.pos.checked_add(1)
+        {
+            let start = start.current.pos;
+            if start < end
                 && let Ok(quote) = self.doc.get_text(BODY).slice(start, end)
                 && blake3::hash(quote.as_bytes()).as_bytes() == &pin.quote_hash
             {
@@ -295,14 +328,7 @@ impl NoteDocument {
         if edits.len() > 256 {
             return Err(invalid("NOTE operation cap exceeded"));
         }
-        let branch = self
-            .doc
-            .fork_at(&frontier(base)?)
-            .map_err(|_| invalid("NOTE base frontier unavailable"))?;
-        let base_doc = Self {
-            doc: branch,
-            id: self.id,
-        };
+        let base_doc = self.fork_at(base)?;
         let pins = self.pins()?;
         let text = base_doc.doc.get_text(BODY);
         for edit in edits {
