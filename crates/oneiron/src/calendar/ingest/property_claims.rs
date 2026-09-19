@@ -26,11 +26,17 @@ pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
             && OWNED.contains(&body.predicate.as_str())
             && body.source == Some(crate::claim::ClaimSource::Imported)
             && body.evidence.as_ref().is_some_and(|evidence| {
-                let candidate = evidence_field(evidence, crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY);
+                let candidate = evidence_field(
+                    evidence,
+                    crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+                );
                 candidate.is_some_and(|value| {
-                    evidence_field(value, "kind").and_then(Value::as_str) == Some("imported_evidence")
-                        && evidence_field(value, "source_id").and_then(Value::as_str) == Some(crate::ingest::ICS_FEED_SOURCE_ID)
-                        && evidence_field(value, "source_record_id").and_then(Value::as_str)
+                    evidence_field(value, "kind").and_then(Value::as_str)
+                        == Some("imported_evidence")
+                        && evidence_field(value, "source_id").and_then(Value::as_str)
+                            == Some(crate::ingest::ICS_FEED_SOURCE_ID)
+                        && evidence_field(value, "source_record_id")
+                            .and_then(Value::as_str)
                             .is_some_and(|source| source.starts_with(source_prefix))
                 })
             })
@@ -110,5 +116,8 @@ pub(super) fn source_prefix(system: &str) -> String {
 }
 
 fn evidence_field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
-    value.as_map()?.iter().find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+    value
+        .as_map()?
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
 }
