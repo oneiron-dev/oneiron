@@ -303,7 +303,7 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     let turn = EntityId::now().to_hex();
     let incoming = json!({"conversation_ref":room.to_hex(),"turn_ref":turn,"occurred_at":2,
         "messages":[{"author":"user","message_type":"text","content":"@addressed respond",
-        "metadata":{"room_mentions":["@addressed"]},"order":0}]});
+        "metadata":{"room_mentions":["@addressed"]},"is_visible":true,"order":0}]});
     let (status, receipt) = post(app.clone(), &owner_token, "rooms.speak", incoming).await;
     assert_eq!(status, StatusCode::OK, "{receipt}");
     assert!(
@@ -314,7 +314,7 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     );
     let reply = json!({"conversation_ref":room.to_hex(),"turn_ref":EntityId::now().to_hex(),"occurred_at":3,
         "messages":[{"author":"companion","message_type":"text","content":"Answer",
-        "metadata":{"room_reply_to":turn},"order":0}]});
+        "metadata":{"room_reply_to":turn},"is_visible":true,"order":0}]});
     let (status, _) = post(app.clone(), &addressed_token, "rooms.speak", reply.clone()).await;
     assert_ne!(status, StatusCode::OK);
     let claim = json!({"room_ref":room.to_hex(),"turn_ref":turn});

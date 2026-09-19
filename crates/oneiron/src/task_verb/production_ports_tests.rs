@@ -243,6 +243,17 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
         .expect("started");
     assert!(adapter.tasks().task_snapshot(task)?.revision > old_revision);
     assert!(!adapter.tasks().acknowledge_push(task, old_revision)?);
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .land_task_result(
+            task,
+            &TaskResultInput {
+                result_ref: owner,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: 104,
+            },
+        )
+        .expect("completed before restart");
     let before_close = adapter.tasks().link(task)?;
     drop(adapter);
     drop(vault);
