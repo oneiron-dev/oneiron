@@ -124,11 +124,12 @@ pub(super) struct VoiceDeletionTally {
     pub(super) sample_rows: usize,
     pub(super) vector_rows: usize,
     pub(super) active_pointer: bool,
+    owner_ref_rows: usize,
 }
 
 impl VoiceDeletionTally {
     pub(super) const fn is_empty(self) -> bool {
-        self.print_rows == 0 && self.sample_rows == 0 && !self.active_pointer
+        self.print_rows == 0 && self.sample_rows == 0 && self.owner_ref_rows == 0 && !self.active_pointer
     }
 }
 
@@ -148,7 +149,10 @@ pub(super) fn delete_voice_biometrics_in_txn(
 
     let mut sample_keys: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut print_keys: Vec<Vec<u8>> = Vec::new();
-    let mut tally = VoiceDeletionTally::default();
+    let mut tally = VoiceDeletionTally {
+        owner_ref_rows: super::ref_bank::delete_owner_refs(store, wtxn, subject)?,
+        ..VoiceDeletionTally::default()
+    };
 
     for (key, value) in rows {
         if key == pointer_key {

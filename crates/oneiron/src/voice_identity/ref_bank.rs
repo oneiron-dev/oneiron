@@ -4,6 +4,7 @@ use crate::{
     error::{Error, Result},
 };
 use serde::{Deserialize, Serialize};
+const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
 const PREFIX: &[u8] = b"voice:owner_ref:v1:";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -74,6 +75,21 @@ impl OwnerVoiceRefPack {
         Ok(())
     }
 }
+pub(super) fn delete_owner_refs(
+    store: &crate::store::Store, txn: &mut heed::RwTxn<'_>, owner: &EntityId,
+) -> Result<usize> {
+    let prefix = [OWNER_PREFIX, owner.as_bytes()].concat();
+    let rows = store.vault_meta.prefix_iter(txn, &prefix)?
+        .map(|row| row.map(|(key, value)| (key.to_vec(), value.to_vec())))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut deleted = 0;
+    for (index, key) in rows {
+        if store.vault_meta.delete(txn, &key)? { deleted += 1; }
+        store.vault_meta.delete(txn, &index)?;
+    }
+    Ok(deleted)
+}
+
 impl Vault {
     /// The caller is the authenticated owner capture path. Vendor identities are refused.
     pub fn store_owner_voice_refs(&self, pack: &OwnerVoiceRefPack) -> Result<()> {
@@ -88,6 +104,8 @@ impl Vault {
             }
         } else {
             self.store.vault_meta.put(&mut txn, &key, &bytes)?;
+            let index = [OWNER_PREFIX, pack.owner.as_bytes(), pack.id.as_bytes()].concat();
+            self.store.vault_meta.put(&mut txn, &index, &key)?;
         }
         txn.commit()?;
         Ok(())
@@ -156,6 +174,14 @@ mod tests {
         };
         assert!(vault.store_owner_voice_refs(&pack).is_err());
         assert!(vault.owner_voice_refs(&pack.id)?.is_none());
+        let receipt = vault.withdraw_voice_consent(&crate::voice_identity::VoiceWithdrawalRequest {
+            event_id: "withdraw-owner".into(), subject_ref: a.owner, recorded_by_ref: a.owner,
+            occurred_at: 10, purposes: vec![crate::voice_identity::VoicePrintPurpose::LiveInterlocutor],
+            basis: crate::voice_identity::VoiceConsentBasis::ConversationalNotice { notice: "withdraw".into() },
+        })?;
+        assert!(!receipt.already_absent);
+        assert!(vault.owner_voice_refs(&a.source_pack)?.is_none());
+        assert!(vault.clone_voice_refs_into(&a.source_pack, "target").is_err());
         Ok(())
     }
 }
