@@ -118,7 +118,7 @@ struct Replay;
 impl HeldOutReplayScorer for Replay {
     fn score(&self, case: &HeldOutReplayCase<'_>) -> oneiron::error::Result<f32> {
         assert!(!case.held_out_receipts.is_empty());
-        Ok(if case.instructions == "CRM contact pack" {
+        Ok(if case.instructions.contains("CRM contact") {
             0.9
         } else {
             0.2
