@@ -262,7 +262,9 @@ fn local_factory_requires_persisted_model_binding() {
         registry::{ModelRegistryRow, ModelWireFormat},
     };
     use oneiron::{DreamerClaimAuthoringStrategy, ModelId, WriteActor};
-    use oneiron_llm_local::{LocalAbortHandle, LocalGeneration, LocalLlmRuntime, LocalModelMetadata};
+    use oneiron_llm_local::{
+        LocalAbortHandle, LocalGeneration, LocalLlmRuntime, LocalModelMetadata,
+    };
     struct Runtime(LocalModelMetadata);
     impl LocalLlmRuntime for Runtime {
         fn metadata(&self) -> &LocalModelMetadata {
