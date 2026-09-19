@@ -22616,7 +22616,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/egress.rs",
-     "purpose": "Window egress: packing policy, secret scrub, exports, and mirror replay",
+     "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
       "crate-vis": 4,
       "fn": 4

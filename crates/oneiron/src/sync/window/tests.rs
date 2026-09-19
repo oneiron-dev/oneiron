@@ -3478,3 +3478,40 @@ fn replicated_lww_overwrite_removes_loser_bm25f_in_the_write_transaction() -> Re
         Ok(())
     })
 }
+
+#[test]
+fn diagnostic_carriers_never_leave_window_in_live_state_or_history() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let key = WindowKey::new("2026-03");
+    let learned_at = key.start_timestamp().unwrap() + 60;
+    let diagnostic = EntityId::from_bytes([0x71; 16])?;
+    let ordinary = EntityId::from_bytes([0x72; 16])?;
+    let marker = b"local-only-diagnostic-observation";
+    let doc = create_window_doc("source", &key);
+    let diagnostic_blob =
+        make_entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, learned_at, marker);
+    for raw_key in [diagnostic.to_hex(), "malformed-diagnostic-id".to_owned()] {
+        map_insert_bytes(&doc.get_map("entities"), &raw_key, &diagnostic_blob)?;
+    }
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary"),
+    )?;
+    doc.commit();
+
+    // A second export must stay history-free after the live rows are gone.
+    for _ in 0..2 {
+        let update =
+            export_window_updates_since(&vault, &key, &doc, &VersionVector::default().encode())?;
+        assert!(!update.windows(marker.len()).any(|bytes| bytes == marker));
+        let peer = LoroDoc::new();
+        import_doc(&peer, &update)?;
+        assert!(peer.is_shallow());
+        assert!(map_get_bytes(&peer.get_map("entities"), &diagnostic.to_hex()).is_none());
+        assert!(map_get_bytes(&peer.get_map("entities"), "malformed-diagnostic-id").is_none());
+        assert!(map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some());
+    }
+    assert!(history_free_window_required(&vault, &key)?);
+    Ok(())
+}

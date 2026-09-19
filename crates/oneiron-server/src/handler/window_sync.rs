@@ -161,6 +161,32 @@ pub(super) async fn handle_window_sync(
             let origin = format!("conn:{conn_id}");
             doc.import_with(payload, &origin)
                 .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
+            // Imported carriers may be local-only even when Observer B
+            // refuses their LMDB materialization. Scrub before durability and
+            // fan-out; a scrubbed window must never relay the original history.
+            // Ordinary updates keep their exact wire bytes, including pending
+            // causal operations, when no history-free boundary is required.
+            let sanitized = oneiron::sync::window::export_window_updates_since(
+                server.vault.as_ref(),
+                &key,
+                &doc,
+                &doc.oplog_vv().encode(),
+            )
+            .and_then(|update| {
+                Ok((oneiron::sync::window::history_free_window_required(
+                    server.vault.as_ref(),
+                    &key,
+                )? || doc.is_shallow())
+                .then_some(update))
+            });
+            let sanitized = match sanitized {
+                Ok(update) => update,
+                Err(error) => {
+                    server.evict_window(&key).await;
+                    return Err(map_delta_export_err(error));
+                }
+            };
+            let payload = sanitized.as_deref().unwrap_or(payload);
             // Durability BEFORE fan-out (ARCH-0023b Observer A duty: "MUST
             // persist synchronously"). `subscribe_local_update` does not fire
             // for imports, so the imported update bytes are appended to
