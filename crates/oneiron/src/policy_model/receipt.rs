@@ -79,6 +79,19 @@ impl Vault {
         system_notices: Vec<GateSystemNoticeRecord>,
     ) -> Result<String> {
         let decision_id = GateDecisionId::now();
+        let mut reason_codes = reason_codes;
+        if verdict.decision == super::PolicyClassifyDecision::Hold {
+            let queue_ref = self.queue_policy_hold_in_txn(
+                wtxn,
+                request,
+                verdict,
+                format!("gate:{}", decision_id.to_hex()),
+            )?;
+            reason_codes.push(format!(
+                "gate.policy_model.hold_queued.{}",
+                queue_ref.rsplit(':').next().expect("queue token")
+            ));
+        }
         self.store.append_gate_decision_in_txn(
             wtxn,
             &GateDecisionRecord {

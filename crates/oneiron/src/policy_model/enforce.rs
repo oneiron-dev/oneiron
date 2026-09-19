@@ -69,6 +69,7 @@ pub enum PolicyEnforcementAction {
     Warn,
     Block,
     RouteToHelp,
+    Hold,
 }
 
 impl PolicyEnforcementAction {
@@ -78,6 +79,7 @@ impl PolicyEnforcementAction {
             Self::Allow => "allow",
             Self::Warn => "warn",
             Self::Block => "block",
+            Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
         }
     }
@@ -87,6 +89,7 @@ impl PolicyEnforcementAction {
             PolicyClassifyDecision::Allow => Self::Allow,
             PolicyClassifyDecision::Warn => Self::Warn,
             PolicyClassifyDecision::Block => Self::Block,
+            PolicyClassifyDecision::Hold => Self::Hold,
             PolicyClassifyDecision::RouteToHelp => Self::RouteToHelp,
         }
     }
@@ -94,7 +97,7 @@ impl PolicyEnforcementAction {
     /// Whether the caller must not deliver the content. `Warn` delivers.
     #[must_use]
     pub const fn halts(self) -> bool {
-        matches!(self, Self::Block | Self::RouteToHelp)
+        matches!(self, Self::Block | Self::RouteToHelp | Self::Hold)
     }
 }
 
@@ -138,6 +141,8 @@ pub struct PolicyModelEnforcement {
     pub final_content: Option<String>,
     pub outbound_halted: bool,
     pub receipt_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moderation_ref: Option<String>,
     pub system_notice: Option<String>,
     pub notice_voice: Option<PolicyEnforcementVoice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -246,6 +251,7 @@ impl Vault {
             final_content: Some(request.content),
             outbound_halted: false,
             receipt_ref: Some(receipt_ref),
+            moderation_ref: None,
             system_notice: None,
             notice_voice: None,
             system_notices: Vec::new(),
@@ -385,6 +391,7 @@ impl Vault {
                 final_content: Some(request.content),
                 outbound_halted: false,
                 receipt_ref: None,
+                moderation_ref: None,
                 system_notice: None,
                 notice_voice: None,
                 system_notices: Vec::new(),
@@ -419,6 +426,19 @@ impl Vault {
             )?),
             DecisionLedger::AlreadyRecorded => None,
         };
+        let held = if action == PolicyEnforcementAction::Hold {
+            Some(
+                self.policy_hold_for_verdict(&request, &verdict)?
+                    .ok_or_else(|| Error::Relay(RelayError::PolicyVerdictNotInForce))?,
+            )
+        } else {
+            None
+        };
+        let receipt_ref = held
+            .as_ref()
+            .map(|item| item.receipt_ref.clone())
+            .or(receipt_ref);
+        let moderation_ref = held.map(|item| item.queue_ref);
         let halts = action.halts();
         Ok(PolicyModelEnforcement {
             help_routing: (action == PolicyEnforcementAction::RouteToHelp).then(|| {
@@ -435,6 +455,7 @@ impl Vault {
             final_content: (!halts).then_some(request.content),
             outbound_halted: halts,
             receipt_ref,
+            moderation_ref,
             system_notice: default_system_notice(&system_notices),
             notice_voice: Some(PolicyEnforcementVoice::System),
             system_notices,
