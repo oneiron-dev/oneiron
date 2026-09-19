@@ -382,24 +382,48 @@ cover this newer 14-comment intake. Deduplication yields the groups below.
 | Group | Inline comment IDs | Current disposition |
 | --- | --- | --- |
 | F37 | 4053640019 | **Dismissed**: Pre-release-only legacy BYOA payload compatibility. This build writes and reads user_login; REVIEW.md excludes migration/default work for never-shipped formats. |
-| F38 | 4053663354 | **Applied, validation pending**: Validate streamed own-server events and their sequence before publication. |
-| F39 | 4053663356 | **Applied, validation pending**: Preserve Gemini interleaved content-part ordering. |
-| F40 | 4053663362, 4053664836 | **Applied, validation pending**: Enforce provider-specific ingest block and auxiliary-field grammars. |
-| F41 | 4053663367 | **Applied, validation pending**: Preserve typed generate errors over own-server HTTP. |
-| F42 | 4053663374 | **Applied, validation pending**: Bind or refuse a model when a resident route narrows locality. |
-| F43 | 4053663380 | **Applied, validation pending**: Re-admit paid schema correction attempts under the budget cap. |
-| F44 | 4053663384, 4053664847 | **Applied, validation pending**: Apply declared purpose locality defaults; duplicate reports. |
-| F45 | 4053664831 | **Applied, validation pending**: Settle the reservation when successful terminal usage is unavailable. |
-| F46 | 4053664842 | **Applied, validation pending**: Reject ToolResult in assistant fallback terminal content. |
-| F47 | 4053664851 | **Applied, validation pending**: Drop whitespace-only voice chunks, including timer and Done flushes. |
-| F48 | 4053664852 | **Applied, validation pending**: Avoid partially committed multi-source score refreshes. |
+| F38 | 4053663354 | **Fixed locally, validated**: Validate streamed own-server events and their sequence before publication. |
+| F39 | 4053663356 | **Fixed locally, validated**: Preserve Gemini interleaved content-part ordering. |
+| F40 | 4053663362, 4053664836 | **Fixed locally, validated**: Enforce provider-specific ingest block and auxiliary-field grammars. |
+| F41 | 4053663367 | **Fixed locally, validated**: Preserve typed generate errors over own-server HTTP. |
+| F42 | 4053663374 | **Fixed locally, validated**: Bind or refuse a model when a resident route narrows locality. |
+| F43 | 4053663380 | **Fixed locally, validated**: Re-admit paid schema correction attempts under the budget cap. |
+| F44 | 4053663384, 4053664847 | **Fixed locally, validated**: Apply declared purpose locality defaults; duplicate reports. |
+| F45 | 4053664831 | **Fixed locally, validated**: Settle the reservation when successful terminal usage is unavailable. |
+| F46 | 4053664842 | **Fixed locally, validated**: Reject ToolResult in assistant fallback terminal content. |
+| F47 | 4053664851 | **Fixed locally, validated**: Drop whitespace-only voice chunks, including timer and Done flushes. |
+| F48 | 4053664852 | **Fixed locally, validated**: Avoid partially committed multi-source score refreshes. |
 
 The preserved nine-crate baseline completed with exit 0: **8,897 passed,
 0 failed, 21 ignored**. All 2,559 pinned source files matched. Its actual result
 is recorded in `baseline-terminal.json`; the separate pidfd event was only a
 completion notification. The prepared repairs were applied only after that
-terminal result was consumed. Their scoped tests and compile/lint checks are
-still pending. F37 has posted reply `4054084301`; do not conflate this applied
-source state with publication or validation of F38–F48. Raw refreshed
-feedback and review context are retained under
-`tickets/W7-C08/fix-tests-after-merge-receipts/pr-refresh/`.
+terminal result was consumed. Their scoped validation is now complete: **249 all-feature tests** on the Mac
+mini and **201 featureless core tests** on Arch passed, with zero failures.
+The five changed crates passed all-target/all-feature Clippy. Core featureless
+all-target Clippy and server-production Clippy also passed. The final
+production-only check used normal MacBook-first routing and ran no vault tests.
+All checks are bound to the repaired source at `13b4597b`; formatting and the
+code-map pin passed. No full-workspace VERDICT is claimed. The initial nextest
+flag error ran no tests and remains recorded separately.
+
+All 14 comment IDs now have posted replies. F37 is reply `4054084301`.
+The remaining replies, in finding-ID order, are `4054328760`, `4054328761`,
+`4054328763`, `4054328779`, `4054328762`, `4054328780`, `4054328782`,
+`4054328764`, `4054328776`, `4054328768`, `4054328765`, `4054328766`,
+and `4054328767`. The exact mapping and API receipts are in
+`pr-refresh/new-dispositions.json` and `repair-inline-replies/`. Own status
+comment `5744404350` supplies the final validation update without reposting
+findings or changing a human draft.
+
+The final complete read-only intake has **17 issue comments, 39 reviews,
+124 inline comments and 54 threads**, still at published head `d7a435af`.
+No new or edited finding was present, and no pending review was returned.
+Thread and nested-comment pagination is complete. This seat has not pushed
+these local repairs or changed approval, thread state, merge, or close state.
+
+Raw feedback, source bindings, failed and successful command logs, per-case
+results, and terminal receipts are retained under
+`tickets/W7-C08/fix-tests-after-merge-receipts/`; the final intake is in
+`repair-terminal-pr-refresh/`. The original F01–F36 and internal-review
+records above are retained unchanged.
