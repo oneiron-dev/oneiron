@@ -90,7 +90,21 @@ impl UsageLedger {
         validate_key(&key)?;
         self.vault
             .sync_state_get(&key)?
-            .map(|raw| rmp_serde::from_slice(&raw).map_err(UsageError::from))
+            .map(|raw| {
+                let stored: CachedBudgetLimit = rmp_serde::from_slice(&raw)?;
+                let expected = CachedBudgetLimit::convert(
+                    stored.original.clone(),
+                    stored.rate.clone(),
+                    stored.refreshed_at,
+                )?;
+                if stored != expected {
+                    return Err(UsageError::InvalidField {
+                        field: "budget",
+                        message: "cached conversion does not match its source",
+                    });
+                }
+                Ok(stored)
+            })
             .transpose()
     }
 }

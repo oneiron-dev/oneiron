@@ -240,7 +240,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/core.rs` | src | s | 1 struct · 2 fn · 6 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
 | `src/server/embedding.rs` | src | s | 4 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/lease_rotation.rs` | src | s | 1 crate-vis | — | Owner-authorized atomic rekey: revoke the old binding and grant a fresh one |
-| `src/server/lease_scope_tests.rs` | test | s | — | — | — |
+| `src/server/lease_scope_tests.rs` | test | m | — | — | — |
 | `src/server/leases.rs` | src | m | 10 crate-vis | — | Device-lease registry: reads, registration, revocation, and commit/mirror |
 | `src/server/lifecycle.rs` | src | s | 12 crate-vis | — | Periodic lifecycle jobs: lease expiry and reassert-drain with debounce |
 | `src/server/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | Sync server state and maintenance jobs, split by concern |

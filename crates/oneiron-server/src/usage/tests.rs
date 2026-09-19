@@ -226,3 +226,47 @@ fn restore_retains_money_facts_rebuilds_rollups_and_resets_host_budget() {
         3
     );
 }
+
+#[test]
+fn malformed_cached_budget_never_reaches_a_guard() {
+    let (_dir, ledger) = ledger();
+    let limit = ledger
+        .cache_budget_limit(
+            "owner-a",
+            "vault-a",
+            Money {
+                amount: 15000,
+                currency: "JPY".into(),
+                price_table_snapshot: "limit".into(),
+            },
+            ExchangeRate {
+                from_currency: "JPY".into(),
+                to_currency: "USD".into(),
+                numerator: 1,
+                denominator: 150,
+                observed_at: 99,
+            },
+            100,
+        )
+        .unwrap();
+    let key = format!(
+        "budget:{}",
+        super::keys::vault_rollup_key("owner-a", "vault-a")
+    );
+    for corruption in 0..3 {
+        let mut malformed = limit.clone();
+        match corruption {
+            0 => malformed.converted.amount = u64::MAX,
+            1 => malformed.rate.denominator = 0,
+            _ => malformed.original.currency = "invalid".into(),
+        }
+        ledger
+            .vault
+            .sync_state_put(&key, &rmp_serde::to_vec_named(&malformed).unwrap())
+            .unwrap();
+        assert!(matches!(
+            ledger.cached_budget_limit("owner-a", "vault-a"),
+            Err(UsageError::InvalidField { .. })
+        ));
+    }
+}
