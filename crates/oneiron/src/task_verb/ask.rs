@@ -7,6 +7,9 @@ use super::{
     wire_encode::{canonical_bytes, encode_task_verb_body},
 };
 use crate::gate::PolicyApprovalCeiling;
+use crate::llm::decision::questions::{
+    CalibrationPair, OutcomeBinding, TaskAnswerBinding, bind_task_answer_in_txn,
+};
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance};
 use crate::{EntityId, Error, Vault};
 use serde::{Deserialize, Serialize};
@@ -18,9 +21,8 @@ pub struct TaskAskSpec {
     pub question: serde_json::Value,
     pub holders: BTreeSet<String>,
     pub idempotency_key: String,
-    /// Ask-local outcome binding. A standing-question version may be linked
-    /// after ONE-2343 lands; this does not fork its question registry.
-    pub outcome_binding: Option<String>,
+    /// Ask-local binding into the shared versioned question/outcome substrate.
+    pub outcome_binding: Option<OutcomeBinding>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAskHandle {
@@ -38,6 +40,9 @@ pub struct TaskAskAnswer {
     pub actor_ref: String,
     pub result_ref: String,
     pub at: u64,
+    /// Shared judgment.answer claim, present when this ask binds an outcome.
+    pub answer_ref: Option<String>,
+    pub question_version: Option<u32>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct AskRow {
@@ -78,12 +83,19 @@ impl Memory<'_> {
             || spec.holders.len() > 256
             || !spec.question.is_object()
             || spec.question.to_string().len() > 64 * 1024
-            || spec
-                .outcome_binding
-                .as_ref()
-                .is_some_and(|s| s.len() > 1024)
         {
             return Err(MemoryError::bad_request("invalid ask spec"));
+        }
+        if let Some(binding) = &spec.outcome_binding {
+            binding.validate()?;
+            if serde_json::to_vec(binding)
+                .map_err(|_| MemoryError::bad_request("outcome binding encoding"))?
+                .len()
+                > 1024
+                || spec.question.to_string().len() > 16_384
+            {
+                return Err(MemoryError::bad_request("bound ask spec too large"));
+            }
         }
         let now = crate::unix_seconds_now();
         let payload =
@@ -218,11 +230,35 @@ impl Memory<'_> {
             if stored != row.spec || body.assignee != Some(TaskAssignee::AnswerHolders) {
                 return Err(MemoryError::bad_request("ask holder binding changed"));
             }
+            let bound = row
+                .spec
+                .outcome_binding
+                .as_ref()
+                .map(|binding| {
+                    bind_task_answer_in_txn(
+                        self.vault(),
+                        txn,
+                        crate::WriteActor::new(self.actor(), self.actor_class()),
+                        TaskAnswerBinding {
+                            task: id,
+                            principal: EntityId::from_hex(&row.owner)?,
+                            unit: result_ref,
+                            question: &row.spec.question,
+                            binding,
+                            now,
+                        },
+                    )
+                })
+                .transpose()?;
             let answer = TaskAskAnswer {
                 task_ref: id.to_hex(),
                 actor_ref: self.actor().to_hex(),
                 result_ref: result_ref.to_hex(),
                 at: now,
+                answer_ref: bound.as_ref().map(|answer| answer.claim.to_hex()),
+                question_version: bound
+                    .as_ref()
+                    .map(|answer| answer.decision.receipt.question_version),
             };
             body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
                 disposition: TaskTerminalDisposition::Completed,
@@ -238,5 +274,26 @@ impl Memory<'_> {
             super::ask_wait::signal_waiters(self.vault(), txn, id, now.saturating_mul(1000))?;
             Ok(answer)
         })
+    }
+}
+
+impl Memory<'_> {
+    /// Owner-scoped calibration pairs. The outcome reader rechecks current
+    /// fact fields, lifecycle and privacy; the ask id is never a read grant.
+    pub fn tasks_ask_outcomes(&self, handle: &TaskAskHandle) -> MemoryResult<Vec<CalibrationPair>> {
+        let id = EntityId::from_hex(&handle.task_ref)?;
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let row = read(self.vault(), &txn, id)?;
+        if row.owner != self.actor().to_hex() {
+            return Err(MemoryError::bad_request(
+                "only the asking actor may read outcomes",
+            ));
+        }
+        drop(txn);
+        Ok(crate::llm::decision::questions::calibration_pairs(
+            self.vault(),
+            self.actor(),
+            id,
+        )?)
     }
 }

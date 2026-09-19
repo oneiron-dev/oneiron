@@ -102,3 +102,6 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 #[cfg(test)]
 use std::time::Duration;
+
+/// Typed question and outcome contracts.
+pub mod decision;

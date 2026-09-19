@@ -657,6 +657,12 @@ pub(super) fn apply_ops_with_origin(
         }
     }
 
+    crate::llm::decision::questions::project_arrivals_in_txn(
+        store,
+        wtxn,
+        &materialized_entity_ids,
+    )?;
+
     crate::hnsw::run_pending_legacy_rebuild(store, config, wtxn, pending_hnsw_rebuild)?;
 
     if had_graph_mutation {

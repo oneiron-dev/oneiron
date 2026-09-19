@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
 
-pub const ROOMS_VERBS: [&str; 4] = ["rooms.list", "rooms.messages", "rooms.speak", "rooms.claim"];
+include!("verb_catalog.rs");
 const TURNS: &[u8] = b"rooms.turn.v1/";
 const HANDLES: &[u8] = b"rooms.platform_handle.v1/";
 const CLAIMS: &[u8] = b"rooms.claim.v1/";
@@ -77,7 +77,7 @@ pub struct RoomClaimReceipt {
     pub receipt_ref: String,
     pub at: u64,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoomClaimOutcome {
     Claimed(RoomClaimReceipt),
     HeldBy(RoomClaimReceipt),
