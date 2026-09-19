@@ -18,6 +18,7 @@ pub struct AnthropicMessagesStreamAccumulator {
     assembly: StreamAssembly,
     tools: BTreeMap<u64, (String, String, Option<JsonValue>)>,
     tool_has_delta: std::collections::BTreeSet<u64>,
+    signatures: BTreeMap<u64, String>,
     usage: LlmUsage,
     finish_reason: FinishReason,
 }
@@ -27,6 +28,7 @@ impl Default for AnthropicMessagesStreamAccumulator {
             assembly: StreamAssembly::default(),
             tools: BTreeMap::new(),
             tool_has_delta: Default::default(),
+            signatures: BTreeMap::new(),
             usage: LlmUsage::zero(),
             finish_reason: FinishReason::Stop,
         }
@@ -57,11 +59,11 @@ impl AnthropicMessagesStreamAccumulator {
                         self.assembly
                             .text(&id, block["text"].as_str().unwrap_or(""))?,
                     ),
-                    Some("thinking") => events.extend(self.assembly.reasoning(
-                        &id,
-                        block["thinking"].as_str().unwrap_or(""),
-                        block["signature"].as_str().map(str::to_owned),
-                    )?),
+                    Some("thinking") => {
+                        let signature = block["signature"].as_str().map(str::to_owned);
+                        if let Some(signature) = &signature { self.signatures.insert(index, signature.clone()); }
+                        events.extend(self.assembly.reasoning(&id, block["thinking"].as_str().unwrap_or(""), signature)?);
+                    }
                     Some("tool_use") => {
                         let call_id = block["id"]
                             .as_str()
@@ -98,18 +100,12 @@ impl AnthropicMessagesStreamAccumulator {
                             None,
                         )?,
                     ),
-                    Some("signature_delta") => events.extend(
-                        self.assembly.reasoning(
-                            &id,
-                            "",
-                            Some(
-                                delta["signature"]
-                                    .as_str()
-                                    .ok_or(FatalLlmError::InvalidRequest)?
-                                    .into(),
-                            ),
-                        )?,
-                    ),
+                    Some("signature_delta") => {
+                        let fragment = delta["signature"].as_str().ok_or(FatalLlmError::InvalidRequest)?;
+                        let signature = self.signatures.entry(index).or_default();
+                        signature.push_str(fragment);
+                        events.extend(self.assembly.reasoning(&id, "", Some(signature.clone()))?);
+                    }
                     Some("input_json_delta") => {
                         let (call_id, name, _) = self
                             .tools
@@ -131,15 +127,15 @@ impl AnthropicMessagesStreamAccumulator {
                 }
             }
             Some("content_block_stop") => {
-                if let Some((call_id, name, input)) = self.tools.get(&index) {
-                    if !self.tool_has_delta.contains(&index) {
+                if let Some((call_id, name, input)) = self.tools.get(&index)
+                    && !self.tool_has_delta.contains(&index)
+                {
                         events.extend(self.assembly.tool(
                             &id,
                             call_id,
                             name,
                             &input.as_ref().unwrap_or(&serde_json::json!({})).to_string(),
                         )?);
-                    }
                 }
                 events.push(self.assembly.end(&id)?);
             }

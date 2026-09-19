@@ -154,7 +154,12 @@ pub async fn render_on_delta(
     if !delta.threshold.is_finite() || !(0.0..=1.0).contains(&delta.threshold) {
         return Err(Error::InvalidConfig("invalid surprise threshold".into()).into());
     }
-    if delta.before.affect.iter().any(|n| !n.is_finite() || !(-1.0..=1.0).contains(n)) {
+    if delta
+        .before
+        .affect
+        .iter()
+        .any(|n| !n.is_finite() || !(-1.0..=1.0).contains(n))
+    {
         return Err(Error::InvalidConfig("invalid previous affect state".into()).into());
     }
     let before = delta.before.read_refs();

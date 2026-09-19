@@ -1,5 +1,6 @@
 use super::*;
 use futures_core::Stream;
+use std::future::Future;
 use std::{
     pin::Pin,
     sync::{Arc, Mutex},
@@ -12,6 +13,14 @@ impl TerminalSink for Sink {
         Ok(())
     }
 }
+struct FakeStream(std::collections::VecDeque<LlmStreamEvent>);
+impl Stream for FakeStream {
+    type Item = LlmResult<LlmStreamEvent>;
+    fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Poll::Ready(self.0.pop_front().map(Ok))
+    }
+}
+
 struct Noop;
 impl Wake for Noop {
     fn wake(self: Arc<Self>) {}
@@ -50,18 +59,13 @@ fn three_subscribers_keep_full_sequence_and_only_terminal_is_durable() {
             finish_reason: FinishReason::Stop,
         },
     ];
-    struct FakeStream(std::collections::VecDeque<LlmStreamEvent>);
-    impl Stream for FakeStream {
-        type Item = LlmResult<LlmStreamEvent>;
-        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            Poll::Ready(self.0.pop_front().map(Ok))
-        }
-    }
     let source = LlmStream::new(FakeStream(events.clone().into()));
     {
-        use std::future::Future;
         let mut drive = std::pin::pin!(bus.drive(source));
-        assert!(matches!(drive.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Ok(()))));
+        assert!(matches!(
+            drive.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
     }
     for sub in &mut subscribers {
         assert_eq!(drain(sub), events);

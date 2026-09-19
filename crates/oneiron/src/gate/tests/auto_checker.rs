@@ -1260,6 +1260,10 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
     use crate::llm::{ModelId, ModelLocality, ModelTierRef};
     for mode in [VerdictMode::Enforce, VerdictMode::Shadow] {
         let (_dir, vault) = checker_vault(None)?;
+        let id = test_id(0x33);
+        let proposed = checker_body(&vault, ClaimApprovalStatus::Proposed)?;
+        attempt_checked_candidate_write(&vault, &id, &proposed, None)?;
+        assert_eq!(vault.get_claim(&id)?.expect("proposal landed").approval, ClaimApprovalStatus::Proposed);
         let model = ModelId::new("test/verdict@1").expect("model");
         vault.set_model_manifest(&ModelManifest {
             version: 2,
@@ -1297,12 +1301,11 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
             },
         )));
         let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
-        let id = test_id(0x33);
         let result = attempt_checked_candidate_write(&vault, &id, &body, Some(&checker));
         match mode {
             VerdictMode::Enforce => {
                 assert!(result.is_err());
-                assert!(vault.get_claim(&id)?.is_none());
+                assert_eq!(vault.get_claim(&id)?.expect("proposal retained").approval, ClaimApprovalStatus::Proposed);
                 assert!(
                     decision_rows(&vault)?
                         .iter()

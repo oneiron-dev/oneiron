@@ -27720,7 +27720,7 @@
      "path": "src/stream.rs",
      "purpose": "Gemini typed stream decoding",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }

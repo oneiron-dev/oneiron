@@ -2355,7 +2355,10 @@ fn boring_tags_spend_nothing_and_surprising_render_names_its_reads() -> Result<(
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
     let guard = guard_with_limit(10_000);
-    let backend = ScriptedBackend::new(vec![Ok(response_fixture("rendered")), Ok(response_fixture("updated"))]);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("rendered")),
+        Ok(response_fixture("updated")),
+    ]);
     let mut delta = InputDelta {
         turn: fixture.subject,
         text: "Ada".into(),
@@ -2393,10 +2396,27 @@ fn boring_tags_spend_nothing_and_surprising_render_names_its_reads() -> Result<(
     assert_eq!(rendered.receipt.read_refs, vec![fixture.subject]);
     assert!(rendered.step.is_some());
     assert_eq!(backend.calls(), 1);
-    let replayed = block_on(render_on_delta(&ctx, &backend, &guard, request_fixture(), &delta)).expect("replay");
-    assert!(matches!(replayed.step, Some(StepOutcome::Finished {memoized: true, ..})));
+    let replayed = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("replay");
+    assert!(matches!(
+        replayed.step,
+        Some(StepOutcome::Finished { memoized: true, .. })
+    ));
     delta.text = "Eve".into();
-    let changed = block_on(render_on_delta(&ctx, &backend, &guard, request_fixture(), &delta)).expect("new delta");
+    let changed = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("new delta");
     assert_ne!(rendered.receipt.input_hash, changed.receipt.input_hash);
     assert_eq!(backend.calls(), 2);
     Ok(())
@@ -2408,19 +2428,39 @@ fn corrective_spend_survives_fatal_fallback_and_memo_replay() -> Result<()> {
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
     let guard = guard_with_limit(10_000);
-    let backend = ScriptedBackend::new(vec![Ok(response_fixture("not json")), Err(FatalLlmError::Auth.into())]);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Err(FatalLlmError::Auth.into()),
+    ]);
     let mut request = request_fixture();
-    request.envelope.response_format = ResponseFormat::Json { schema: json!({"type":"object"}) };
-    request.envelope.class = CallClass::Durable { fallback: DeterministicFallback {
-        name: "json_rules_v1".into(),
-        config: Some(json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]})),
-    }};
-    let StepOutcome::Finished {response, ..} = block_on(call_as_step(&ctx, &backend, &guard, request.clone())).expect("fallback") else { panic!("not finished"); };
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    let StepOutcome::Finished { response, .. } =
+        block_on(call_as_step(&ctx, &backend, &guard, request.clone())).expect("fallback")
+    else {
+        panic!("not finished");
+    };
     assert_eq!(response.usage.input.total, 100);
     assert_eq!(response.usage.output.total, 50);
     assert_eq!(guard.read().used_units, 150);
     assert_eq!(guard.read().reserved_units, 0);
-    let StepOutcome::Finished { response: replay, memoized: true, .. } = block_on(call_as_step(&ctx, &backend, &guard, request)).expect("replay") else { panic!("not memoized"); };
+    let StepOutcome::Finished {
+        response: replay,
+        memoized: true,
+        ..
+    } = block_on(call_as_step(&ctx, &backend, &guard, request)).expect("replay")
+    else {
+        panic!("not memoized");
+    };
     assert_eq!(response, replay);
     assert_eq!(backend.calls(), 2);
     assert_eq!(guard.read().used_units, 150);
