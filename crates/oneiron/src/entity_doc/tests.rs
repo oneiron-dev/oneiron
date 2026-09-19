@@ -697,3 +697,57 @@ fn map_field_migration_refuses_trailing_bytes_without_mutating_storage() -> Resu
     assert!(vault.entity_text(&id).is_err());
     Ok(())
 }
+
+#[test]
+fn text_migration_refuses_maintenance_and_semantic_records_atomically() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_REGISTRY, ENTITY_TYPE_SECRET_CUSTODY, EntityClassification};
+
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let (writer, owner) = actor(&vault)?;
+    for entry in ENTITY_TYPE_REGISTRY.iter().filter(|entry| {
+        matches!(
+            entry.classification,
+            EntityClassification::Maintenance | EntityClassification::Semantic
+        )
+    }) {
+        for (field, body) in [
+            (TextField::Utf8Body, b"immutable engine record".to_vec()),
+            (
+                TextField::MapField("text".into()),
+                rmp_serde::to_vec_named(&serde_json::json!({"text": "immutable engine record"}))
+                    .unwrap(),
+            ),
+        ] {
+            let id = EntityId::now();
+            // Seed below public admission so this proves the migration door's
+            // own classification check, not a codec or generic-put refusal.
+            let raw = crate::test_util::entity_record(
+                entry.type_byte,
+                TimeRange { start: 7, end: 7 },
+                9,
+                &body,
+            );
+            vault.with_write_txn(|txn| {
+                vault.store.entities.put(txn, id.as_bytes(), &raw)?;
+                Ok(())
+            })?;
+            let result =
+                vault.migrate_entity_text(&id, &field, writer, &DocAuthorization::Owner(&owner));
+            if entry.type_byte == ENTITY_TYPE_SECRET_CUSTODY {
+                assert!(matches!(result, Err(Error::EntityNotFound)));
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+                ));
+            }
+            assert_eq!(vault.get_raw(&id)?, Some(raw));
+            assert!(matches!(vault.entity_text(&id), Err(Error::EntityNotFound)));
+        }
+    }
+    // The same authenticated writer can still migrate an editable kind.
+    let id = entity(&vault, writer, &owner, "editable asset")?;
+    assert_eq!(vault.entity_text(&id)?, "editable asset");
+    Ok(())
+}
