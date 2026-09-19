@@ -58,7 +58,7 @@ aside.context[hidden] { display: none; }
   padding: 4px 11px; width: 100%; max-width: 62ch;
   transition: background 160ms ease;
 }
-.bd-inner .draft-card ~ .reply-input { margin-left: 24px; width: auto; }
+.bd-inner .draft-card ~ .reply-preview { margin-left: 24px; width: auto; }
 .reply-input::placeholder { color: var(--silver-4); }
 .reply-input:focus { outline: none; background: var(--bg-well); box-shadow: inset 0 0 0 1px var(--rule-strong); }
 
@@ -114,7 +114,7 @@ aside.context[hidden] { display: none; }
    everything. one tight line per event: time · channel glyph · seal
    · what happened. */
 .wire { display: none; flex-direction: column; gap: 6px; }
-body.dial-all .wire { display: flex; }
+body.dial-all .wire, .wire.revealed { display: flex; }
 body.dial-all .quiet-line { display: none; }
 .wire-head { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); padding-bottom: 2px; }
 /* a wire row clicks into the context column (owner 08-15) */
@@ -150,3 +150,31 @@ body.dial-all .quiet-line { display: none; }
 .w-glance .bd-inner { padding-left: 58px; }
 aside.context .bd-msg { margin: 6px 0 2px; }
 aside.context .reply-input { margin-top: 4px; }
+
+/* Local preview notes use the existing quiet register, never a toast. */
+.inbox-preview-scope {
+  margin: 0; max-width: 88ch;
+  font-family: var(--sans); font-size: 12px; line-height: 1.5; color: var(--silver-3);
+}
+.fixture-feedback {
+  display: block; max-width: 68ch;
+  font-family: var(--sans); font-size: 12px; line-height: 1.5;
+  color: var(--silver-3); overflow-wrap: anywhere;
+}
+/* Keep empty live regions in the accessibility tree without spending layout space. */
+.fixture-feedback:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.brow > .fixture-feedback { margin: 2px 8px 6px 22px; }
+.reply-preview { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.reply-preview .fixture-feedback { padding: 0 11px; }
+.bmore, .bd-acts { flex-wrap: wrap; }
+.brow .rverbs { max-width: 50%; flex-wrap: wrap; justify-content: flex-end; }
+.brow .rverbs .meta-line { text-align: right; }
+
+/* Native row triggers keep the authored type, ink and silver focus ring. */
+.brow-line > button.claim { padding: 0; text-align: left; }
+button.w-row { width: 100%; text-align: left; }
+.brow-line:has(> button:focus-visible), .w-row:focus-visible {
+  background: color-mix(in srgb, var(--silver-4) 10%, transparent);
+}
+.wire:focus-visible { outline: 1.5px solid var(--silver-3); outline-offset: 2px; }
+.pane-body > .summon { max-width: min(40ch, 90%); }
