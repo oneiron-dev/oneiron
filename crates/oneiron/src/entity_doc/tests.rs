@@ -665,3 +665,35 @@ fn purged_deleted_cursor_drifts_with_origin_quote_intact() -> Result<()> {
     assert_eq!(vault.entity_text(&id)?, "replacement and live later");
     Ok(())
 }
+
+#[test]
+fn map_field_migration_refuses_trailing_bytes_without_mutating_storage() -> Result<()> {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let (actor, owner) = actor(&vault)?;
+    let id = EntityId::now();
+    let mut body =
+        rmp_serde::to_vec_named(&serde_json::json!({"text":"retain every byte","other":7}))
+            .unwrap();
+    body.extend_from_slice(b"unparsed suffix");
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_ASSET,
+        TimeRange { start: 7, end: 7 },
+        9,
+        &body,
+    )?;
+    let before = vault.get_raw(&id)?;
+    assert!(matches!(
+        vault.migrate_entity_text(
+            &id,
+            &TextField::MapField("text".into()),
+            actor,
+            &DocAuthorization::Owner(&owner)
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+    assert_eq!(vault.get_raw(&id)?, before);
+    assert!(vault.entity_text(&id).is_err());
+    Ok(())
+}

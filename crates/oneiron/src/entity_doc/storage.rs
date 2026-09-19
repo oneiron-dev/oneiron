@@ -282,8 +282,12 @@ fn replace_text(body: &[u8], field: &TextField, doc: &str) -> Result<(String, Ve
             if key == "entity_doc_ref" {
                 return Err(invalid("reserved document pointer field"));
             }
-            let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
+            let mut cursor = std::io::Cursor::new(body);
+            let value = rmpv::decode::read_value(&mut cursor)
                 .map_err(|_| invalid("body is not a MessagePack map"))?;
+            if cursor.position() != body.len() as u64 {
+                return Err(invalid("trailing bytes after MessagePack body"));
+            }
             let rmpv::Value::Map(mut fields) = value else {
                 return Err(invalid("body is not a MessagePack map"));
             };
