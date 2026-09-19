@@ -29,7 +29,7 @@ Collected before new review-driven fixes on 2026-09-19.
 | IR-02 review-current P0 composite supersession | Already fixed. `affect/state_index.rs` uses the non-reserved supersession door; existing idempotence/progression fixture passes. |
 | IR-03 review-current P1 cross-review outcome | Already fixed by a stronger binding. `persisted_artifact` loads the exact private result by verdict ID, checks its stored verdict and artifact membership, then verifies the independently stored artifact. Reusing a run string cannot pair another review. |
 | IR-04a review-current P1 forged critic heads | Already fixed. Producer writes stamp exact body digests; reliability/outcome reads require that local stamp and `claim_surfaceable`. Peer/raw assertions alone cannot calibrate. |
-| IR-04b review-current P1 forged composite heads | VALID, fix now. Composite reads and rerun selection still trust unstamped raw claims, including future rows that can veto derivation. Add a local producer/body binding; copied history remains non-authoritative and receiving vaults recompute from inputs. |
+| IR-04b review-current P1 forged composite heads | FIXED and validated. Local producer/body binding rejects raw/replayed/future forged heads and modified bodies; imported history stays non-authoritative. The expanded fixture covers idempotence, supersession, repair and reopen. Durable guarded-Arch test at dd5ced70 exited0 on 2026-09-19T18:06:15.995848Z: 1 passed,0 failed,0 ignored. Receipt: `W7-C02-portable-state-validation.json`. |
 | IR-05 review-current P1 rerun after Beta drift / inactive cache | Already fixed for posterior drift by immutable private result identity and cached triage. Changed lifecycle/body cannot return as an unchanged cached result because producer digest verification refuses it. Skip proposed silent re-review under the same immutable run identity; a new review needs a new run. |
 | IR-06 review-current P1 confidence order/weights | Finding identity now includes `finding_key`, fixing dropped votes/order sensitivity. Skip posterior-normalized denominator: unanimous weak critics would become confidence 1.0. Current denominator counts all distinct votes uniformly while agreement is attenuated by posterior; it does not depend on host order. |
 | IR-07 review-current P1 self-attested outcome source | Already fixed: every anchored source requires the active human-owner gate. A second conflicting source/outcome for an artifact refuses rather than double-counting or silently accepting it. |
@@ -45,7 +45,20 @@ Collected before new review-driven fixes on 2026-09-19.
 
 ## Current validation / publication boundary
 
-Existing 10 receipt cases, three strict clippy lanes, strict rustdoc and structure
-checks remain green evidence for unchanged bytes. IR-04b and future audio changes
-need their own focused validation. No new result is claimed yet. No GitHub post
-is possible until this branch has an actual PR.
+Existing 10 receipt cases, three strict clippy lanes, strict rustdoc and structural
+checks retain their exact source boundaries. Later strict featureless clippy and
+7 native protocol cases passed. IR-04b's last missing portable runtime fixture
+now passes on guarded Arch at dd5ced70 (actual exit0, 1 pass). No broad suite was
+repeated. The original lost transient queue attempt remains a no-result failure
+of custody, not test evidence.
+
+The committed audio evidence contains actual Mac-native EN/UK/MOSS synthetic runs
+and a correctly refused JP zero-duration interval. These are not E1/E3 or full
+native-artifact acceptance. Only the explicit external access, admitted cleanup
+instructions, reference/enrollment data and post-E1 default act remain. See the
+current per-step ledger and final result in `impl-notes/W7-C02.md`.
+
+A fresh branch PR lookup after the portable result again returned no PR. No Qodo,
+Codex or CodeRabbit surface exists on this ticket to paginate or post to yet.
+No unrelated PR is used. On actual publication, collect all pages and post the
+source-bound changes, explicit skips and actual validation to that PR only.
