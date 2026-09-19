@@ -1,9 +1,7 @@
 //! Immutable producer artifact and one approval for the complete import batch.
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::ingest::{
-    INGEST_SOURCE_REGISTRY, MEETING_TRANSCRIPT_SOURCE_ID, NormalizedIngestBatch,
-};
+use crate::ingest::{INGEST_SOURCE_REGISTRY, MEETING_TRANSCRIPT_SOURCE_ID, NormalizedIngestBatch};
 
 use super::provenance::sha256;
 use super::{AudioError, AudioResult, BulkImportAuthorizer, BulkImportBinding, BulkImportReceipt};
@@ -22,8 +20,16 @@ impl ProducedMeetingTranscript {
         // Exercise the real consumer rather than maintaining a second schema
         // validator. This is pure normalization, not import admission.
         let normalized = INGEST_SOURCE_REGISTRY.normalize(MEETING_TRANSCRIPT_SOURCE_ID, &json)?;
-        let source_record_ids = normalized.records.into_iter().map(|r| r.source_record_id).collect();
-        Ok(Self { json, recording_id, source_record_ids })
+        let source_record_ids = normalized
+            .records
+            .into_iter()
+            .map(|r| r.source_record_id)
+            .collect();
+        Ok(Self {
+            json,
+            recording_id,
+            source_record_ids,
+        })
     }
 
     pub fn json(&self) -> &str {
@@ -55,13 +61,19 @@ impl ProducedMeetingTranscript {
             artifact_sha256: sha256(self.json.as_bytes()),
             source_record_ids: self.source_record_ids.clone(),
         };
-        let receipt = authorizer.authorize_import(&binding)?
+        let receipt = authorizer
+            .authorize_import(&binding)?
             .ok_or(AudioError::BulkConsentRequired)?;
         if receipt.binding != binding || receipt.receipt_ref.trim().is_empty() {
             return Err(AudioError::BulkConsentMismatch);
         }
-        let normalized = INGEST_SOURCE_REGISTRY.normalize(MEETING_TRANSCRIPT_SOURCE_ID, &self.json)?;
-        Ok(AuthorizedMeetingImport { artifact: self.clone(), normalized, receipt })
+        let normalized =
+            INGEST_SOURCE_REGISTRY.normalize(MEETING_TRANSCRIPT_SOURCE_ID, &self.json)?;
+        Ok(AuthorizedMeetingImport {
+            artifact: self.clone(),
+            normalized,
+            receipt,
+        })
     }
 }
 
@@ -95,7 +107,13 @@ impl AuthorizedMeetingImport {
         ClaimApprovalStatus::Proposed
     }
 
-    pub fn into_parts(self) -> (ProducedMeetingTranscript, NormalizedIngestBatch, BulkImportReceipt) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        ProducedMeetingTranscript,
+        NormalizedIngestBatch,
+        BulkImportReceipt,
+    ) {
         (self.artifact, self.normalized, self.receipt)
     }
 }

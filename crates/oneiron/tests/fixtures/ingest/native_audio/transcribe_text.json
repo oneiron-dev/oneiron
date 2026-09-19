@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "result": {
+    "text": "The library opens at nine. Please bring a blue notebook. The train leaves at noon. We will meet by the station.",
+    "segments": [
+      {
+        "text": "The library opens at nine. Please bring a blue notebook. The train leaves at noon. We will meet by the station.",
+        "language": "English",
+        "start": 0.0,
+        "end": 11.888625
+      }
+    ],
+    "timestamp_kind": "input_chunk_only",
+    "word_timestamps": null,
+    "generation_tokens": 25,
+    "glossary_sha256": "d5d3f957b45ec16361edb8e5783e45c394996d1e716437f3f056190fef52a7b3",
+    "provenance": {
+      "invocation_id": "9f0f9a16-92e5-43ed-9d6e-587c65657979",
+      "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+      "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+      "execution": "measured",
+      "model_snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+      "revision": "a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+      "package_version": "0.4.7"
+    }
+  },
+  "protocol": "oneiron.meeting_audio.host.v1",
+  "request_id": "a07f7d30-f56c-49c1-8f73-c586e48768d5",
+  "body_bytes": 0,
+  "elapsed_seconds": 10.092473458033055
+}

@@ -11,8 +11,8 @@ use super::cleanup::apply_cleanup;
 use super::packing::{packed_audio, source_times};
 use super::provenance::{COMMUNITY1_MODEL, execution_mode, pcm_sha256, sha256, validate_receipt};
 use super::{
-    AsrPackRequest, AsrRole, AudioError, AudioFile, AudioResult, BatchAsrRequest,
-    BatchDefault, CleanupRequest, InferenceExecution, MeetingAudioHost, ProcessingTier,
+    AsrPackRequest, AsrRole, AudioError, AudioFile, AudioResult, BatchAsrRequest, BatchDefault,
+    CleanupRequest, InferenceExecution, MeetingAudioHost, ProcessingTier,
     ProducedMeetingTranscript, ProducerOptions, TranscriptWord, align_words_to_speakers,
     pack_speech,
 };
@@ -41,7 +41,11 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     let packs = pack_speech(&vad.spans, duration_ms)?;
     let route = host.route_batch_asr(BatchAsrRequest {
         role: AsrRole::Asr,
-        preferred_tier: if options.local_only { ProcessingTier::Local } else { ProcessingTier::HomeFleet },
+        preferred_tier: if options.local_only {
+            ProcessingTier::Local
+        } else {
+            ProcessingTier::HomeFleet
+        },
         local_only: options.local_only,
         batch_default: &options.batch_default,
     })?;
@@ -71,7 +75,9 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
         validate_receipt(&output.provenance, &pack_hash, &mut invocation_ids)?;
         if output.provenance.model_id != route.model_id
             || output.aligner_model.trim().is_empty()
-            || aligner_model.as_ref().is_some_and(|model| model != &output.aligner_model)
+            || aligner_model
+                .as_ref()
+                .is_some_and(|model| model != &output.aligner_model)
         {
             return Err(AudioError::InvalidProvenance);
         }
@@ -121,19 +127,29 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     let mut turns = make_turns(&words);
     let cleanup_input = serde_json::to_vec(&turns).map_err(|_| AudioError::Serialization)?;
     let cleanup_hash = sha256(&cleanup_input);
-    let cleanup = host.cleanup_turns(CleanupRequest { turns: &turns, input_sha256: &cleanup_hash })?;
+    let cleanup = host.cleanup_turns(CleanupRequest {
+        turns: &turns,
+        input_sha256: &cleanup_hash,
+    })?;
     validate_receipt(&cleanup.provenance, &cleanup_hash, &mut invocation_ids)?;
     apply_cleanup(&mut turns, cleanup.texts)?;
-    let glossary_bytes = serde_json::to_vec(&options.glossary).map_err(|_| AudioError::Serialization)?;
+    let glossary_bytes =
+        serde_json::to_vec(&options.glossary).map_err(|_| AudioError::Serialization)?;
     // All execution modes are host reports. A fixture at any stage marks the
     // run as a fixture; an E1 reference never overrides that evidence class.
     let mut execution = execution_mode(&[
-        &vad.provenance, &diarization.provenance, &cleanup.provenance,
+        &vad.provenance,
+        &diarization.provenance,
+        &cleanup.provenance,
     ]);
     if asr_fixture {
         execution = InferenceExecution::Fixture;
     }
-    let note_body = turns.iter().map(|turn| turn.text.as_str()).collect::<Vec<_>>().join("\n");
+    let note_body = turns
+        .iter()
+        .map(|turn| turn.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     let document = json!({
         "schema": MEETING_TRANSCRIPT_SCHEMA_V1,
         "recording": {
@@ -189,7 +205,9 @@ fn validate_options(file: &AudioFile<'_>, options: &ProducerOptions) -> AudioRes
         return Err(AudioError::InvalidAudio);
     }
     if file.source_name.trim().is_empty()
-        || file.language_hint.is_some_and(|hint| hint.trim().is_empty())
+        || file
+            .language_hint
+            .is_some_and(|hint| hint.trim().is_empty())
         || options.batch_default.model_id().trim().is_empty()
         || options.glossary.iter().any(|entry| entry.trim().is_empty())
         || matches!(&options.batch_default, BatchDefault::MeasuredE1 { evidence_ref, .. }

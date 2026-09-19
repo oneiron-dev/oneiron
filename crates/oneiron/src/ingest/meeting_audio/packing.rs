@@ -100,15 +100,22 @@ pub(super) fn packed_audio(audio: &Pcm16, pack: &SpeechPack) -> AudioResult<Pcm1
     for span in &pack.source_spans {
         let start = sample_index(span.source_start_ms, audio.samples.len())?;
         let end = sample_index(span.source_end_ms, audio.samples.len())?;
-        samples.extend_from_slice(audio.samples.get(start..end).ok_or(AudioError::InvalidAudio)?);
+        samples.extend_from_slice(
+            audio
+                .samples
+                .get(start..end)
+                .ok_or(AudioError::InvalidAudio)?,
+        );
     }
     Ok(Pcm16 { samples })
 }
 
 fn sample_index(ms: u64, max: usize) -> AudioResult<usize> {
-    Ok(usize::try_from(ms.checked_mul(16).ok_or(AudioError::InvalidAudio)?)
-        .map_err(|_| AudioError::InvalidAudio)?
-        .min(max))
+    Ok(
+        usize::try_from(ms.checked_mul(16).ok_or(AudioError::InvalidAudio)?)
+            .map_err(|_| AudioError::InvalidAudio)?
+            .min(max),
+    )
 }
 
 /// A word crossing removed silence is refused, never stretched across a gap.
@@ -117,9 +124,11 @@ pub(super) fn source_times(pack: &SpeechPack, start: u64, end: u64) -> AudioResu
     if start >= end {
         return Err(AudioError::InvalidWords);
     }
-    let Some(index) = pack.source_spans.iter().position(|span| {
-        start >= span.pack_start_ms && start < span.pack_end_ms
-    }) else {
+    let Some(index) = pack
+        .source_spans
+        .iter()
+        .position(|span| start >= span.pack_start_ms && start < span.pack_end_ms)
+    else {
         return Err(AudioError::InvalidWords);
     };
     let first = &pack.source_spans[index];
@@ -132,7 +141,10 @@ pub(super) fn source_times(pack: &SpeechPack, start: u64, end: u64) -> AudioResu
             }
         }
         if end <= span.pack_end_ms {
-            return Ok((source_start, span.source_start_ms + (end - span.pack_start_ms)));
+            return Ok((
+                source_start,
+                span.source_start_ms + (end - span.pack_start_ms),
+            ));
         }
     }
     Err(AudioError::InvalidWords)

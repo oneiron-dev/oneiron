@@ -26,14 +26,15 @@ pub fn align_words_to_speakers(
     let mut track_cursor = 0;
     let mut labels = Vec::with_capacity(words.len());
     for word in &*words {
-        if word.start_ms >= word.end_ms
-            || word.start_ms < previous_end
-            || word.end_ms > duration_ms
+        if word.start_ms >= word.end_ms || word.start_ms < previous_end || word.end_ms > duration_ms
         {
             return Err(AudioError::InvalidWords);
         }
         previous_end = word.end_ms;
-        while tracks.get(track_cursor).is_some_and(|track| track.end_ms <= word.start_ms) {
+        while tracks
+            .get(track_cursor)
+            .is_some_and(|track| track.end_ms <= word.start_ms)
+        {
             track_cursor += 1;
         }
         let mut best: Option<(&SpeakerTrack, u64, u64)> = None;
@@ -41,7 +42,9 @@ pub fn align_words_to_speakers(
             if track.start_ms >= word.end_ms {
                 break;
             }
-            let intersection = word.end_ms.min(track.end_ms)
+            let intersection = word
+                .end_ms
+                .min(track.end_ms)
                 .saturating_sub(word.start_ms.max(track.start_ms));
             if intersection == 0 {
                 continue;
@@ -57,8 +60,11 @@ pub fn align_words_to_speakers(
                 best = Some((track, intersection, union));
             }
         }
-        let label = best.map(|(track, _, _)| track.speaker_cluster.clone())
-            .ok_or_else(|| AudioError::UnlabelledWord { word_id: word.word_id.clone() })?;
+        let label = best
+            .map(|(track, _, _)| track.speaker_cluster.clone())
+            .ok_or_else(|| AudioError::UnlabelledWord {
+                word_id: word.word_id.clone(),
+            })?;
         labels.push(label);
     }
     for (word, label) in words.iter_mut().zip(labels) {

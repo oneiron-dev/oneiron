@@ -1,0 +1,367 @@
+[
+  {
+    "command": [
+      "/Users/olety/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/bin/python",
+      "/Volumes/Cinema/w7-build/wt/W7-C02/.w7/voice-host-draft/meeting-audio-native.py",
+      "--self-test"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.03820162499323487
+  },
+  {
+    "command": [
+      "/usr/bin/say",
+      "-v",
+      "?"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.5029523749835789
+  },
+  {
+    "command": [
+      "/usr/bin/say",
+      "-v",
+      "Fred",
+      "-r",
+      "145",
+      "-f",
+      "/Volumes/Cinema/w7-build/wt/W7-C02/.w7/voice-host-draft/evidence/synthesis-input.txt",
+      "-o",
+      "/Volumes/Cinema/w7-build/wt/W7-C02/.w7/voice-host-draft/evidence/public-speech.aiff"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.5144202501978725
+  },
+  {
+    "command": [
+      "/opt/homebrew/bin/ffmpeg",
+      "-hide_banner",
+      "-nostdin",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=black:s=320x240:r=10",
+      "-i",
+      "/Volumes/Cinema/w7-build/wt/W7-C02/.w7/voice-host-draft/evidence/public-speech.aiff",
+      "-filter:a",
+      "adelay=1000:all=1,apad=pad_dur=1",
+      "-c:v",
+      "mpeg4",
+      "-q:v",
+      "5",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      "/Volumes/Cinema/w7-build/wt/W7-C02/.w7/voice-host-draft/evidence/public-speech.mp4"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.5405155420303345
+  },
+  {
+    "operation": "decode",
+    "request": {
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "a57f130f-b259-4c09-ad4c-256f990cfac0",
+      "operation": "decode",
+      "input_bytes": 88166,
+      "input_sha256": "0401d5626fa0a5e6401da721f62479033358d9b3dc2db6a19c889913d4c0d089",
+      "options": {}
+    },
+    "exit_code": 0,
+    "response": {
+      "ok": true,
+      "result": {
+        "sample_rate": 16000,
+        "channels": 1,
+        "format": "s16le",
+        "samples": 190218,
+        "pcm_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+        "provenance": {
+          "invocation_id": "36efe2c4-7602-418c-9936-38ce14cc3428",
+          "model_id": "ffmpeg",
+          "input_sha256": "0401d5626fa0a5e6401da721f62479033358d9b3dc2db6a19c889913d4c0d089",
+          "execution": "measured"
+        }
+      },
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "a57f130f-b259-4c09-ad4c-256f990cfac0",
+      "body_bytes": 380436,
+      "elapsed_seconds": 0.03749716584570706
+    }
+  },
+  {
+    "operation": "silero_vad",
+    "request": {
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "58b0711b-42ed-4d19-ad2c-0f764d2f39fa",
+      "operation": "silero_vad",
+      "input_bytes": 380436,
+      "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+      "options": {}
+    },
+    "exit_code": 0,
+    "response": {
+      "ok": true,
+      "result": {
+        "spans": [
+          {
+            "start_ms": 1024,
+            "end_ms": 2784
+          },
+          {
+            "start_ms": 3168,
+            "end_ms": 4736
+          },
+          {
+            "start_ms": 6240,
+            "end_ms": 7616
+          },
+          {
+            "start_ms": 7936,
+            "end_ms": 9344
+          }
+        ],
+        "provenance": {
+          "invocation_id": "c1e4fa42-5041-45d5-8df8-08fd88841250",
+          "model_id": "silero-vad",
+          "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+          "execution": "measured",
+          "package_version": "6.2.1",
+          "full_file_samples": 190218,
+          "threshold": 0.5,
+          "speech_pad_ms": 0
+        }
+      },
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "58b0711b-42ed-4d19-ad2c-0f764d2f39fa",
+      "body_bytes": 0,
+      "elapsed_seconds": 8.302531542023644
+    }
+  },
+  {
+    "operation": "transcribe_text",
+    "request": {
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "a07f7d30-f56c-49c1-8f73-c586e48768d5",
+      "operation": "transcribe_text",
+      "input_bytes": 380436,
+      "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+      "options": {
+        "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+        "glossary": [
+          "notebook",
+          "station"
+        ],
+        "language_hint": "English"
+      }
+    },
+    "exit_code": 0,
+    "response": {
+      "ok": true,
+      "result": {
+        "text": "The library opens at nine. Please bring a blue notebook. The train leaves at noon. We will meet by the station.",
+        "segments": [
+          {
+            "text": "The library opens at nine. Please bring a blue notebook. The train leaves at noon. We will meet by the station.",
+            "language": "English",
+            "start": 0.0,
+            "end": 11.888625
+          }
+        ],
+        "timestamp_kind": "input_chunk_only",
+        "word_timestamps": null,
+        "generation_tokens": 25,
+        "glossary_sha256": "d5d3f957b45ec16361edb8e5783e45c394996d1e716437f3f056190fef52a7b3",
+        "provenance": {
+          "invocation_id": "9f0f9a16-92e5-43ed-9d6e-587c65657979",
+          "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+          "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+          "execution": "measured",
+          "model_snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+          "revision": "a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+          "package_version": "0.4.7"
+        }
+      },
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "a07f7d30-f56c-49c1-8f73-c586e48768d5",
+      "body_bytes": 0,
+      "elapsed_seconds": 10.092473458033055
+    }
+  },
+  {
+    "operation": "transcribe_pack",
+    "request": {
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "fbb4a416-9558-4a44-89b3-eee110a64a43",
+      "operation": "transcribe_pack",
+      "input_bytes": 380436,
+      "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+      "options": {
+        "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+        "glossary": [
+          "notebook",
+          "station"
+        ],
+        "language_hint": "English"
+      }
+    },
+    "exit_code": 2,
+    "response": {
+      "ok": false,
+      "error": {
+        "code": "ForcedAlignmentUnavailable",
+        "details": {
+          "requires": "installed forced-word aligner and its local weights",
+          "text_probe_operation": "transcribe_text"
+        }
+      },
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "fbb4a416-9558-4a44-89b3-eee110a64a43",
+      "body_bytes": 0,
+      "elapsed_seconds": 0.0013811658136546612
+    }
+  },
+  {
+    "operation": "community1_exclusive_full_file",
+    "request": {
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "9a752f60-6113-4550-8e9d-316d4d749013",
+      "operation": "community1_exclusive_full_file",
+      "input_bytes": 380436,
+      "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+      "options": {}
+    },
+    "exit_code": 2,
+    "response": {
+      "ok": false,
+      "error": {
+        "code": "Community1Unavailable",
+        "details": {
+          "requires": "pyannote/speaker-diarization-community-1"
+        }
+      },
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "9a752f60-6113-4550-8e9d-316d4d749013",
+      "body_bytes": 0,
+      "elapsed_seconds": 0.0014104580041021109
+    }
+  },
+  {
+    "operation": "capabilities",
+    "request": {
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "7616a36e-22b4-401a-a967-644b863d37fd",
+      "operation": "capabilities",
+      "input_bytes": 0,
+      "input_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "options": {}
+    },
+    "exit_code": 0,
+    "response": {
+      "ok": true,
+      "result": {
+        "packages": {
+          "mlx": "0.32.2",
+          "mlx-metal": "0.32.2",
+          "mlx-lm": "0.31.3",
+          "mlx-audio": "0.4.7",
+          "torch": "2.14.0",
+          "silero-vad": "6.2.1",
+          "onnxruntime": "1.30.0",
+          "pyannote.audio": null,
+          "qwen-asr": null
+        },
+        "asr_model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+        "asr_snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+        "operations": [
+          "decode",
+          "silero_vad",
+          "transcribe_text"
+        ],
+        "artifact_capable": false,
+        "missing": [
+          "forced_word_alignment",
+          "community1_exclusive_full_file",
+          "cleanup_model"
+        ],
+        "e1_e3_evidence": false
+      },
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "7616a36e-22b4-401a-a967-644b863d37fd",
+      "body_bytes": 0,
+      "elapsed_seconds": 0.007072041044011712
+    }
+  },
+  {
+    "command": [
+      "/opt/homebrew/bin/ffmpeg",
+      "-version"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.0227359589189291
+  },
+  {
+    "request": {
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "core-port-real-asr-word-alignment-refusal",
+      "operation": "transcribe_pack",
+      "input_bytes": 380436,
+      "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+      "options": {
+        "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+        "glossary": [
+          "notebook",
+          "station"
+        ],
+        "language_hint": "English"
+      }
+    },
+    "exit_code": 2,
+    "response": {
+      "ok": false,
+      "error": {
+        "code": "ForcedAlignmentUnavailable",
+        "details": {
+          "requires": "installed forced-word aligner and its local weights",
+          "partial_asr": {
+            "text": "The library opens at nine. Please bring a blue notebook. The train leaves at noon. We will meet by the station.",
+            "segments": [
+              {
+                "text": "The library opens at nine. Please bring a blue notebook. The train leaves at noon. We will meet by the station.",
+                "language": "English",
+                "start": 0.0,
+                "end": 11.888625
+              }
+            ],
+            "timestamp_kind": "input_chunk_only",
+            "word_timestamps": null,
+            "generation_tokens": 25,
+            "glossary_sha256": "d5d3f957b45ec16361edb8e5783e45c394996d1e716437f3f056190fef52a7b3",
+            "provenance": {
+              "invocation_id": "22e29283-a341-4b4b-804e-73762fb4a452",
+              "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+              "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+              "execution": "measured",
+              "model_snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+              "revision": "a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+              "package_version": "0.4.7"
+            }
+          },
+          "artifact": null
+        }
+      },
+      "protocol": "oneiron.meeting_audio.host.v1",
+      "request_id": "core-port-real-asr-word-alignment-refusal",
+      "body_bytes": 0,
+      "elapsed_seconds": 4.673666957998648
+    },
+    "purpose": "native port now runs actual ASR before refusing unavailable word alignment"
+  }
+]

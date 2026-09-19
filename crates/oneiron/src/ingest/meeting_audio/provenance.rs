@@ -41,7 +41,10 @@ pub(super) fn validate_receipt(
 }
 
 pub(super) fn execution_mode(receipts: &[&InferenceProvenance]) -> InferenceExecution {
-    if receipts.iter().any(|r| r.execution == InferenceExecution::Fixture) {
+    if receipts
+        .iter()
+        .any(|r| r.execution == InferenceExecution::Fixture)
+    {
         InferenceExecution::Fixture
     } else {
         InferenceExecution::Measured

@@ -28,8 +28,22 @@ fn lexical_tokens(text: &str) -> Vec<String> {
             && chars.get(index + 1).is_some_and(|c| c.is_numeric());
         let cosmetic = matches!(
             ch,
-            '.' | ',' | '!' | '?' | ';' | ':' | '。' | '、' | '！' | '？'
-                | '「' | '」' | '“' | '”' | '"' | '(' | ')'
+            '.' | ','
+                | '!'
+                | '?'
+                | ';'
+                | ':'
+                | '。'
+                | '、'
+                | '！'
+                | '？'
+                | '「'
+                | '」'
+                | '“'
+                | '”'
+                | '"'
+                | '('
+                | ')'
         ) && !numeric_separator;
         if ch.is_whitespace() || cosmetic {
             if !token.is_empty() {

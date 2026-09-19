@@ -93,8 +93,13 @@ pub enum ProcessingTier {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "basis", rename_all = "snake_case")]
 pub enum BatchDefault {
-    Provisional { model_id: String },
-    MeasuredE1 { model_id: String, evidence_ref: String },
+    Provisional {
+        model_id: String,
+    },
+    MeasuredE1 {
+        model_id: String,
+        evidence_ref: String,
+    },
 }
 
 impl BatchDefault {

@@ -1,0 +1,10 @@
+{
+  "pyannote_installed": false,
+  "qwen_asr_installed": false,
+  "installed_aligner_code": [
+    "/Users/olety/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/lib/python3.13/site-packages/mlx_audio/stt/models/qwen3_forced_aligner"
+  ],
+  "relevant_cached_model_dirs": [
+    "models--mlx-community--Qwen3-ASR-1.7B-8bit"
+  ]
+}

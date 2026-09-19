@@ -8,6 +8,7 @@
 mod alignment;
 mod artifact;
 mod cleanup;
+mod command;
 mod error;
 mod packing;
 mod producer;
@@ -17,16 +18,16 @@ mod types;
 pub use alignment::align_words_to_speakers;
 pub use artifact::{AuthorizedMeetingImport, ProducedMeetingTranscript};
 pub use cleanup::validate_cleanup;
+pub use command::{CommandAudioConfig, CommandMeetingAudioHost};
 pub use error::{AudioError, AudioResult};
 pub use packing::pack_speech;
 pub use producer::produce_meeting_transcript;
 pub use types::{
     AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest,
     BatchDefault, BulkImportAuthorizer, BulkImportBinding, BulkImportReceipt, CleanupOutput,
-    CleanupRequest,
-    GlobalDiarization, InferenceExecution, InferenceProvenance, MeetingAudioHost,
-    Pcm16, ProcessingTier, ProducerOptions, SourceSpan, SpeakerTrack, SpeechPack,
-    SpeechSpan, TranscriptTurn, TranscriptWord, VadOutput,
+    CleanupRequest, GlobalDiarization, InferenceExecution, InferenceProvenance, MeetingAudioHost,
+    Pcm16, ProcessingTier, ProducerOptions, SourceSpan, SpeakerTrack, SpeechPack, SpeechSpan,
+    TranscriptTurn, TranscriptWord, VadOutput,
 };
 
 #[cfg(test)]
