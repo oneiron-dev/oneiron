@@ -734,3 +734,29 @@ fn signing_field_save_survives_reopen_without_rotating_the_bearer() -> Result<()
     assert_eq!(reopened.esign_audit(id)?, audit);
     Ok(())
 }
+
+#[test]
+fn audit_chain_survives_document_deletion_and_reopen() -> Result<()> {
+    let (dir, vault, id, doc) = setup()?;
+    event(&vault, id, EsignEvent::Sent, 3)?;
+    event(
+        &vault,
+        id,
+        EsignEvent::Viewed {
+            recipient: doc.recipients[0].id.clone(),
+        },
+        4,
+    )?;
+    let audit = vault.esign_audit(id)?;
+    assert_eq!(audit.len(), 3);
+
+    assert!(vault.delete_entity(&id)?);
+    assert!(vault.get_blob_artifact(&id)?.is_none());
+    assert_eq!(vault.esign_audit(id)?, audit);
+
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    assert!(reopened.get_blob_artifact(&id)?.is_none());
+    assert_eq!(reopened.esign_audit(id)?, audit);
+    Ok(())
+}
