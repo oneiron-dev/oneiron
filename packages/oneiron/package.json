@@ -1,7 +1,7 @@
 {
   "name": "oneiron",
   "version": "1.0.0",
-  "description": "Memory for agents: witness a turn, claim a fact, recall it, read the receipts.",
+  "description": "Memory Wire: the Oneiron developer profile. Witness, recall, and receipts over one actor-bound facade.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -47,6 +47,7 @@
     "agents",
     "retrieval",
     "vector-search",
-    "knowledge-graph"
+    "knowledge-graph",
+    "memory-wire"
   ]
 }

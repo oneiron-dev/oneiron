@@ -169,3 +169,24 @@ def test_remote_sdk_parity():
     assert older in short_ids
     assert newer in short_ids
     assert short_ids.index(newer) < short_ids.index(older)
+
+
+def test_installed_remote_quickstarts():
+    """Execute both complete remote README snippets verbatim on installed SDKs."""
+    import shutil
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    project = Path(os.environ["WIRE_NODE_PROJECT"])
+    node = project / "node-connect.mjs"
+    shutil.copyfile(root / "packages/oneiron/quickstart/node-connect.mjs", node)
+    env = os.environ.copy()
+    env["ONEIRON_URL"] = env["ONEIRON_WIRE_URL"]
+    env["ONEIRON_KEY"] = env["ONEIRON_WIRE_KEY"]
+    for command in (
+        ["node", str(node)],
+        [sys.executable, str(root / "packages/oneiron/quickstart/python-connect.py")],
+    ):
+        result = subprocess.run(command, env=env, text=True, capture_output=True,
+                                check=True, timeout=180)
+        assert_quickstart(json.loads(result.stdout))

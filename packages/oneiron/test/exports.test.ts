@@ -9,6 +9,8 @@
 
 import { describe, expect, test } from "bun:test"
 
+import { readFileSync } from "node:fs"
+
 import * as pkg from "../src/index.js"
 
 /** The whole public runtime surface, spelled once. */
@@ -42,13 +44,13 @@ describe("export census", () => {
     const instanceMethods = Object.getOwnPropertyNames(pkg.Oneiron.prototype)
       .filter((name) => name !== "constructor")
       .sort()
-    expect(instanceMethods).toEqual([
-      "asActor",
-      "claimUpsert",
-      "recall",
-      "receipts",
-      "witness",
-    ])
+    const source = readFileSync(new URL("../../../crates/oneiron-remote/src/lib.rs", import.meta.url), "utf8")
+    const catalog = source.match(/pub const FACADE_VERB_CATALOG[^=]*=\s*\[([^\]]+)\]/)?.[1]
+    expect(catalog).toBeDefined()
+    const verbs = [...catalog!.matchAll(/"([a-z_]+)"/g)].map((match) => match[1])
+    expect(verbs.length).toBeGreaterThan(0)
+    const jsVerbs = verbs.map((verb) => verb.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase()))
+    expect(instanceMethods).toEqual(["asActor", ...jsVerbs].sort())
 
     expect(typeof pkg.Oneiron.open).toBe("function")
     expect(typeof pkg.Oneiron.connect).toBe("function")

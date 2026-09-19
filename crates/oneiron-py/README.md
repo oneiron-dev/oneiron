@@ -1,6 +1,9 @@
-# oneiron
+# Memory Wire — oneiron
 
-Memory for agents. Witness a turn, claim a fact, recall it, read the receipts.
+Memory Wire is the Oneiron developer profile. Start with `witness`, `recall`, and
+`receipts`. The same package also ships `claim_upsert` (`claimUpsert` in JS),
+the fourth verb in the engine’s authoritative `FACADE_VERB_CATALOG`.
+There is no separate lite SDK and no alternate mutation path.
 
 ```sh
 pip install oneiron

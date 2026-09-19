@@ -1,0 +1,25 @@
+{
+  "name": "@oneiron/ai-sdk",
+  "version": "1.0.0",
+  "description": "Memory Wire tools for the Vercel AI SDK",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "ai": ">=5 <7",
+    "oneiron": "^1.0.0"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}
