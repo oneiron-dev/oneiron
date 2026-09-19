@@ -39,10 +39,10 @@ impl DocumentRegistry {
             // Also refuses soft-erased shells and malformed birth records.
             crate::note::document_birth_in_txn(&self.vault, txn, id)?;
             let key = format!("qn:e:{}:{}", id.to_hex(), operation.request_id.to_hex());
-            if let Some(previous) = self.vault.store.sync_state.get(txn, &key)? {
-                if previous.as_ref() != frame.as_slice() {
-                    return Err(denied());
-                }
+            if let Some(previous) = self.vault.store.sync_state.get(txn, &key)?
+                && previous.as_ref() != frame.as_slice()
+            {
+                return Err(denied());
             }
             self.vault.store.sync_state.put(txn, &key, &frame)?;
             if let crate::note::NoteChange::Cite { pin } = &operation.change {

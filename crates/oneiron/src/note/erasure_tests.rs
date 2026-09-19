@@ -17,6 +17,18 @@ fn actor(vault: &Vault) -> EntityId {
     id
 }
 
+// Read the stored row through the feature-independent store. The production
+// sync convenience methods deliberately do not exist in the featureless crate.
+fn document_carrier(vault: &Vault, note: EntityId) -> Option<Vec<u8>> {
+    let txn = vault.store.env.read_txn().unwrap();
+    vault
+        .store
+        .sync_state
+        .get(&txn, &format!("d:e:{}", note.to_hex()))
+        .unwrap()
+        .map(|bytes| bytes.to_vec())
+}
+
 // This law runs featureless too: lacking a Loro decoder is not permission to
 // discard the document or silently project its older birth markdown.
 #[test]
@@ -64,10 +76,7 @@ fn pending_citation_erasure_fences_reads_without_deleting_document() {
         ))
     ));
     assert_eq!(
-        vault
-            .sync_state_get(&format!("d:e:{}", note.to_hex()))
-            .unwrap()
-            .as_deref(),
+        document_carrier(&vault, note).as_deref(),
         Some(opaque.as_slice())
     );
     drop(vault);
@@ -79,10 +88,7 @@ fn pending_citation_erasure_fences_reads_without_deleting_document() {
         ))
     ));
     assert_eq!(
-        vault
-            .sync_state_get(&format!("d:e:{}", note.to_hex()))
-            .unwrap()
-            .as_deref(),
+        document_carrier(&vault, note).as_deref(),
         Some(opaque.as_slice())
     );
     #[cfg(not(feature = "sync"))]
@@ -93,10 +99,7 @@ fn pending_citation_erasure_fences_reads_without_deleting_document() {
         assert_eq!(sweep.jobs_processed, 0);
         assert!(sweep.jobs_deferred > 0);
         assert_eq!(
-            vault
-                .sync_state_get(&format!("d:e:{}", note.to_hex()))
-                .unwrap()
-                .as_deref(),
+            document_carrier(&vault, note).as_deref(),
             Some(opaque.as_slice())
         );
     }

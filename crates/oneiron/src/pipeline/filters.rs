@@ -89,7 +89,7 @@ pub(super) fn claim_status_gate_allows(
             raw.get(ENTITY_METADATA_HEADER_LEN..)
                 .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
         })
-        .filter(|body| crate::claim::claim_generic_readable(body))
+        .filter(crate::claim::claim_generic_readable)
         .filter(|body| {
             claim_surfaceable(body)
                 || (gate.include_stale
