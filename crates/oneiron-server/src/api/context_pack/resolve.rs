@@ -464,7 +464,7 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     pack.stats.entities_hydrated = pack.results.len();
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
-    if pack.results.is_empty() && pack.neighbors.is_empty() {
+    if pack.results.is_empty() && pack.neighbors.is_empty() && pack.l2_base.is_none() {
         if let Some(empty) = pack.empty.as_mut() {
             empty.total_in_scope = 0;
         } else {

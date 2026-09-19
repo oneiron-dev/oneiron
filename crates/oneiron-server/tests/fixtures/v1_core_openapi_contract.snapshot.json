@@ -2609,6 +2609,12 @@
               "null"
             ]
           },
+          "l2_base": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "neighbors": {
             "items": {
               "$ref": "#/components/schemas/CoreContextEntity"

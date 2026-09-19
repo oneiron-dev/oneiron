@@ -142,6 +142,14 @@ impl<'a> ContextPackBuilder<'a> {
             Some(session) => ContextPackTelemetry::Session(session),
             None => ContextPackTelemetry::Base(&self.vault.store),
         };
+        let mut l2_base = super::super::l2_base::produce_l2_base(
+            self.vault,
+            &pipeline,
+            &self.l2_summary_subjects,
+            self.disclosure.as_ref(),
+            self.l2_summary_reader,
+            self.session.is_none(),
+        )?;
         let pipeline_output = pipeline
             .context_pack_budget(retrieval_budget)
             .run_for_pack()?;
@@ -358,9 +366,25 @@ impl<'a> ContextPackBuilder<'a> {
             if let Some(ctx) = clamp {
                 validate_pack_disclosure(&self.vault.store, &rtxn, ctx, &results, &neighbors)?;
             }
+            if let Some(summary) = &l2_base
+                && !super::super::l2_base::revalidate_l2_base(
+                    self.vault,
+                    &rtxn,
+                    summary,
+                    clamp,
+                    self.l2_summary_reader,
+                )?
+            {
+                l2_base = None;
+            }
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
-            let pack_is_empty = results.is_empty() && neighbors.is_empty();
+            if let Some(summary) = &l2_base {
+                let ids = summary.evidence_ids();
+                results.retain(|entity| ids.binary_search(&entity.id).is_err());
+                neighbors.retain(|entity| ids.binary_search(&entity.id).is_err());
+            }
+            let pack_is_empty = results.is_empty() && neighbors.is_empty() && l2_base.is_none();
             let candidates_considered = if pack_is_empty {
                 total_in_scope
             } else {
@@ -389,6 +413,7 @@ impl<'a> ContextPackBuilder<'a> {
 
             Ok(ContextPackRun {
                 pack: ContextPack {
+                    l2_base,
                     retrieval_quality,
                     results,
                     neighbors,

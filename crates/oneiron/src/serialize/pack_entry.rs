@@ -67,6 +67,7 @@ pub(super) enum PreparedEntitySource {
 
 #[derive(Debug, Clone)]
 pub(super) struct PreparedPack {
+    pub(super) l2_base: Option<crate::context_pack::L2BaseSummary>,
     pub(super) merged: bool,
     pub(super) results: Vec<(GroupKey, Vec<PreparedEntity>)>,
     pub(super) neighbors: Vec<(GroupKey, Vec<PreparedEntity>)>,
@@ -77,6 +78,7 @@ pub(super) type PreparedGroups = Vec<(GroupKey, Vec<PreparedEntity>)>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SerializedPackTelemetry {
+    pub(crate) has_l2_base: bool,
     pub(crate) result_ids: Vec<[u8; 16]>,
     pub(crate) stats: PackStats,
 }
@@ -104,6 +106,7 @@ pub fn project_pack_for_json_response(
 ) -> ContextPack {
     let prepared = prepare_pack(&pack, config, true);
     let stats = prepared.stats.clone();
+    pack.l2_base = prepared.l2_base.clone();
     let mut projected_results = HashMap::<[u8; 16], Vec<(String, Value)>>::new();
     let mut projected_neighbors = HashMap::<[u8; 16], Vec<(String, Value)>>::new();
     collect_projected_json_rows(
@@ -163,13 +166,15 @@ pub(super) fn serialize_prepared_pack(
     config: &SerializeConfig,
     prepared: PreparedPack,
 ) -> Vec<u8> {
-    match config.format {
+    let l2_base = prepared.l2_base.clone();
+    let bytes = match config.format {
         PackFormat::Json => serialize_json(pack, config, prepared),
         PackFormat::Yaml => serialize_yaml(config, prepared).into_bytes(),
         PackFormat::Toon => serialize_toon(config, prepared).into_bytes(),
         PackFormat::Markdown => serialize_markdown(config, prepared).into_bytes(),
         PackFormat::Plaintext => serialize_plaintext(config, prepared).into_bytes(),
-    }
+    };
+    super::l2_prefix::with_l2_prefix(l2_base.as_ref(), config.format, bytes)
 }
 
 fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackTelemetry {
@@ -181,6 +186,7 @@ fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackT
         .map(|entity| entity.source_id)
         .collect();
     SerializedPackTelemetry {
+        has_l2_base: prepared.l2_base.is_some(),
         result_ids,
         stats: prepared.stats.clone(),
     }

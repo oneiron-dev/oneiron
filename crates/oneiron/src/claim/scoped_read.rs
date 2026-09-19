@@ -426,6 +426,19 @@ impl<'a> ScopedRead<'a> {
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<()> {
         let rtxn = self.vault.store.env.read_txn()?;
         let policy = self.policy_manifest_in(&rtxn)?;
+        if let Some(summary) = pack.l2_base.as_ref() {
+            let visibility = self.retrieval_visibility_in(&rtxn, None)?;
+            let mut admitted = true;
+            for id in summary.evidence_ids() {
+                if !crate::ppr::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)? {
+                    admitted = false;
+                    break;
+                }
+            }
+            if !admitted {
+                pack.l2_base = None;
+            }
+        }
         let previous_count = pack.results.len() + pack.neighbors.len();
         let (results, result_suppressed) =
             self.filter_context_entities(&rtxn, &policy, std::mem::take(&mut pack.results))?;
@@ -441,7 +454,11 @@ impl<'a> ScopedRead<'a> {
         pack.stats.claims_suppressed +=
             result_suppressed + neighbor_suppressed + reachability_suppressed;
 
-        if previous_count > 0 && pack.results.is_empty() && pack.neighbors.is_empty() {
+        if previous_count > 0
+            && pack.results.is_empty()
+            && pack.neighbors.is_empty()
+            && pack.l2_base.is_none()
+        {
             pack.empty = Some(EmptyContext {
                 retrieval_quality: pack.retrieval_quality.clone(),
                 reason: EmptyReason::FilterMatchedNone,

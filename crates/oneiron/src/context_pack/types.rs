@@ -179,6 +179,8 @@ impl PackItemAccounting {
 /// A fully hydrated context pack ready for serialization or programmatic use.
 #[derive(Debug, Clone)]
 pub struct ContextPack {
+    /// Cached, score-free subject evidence. Results and neighbors are its read-time delta.
+    pub l2_base: Option<super::L2BaseSummary>,
     /// Channel execution health, retained even when no entities surface.
     pub retrieval_quality: RetrievalQualityReport,
     pub results: Vec<ContextEntity>,

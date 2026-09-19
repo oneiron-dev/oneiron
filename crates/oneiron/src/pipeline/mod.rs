@@ -9,6 +9,7 @@ mod execution_binding;
 mod filters;
 mod scoped_channels;
 pub(crate) use types::CandidateFilter;
+mod l2_evidence;
 mod support;
 mod trace;
 mod types;

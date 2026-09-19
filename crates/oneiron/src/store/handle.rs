@@ -129,6 +129,8 @@ pub struct StoreCore {
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
+    /// Bounded, content-addressed L2 render cache. Never persisted.
+    pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,

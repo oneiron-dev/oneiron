@@ -395,6 +395,11 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool)> {
+        self.store
+            .l2_base_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .erase(id, self.store.env.info().last_txn_id);
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {

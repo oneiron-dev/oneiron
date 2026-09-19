@@ -117,6 +117,7 @@ impl Store {
             off_record_sessions: OffRecordSessionRegistry::default(),
             retrieval_blend_tuning_lock: Mutex::new(()),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
+            l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             diagnostics: Diagnostics::default(),
             #[cfg(feature = "sync")]
             attempt_updates: tokio::sync::broadcast::channel(256).0,

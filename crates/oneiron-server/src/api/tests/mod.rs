@@ -332,6 +332,7 @@ pub(super) fn seeded_test_entity_id(counter: u128) -> oneiron::EntityId {
 
 pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPack {
     oneiron::ContextPack {
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: (0..result_count)
             .map(|index| {

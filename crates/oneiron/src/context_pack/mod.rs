@@ -8,6 +8,7 @@ mod builder;
 mod edge_walk;
 mod empty_pack;
 mod hydration;
+mod l2_base;
 mod mcp_ref;
 mod psych_mirror;
 mod quarantine;
@@ -21,6 +22,8 @@ mod tests;
 
 pub use builder::{ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack};
 pub use empty_pack::{EmptyContext, EmptyReason, refresh_projected_empty_context};
+pub(crate) use l2_base::L2BaseCache;
+pub use l2_base::L2BaseSummary;
 pub use mcp_ref::{MCP_CONTEXT_PACK_REF_SCHEMA_VERSION, McpContextPackRef, McpContextPackRefError};
 pub use psych_mirror::{
     PsychProfilePackSection, PsychProfilePackStaleReason, psych_mirror_source_candidate_from_claim,

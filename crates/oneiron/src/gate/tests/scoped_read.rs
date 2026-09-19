@@ -715,6 +715,7 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
         vector: None,
     };
     let mut pack = ContextPack {
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
             entity(kept_seed, crate::registry::ENTITY_TYPE_TURN, 1.0),
@@ -980,5 +981,52 @@ fn scoped_read_facet_grants_match_facet_of_edges() -> Result<()> {
         scoped_read.get(&unfaceted_claim)?.is_none(),
         "facet grant must not fall through to unfaceted claims"
     );
+    Ok(())
+}
+
+#[test]
+fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = test_id(0x21);
+    let world = test_id(0x32);
+    let claim_id = test_id(0x33);
+    put_text_entity(
+        &vault,
+        &subject,
+        ENTITY_TYPE_PERSON,
+        "subject",
+        serde_json::json!({"name":"subject"}),
+    )?;
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.world = Some(world);
+    put_claim_text_body(&vault, &claim_id, "l2scopedneedle", &body)?;
+    vault.put_edge(&claim_id, EdgeKind::ClaimOf, &subject, 1.0)?;
+    let manifest = encode_policy_manifest(vec![core_read_scoped_grant_entry(
+        "l2-reader",
+        Value::Map(vec![(
+            Value::from("world_ref"),
+            Value::from(world.to_hex()),
+        )]),
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0x61), &manifest)?;
+    let reader = vault.scoped_read(ScopedReadActorKey::new("l2-reader").unwrap());
+    let allowed = vault
+        .context_pack()
+        .l2_summary_subjects(&[subject])
+        .l2_summary_reader(&reader)
+        .search_text("l2scopedneedle", 10)
+        .run()?;
+    assert_eq!(
+        allowed.l2_base.as_ref().unwrap().evidence_ids(),
+        &[claim_id]
+    );
+    let denied = vault.scoped_read(ScopedReadActorKey::new("l2-other-reader").unwrap());
+    let pack = vault
+        .context_pack()
+        .l2_summary_subjects(&[subject])
+        .l2_summary_reader(&denied)
+        .search_text("l2scopedneedle", 10)
+        .run()?;
+    assert!(pack.l2_base.is_none());
     Ok(())
 }

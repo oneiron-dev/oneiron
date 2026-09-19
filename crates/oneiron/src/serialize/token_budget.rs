@@ -312,7 +312,10 @@ fn drop_last_token_budget_item(prepared: &mut PreparedPack, include_critical: bo
         return true;
     }
 
-    drop_last_token_budget_item_from_groups(&mut prepared.results, include_critical)
+    if drop_last_token_budget_item_from_groups(&mut prepared.results, include_critical) {
+        return true;
+    }
+    prepared.l2_base.take().is_some()
 }
 
 fn drop_last_token_budget_item_from_groups(
@@ -395,6 +398,12 @@ fn collect_pack_token_stats(
     tokenizer: PackTokenizer,
 ) -> PackTokenStats {
     let mut sections = Vec::new();
+    if let Some(summary) = &prepared.l2_base {
+        sections.push(PackSectionTokenStats {
+            section: "l2_base".to_owned(),
+            tokens: tokenizer.count(&summary.body),
+        });
+    }
     let mut items = Vec::new();
     if prepared.merged {
         collect_section_token_stats(

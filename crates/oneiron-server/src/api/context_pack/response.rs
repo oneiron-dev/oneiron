@@ -189,6 +189,10 @@ pub(crate) struct CoreContextPackEvidence {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
+    /// Content-addressed, score-free subject evidence, before the read-time delta.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    l2_base: Option<oneiron::context_pack::L2BaseSummary>,
     /// Execution quality projected from the engine's shared report.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
@@ -246,6 +250,22 @@ pub(crate) async fn run_context_pack_builder(
     ),
     ApiError,
 > {
+    let subjects: Vec<_> = memories
+        .as_ref()
+        .and_then(|request| request.companion.as_ref())
+        .into_iter()
+        .flat_map(|companion| {
+            [
+                companion.person_ref.as_deref(),
+                companion.persona_ref.as_deref(),
+            ]
+        })
+        .flatten()
+        .filter_map(|reference| oneiron::EntityId::from_hex(reference).ok())
+        .collect();
+    let builder = builder
+        .l2_summary_subjects(&subjects)
+        .l2_summary_reader(scoped_read);
     let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
         tracing::error!(error = %error, "core context-pack failed");
         core_engine_error("core context-pack failed", error)
@@ -343,6 +363,7 @@ pub(crate) fn core_context_pack_response(
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        l2_base: pack.l2_base,
         quality: Some(pack.retrieval_quality.quality),
         degradation: (!pack.retrieval_quality.degradation.is_empty())
             .then_some(pack.retrieval_quality.degradation),
