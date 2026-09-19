@@ -93,26 +93,36 @@ pub(crate) fn inbox_claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     // The implicit writer substrate is provenance, just like actor evidence.
     // Two runs may propose the same fact under different writers. Named masks
     // remain semantic scope; never erase them, relationships or project scope.
-    let writer = body.evidence.as_ref().and_then(rmpv::Value::as_map).and_then(|fields| {
-        let mut actors = fields.iter().filter(|(key,_)|key.as_str()==Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY));
-        let (_,rmpv::Value::Binary(bytes))=actors.next()? else { return None; };
-        if actors.next().is_some() {return None;}
-        EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()
-    });
-    if writer.is_some_and(|actor|body.scope_facet==crate::claim::substrate_facet_id(actor)) {
-        let mut value=rmpv::decode::read_value(&mut encoded.as_slice())
-            .map_err(|_|Error::InvariantViolation("encoded inbox claim map"))?;
-        if let rmpv::Value::Map(fields)=&mut value {
-            for (key,value) in fields {
-                if key.as_str()==Some("scopeFacetId") {
+    let writer = body
+        .evidence
+        .as_ref()
+        .and_then(rmpv::Value::as_map)
+        .and_then(|fields| {
+            let mut actors = fields.iter().filter(|(key, _)| {
+                key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
+            });
+            let (_, rmpv::Value::Binary(bytes)) = actors.next()? else {
+                return None;
+            };
+            if actors.next().is_some() {
+                return None;
+            }
+            EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()
+        });
+    if writer.is_some_and(|actor| body.scope_facet == crate::claim::substrate_facet_id(actor)) {
+        let mut value = rmpv::decode::read_value(&mut encoded.as_slice())
+            .map_err(|_| Error::InvariantViolation("encoded inbox claim map"))?;
+        if let rmpv::Value::Map(fields) = &mut value {
+            for (key, value) in fields {
+                if key.as_str() == Some("scopeFacetId") {
                     // Hash-only tag, not a stored claim or a fabricated FACET id.
-                    *value=rmpv::Value::from("writer-substrate");
+                    *value = rmpv::Value::from("writer-substrate");
                 }
             }
         }
         encoded.clear();
-        rmpv::encode::write_value(&mut encoded,&value)
-            .map_err(|_|Error::InvariantViolation("normalized inbox claim map"))?;
+        rmpv::encode::write_value(&mut encoded, &value)
+            .map_err(|_| Error::InvariantViolation("normalized inbox claim map"))?;
     }
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.inbox.claim_hash.v1");

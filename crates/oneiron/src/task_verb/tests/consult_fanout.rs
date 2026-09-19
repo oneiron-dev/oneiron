@@ -205,17 +205,30 @@ fn fanout_pathologies_park_with_count_fan_out_board_rows_and_evidence() {
     let peer = input.assignees[0];
     // The reverse leg is a real peer actor, not the first-party actor preset.
     // Give that peer an explicit Auto ceiling before testing cycle admission.
-    let bytes=crate::gate::default_policy_manifest();
-    let Value::Map(mut manifest)=rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else { panic!("manifest"); };
-    let (_,Value::Array(ceilings))=manifest.iter_mut().find(|(k,_)| k.as_str()==Some("actor_ceilings")).unwrap() else { panic!("ceilings"); };
+    let bytes = crate::gate::default_policy_manifest();
+    let Value::Map(mut manifest) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
+        panic!("manifest");
+    };
+    let (_, Value::Array(ceilings)) = manifest
+        .iter_mut()
+        .find(|(k, _)| k.as_str() == Some("actor_ceilings"))
+        .unwrap()
+    else {
+        panic!("ceilings");
+    };
     ceilings.push(Value::Map(vec![
-        (Value::from("actor_class"),Value::from("agent")),
-        (Value::from("actor_ref"),Value::from(peer.to_hex())),
-        (Value::from("ceiling"),Value::from("auto")),
+        (Value::from("actor_class"), Value::from("agent")),
+        (Value::from("actor_ref"), Value::from(peer.to_hex())),
+        (Value::from("ceiling"), Value::from("auto")),
     ]));
-    let mut bytes=Vec::new();
-    rmpv::encode::write_value(&mut bytes,&Value::Map(manifest)).unwrap();
-    crate::test_util::put_policy_manifest_bytes(&vault,crate::gate::default_policy_manifest_id().unwrap(),&bytes).unwrap();
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(manifest)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().unwrap(),
+        &bytes,
+    )
+    .unwrap();
     let facade = vault.memory(actor, EdgeActorClass::Agent);
     let first = facade.fan_out_consults(&input).unwrap();
     assert_eq!(first.task_refs.len(), 1);

@@ -590,28 +590,68 @@ fn later_host_fork_revokes_cached_owner_auth_and_its_session_jti() {
 
 #[test]
 fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
-    struct At<'a> { fixture: &'a Fixture, now: u64 }
+    struct At<'a> {
+        fixture: &'a Fixture,
+        now: u64,
+    }
     impl RevokedTokenJtis for At<'_> {
-        fn is_revoked(&self, jti: &str) -> Result<bool, ()> { self.fixture.vault.is_revoked(jti) }
-        fn verify_slip(&self, secret: &str, slip: &CapabilitySlip, challenge: &[u8], signature: &[u8])
-            -> Result<oneiron::authority::VerifiedSlip, ()> {
+        fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
+            self.fixture.vault.is_revoked(jti)
+        }
+        fn verify_slip(
+            &self,
+            secret: &str,
+            slip: &CapabilitySlip,
+            challenge: &[u8],
+            signature: &[u8],
+        ) -> Result<oneiron::authority::VerifiedSlip, ()> {
             let fold = self.fixture.vault.authority_fold().map_err(drop)?;
-            slip.verify(secret.as_bytes(), &fold, self.now, challenge, signature).map_err(drop)
+            slip.verify(secret.as_bytes(), &fold, self.now, challenge, signature)
+                .map_err(drop)
         }
     }
     let fixture = Fixture::new();
     let slip = fixture.mint(|claims| claims.actor_class = Some("human".to_owned()));
     let token = slip.to_token().unwrap();
-    let first = CoreAuth::from_headers(&fixture.headers(&slip), &fixture.config,
-        &At { fixture: &fixture, now: slip.claims.issued_at }).unwrap();
-    let later = CoreAuth::from_headers(&fixture.headers(&slip), &fixture.config,
-        &At { fixture: &fixture, now: slip.claims.issued_at + 20 }).unwrap();
+    let first = CoreAuth::from_headers(
+        &fixture.headers(&slip),
+        &fixture.config,
+        &At {
+            fixture: &fixture,
+            now: slip.claims.issued_at,
+        },
+    )
+    .unwrap();
+    let later = CoreAuth::from_headers(
+        &fixture.headers(&slip),
+        &fixture.config,
+        &At {
+            fixture: &fixture,
+            now: slip.claims.issued_at + 20,
+        },
+    )
+    .unwrap();
     assert!(first.same_authority(&later));
     assert_eq!(first.idempotency_principal(), later.idempotency_principal());
     let mut narrowed = CapabilitySlip::from_token(&token).unwrap();
-    narrowed.attenuate(SlipCaveat { ttl_secs: Some(30), ..Default::default() }).unwrap();
-    let narrowed_auth = CoreAuth::from_headers(&fixture.headers(&narrowed), &fixture.config,
-        &At { fixture: &fixture, now: slip.claims.issued_at + 20 }).unwrap();
+    narrowed
+        .attenuate(SlipCaveat {
+            ttl_secs: Some(30),
+            ..Default::default()
+        })
+        .unwrap();
+    let narrowed_auth = CoreAuth::from_headers(
+        &fixture.headers(&narrowed),
+        &fixture.config,
+        &At {
+            fixture: &fixture,
+            now: slip.claims.issued_at + 20,
+        },
+    )
+    .unwrap();
     assert!(!first.same_authority(&narrowed_auth));
-    assert_ne!(first.idempotency_principal(), narrowed_auth.idempotency_principal());
+    assert_ne!(
+        first.idempotency_principal(),
+        narrowed_auth.idempotency_principal()
+    );
 }

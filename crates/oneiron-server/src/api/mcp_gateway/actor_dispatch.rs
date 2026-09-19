@@ -45,11 +45,18 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     // principal. Verify that exact instrument with its holder proof; never
     // borrow an unrelated Authorization header's owner privileges.
     let mut proof_headers = headers.clone();
-    proof_headers.insert(AUTHORIZATION, format!("Bearer {credential}").parse()
-        .map_err(|_| mcp_proof_error())?);
+    proof_headers.insert(
+        AUTHORIZATION,
+        format!("Bearer {credential}")
+            .parse()
+            .map_err(|_| mcp_proof_error())?,
+    );
     let auth = crate::auth::CoreAuth::from_headers(
-        &proof_headers, &server.config, server.vault().as_ref(),
-    ).map_err(|_| mcp_proof_error())?;
+        &proof_headers,
+        &server.config,
+        server.vault().as_ref(),
+    )
+    .map_err(|_| mcp_proof_error())?;
     let proof = auth.verified_slip().ok_or_else(mcp_proof_error)?;
     // Only the actual configured root may act through its host-registered
     // actor. Every client is bound to the paired holder and verified class.
@@ -65,8 +72,11 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     // The legacy registry can represent only all or one world/facet. Refuse
     // a wider registration instead of silently projecting away verifier bounds.
     use oneiron::federation::{ScopeAxis, ScopeId};
-    let axis = |id: Option<oneiron::EntityId>| id.map_or(ScopeAxis::All, |id| ScopeAxis::Some(
-        std::collections::BTreeSet::from([ScopeId(id)])));
+    let axis = |id: Option<oneiron::EntityId>| {
+        id.map_or(ScopeAxis::All, |id| {
+            ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(id)]))
+        })
+    };
     if !axis(actor.scope.world_ref).is_narrowing_of(&proof.scope().worlds)
         || !axis(actor.scope.facet_ref).is_narrowing_of(&proof.scope().facets)
     {
@@ -81,8 +91,11 @@ pub(crate) async fn resolve_mcp_gateway_actor(
 }
 
 fn mcp_proof_error() -> McpGatewayError {
-    McpGatewayError::new(-32001, "mcp_auth_required",
-        "the registered connector requires its live paired holder proof")
+    McpGatewayError::new(
+        -32001,
+        "mcp_auth_required",
+        "the registered connector requires its live paired holder proof",
+    )
 }
 
 pub(crate) fn mcp_connector_credential(headers: &HeaderMap) -> Result<String, McpGatewayError> {
@@ -289,16 +302,29 @@ pub(crate) async fn execute_mcp_tool(
             | crate::mcp::McpVerbBinding::BoardSubscribe
             | crate::mcp::McpVerbBinding::BoardUnsubscribe));
     if !filtered_read {
-        auth.require_unrestricted_record_scope().map_err(|_| McpGatewayError::new(
-            -32020, "mcp_scope_unprojectable", "this facade cannot project the credential's record bounds"))?;
+        auth.require_unrestricted_record_scope().map_err(|_| {
+            McpGatewayError::new(
+                -32020,
+                "mcp_scope_unprojectable",
+                "this facade cannot project the credential's record bounds",
+            )
+        })?;
     }
-    let writes = matches!(&args, McpValidatedToolArgs::Edit(_) | McpValidatedToolArgs::Book(_)
-        | McpValidatedToolArgs::ExecuteCode(_) | McpValidatedToolArgs::Calendar(_))
-        || matches!(&args, McpValidatedToolArgs::Verb(verb) if matches!(verb.tool.binding,
+    let writes = matches!(
+        &args,
+        McpValidatedToolArgs::Edit(_)
+            | McpValidatedToolArgs::Book(_)
+            | McpValidatedToolArgs::ExecuteCode(_)
+            | McpValidatedToolArgs::Calendar(_)
+    ) || matches!(&args, McpValidatedToolArgs::Verb(verb) if matches!(verb.tool.binding,
             crate::mcp::McpVerbBinding::TasksCreate | crate::mcp::McpVerbBinding::TasksAck
             | crate::mcp::McpVerbBinding::TasksCancel));
-    auth.require(if writes { crate::auth::CoreScope::Write } else { crate::auth::CoreScope::Read })
-        .map_err(|_| mcp_proof_error())?;
+    auth.require(if writes {
+        crate::auth::CoreScope::Write
+    } else {
+        crate::auth::CoreScope::Read
+    })
+    .map_err(|_| mcp_proof_error())?;
     match args {
         McpValidatedToolArgs::Nav(args) => execute_mcp_nav(server, args, actor),
         McpValidatedToolArgs::Read(args) => execute_mcp_read(server, args, actor),

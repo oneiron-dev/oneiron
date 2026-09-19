@@ -431,8 +431,8 @@ use oneiron::code_run::{
     SelfMemorySearchCall,
 };
 use oneiron::context_board::{
-    BoardBlockHeader, BoardBudgetRequest,
-    assemble_task_agent_sections, render_agents_section, render_tasks_section,
+    BoardBlockHeader, BoardBudgetRequest, assemble_task_agent_sections, render_agents_section,
+    render_tasks_section,
 };
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorLimits, EngineExecutorStatus, JsCodeModeHost,
@@ -625,11 +625,24 @@ struct InjectedHostRun {
 fn oracle_resolved_actor(actor_ref: EntityId) -> McpResolvedActor {
     // The injected host is a trusted embedding seam, not network admission.
     // Resolve its actor through the public registry; no read proof is forged.
-    let mut registry=oneiron_server::mcp::McpConnectorActorRegistry::new(
-        oneiron_server::mcp::McpCredentialHashKey::from_bytes([0x41;32]));
-    registry.register("oracle-injected-host",oneiron_server::mcp::McpConnectorActorRecord::new(
-        actor_ref,EdgeActorClass::Agent,McpConnectorScope::vault_wide())).expect("register actor");
-    registry.resolve("oracle-injected-host",1,|class,id| class=="agent" && id==actor_ref.to_hex()).expect("resolve registered actor")
+    let mut registry = oneiron_server::mcp::McpConnectorActorRegistry::new(
+        oneiron_server::mcp::McpCredentialHashKey::from_bytes([0x41; 32]),
+    );
+    registry
+        .register(
+            "oracle-injected-host",
+            oneiron_server::mcp::McpConnectorActorRecord::new(
+                actor_ref,
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("register actor");
+    registry
+        .resolve("oracle-injected-host", 1, |class, id| {
+            class == "agent" && id == actor_ref.to_hex()
+        })
+        .expect("resolve registered actor")
 }
 
 /// Runs `execute_code` twice under ONE run handle through the SHIPPED injected

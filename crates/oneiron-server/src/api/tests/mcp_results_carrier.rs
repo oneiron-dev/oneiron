@@ -78,7 +78,11 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
-            .resolve(&mcp_registered_credential(&server, credential), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection
     };
@@ -360,7 +364,11 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
-            .resolve(&mcp_registered_credential(&server, credential), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection
     };

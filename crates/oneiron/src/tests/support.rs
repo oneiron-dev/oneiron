@@ -1253,7 +1253,11 @@ pub(super) fn federation_grant_body_with_role_and_preset(role: &str, preset: &st
                 ("vault_id".into(), rmpv::Value::from(7_u64)),
             ]),
         ),
-        ("authority_scope".into(),crate::federation::scope_codec::encode_scope_value(&crate::federation::Scope::top()).expect("fixture scope")),
+        (
+            "authority_scope".into(),
+            crate::federation::scope_codec::encode_scope_value(&crate::federation::Scope::top())
+                .expect("fixture scope"),
+        ),
         ("member_ref".into(), rmpv::Value::from(member_ref.as_str())),
         ("role".into(), rmpv::Value::from(role)),
         ("preset".into(), rmpv::Value::from(preset)),

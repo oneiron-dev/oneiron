@@ -255,7 +255,8 @@ impl CapabilitySlip {
         let mut effective = self.claims.clone();
         // An absent named-record bound is universal on generic record reads.
         // Once a caveat supplies a set, its empty meet is Bottom, never universal.
-        let mut records_constrained = !effective.records.is_empty() || !effective.channels.is_empty();
+        let mut records_constrained =
+            !effective.records.is_empty() || !effective.channels.is_empty();
         for caveat in &self.caveats {
             mac = *blake3::keyed_hash(&mac, &canonical(caveat)?).as_bytes();
             if let Some(scope) = &caveat.scope {

@@ -1777,7 +1777,8 @@ fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt(
     let portable_persona = EntityId::from_bytes_unchecked([0x4B; 16]);
     let learned_at = 1_772_400_001u64;
     let local_record = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
-    let portable_record = companion_record(portable_persona, crate::federation::Sensitivity::Public);
+    let portable_record =
+        companion_record(portable_persona, crate::federation::Sensitivity::Public);
     let local_body =
         encode_companion_record_body(&local_record.created_at(learned_at).unwrap()).unwrap();
     let portable_body =

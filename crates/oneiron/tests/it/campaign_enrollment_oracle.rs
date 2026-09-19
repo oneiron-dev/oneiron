@@ -975,11 +975,7 @@ fn distinct_pending_transitions_do_not_share_a_dedupe_key() -> Result<()> {
     // Base-reality evidence needs an explicit base grant; the two pending
     // transitions still differ by the person's named-world reach.
     let grants = QueryScope {
-        worlds: vec![
-            first_world,
-            second_world,
-            oneiron::claim::base_world_id(),
-        ],
+        worlds: vec![first_world, second_world, oneiron::claim::base_world_id()],
         facets: Vec::new(),
     };
     place_in_world(&vault, fixture.person, first_world);

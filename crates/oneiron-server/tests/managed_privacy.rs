@@ -123,10 +123,7 @@ fn managed_privacy_posture_rejects_legacy_spellings_before_conflict_check() {
         let dir = tempfile::tempdir().unwrap();
         let mut argv = vec!["oneiron-server".to_owned()];
         argv.extend(managed_argv(dir.path()));
-        argv.extend([
-            "--privacy-posture".to_owned(),
-            legacy.to_owned(),
-        ]);
+        argv.extend(["--privacy-posture".to_owned(), legacy.to_owned()]);
         assert!(
             ArgvProbe::try_parse_from(argv).is_err(),
             "--privacy-posture {legacy:?} must not parse"

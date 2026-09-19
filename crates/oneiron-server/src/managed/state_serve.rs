@@ -350,7 +350,11 @@ async fn refuse_frozen_writes(
     if state.server.managed_issuer.is_some() {
         // Bearer authentication terminated at the supervisor. Do not let a
         // forwarded legacy/dev claim select a principal on secondary routes.
-        for header in ["authorization", "x-oneiron-binding", "x-oneiron-mcp-credential"] {
+        for header in [
+            "authorization",
+            "x-oneiron-binding",
+            "x-oneiron-mcp-credential",
+        ] {
             request.headers_mut().remove(header);
         }
     }

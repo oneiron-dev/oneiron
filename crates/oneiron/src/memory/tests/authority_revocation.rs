@@ -1100,7 +1100,10 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     // First-seen migration starts its veto window now; peer timestamps cannot
     // pretend that the delay has already elapsed.
     let full = vault.authority_fold().expect("fold");
-    assert!(!full.pending_widens.is_empty(),"the rotation is dated at migration time, so its delay has not elapsed");
+    assert!(
+        !full.pending_widens.is_empty(),
+        "the rotation is dated at migration time, so its delay has not elapsed"
+    );
     let rtxn = vault.store.env.read_txn().expect("read txn");
     assert_eq!(
         vault

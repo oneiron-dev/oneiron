@@ -37,7 +37,8 @@ pub(super) fn scoped_read_for_legacy_api(
 ) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
     let vault = server.vault().as_ref();
     if let Some(issuer) = server.managed_issuer.as_ref() {
-        let proof = vault.verified_host_root_slip(issuer)
+        let proof = vault
+            .verified_host_root_slip(issuer)
             .map_err(|_| ApiError::unauthorized())?;
         let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof)
             .ok_or_else(ApiError::unauthorized)?;

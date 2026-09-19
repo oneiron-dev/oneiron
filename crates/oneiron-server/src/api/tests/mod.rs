@@ -1269,11 +1269,7 @@ pub(super) fn memory_reason_server_with_guard_auth(
     backend: Option<Arc<dyn MemoryReasonBackend>>,
     guard: oneiron::llm::BudgetGuard,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
-    let (dir, server) = memory_reason_server_inner(
-        backend,
-        guard,
-        Some("secret".to_owned()),
-    );
+    let (dir, server) = memory_reason_server_inner(backend, guard, Some("secret".to_owned()));
     (dir, server)
 }
 

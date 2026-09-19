@@ -302,7 +302,11 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
     {
         let mut registry = server.mcp_registry.lock().await;
         let connection = registry
-            .resolve(&mcp_registered_credential(&server, credential), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection;
         // A different board STATE advances the snapshot epoch by exactly one,
@@ -385,7 +389,11 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
-            .resolve(&mcp_registered_credential(&server, credential), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection
     };
@@ -565,7 +573,11 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
     let (connection, cursor) = {
         let mut registry = server.mcp_registry.lock().await;
         let connection = registry
-            .resolve(&mcp_registered_credential(&server, credential), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection;
         let cursor = registry.mint_page_cursor_with_snapshot(
@@ -712,7 +724,11 @@ async fn mcp_two_live_cursors_on_one_connection_continue_independently() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         let connection = registry
-            .resolve(&mcp_registered_credential(&server, credential), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection;
         assert_eq!(

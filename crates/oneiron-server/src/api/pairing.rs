@@ -102,13 +102,25 @@ async fn register_paired_mcp(
         ScopeAxis::Some(ids) if ids.len() == 1 => ids.first().map(|id| Some(id.0)),
         _ => None,
     };
-    let (Some(world), Some(facet)) = (axis(&claims.scope.worlds), axis(&claims.scope.facets)) else {
+    let (Some(world), Some(facet)) = (axis(&claims.scope.worlds), axis(&claims.scope.facets))
+    else {
         return Ok(());
     };
-    let actor = oneiron::EntityId::from_hex(&claims.holder_ref).map_err(|_| ApiError::unauthorized())?;
-    server.mcp_registry.lock().await.register(token,
-        crate::mcp::McpConnectorActorRecord::new(actor, class,
-            crate::mcp::McpConnectorScope::scoped(world, facet)).with_expiry(claims.expires_at))
+    let actor =
+        oneiron::EntityId::from_hex(&claims.holder_ref).map_err(|_| ApiError::unauthorized())?;
+    server
+        .mcp_registry
+        .lock()
+        .await
+        .register(
+            token,
+            crate::mcp::McpConnectorActorRecord::new(
+                actor,
+                class,
+                crate::mcp::McpConnectorScope::scoped(world, facet),
+            )
+            .with_expiry(claims.expires_at),
+        )
         .map_err(|_| ApiError::unauthorized())
 }
 

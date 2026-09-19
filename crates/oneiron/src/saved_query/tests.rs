@@ -358,7 +358,10 @@ fn claim_world_scope_admission_mirrors_the_gate_rule() {
         facets: Vec::new(),
     };
     assert!(!claim_in_scope(&scoped_to(None), &scope));
-    let with_base=QueryScope { worlds:vec![id(0x33),crate::claim::base_world_id()], facets:Vec::new() };
+    let with_base = QueryScope {
+        worlds: vec![id(0x33), crate::claim::base_world_id()],
+        facets: Vec::new(),
+    };
     assert!(claim_in_scope(&scoped_to(None), &with_base));
     assert!(claim_in_scope(&scoped_to(Some(id(0x33))), &scope));
     assert!(!claim_in_scope(&scoped_to(Some(id(0x34))), &scope));

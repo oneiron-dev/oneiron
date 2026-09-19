@@ -140,7 +140,11 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         )?;
         let before = durable_rows(&vault)?;
         let err = mutate(&vault, &intent, &owner).expect_err(name);
-        assert_eq!(err.kind(), ErrorKind::WriteConcurrentWithRevocation, "{name}");
+        assert_eq!(
+            err.kind(),
+            ErrorKind::WriteConcurrentWithRevocation,
+            "{name}"
+        );
         assert_eq!(
             durable_rows(&vault)?,
             before,

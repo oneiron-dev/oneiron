@@ -2231,19 +2231,14 @@ fn companion_register_records_budget_with_fixed_state_allocation() {
     };
 
     assert_eq!(
-        type_fraction(
-            GroupKey::Kind(ENTITY_TYPE_FACET),
-            &zero_other_allocation
-        ),
+        type_fraction(GroupKey::Kind(ENTITY_TYPE_FACET), &zero_other_allocation),
         zero_other_allocation.claims
     );
 
     let (budgeted, used) = budget_groups(&groups, &zero_other_allocation, needed);
     let records = budgeted
         .iter()
-        .find_map(|(key, rows)| {
-            (*key == GroupKey::Kind(ENTITY_TYPE_FACET)).then_some(rows)
-        })
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(ENTITY_TYPE_FACET)).then_some(rows))
         .expect("companion register group should keep state allocation budget");
 
     assert_eq!(used, needed);

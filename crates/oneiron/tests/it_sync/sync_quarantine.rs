@@ -139,9 +139,7 @@ fn claim_body_with_bad_predicate() -> Vec<u8> {
         ),
         (
             rmpv::Value::from("scopeProjectId"),
-            rmpv::Value::Binary(
-                oneiron::claim::default_project_id().as_bytes().to_vec(),
-            ),
+            rmpv::Value::Binary(oneiron::claim::default_project_id().as_bytes().to_vec()),
         ),
         (rmpv::Value::from("scopeVersion"), rmpv::Value::from(2u64)),
     ]);

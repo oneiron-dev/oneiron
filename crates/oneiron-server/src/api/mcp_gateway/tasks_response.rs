@@ -297,11 +297,18 @@ pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,
 ) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
-    let key = actor.auth.as_ref()
+    let key = actor
+        .auth
+        .as_ref()
         .and_then(crate::auth::CoreAuth::verified_slip)
         .and_then(oneiron::claim::ScopedReadActorKey::from_verified_slip)
-        .ok_or_else(|| McpGatewayError::new(-32001, "mcp_auth_required",
-            "scoped reads require the authenticated connector proof"))?;
+        .ok_or_else(|| {
+            McpGatewayError::new(
+                -32001,
+                "mcp_auth_required",
+                "scoped reads require the authenticated connector proof",
+            )
+        })?;
     Ok(vault.scoped_read(key))
 }
 

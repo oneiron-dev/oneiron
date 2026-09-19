@@ -475,7 +475,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
         );
         assert_eq!(type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY), 1);
         assert_eq!(type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER), 0);
-        assert_eq!(vault.companion_register()?.len(),1);
+        assert_eq!(vault.companion_register()?.len(), 1);
         assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), 2);
         assert_eq!(
             type_count(&vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),

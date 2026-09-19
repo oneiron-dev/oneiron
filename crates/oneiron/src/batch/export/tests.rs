@@ -147,10 +147,7 @@ fn companion_export_checks_channel_ceiling_and_lifecycle() -> Result<()> {
     expressions.update(included.key(), CompanionExpression::Warm)?;
     expressions.update(private.key(), CompanionExpression::Unrestricted)?;
     expressions.update(shared_private.key(), CompanionExpression::Unrestricted)?;
-    expressions.update(
-        shared_public.key(),
-        CompanionExpression::Unrestricted,
-    )?;
+    expressions.update(shared_public.key(), CompanionExpression::Unrestricted)?;
     expressions.update(closed.key(), CompanionExpression::Professional)?;
 
     let layer = companion_export_layer(
@@ -173,8 +170,18 @@ fn companion_export_checks_channel_ceiling_and_lifecycle() -> Result<()> {
         Some(CompanionExpression::Warm)
     );
     assert_ne!(layer.personas()[0].record(), &private);
-    assert!(layer.personas().iter().any(|item|item.record()==&shared_public));
-    assert!(layer.personas().iter().all(|item|item.record()!=&private));
+    assert!(
+        layer
+            .personas()
+            .iter()
+            .any(|item| item.record() == &shared_public)
+    );
+    assert!(
+        layer
+            .personas()
+            .iter()
+            .all(|item| item.record() != &private)
+    );
     Ok(())
 }
 
@@ -1443,9 +1450,26 @@ mod staged_content_gc {
             &companion_body_without_pinned_keys(),
         );
 
-        let retired=claim_and_entity_update(&claim_id,&claim,&companion_id,ENTITY_TYPE_COMPANION_REGISTER,&valid_companion_body());
-        assert!(matches!(admit_federated_window_update(&vault,&WindowKey::new("2026-01"),&retired,FederationAdmissionRole::Guest),Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))));
-        assert!(matches!(stage_prebuilt_update(&vault,0x7A,&retired),Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))));
+        let retired = claim_and_entity_update(
+            &claim_id,
+            &claim,
+            &companion_id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &valid_companion_body(),
+        );
+        assert!(matches!(
+            admit_federated_window_update(
+                &vault,
+                &WindowKey::new("2026-01"),
+                &retired,
+                FederationAdmissionRole::Guest
+            ),
+            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+        ));
+        assert!(matches!(
+            stage_prebuilt_update(&vault, 0x7A, &retired),
+            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+        ));
         // Admission refuses the whole artifact, as it already does for TASK.
         let err = admit_federated_window_update(
             &vault,

@@ -819,10 +819,7 @@ fn world_value_must_be_16_byte_binary() {
         if let Some(world) = world {
             entries.push((Value::from("worldId"), world));
         }
-        entries.push((
-            Value::from("scopeRelationshipId"),
-            Value::from("all"),
-        ));
+        entries.push((Value::from("scopeRelationshipId"), Value::from("all")));
         entries.push((Value::from("subj"), Value::Binary(subj.as_bytes().to_vec())));
         entries.push((Value::from("appr"), Value::from("auto")));
         entries.push((Value::from("life"), Value::from("active")));
@@ -4047,9 +4044,7 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
         use crate::federation::ScopeAxis;
         use std::collections::BTreeSet;
         let mut scope = crate::federation::scope_codec::read_preset();
-        scope.bands = ScopeAxis::Some(BTreeSet::from([
-            crate::registry::ENTITY_TYPE_PERSON,
-        ]));
+        scope.bands = ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_PERSON]));
         let bytes = crate::gate::default_policy_manifest();
         let Value::Map(mut entries) =
             rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")

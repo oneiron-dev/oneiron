@@ -146,10 +146,7 @@ pub(super) fn validate_workspace_references(
         minted.extend([
             (companion.person_ref, ENTITY_TYPE_PERSON),
             (companion.actor_ref, ENTITY_TYPE_AGENT_DEF),
-            (
-                companion.companion_record_ref,
-                ENTITY_TYPE_FACET,
-            ),
+            (companion.companion_record_ref, ENTITY_TYPE_FACET),
             (
                 companion.profile_grant_ref,
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT,

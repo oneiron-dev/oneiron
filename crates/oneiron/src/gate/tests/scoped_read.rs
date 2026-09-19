@@ -392,11 +392,17 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
     );
     for scopes in [
         vec![],
-        vec![core_read_grant_map("reader",Value::Map(vec![("world_ref".into(),test_id(0x29).to_hex().into())]))],
-        vec![nonclaim_entity_types_grant_map("reader",&[crate::registry::ENTITY_TYPE_CLAIM])],
+        vec![core_read_grant_map(
+            "reader",
+            Value::Map(vec![("world_ref".into(), test_id(0x29).to_hex().into())]),
+        )],
+        vec![nonclaim_entity_types_grant_map(
+            "reader",
+            &[crate::registry::ENTITY_TYPE_CLAIM],
+        )],
     ] {
-        put_policy_manifest_bytes(&vault,test_id(0x65),&core_read_grants_manifest(scopes))?;
-        assert!(scoped_read.hydrate_short_id("cldangling",0x5A)?.is_none());
+        put_policy_manifest_bytes(&vault, test_id(0x65), &core_read_grants_manifest(scopes))?;
+        assert!(scoped_read.hydrate_short_id("cldangling", 0x5A)?.is_none());
     }
     Ok(())
 }

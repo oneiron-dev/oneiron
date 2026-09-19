@@ -759,16 +759,43 @@ fn channel_identity_scope_rejects_hybrid_capability_and_unknown_keys() -> Result
 
 #[test]
 fn access_scope_migration_rejects_mixed_versions_and_malformed_scope() -> Result<()> {
-    assert_eq!(decode_access_grant_body(&grant_map(legacy_v2_entries()))?,test_grant());
-    let mut missing=valid_entries();
-    missing.retain(|(key,_)|key.as_str()!=Some("authority_scope"));
-    assert_eq!(decode_access_grant_body(&grant_map(missing)).unwrap_err().kind(),ErrorKind::InvalidAccessGrantBody);
-    for scope in [Value::Nil,crate::federation::scope_codec::encode_scope_value(&crate::federation::Scope::default())?] {
-        let mut entries=valid_entries();
-        entries.iter_mut().find(|(k,_)|k.as_str()==Some("authority_scope")).unwrap().1=scope.clone();
-        if scope==Value::Nil { assert_eq!(decode_access_grant_body(&grant_map(entries.clone())).unwrap_err().kind(),ErrorKind::InvalidAccessGrantBody); }
-        entries[0].1=Value::from(2_u64);
-        assert_eq!(decode_access_grant_body(&grant_map(entries)).unwrap_err().kind(),ErrorKind::InvalidAccessGrantBody);
+    assert_eq!(
+        decode_access_grant_body(&grant_map(legacy_v2_entries()))?,
+        test_grant()
+    );
+    let mut missing = valid_entries();
+    missing.retain(|(key, _)| key.as_str() != Some("authority_scope"));
+    assert_eq!(
+        decode_access_grant_body(&grant_map(missing))
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAccessGrantBody
+    );
+    for scope in [
+        Value::Nil,
+        crate::federation::scope_codec::encode_scope_value(&crate::federation::Scope::default())?,
+    ] {
+        let mut entries = valid_entries();
+        entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some("authority_scope"))
+            .unwrap()
+            .1 = scope.clone();
+        if scope == Value::Nil {
+            assert_eq!(
+                decode_access_grant_body(&grant_map(entries.clone()))
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidAccessGrantBody
+            );
+        }
+        entries[0].1 = Value::from(2_u64);
+        assert_eq!(
+            decode_access_grant_body(&grant_map(entries))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidAccessGrantBody
+        );
     }
     Ok(())
 }

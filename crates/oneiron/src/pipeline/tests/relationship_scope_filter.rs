@@ -238,10 +238,7 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
                 rmpv::Value::from("scopeProjectId"),
                 rmpv::Value::Binary(project.as_bytes().to_vec()),
             ),
-            (
-                rmpv::Value::from("scopeVersion"),
-                rmpv::Value::from(2_u64),
-            ),
+            (rmpv::Value::from("scopeVersion"), rmpv::Value::from(2_u64)),
         ]);
         let mut encoded = Vec::new();
         rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(fields))
@@ -306,7 +303,8 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
         )]))),
         body_with_relationship(Some(rmpv::Value::from("relationship"))),
         body_with_relationship(Some(rmpv::Value::Array(vec![rmpv::Value::Binary(vec![
-            0; 16
+            0;
+            16
         ])]))),
         // Singleton only: zero or two ids never validate.
         body_with_relationship(Some(rmpv::Value::Array(vec![]))),
@@ -315,9 +313,7 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
             rmpv::Value::Binary(entity_id(0xD9).as_bytes().to_vec()),
         ]))),
         // Legacy bare-binary shape is no longer on the wire.
-        body_with_relationship(Some(rmpv::Value::Binary(
-            relationship.as_bytes().to_vec(),
-        ))),
+        body_with_relationship(Some(rmpv::Value::Binary(relationship.as_bytes().to_vec()))),
     ] {
         assert_matches!(
             crate::claim::decode_claim_body(&invalid, true),

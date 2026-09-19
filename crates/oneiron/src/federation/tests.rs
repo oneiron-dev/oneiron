@@ -46,7 +46,11 @@ fn valid_entries() -> Vec<(Value, Value)> {
                 ),
             ]),
         ),
-        (Value::from("authority_scope"), super::scope_codec::encode_scope_value(&test_grant().authority_scope).expect("membership scope")),
+        (
+            Value::from("authority_scope"),
+            super::scope_codec::encode_scope_value(&test_grant().authority_scope)
+                .expect("membership scope"),
+        ),
         (
             Value::from(KEY_MEMBER_REF),
             Value::from(member_ref().to_hex()),
@@ -216,7 +220,10 @@ fn valid_delegate_entries() -> Vec<(Value, Value)> {
         match key.as_str() {
             Some(KEY_MEMBER_REF) => *value = Value::from(delegate_member_ref().to_hex()),
             Some(KEY_ROLE | KEY_PRESET) => *value = Value::from("delegate"),
-            Some("authority_scope") => *value=super::scope_codec::encode_scope_value(&test_delegate().authority_scope).expect("delegate scope"),
+            Some("authority_scope") => {
+                *value = super::scope_codec::encode_scope_value(&test_delegate().authority_scope)
+                    .expect("delegate scope")
+            }
             _ => {}
         }
     }
@@ -703,7 +710,14 @@ fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
     else {
         panic!("grant body must encode as a map");
     };
-    assert_eq!(entries.iter().filter(|(key,_)|!legacy_keys.contains(&key.as_str().expect("string key"))).count(),1,"current membership Scope also lies outside the legacy five-key shape");
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|(key, _)| !legacy_keys.contains(&key.as_str().expect("string key")))
+            .count(),
+        1,
+        "current membership Scope also lies outside the legacy five-key shape"
+    );
     Ok(())
 }
 
@@ -883,7 +897,13 @@ fn federation_pact_scope_decode_fails_closed() {
         (Value::from("future"), Value::from("permit")),
     ]));
 
-    assert_eq!(decode_federation_pact_scope(&empty_worlds).unwrap().lo_to_hi.worlds,FederationScopeWorlds::Bottom);
+    assert_eq!(
+        decode_federation_pact_scope(&empty_worlds)
+            .unwrap()
+            .lo_to_hi
+            .worlds,
+        FederationScopeWorlds::Bottom
+    );
     for (case, bytes) in [
         ("empty some", empty_some),
         ("unsorted ids", unsorted_ids),
@@ -939,12 +959,27 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
     let one_world = FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]);
     let two_worlds = FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]);
     assert!(!FederationScopeWorlds::Base.is_narrowing_of(&one_world));
-    let explicit_base=FederationScopeWorlds::Worlds(vec![crate::claim::base_world_id(),scope_entity(0x10)]);
+    let explicit_base =
+        FederationScopeWorlds::Worlds(vec![crate::claim::base_world_id(), scope_entity(0x10)]);
     assert!(FederationScopeWorlds::Base.is_narrowing_of(&explicit_base));
-    let base_direction=direction(FederationScopeWorlds::Base,FederationScopeFacets::All,FederationScopeBands::All);
-    let explicit_direction=direction(explicit_base,FederationScopeFacets::All,FederationScopeBands::All);
-    assert_eq!(base_direction.intersect(&explicit_direction),base_direction);
-    assert_eq!(explicit_direction.intersect(&base_direction),base_direction);
+    let base_direction = direction(
+        FederationScopeWorlds::Base,
+        FederationScopeFacets::All,
+        FederationScopeBands::All,
+    );
+    let explicit_direction = direction(
+        explicit_base,
+        FederationScopeFacets::All,
+        FederationScopeBands::All,
+    );
+    assert_eq!(
+        base_direction.intersect(&explicit_direction),
+        base_direction
+    );
+    assert_eq!(
+        explicit_direction.intersect(&base_direction),
+        base_direction
+    );
     assert!(one_world.is_narrowing_of(&two_worlds));
     assert!(!two_worlds.is_narrowing_of(&one_world));
     assert!(!FederationScopeWorlds::All.is_narrowing_of(&two_worlds));
@@ -3691,22 +3726,35 @@ fn federation_grant_scope_u64_max_round_trip() -> Result<()> {
 
 #[test]
 fn membership_scope_migration_never_ignores_a_carried_scope() -> Result<()> {
-    for grant in [test_grant(),test_delegate()] {
-        let bytes=encode_federation_grant_body(&grant)?;
-        let Value::Map(entries)=rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {panic!("map")};
-        let mut legacy=entries.clone();
-        legacy.retain(|(k,_)|k.as_str()!=Some("authority_scope"));
-        assert_grant_rejected("current missing scope",&grant_map(legacy.clone()));
-        legacy[0].1=Value::from(1_u64);
-        let mut expected=grant.clone();
-        if expected.role==FederationGrantRole::Delegate {expected.authority_scope=super::scope_codec::read_preset();}
-        assert_eq!(decode_federation_grant_body(&grant_map(legacy))?,expected);
-        for scope in [Value::Nil,super::scope_codec::encode_scope_value(&Scope::default())?] {
-            let mut changed=entries.clone();
-            changed.iter_mut().find(|(k,_)|k.as_str()==Some("authority_scope")).unwrap().1=scope.clone();
-            if scope==Value::Nil {assert_grant_rejected("malformed scope",&grant_map(changed.clone()));}
-            changed[0].1=Value::from(1_u64);
-            assert_grant_rejected("legacy cannot discard scope",&grant_map(changed));
+    for grant in [test_grant(), test_delegate()] {
+        let bytes = encode_federation_grant_body(&grant)?;
+        let Value::Map(entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
+            panic!("map")
+        };
+        let mut legacy = entries.clone();
+        legacy.retain(|(k, _)| k.as_str() != Some("authority_scope"));
+        assert_grant_rejected("current missing scope", &grant_map(legacy.clone()));
+        legacy[0].1 = Value::from(1_u64);
+        let mut expected = grant.clone();
+        if expected.role == FederationGrantRole::Delegate {
+            expected.authority_scope = super::scope_codec::read_preset();
+        }
+        assert_eq!(decode_federation_grant_body(&grant_map(legacy))?, expected);
+        for scope in [
+            Value::Nil,
+            super::scope_codec::encode_scope_value(&Scope::default())?,
+        ] {
+            let mut changed = entries.clone();
+            changed
+                .iter_mut()
+                .find(|(k, _)| k.as_str() == Some("authority_scope"))
+                .unwrap()
+                .1 = scope.clone();
+            if scope == Value::Nil {
+                assert_grant_rejected("malformed scope", &grant_map(changed.clone()));
+            }
+            changed[0].1 = Value::from(1_u64);
+            assert_grant_rejected("legacy cannot discard scope", &grant_map(changed));
         }
     }
     Ok(())

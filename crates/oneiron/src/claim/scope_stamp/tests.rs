@@ -120,10 +120,7 @@ fn person_mints_one_substrate_facet_with_sensitivity_and_replay_is_idempotent() 
         .commit()?;
     let raw = vault.get(&facet)?.expect("fixture");
     assert_eq!(vault.get_entity_type(&facet)?, Some(ENTITY_TYPE_FACET));
-    let Value::Map(entries) =
-        rmpv::decode::read_value(&mut &raw[..])
-            .expect("fixture")
-    else {
+    let Value::Map(entries) = rmpv::decode::read_value(&mut &raw[..]).expect("fixture") else {
         panic!("map")
     };
     assert!(
@@ -277,22 +274,13 @@ fn identity_facet_replay_and_export_use_content_sensitivity_not_export_classific
     let (_dir2, replayed) = self::vault()?;
     replayed
         .batch()
-        .put_replicated(
-            &facet,
-            ENTITY_TYPE_FACET,
-            AT,
-            10,
-            &raw[..],
-        )
+        .put_replicated(&facet, ENTITY_TYPE_FACET, AT, 10, &raw[..])
         .commit()?;
     assert_eq!(
         replayed.get_companion_record(&facet)?,
         vault.get_companion_record(&facet)?
     );
-    assert_eq!(
-        replayed.get_entity_type(&person)?,
-        Some(ENTITY_TYPE_PERSON)
-    );
+    assert_eq!(replayed.get_entity_type(&person)?, Some(ENTITY_TYPE_PERSON));
     let register = vault.companion_register()?;
     let expressions = crate::companion::CompanionExpressionRegister::new();
     let mut channel = Scope::top();

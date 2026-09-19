@@ -386,13 +386,23 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
     let (conn_facet_a, conn_facet_b, conn_wide, run_a, run_b) = {
         let mut registry = server.mcp_registry.lock().await;
         let a = registry
-            .resolve(&mcp_registered_credential(&server, cred_facet_a), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, cred_facet_a),
+                1,
+                |_, _| true,
+            )
             .expect("facet credential a resolves");
         let b = registry
-            .resolve(&mcp_registered_credential(&server, cred_facet_b), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, cred_facet_b),
+                1,
+                |_, _| true,
+            )
             .expect("facet credential b resolves");
         let wide = registry
-            .resolve(&mcp_registered_credential(&server, cred_wide), 1, |_, _| true)
+            .resolve(&mcp_registered_credential(&server, cred_wide), 1, |_, _| {
+                true
+            })
             .expect("the vault-wide credential resolves");
         for connection in [&a.stream_connection, &wide.stream_connection] {
             registry.enqueue_stream_frame(
@@ -513,7 +523,11 @@ async fn mcp_board_epoch_is_state_monotonic() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         let actor = registry
-            .resolve(&mcp_registered_credential(&server, credential), 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves");
         assert_eq!(
             registry
@@ -590,16 +604,34 @@ async fn mcp_registry_cannot_lend_host_authority_or_replace_the_paired_holder() 
     let other = seeded_test_entity_id(0x1704_0112);
     register_mcp_actor(&server, "paired-a", actor, oneiron::EdgeActorClass::Human).await;
     register_mcp_actor(&server, "paired-b", other, oneiron::EdgeActorClass::Human).await;
-    let record = |actor| crate::mcp::McpConnectorActorRecord::new(actor,
-        oneiron::EdgeActorClass::Human, crate::mcp::McpConnectorScope::vault_wide());
-    server.mcp_registry.lock().await.register("old-opaque", record(actor)).unwrap();
+    let record = |actor| {
+        crate::mcp::McpConnectorActorRecord::new(
+            actor,
+            oneiron::EdgeActorClass::Human,
+            crate::mcp::McpConnectorScope::vault_wide(),
+        )
+    };
+    server
+        .mcp_registry
+        .lock()
+        .await
+        .register("old-opaque", record(actor))
+        .unwrap();
     let mut request = mcp_list_request("/mcp", "secret", "opaque-not-root");
-    request.headers_mut().insert("x-oneiron-mcp-credential", "old-opaque".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("x-oneiron-mcp-credential", "old-opaque".parse().unwrap());
     let (_, denied) = route_json(server.clone(), request).await;
     assert_mcp_structured_error(&denied, "mcp_auth_required");
     // A genuine configured host credential can use its own logged root proof.
-    server.mcp_registry.lock().await.register("secret", record(actor)).unwrap();
-    let (_, admitted) = route_json(server.clone(), mcp_list_request("/mcp", "secret", "root")).await;
+    server
+        .mcp_registry
+        .lock()
+        .await
+        .register("secret", record(actor))
+        .unwrap();
+    let (_, admitted) =
+        route_json(server.clone(), mcp_list_request("/mcp", "secret", "root")).await;
     assert!(admitted.get("error").is_none(), "{admitted}");
     let token = mcp_registered_credential(&server, "paired-a");
     {
@@ -607,7 +639,11 @@ async fn mcp_registry_cannot_lend_host_authority_or_replace_the_paired_holder() 
         assert!(registry.unregister(&token));
         registry.register(&token, record(other)).unwrap();
     }
-    let (_, denied) = route_json(server.clone(), mcp_list_request("/mcp", "paired-a", "wrong-holder")).await;
+    let (_, denied) = route_json(
+        server.clone(),
+        mcp_list_request("/mcp", "paired-a", "wrong-holder"),
+    )
+    .await;
     assert_mcp_structured_error(&denied, "mcp_auth_required");
     {
         let mut registry = server.mcp_registry.lock().await;
@@ -615,6 +651,10 @@ async fn mcp_registry_cannot_lend_host_authority_or_replace_the_paired_holder() 
         registry.register(&token, record(actor)).unwrap();
         registry.revoke(&token, 1).unwrap();
     }
-    let (_, denied) = route_json(server.clone(), mcp_list_request("/mcp", "paired-a", "revoked-registry")).await;
+    let (_, denied) = route_json(
+        server.clone(),
+        mcp_list_request("/mcp", "paired-a", "revoked-registry"),
+    )
+    .await;
     assert_mcp_structured_error(&denied, "mcp_credential_revoked");
 }

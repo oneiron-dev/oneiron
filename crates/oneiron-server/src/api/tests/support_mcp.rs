@@ -72,8 +72,13 @@ pub(super) async fn register_mcp_actor(
             b"mcp actor",
         )
         .expect("seed mcp actor entity");
-    let credential = pair_mcp_credential(server, credential, actor_ref, actor_class,
-        &crate::mcp::McpConnectorScope::vault_wide());
+    let credential = pair_mcp_credential(
+        server,
+        credential,
+        actor_ref,
+        actor_class,
+        &crate::mcp::McpConnectorScope::vault_wide(),
+    );
     server
         .mcp_registry
         .lock()
@@ -173,9 +178,14 @@ pub(super) fn mcp_endpoint_request(path: &str, credential: &str, body: Value) ->
 /// Used where a test drives a gateway seam directly instead of through the
 /// router, so the credential still resolves exactly the way the wire resolves
 /// it — nothing here fabricates an actor.
-pub(super) fn mcp_credential_headers(server: &SyncServer, credential: &str) -> axum::http::HeaderMap {
-    let request = Request::builder().header(AUTHORIZATION, format!("Bearer {credential}"))
-        .body(Body::empty()).unwrap();
+pub(super) fn mcp_credential_headers(
+    server: &SyncServer,
+    credential: &str,
+) -> axum::http::HeaderMap {
+    let request = Request::builder()
+        .header(AUTHORIZATION, format!("Bearer {credential}"))
+        .body(Body::empty())
+        .unwrap();
     let request = bind_mcp_request(server, request);
     request.into_parts().0.headers
 }
@@ -309,8 +319,13 @@ pub(super) async fn register_scoped_mcp_actor(
             b"scoped mcp actor",
         )
         .expect("seed scoped mcp actor entity");
-    let credential = pair_mcp_credential(server, credential, actor_ref,
-        oneiron::EdgeActorClass::Human, &scope);
+    let credential = pair_mcp_credential(
+        server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+        &scope,
+    );
     server
         .mcp_registry
         .lock()
@@ -494,8 +509,13 @@ pub(super) async fn register_bound_verb_mcp_actor(
             b"bound-verb mcp actor",
         )
         .expect("seed bound-verb mcp actor entity");
-    let credential = pair_mcp_credential(server, credential, actor_ref, oneiron::EdgeActorClass::Human,
-        &crate::mcp::McpConnectorScope::vault_wide());
+    let credential = pair_mcp_credential(
+        server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+        &crate::mcp::McpConnectorScope::vault_wide(),
+    );
     server
         .mcp_registry
         .lock()

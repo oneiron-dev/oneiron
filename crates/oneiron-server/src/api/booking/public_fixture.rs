@@ -466,7 +466,14 @@ fn bind_fixture_owner(vault: &Vault, secret: &str, actor: EntityId) {
         .to_bytes()
         .to_vec();
     vault
-        .put_authority_log_entry(&bind, TimeRange { start: now, end: now }, now)
+        .put_authority_log_entry(
+            &bind,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
         .expect("owner binding lands");
     assert!(
         actor_binding_is_active(&vault.authority_fold().expect("refold"), &actor, "human"),

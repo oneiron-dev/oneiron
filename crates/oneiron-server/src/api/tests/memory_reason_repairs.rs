@@ -116,7 +116,8 @@ async fn memory_reason_text_query_text_never_retargets_the_probe() {
     let (_dir, server) = memory_reason_server_auth(Some(backend));
     for depth in ["minimal", "standard", "deep"] {
         let uri = format!("/api/search/text?query=launch&depth={depth}&view=standard");
-        let (status, original) = route_json_auth(server.clone(), raw_search_request_auth(&uri)).await;
+        let (status, original) =
+            route_json_auth(server.clone(), raw_search_request_auth(&uri)).await;
         assert_eq!(status, StatusCode::OK, "{original:?}");
         assert!(!original["items"].as_array().unwrap().is_empty());
         let (status, overridden) = route_json_auth(
@@ -241,7 +242,8 @@ async fn memory_reason_backend_errors_release_each_admitted_reservation() {
     ] {
         let guard = repair_guard(100, 17);
         let backend = Arc::new(RecordingReasonBackend::new(Some(stage)));
-        let (_dir, server) = memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
+        let (_dir, server) =
+            memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
         let per_read_usage = match stage {
             FailingStage::Decompose => 0,
             FailingStage::Rerank => 3,
@@ -288,7 +290,8 @@ async fn memory_reason_raw_search_errors_and_zero_pages_release_reservations() {
                 StatusCode::OK,
             ),
         ] {
-            let (status, body) = route_json_auth(server.clone(), raw_search_request_auth(uri)).await;
+            let (status, body) =
+                route_json_auth(server.clone(), raw_search_request_auth(uri)).await;
             assert_eq!(status, expected, "{uri}: {body:?}");
             assert_eq!(guard.read().reserved_units, 0);
         }
@@ -387,7 +390,8 @@ async fn memory_reason_budget_refusals_settle_actual_usage_and_stop_later_calls(
     ] {
         let guard = repair_guard(100, 17);
         let backend = Arc::new(RecordingReasonBackend::new(None));
-        let (_dir, server) = memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
+        let (_dir, server) =
+            memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
         let (status, body) = route_json_auth(
             server,
             json_request(

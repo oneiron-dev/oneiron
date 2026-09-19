@@ -499,14 +499,14 @@ fn claim_body(text: &str) -> Vec<u8> {
             (
                 rmpv::Value::from("scopeFacetId"),
                 rmpv::Value::Binary(
-                    oneiron::claim::substrate_facet_id(subject).as_bytes().to_vec(),
+                    oneiron::claim::substrate_facet_id(subject)
+                        .as_bytes()
+                        .to_vec(),
                 ),
             ),
             (
                 rmpv::Value::from("scopeProjectId"),
-                rmpv::Value::Binary(
-                    oneiron::claim::default_project_id().as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(oneiron::claim::default_project_id().as_bytes().to_vec()),
             ),
             (rmpv::Value::from("scopeVersion"), rmpv::Value::from(2u64)),
         ]),

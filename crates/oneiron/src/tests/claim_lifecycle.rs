@@ -536,14 +536,9 @@ fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
         ("to".into(), rmpv::Value::from(NOW)),
         (
             "worldId".into(),
-            rmpv::Value::Binary(
-                crate::claim::base_world_id().as_bytes().to_vec(),
-            ),
+            rmpv::Value::Binary(crate::claim::base_world_id().as_bytes().to_vec()),
         ),
-        (
-            "scopeRelationshipId".into(),
-            rmpv::Value::from("all"),
-        ),
+        ("scopeRelationshipId".into(), rmpv::Value::from("all")),
         (
             "subj".into(),
             rmpv::Value::Binary(subject.as_bytes().to_vec()),
@@ -553,14 +548,14 @@ fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
         (
             "scopeFacetId".into(),
             rmpv::Value::Binary(
-                crate::claim::substrate_facet_id(subject).as_bytes().to_vec(),
+                crate::claim::substrate_facet_id(subject)
+                    .as_bytes()
+                    .to_vec(),
             ),
         ),
         (
             "scopeProjectId".into(),
-            rmpv::Value::Binary(
-                crate::claim::default_project_id().as_bytes().to_vec(),
-            ),
+            rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
         ),
         ("scopeVersion".into(), rmpv::Value::from(2_u64)),
     ]);

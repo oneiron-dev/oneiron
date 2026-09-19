@@ -98,24 +98,40 @@ fn store_split_grant_event(
         Value::from("imported"),
         Some(granted_world),
     );
-    put_family_claim(vault, seed, 1, id, decisive.0, decisive.1, decisive_world.or(Some(granted_world)));
+    put_family_claim(
+        vault,
+        seed,
+        1,
+        id,
+        decisive.0,
+        decisive.1,
+        decisive_world.or(Some(granted_world)),
+    );
     id
 }
 
 /// Grant the named claim world and the EVENT metadata kind separately.
 /// A named world never grants base-world claims implicitly.
 fn scoped_read_world_manifest(actor_ref: &str, world: EntityId) -> Vec<u8> {
-    use crate::federation::{ScopeAxis,ScopeId};
-    let mut claims=crate::federation::scope_codec::read_preset();
-    claims.worlds=ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(world)]));
-    let mut events=crate::federation::scope_codec::read_preset();
-    events.bands=ScopeAxis::Some(std::collections::BTreeSet::from([ENTITY_TYPE_EVENT]));
-    let grants=[claims,events].into_iter().map(|scope|Value::Map(vec![
-        (Value::from("actor_ref"),Value::from(actor_ref)),
-        (Value::from("effector"),Value::from("core:read")),
-        (Value::from("scope"),crate::federation::scope_codec::encode_scope_value(&scope).unwrap()),
-        (Value::from("receipt_required"),Value::Boolean(false)),
-    ])).collect();
+    use crate::federation::{ScopeAxis, ScopeId};
+    let mut claims = crate::federation::scope_codec::read_preset();
+    claims.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(world)]));
+    let mut events = crate::federation::scope_codec::read_preset();
+    events.bands = ScopeAxis::Some(std::collections::BTreeSet::from([ENTITY_TYPE_EVENT]));
+    let grants = [claims, events]
+        .into_iter()
+        .map(|scope| {
+            Value::Map(vec![
+                (Value::from("actor_ref"), Value::from(actor_ref)),
+                (Value::from("effector"), Value::from("core:read")),
+                (
+                    Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(&scope).unwrap(),
+                ),
+                (Value::from("receipt_required"), Value::Boolean(false)),
+            ])
+        })
+        .collect();
     let manifest = Value::Map(vec![
         (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("cal-09-scoped-read")),

@@ -302,10 +302,7 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
             "worldId".into(),
             rmpv::Value::Binary(world_id.as_bytes().to_vec()),
         ),
-        (
-            "scopeRelationshipId".into(),
-            rmpv::Value::from("all"),
-        ),
+        ("scopeRelationshipId".into(), rmpv::Value::from("all")),
         (
             "subj".into(),
             rmpv::Value::Binary(subject.as_bytes().to_vec()),
@@ -317,14 +314,14 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         (
             "scopeFacetId".into(),
             rmpv::Value::Binary(
-                crate::claim::substrate_facet_id(subject).as_bytes().to_vec(),
+                crate::claim::substrate_facet_id(subject)
+                    .as_bytes()
+                    .to_vec(),
             ),
         ),
         (
             "scopeProjectId".into(),
-            rmpv::Value::Binary(
-                crate::claim::default_project_id().as_bytes().to_vec(),
-            ),
+            rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
         ),
         ("scopeVersion".into(), rmpv::Value::from(2_u64)),
     ]);
@@ -624,22 +621,20 @@ fn claim_negative_matrix_rejects_typed_and_writes_nothing() -> Result<()> {
         vec![
             (
                 "worldId".into(),
-                rmpv::Value::Binary(
-                    crate::claim::base_world_id().as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(crate::claim::base_world_id().as_bytes().to_vec()),
             ),
             ("scopeRelationshipId".into(), rmpv::Value::from("all")),
             (
                 "scopeFacetId".into(),
                 rmpv::Value::Binary(
-                    crate::claim::substrate_facet_id(subj_id).as_bytes().to_vec(),
+                    crate::claim::substrate_facet_id(subj_id)
+                        .as_bytes()
+                        .to_vec(),
                 ),
             ),
             (
                 "scopeProjectId".into(),
-                rmpv::Value::Binary(
-                    crate::claim::default_project_id().as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
             ),
             ("scopeVersion".into(), rmpv::Value::from(2_u64)),
         ]
@@ -906,22 +901,16 @@ fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Resu
         entries.extend([
             (
                 "worldId".into(),
-                rmpv::Value::Binary(
-                    crate::claim::base_world_id().as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(crate::claim::base_world_id().as_bytes().to_vec()),
             ),
             ("scopeRelationshipId".into(), rmpv::Value::from("all")),
             (
                 "scopeFacetId".into(),
-                rmpv::Value::Binary(
-                    crate::claim::substrate_facet_id(a).as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(crate::claim::substrate_facet_id(a).as_bytes().to_vec()),
             ),
             (
                 "scopeProjectId".into(),
-                rmpv::Value::Binary(
-                    crate::claim::default_project_id().as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
             ),
             ("scopeVersion".into(), rmpv::Value::from(2_u64)),
         ]);
@@ -1027,22 +1016,16 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
         entries.extend([
             (
                 "worldId".into(),
-                rmpv::Value::Binary(
-                    crate::claim::base_world_id().as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(crate::claim::base_world_id().as_bytes().to_vec()),
             ),
             ("scopeRelationshipId".into(), rmpv::Value::from("all")),
             (
                 "scopeFacetId".into(),
-                rmpv::Value::Binary(
-                    crate::claim::substrate_facet_id(a).as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(crate::claim::substrate_facet_id(a).as_bytes().to_vec()),
             ),
             (
                 "scopeProjectId".into(),
-                rmpv::Value::Binary(
-                    crate::claim::default_project_id().as_bytes().to_vec(),
-                ),
+                rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
             ),
             ("scopeVersion".into(), rmpv::Value::from(2_u64)),
         ]);

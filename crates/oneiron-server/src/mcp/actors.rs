@@ -229,8 +229,9 @@ pub struct McpResolvedActor {
 
 impl McpResolvedActor {
     pub(crate) fn has_unrestricted_record_scope(&self) -> bool {
-        self.auth.as_ref().is_some_and(|auth|
-            auth.require_unrestricted_record_scope().is_ok())
+        self.auth
+            .as_ref()
+            .is_some_and(|auth| auth.require_unrestricted_record_scope().is_ok())
     }
 
     #[must_use]

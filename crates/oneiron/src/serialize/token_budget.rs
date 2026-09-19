@@ -10,7 +10,6 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Number, Value};
 
-use crate::registry::ENTITY_TYPE_FACET;
 use crate::context_pack::ContextPack;
 use crate::context_pack::PackFormat;
 use crate::context_pack::PackItemTokenStats;
@@ -19,6 +18,7 @@ use crate::context_pack::PackStats;
 use crate::context_pack::PackTokenStats;
 use crate::context_pack::TokenAllocation;
 use crate::pipeline::Signal;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 #[cfg(test)]
 use crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER;

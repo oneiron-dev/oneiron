@@ -60,7 +60,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/access_grant/tests.rs",
@@ -3735,7 +3735,7 @@
      "path": "src/branch_store_oracle/seam/binding.rs",
      "purpose": "Seam: error mappers, crash/reopen, job/taint/scoped-read probes, executor binding-mismatch and route-flip…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -4517,7 +4517,7 @@
      "purpose": "—",
      "surface": {
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -6026,7 +6026,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/claim/scope_stamp/tests.rs",
@@ -13186,7 +13186,7 @@
      "path": "src/gate/tests/support.rs",
      "purpose": "Shared fixtures and assertion helpers for the gate test modules",
      "surface": {
-      "crate-vis": 57
+      "crate-vis": 60
      }
     },
     {
@@ -14877,7 +14877,7 @@
      "path": "src/lens/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the lens behaviour tests",
      "surface": {
-      "crate-vis": 52
+      "crate-vis": 54
      }
     },
     {
@@ -17489,7 +17489,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound_grant/tests.rs",
@@ -19514,12 +19514,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/retrieval_depth/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -30229,7 +30231,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 69
      }
     },
     {
@@ -30265,7 +30267,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/run_tree.rs",
@@ -30298,6 +30300,16 @@
      "purpose": "Shared MCP test harness: legacy adapter, tool-first endpoints, scoping, code-run fixtures",
      "surface": {
       "crate-vis": 32
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/support_mcp_credentials.rs",
+     "purpose": "Paired MCP fixture credentials",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -30341,7 +30353,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -30373,7 +30385,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/auth/tests/pairing.rs",
@@ -31124,7 +31136,7 @@
      "path": "src/mcp/actors.rs",
      "purpose": "MCP connector actor types: credentials, scopes, records, and resolution",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 16,
       "struct": 5
@@ -31888,7 +31900,7 @@
    ],
    "modules": {
     "api": {
-     "files": 130,
+     "files": 131,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -32045,7 +32057,7 @@
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 190,
-   "test_files": 74
+   "test_files": 75
   },
   "oneiron-uniffi": {
    "files": [

@@ -173,7 +173,8 @@ fn actor_facade(vault: &Vault) -> (EntityId, Memory<'_>) {
     vault
         .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
         .expect("put actor");
-    oneiron::calendar::transcript::permit_calendar_read_for_test(vault,actor).expect("grant actor read scope without source permission");
+    oneiron::calendar::transcript::permit_calendar_read_for_test(vault, actor)
+        .expect("grant actor read scope without source permission");
     (actor, vault.memory(actor, EdgeActorClass::Human))
 }
 

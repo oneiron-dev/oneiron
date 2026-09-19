@@ -205,7 +205,9 @@ impl Connection {
             }
         }
         let session = self.session.as_ref().ok_or_else(unavailable)?;
-        if !session.auth.same_authority(auth) || session.attached.load(Ordering::Acquire) != self.conn_id {
+        if !session.auth.same_authority(auth)
+            || session.attached.load(Ordering::Acquire) != self.conn_id
+        {
             return Err(AppError::unauthorized());
         }
         if !opening && !self.active.contains(&id) {

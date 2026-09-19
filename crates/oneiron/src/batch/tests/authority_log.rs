@@ -640,7 +640,12 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
         "the evicted event's induced shell edge must be unwound, not left dangling"
     );
     assert!(
-        vault.edges_out(&loser)?.iter().all(|edge| edge.kind == EdgeKind::HasFacet && edge.target == crate::claim::substrate_facet_id(loser)) && vault.edges_in(&survivor)?.is_empty(),
+        vault
+            .edges_out(&loser)?
+            .iter()
+            .all(|edge| edge.kind == EdgeKind::HasFacet
+                && edge.target == crate::claim::substrate_facet_id(loser))
+            && vault.edges_in(&survivor)?.is_empty(),
         "no half of the shell pair may survive its ledger justification"
     );
     assert_eq!(

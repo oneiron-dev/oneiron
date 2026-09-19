@@ -434,36 +434,53 @@ pub fn permit_imported_calendar_source_for_test(
             )]),
         ),
     ]);
-    put_calendar_test_policy(vault,&manifest)
+    put_calendar_test_policy(vault, &manifest)
 }
 
 /// Grants only an actor's calendar fixture reads. This contributes no write,
 /// approval, predicate, ceiling or source authority and does not rewrite defaults.
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
-pub fn permit_calendar_read_for_test(vault:&crate::Vault,actor:crate::EntityId)->crate::Result<()> {
+pub fn permit_calendar_read_for_test(
+    vault: &crate::Vault,
+    actor: crate::EntityId,
+) -> crate::Result<()> {
     use rmpv::Value;
-    let manifest=Value::Map(vec![
-        ("schema_version".into(),crate::gate::POLICY_SCHEMA_VERSION.into()),
-        ("pack_id".into(),"calendar-read-test".into()),
-        ("pack_version".into(),"v1".into()),
-        ("min_engine_version".into(),env!("CARGO_PKG_VERSION").into()),
-        ("defaults".into(),Value::Map(Vec::new())),
-        ("rules".into(),Value::Array(Vec::new())),
-        ("actor_ceilings".into(),Value::Array(Vec::new())),
-        ("scoped_grants".into(),Value::Array(vec![Value::Map(vec![
-            ("actor_ref".into(),actor.to_hex().into()),
-            ("actor_class".into(),"human".into()),
-            ("effector".into(),"core:read".into()),
-            ("scope".into(),crate::federation::scope_codec::encode_scope_value(&crate::federation::scope_codec::read_preset())?),
-            ("receipt_required".into(),Value::Boolean(false)),
-        ])])),
+    let manifest = Value::Map(vec![
+        (
+            "schema_version".into(),
+            crate::gate::POLICY_SCHEMA_VERSION.into(),
+        ),
+        ("pack_id".into(), "calendar-read-test".into()),
+        ("pack_version".into(), "v1".into()),
+        (
+            "min_engine_version".into(),
+            env!("CARGO_PKG_VERSION").into(),
+        ),
+        ("defaults".into(), Value::Map(Vec::new())),
+        ("rules".into(), Value::Array(Vec::new())),
+        ("actor_ceilings".into(), Value::Array(Vec::new())),
+        (
+            "scoped_grants".into(),
+            Value::Array(vec![Value::Map(vec![
+                ("actor_ref".into(), actor.to_hex().into()),
+                ("actor_class".into(), "human".into()),
+                ("effector".into(), "core:read".into()),
+                (
+                    "scope".into(),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::read_preset(),
+                    )?,
+                ),
+                ("receipt_required".into(), Value::Boolean(false)),
+            ])]),
+        ),
     ]);
-    put_calendar_test_policy(vault,&manifest)
+    put_calendar_test_policy(vault, &manifest)
 }
 
 #[cfg(feature = "test-support")]
-fn put_calendar_test_policy(vault:&crate::Vault,manifest:&rmpv::Value)->crate::Result<()> {
+fn put_calendar_test_policy(vault: &crate::Vault, manifest: &rmpv::Value) -> crate::Result<()> {
     let mut body = Vec::new();
     rmpv::encode::write_value(&mut body, manifest)
         .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;

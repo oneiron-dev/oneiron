@@ -510,13 +510,7 @@ fn seed_doc_stamps(vault: &Vault, doc: &LoroDoc) {
         let body = &blob[ENTITY_METADATA_HEADER_LEN..];
         let res = vault
             .batch()
-            .put(
-                &id,
-                entity_type,
-                TimeRange { start: 1, end: 1 },
-                1,
-                body,
-            )
+            .put(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, body)
             .commit();
         match res {
             Ok(()) => {}
@@ -1994,7 +1988,11 @@ fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
         // Owner-verified bodies do not endorse the hostile FacetOf residue.
         // Stamp all known fixture records so the negative observes the facet
         // boundary rather than an unrelated absence of record evidence.
-        stamp_live_rows(&vault, &live.doc, &[facet_selected, event, person, neighbor]);
+        stamp_live_rows(
+            &vault,
+            &live.doc,
+            &[facet_selected, event, person, neighbor],
+        );
 
         let selector = SyncSelector::new(
             grant_id,
@@ -4434,16 +4432,11 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
         // Stamp the non-CLAIM rows so ⊥ filtering (not missing stamps)
         // decides the empty verdict.
         seed_doc_stamps(&vault, &doc);
-        let update = filtered_window_doc(
-            &vault,
-            &doc,
-            &window_key,
-            test_selector_scope(),
-            &selector,
-        )
-        .unwrap_or_else(|err| panic!("{name}: a ⊥ selector authorizes: {err:?}"))
-        .export(ExportMode::all_updates())
-        .unwrap();
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap_or_else(|err| panic!("{name}: a ⊥ selector authorizes: {err:?}"))
+                .export(ExportMode::all_updates())
+                .unwrap();
 
         assert_eq!(
             import_ids(&update),
@@ -4464,16 +4457,10 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     let doc = source_doc();
     seed_doc_stamps(&vault, &doc);
-    let update = filtered_window_doc(
-        &vault,
-        &doc,
-        &window_key,
-        test_selector_scope(),
-        &selector,
-    )
-    .expect("a ⊥ selector on an unpacted grant still authorizes")
-    .export(ExportMode::all_updates())
-    .unwrap();
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .expect("a ⊥ selector on an unpacted grant still authorizes")
+        .export(ExportMode::all_updates())
+        .unwrap();
     assert_eq!(
         import_ids(&update),
         Vec::new(),

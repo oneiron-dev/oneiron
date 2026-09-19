@@ -1540,7 +1540,10 @@ fn facet_and_assert_distinct_doors_mint_their_own_effects() {
     let all_masks = vault.facets_of(&other).expect("facets of");
     assert_eq!(all_masks.len(), 2);
     assert!(all_masks.contains(&crate::claim::substrate_facet_id(other)));
-    let masks: Vec<_> = all_masks.into_iter().filter(|mask| *mask != crate::claim::substrate_facet_id(other)).collect();
+    let masks: Vec<_> = all_masks
+        .into_iter()
+        .filter(|mask| *mask != crate::claim::substrate_facet_id(other))
+        .collect();
     assert_eq!(masks.len(), 1);
     assert_eq!(
         vault
@@ -1566,11 +1569,20 @@ fn facet_and_assert_distinct_doors_mint_their_own_effects() {
             .entity_type,
         crate::registry::ENTITY_TYPE_FACET
     );
-    let mask_bytes=vault.get(&masks[0]).expect("read mask body").expect("mask exists");
-    let mask=rmpv::decode::read_value(&mut mask_bytes.as_slice()).expect("mask map");
-    let fields=mask.as_map().expect("mask fields");
-    assert!(fields.contains(&(rmpv::Value::from("label"),rmpv::Value::from("fixture-mask"))));
-    assert!(fields.contains(&(rmpv::Value::from("sensitivity"),rmpv::Value::from("sensitive"))));
+    let mask_bytes = vault
+        .get(&masks[0])
+        .expect("read mask body")
+        .expect("mask exists");
+    let mask = rmpv::decode::read_value(&mut mask_bytes.as_slice()).expect("mask map");
+    let fields = mask.as_map().expect("mask fields");
+    assert!(fields.contains(&(
+        rmpv::Value::from("label"),
+        rmpv::Value::from("fixture-mask")
+    )));
+    assert!(fields.contains(&(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("sensitive")
+    )));
 
     // The propose lane is NOT armed for this kind: a park would name masks it
     // never minted, and the resolution door has no scope target for it.

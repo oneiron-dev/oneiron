@@ -138,7 +138,7 @@ fn deep_request(reason: bool) -> Request<Body> {
     } else {
         Request::builder()
             .uri("/api/search/text?query=launch&depth=deep")
-            .header("authorization","Bearer secret")
+            .header("authorization", "Bearer secret")
             .body(Body::empty())
             .unwrap()
     }
@@ -155,7 +155,8 @@ async fn deep_api_malformed_rerank_and_spent_errors_settle_before_return() {
             let (_dir, server, backend) = failing_server(point);
             // Run twice to pin additive accounting, not an absolute meter.
             for count in 1..=2 {
-                let (status, response) = route_json_auth(server.clone(), deep_request(reason)).await;
+                let (status, response) =
+                    route_json_auth(server.clone(), deep_request(reason)).await;
                 assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
                 assert!(response.get("answer").is_none());
                 assert!(response.get("items").is_none());

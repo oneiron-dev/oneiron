@@ -246,7 +246,9 @@ impl CoreAuth {
 
     pub(crate) fn for_server(headers: &HeaderMap, server: &SyncServer) -> Result<Self, ApiError> {
         if let Some(issuer) = server.managed_issuer.as_ref() {
-            let proof = server.vault().verified_host_root_slip(issuer)
+            let proof = server
+                .vault()
+                .verified_host_root_slip(issuer)
                 .map_err(|_| ApiError::unauthorized())?;
             let mut auth = Self::from_verified(proof, true)?;
             auth.principal = "managed-supervisor".to_owned();
@@ -422,7 +424,8 @@ impl CoreAuth {
             .unwrap_or_default();
         // The exact verified instrument partitions every caveat. Remaining TTL
         // is a verifier observation, not a new cache or reconnect identity.
-        let authority = self.instrument
+        let authority = self
+            .instrument
             .map(|fingerprint| format!(":authority={}", blake3::Hash::from(fingerprint).to_hex()))
             .unwrap_or_default();
         format!(
@@ -439,8 +442,7 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        Self::for_server(&parts.headers, server)
-            .map_err(Into::into)
+        Self::for_server(&parts.headers, server).map_err(Into::into)
     }
 }
 

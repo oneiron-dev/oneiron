@@ -396,10 +396,8 @@ fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<
     let external_persona = EntityId::from_bytes([0x3C; 16]).unwrap();
     let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
     let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
-    let external_local = companion_record(
-        external_persona,
-        crate::federation::Sensitivity::Restricted,
-    );
+    let external_local =
+        companion_record(external_persona, crate::federation::Sensitivity::Restricted);
 
     vault.create_companion_record(&local_id, &local, learned_at)?;
     vault.create_companion_record(&portable_id, &portable, learned_at)?;

@@ -191,7 +191,9 @@ impl FederationScopeWorlds {
             (Self::All, _) | (_, Self::Bottom) => false,
             (Self::Base, Self::Base) => true,
             (Self::Base, Self::Worlds(wide)) => wide.contains(&crate::claim::base_world_id()),
-            (Self::Worlds(narrow), Self::Base) => narrow.iter().all(|id|*id==crate::claim::base_world_id()),
+            (Self::Worlds(narrow), Self::Base) => {
+                narrow.iter().all(|id| *id == crate::claim::base_world_id())
+            }
             (Self::Worlds(narrow), Self::Worlds(wide)) => narrow.iter().all(|id| wide.contains(id)),
         }
     }
@@ -201,7 +203,11 @@ impl FederationScopeWorlds {
             (Self::All, x) | (x, Self::All) => x.clone(),
             (Self::Base, Self::Base) => Self::Base,
             (Self::Base, Self::Worlds(ids)) | (Self::Worlds(ids), Self::Base) => {
-                if ids.contains(&crate::claim::base_world_id()) { Self::Base } else { Self::Bottom }
+                if ids.contains(&crate::claim::base_world_id()) {
+                    Self::Base
+                } else {
+                    Self::Bottom
+                }
             }
             (Self::Worlds(left), Self::Worlds(right)) => {
                 let both: Vec<_> = left
