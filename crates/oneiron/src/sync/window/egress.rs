@@ -90,8 +90,8 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     let mut portable_ids = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
-        if !crate::batch::EntityMetadataHeader::parse(blob)
-            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+        if crate::batch::EntityMetadataHeader::parse(blob)
+            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
         {
             return;
         }

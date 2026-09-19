@@ -177,20 +177,9 @@ pub(super) fn apply_ops_with_origin(
                     && allow_reserved_predicate
                     && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                 {
-                    let incoming_allowed = crate::secret_custody::custody_sync_allowed(&data);
-                    let local_allowed = match store.entities.get(&*wtxn, id.as_bytes())? {
-                        Some(raw)
-                            if raw.first()
-                                == Some(&crate::registry::ENTITY_TYPE_SECRET_CUSTODY) =>
-                        {
-                            raw.get(ENTITY_METADATA_HEADER_LEN..)
-                                .is_some_and(crate::secret_custody::custody_sync_allowed)
-                        }
-                        _ => true,
-                    };
-                    if !incoming_allowed || !local_allowed {
-                        return Err(crate::secret_custody::reject_secret_custody_byte());
-                    }
+                    crate::secret_custody::validate_replicated_custody_put(
+                        store, wtxn, &id, &data,
+                    )?;
                 }
                 if allow_maintenance {
                     store.validate_entity_type(entity_type)?;

@@ -1102,7 +1102,7 @@ fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()>
         if allowed {
             assert_eq!(dst.get_raw_unsealed(&id)?.unwrap(), raw);
             assert_eq!(dst.resolve_secret_ref("roundtrip")?, Some(id));
-            let txn = dst.store.env.read_txn()?;
+            let txn = dst.store.env.write_txn()?;
             assert_eq!(
                 dst.get_secret_value_in_txn(&txn, &id, "door:roundtrip")?,
                 Some(b"custody-canary".to_vec())

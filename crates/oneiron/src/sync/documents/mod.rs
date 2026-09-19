@@ -308,7 +308,7 @@ impl EntityDocument {
             .store
             .sync_state
             .prefix_iter(&txn, &format!("qd:e:{}:", self.id.to_hex()))?
-            .map(|row| row.map(|(_, bytes)| bytes.to_vec()).map_err(Error::from))
+            .map(|row| row.map(|(_, bytes)| bytes.to_vec()))
             .collect()
     }
 

@@ -27,6 +27,7 @@ use crate::registry::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
+use crate::secret_custody::plan_replicated_name_index;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
@@ -95,11 +96,7 @@ pub(in crate::batch) fn apply_put(
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
     let custody_name_index =
-        if replicated && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            crate::secret_custody::plan_replicated_name_index(store, wtxn, &id, data)?
-        } else {
-            None
-        };
+        plan_replicated_name_index(store, wtxn, &id, entity_type, data, replicated)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
     let mut new_agent_definition = None;

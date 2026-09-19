@@ -591,9 +591,13 @@ impl<'a> TxnBatchBuilder<'a> {
         self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true))
     }
 
-    fn apply_with_gate_mode(self, wtxn: &mut RwTxn<'_>, gate_mode: ApplyOpsGateMode) -> Result<()> {
-        if self.validation_error.is_some() {
-            return Err(self.validation_error.expect("checked validation error"));
+    fn apply_with_gate_mode(
+        mut self,
+        wtxn: &mut RwTxn<'_>,
+        gate_mode: ApplyOpsGateMode,
+    ) -> Result<()> {
+        if let Some(error) = self.validation_error.take() {
+            return Err(error);
         }
         #[cfg(feature = "sync")]
         let mut this = self;
