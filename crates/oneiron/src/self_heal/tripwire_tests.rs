@@ -416,7 +416,6 @@ fn unavailable_or_oversized_tripwire_inputs_are_not_reported_as_healthy() {
         v.store
             .vault_meta
             .put(txn, b"retr_run:v0:invalid-key", b"invalid-row")
-            .map_err(Into::into)
     })
     .unwrap();
     assert!(matches!(
