@@ -54,6 +54,8 @@ pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
         size: 24,
         bytes: [0; 24],
     };
+    // The UAPI deliberately encodes __u8[9] (size + version), not sizeof(Policy).
+    // Its request number stays 0xc0096616 even though this buffer is 32 bytes.
     // SAFETY: live directory fd; correctly sized/aligned writable UAPI buffer.
     let rc = unsafe { libc::ioctl(dir.as_raw_fd(), 0xc0096616 as libc::c_ulong, &mut policy) };
     let fscrypt = rc == 0 && matches!((policy.bytes[0], policy.size), (0, 12) | (2, 24));
