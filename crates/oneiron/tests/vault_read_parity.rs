@@ -362,7 +362,6 @@ fn normalized_error(error: &VaultReadError) -> String {
             format!("invalid_request:{method:?}:{field}")
         }
         VaultReadError::Engine {
-            narrowing: None,
             method,
             engine_code,
             ..
