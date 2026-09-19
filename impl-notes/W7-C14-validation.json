@@ -466,6 +466,32 @@
       "crates/oneiron-xlsx-formula/src/workbook.rs": "4530074370d5a147afe2055f36739d8f4d748d9418bcc402f8dca1bba185a1eb",
       "crates/oneiron-xlsx-formula/tests/session.rs": "b991fd1c78330e7dd56b71b088c225ec1f248f8e2cb41ca0869b3588cf7b2c25"
     },
-    "acceptance_boundary": "targeted safety proof only; frozen native-v2 corpus outputs do not prove this repaired candidate"
+    "acceptance_boundary": "targeted safety proof only; frozen native-v2 corpus outputs do not prove this repaired candidate",
+    "compatibility": {
+      "candidate": {
+        "passed": 754,
+        "total": 811
+      },
+      "libreoffice": {
+        "passed": 753,
+        "total": 811
+      },
+      "cases": 834,
+      "source_commit": "707eb28b",
+      "executable_sha256": "2f4beaeedf076d16ba84a73df354cfdf5b58d8a528926c93cd32b0c25fa20afa",
+      "report": "crates/oneiron-docedit/tests/fixtures/spreadsheet-compat/measurements/formualizer-fork-bounded-comparison.json",
+      "scope": "scalar compatibility, not retained real-workbook release gate"
+    },
+    "mac_candidate": {
+      "receipt": "crates/oneiron-docedit/tests/fixtures/real-workbooks/retained-native-v3-executable.json",
+      "sha256": "c54211ad849c022ac84facc4230f5e10b3cfd06a7a069460c274fe12e3c775d7",
+      "source_commit": "707eb28b",
+      "original_crashes_now_refused": 2,
+      "partial_outputs": 0,
+      "positive_probe_value": 3,
+      "precision_fallback": false,
+      "receipt_tests_passed": 5,
+      "full_cohort_measurement": "admitted, not complete"
+    }
   }
 }

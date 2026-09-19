@@ -1,0 +1,6099 @@
+{
+  "engine_stamp": "formualizer-workbook 0.9.3 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5",
+  "corpus_sha256": "d4740551ddcae1828c8e1c59784a5594a9bb0802423271148e225589acbab8bd",
+  "cases": {
+    "ABS_cell_reference_negative": {
+      "id": "ABS_cell_reference_negative",
+      "function": "ABS",
+      "status": "ok",
+      "value": 12.5,
+      "matches_upstream": true
+    },
+    "ABS_error_propagates": {
+      "id": "ABS_error_propagates",
+      "function": "ABS",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "ABS_expression_argument": {
+      "id": "ABS_expression_argument",
+      "function": "ABS",
+      "status": "ok",
+      "value": 7.0,
+      "matches_upstream": true
+    },
+    "ABS_negative_number": {
+      "id": "ABS_negative_number",
+      "function": "ABS",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "ABS_positive_number": {
+      "id": "ABS_positive_number",
+      "function": "ABS",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "ABS_zero": {
+      "id": "ABS_zero",
+      "function": "ABS",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "ADDRESS_abs_num_1_explicit_absolute": {
+      "id": "ADDRESS_abs_num_1_explicit_absolute",
+      "function": "ADDRESS",
+      "status": "ok",
+      "value": "$C$2",
+      "matches_upstream": true
+    },
+    "ADDRESS_abs_num_2_abs_row_rel_col": {
+      "id": "ADDRESS_abs_num_2_abs_row_rel_col",
+      "function": "ADDRESS",
+      "status": "ok",
+      "value": "C$2",
+      "matches_upstream": true
+    },
+    "ADDRESS_abs_num_3_rel_row_abs_col": {
+      "id": "ADDRESS_abs_num_3_rel_row_abs_col",
+      "function": "ADDRESS",
+      "status": "ok",
+      "value": "$C2",
+      "matches_upstream": true
+    },
+    "ADDRESS_abs_num_4_relative": {
+      "id": "ADDRESS_abs_num_4_relative",
+      "function": "ADDRESS",
+      "status": "ok",
+      "value": "C2",
+      "matches_upstream": true
+    },
+    "ADDRESS_abs_num_omitted_defaults_absolute": {
+      "id": "ADDRESS_abs_num_omitted_defaults_absolute",
+      "function": "ADDRESS",
+      "status": "ok",
+      "value": "$C$2",
+      "matches_upstream": true
+    },
+    "ADDRESS_with_sheet_text": {
+      "id": "ADDRESS_with_sheet_text",
+      "function": "ADDRESS",
+      "status": "ok",
+      "value": "Sheet1!$A$1",
+      "matches_upstream": true
+    },
+    "AGGREGATE_sum_ignoring_errors": {
+      "id": "AGGREGATE_sum_ignoring_errors",
+      "function": "AGGREGATE",
+      "status": "ok",
+      "value": "#N/IMPL!",
+      "matches_upstream": false
+    },
+    "AND_basic_false": {
+      "id": "AND_basic_false",
+      "function": "AND",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "AND_basic_true": {
+      "id": "AND_basic_true",
+      "function": "AND",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "AND_literal_text_error": {
+      "id": "AND_literal_text_error",
+      "function": "AND",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "AND_range_numeric_all_nonzero": {
+      "id": "AND_range_numeric_all_nonzero",
+      "function": "AND",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "AND_range_numeric_with_zero": {
+      "id": "AND_range_numeric_with_zero",
+      "function": "AND",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ARABIC_basic": {
+      "id": "ARABIC_basic",
+      "function": "ARABIC",
+      "status": "ok",
+      "value": 2026.0,
+      "matches_upstream": true
+    },
+    "ARRAYTOTEXT_2d_array": {
+      "id": "ARRAYTOTEXT_2d_array",
+      "function": "ARRAYTOTEXT",
+      "status": "ok",
+      "value": "1, 2, 3, 4",
+      "matches_upstream": true
+    },
+    "ARRAYTOTEXT_default_format": {
+      "id": "ARRAYTOTEXT_default_format",
+      "function": "ARRAYTOTEXT",
+      "status": "ok",
+      "value": "1, 2, 3",
+      "matches_upstream": true
+    },
+    "ARRAYTOTEXT_strict_format": {
+      "id": "ARRAYTOTEXT_strict_format",
+      "function": "ARRAYTOTEXT",
+      "status": "ok",
+      "value": "{1,2,3}",
+      "matches_upstream": true
+    },
+    "ARRAYTOTEXT_text_elements_strict": {
+      "id": "ARRAYTOTEXT_text_elements_strict",
+      "function": "ARRAYTOTEXT",
+      "status": "ok",
+      "value": "{\"a\",\"b\"}",
+      "matches_upstream": true
+    },
+    "AVEDEV_basic": {
+      "id": "AVEDEV_basic",
+      "function": "AVEDEV",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "AVEDEV_from_range": {
+      "id": "AVEDEV_from_range",
+      "function": "AVEDEV",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "AVEDEV_identical_values": {
+      "id": "AVEDEV_identical_values",
+      "function": "AVEDEV",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "AVERAGEIFS_basic": {
+      "id": "AVERAGEIFS_basic",
+      "function": "AVERAGEIFS",
+      "status": "ok",
+      "value": 40.0,
+      "matches_upstream": true
+    },
+    "AVERAGEIFS_multi_criteria": {
+      "id": "AVERAGEIFS_multi_criteria",
+      "function": "AVERAGEIFS",
+      "status": "ok",
+      "value": 25.0,
+      "matches_upstream": true
+    },
+    "AVERAGEIFS_no_match_div0": {
+      "id": "AVERAGEIFS_no_match_div0",
+      "function": "AVERAGEIFS",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "AVERAGEIFS_wildcard": {
+      "id": "AVERAGEIFS_wildcard",
+      "function": "AVERAGEIFS",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "AVERAGEIF_basic": {
+      "id": "AVERAGEIF_basic",
+      "function": "AVERAGEIF",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "AVERAGEIF_blank_average_range_cells_excluded": {
+      "id": "AVERAGEIF_blank_average_range_cells_excluded",
+      "function": "AVERAGEIF",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "AVERAGEIF_no_match_div0": {
+      "id": "AVERAGEIF_no_match_div0",
+      "function": "AVERAGEIF",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "AVERAGEIF_separate_average_range": {
+      "id": "AVERAGEIF_separate_average_range",
+      "function": "AVERAGEIF",
+      "status": "ok",
+      "value": 40.0,
+      "matches_upstream": true
+    },
+    "AVERAGE_all_text_div0": {
+      "id": "AVERAGE_all_text_div0",
+      "function": "AVERAGE",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "AVERAGE_basic": {
+      "id": "AVERAGE_basic",
+      "function": "AVERAGE",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "AVERAGE_empty_range_div0": {
+      "id": "AVERAGE_empty_range_div0",
+      "function": "AVERAGE",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "AVERAGE_ignores_text_and_blanks": {
+      "id": "AVERAGE_ignores_text_and_blanks",
+      "function": "AVERAGE",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "BASE_basic": {
+      "id": "BASE_basic",
+      "function": "BASE",
+      "status": "ok",
+      "value": "FF",
+      "matches_upstream": true
+    },
+    "BIN2DEC_basic": {
+      "id": "BIN2DEC_basic",
+      "function": "BIN2DEC",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "BIN2DEC_eight": {
+      "id": "BIN2DEC_eight",
+      "function": "BIN2DEC",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "BIN2DEC_roundtrip": {
+      "id": "BIN2DEC_roundtrip",
+      "function": "BIN2DEC",
+      "status": "ok",
+      "value": 42.0,
+      "matches_upstream": true
+    },
+    "BIN2HEX_basic": {
+      "id": "BIN2HEX_basic",
+      "function": "BIN2HEX",
+      "status": "ok",
+      "value": "F",
+      "matches_upstream": true
+    },
+    "BIN2HEX_padded": {
+      "id": "BIN2HEX_padded",
+      "function": "BIN2HEX",
+      "status": "ok",
+      "value": "000F",
+      "matches_upstream": true
+    },
+    "BIN2HEX_ten": {
+      "id": "BIN2HEX_ten",
+      "function": "BIN2HEX",
+      "status": "ok",
+      "value": "A",
+      "matches_upstream": true
+    },
+    "BIN2OCT_basic": {
+      "id": "BIN2OCT_basic",
+      "function": "BIN2OCT",
+      "status": "ok",
+      "value": "17",
+      "matches_upstream": true
+    },
+    "BIN2OCT_eight": {
+      "id": "BIN2OCT_eight",
+      "function": "BIN2OCT",
+      "status": "ok",
+      "value": "10",
+      "matches_upstream": true
+    },
+    "BIN2OCT_padded": {
+      "id": "BIN2OCT_padded",
+      "function": "BIN2OCT",
+      "status": "ok",
+      "value": "0007",
+      "matches_upstream": true
+    },
+    "BITAND_basic": {
+      "id": "BITAND_basic",
+      "function": "BITAND",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "BITAND_larger": {
+      "id": "BITAND_larger",
+      "function": "BITAND",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "BITAND_with_zero": {
+      "id": "BITAND_with_zero",
+      "function": "BITAND",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "BITLSHIFT_basic": {
+      "id": "BITLSHIFT_basic",
+      "function": "BITLSHIFT",
+      "status": "ok",
+      "value": 16.0,
+      "matches_upstream": true
+    },
+    "BITLSHIFT_by_three": {
+      "id": "BITLSHIFT_by_three",
+      "function": "BITLSHIFT",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "BITLSHIFT_zero_shift": {
+      "id": "BITLSHIFT_zero_shift",
+      "function": "BITLSHIFT",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "BITOR_basic": {
+      "id": "BITOR_basic",
+      "function": "BITOR",
+      "status": "ok",
+      "value": 7.0,
+      "matches_upstream": true
+    },
+    "BITOR_larger": {
+      "id": "BITOR_larger",
+      "function": "BITOR",
+      "status": "ok",
+      "value": 14.0,
+      "matches_upstream": true
+    },
+    "BITOR_with_zero": {
+      "id": "BITOR_with_zero",
+      "function": "BITOR",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "BITRSHIFT_basic": {
+      "id": "BITRSHIFT_basic",
+      "function": "BITRSHIFT",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "BITRSHIFT_by_three": {
+      "id": "BITRSHIFT_by_three",
+      "function": "BITRSHIFT",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "BITRSHIFT_reverses_lshift": {
+      "id": "BITRSHIFT_reverses_lshift",
+      "function": "BITRSHIFT",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "BITXOR_basic": {
+      "id": "BITXOR_basic",
+      "function": "BITXOR",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "BITXOR_larger": {
+      "id": "BITXOR_larger",
+      "function": "BITXOR",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "BITXOR_self_cancels": {
+      "id": "BITXOR_self_cancels",
+      "function": "BITXOR",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "BYCOL_colsums": {
+      "id": "BYCOL_colsums",
+      "function": "BYCOL",
+      "status": "ok",
+      "value": [
+        "#NAME?",
+        null
+      ],
+      "matches_upstream": false
+    },
+    "BYROW_rowsums": {
+      "id": "BYROW_rowsums",
+      "function": "BYROW",
+      "status": "ok",
+      "value": [
+        "#NAME?",
+        null
+      ],
+      "matches_upstream": false
+    },
+    "CEILING.MATH_basic_significance": {
+      "id": "CEILING.MATH_basic_significance",
+      "function": "CEILING.MATH",
+      "status": "ok",
+      "value": 25.0,
+      "matches_upstream": true
+    },
+    "CEILING.MATH_default_significance_1": {
+      "id": "CEILING.MATH_default_significance_1",
+      "function": "CEILING.MATH",
+      "status": "ok",
+      "value": 7.0,
+      "matches_upstream": true
+    },
+    "CEILING.MATH_negative_default_mode_toward_zero": {
+      "id": "CEILING.MATH_negative_default_mode_toward_zero",
+      "function": "CEILING.MATH",
+      "status": "ok",
+      "value": -8.0,
+      "matches_upstream": true
+    },
+    "CEILING.MATH_negative_mode_nonzero_away_from_zero": {
+      "id": "CEILING.MATH_negative_mode_nonzero_away_from_zero",
+      "function": "CEILING.MATH",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": false
+    },
+    "CEILING_PRECISE_already_multiple": {
+      "id": "CEILING_PRECISE_already_multiple",
+      "function": "CEILING.PRECISE",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "CEILING_PRECISE_basic": {
+      "id": "CEILING_PRECISE_basic",
+      "function": "CEILING.PRECISE",
+      "status": "ok",
+      "value": 9.0,
+      "matches_upstream": true
+    },
+    "CEILING_PRECISE_negative_rounds_up": {
+      "id": "CEILING_PRECISE_negative_rounds_up",
+      "function": "CEILING.PRECISE",
+      "status": "ok",
+      "value": -6.0,
+      "matches_upstream": true
+    },
+    "CEILING_basic": {
+      "id": "CEILING_basic",
+      "function": "CEILING",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "CEILING_both_negative_away_from_zero": {
+      "id": "CEILING_both_negative_away_from_zero",
+      "function": "CEILING",
+      "status": "ok",
+      "value": -2.0,
+      "matches_upstream": false
+    },
+    "CEILING_fractional_significance": {
+      "id": "CEILING_fractional_significance",
+      "function": "CEILING",
+      "status": "ok",
+      "value": 0.24,
+      "matches_upstream": true
+    },
+    "CEILING_libreoffice_default_mode_divergence": {
+      "id": "CEILING_libreoffice_default_mode_divergence",
+      "function": "CEILING",
+      "status": "ok",
+      "value": -44.0,
+      "matches_upstream": false
+    },
+    "CEILING_negative_number_positive_significance": {
+      "id": "CEILING_negative_number_positive_significance",
+      "function": "CEILING",
+      "status": "ok",
+      "value": -2.0,
+      "matches_upstream": true
+    },
+    "CEILING_nonnumeric_error": {
+      "id": "CEILING_nonnumeric_error",
+      "function": "CEILING",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "CHAR_basic_roundtrip": {
+      "id": "CHAR_basic_roundtrip",
+      "function": "CHAR",
+      "status": "ok",
+      "value": "A",
+      "matches_upstream": true
+    },
+    "CHAR_lowercase": {
+      "id": "CHAR_lowercase",
+      "function": "CHAR",
+      "status": "ok",
+      "value": "a",
+      "matches_upstream": true
+    },
+    "CHAR_out_of_range_256": {
+      "id": "CHAR_out_of_range_256",
+      "function": "CHAR",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "CHAR_out_of_range_zero": {
+      "id": "CHAR_out_of_range_zero",
+      "function": "CHAR",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "CHOOSECOLS_pick_3_1": {
+      "id": "CHOOSECOLS_pick_3_1",
+      "function": "CHOOSECOLS",
+      "status": "ok",
+      "value": [
+        3.0,
+        1.0
+      ],
+      "matches_upstream": true
+    },
+    "CHOOSEROWS_pick_4_2": {
+      "id": "CHOOSEROWS_pick_4_2",
+      "function": "CHOOSEROWS",
+      "status": "ok",
+      "value": [
+        40.0,
+        20.0
+      ],
+      "matches_upstream": true
+    },
+    "CHOOSE_basic_second_value": {
+      "id": "CHOOSE_basic_second_value",
+      "function": "CHOOSE",
+      "status": "ok",
+      "value": "b",
+      "matches_upstream": true
+    },
+    "CHOOSE_fractional_index_truncated": {
+      "id": "CHOOSE_fractional_index_truncated",
+      "function": "CHOOSE",
+      "status": "ok",
+      "value": "b",
+      "matches_upstream": true
+    },
+    "CHOOSE_index_1": {
+      "id": "CHOOSE_index_1",
+      "function": "CHOOSE",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "CHOOSE_out_of_range_error": {
+      "id": "CHOOSE_out_of_range_error",
+      "function": "CHOOSE",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "CHOOSE_selects_a_range_then_summed": {
+      "id": "CHOOSE_selects_a_range_then_summed",
+      "function": "CHOOSE",
+      "status": "ok",
+      "value": 60.0,
+      "matches_upstream": true
+    },
+    "CLEAN_leaves_spaces_alone": {
+      "id": "CLEAN_leaves_spaces_alone",
+      "function": "CLEAN",
+      "status": "ok",
+      "value": "  Hello  ",
+      "matches_upstream": true
+    },
+    "CLEAN_no_op_on_clean_text": {
+      "id": "CLEAN_no_op_on_clean_text",
+      "function": "CLEAN",
+      "status": "ok",
+      "value": "Hello",
+      "matches_upstream": true
+    },
+    "CLEAN_removes_control_char": {
+      "id": "CLEAN_removes_control_char",
+      "function": "CLEAN",
+      "status": "ok",
+      "value": "HelloWorld",
+      "matches_upstream": true
+    },
+    "CLEAN_removes_tab_leaves_text": {
+      "id": "CLEAN_removes_tab_leaves_text",
+      "function": "CLEAN",
+      "status": "ok",
+      "value": "Hello",
+      "matches_upstream": true
+    },
+    "CODE_basic_roundtrip": {
+      "id": "CODE_basic_roundtrip",
+      "function": "CODE",
+      "status": "ok",
+      "value": 65.0,
+      "matches_upstream": true
+    },
+    "CODE_char_roundtrip": {
+      "id": "CODE_char_roundtrip",
+      "function": "CODE",
+      "status": "ok",
+      "value": 97.0,
+      "matches_upstream": true
+    },
+    "CODE_first_character_only": {
+      "id": "CODE_first_character_only",
+      "function": "CODE",
+      "status": "ok",
+      "value": 65.0,
+      "matches_upstream": true
+    },
+    "CODE_punctuation": {
+      "id": "CODE_punctuation",
+      "function": "CODE",
+      "status": "ok",
+      "value": 33.0,
+      "matches_upstream": true
+    },
+    "COLUMNS_2d_range": {
+      "id": "COLUMNS_2d_range",
+      "function": "COLUMNS",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "COLUMNS_basic_row_range": {
+      "id": "COLUMNS_basic_row_range",
+      "function": "COLUMNS",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "COLUMNS_single_cell": {
+      "id": "COLUMNS_single_cell",
+      "function": "COLUMNS",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "COLUMN_explicit_cell_ref": {
+      "id": "COLUMN_explicit_cell_ref",
+      "function": "COLUMN",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "COLUMN_far_column": {
+      "id": "COLUMN_far_column",
+      "function": "COLUMN",
+      "status": "ok",
+      "value": 26.0,
+      "matches_upstream": true
+    },
+    "COLUMN_no_arg_uses_formula_cell": {
+      "id": "COLUMN_no_arg_uses_formula_cell",
+      "function": "COLUMN",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "COLUMN_range_returns_first_column": {
+      "id": "COLUMN_range_returns_first_column",
+      "function": "COLUMN",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "COMBINA_basic": {
+      "id": "COMBINA_basic",
+      "function": "COMBINA",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "COMBINA_choose_zero": {
+      "id": "COMBINA_choose_zero",
+      "function": "COMBINA",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "COMBINA_five_two": {
+      "id": "COMBINA_five_two",
+      "function": "COMBINA",
+      "status": "ok",
+      "value": 15.0,
+      "matches_upstream": true
+    },
+    "COMBIN_5_2": {
+      "id": "COMBIN_5_2",
+      "function": "COMBIN",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "CONCATENATE_cell_refs": {
+      "id": "CONCATENATE_cell_refs",
+      "function": "CONCATENATE",
+      "status": "ok",
+      "value": "Hello World",
+      "matches_upstream": true
+    },
+    "CONCATENATE_literals": {
+      "id": "CONCATENATE_literals",
+      "function": "CONCATENATE",
+      "status": "ok",
+      "value": "abc",
+      "matches_upstream": true
+    },
+    "CONCATENATE_number_coercion": {
+      "id": "CONCATENATE_number_coercion",
+      "function": "CONCATENATE",
+      "status": "ok",
+      "value": "Item 42",
+      "matches_upstream": true
+    },
+    "CONCAT_2d_range": {
+      "id": "CONCAT_2d_range",
+      "function": "CONCAT",
+      "status": "ok",
+      "value": "abcd",
+      "matches_upstream": true
+    },
+    "CONCAT_literals": {
+      "id": "CONCAT_literals",
+      "function": "CONCAT",
+      "status": "ok",
+      "value": "abc",
+      "matches_upstream": true
+    },
+    "CONCAT_mixed_types": {
+      "id": "CONCAT_mixed_types",
+      "function": "CONCAT",
+      "status": "ok",
+      "value": "val:5",
+      "matches_upstream": true
+    },
+    "CONCAT_range": {
+      "id": "CONCAT_range",
+      "function": "CONCAT",
+      "status": "ok",
+      "value": "xyz",
+      "matches_upstream": true
+    },
+    "CONVERT_celsius_to_fahrenheit": {
+      "id": "CONVERT_celsius_to_fahrenheit",
+      "function": "CONVERT",
+      "status": "ok",
+      "value": 212.0,
+      "matches_upstream": true
+    },
+    "CONVERT_day_to_hour": {
+      "id": "CONVERT_day_to_hour",
+      "function": "CONVERT",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": false
+    },
+    "CONVERT_hour_to_minute": {
+      "id": "CONVERT_hour_to_minute",
+      "function": "CONVERT",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": false
+    },
+    "CORREL_perfect_linear": {
+      "id": "CORREL_perfect_linear",
+      "function": "CORREL",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "COUNTA_all_blank_range": {
+      "id": "COUNTA_all_blank_range",
+      "function": "COUNTA",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COUNTA_empty_string_formula_counts": {
+      "id": "COUNTA_empty_string_formula_counts",
+      "function": "COUNTA",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNTA_mixed_types_range": {
+      "id": "COUNTA_mixed_types_range",
+      "function": "COUNTA",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "COUNTBLANK_basic": {
+      "id": "COUNTBLANK_basic",
+      "function": "COUNTBLANK",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNTBLANK_empty_string_formula_counted_as_blank": {
+      "id": "COUNTBLANK_empty_string_formula_counted_as_blank",
+      "function": "COUNTBLANK",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNTBLANK_mixed_types_range": {
+      "id": "COUNTBLANK_mixed_types_range",
+      "function": "COUNTBLANK",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNTBLANK_zero_not_blank": {
+      "id": "COUNTBLANK_zero_not_blank",
+      "function": "COUNTBLANK",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COUNTIFS_basic": {
+      "id": "COUNTIFS_basic",
+      "function": "COUNTIFS",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "COUNTIFS_multi_range": {
+      "id": "COUNTIFS_multi_range",
+      "function": "COUNTIFS",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNTIFS_no_match": {
+      "id": "COUNTIFS_no_match",
+      "function": "COUNTIFS",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COUNTIFS_wildcard": {
+      "id": "COUNTIFS_wildcard",
+      "function": "COUNTIFS",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNTIF_basic": {
+      "id": "COUNTIF_basic",
+      "function": "COUNTIF",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "COUNTIF_case_insensitive_text_match": {
+      "id": "COUNTIF_case_insensitive_text_match",
+      "function": "COUNTIF",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNTIF_criteria_from_cell_concat": {
+      "id": "COUNTIF_criteria_from_cell_concat",
+      "function": "COUNTIF",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "COUNTIF_no_match": {
+      "id": "COUNTIF_no_match",
+      "function": "COUNTIF",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COUNTIF_wildcard_text": {
+      "id": "COUNTIF_wildcard_text",
+      "function": "COUNTIF",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNT_all_blank_range": {
+      "id": "COUNT_all_blank_range",
+      "function": "COUNT",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COUNT_boolean_in_range_excluded": {
+      "id": "COUNT_boolean_in_range_excluded",
+      "function": "COUNT",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COUNT_boolean_literal_argument_counted": {
+      "id": "COUNT_boolean_literal_argument_counted",
+      "function": "COUNT",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COUNT_mixed_types_range": {
+      "id": "COUNT_mixed_types_range",
+      "function": "COUNT",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "COVARIANCE_P_constant_column": {
+      "id": "COVARIANCE_P_constant_column",
+      "function": "COVARIANCE.P",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COVARIANCE_P_positive": {
+      "id": "COVARIANCE_P_positive",
+      "function": "COVARIANCE.P",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "COVARIANCE_S_constant_column": {
+      "id": "COVARIANCE_S_constant_column",
+      "function": "COVARIANCE.S",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COVARIANCE_S_positive": {
+      "id": "COVARIANCE_S_positive",
+      "function": "COVARIANCE.S",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "COVAR_constant_column": {
+      "id": "COVAR_constant_column",
+      "function": "COVAR",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "COVAR_positive": {
+      "id": "COVAR_positive",
+      "function": "COVAR",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "CUMIPMT_first_period": {
+      "id": "CUMIPMT_first_period",
+      "function": "CUMIPMT",
+      "status": "ok",
+      "value": 1500.0,
+      "matches_upstream": false
+    },
+    "CUMPRINC_first_period": {
+      "id": "CUMPRINC_first_period",
+      "function": "CUMPRINC",
+      "status": "ok",
+      "value": -3298.65,
+      "matches_upstream": false
+    },
+    "DATEDIF_days": {
+      "id": "DATEDIF_days",
+      "function": "DATEDIF",
+      "status": "ok",
+      "value": 9.0,
+      "matches_upstream": true
+    },
+    "DATEDIF_end_before_start": {
+      "id": "DATEDIF_end_before_start",
+      "function": "DATEDIF",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "DATEDIF_md_known_quirk": {
+      "id": "DATEDIF_md_known_quirk",
+      "function": "DATEDIF",
+      "status": "ok",
+      "value": -1.0,
+      "matches_upstream": true
+    },
+    "DATEDIF_months": {
+      "id": "DATEDIF_months",
+      "function": "DATEDIF",
+      "status": "ok",
+      "value": 41.0,
+      "matches_upstream": true
+    },
+    "DATEDIF_years": {
+      "id": "DATEDIF_years",
+      "function": "DATEDIF",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "DATEVALUE_iso": {
+      "id": "DATEVALUE_iso",
+      "function": "DATEVALUE",
+      "status": "ok",
+      "value": 46224.0,
+      "matches_upstream": true
+    },
+    "DATE_basic": {
+      "id": "DATE_basic",
+      "function": "DATE",
+      "status": "ok",
+      "value": 45366.0,
+      "matches_upstream": true
+    },
+    "DATE_month_rollback_below_1": {
+      "id": "DATE_month_rollback_below_1",
+      "function": "DATE",
+      "status": "ok",
+      "value": 39327.0,
+      "matches_upstream": true
+    },
+    "DATE_month_rollover_above_12": {
+      "id": "DATE_month_rollover_above_12",
+      "function": "DATE",
+      "status": "ok",
+      "value": 45658.0,
+      "matches_upstream": true
+    },
+    "DAVERAGE_matching_criteria": {
+      "id": "DAVERAGE_matching_criteria",
+      "function": "DAVERAGE",
+      "status": "ok",
+      "value": 75.0,
+      "matches_upstream": true
+    },
+    "DAVERAGE_numeric_criteria": {
+      "id": "DAVERAGE_numeric_criteria",
+      "function": "DAVERAGE",
+      "status": "ok",
+      "value": 150.0,
+      "matches_upstream": true
+    },
+    "DAYS360_doc_example_basic": {
+      "id": "DAYS360_doc_example_basic",
+      "function": "DAYS360",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "DAYS360_doc_example_full_year": {
+      "id": "DAYS360_doc_example_full_year",
+      "function": "DAYS360",
+      "status": "ok",
+      "value": 360.0,
+      "matches_upstream": true
+    },
+    "DAYS360_european_method_month_end_no_shift": {
+      "id": "DAYS360_european_method_month_end_no_shift",
+      "function": "DAYS360",
+      "status": "ok",
+      "value": 29.0,
+      "matches_upstream": true
+    },
+    "DAYS360_us_method_month_end_shift": {
+      "id": "DAYS360_us_method_month_end_shift",
+      "function": "DAYS360",
+      "status": "ok",
+      "value": 30.0,
+      "matches_upstream": true
+    },
+    "DAYS_basic_end_first_argument_order": {
+      "id": "DAYS_basic_end_first_argument_order",
+      "function": "DAYS",
+      "status": "ok",
+      "value": 14.0,
+      "matches_upstream": true
+    },
+    "DAYS_doc_example_full_year": {
+      "id": "DAYS_doc_example_full_year",
+      "function": "DAYS",
+      "status": "ok",
+      "value": 364.0,
+      "matches_upstream": true
+    },
+    "DAYS_doc_example_text_dates": {
+      "id": "DAYS_doc_example_text_dates",
+      "function": "DAYS",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": false
+    },
+    "DAYS_reversed_arguments_flip_sign": {
+      "id": "DAYS_reversed_arguments_flip_sign",
+      "function": "DAYS",
+      "status": "ok",
+      "value": -14.0,
+      "matches_upstream": true
+    },
+    "DAY_ignores_time_fraction": {
+      "id": "DAY_ignores_time_fraction",
+      "function": "DAY",
+      "status": "ok",
+      "value": 15.0,
+      "matches_upstream": true
+    },
+    "DAY_of_date": {
+      "id": "DAY_of_date",
+      "function": "DAY",
+      "status": "ok",
+      "value": 15.0,
+      "matches_upstream": true
+    },
+    "DAY_of_raw_serial_epoch": {
+      "id": "DAY_of_raw_serial_epoch",
+      "function": "DAY",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "DB_first_year": {
+      "id": "DB_first_year",
+      "function": "DB",
+      "status": "ok",
+      "value": 3690.0,
+      "matches_upstream": true
+    },
+    "DCOUNT_all_matching": {
+      "id": "DCOUNT_all_matching",
+      "function": "DCOUNT",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "DCOUNT_matching_criteria": {
+      "id": "DCOUNT_matching_criteria",
+      "function": "DCOUNT",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "DDB_first_year": {
+      "id": "DDB_first_year",
+      "function": "DDB",
+      "status": "ok",
+      "value": 4000.0,
+      "matches_upstream": true
+    },
+    "DEC2BIN_basic": {
+      "id": "DEC2BIN_basic",
+      "function": "DEC2BIN",
+      "status": "ok",
+      "value": "1010",
+      "matches_upstream": true
+    },
+    "DEC2BIN_five": {
+      "id": "DEC2BIN_five",
+      "function": "DEC2BIN",
+      "status": "ok",
+      "value": "101",
+      "matches_upstream": true
+    },
+    "DEC2BIN_padded": {
+      "id": "DEC2BIN_padded",
+      "function": "DEC2BIN",
+      "status": "ok",
+      "value": "00001010",
+      "matches_upstream": true
+    },
+    "DEC2HEX_basic": {
+      "id": "DEC2HEX_basic",
+      "function": "DEC2HEX",
+      "status": "ok",
+      "value": "FF",
+      "matches_upstream": true
+    },
+    "DEC2HEX_padded": {
+      "id": "DEC2HEX_padded",
+      "function": "DEC2HEX",
+      "status": "ok",
+      "value": "00FF",
+      "matches_upstream": true
+    },
+    "DEC2HEX_sixteen": {
+      "id": "DEC2HEX_sixteen",
+      "function": "DEC2HEX",
+      "status": "ok",
+      "value": "10",
+      "matches_upstream": true
+    },
+    "DEC2OCT_basic": {
+      "id": "DEC2OCT_basic",
+      "function": "DEC2OCT",
+      "status": "ok",
+      "value": "10",
+      "matches_upstream": true
+    },
+    "DEC2OCT_fifteen": {
+      "id": "DEC2OCT_fifteen",
+      "function": "DEC2OCT",
+      "status": "ok",
+      "value": "17",
+      "matches_upstream": true
+    },
+    "DEC2OCT_padded": {
+      "id": "DEC2OCT_padded",
+      "function": "DEC2OCT",
+      "status": "ok",
+      "value": "0010",
+      "matches_upstream": true
+    },
+    "DECIMAL_basic": {
+      "id": "DECIMAL_basic",
+      "function": "DECIMAL",
+      "status": "ok",
+      "value": 255.0,
+      "matches_upstream": true
+    },
+    "DEGREES_negative": {
+      "id": "DEGREES_negative",
+      "function": "DEGREES",
+      "status": "ok",
+      "value": -90.0,
+      "matches_upstream": true
+    },
+    "DEGREES_one_radian": {
+      "id": "DEGREES_one_radian",
+      "function": "DEGREES",
+      "status": "ok",
+      "value": 57.29577951308232,
+      "matches_upstream": true
+    },
+    "DEGREES_pi_is_180": {
+      "id": "DEGREES_pi_is_180",
+      "function": "DEGREES",
+      "status": "ok",
+      "value": 180.0,
+      "matches_upstream": true
+    },
+    "DEGREES_zero": {
+      "id": "DEGREES_zero",
+      "function": "DEGREES",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "DEVSQ_basic": {
+      "id": "DEVSQ_basic",
+      "function": "DEVSQ",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "DEVSQ_from_range": {
+      "id": "DEVSQ_from_range",
+      "function": "DEVSQ",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "DEVSQ_identical_values": {
+      "id": "DEVSQ_identical_values",
+      "function": "DEVSQ",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "DGET_multiple_matches_error": {
+      "id": "DGET_multiple_matches_error",
+      "function": "DGET",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": false
+    },
+    "DGET_single_match": {
+      "id": "DGET_single_match",
+      "function": "DGET",
+      "status": "ok",
+      "value": 200.0,
+      "matches_upstream": true
+    },
+    "DMAX_all_rows": {
+      "id": "DMAX_all_rows",
+      "function": "DMAX",
+      "status": "ok",
+      "value": 200.0,
+      "matches_upstream": true
+    },
+    "DMAX_matching_criteria": {
+      "id": "DMAX_matching_criteria",
+      "function": "DMAX",
+      "status": "ok",
+      "value": 100.0,
+      "matches_upstream": true
+    },
+    "DMIN_all_rows": {
+      "id": "DMIN_all_rows",
+      "function": "DMIN",
+      "status": "ok",
+      "value": 50.0,
+      "matches_upstream": true
+    },
+    "DMIN_matching_criteria": {
+      "id": "DMIN_matching_criteria",
+      "function": "DMIN",
+      "status": "ok",
+      "value": 50.0,
+      "matches_upstream": true
+    },
+    "DOLLAR_basic": {
+      "id": "DOLLAR_basic",
+      "function": "DOLLAR",
+      "status": "ok",
+      "value": "$1,234.57",
+      "matches_upstream": true
+    },
+    "DROP_first_row_and_col": {
+      "id": "DROP_first_row_and_col",
+      "function": "DROP",
+      "status": "ok",
+      "value": [
+        [
+          5.0,
+          6.0
+        ],
+        [
+          8.0,
+          9.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "DSUM_field_by_number": {
+      "id": "DSUM_field_by_number",
+      "function": "DSUM",
+      "status": "ok",
+      "value": 150.0,
+      "matches_upstream": true
+    },
+    "DSUM_matching_criteria": {
+      "id": "DSUM_matching_criteria",
+      "function": "DSUM",
+      "status": "ok",
+      "value": 150.0,
+      "matches_upstream": true
+    },
+    "DSUM_numeric_condition": {
+      "id": "DSUM_numeric_condition",
+      "function": "DSUM",
+      "status": "ok",
+      "value": 300.0,
+      "matches_upstream": true
+    },
+    "EDATE_fractional_months_truncated": {
+      "id": "EDATE_fractional_months_truncated",
+      "function": "EDATE",
+      "status": "ok",
+      "value": 45323.0,
+      "matches_upstream": true
+    },
+    "EDATE_leap_year_clamp": {
+      "id": "EDATE_leap_year_clamp",
+      "function": "EDATE",
+      "status": "ok",
+      "value": 45351.0,
+      "matches_upstream": true
+    },
+    "EDATE_negative_months": {
+      "id": "EDATE_negative_months",
+      "function": "EDATE",
+      "status": "ok",
+      "value": 45306.0,
+      "matches_upstream": true
+    },
+    "EDATE_year_boundary": {
+      "id": "EDATE_year_boundary",
+      "function": "EDATE",
+      "status": "ok",
+      "value": 45337.0,
+      "matches_upstream": true
+    },
+    "EFFECT_monthly_6pct": {
+      "id": "EFFECT_monthly_6pct",
+      "function": "EFFECT",
+      "status": "ok",
+      "value": 0.061678,
+      "matches_upstream": true
+    },
+    "EOMONTH_crosses_year_boundary": {
+      "id": "EOMONTH_crosses_year_boundary",
+      "function": "EOMONTH",
+      "status": "ok",
+      "value": 45688.0,
+      "matches_upstream": true
+    },
+    "EOMONTH_negative_months_backward": {
+      "id": "EOMONTH_negative_months_backward",
+      "function": "EOMONTH",
+      "status": "ok",
+      "value": 45351.0,
+      "matches_upstream": true
+    },
+    "EOMONTH_positive_months_forward": {
+      "id": "EOMONTH_positive_months_forward",
+      "function": "EOMONTH",
+      "status": "ok",
+      "value": 45412.0,
+      "matches_upstream": true
+    },
+    "EOMONTH_zero_months_same_month": {
+      "id": "EOMONTH_zero_months_same_month",
+      "function": "EOMONTH",
+      "status": "ok",
+      "value": 45382.0,
+      "matches_upstream": true
+    },
+    "ERROR.TYPE_div0": {
+      "id": "ERROR.TYPE_div0",
+      "function": "ERROR.TYPE",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "ERROR.TYPE_na": {
+      "id": "ERROR.TYPE_na",
+      "function": "ERROR.TYPE",
+      "status": "ok",
+      "value": 7.0,
+      "matches_upstream": true
+    },
+    "ERROR.TYPE_name": {
+      "id": "ERROR.TYPE_name",
+      "function": "ERROR.TYPE",
+      "status": "ok",
+      "value": "#NAME?",
+      "matches_upstream": false
+    },
+    "ERROR.TYPE_non_error": {
+      "id": "ERROR.TYPE_non_error",
+      "function": "ERROR.TYPE",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "ERROR.TYPE_null": {
+      "id": "ERROR.TYPE_null",
+      "function": "ERROR.TYPE",
+      "status": "ok",
+      "value": "#N/IMPL!",
+      "matches_upstream": false
+    },
+    "ERROR.TYPE_num": {
+      "id": "ERROR.TYPE_num",
+      "function": "ERROR.TYPE",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "ERROR.TYPE_ref": {
+      "id": "ERROR.TYPE_ref",
+      "function": "ERROR.TYPE",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "ERROR.TYPE_value": {
+      "id": "ERROR.TYPE_value",
+      "function": "ERROR.TYPE",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "EVEN_round_up": {
+      "id": "EVEN_round_up",
+      "function": "EVEN",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "EXACT_case_sensitive_false": {
+      "id": "EXACT_case_sensitive_false",
+      "function": "EXACT",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "EXACT_case_sensitive_true": {
+      "id": "EXACT_case_sensitive_true",
+      "function": "EXACT",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "EXACT_numeric_arguments": {
+      "id": "EXACT_numeric_arguments",
+      "function": "EXACT",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "EXACT_space_sensitive": {
+      "id": "EXACT_space_sensitive",
+      "function": "EXACT",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "EXPAND_pad_cols": {
+      "id": "EXPAND_pad_cols",
+      "function": "EXPAND",
+      "status": "ok",
+      "value": [
+        "#NAME?",
+        null,
+        null
+      ],
+      "matches_upstream": false
+    },
+    "EXPAND_pad_rows": {
+      "id": "EXPAND_pad_rows",
+      "function": "EXPAND",
+      "status": "ok",
+      "value": [
+        "#NAME?",
+        null,
+        null
+      ],
+      "matches_upstream": false
+    },
+    "EXP_ln_roundtrip": {
+      "id": "EXP_ln_roundtrip",
+      "function": "EXP",
+      "status": "ok",
+      "value": 4.999999999999999,
+      "matches_upstream": true
+    },
+    "EXP_negative": {
+      "id": "EXP_negative",
+      "function": "EXP",
+      "status": "ok",
+      "value": 0.36787944117144233,
+      "matches_upstream": true
+    },
+    "EXP_one_is_e": {
+      "id": "EXP_one_is_e",
+      "function": "EXP",
+      "status": "ok",
+      "value": 2.718281828459045,
+      "matches_upstream": true
+    },
+    "EXP_zero": {
+      "id": "EXP_zero",
+      "function": "EXP",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "FACTDOUBLE_even": {
+      "id": "FACTDOUBLE_even",
+      "function": "FACTDOUBLE",
+      "status": "ok",
+      "value": 48.0,
+      "matches_upstream": true
+    },
+    "FACTDOUBLE_odd": {
+      "id": "FACTDOUBLE_odd",
+      "function": "FACTDOUBLE",
+      "status": "ok",
+      "value": 105.0,
+      "matches_upstream": true
+    },
+    "FACTDOUBLE_zero": {
+      "id": "FACTDOUBLE_zero",
+      "function": "FACTDOUBLE",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "FACT_5": {
+      "id": "FACT_5",
+      "function": "FACT",
+      "status": "ok",
+      "value": 120.0,
+      "matches_upstream": true
+    },
+    "FALSE_equals_keyword": {
+      "id": "FALSE_equals_keyword",
+      "function": "FALSE",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "FALSE_in_if": {
+      "id": "FALSE_in_if",
+      "function": "FALSE",
+      "status": "ok",
+      "value": "no",
+      "matches_upstream": true
+    },
+    "FALSE_zero_arg_function": {
+      "id": "FALSE_zero_arg_function",
+      "function": "FALSE",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "FILTER_2d_by_column_condition": {
+      "id": "FILTER_2d_by_column_condition",
+      "function": "FILTER",
+      "status": "ok",
+      "value": [
+        [
+          2.0,
+          "y"
+        ],
+        [
+          3.0,
+          "z"
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "FILTER_all_false_no_default": {
+      "id": "FILTER_all_false_no_default",
+      "function": "FILTER",
+      "status": "ok",
+      "value": "#CALC!",
+      "matches_upstream": true
+    },
+    "FILTER_all_false_with_default": {
+      "id": "FILTER_all_false_with_default",
+      "function": "FILTER",
+      "status": "ok",
+      "value": "none",
+      "matches_upstream": true
+    },
+    "FILTER_basic": {
+      "id": "FILTER_basic",
+      "function": "FILTER",
+      "status": "ok",
+      "value": [
+        "c",
+        "d",
+        "e"
+      ],
+      "matches_upstream": true
+    },
+    "FILTER_inline_array_literal": {
+      "id": "FILTER_inline_array_literal",
+      "function": "FILTER",
+      "status": "ok",
+      "value": [
+        1.0,
+        2.0
+      ],
+      "matches_upstream": false
+    },
+    "FIND_basic": {
+      "id": "FIND_basic",
+      "function": "FIND",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "FIND_case_sensitive_no_match": {
+      "id": "FIND_case_sensitive_no_match",
+      "function": "FIND",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "FIND_not_found": {
+      "id": "FIND_not_found",
+      "function": "FIND",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "FIND_start_num_skips_earlier_match": {
+      "id": "FIND_start_num_skips_earlier_match",
+      "function": "FIND",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "FIXED_basic": {
+      "id": "FIXED_basic",
+      "function": "FIXED",
+      "status": "ok",
+      "value": "1,234.6",
+      "matches_upstream": true
+    },
+    "FLOOR.MATH_basic_significance": {
+      "id": "FLOOR.MATH_basic_significance",
+      "function": "FLOOR.MATH",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "FLOOR.MATH_default_significance_1": {
+      "id": "FLOOR.MATH_default_significance_1",
+      "function": "FLOOR.MATH",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "FLOOR.MATH_negative_default_mode_away_from_zero": {
+      "id": "FLOOR.MATH_negative_default_mode_away_from_zero",
+      "function": "FLOOR.MATH",
+      "status": "ok",
+      "value": -10.0,
+      "matches_upstream": true
+    },
+    "FLOOR.MATH_negative_mode_nonzero_toward_zero": {
+      "id": "FLOOR.MATH_negative_mode_nonzero_toward_zero",
+      "function": "FLOOR.MATH",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": false
+    },
+    "FLOOR_basic": {
+      "id": "FLOOR_basic",
+      "function": "FLOOR",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "FLOOR_both_negative_toward_zero": {
+      "id": "FLOOR_both_negative_toward_zero",
+      "function": "FLOOR",
+      "status": "ok",
+      "value": -4.0,
+      "matches_upstream": false
+    },
+    "FLOOR_fractional_significance": {
+      "id": "FLOOR_fractional_significance",
+      "function": "FLOOR",
+      "status": "ok",
+      "value": 0.23,
+      "matches_upstream": true
+    },
+    "FLOOR_libreoffice_default_mode_divergence": {
+      "id": "FLOOR_libreoffice_default_mode_divergence",
+      "function": "FLOOR",
+      "status": "ok",
+      "value": -46.0,
+      "matches_upstream": false
+    },
+    "FLOOR_mismatched_sign_error": {
+      "id": "FLOOR_mismatched_sign_error",
+      "function": "FLOOR",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": false
+    },
+    "FLOOR_nonnumeric_error": {
+      "id": "FLOOR_nonnumeric_error",
+      "function": "FLOOR",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "FORECAST_ETS_exists": {
+      "id": "FORECAST_ETS_exists",
+      "function": "FORECAST.ETS",
+      "status": "probe",
+      "value": "#NAME?"
+    },
+    "FORECAST_LINEAR_two_point_interpolation": {
+      "id": "FORECAST_LINEAR_two_point_interpolation",
+      "function": "FORECAST.LINEAR",
+      "status": "ok",
+      "value": 15.0,
+      "matches_upstream": true
+    },
+    "FORECAST_extrapolation": {
+      "id": "FORECAST_extrapolation",
+      "function": "FORECAST",
+      "status": "ok",
+      "value": 50.0,
+      "matches_upstream": true
+    },
+    "FORECAST_two_point_interpolation": {
+      "id": "FORECAST_two_point_interpolation",
+      "function": "FORECAST",
+      "status": "ok",
+      "value": 15.0,
+      "matches_upstream": true
+    },
+    "FORMULATEXT_basic_arithmetic": {
+      "id": "FORMULATEXT_basic_arithmetic",
+      "function": "FORMULATEXT",
+      "status": "ok",
+      "value": "=1 + 2",
+      "matches_upstream": false
+    },
+    "FORMULATEXT_blank_cell": {
+      "id": "FORMULATEXT_blank_cell",
+      "function": "FORMULATEXT",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "FORMULATEXT_non_formula_cell": {
+      "id": "FORMULATEXT_non_formula_cell",
+      "function": "FORMULATEXT",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "FORMULATEXT_preserves_exact_text": {
+      "id": "FORMULATEXT_preserves_exact_text",
+      "function": "FORMULATEXT",
+      "status": "ok",
+      "value": "=CONCATENATE(\"a\", \"b\")",
+      "matches_upstream": false
+    },
+    "FREQUENCY_three_bins": {
+      "id": "FREQUENCY_three_bins",
+      "function": "FREQUENCY",
+      "status": "ok",
+      "value": [
+        2.0,
+        2.0,
+        1.0
+      ],
+      "matches_upstream": true
+    },
+    "FV_monthly_savings": {
+      "id": "FV_monthly_savings",
+      "function": "FV",
+      "status": "ok",
+      "value": 15528.23,
+      "matches_upstream": true
+    },
+    "GCD_basic": {
+      "id": "GCD_basic",
+      "function": "GCD",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "GEOMEAN_1_4_16": {
+      "id": "GEOMEAN_1_4_16",
+      "function": "GEOMEAN",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "GROUPBY_exists_sum": {
+      "id": "GROUPBY_exists_sum",
+      "function": "GROUPBY",
+      "status": "probe",
+      "value": "#NAME?"
+    },
+    "GROWTH_exact_exponential": {
+      "id": "GROWTH_exact_exponential",
+      "function": "GROWTH",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": false
+    },
+    "HARMEAN_all_equal": {
+      "id": "HARMEAN_all_equal",
+      "function": "HARMEAN",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "HARMEAN_basic": {
+      "id": "HARMEAN_basic",
+      "function": "HARMEAN",
+      "status": "ok",
+      "value": 3.0000000000000004,
+      "matches_upstream": true
+    },
+    "HARMEAN_from_range": {
+      "id": "HARMEAN_from_range",
+      "function": "HARMEAN",
+      "status": "ok",
+      "value": 1.5,
+      "matches_upstream": true
+    },
+    "HEX2BIN_basic": {
+      "id": "HEX2BIN_basic",
+      "function": "HEX2BIN",
+      "status": "ok",
+      "value": "1111",
+      "matches_upstream": true
+    },
+    "HEX2BIN_padded": {
+      "id": "HEX2BIN_padded",
+      "function": "HEX2BIN",
+      "status": "ok",
+      "value": "00001111",
+      "matches_upstream": true
+    },
+    "HEX2BIN_ten": {
+      "id": "HEX2BIN_ten",
+      "function": "HEX2BIN",
+      "status": "ok",
+      "value": "1010",
+      "matches_upstream": true
+    },
+    "HEX2DEC_basic": {
+      "id": "HEX2DEC_basic",
+      "function": "HEX2DEC",
+      "status": "ok",
+      "value": 255.0,
+      "matches_upstream": true
+    },
+    "HEX2DEC_roundtrip": {
+      "id": "HEX2DEC_roundtrip",
+      "function": "HEX2DEC",
+      "status": "ok",
+      "value": 4095.0,
+      "matches_upstream": true
+    },
+    "HEX2DEC_ten": {
+      "id": "HEX2DEC_ten",
+      "function": "HEX2DEC",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "HEX2OCT_basic": {
+      "id": "HEX2OCT_basic",
+      "function": "HEX2OCT",
+      "status": "ok",
+      "value": "17",
+      "matches_upstream": true
+    },
+    "HEX2OCT_larger": {
+      "id": "HEX2OCT_larger",
+      "function": "HEX2OCT",
+      "status": "ok",
+      "value": "377",
+      "matches_upstream": true
+    },
+    "HEX2OCT_ten": {
+      "id": "HEX2OCT_ten",
+      "function": "HEX2OCT",
+      "status": "ok",
+      "value": "12",
+      "matches_upstream": true
+    },
+    "HLOOKUP_approximate_match": {
+      "id": "HLOOKUP_approximate_match",
+      "function": "HLOOKUP",
+      "status": "ok",
+      "value": 50.0,
+      "matches_upstream": true
+    },
+    "HLOOKUP_exact_match": {
+      "id": "HLOOKUP_exact_match",
+      "function": "HLOOKUP",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "HLOOKUP_not_found_exact_na": {
+      "id": "HLOOKUP_not_found_exact_na",
+      "function": "HLOOKUP",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "HLOOKUP_row_index_out_of_range": {
+      "id": "HLOOKUP_row_index_out_of_range",
+      "function": "HLOOKUP",
+      "status": "ok",
+      "value": "#REF!",
+      "matches_upstream": true
+    },
+    "HOUR_of_date_plus_time_serial": {
+      "id": "HOUR_of_date_plus_time_serial",
+      "function": "HOUR",
+      "status": "ok",
+      "value": 18.0,
+      "matches_upstream": true
+    },
+    "HOUR_of_fractional_day_noon": {
+      "id": "HOUR_of_fractional_day_noon",
+      "function": "HOUR",
+      "status": "ok",
+      "value": 12.0,
+      "matches_upstream": true
+    },
+    "HOUR_of_time_value": {
+      "id": "HOUR_of_time_value",
+      "function": "HOUR",
+      "status": "ok",
+      "value": 15.0,
+      "matches_upstream": true
+    },
+    "HSTACK_two_columns": {
+      "id": "HSTACK_two_columns",
+      "function": "HSTACK",
+      "status": "ok",
+      "value": [
+        [
+          1.0,
+          3.0
+        ],
+        [
+          2.0,
+          4.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "HYPERLINK_friendly_name_from_cell": {
+      "id": "HYPERLINK_friendly_name_from_cell",
+      "function": "HYPERLINK",
+      "status": "ok",
+      "value": "Go",
+      "matches_upstream": true
+    },
+    "HYPERLINK_friendly_name_numeric": {
+      "id": "HYPERLINK_friendly_name_numeric",
+      "function": "HYPERLINK",
+      "status": "ok",
+      "value": "42",
+      "matches_upstream": false
+    },
+    "HYPERLINK_with_friendly_name": {
+      "id": "HYPERLINK_with_friendly_name",
+      "function": "HYPERLINK",
+      "status": "ok",
+      "value": "Click here",
+      "matches_upstream": true
+    },
+    "HYPERLINK_without_friendly_name": {
+      "id": "HYPERLINK_without_friendly_name",
+      "function": "HYPERLINK",
+      "status": "ok",
+      "value": "https://example.com",
+      "matches_upstream": true
+    },
+    "IFERROR_catches_div0": {
+      "id": "IFERROR_catches_div0",
+      "function": "IFERROR",
+      "status": "ok",
+      "value": "err",
+      "matches_upstream": true
+    },
+    "IFERROR_catches_ref_error": {
+      "id": "IFERROR_catches_ref_error",
+      "function": "IFERROR",
+      "status": "ok",
+      "value": "bad index",
+      "matches_upstream": true
+    },
+    "IFERROR_nested_vlookup": {
+      "id": "IFERROR_nested_vlookup",
+      "function": "IFERROR",
+      "status": "ok",
+      "value": "not found",
+      "matches_upstream": true
+    },
+    "IFERROR_no_error_passthrough": {
+      "id": "IFERROR_no_error_passthrough",
+      "function": "IFERROR",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "IFNA_catches_na": {
+      "id": "IFNA_catches_na",
+      "function": "IFNA",
+      "status": "ok",
+      "value": "not found",
+      "matches_upstream": true
+    },
+    "IFNA_does_not_catch_other_errors": {
+      "id": "IFNA_does_not_catch_other_errors",
+      "function": "IFNA",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "IFNA_no_error_passthrough": {
+      "id": "IFNA_no_error_passthrough",
+      "function": "IFNA",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "IFS_basic": {
+      "id": "IFS_basic",
+      "function": "IFS",
+      "status": "ok",
+      "value": "B",
+      "matches_upstream": true
+    },
+    "IFS_catchall_first_value": {
+      "id": "IFS_catchall_first_value",
+      "function": "IFS",
+      "status": "ok",
+      "value": "always",
+      "matches_upstream": true
+    },
+    "IFS_no_match_no_catchall": {
+      "id": "IFS_no_match_no_catchall",
+      "function": "IFS",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "IFS_order_matters": {
+      "id": "IFS_order_matters",
+      "function": "IFS",
+      "status": "ok",
+      "value": "pos",
+      "matches_upstream": true
+    },
+    "IF_false_branch": {
+      "id": "IF_false_branch",
+      "function": "IF",
+      "status": "ok",
+      "value": "no",
+      "matches_upstream": true
+    },
+    "IF_numeric_result": {
+      "id": "IF_numeric_result",
+      "function": "IF",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "IF_true_branch": {
+      "id": "IF_true_branch",
+      "function": "IF",
+      "status": "ok",
+      "value": "yes",
+      "matches_upstream": true
+    },
+    "INDEX_1d_basic": {
+      "id": "INDEX_1d_basic",
+      "function": "INDEX",
+      "status": "ok",
+      "value": 30.0,
+      "matches_upstream": true
+    },
+    "INDEX_2d_row_col": {
+      "id": "INDEX_2d_row_col",
+      "function": "INDEX",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "INDEX_MATCH_combo": {
+      "id": "INDEX_MATCH_combo",
+      "function": "INDEX",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "INDEX_out_of_range": {
+      "id": "INDEX_out_of_range",
+      "function": "INDEX",
+      "status": "ok",
+      "value": "#REF!",
+      "matches_upstream": true
+    },
+    "INDEX_whole_column_spill": {
+      "id": "INDEX_whole_column_spill",
+      "function": "INDEX",
+      "status": "ok",
+      "value": [
+        2.0,
+        5.0,
+        8.0
+      ],
+      "matches_upstream": true
+    },
+    "INDIRECT_basic_cell_text": {
+      "id": "INDIRECT_basic_cell_text",
+      "function": "INDIRECT",
+      "status": "ok",
+      "value": 42.0,
+      "matches_upstream": true
+    },
+    "INDIRECT_concatenated_ref": {
+      "id": "INDIRECT_concatenated_ref",
+      "function": "INDIRECT",
+      "status": "ok",
+      "value": 99.0,
+      "matches_upstream": true
+    },
+    "INDIRECT_malformed_ref_error": {
+      "id": "INDIRECT_malformed_ref_error",
+      "function": "INDIRECT",
+      "status": "ok",
+      "value": "#REF!",
+      "matches_upstream": true
+    },
+    "INDIRECT_r1c1_style": {
+      "id": "INDIRECT_r1c1_style",
+      "function": "INDIRECT",
+      "status": "ok",
+      "value": "#REF!",
+      "matches_upstream": false
+    },
+    "INDIRECT_ref_to_blank_cell": {
+      "id": "INDIRECT_ref_to_blank_cell",
+      "function": "INDIRECT",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "INTERCEPT_exact_line": {
+      "id": "INTERCEPT_exact_line",
+      "function": "INTERCEPT",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "INT_already_integer": {
+      "id": "INT_already_integer",
+      "function": "INT",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "INT_basic_positive": {
+      "id": "INT_basic_positive",
+      "function": "INT",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "INT_negative_integer": {
+      "id": "INT_negative_integer",
+      "function": "INT",
+      "status": "ok",
+      "value": -5.0,
+      "matches_upstream": true
+    },
+    "INT_negative_rounds_toward_negative_infinity": {
+      "id": "INT_negative_rounds_toward_negative_infinity",
+      "function": "INT",
+      "status": "ok",
+      "value": -9.0,
+      "matches_upstream": true
+    },
+    "IPMT_first_month_interest": {
+      "id": "IPMT_first_month_interest",
+      "function": "IPMT",
+      "status": "ok",
+      "value": 1500.0,
+      "matches_upstream": true
+    },
+    "IRR_simple_investment": {
+      "id": "IRR_simple_investment",
+      "function": "IRR",
+      "status": "ok",
+      "value": 0.234,
+      "matches_upstream": true
+    },
+    "ISBLANK_false_for_cell_with_value": {
+      "id": "ISBLANK_false_for_cell_with_value",
+      "function": "ISBLANK",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISBLANK_false_for_formula_returning_empty_string": {
+      "id": "ISBLANK_false_for_formula_returning_empty_string",
+      "function": "ISBLANK",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISBLANK_true_for_genuinely_empty_cell": {
+      "id": "ISBLANK_true_for_genuinely_empty_cell",
+      "function": "ISBLANK",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISERROR_div0": {
+      "id": "ISERROR_div0",
+      "function": "ISERROR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISERROR_na": {
+      "id": "ISERROR_na",
+      "function": "ISERROR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISERROR_no_error": {
+      "id": "ISERROR_no_error",
+      "function": "ISERROR",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISERROR_value_error": {
+      "id": "ISERROR_value_error",
+      "function": "ISERROR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISERR_div0": {
+      "id": "ISERR_div0",
+      "function": "ISERR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISERR_na": {
+      "id": "ISERR_na",
+      "function": "ISERR",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISERR_no_error": {
+      "id": "ISERR_no_error",
+      "function": "ISERR",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISERR_value_error": {
+      "id": "ISERR_value_error",
+      "function": "ISERR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISEVEN_negative_even": {
+      "id": "ISEVEN_negative_even",
+      "function": "ISEVEN",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISEVEN_negative_odd": {
+      "id": "ISEVEN_negative_odd",
+      "function": "ISEVEN",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISEVEN_noninteger_truncates": {
+      "id": "ISEVEN_noninteger_truncates",
+      "function": "ISEVEN",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISEVEN_nonnumeric_error": {
+      "id": "ISEVEN_nonnumeric_error",
+      "function": "ISEVEN",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "ISEVEN_zero": {
+      "id": "ISEVEN_zero",
+      "function": "ISEVEN",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISFORMULA_false_on_literal": {
+      "id": "ISFORMULA_false_on_literal",
+      "function": "ISFORMULA",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISFORMULA_true_on_formula_cell": {
+      "id": "ISFORMULA_true_on_formula_cell",
+      "function": "ISFORMULA",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": false
+    },
+    "ISLOGICAL_false": {
+      "id": "ISLOGICAL_false",
+      "function": "ISLOGICAL",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISLOGICAL_number": {
+      "id": "ISLOGICAL_number",
+      "function": "ISLOGICAL",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISLOGICAL_text": {
+      "id": "ISLOGICAL_text",
+      "function": "ISLOGICAL",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISLOGICAL_true": {
+      "id": "ISLOGICAL_true",
+      "function": "ISLOGICAL",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISNA_div0": {
+      "id": "ISNA_div0",
+      "function": "ISNA",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISNA_na": {
+      "id": "ISNA_na",
+      "function": "ISNA",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISNA_no_error": {
+      "id": "ISNA_no_error",
+      "function": "ISNA",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISNA_value_error": {
+      "id": "ISNA_value_error",
+      "function": "ISNA",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISNUMBER_blank": {
+      "id": "ISNUMBER_blank",
+      "function": "ISNUMBER",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISNUMBER_boolean": {
+      "id": "ISNUMBER_boolean",
+      "function": "ISNUMBER",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISNUMBER_number": {
+      "id": "ISNUMBER_number",
+      "function": "ISNUMBER",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISNUMBER_text": {
+      "id": "ISNUMBER_text",
+      "function": "ISNUMBER",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISODD_negative_even": {
+      "id": "ISODD_negative_even",
+      "function": "ISODD",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISODD_negative_odd": {
+      "id": "ISODD_negative_odd",
+      "function": "ISODD",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISODD_noninteger_truncates": {
+      "id": "ISODD_noninteger_truncates",
+      "function": "ISODD",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "ISODD_nonnumeric_error": {
+      "id": "ISODD_nonnumeric_error",
+      "function": "ISODD",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "ISODD_zero": {
+      "id": "ISODD_zero",
+      "function": "ISODD",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISOWEEKNUM_doc_example": {
+      "id": "ISOWEEKNUM_doc_example",
+      "function": "ISOWEEKNUM",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "ISOWEEKNUM_next_iso_year_boundary": {
+      "id": "ISOWEEKNUM_next_iso_year_boundary",
+      "function": "ISOWEEKNUM",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "ISOWEEKNUM_prior_iso_year_boundary": {
+      "id": "ISOWEEKNUM_prior_iso_year_boundary",
+      "function": "ISOWEEKNUM",
+      "status": "ok",
+      "value": 52.0,
+      "matches_upstream": true
+    },
+    "ISOWEEKNUM_same_calendar_date_different_year_no_boundary_issue": {
+      "id": "ISOWEEKNUM_same_calendar_date_different_year_no_boundary_issue",
+      "function": "ISOWEEKNUM",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "ISTEXT_blank": {
+      "id": "ISTEXT_blank",
+      "function": "ISTEXT",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISTEXT_boolean": {
+      "id": "ISTEXT_boolean",
+      "function": "ISTEXT",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISTEXT_number": {
+      "id": "ISTEXT_number",
+      "function": "ISTEXT",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "ISTEXT_text": {
+      "id": "ISTEXT_text",
+      "function": "ISTEXT",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "LAMBDA_basic_invoke": {
+      "id": "LAMBDA_basic_invoke",
+      "function": "LAMBDA",
+      "status": "ok",
+      "value": "#N/IMPL!",
+      "matches_upstream": false
+    },
+    "LAMBDA_two_params": {
+      "id": "LAMBDA_two_params",
+      "function": "LAMBDA",
+      "status": "ok",
+      "value": "#N/IMPL!",
+      "matches_upstream": false
+    },
+    "LAMBDA_via_LET": {
+      "id": "LAMBDA_via_LET",
+      "function": "LAMBDA",
+      "status": "ok",
+      "value": 16.0,
+      "matches_upstream": true
+    },
+    "LAMBDA_wrong_arg_count": {
+      "id": "LAMBDA_wrong_arg_count",
+      "function": "LAMBDA",
+      "status": "ok",
+      "value": "#N/IMPL!",
+      "matches_upstream": false
+    },
+    "LARGE_basic": {
+      "id": "LARGE_basic",
+      "function": "LARGE",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "LARGE_k1_equals_max": {
+      "id": "LARGE_k1_equals_max",
+      "function": "LARGE",
+      "status": "ok",
+      "value": 9.0,
+      "matches_upstream": true
+    },
+    "LARGE_k_out_of_range": {
+      "id": "LARGE_k_out_of_range",
+      "function": "LARGE",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "LARGE_k_zero_error": {
+      "id": "LARGE_k_zero_error",
+      "function": "LARGE",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "LCM_basic": {
+      "id": "LCM_basic",
+      "function": "LCM",
+      "status": "ok",
+      "value": 12.0,
+      "matches_upstream": true
+    },
+    "LEFT_basic": {
+      "id": "LEFT_basic",
+      "function": "LEFT",
+      "status": "ok",
+      "value": "Exc",
+      "matches_upstream": true
+    },
+    "LEFT_default_num_chars": {
+      "id": "LEFT_default_num_chars",
+      "function": "LEFT",
+      "status": "ok",
+      "value": "E",
+      "matches_upstream": true
+    },
+    "LEFT_num_chars_exceeds_length": {
+      "id": "LEFT_num_chars_exceeds_length",
+      "function": "LEFT",
+      "status": "ok",
+      "value": "Excel",
+      "matches_upstream": true
+    },
+    "LEFT_zero_chars": {
+      "id": "LEFT_zero_chars",
+      "function": "LEFT",
+      "status": "ok",
+      "value": "",
+      "matches_upstream": true
+    },
+    "LEN_basic": {
+      "id": "LEN_basic",
+      "function": "LEN",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "LEN_counts_spaces": {
+      "id": "LEN_counts_spaces",
+      "function": "LEN",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "LEN_empty_string": {
+      "id": "LEN_empty_string",
+      "function": "LEN",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "LEN_numeric_value_coerced": {
+      "id": "LEN_numeric_value_coerced",
+      "function": "LEN",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "LET_array_binding": {
+      "id": "LET_array_binding",
+      "function": "LET",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "LET_basic": {
+      "id": "LET_basic",
+      "function": "LET",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "LET_chained_bindings": {
+      "id": "LET_chained_bindings",
+      "function": "LET",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "LET_odd_arg_count_error": {
+      "id": "LET_odd_arg_count_error",
+      "function": "LET",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "LINEST_slope_exact_line": {
+      "id": "LINEST_slope_exact_line",
+      "function": "LINEST",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "LN_negative_error": {
+      "id": "LN_negative_error",
+      "function": "LN",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "LN_of_e": {
+      "id": "LN_of_e",
+      "function": "LN",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "LN_of_one": {
+      "id": "LN_of_one",
+      "function": "LN",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "LN_zero_error": {
+      "id": "LN_zero_error",
+      "function": "LN",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "LOG10_basic": {
+      "id": "LOG10_basic",
+      "function": "LOG10",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "LOG10_negative_error": {
+      "id": "LOG10_negative_error",
+      "function": "LOG10",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "LOG10_of_one": {
+      "id": "LOG10_of_one",
+      "function": "LOG10",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "LOG10_zero_error": {
+      "id": "LOG10_zero_error",
+      "function": "LOG10",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "LOG_default_base_ten": {
+      "id": "LOG_default_base_ten",
+      "function": "LOG",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "LOG_explicit_base": {
+      "id": "LOG_explicit_base",
+      "function": "LOG",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "LOG_negative_number_error": {
+      "id": "LOG_negative_number_error",
+      "function": "LOG",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "LOG_zero_error": {
+      "id": "LOG_zero_error",
+      "function": "LOG",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "LOOKUP_array_form_more_rows_than_cols": {
+      "id": "LOOKUP_array_form_more_rows_than_cols",
+      "function": "LOOKUP",
+      "status": "ok",
+      "value": 200.0,
+      "matches_upstream": true
+    },
+    "LOOKUP_below_range_na": {
+      "id": "LOOKUP_below_range_na",
+      "function": "LOOKUP",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "LOOKUP_vector_approximate_between_values": {
+      "id": "LOOKUP_vector_approximate_between_values",
+      "function": "LOOKUP",
+      "status": "ok",
+      "value": 30.0,
+      "matches_upstream": true
+    },
+    "LOOKUP_vector_exact_match": {
+      "id": "LOOKUP_vector_exact_match",
+      "function": "LOOKUP",
+      "status": "ok",
+      "value": 30.0,
+      "matches_upstream": true
+    },
+    "LOWER_already_lower": {
+      "id": "LOWER_already_lower",
+      "function": "LOWER",
+      "status": "ok",
+      "value": "hello",
+      "matches_upstream": true
+    },
+    "LOWER_basic": {
+      "id": "LOWER_basic",
+      "function": "LOWER",
+      "status": "ok",
+      "value": "hello world",
+      "matches_upstream": true
+    },
+    "LOWER_leaves_numbers_and_symbols": {
+      "id": "LOWER_leaves_numbers_and_symbols",
+      "function": "LOWER",
+      "status": "ok",
+      "value": "abc123!@#",
+      "matches_upstream": true
+    },
+    "MAKEARRAY_rc": {
+      "id": "MAKEARRAY_rc",
+      "function": "MAKEARRAY",
+      "status": "ok",
+      "value": [
+        [
+          "#NAME?",
+          null
+        ],
+        [
+          null,
+          null
+        ]
+      ],
+      "matches_upstream": false
+    },
+    "MAP_double": {
+      "id": "MAP_double",
+      "function": "MAP",
+      "status": "ok",
+      "value": [
+        "#NAME?",
+        null,
+        null
+      ],
+      "matches_upstream": false
+    },
+    "MATCH_approx_ascending": {
+      "id": "MATCH_approx_ascending",
+      "function": "MATCH",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "MATCH_approx_descending": {
+      "id": "MATCH_approx_descending",
+      "function": "MATCH",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "MATCH_exact": {
+      "id": "MATCH_exact",
+      "function": "MATCH",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "MATCH_not_found": {
+      "id": "MATCH_not_found",
+      "function": "MATCH",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "MAXIFS_multi_criteria": {
+      "id": "MAXIFS_multi_criteria",
+      "function": "MAXIFS",
+      "status": "ok",
+      "value": 30.0,
+      "matches_upstream": true
+    },
+    "MAXIFS_no_matches": {
+      "id": "MAXIFS_no_matches",
+      "function": "MAXIFS",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "MAXIFS_single_criteria": {
+      "id": "MAXIFS_single_criteria",
+      "function": "MAXIFS",
+      "status": "ok",
+      "value": 50.0,
+      "matches_upstream": true
+    },
+    "MAXIFS_wildcard_text": {
+      "id": "MAXIFS_wildcard_text",
+      "function": "MAXIFS",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "MAX_basic": {
+      "id": "MAX_basic",
+      "function": "MAX",
+      "status": "ok",
+      "value": 9.0,
+      "matches_upstream": true
+    },
+    "MAX_empty_range": {
+      "id": "MAX_empty_range",
+      "function": "MAX",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "MAX_ignores_text": {
+      "id": "MAX_ignores_text",
+      "function": "MAX",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "MAX_negative_numbers": {
+      "id": "MAX_negative_numbers",
+      "function": "MAX",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "MEDIAN_even_count_averages_middle_two": {
+      "id": "MEDIAN_even_count_averages_middle_two",
+      "function": "MEDIAN",
+      "status": "ok",
+      "value": 2.5,
+      "matches_upstream": true
+    },
+    "MEDIAN_ignores_text_and_blanks": {
+      "id": "MEDIAN_ignores_text_and_blanks",
+      "function": "MEDIAN",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "MEDIAN_odd_count": {
+      "id": "MEDIAN_odd_count",
+      "function": "MEDIAN",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "MEDIAN_single_value": {
+      "id": "MEDIAN_single_value",
+      "function": "MEDIAN",
+      "status": "ok",
+      "value": 42.0,
+      "matches_upstream": true
+    },
+    "MID_basic": {
+      "id": "MID_basic",
+      "function": "MID",
+      "status": "ok",
+      "value": "xce",
+      "matches_upstream": true
+    },
+    "MID_num_chars_exceeds_remaining": {
+      "id": "MID_num_chars_exceeds_remaining",
+      "function": "MID",
+      "status": "ok",
+      "value": "cel",
+      "matches_upstream": true
+    },
+    "MID_start_beyond_length": {
+      "id": "MID_start_beyond_length",
+      "function": "MID",
+      "status": "ok",
+      "value": "",
+      "matches_upstream": true
+    },
+    "MID_start_num_one_full_length": {
+      "id": "MID_start_num_one_full_length",
+      "function": "MID",
+      "status": "ok",
+      "value": "Excel",
+      "matches_upstream": true
+    },
+    "MINIFS_multi_criteria": {
+      "id": "MINIFS_multi_criteria",
+      "function": "MINIFS",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "MINIFS_no_matches": {
+      "id": "MINIFS_no_matches",
+      "function": "MINIFS",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "MINIFS_single_criteria": {
+      "id": "MINIFS_single_criteria",
+      "function": "MINIFS",
+      "status": "ok",
+      "value": 30.0,
+      "matches_upstream": true
+    },
+    "MINUTE_of_fractional_day_noon": {
+      "id": "MINUTE_of_fractional_day_noon",
+      "function": "MINUTE",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "MINUTE_of_time_near_midnight": {
+      "id": "MINUTE_of_time_near_midnight",
+      "function": "MINUTE",
+      "status": "ok",
+      "value": 59.0,
+      "matches_upstream": true
+    },
+    "MINUTE_of_time_value": {
+      "id": "MINUTE_of_time_value",
+      "function": "MINUTE",
+      "status": "ok",
+      "value": 45.0,
+      "matches_upstream": true
+    },
+    "MIN_basic": {
+      "id": "MIN_basic",
+      "function": "MIN",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "MIN_empty_range": {
+      "id": "MIN_empty_range",
+      "function": "MIN",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "MIN_ignores_text": {
+      "id": "MIN_ignores_text",
+      "function": "MIN",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "MIN_negative_numbers": {
+      "id": "MIN_negative_numbers",
+      "function": "MIN",
+      "status": "ok",
+      "value": -8.0,
+      "matches_upstream": true
+    },
+    "MODE_MULT_single_mode": {
+      "id": "MODE_MULT_single_mode",
+      "function": "MODE.MULT",
+      "status": "ok",
+      "value": [
+        4.0
+      ],
+      "matches_upstream": true
+    },
+    "MODE_MULT_two_modes": {
+      "id": "MODE_MULT_two_modes",
+      "function": "MODE.MULT",
+      "status": "ok",
+      "value": [
+        1.0,
+        2.0
+      ],
+      "matches_upstream": true
+    },
+    "MODE_SNGL_basic": {
+      "id": "MODE_SNGL_basic",
+      "function": "MODE.SNGL",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "MODE_SNGL_first_of_ties": {
+      "id": "MODE_SNGL_first_of_ties",
+      "function": "MODE.SNGL",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "MODE_SNGL_from_range": {
+      "id": "MODE_SNGL_from_range",
+      "function": "MODE.SNGL",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "MODE_SNGL_negatives": {
+      "id": "MODE_SNGL_negatives",
+      "function": "MODE.SNGL",
+      "status": "ok",
+      "value": -4.0,
+      "matches_upstream": true
+    },
+    "MODE_SNGL_no_repeats_error": {
+      "id": "MODE_SNGL_no_repeats_error",
+      "function": "MODE.SNGL",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": false
+    },
+    "MODE_basic_repeated_value": {
+      "id": "MODE_basic_repeated_value",
+      "function": "MODE",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "MODE_ignores_text_and_blanks": {
+      "id": "MODE_ignores_text_and_blanks",
+      "function": "MODE",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "MODE_negative_numbers_repeated": {
+      "id": "MODE_negative_numbers_repeated",
+      "function": "MODE",
+      "status": "ok",
+      "value": -3.0,
+      "matches_upstream": true
+    },
+    "MODE_no_repeated_value_na": {
+      "id": "MODE_no_repeated_value_na",
+      "function": "MODE",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "MOD_divisor_zero": {
+      "id": "MOD_divisor_zero",
+      "function": "MOD",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "MOD_negative_dividend": {
+      "id": "MOD_negative_dividend",
+      "function": "MOD",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "MOD_negative_divisor": {
+      "id": "MOD_negative_divisor",
+      "function": "MOD",
+      "status": "ok",
+      "value": -2.0,
+      "matches_upstream": true
+    },
+    "MOD_positive_positive": {
+      "id": "MOD_positive_positive",
+      "function": "MOD",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "MONTH_ignores_time_fraction": {
+      "id": "MONTH_ignores_time_fraction",
+      "function": "MONTH",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "MONTH_of_date": {
+      "id": "MONTH_of_date",
+      "function": "MONTH",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "MONTH_of_raw_serial_epoch": {
+      "id": "MONTH_of_raw_serial_epoch",
+      "function": "MONTH",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "MROUND_basic": {
+      "id": "MROUND_basic",
+      "function": "MROUND",
+      "status": "ok",
+      "value": 9.0,
+      "matches_upstream": true
+    },
+    "MROUND_both_negative": {
+      "id": "MROUND_both_negative",
+      "function": "MROUND",
+      "status": "ok",
+      "value": -9.0,
+      "matches_upstream": true
+    },
+    "MROUND_fractional_multiple": {
+      "id": "MROUND_fractional_multiple",
+      "function": "MROUND",
+      "status": "ok",
+      "value": 1.4000000000000001,
+      "matches_upstream": true
+    },
+    "MROUND_mismatched_signs_error": {
+      "id": "MROUND_mismatched_signs_error",
+      "function": "MROUND",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "MROUND_zero": {
+      "id": "MROUND_zero",
+      "function": "MROUND",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "MULTINOMIAL_from_range": {
+      "id": "MULTINOMIAL_from_range",
+      "function": "MULTINOMIAL",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "MULTINOMIAL_three_groups": {
+      "id": "MULTINOMIAL_three_groups",
+      "function": "MULTINOMIAL",
+      "status": "ok",
+      "value": 60.0,
+      "matches_upstream": true
+    },
+    "MULTINOMIAL_two_groups": {
+      "id": "MULTINOMIAL_two_groups",
+      "function": "MULTINOMIAL",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "NA_direct": {
+      "id": "NA_direct",
+      "function": "NA",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "NA_isna_true": {
+      "id": "NA_isna_true",
+      "function": "NA",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "NA_isnumber_false": {
+      "id": "NA_isnumber_false",
+      "function": "NA",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "NA_propagates_through_arithmetic": {
+      "id": "NA_propagates_through_arithmetic",
+      "function": "NA",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "NETWORKDAYS_INTL_july": {
+      "id": "NETWORKDAYS_INTL_july",
+      "function": "NETWORKDAYS.INTL",
+      "status": "ok",
+      "value": 23.0,
+      "matches_upstream": true
+    },
+    "NETWORKDAYS_basic_week": {
+      "id": "NETWORKDAYS_basic_week",
+      "function": "NETWORKDAYS",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "NETWORKDAYS_reversed_dates": {
+      "id": "NETWORKDAYS_reversed_dates",
+      "function": "NETWORKDAYS",
+      "status": "ok",
+      "value": -5.0,
+      "matches_upstream": true
+    },
+    "NETWORKDAYS_weekend_only": {
+      "id": "NETWORKDAYS_weekend_only",
+      "function": "NETWORKDAYS",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "NETWORKDAYS_with_holiday": {
+      "id": "NETWORKDAYS_with_holiday",
+      "function": "NETWORKDAYS",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": false
+    },
+    "NOMINAL_inverse_of_effect": {
+      "id": "NOMINAL_inverse_of_effect",
+      "function": "NOMINAL",
+      "status": "ok",
+      "value": 0.06,
+      "matches_upstream": true
+    },
+    "NOT_false": {
+      "id": "NOT_false",
+      "function": "NOT",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "NOT_nonzero_coercion": {
+      "id": "NOT_nonzero_coercion",
+      "function": "NOT",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "NOT_text_error": {
+      "id": "NOT_text_error",
+      "function": "NOT",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "NOT_true": {
+      "id": "NOT_true",
+      "function": "NOT",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "NOT_zero_coercion": {
+      "id": "NOT_zero_coercion",
+      "function": "NOT",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "NOW_exists_and_plausible": {
+      "id": "NOW_exists_and_plausible",
+      "function": "NOW",
+      "status": "probe",
+      "value": 46023.0
+    },
+    "NOW_on_or_after_today": {
+      "id": "NOW_on_or_after_today",
+      "function": "NOW",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "NOW_self_difference_is_deterministic": {
+      "id": "NOW_self_difference_is_deterministic",
+      "function": "NOW",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "NPER_payoff_periods": {
+      "id": "NPER_payoff_periods",
+      "function": "NPER",
+      "status": "ok",
+      "value": 7.2725,
+      "matches_upstream": true
+    },
+    "NPV_three_cashflows": {
+      "id": "NPV_three_cashflows",
+      "function": "NPV",
+      "status": "ok",
+      "value": 481.59,
+      "matches_upstream": true
+    },
+    "NUMBERVALUE_basic": {
+      "id": "NUMBERVALUE_basic",
+      "function": "NUMBERVALUE",
+      "status": "ok",
+      "value": 1234.56,
+      "matches_upstream": true
+    },
+    "NUMBERVALUE_decimal_separator_used_twice": {
+      "id": "NUMBERVALUE_decimal_separator_used_twice",
+      "function": "NUMBERVALUE",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "NUMBERVALUE_european_separators": {
+      "id": "NUMBERVALUE_european_separators",
+      "function": "NUMBERVALUE",
+      "status": "ok",
+      "value": 2500.27,
+      "matches_upstream": true
+    },
+    "NUMBERVALUE_malformed_text": {
+      "id": "NUMBERVALUE_malformed_text",
+      "function": "NUMBERVALUE",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "N_date": {
+      "id": "N_date",
+      "function": "N",
+      "status": "ok",
+      "value": 45292.0,
+      "matches_upstream": true
+    },
+    "N_false": {
+      "id": "N_false",
+      "function": "N",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "N_number": {
+      "id": "N_number",
+      "function": "N",
+      "status": "ok",
+      "value": 7.0,
+      "matches_upstream": true
+    },
+    "N_text": {
+      "id": "N_text",
+      "function": "N",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "N_true": {
+      "id": "N_true",
+      "function": "N",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "OCT2BIN_basic": {
+      "id": "OCT2BIN_basic",
+      "function": "OCT2BIN",
+      "status": "ok",
+      "value": "1111",
+      "matches_upstream": true
+    },
+    "OCT2BIN_padded": {
+      "id": "OCT2BIN_padded",
+      "function": "OCT2BIN",
+      "status": "ok",
+      "value": "0111",
+      "matches_upstream": true
+    },
+    "OCT2BIN_three": {
+      "id": "OCT2BIN_three",
+      "function": "OCT2BIN",
+      "status": "ok",
+      "value": "11",
+      "matches_upstream": true
+    },
+    "OCT2DEC_basic": {
+      "id": "OCT2DEC_basic",
+      "function": "OCT2DEC",
+      "status": "ok",
+      "value": 15.0,
+      "matches_upstream": true
+    },
+    "OCT2DEC_roundtrip": {
+      "id": "OCT2DEC_roundtrip",
+      "function": "OCT2DEC",
+      "status": "ok",
+      "value": 64.0,
+      "matches_upstream": true
+    },
+    "OCT2DEC_ten": {
+      "id": "OCT2DEC_ten",
+      "function": "OCT2DEC",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "OCT2HEX_basic": {
+      "id": "OCT2HEX_basic",
+      "function": "OCT2HEX",
+      "status": "ok",
+      "value": "F",
+      "matches_upstream": true
+    },
+    "OCT2HEX_larger": {
+      "id": "OCT2HEX_larger",
+      "function": "OCT2HEX",
+      "status": "ok",
+      "value": "1FF",
+      "matches_upstream": true
+    },
+    "OCT2HEX_ten": {
+      "id": "OCT2HEX_ten",
+      "function": "OCT2HEX",
+      "status": "ok",
+      "value": "A",
+      "matches_upstream": true
+    },
+    "ODD_round_up": {
+      "id": "ODD_round_up",
+      "function": "ODD",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "OFFSET_basic_single_cell": {
+      "id": "OFFSET_basic_single_cell",
+      "function": "OFFSET",
+      "status": "ok",
+      "value": 99.0,
+      "matches_upstream": true
+    },
+    "OFFSET_negative_out_of_bounds_error": {
+      "id": "OFFSET_negative_out_of_bounds_error",
+      "function": "OFFSET",
+      "status": "ok",
+      "value": "#REF!",
+      "matches_upstream": true
+    },
+    "OFFSET_range_with_height_width": {
+      "id": "OFFSET_range_with_height_width",
+      "function": "OFFSET",
+      "status": "ok",
+      "value": 60.0,
+      "matches_upstream": true
+    },
+    "OFFSET_zero_offset_returns_same_cell": {
+      "id": "OFFSET_zero_offset_returns_same_cell",
+      "function": "OFFSET",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "OR_basic_false": {
+      "id": "OR_basic_false",
+      "function": "OR",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "OR_basic_true": {
+      "id": "OR_basic_true",
+      "function": "OR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "OR_range_numeric_all_zero": {
+      "id": "OR_range_numeric_all_zero",
+      "function": "OR",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "OR_range_numeric_with_nonzero": {
+      "id": "OR_range_numeric_with_nonzero",
+      "function": "OR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "OR_range_text_ignored": {
+      "id": "OR_range_text_ignored",
+      "function": "OR",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": false
+    },
+    "PEARSON_no_correlation": {
+      "id": "PEARSON_no_correlation",
+      "function": "PEARSON",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "PEARSON_perfect_negative": {
+      "id": "PEARSON_perfect_negative",
+      "function": "PEARSON",
+      "status": "ok",
+      "value": -1.0,
+      "matches_upstream": true
+    },
+    "PEARSON_perfect_positive": {
+      "id": "PEARSON_perfect_positive",
+      "function": "PEARSON",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "PERCENTILE.EXC_k_half": {
+      "id": "PERCENTILE.EXC_k_half",
+      "function": "PERCENTILE.EXC",
+      "status": "ok",
+      "value": 5.5,
+      "matches_upstream": true
+    },
+    "PERCENTILE.EXC_k_near_lower_bound": {
+      "id": "PERCENTILE.EXC_k_near_lower_bound",
+      "function": "PERCENTILE.EXC",
+      "status": "ok",
+      "value": 1.1,
+      "matches_upstream": true
+    },
+    "PERCENTILE.EXC_k_one_error": {
+      "id": "PERCENTILE.EXC_k_one_error",
+      "function": "PERCENTILE.EXC",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "PERCENTILE.EXC_k_zero_error": {
+      "id": "PERCENTILE.EXC_k_zero_error",
+      "function": "PERCENTILE.EXC",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "PERCENTILE.INC_k_half": {
+      "id": "PERCENTILE.INC_k_half",
+      "function": "PERCENTILE.INC",
+      "status": "ok",
+      "value": 5.5,
+      "matches_upstream": true
+    },
+    "PERCENTILE.INC_k_one": {
+      "id": "PERCENTILE.INC_k_one",
+      "function": "PERCENTILE.INC",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "PERCENTILE.INC_k_out_of_range": {
+      "id": "PERCENTILE.INC_k_out_of_range",
+      "function": "PERCENTILE.INC",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "PERCENTILE.INC_k_zero": {
+      "id": "PERCENTILE.INC_k_zero",
+      "function": "PERCENTILE.INC",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "PERCENTILE_median_equivalent": {
+      "id": "PERCENTILE_median_equivalent",
+      "function": "PERCENTILE",
+      "status": "ok",
+      "value": 2.5,
+      "matches_upstream": true
+    },
+    "PERCENTRANK_interpolated": {
+      "id": "PERCENTRANK_interpolated",
+      "function": "PERCENTRANK",
+      "status": "ok",
+      "value": 0.5,
+      "matches_upstream": true
+    },
+    "PERCENTRANK_max": {
+      "id": "PERCENTRANK_max",
+      "function": "PERCENTRANK",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "PERCENTRANK_middle": {
+      "id": "PERCENTRANK_middle",
+      "function": "PERCENTRANK",
+      "status": "ok",
+      "value": 0.666,
+      "matches_upstream": false
+    },
+    "PERCENTRANK_min": {
+      "id": "PERCENTRANK_min",
+      "function": "PERCENTRANK",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "PIVOTBY_exists_sum": {
+      "id": "PIVOTBY_exists_sum",
+      "function": "PIVOTBY",
+      "status": "probe",
+      "value": "#NAME?"
+    },
+    "PI_rounded_four_places": {
+      "id": "PI_rounded_four_places",
+      "function": "PI",
+      "status": "ok",
+      "value": 3.1416,
+      "matches_upstream": true
+    },
+    "PI_times_two": {
+      "id": "PI_times_two",
+      "function": "PI",
+      "status": "ok",
+      "value": 6.283185307179586,
+      "matches_upstream": true
+    },
+    "PI_value": {
+      "id": "PI_value",
+      "function": "PI",
+      "status": "ok",
+      "value": 3.141592653589793,
+      "matches_upstream": true
+    },
+    "PMT_standard_mortgage": {
+      "id": "PMT_standard_mortgage",
+      "function": "PMT",
+      "status": "ok",
+      "value": 1798.65,
+      "matches_upstream": true
+    },
+    "POWER_basic": {
+      "id": "POWER_basic",
+      "function": "POWER",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "POWER_fractional_exponent_positive_base": {
+      "id": "POWER_fractional_exponent_positive_base",
+      "function": "POWER",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "POWER_negative_base_fractional_exponent": {
+      "id": "POWER_negative_base_fractional_exponent",
+      "function": "POWER",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "POWER_negative_exponent": {
+      "id": "POWER_negative_exponent",
+      "function": "POWER",
+      "status": "ok",
+      "value": 0.25,
+      "matches_upstream": true
+    },
+    "POWER_zero_to_zero": {
+      "id": "POWER_zero_to_zero",
+      "function": "POWER",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "PPMT_first_month_principal": {
+      "id": "PPMT_first_month_principal",
+      "function": "PPMT",
+      "status": "ok",
+      "value": 298.65,
+      "matches_upstream": true
+    },
+    "PRODUCT_basic": {
+      "id": "PRODUCT_basic",
+      "function": "PRODUCT",
+      "status": "ok",
+      "value": 24.0,
+      "matches_upstream": true
+    },
+    "PROPER_apostrophe_word_boundary": {
+      "id": "PROPER_apostrophe_word_boundary",
+      "function": "PROPER",
+      "status": "ok",
+      "value": "O'Brien",
+      "matches_upstream": true
+    },
+    "PROPER_basic_sentence": {
+      "id": "PROPER_basic_sentence",
+      "function": "PROPER",
+      "status": "ok",
+      "value": "This Is A Title",
+      "matches_upstream": true
+    },
+    "PROPER_digit_letter_boundary": {
+      "id": "PROPER_digit_letter_boundary",
+      "function": "PROPER",
+      "status": "ok",
+      "value": "76budget",
+      "matches_upstream": false
+    },
+    "PV_annuity": {
+      "id": "PV_annuity",
+      "function": "PV",
+      "status": "ok",
+      "value": 3790.79,
+      "matches_upstream": true
+    },
+    "QUARTILE.INC_quart_four_max": {
+      "id": "QUARTILE.INC_quart_four_max",
+      "function": "QUARTILE.INC",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "QUARTILE.INC_quart_one_first_quartile": {
+      "id": "QUARTILE.INC_quart_one_first_quartile",
+      "function": "QUARTILE.INC",
+      "status": "ok",
+      "value": 3.25,
+      "matches_upstream": true
+    },
+    "QUARTILE.INC_quart_out_of_range": {
+      "id": "QUARTILE.INC_quart_out_of_range",
+      "function": "QUARTILE.INC",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "QUARTILE.INC_quart_two_median": {
+      "id": "QUARTILE.INC_quart_two_median",
+      "function": "QUARTILE.INC",
+      "status": "ok",
+      "value": 5.5,
+      "matches_upstream": true
+    },
+    "QUARTILE.INC_quart_zero_min": {
+      "id": "QUARTILE.INC_quart_zero_min",
+      "function": "QUARTILE.INC",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "QUARTILE_EXC_first": {
+      "id": "QUARTILE_EXC_first",
+      "function": "QUARTILE.EXC",
+      "status": "ok",
+      "value": 1.5,
+      "matches_upstream": true
+    },
+    "QUARTILE_EXC_median": {
+      "id": "QUARTILE_EXC_median",
+      "function": "QUARTILE.EXC",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "QUARTILE_EXC_third": {
+      "id": "QUARTILE_EXC_third",
+      "function": "QUARTILE.EXC",
+      "status": "ok",
+      "value": 4.5,
+      "matches_upstream": true
+    },
+    "QUARTILE_first_quartile": {
+      "id": "QUARTILE_first_quartile",
+      "function": "QUARTILE",
+      "status": "ok",
+      "value": 1.75,
+      "matches_upstream": true
+    },
+    "QUOTIENT_integer_division": {
+      "id": "QUOTIENT_integer_division",
+      "function": "QUOTIENT",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "RADIANS_180_is_pi": {
+      "id": "RADIANS_180_is_pi",
+      "function": "RADIANS",
+      "status": "ok",
+      "value": 3.141592653589793,
+      "matches_upstream": true
+    },
+    "RADIANS_negative": {
+      "id": "RADIANS_negative",
+      "function": "RADIANS",
+      "status": "ok",
+      "value": -1.5707963267948966,
+      "matches_upstream": true
+    },
+    "RADIANS_ninety": {
+      "id": "RADIANS_ninety",
+      "function": "RADIANS",
+      "status": "ok",
+      "value": 1.5707963267948966,
+      "matches_upstream": true
+    },
+    "RADIANS_zero": {
+      "id": "RADIANS_zero",
+      "function": "RADIANS",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "RANDARRAY_default_unit_range": {
+      "id": "RANDARRAY_default_unit_range",
+      "function": "RANDARRAY",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "RANDARRAY_shape_is_deterministic": {
+      "id": "RANDARRAY_shape_is_deterministic",
+      "function": "RANDARRAY",
+      "status": "ok",
+      "value": 23.0,
+      "matches_upstream": true
+    },
+    "RANDBETWEEN_degenerate_equal_bounds": {
+      "id": "RANDBETWEEN_degenerate_equal_bounds",
+      "function": "RANDBETWEEN",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "RANDBETWEEN_exists_bounds": {
+      "id": "RANDBETWEEN_exists_bounds",
+      "function": "RANDBETWEEN",
+      "status": "probe",
+      "value": 8.0
+    },
+    "RANDBETWEEN_negative_range": {
+      "id": "RANDBETWEEN_negative_range",
+      "function": "RANDBETWEEN",
+      "status": "probe",
+      "value": -5.0
+    },
+    "RAND_exists_and_in_unit_range": {
+      "id": "RAND_exists_and_in_unit_range",
+      "function": "RAND",
+      "status": "probe",
+      "value": 0.8671679596917263
+    },
+    "RANK.AVG_no_tie_matches_RANK_EQ": {
+      "id": "RANK.AVG_no_tie_matches_RANK_EQ",
+      "function": "RANK.AVG",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "RANK.AVG_tie_ascending_order": {
+      "id": "RANK.AVG_tie_ascending_order",
+      "function": "RANK.AVG",
+      "status": "ok",
+      "value": 2.5,
+      "matches_upstream": true
+    },
+    "RANK.AVG_tie_averages_ranks": {
+      "id": "RANK.AVG_tie_averages_ranks",
+      "function": "RANK.AVG",
+      "status": "ok",
+      "value": 3.5,
+      "matches_upstream": true
+    },
+    "RANK.EQ_ascending_order": {
+      "id": "RANK.EQ_ascending_order",
+      "function": "RANK.EQ",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "RANK.EQ_basic_descending": {
+      "id": "RANK.EQ_basic_descending",
+      "function": "RANK.EQ",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "RANK.EQ_tie_shares_top_rank": {
+      "id": "RANK.EQ_tie_shares_top_rank",
+      "function": "RANK.EQ",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "RANK_ascending_order": {
+      "id": "RANK_ascending_order",
+      "function": "RANK",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "RANK_basic_descending": {
+      "id": "RANK_basic_descending",
+      "function": "RANK",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "RANK_tie_shares_top_rank": {
+      "id": "RANK_tie_shares_top_rank",
+      "function": "RANK",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "RATE_recover_annual_rate": {
+      "id": "RATE_recover_annual_rate",
+      "function": "RATE",
+      "status": "ok",
+      "value": 0.06,
+      "matches_upstream": true
+    },
+    "REDUCE_sum": {
+      "id": "REDUCE_sum",
+      "function": "REDUCE",
+      "status": "ok",
+      "value": "#NAME?",
+      "matches_upstream": false
+    },
+    "REPLACE_basic_by_position": {
+      "id": "REPLACE_basic_by_position",
+      "function": "REPLACE",
+      "status": "ok",
+      "value": "@456",
+      "matches_upstream": true
+    },
+    "REPLACE_larger_range": {
+      "id": "REPLACE_larger_range",
+      "function": "REPLACE",
+      "status": "ok",
+      "value": "abcde*k",
+      "matches_upstream": true
+    },
+    "REPLACE_mid_string_by_position": {
+      "id": "REPLACE_mid_string_by_position",
+      "function": "REPLACE",
+      "status": "ok",
+      "value": "2010",
+      "matches_upstream": true
+    },
+    "REPLACE_position_vs_content_contrast": {
+      "id": "REPLACE_position_vs_content_contrast",
+      "function": "REPLACE",
+      "status": "ok",
+      "value": "bXYZna",
+      "matches_upstream": true
+    },
+    "REPT_basic": {
+      "id": "REPT_basic",
+      "function": "REPT",
+      "status": "ok",
+      "value": "ababab",
+      "matches_upstream": true
+    },
+    "REPT_fractional_truncated": {
+      "id": "REPT_fractional_truncated",
+      "function": "REPT",
+      "status": "ok",
+      "value": "abab",
+      "matches_upstream": true
+    },
+    "REPT_negative_times": {
+      "id": "REPT_negative_times",
+      "function": "REPT",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "REPT_zero_times": {
+      "id": "REPT_zero_times",
+      "function": "REPT",
+      "status": "ok",
+      "value": "",
+      "matches_upstream": true
+    },
+    "RIGHT_basic": {
+      "id": "RIGHT_basic",
+      "function": "RIGHT",
+      "status": "ok",
+      "value": "cel",
+      "matches_upstream": true
+    },
+    "RIGHT_default_num_chars": {
+      "id": "RIGHT_default_num_chars",
+      "function": "RIGHT",
+      "status": "ok",
+      "value": "l",
+      "matches_upstream": true
+    },
+    "RIGHT_num_chars_exceeds_length": {
+      "id": "RIGHT_num_chars_exceeds_length",
+      "function": "RIGHT",
+      "status": "ok",
+      "value": "Excel",
+      "matches_upstream": true
+    },
+    "RIGHT_zero_chars": {
+      "id": "RIGHT_zero_chars",
+      "function": "RIGHT",
+      "status": "ok",
+      "value": "",
+      "matches_upstream": true
+    },
+    "ROMAN_basic": {
+      "id": "ROMAN_basic",
+      "function": "ROMAN",
+      "status": "ok",
+      "value": "MMXXVI",
+      "matches_upstream": true
+    },
+    "ROUNDDOWN_basic_positive": {
+      "id": "ROUNDDOWN_basic_positive",
+      "function": "ROUNDDOWN",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "ROUNDDOWN_decimal_places": {
+      "id": "ROUNDDOWN_decimal_places",
+      "function": "ROUNDDOWN",
+      "status": "ok",
+      "value": 3.14,
+      "matches_upstream": true
+    },
+    "ROUNDDOWN_negative_num_digits": {
+      "id": "ROUNDDOWN_negative_num_digits",
+      "function": "ROUNDDOWN",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "ROUNDDOWN_negative_number": {
+      "id": "ROUNDDOWN_negative_number",
+      "function": "ROUNDDOWN",
+      "status": "ok",
+      "value": -3.0,
+      "matches_upstream": true
+    },
+    "ROUNDUP_basic_positive": {
+      "id": "ROUNDUP_basic_positive",
+      "function": "ROUNDUP",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "ROUNDUP_decimal_places": {
+      "id": "ROUNDUP_decimal_places",
+      "function": "ROUNDUP",
+      "status": "ok",
+      "value": 3.15,
+      "matches_upstream": true
+    },
+    "ROUNDUP_negative_num_digits": {
+      "id": "ROUNDUP_negative_num_digits",
+      "function": "ROUNDUP",
+      "status": "ok",
+      "value": 30.0,
+      "matches_upstream": true
+    },
+    "ROUNDUP_negative_number": {
+      "id": "ROUNDUP_negative_number",
+      "function": "ROUNDUP",
+      "status": "ok",
+      "value": -4.0,
+      "matches_upstream": true
+    },
+    "ROUND_float_representation_quirk": {
+      "id": "ROUND_float_representation_quirk",
+      "function": "ROUND",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": false
+    },
+    "ROUND_half_away_from_zero": {
+      "id": "ROUND_half_away_from_zero",
+      "function": "ROUND",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "ROUND_negative_digits": {
+      "id": "ROUND_negative_digits",
+      "function": "ROUND",
+      "status": "ok",
+      "value": 12300.0,
+      "matches_upstream": true
+    },
+    "ROUND_negative_half_away_from_zero": {
+      "id": "ROUND_negative_half_away_from_zero",
+      "function": "ROUND",
+      "status": "ok",
+      "value": -3.0,
+      "matches_upstream": true
+    },
+    "ROWS_2d_range": {
+      "id": "ROWS_2d_range",
+      "function": "ROWS",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "ROWS_basic_column_range": {
+      "id": "ROWS_basic_column_range",
+      "function": "ROWS",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "ROWS_single_cell": {
+      "id": "ROWS_single_cell",
+      "function": "ROWS",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "ROW_explicit_cell_ref": {
+      "id": "ROW_explicit_cell_ref",
+      "function": "ROW",
+      "status": "ok",
+      "value": 9.0,
+      "matches_upstream": true
+    },
+    "ROW_far_cell": {
+      "id": "ROW_far_cell",
+      "function": "ROW",
+      "status": "ok",
+      "value": 100.0,
+      "matches_upstream": true
+    },
+    "ROW_no_arg_uses_formula_cell": {
+      "id": "ROW_no_arg_uses_formula_cell",
+      "function": "ROW",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "ROW_range_returns_first_row": {
+      "id": "ROW_range_returns_first_row",
+      "function": "ROW",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "RSQ_no_fit": {
+      "id": "RSQ_no_fit",
+      "function": "RSQ",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "RSQ_perfect_fit": {
+      "id": "RSQ_perfect_fit",
+      "function": "RSQ",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "SCAN_running_sum": {
+      "id": "SCAN_running_sum",
+      "function": "SCAN",
+      "status": "ok",
+      "value": [
+        "#NAME?",
+        null,
+        null
+      ],
+      "matches_upstream": false
+    },
+    "SEARCH_case_insensitive_match": {
+      "id": "SEARCH_case_insensitive_match",
+      "function": "SEARCH",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "SEARCH_not_found": {
+      "id": "SEARCH_not_found",
+      "function": "SEARCH",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "SEARCH_wildcard_asterisk": {
+      "id": "SEARCH_wildcard_asterisk",
+      "function": "SEARCH",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "SEARCH_wildcard_question_mark": {
+      "id": "SEARCH_wildcard_question_mark",
+      "function": "SEARCH",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "SECOND_of_fractional_day_noon": {
+      "id": "SECOND_of_fractional_day_noon",
+      "function": "SECOND",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "SECOND_of_time_near_midnight": {
+      "id": "SECOND_of_time_near_midnight",
+      "function": "SECOND",
+      "status": "ok",
+      "value": 59.0,
+      "matches_upstream": true
+    },
+    "SECOND_of_time_value": {
+      "id": "SECOND_of_time_value",
+      "function": "SECOND",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "SEQUENCE_basic_vertical": {
+      "id": "SEQUENCE_basic_vertical",
+      "function": "SEQUENCE",
+      "status": "ok",
+      "value": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0
+      ],
+      "matches_upstream": true
+    },
+    "SEQUENCE_negative_step": {
+      "id": "SEQUENCE_negative_step",
+      "function": "SEQUENCE",
+      "status": "ok",
+      "value": [
+        5.0,
+        4.0,
+        3.0
+      ],
+      "matches_upstream": true
+    },
+    "SEQUENCE_rows_cols": {
+      "id": "SEQUENCE_rows_cols",
+      "function": "SEQUENCE",
+      "status": "ok",
+      "value": [
+        [
+          1.0,
+          2.0,
+          3.0
+        ],
+        [
+          4.0,
+          5.0,
+          6.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "SEQUENCE_start_step": {
+      "id": "SEQUENCE_start_step",
+      "function": "SEQUENCE",
+      "status": "ok",
+      "value": [
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0
+      ],
+      "matches_upstream": true
+    },
+    "SHEETS_returns_positive_count": {
+      "id": "SHEETS_returns_positive_count",
+      "function": "SHEETS",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "SHEET_returns_positive_index": {
+      "id": "SHEET_returns_positive_index",
+      "function": "SHEET",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "SIGN_negative": {
+      "id": "SIGN_negative",
+      "function": "SIGN",
+      "status": "ok",
+      "value": -1.0,
+      "matches_upstream": true
+    },
+    "SIGN_positive": {
+      "id": "SIGN_positive",
+      "function": "SIGN",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "SIGN_small_negative_fraction": {
+      "id": "SIGN_small_negative_fraction",
+      "function": "SIGN",
+      "status": "ok",
+      "value": -1.0,
+      "matches_upstream": true
+    },
+    "SIGN_zero": {
+      "id": "SIGN_zero",
+      "function": "SIGN",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "SLN_straight_line": {
+      "id": "SLN_straight_line",
+      "function": "SLN",
+      "status": "ok",
+      "value": 1800.0,
+      "matches_upstream": true
+    },
+    "SLOPE_exact_line": {
+      "id": "SLOPE_exact_line",
+      "function": "SLOPE",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "SMALL_basic": {
+      "id": "SMALL_basic",
+      "function": "SMALL",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "SMALL_k1_equals_min": {
+      "id": "SMALL_k1_equals_min",
+      "function": "SMALL",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "SMALL_k_out_of_range": {
+      "id": "SMALL_k_out_of_range",
+      "function": "SMALL",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "SMALL_k_zero_error": {
+      "id": "SMALL_k_zero_error",
+      "function": "SMALL",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "SORTBY_by_other_col": {
+      "id": "SORTBY_by_other_col",
+      "function": "SORTBY",
+      "status": "ok",
+      "value": [
+        "y",
+        "z",
+        "x"
+      ],
+      "matches_upstream": true
+    },
+    "SORT_by_second_column": {
+      "id": "SORT_by_second_column",
+      "function": "SORT",
+      "status": "ok",
+      "value": [
+        [
+          "y",
+          10.0
+        ],
+        [
+          "z",
+          20.0
+        ],
+        [
+          "x",
+          30.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "SORT_default_ascending": {
+      "id": "SORT_default_ascending",
+      "function": "SORT",
+      "status": "ok",
+      "value": [
+        1.0,
+        1.0,
+        3.0,
+        4.0,
+        5.0
+      ],
+      "matches_upstream": true
+    },
+    "SORT_descending": {
+      "id": "SORT_descending",
+      "function": "SORT",
+      "status": "ok",
+      "value": [
+        5.0,
+        4.0,
+        3.0,
+        1.0,
+        1.0
+      ],
+      "matches_upstream": true
+    },
+    "SORT_empty_range_error": {
+      "id": "SORT_empty_range_error",
+      "function": "SORT",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "SQRT_basic": {
+      "id": "SQRT_basic",
+      "function": "SQRT",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "SQRT_documented_abs_workaround": {
+      "id": "SQRT_documented_abs_workaround",
+      "function": "SQRT",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "SQRT_negative_returns_num_error": {
+      "id": "SQRT_negative_returns_num_error",
+      "function": "SQRT",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "SQRT_zero": {
+      "id": "SQRT_zero",
+      "function": "SQRT",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "STANDARDIZE_above_mean": {
+      "id": "STANDARDIZE_above_mean",
+      "function": "STANDARDIZE",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "STANDARDIZE_at_mean": {
+      "id": "STANDARDIZE_at_mean",
+      "function": "STANDARDIZE",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "STANDARDIZE_below_mean": {
+      "id": "STANDARDIZE_below_mean",
+      "function": "STANDARDIZE",
+      "status": "ok",
+      "value": -2.0,
+      "matches_upstream": true
+    },
+    "STDEV.P_diverges_from_sample_same_data": {
+      "id": "STDEV.P_diverges_from_sample_same_data",
+      "function": "STDEV.P",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "STDEV.P_single_value_no_error": {
+      "id": "STDEV.P_single_value_no_error",
+      "function": "STDEV.P",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "STDEV.P_two_points_diverges": {
+      "id": "STDEV.P_two_points_diverges",
+      "function": "STDEV.P",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "STDEV.S_basic_two_points": {
+      "id": "STDEV.S_basic_two_points",
+      "function": "STDEV.S",
+      "status": "ok",
+      "value": 7.0710678118654755,
+      "matches_upstream": true
+    },
+    "STDEV.S_matches_STDEV_same_data": {
+      "id": "STDEV.S_matches_STDEV_same_data",
+      "function": "STDEV.S",
+      "status": "ok",
+      "value": 2.138089935299395,
+      "matches_upstream": true
+    },
+    "STDEV.S_single_value_div0": {
+      "id": "STDEV.S_single_value_div0",
+      "function": "STDEV.S",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "STDEVA_counts_text_as_zero": {
+      "id": "STDEVA_counts_text_as_zero",
+      "function": "STDEVA",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "STDEVA_identical_values": {
+      "id": "STDEVA_identical_values",
+      "function": "STDEVA",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "STDEVA_numbers_only": {
+      "id": "STDEVA_numbers_only",
+      "function": "STDEVA",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "STDEVPA_counts_text_as_zero": {
+      "id": "STDEVPA_counts_text_as_zero",
+      "function": "STDEVPA",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "STDEVPA_textbook": {
+      "id": "STDEVPA_textbook",
+      "function": "STDEVPA",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "STDEVP_from_range": {
+      "id": "STDEVP_from_range",
+      "function": "STDEVP",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "STDEVP_ignores_text": {
+      "id": "STDEVP_ignores_text",
+      "function": "STDEVP",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "STDEVP_textbook": {
+      "id": "STDEVP_textbook",
+      "function": "STDEVP",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "STDEVP_two_values": {
+      "id": "STDEVP_two_values",
+      "function": "STDEVP",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "STDEV_basic_two_points": {
+      "id": "STDEV_basic_two_points",
+      "function": "STDEV",
+      "status": "ok",
+      "value": 7.0710678118654755,
+      "matches_upstream": true
+    },
+    "STDEV_matches_STDEV_S_same_data": {
+      "id": "STDEV_matches_STDEV_S_same_data",
+      "function": "STDEV",
+      "status": "ok",
+      "value": 2.138089935299395,
+      "matches_upstream": true
+    },
+    "STDEV_single_value_div0": {
+      "id": "STDEV_single_value_div0",
+      "function": "STDEV",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "SUBSTITUTE_all_occurrences": {
+      "id": "SUBSTITUTE_all_occurrences",
+      "function": "SUBSTITUTE",
+      "status": "ok",
+      "value": "X-b-X-b",
+      "matches_upstream": true
+    },
+    "SUBSTITUTE_case_sensitive": {
+      "id": "SUBSTITUTE_case_sensitive",
+      "function": "SUBSTITUTE",
+      "status": "ok",
+      "value": "Apple",
+      "matches_upstream": true
+    },
+    "SUBSTITUTE_instance_num": {
+      "id": "SUBSTITUTE_instance_num",
+      "function": "SUBSTITUTE",
+      "status": "ok",
+      "value": "a-b-X-b",
+      "matches_upstream": true
+    },
+    "SUBSTITUTE_no_match": {
+      "id": "SUBSTITUTE_no_match",
+      "function": "SUBSTITUTE",
+      "status": "ok",
+      "value": "hello",
+      "matches_upstream": true
+    },
+    "SUBTOTAL_counta_code3": {
+      "id": "SUBTOTAL_counta_code3",
+      "function": "SUBTOTAL",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "SUBTOTAL_ignores_nested_subtotal": {
+      "id": "SUBTOTAL_ignores_nested_subtotal",
+      "function": "SUBTOTAL",
+      "status": "ok",
+      "value": 200.0,
+      "matches_upstream": false
+    },
+    "SUBTOTAL_sum_code9": {
+      "id": "SUBTOTAL_sum_code9",
+      "function": "SUBTOTAL",
+      "status": "ok",
+      "value": 100.0,
+      "matches_upstream": true
+    },
+    "SUMIFS_basic": {
+      "id": "SUMIFS_basic",
+      "function": "SUMIFS",
+      "status": "ok",
+      "value": 120.0,
+      "matches_upstream": true
+    },
+    "SUMIFS_multi_criteria": {
+      "id": "SUMIFS_multi_criteria",
+      "function": "SUMIFS",
+      "status": "ok",
+      "value": 50.0,
+      "matches_upstream": true
+    },
+    "SUMIFS_no_match": {
+      "id": "SUMIFS_no_match",
+      "function": "SUMIFS",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "SUMIFS_wildcard": {
+      "id": "SUMIFS_wildcard",
+      "function": "SUMIFS",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "SUMIF_basic": {
+      "id": "SUMIF_basic",
+      "function": "SUMIF",
+      "status": "ok",
+      "value": 60.0,
+      "matches_upstream": true
+    },
+    "SUMIF_blank_cells_ignored": {
+      "id": "SUMIF_blank_cells_ignored",
+      "function": "SUMIF",
+      "status": "ok",
+      "value": 30.0,
+      "matches_upstream": true
+    },
+    "SUMIF_no_match": {
+      "id": "SUMIF_no_match",
+      "function": "SUMIF",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "SUMIF_separate_sum_range": {
+      "id": "SUMIF_separate_sum_range",
+      "function": "SUMIF",
+      "status": "ok",
+      "value": 120.0,
+      "matches_upstream": true
+    },
+    "SUMIF_wildcard_text": {
+      "id": "SUMIF_wildcard_text",
+      "function": "SUMIF",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "SUMPRODUCT_basic": {
+      "id": "SUMPRODUCT_basic",
+      "function": "SUMPRODUCT",
+      "status": "ok",
+      "value": 140.0,
+      "matches_upstream": true
+    },
+    "SUMPRODUCT_boolean_double_negative_count": {
+      "id": "SUMPRODUCT_boolean_double_negative_count",
+      "function": "SUMPRODUCT",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "SUMPRODUCT_condition_times_values_sumif_replacement": {
+      "id": "SUMPRODUCT_condition_times_values_sumif_replacement",
+      "function": "SUMPRODUCT",
+      "status": "ok",
+      "value": 120.0,
+      "matches_upstream": true
+    },
+    "SUMPRODUCT_mismatched_array_sizes_error": {
+      "id": "SUMPRODUCT_mismatched_array_sizes_error",
+      "function": "SUMPRODUCT",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "SUMPRODUCT_single_array_acts_like_sum": {
+      "id": "SUMPRODUCT_single_array_acts_like_sum",
+      "function": "SUMPRODUCT",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "SUMSQ_3_4": {
+      "id": "SUMSQ_3_4",
+      "function": "SUMSQ",
+      "status": "ok",
+      "value": 25.0,
+      "matches_upstream": true
+    },
+    "SUM_basic_range": {
+      "id": "SUM_basic_range",
+      "function": "SUM",
+      "status": "ok",
+      "value": 15.0,
+      "matches_upstream": true
+    },
+    "SUM_empty_range": {
+      "id": "SUM_empty_range",
+      "function": "SUM",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "SUM_literal_numeric_string_argument_coerced": {
+      "id": "SUM_literal_numeric_string_argument_coerced",
+      "function": "SUM",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "SUM_text_in_cell_reference_ignored": {
+      "id": "SUM_text_in_cell_reference_ignored",
+      "function": "SUM",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "SWITCH_basic_match": {
+      "id": "SWITCH_basic_match",
+      "function": "SWITCH",
+      "status": "ok",
+      "value": "two",
+      "matches_upstream": true
+    },
+    "SWITCH_default_value": {
+      "id": "SWITCH_default_value",
+      "function": "SWITCH",
+      "status": "ok",
+      "value": "default",
+      "matches_upstream": true
+    },
+    "SWITCH_no_match_no_default": {
+      "id": "SWITCH_no_match_no_default",
+      "function": "SWITCH",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "SWITCH_text_match": {
+      "id": "SWITCH_text_match",
+      "function": "SWITCH",
+      "status": "ok",
+      "value": "B",
+      "matches_upstream": true
+    },
+    "SYD_first_year": {
+      "id": "SYD_first_year",
+      "function": "SYD",
+      "status": "ok",
+      "value": 3000.0,
+      "matches_upstream": true
+    },
+    "TAKE_first_2x2": {
+      "id": "TAKE_first_2x2",
+      "function": "TAKE",
+      "status": "ok",
+      "value": [
+        [
+          1.0,
+          2.0
+        ],
+        [
+          4.0,
+          5.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "TEXTAFTER_basic": {
+      "id": "TEXTAFTER_basic",
+      "function": "TEXTAFTER",
+      "status": "ok",
+      "value": "b-c",
+      "matches_upstream": true
+    },
+    "TEXTAFTER_instance_num": {
+      "id": "TEXTAFTER_instance_num",
+      "function": "TEXTAFTER",
+      "status": "ok",
+      "value": "c",
+      "matches_upstream": true
+    },
+    "TEXTAFTER_negative_instance": {
+      "id": "TEXTAFTER_negative_instance",
+      "function": "TEXTAFTER",
+      "status": "ok",
+      "value": "c",
+      "matches_upstream": true
+    },
+    "TEXTAFTER_not_found_custom": {
+      "id": "TEXTAFTER_not_found_custom",
+      "function": "TEXTAFTER",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": false
+    },
+    "TEXTBEFORE_basic": {
+      "id": "TEXTBEFORE_basic",
+      "function": "TEXTBEFORE",
+      "status": "ok",
+      "value": "a",
+      "matches_upstream": true
+    },
+    "TEXTBEFORE_instance_num": {
+      "id": "TEXTBEFORE_instance_num",
+      "function": "TEXTBEFORE",
+      "status": "ok",
+      "value": "a-b",
+      "matches_upstream": true
+    },
+    "TEXTBEFORE_negative_instance": {
+      "id": "TEXTBEFORE_negative_instance",
+      "function": "TEXTBEFORE",
+      "status": "ok",
+      "value": "a-b",
+      "matches_upstream": true
+    },
+    "TEXTBEFORE_not_found_custom": {
+      "id": "TEXTBEFORE_not_found_custom",
+      "function": "TEXTBEFORE",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": false
+    },
+    "TEXTBEFORE_not_found_default": {
+      "id": "TEXTBEFORE_not_found_default",
+      "function": "TEXTBEFORE",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "TEXTJOIN_ignore_empty_false": {
+      "id": "TEXTJOIN_ignore_empty_false",
+      "function": "TEXTJOIN",
+      "status": "ok",
+      "value": "a,,b",
+      "matches_upstream": true
+    },
+    "TEXTJOIN_ignore_empty_true": {
+      "id": "TEXTJOIN_ignore_empty_true",
+      "function": "TEXTJOIN",
+      "status": "ok",
+      "value": "a,b",
+      "matches_upstream": true
+    },
+    "TEXTJOIN_multiple_ranges": {
+      "id": "TEXTJOIN_multiple_ranges",
+      "function": "TEXTJOIN",
+      "status": "ok",
+      "value": "a,b,c,d",
+      "matches_upstream": true
+    },
+    "TEXTJOIN_range": {
+      "id": "TEXTJOIN_range",
+      "function": "TEXTJOIN",
+      "status": "ok",
+      "value": "x-y-z",
+      "matches_upstream": true
+    },
+    "TEXTSPLIT_basic": {
+      "id": "TEXTSPLIT_basic",
+      "function": "TEXTSPLIT",
+      "status": "ok",
+      "value": [
+        "a",
+        "b",
+        "c"
+      ],
+      "matches_upstream": true
+    },
+    "TEXTSPLIT_ignore_empty": {
+      "id": "TEXTSPLIT_ignore_empty",
+      "function": "TEXTSPLIT",
+      "status": "ok",
+      "value": [
+        "a",
+        "b"
+      ],
+      "matches_upstream": true
+    },
+    "TEXTSPLIT_pad_with": {
+      "id": "TEXTSPLIT_pad_with",
+      "function": "TEXTSPLIT",
+      "status": "ok",
+      "value": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        [
+          "d",
+          "-",
+          "-"
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "TEXTSPLIT_row_and_col_delims": {
+      "id": "TEXTSPLIT_row_and_col_delims",
+      "function": "TEXTSPLIT",
+      "status": "ok",
+      "value": [
+        [
+          "a",
+          "b"
+        ],
+        [
+          "c",
+          "d"
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "TEXT_currency_format": {
+      "id": "TEXT_currency_format",
+      "function": "TEXT",
+      "status": "ok",
+      "value": "1,234.57",
+      "matches_upstream": false
+    },
+    "TEXT_iso_date_format": {
+      "id": "TEXT_iso_date_format",
+      "function": "TEXT",
+      "status": "ok",
+      "value": "2024-03-05",
+      "matches_upstream": true
+    },
+    "TEXT_percentage_format": {
+      "id": "TEXT_percentage_format",
+      "function": "TEXT",
+      "status": "ok",
+      "value": "28%",
+      "matches_upstream": false
+    },
+    "TEXT_scientific_format": {
+      "id": "TEXT_scientific_format",
+      "function": "TEXT",
+      "status": "ok",
+      "value": "12200000.00",
+      "matches_upstream": false
+    },
+    "TEXT_weekday_name_format": {
+      "id": "TEXT_weekday_name_format",
+      "function": "TEXT",
+      "status": "ok",
+      "value": "0505",
+      "matches_upstream": false
+    },
+    "TEXT_zero_padding": {
+      "id": "TEXT_zero_padding",
+      "function": "TEXT",
+      "status": "ok",
+      "value": "1234",
+      "matches_upstream": false
+    },
+    "TIMEVALUE_6am": {
+      "id": "TIMEVALUE_6am",
+      "function": "TIMEVALUE",
+      "status": "ok",
+      "value": 0.25,
+      "matches_upstream": true
+    },
+    "TIME_basic": {
+      "id": "TIME_basic",
+      "function": "TIME",
+      "status": "ok",
+      "value": 0.5625,
+      "matches_upstream": true
+    },
+    "TIME_doc_example_27_hours": {
+      "id": "TIME_doc_example_27_hours",
+      "function": "TIME",
+      "status": "ok",
+      "value": 0.125,
+      "matches_upstream": true
+    },
+    "TIME_hour_wraps_modulo_24": {
+      "id": "TIME_hour_wraps_modulo_24",
+      "function": "TIME",
+      "status": "ok",
+      "value": 0.041666666666666664,
+      "matches_upstream": true
+    },
+    "TOCOL_flatten_by_row": {
+      "id": "TOCOL_flatten_by_row",
+      "function": "TOCOL",
+      "status": "ok",
+      "value": [
+        1.0,
+        2.0,
+        3.0,
+        4.0
+      ],
+      "matches_upstream": true
+    },
+    "TODAY_exists_and_plausible": {
+      "id": "TODAY_exists_and_plausible",
+      "function": "TODAY",
+      "status": "probe",
+      "value": 46023.0
+    },
+    "TODAY_self_difference_is_deterministic": {
+      "id": "TODAY_self_difference_is_deterministic",
+      "function": "TODAY",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "TODAY_year_is_plausible": {
+      "id": "TODAY_year_is_plausible",
+      "function": "TODAY",
+      "status": "probe",
+      "value": 2026.0
+    },
+    "TOROW_flatten_by_row": {
+      "id": "TOROW_flatten_by_row",
+      "function": "TOROW",
+      "status": "ok",
+      "value": [
+        1.0,
+        2.0,
+        3.0,
+        4.0
+      ],
+      "matches_upstream": true
+    },
+    "TRANSPOSE_2x3_to_3x2": {
+      "id": "TRANSPOSE_2x3_to_3x2",
+      "function": "TRANSPOSE",
+      "status": "ok",
+      "value": [
+        [
+          1.0,
+          4.0
+        ],
+        [
+          2.0,
+          5.0
+        ],
+        [
+          3.0,
+          6.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "TRANSPOSE_blank_cell_becomes_zero": {
+      "id": "TRANSPOSE_blank_cell_becomes_zero",
+      "function": "TRANSPOSE",
+      "status": "ok",
+      "value": [
+        [
+          5.0
+        ],
+        [
+          0.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "TRANSPOSE_row_to_column": {
+      "id": "TRANSPOSE_row_to_column",
+      "function": "TRANSPOSE",
+      "status": "ok",
+      "value": [
+        [
+          1.0
+        ],
+        [
+          2.0
+        ],
+        [
+          3.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "TRANSPOSE_single_cell_degenerate": {
+      "id": "TRANSPOSE_single_cell_degenerate",
+      "function": "TRANSPOSE",
+      "status": "ok",
+      "value": [
+        [
+          5.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "TREND_extrapolate_exact_line": {
+      "id": "TREND_extrapolate_exact_line",
+      "function": "TREND",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "TRIMMEAN_drop_extremes": {
+      "id": "TRIMMEAN_drop_extremes",
+      "function": "TRIMMEAN",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "TRIM_collapse_and_strip": {
+      "id": "TRIM_collapse_and_strip",
+      "function": "TRIM",
+      "status": "ok",
+      "value": "Hello World",
+      "matches_upstream": true
+    },
+    "TRIM_nonbreaking_space_not_removed": {
+      "id": "TRIM_nonbreaking_space_not_removed",
+      "function": "TRIM",
+      "status": "ok",
+      "value": "Hello",
+      "matches_upstream": false
+    },
+    "TRIM_single_spaces_untouched": {
+      "id": "TRIM_single_spaces_untouched",
+      "function": "TRIM",
+      "status": "ok",
+      "value": "No Extra Spaces",
+      "matches_upstream": true
+    },
+    "TRIM_tab_not_removed": {
+      "id": "TRIM_tab_not_removed",
+      "function": "TRIM",
+      "status": "ok",
+      "value": "Hello",
+      "matches_upstream": false
+    },
+    "TRUE_equals_keyword": {
+      "id": "TRUE_equals_keyword",
+      "function": "TRUE",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "TRUE_in_if": {
+      "id": "TRUE_in_if",
+      "function": "TRUE",
+      "status": "ok",
+      "value": "yes",
+      "matches_upstream": true
+    },
+    "TRUE_zero_arg_function": {
+      "id": "TRUE_zero_arg_function",
+      "function": "TRUE",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "TRUNC_basic_positive": {
+      "id": "TRUNC_basic_positive",
+      "function": "TRUNC",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "TRUNC_negative_num_digits": {
+      "id": "TRUNC_negative_num_digits",
+      "function": "TRUNC",
+      "status": "ok",
+      "value": 12300.0,
+      "matches_upstream": true
+    },
+    "TRUNC_negative_truncates_toward_zero": {
+      "id": "TRUNC_negative_truncates_toward_zero",
+      "function": "TRUNC",
+      "status": "ok",
+      "value": -8.0,
+      "matches_upstream": true
+    },
+    "TRUNC_num_digits_positive": {
+      "id": "TRUNC_num_digits_positive",
+      "function": "TRUNC",
+      "status": "ok",
+      "value": 3.14,
+      "matches_upstream": true
+    },
+    "TYPE_array": {
+      "id": "TYPE_array",
+      "function": "TYPE",
+      "status": "ok",
+      "value": 64.0,
+      "matches_upstream": true
+    },
+    "TYPE_error": {
+      "id": "TYPE_error",
+      "function": "TYPE",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": false
+    },
+    "TYPE_logical": {
+      "id": "TYPE_logical",
+      "function": "TYPE",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "TYPE_number": {
+      "id": "TYPE_number",
+      "function": "TYPE",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "TYPE_text": {
+      "id": "TYPE_text",
+      "function": "TYPE",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "UNICHAR_accented_char": {
+      "id": "UNICHAR_accented_char",
+      "function": "UNICHAR",
+      "status": "ok",
+      "value": "\u00e9",
+      "matches_upstream": true
+    },
+    "UNICHAR_astral_emoji": {
+      "id": "UNICHAR_astral_emoji",
+      "function": "UNICHAR",
+      "status": "ok",
+      "value": "\ud83d\ude00",
+      "matches_upstream": true
+    },
+    "UNICHAR_negative_error": {
+      "id": "UNICHAR_negative_error",
+      "function": "UNICHAR",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "UNICHAR_roundtrip_via_unicode": {
+      "id": "UNICHAR_roundtrip_via_unicode",
+      "function": "UNICHAR",
+      "status": "ok",
+      "value": "\u00e9",
+      "matches_upstream": true
+    },
+    "UNICHAR_zero_error": {
+      "id": "UNICHAR_zero_error",
+      "function": "UNICHAR",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "UNICODE_accented_char": {
+      "id": "UNICODE_accented_char",
+      "function": "UNICODE",
+      "status": "ok",
+      "value": 233.0,
+      "matches_upstream": true
+    },
+    "UNICODE_astral_emoji": {
+      "id": "UNICODE_astral_emoji",
+      "function": "UNICODE",
+      "status": "ok",
+      "value": 128512.0,
+      "matches_upstream": true
+    },
+    "UNICODE_basic_latin": {
+      "id": "UNICODE_basic_latin",
+      "function": "UNICODE",
+      "status": "ok",
+      "value": 65.0,
+      "matches_upstream": true
+    },
+    "UNICODE_empty_string_error": {
+      "id": "UNICODE_empty_string_error",
+      "function": "UNICODE",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "UNIQUE_basic": {
+      "id": "UNIQUE_basic",
+      "function": "UNIQUE",
+      "status": "ok",
+      "value": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "matches_upstream": true
+    },
+    "UNIQUE_by_column": {
+      "id": "UNIQUE_by_column",
+      "function": "UNIQUE",
+      "status": "ok",
+      "value": [
+        1.0,
+        1.0
+      ],
+      "matches_upstream": false
+    },
+    "UNIQUE_exactly_once": {
+      "id": "UNIQUE_exactly_once",
+      "function": "UNIQUE",
+      "status": "ok",
+      "value": [
+        3.0
+      ],
+      "matches_upstream": true
+    },
+    "UNIQUE_no_duplicates": {
+      "id": "UNIQUE_no_duplicates",
+      "function": "UNIQUE",
+      "status": "ok",
+      "value": [
+        5.0,
+        6.0,
+        7.0
+      ],
+      "matches_upstream": true
+    },
+    "UPPER_already_upper": {
+      "id": "UPPER_already_upper",
+      "function": "UPPER",
+      "status": "ok",
+      "value": "HELLO",
+      "matches_upstream": true
+    },
+    "UPPER_basic": {
+      "id": "UPPER_basic",
+      "function": "UPPER",
+      "status": "ok",
+      "value": "HELLO WORLD",
+      "matches_upstream": true
+    },
+    "UPPER_leaves_numbers_and_symbols": {
+      "id": "UPPER_leaves_numbers_and_symbols",
+      "function": "UPPER",
+      "status": "ok",
+      "value": "ABC123!@#",
+      "matches_upstream": true
+    },
+    "VALUE_currency_string": {
+      "id": "VALUE_currency_string",
+      "function": "VALUE",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": false
+    },
+    "VALUE_non_numeric_string_error": {
+      "id": "VALUE_non_numeric_string_error",
+      "function": "VALUE",
+      "status": "ok",
+      "value": "#VALUE!",
+      "matches_upstream": true
+    },
+    "VALUE_numeric_string": {
+      "id": "VALUE_numeric_string",
+      "function": "VALUE",
+      "status": "ok",
+      "value": 123.0,
+      "matches_upstream": true
+    },
+    "VALUE_percentage_string": {
+      "id": "VALUE_percentage_string",
+      "function": "VALUE",
+      "status": "ok",
+      "value": 0.5,
+      "matches_upstream": true
+    },
+    "VAR.S_basic_two_points": {
+      "id": "VAR.S_basic_two_points",
+      "function": "VAR.S",
+      "status": "ok",
+      "value": 50.0,
+      "matches_upstream": true
+    },
+    "VAR.S_negative_numbers": {
+      "id": "VAR.S_negative_numbers",
+      "function": "VAR.S",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "VAR.S_single_value_div0": {
+      "id": "VAR.S_single_value_div0",
+      "function": "VAR.S",
+      "status": "ok",
+      "value": "#DIV/0!",
+      "matches_upstream": true
+    },
+    "VAR.S_wikipedia_dataset": {
+      "id": "VAR.S_wikipedia_dataset",
+      "function": "VAR.S",
+      "status": "ok",
+      "value": 4.571428571428571,
+      "matches_upstream": true
+    },
+    "VARA_counts_text_as_zero": {
+      "id": "VARA_counts_text_as_zero",
+      "function": "VARA",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "VARA_identical_values": {
+      "id": "VARA_identical_values",
+      "function": "VARA",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "VARA_numbers_only": {
+      "id": "VARA_numbers_only",
+      "function": "VARA",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "VARP_from_range": {
+      "id": "VARP_from_range",
+      "function": "VARP",
+      "status": "ok",
+      "value": 8.0,
+      "matches_upstream": true
+    },
+    "VARP_identical_values": {
+      "id": "VARP_identical_values",
+      "function": "VARP",
+      "status": "ok",
+      "value": 0.0,
+      "matches_upstream": true
+    },
+    "VARP_textbook": {
+      "id": "VARP_textbook",
+      "function": "VARP",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "VARP_two_values": {
+      "id": "VARP_two_values",
+      "function": "VARP",
+      "status": "ok",
+      "value": 25.0,
+      "matches_upstream": true
+    },
+    "VAR_basic": {
+      "id": "VAR_basic",
+      "function": "VAR",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "VAR_from_range": {
+      "id": "VAR_from_range",
+      "function": "VAR",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "VAR_ignores_text": {
+      "id": "VAR_ignores_text",
+      "function": "VAR",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "VAR_two_values": {
+      "id": "VAR_two_values",
+      "function": "VAR",
+      "status": "ok",
+      "value": 50.0,
+      "matches_upstream": true
+    },
+    "VLOOKUP_approximate_match": {
+      "id": "VLOOKUP_approximate_match",
+      "function": "VLOOKUP",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "VLOOKUP_col_index_out_of_range": {
+      "id": "VLOOKUP_col_index_out_of_range",
+      "function": "VLOOKUP",
+      "status": "ok",
+      "value": "#REF!",
+      "matches_upstream": true
+    },
+    "VLOOKUP_exact_match": {
+      "id": "VLOOKUP_exact_match",
+      "function": "VLOOKUP",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "VLOOKUP_not_found_exact": {
+      "id": "VLOOKUP_not_found_exact",
+      "function": "VLOOKUP",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "VLOOKUP_wildcard_exact_mode": {
+      "id": "VLOOKUP_wildcard_exact_mode",
+      "function": "VLOOKUP",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "VSTACK_two_rows": {
+      "id": "VSTACK_two_rows",
+      "function": "VSTACK",
+      "status": "ok",
+      "value": [
+        [
+          1.0,
+          2.0
+        ],
+        [
+          3.0,
+          4.0
+        ]
+      ],
+      "matches_upstream": true
+    },
+    "WEEKDAY_default_type1": {
+      "id": "WEEKDAY_default_type1",
+      "function": "WEEKDAY",
+      "status": "ok",
+      "value": 5.0,
+      "matches_upstream": true
+    },
+    "WEEKDAY_invalid_return_type": {
+      "id": "WEEKDAY_invalid_return_type",
+      "function": "WEEKDAY",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "WEEKDAY_type12_tuesday_start": {
+      "id": "WEEKDAY_type12_tuesday_start",
+      "function": "WEEKDAY",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "WEEKDAY_type16_saturday_start": {
+      "id": "WEEKDAY_type16_saturday_start",
+      "function": "WEEKDAY",
+      "status": "ok",
+      "value": 6.0,
+      "matches_upstream": true
+    },
+    "WEEKDAY_type2_monday_start": {
+      "id": "WEEKDAY_type2_monday_start",
+      "function": "WEEKDAY",
+      "status": "ok",
+      "value": 4.0,
+      "matches_upstream": true
+    },
+    "WEEKDAY_type3_zero_based": {
+      "id": "WEEKDAY_type3_zero_based",
+      "function": "WEEKDAY",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "WEEKNUM_doc_example_default": {
+      "id": "WEEKNUM_doc_example_default",
+      "function": "WEEKNUM",
+      "status": "ok",
+      "value": 10.0,
+      "matches_upstream": true
+    },
+    "WEEKNUM_doc_example_monday_start_diverges": {
+      "id": "WEEKNUM_doc_example_monday_start_diverges",
+      "function": "WEEKNUM",
+      "status": "ok",
+      "value": 11.0,
+      "matches_upstream": true
+    },
+    "WEEKNUM_monday_start_return_type_2": {
+      "id": "WEEKNUM_monday_start_return_type_2",
+      "function": "WEEKNUM",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "WEEKNUM_return_type_21_is_iso_system": {
+      "id": "WEEKNUM_return_type_21_is_iso_system",
+      "function": "WEEKNUM",
+      "status": "ok",
+      "value": 52.0,
+      "matches_upstream": true
+    },
+    "WEEKNUM_us_default_return_type_1": {
+      "id": "WEEKNUM_us_default_return_type_1",
+      "function": "WEEKNUM",
+      "status": "ok",
+      "value": 1.0,
+      "matches_upstream": true
+    },
+    "WORKDAY_INTL_next_workday": {
+      "id": "WORKDAY_INTL_next_workday",
+      "function": "WORKDAY.INTL",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "WORKDAY_basic_no_holidays": {
+      "id": "WORKDAY_basic_no_holidays",
+      "function": "WORKDAY",
+      "status": "ok",
+      "value": 45299.0,
+      "matches_upstream": true
+    },
+    "WORKDAY_multiple_holidays_via_range": {
+      "id": "WORKDAY_multiple_holidays_via_range",
+      "function": "WORKDAY",
+      "status": "ok",
+      "value": 45301.0,
+      "matches_upstream": true
+    },
+    "WORKDAY_negative_days_goes_backward": {
+      "id": "WORKDAY_negative_days_goes_backward",
+      "function": "WORKDAY",
+      "status": "ok",
+      "value": 45294.0,
+      "matches_upstream": true
+    },
+    "WORKDAY_with_single_holiday": {
+      "id": "WORKDAY_with_single_holiday",
+      "function": "WORKDAY",
+      "status": "ok",
+      "value": 45299.0,
+      "matches_upstream": false
+    },
+    "WRAPCOLS_2": {
+      "id": "WRAPCOLS_2",
+      "function": "WRAPCOLS",
+      "status": "ok",
+      "value": [
+        [
+          "#NAME?",
+          null
+        ],
+        [
+          null,
+          null
+        ]
+      ],
+      "matches_upstream": false
+    },
+    "WRAPROWS_2": {
+      "id": "WRAPROWS_2",
+      "function": "WRAPROWS",
+      "status": "ok",
+      "value": [
+        [
+          "#NAME?",
+          null
+        ],
+        [
+          null,
+          null
+        ]
+      ],
+      "matches_upstream": false
+    },
+    "XIRR_one_year_10pct": {
+      "id": "XIRR_one_year_10pct",
+      "function": "XIRR",
+      "status": "ok",
+      "value": 0.1,
+      "matches_upstream": true
+    },
+    "XLOOKUP_empty_lookup_array": {
+      "id": "XLOOKUP_empty_lookup_array",
+      "function": "XLOOKUP",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "XLOOKUP_exact_match": {
+      "id": "XLOOKUP_exact_match",
+      "function": "XLOOKUP",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "XLOOKUP_match_mode_next_smaller": {
+      "id": "XLOOKUP_match_mode_next_smaller",
+      "function": "XLOOKUP",
+      "status": "ok",
+      "value": 20.0,
+      "matches_upstream": true
+    },
+    "XLOOKUP_not_found_custom": {
+      "id": "XLOOKUP_not_found_custom",
+      "function": "XLOOKUP",
+      "status": "ok",
+      "value": "missing",
+      "matches_upstream": true
+    },
+    "XLOOKUP_not_found_default_na": {
+      "id": "XLOOKUP_not_found_default_na",
+      "function": "XLOOKUP",
+      "status": "ok",
+      "value": "#N/A",
+      "matches_upstream": true
+    },
+    "XLOOKUP_search_mode_last_to_first": {
+      "id": "XLOOKUP_search_mode_last_to_first",
+      "function": "XLOOKUP",
+      "status": "ok",
+      "value": 3.0,
+      "matches_upstream": true
+    },
+    "XMATCH_exact": {
+      "id": "XMATCH_exact",
+      "function": "XMATCH",
+      "status": "ok",
+      "value": 2.0,
+      "matches_upstream": true
+    },
+    "XNPV_zero_at_irr": {
+      "id": "XNPV_zero_at_irr",
+      "function": "XNPV",
+      "status": "ok",
+      "value": -0.0,
+      "matches_upstream": true
+    },
+    "XOR_even_count_of_true": {
+      "id": "XOR_even_count_of_true",
+      "function": "XOR",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "XOR_odd_count_of_true": {
+      "id": "XOR_odd_count_of_true",
+      "function": "XOR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "XOR_range_numeric_coercion": {
+      "id": "XOR_range_numeric_coercion",
+      "function": "XOR",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "XOR_single_true": {
+      "id": "XOR_single_true",
+      "function": "XOR",
+      "status": "ok",
+      "value": true,
+      "matches_upstream": true
+    },
+    "XOR_zero_true_is_even": {
+      "id": "XOR_zero_true_is_even",
+      "function": "XOR",
+      "status": "ok",
+      "value": false,
+      "matches_upstream": true
+    },
+    "YEARFRAC_basis0_us_nasd_default": {
+      "id": "YEARFRAC_basis0_us_nasd_default",
+      "function": "YEARFRAC",
+      "status": "ok",
+      "value": 0.5805555555555556,
+      "matches_upstream": true
+    },
+    "YEARFRAC_basis1_actual_actual": {
+      "id": "YEARFRAC_basis1_actual_actual",
+      "function": "YEARFRAC",
+      "status": "ok",
+      "value": 0.5765027322404371,
+      "matches_upstream": true
+    },
+    "YEARFRAC_basis2_actual_360": {
+      "id": "YEARFRAC_basis2_actual_360",
+      "function": "YEARFRAC",
+      "status": "ok",
+      "value": 0.5861111111111111,
+      "matches_upstream": true
+    },
+    "YEARFRAC_basis3_actual_365": {
+      "id": "YEARFRAC_basis3_actual_365",
+      "function": "YEARFRAC",
+      "status": "ok",
+      "value": 0.5780821917808219,
+      "matches_upstream": true
+    },
+    "YEARFRAC_basis4_european_30_360": {
+      "id": "YEARFRAC_basis4_european_30_360",
+      "function": "YEARFRAC",
+      "status": "ok",
+      "value": 0.5805555555555556,
+      "matches_upstream": true
+    },
+    "YEARFRAC_invalid_basis_error": {
+      "id": "YEARFRAC_invalid_basis_error",
+      "function": "YEARFRAC",
+      "status": "ok",
+      "value": "#NUM!",
+      "matches_upstream": true
+    },
+    "YEAR_ignores_time_fraction": {
+      "id": "YEAR_ignores_time_fraction",
+      "function": "YEAR",
+      "status": "ok",
+      "value": 2024.0,
+      "matches_upstream": true
+    },
+    "YEAR_of_date": {
+      "id": "YEAR_of_date",
+      "function": "YEAR",
+      "status": "ok",
+      "value": 2024.0,
+      "matches_upstream": true
+    },
+    "YEAR_of_raw_serial_epoch": {
+      "id": "YEAR_of_raw_serial_epoch",
+      "function": "YEAR",
+      "status": "ok",
+      "value": 1900.0,
+      "matches_upstream": true
+    }
+  },
+  "status_counts": {
+    "ok": 825,
+    "probe": 9
+  }
+}

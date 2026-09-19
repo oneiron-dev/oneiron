@@ -69,7 +69,7 @@ class CompleteCorpusReceipts(unittest.TestCase):
         lo = receipt["libreoffice"]
         pins = read_json("engine-comparison-pins.json")
         self.assertEqual(pins["libreoffice"], lo["identity"]["engine"])
-        self.assertEqual(pins["native"], read_json("retained-native-v2-executable.json")["executable_sha256"])
+        self.assertEqual(pins["native"], read_json("retained-native-v3-executable.json")["executable_sha256"])
         rows = read_rows("spreadsheetbench-libreoffice-rows.jsonl.gz", lo["rows_sha256"])
         self.complete(rows, manifest)
         self.classification(rows, lo)
@@ -92,9 +92,24 @@ class CompleteCorpusReceipts(unittest.TestCase):
         self.complete(rows, manifest)
         self.classification(rows, receipt)
         self.diagnostic(rows, summary)
-        self.assertEqual(summary["executable_sha256"], read_json("engine-comparison-pins.json")["native"])
+        self.assertEqual(summary["executable_sha256"], read_json("retained-native-v2-executable.json")["executable_sha256"])
         self.assertEqual(receipt["identity"]["executable_sha256"], summary["executable_sha256"])
         self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["spreadsheetbench"]["manifest_sha256"])
+
+    def test_current_native_candidate_refuses_crashing_inputs_and_still_recalculates(self):
+        receipt = read_json("retained-native-v3-executable.json")
+        self.assertEqual(receipt["status"], "passed")
+        self.assertEqual(len(receipt["cases"]), 2)
+        manifest = self.manifest("fuse")
+        for case in receipt["cases"]:
+            self.assertIn(case["input_sha256"], manifest)
+            self.assertEqual(case["exit_code"], 1)
+            self.assertFalse(case["output_exists"])
+        probe = receipt["positive_probe"]
+        self.assertEqual(float(probe["value"]), 3)
+        self.assertEqual(probe["report"]["formulas"], 1)
+        self.assertFalse(probe["report"]["precision_fallback"])
+        self.assertNotEqual(receipt["executable_sha256"], read_json("retained-native-v2-executable.json")["executable_sha256"])
 
     def test_historical_native_fuse_lane_covers_complete_cohort(self):
         manifest = self.manifest("fuse")

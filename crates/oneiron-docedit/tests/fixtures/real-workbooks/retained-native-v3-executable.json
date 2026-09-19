@@ -1,0 +1,37 @@
+{
+  "source_commit": "707eb28b",
+  "executable": "/Users/olety/w7-oracle/W7-C14/real-workbook-oracle/native-retained-measurement-v3/recalc_native",
+  "executable_sha256": "c54211ad849c022ac84facc4230f5e10b3cfd06a7a069460c274fe12e3c775d7",
+  "host": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "status": "passed",
+  "cases": [
+    {
+      "input_sha256": "82db7502fa68bc2a62ccd746e843fe09025c607f095c5ebc58e59ba0b49a3ae2",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: UnsupportedWorkbook(\"formula token limit\")\n",
+      "output_exists": false
+    },
+    {
+      "input_sha256": "975856ae65002826fb6bc56612683f2ae16c03d3aaa29ff66802a664afaa5f1c",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: UnsupportedWorkbook(\"formula token limit\")\n",
+      "output_exists": false
+    }
+  ],
+  "positive_probe": {
+    "input_sha256": "ba7258be4076734c7593ecc43b7d5c20b7cd865becd749a8b9193d4c0288b1f2",
+    "output_sha256": "d44e4c71232f80d4887846b7cb536f6d23fab4bb173554dccf2e38e64d541d01",
+    "value": "3",
+    "report": {
+      "engine": {
+        "engine": "oneiron-xlsx-formula",
+        "version": "0.1.0+formualizer.0.9.3"
+      },
+      "formulas": 1,
+      "output_bytes": 1359,
+      "precision_fallback": false
+    }
+  }
+}
