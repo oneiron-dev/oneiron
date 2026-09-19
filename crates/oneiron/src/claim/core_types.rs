@@ -567,6 +567,8 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_edge_provenance_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_LEXICAL_QUERY_HINT {
         lexical_query_hint_target(&body)?;
+    } else if crate::edit_distance::miner::is_compiled_preference(&body.predicate) {
+        crate::edit_distance::miner::validate_compiled_preference(&body)?;
     } else if is_expression_preference_predicate(&body.predicate) {
         validate_expression_preference_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_COMPANION_EXPRESSION {

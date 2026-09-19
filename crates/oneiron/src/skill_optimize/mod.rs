@@ -136,7 +136,7 @@ mod tier;
 pub use self::brief::{
     SKILL_OPTIMIZE_CALL_PURPOSE_NAME, SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE,
     SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
-    optimize_brief, skill_optimize_call_purpose,
+    optimize_brief, optimize_brief_for_principal_at, skill_optimize_call_purpose,
 };
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
@@ -147,7 +147,7 @@ pub use self::job::{
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, PROVENANCE_OPTIMIZE_OF_KEY,
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY,
     PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
-    run_skill_optimize,
+    run_skill_optimize, run_skill_optimize_as,
 };
 pub use self::selection::{SkillOptimizeCandidate, optimize_candidates};
 pub use self::tier::{SkillTierVerdict, skill_governance_tier};

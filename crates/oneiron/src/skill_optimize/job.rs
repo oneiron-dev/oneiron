@@ -17,7 +17,7 @@ use crate::temporal::TimeRange;
 
 use super::brief::{
     SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
-    optimize_brief,
+    optimize_brief, optimize_brief_bound_at,
 };
 use super::dials::{invalid, validate_text};
 use super::gate::SkillEditCycle;
@@ -115,10 +115,43 @@ pub fn run_skill_optimize(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<SkillOptimizeOutcome> {
+    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, None)
+}
+
+/// An optimizer job with an explicit host-authenticated preference audience.
+/// The owner identity is checked before reading and again when landing a
+/// proposal. It grants no exception to the normal skill admission gate.
+pub fn run_skill_optimize_as(
+    vault: &Vault,
+    attempt: AttemptId,
+    author: &dyn SkillOptimizeAuthor,
+    occurred: TimeRange,
+    learned_at: u64,
+    owner: crate::write_envelope::WriteActor,
+) -> Result<SkillOptimizeOutcome> {
+    let txn = vault.store.env.read_txn()?;
+    vault.verify_owner_write_actor_in_txn(&txn, &owner)?;
+    drop(txn);
+    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, Some(owner))
+}
+
+fn run_skill_optimize_bound(
+    vault: &Vault,
+    attempt: AttemptId,
+    author: &dyn SkillOptimizeAuthor,
+    occurred: TimeRange,
+    learned_at: u64,
+    owner: Option<crate::write_envelope::WriteActor>,
+) -> Result<SkillOptimizeOutcome> {
     let Some(candidate) = optimize_candidates(vault)?.into_iter().next() else {
         return affirm_healthy_skill(vault);
     };
-    let brief = optimize_brief(vault, &candidate)?;
+    let brief = optimize_brief_bound_at(
+        vault,
+        &candidate,
+        owner.map(|owner| owner.entity_ref()),
+        learned_at,
+    )?;
     let (desc, rationale) = match author.draft(&brief)? {
         SkillEditDraft::Decline { rationale } => {
             validate_text(
@@ -169,6 +202,9 @@ pub fn run_skill_optimize(
     let drafted_in = proven_cycle(vault, attempt)?;
     let proposal_id = EntityId::now();
     vault.with_write_txn(|wtxn| {
+        if let Some(owner) = owner {
+            vault.verify_owner_write_actor_in_txn(wtxn, &owner)?;
+        }
         // Resolved at the WRITE door, not carried from the ranking: the
         // author ran outside this transaction, so the target may have been
         // superseded, quarantined or re-proposed in that window. A proposal
@@ -180,7 +216,7 @@ pub fn run_skill_optimize(
                 "optimization target moved while the author was drafting",
             ));
         }
-        let record = proposal_record(
+        let mut record = proposal_record(
             &target,
             &desc,
             &rationale,
@@ -191,6 +227,14 @@ pub fn run_skill_optimize(
             &drafted_in,
             tier_verdict_in_txn(vault, &*wtxn, &candidate.skill, &target)?,
         )?;
+        if let Some(owner) = owner
+            && let Value::Map(provenance) = &mut record.provenance
+        {
+            provenance.push((
+                Value::from("preferencePrincipal"),
+                Value::from(owner.entity_ref().to_hex()),
+            ));
+        }
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
         Ok(())
     })?;
