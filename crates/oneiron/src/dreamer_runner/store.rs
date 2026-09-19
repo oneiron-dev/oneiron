@@ -83,6 +83,11 @@ impl<'a> DreamerRunnerStore<'a> {
             task_ref,
         )?;
 
+        let record = match &outcome {
+            EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => record,
+        };
+        super::authority::stamp_attempt(self.vault, wtxn, record, &payload.attempt_type)?;
+
         match outcome {
             EnqueueOutcome::Enqueued(record) => {
                 put_run_tree_record_in_txn(
@@ -282,6 +287,11 @@ impl<'a> DreamerRunnerStore<'a> {
                 now,
             },
         )?;
+
+        let record = match &outcome {
+            EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => record,
+        };
+        super::authority::stamp_attempt(self.vault, wtxn, record, &payload.attempt_type)?;
 
         match outcome {
             EnqueueOutcome::Enqueued(record) => {
