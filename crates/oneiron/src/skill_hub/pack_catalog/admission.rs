@@ -102,6 +102,7 @@ impl Vault {
                 content_hash: source.content_hash().to_hex(),
                 consent_digest: ask.effect.to_hex(),
                 qualification_report_hash: ask.qualification.report_hash.clone(),
+                runtime: ask.qualification.runtime.clone(),
                 hub_id: ask.hub.hub_id.to_hex(),
                 publisher: ask.publisher.identity().to_owned(),
                 requested_grants: source.manifest.requested_grants.iter().cloned().collect(),

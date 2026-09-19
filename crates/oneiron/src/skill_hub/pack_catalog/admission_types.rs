@@ -19,7 +19,8 @@ pub struct PackQualification {
     /// Required for connector/code packs; fingerprints a provisioned runtime.
     pub runtime: Option<PackRuntimeRecipe>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackRuntimeRecipe {
     pub adapter: PackAdapter,
     pub runtime_id: String,
@@ -61,6 +62,8 @@ pub struct PackInstallReceipt {
     pub content_hash: String,
     pub consent_digest: String,
     pub qualification_report_hash: String,
+    /// Provisioned recipe as data. Execution must still use the ordinary action gate.
+    pub runtime: Option<PackRuntimeRecipe>,
     pub hub_id: String,
     pub publisher: String,
     /// A slate of requested powers, not a standing grant.
