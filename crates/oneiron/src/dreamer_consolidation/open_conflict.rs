@@ -20,11 +20,14 @@ pub(super) fn park_open_conflict(
         .iter()
         .flat_map(|c| c.evidence_turn_refs.iter().copied())
         .collect();
-    let evidence = Value::Array(
-        refs.into_iter()
-            .map(|id| Value::Binary(id.as_bytes().to_vec()))
-            .collect(),
-    );
+    for member in members {
+        fence.evidence_source(member)?;
+    }
+    let evidence = super::encode_consolidation_evidence(&super::ConsolidationEvidenceEnvelope {
+        refs: refs.into_iter().collect(),
+        chain: Vec::new(),
+        source_meet: ClaimSource::Generated,
+    });
     let envelope = WriteEnvelope::new(
         actor,
         ClaimSource::Generated,

@@ -1176,13 +1176,14 @@ mod cb_a {
         use oneiron::{EntityId, Error};
         use rmpv::Value;
 
-        let fixture = super::peer_fixture::PeerFixture::open_without_generated_permit();
-        let ids = fixture
-            .vault
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device())
+            .expect("unchanged default policy vault");
+        let ids = vault
             .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
             .expect("read policy ids");
         assert_eq!(ids.len(), 1);
-        let before = fixture.vault.get(&ids[0]).expect("read policy").unwrap();
+        let before = vault.get(&ids[0]).expect("read policy").unwrap();
         let mut expected = rmpv::decode::read_value(&mut std::io::Cursor::new(&before))
             .expect("decode stock policy");
         let Value::Map(entries) = &mut expected else {
@@ -1204,19 +1205,17 @@ mod cb_a {
             .iter_mut()
             .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
             .expect("Generated permit is actor-bound");
-        let actor = fixture.run().agent_actor.entity_ref();
+        let actor = vault
+            .dreamer_authority()
+            .expect("Dreamer authority")
+            .entity_ref();
         assert_ne!(*actor_ref, Value::from(actor.to_hex()));
         *actor_ref = Value::from(actor.to_hex());
 
-        fixture
-            .vault
+        vault
             .install_generated_source_permit_for_test(actor)
             .expect("install on an unchanged default");
-        let after = fixture
-            .vault
-            .get(&ids[0])
-            .expect("read installed policy")
-            .unwrap();
+        let after = vault.get(&ids[0]).expect("read installed policy").unwrap();
         let installed = rmpv::decode::read_value(&mut std::io::Cursor::new(&after))
             .expect("decode installed policy");
         // Compare policy values rather than their MessagePack encoding.
@@ -1224,13 +1223,10 @@ mod cb_a {
         let wrong_actor = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
         for replacement in [actor, wrong_actor] {
             assert!(matches!(
-                fixture
-                    .vault
-                    .install_generated_source_permit_for_test(replacement),
+                vault.install_generated_source_permit_for_test(replacement),
                 Err(Error::InvariantViolation(_))
             ));
-            let refused = fixture
-                .vault
+            let refused = vault
                 .get(&ids[0])
                 .expect("read refused replacement")
                 .unwrap();
@@ -1602,7 +1598,8 @@ mod peer_fixture {
                         run_id: Some("cb-b-1710".to_owned()),
                         now: PEER_NOW,
                     })
-                    .expect("enqueue real Dreamer attempt") else {
+                    .expect("enqueue real Dreamer attempt")
+            else {
                 panic!("unexpected enqueue outcome");
             };
             Self {
