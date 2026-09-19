@@ -1,0 +1,3906 @@
+{
+  "counts": {
+    "libreoffice": {
+      "passed": 753,
+      "total": 811,
+      "by_function": {
+        "ABS": {
+          "passed": 6,
+          "total": 6
+        },
+        "ADDRESS": {
+          "passed": 6,
+          "total": 6
+        },
+        "AGGREGATE": {
+          "passed": 1,
+          "total": 1
+        },
+        "AND": {
+          "passed": 4,
+          "total": 5
+        },
+        "ARABIC": {
+          "passed": 1,
+          "total": 1
+        },
+        "ARRAYTOTEXT": {
+          "passed": 0,
+          "total": 4
+        },
+        "AVEDEV": {
+          "passed": 3,
+          "total": 3
+        },
+        "AVERAGE": {
+          "passed": 4,
+          "total": 4
+        },
+        "AVERAGEIF": {
+          "passed": 4,
+          "total": 4
+        },
+        "AVERAGEIFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "BASE": {
+          "passed": 1,
+          "total": 1
+        },
+        "BIN2DEC": {
+          "passed": 3,
+          "total": 3
+        },
+        "BIN2HEX": {
+          "passed": 3,
+          "total": 3
+        },
+        "BIN2OCT": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITAND": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITLSHIFT": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITOR": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITRSHIFT": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITXOR": {
+          "passed": 3,
+          "total": 3
+        },
+        "BYCOL": {
+          "passed": 0,
+          "total": 1
+        },
+        "BYROW": {
+          "passed": 0,
+          "total": 1
+        },
+        "CEILING": {
+          "passed": 6,
+          "total": 6
+        },
+        "CEILING.MATH": {
+          "passed": 4,
+          "total": 4
+        },
+        "CEILING.PRECISE": {
+          "passed": 3,
+          "total": 3
+        },
+        "CHAR": {
+          "passed": 3,
+          "total": 4
+        },
+        "CHOOSE": {
+          "passed": 5,
+          "total": 5
+        },
+        "CHOOSECOLS": {
+          "passed": 1,
+          "total": 1
+        },
+        "CHOOSEROWS": {
+          "passed": 1,
+          "total": 1
+        },
+        "CLEAN": {
+          "passed": 4,
+          "total": 4
+        },
+        "CODE": {
+          "passed": 4,
+          "total": 4
+        },
+        "COLUMN": {
+          "passed": 4,
+          "total": 4
+        },
+        "COLUMNS": {
+          "passed": 3,
+          "total": 3
+        },
+        "COMBIN": {
+          "passed": 1,
+          "total": 1
+        },
+        "COMBINA": {
+          "passed": 3,
+          "total": 3
+        },
+        "CONCAT": {
+          "passed": 4,
+          "total": 4
+        },
+        "CONCATENATE": {
+          "passed": 3,
+          "total": 3
+        },
+        "CONVERT": {
+          "passed": 3,
+          "total": 3
+        },
+        "CORREL": {
+          "passed": 1,
+          "total": 1
+        },
+        "COUNT": {
+          "passed": 2,
+          "total": 4
+        },
+        "COUNTA": {
+          "passed": 3,
+          "total": 3
+        },
+        "COUNTBLANK": {
+          "passed": 4,
+          "total": 4
+        },
+        "COUNTIF": {
+          "passed": 5,
+          "total": 5
+        },
+        "COUNTIFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "COVAR": {
+          "passed": 2,
+          "total": 2
+        },
+        "COVARIANCE.P": {
+          "passed": 2,
+          "total": 2
+        },
+        "COVARIANCE.S": {
+          "passed": 2,
+          "total": 2
+        },
+        "CUMIPMT": {
+          "passed": 1,
+          "total": 1
+        },
+        "CUMPRINC": {
+          "passed": 1,
+          "total": 1
+        },
+        "DATE": {
+          "passed": 3,
+          "total": 3
+        },
+        "DATEDIF": {
+          "passed": 4,
+          "total": 5
+        },
+        "DATEVALUE": {
+          "passed": 1,
+          "total": 1
+        },
+        "DAVERAGE": {
+          "passed": 2,
+          "total": 2
+        },
+        "DAY": {
+          "passed": 2,
+          "total": 3
+        },
+        "DAYS": {
+          "passed": 4,
+          "total": 4
+        },
+        "DAYS360": {
+          "passed": 4,
+          "total": 4
+        },
+        "DB": {
+          "passed": 1,
+          "total": 1
+        },
+        "DCOUNT": {
+          "passed": 2,
+          "total": 2
+        },
+        "DDB": {
+          "passed": 1,
+          "total": 1
+        },
+        "DEC2BIN": {
+          "passed": 3,
+          "total": 3
+        },
+        "DEC2HEX": {
+          "passed": 3,
+          "total": 3
+        },
+        "DEC2OCT": {
+          "passed": 3,
+          "total": 3
+        },
+        "DECIMAL": {
+          "passed": 1,
+          "total": 1
+        },
+        "DEGREES": {
+          "passed": 4,
+          "total": 4
+        },
+        "DEVSQ": {
+          "passed": 3,
+          "total": 3
+        },
+        "DGET": {
+          "passed": 1,
+          "total": 2
+        },
+        "DMAX": {
+          "passed": 2,
+          "total": 2
+        },
+        "DMIN": {
+          "passed": 2,
+          "total": 2
+        },
+        "DOLLAR": {
+          "passed": 0,
+          "total": 1
+        },
+        "DROP": {
+          "passed": 1,
+          "total": 1
+        },
+        "DSUM": {
+          "passed": 3,
+          "total": 3
+        },
+        "EDATE": {
+          "passed": 4,
+          "total": 4
+        },
+        "EFFECT": {
+          "passed": 1,
+          "total": 1
+        },
+        "EOMONTH": {
+          "passed": 4,
+          "total": 4
+        },
+        "ERROR.TYPE": {
+          "passed": 6,
+          "total": 7
+        },
+        "EVEN": {
+          "passed": 1,
+          "total": 1
+        },
+        "EXACT": {
+          "passed": 4,
+          "total": 4
+        },
+        "EXP": {
+          "passed": 4,
+          "total": 4
+        },
+        "EXPAND": {
+          "passed": 2,
+          "total": 2
+        },
+        "FACT": {
+          "passed": 1,
+          "total": 1
+        },
+        "FACTDOUBLE": {
+          "passed": 3,
+          "total": 3
+        },
+        "FALSE": {
+          "passed": 3,
+          "total": 3
+        },
+        "FILTER": {
+          "passed": 4,
+          "total": 5
+        },
+        "FIND": {
+          "passed": 4,
+          "total": 4
+        },
+        "FIXED": {
+          "passed": 1,
+          "total": 1
+        },
+        "FLOOR": {
+          "passed": 5,
+          "total": 6
+        },
+        "FLOOR.MATH": {
+          "passed": 4,
+          "total": 4
+        },
+        "FORECAST": {
+          "passed": 2,
+          "total": 2
+        },
+        "FORECAST.ETS": {
+          "passed": 1,
+          "total": 1
+        },
+        "FORECAST.LINEAR": {
+          "passed": 1,
+          "total": 1
+        },
+        "FORMULATEXT": {
+          "passed": 4,
+          "total": 4
+        },
+        "FREQUENCY": {
+          "passed": 1,
+          "total": 1
+        },
+        "FV": {
+          "passed": 1,
+          "total": 1
+        },
+        "GCD": {
+          "passed": 1,
+          "total": 1
+        },
+        "GEOMEAN": {
+          "passed": 1,
+          "total": 1
+        },
+        "GROUPBY": {
+          "passed": 0,
+          "total": 1
+        },
+        "GROWTH": {
+          "passed": 1,
+          "total": 1
+        },
+        "HARMEAN": {
+          "passed": 3,
+          "total": 3
+        },
+        "HEX2BIN": {
+          "passed": 3,
+          "total": 3
+        },
+        "HEX2DEC": {
+          "passed": 3,
+          "total": 3
+        },
+        "HEX2OCT": {
+          "passed": 3,
+          "total": 3
+        },
+        "HLOOKUP": {
+          "passed": 3,
+          "total": 4
+        },
+        "HOUR": {
+          "passed": 3,
+          "total": 3
+        },
+        "HSTACK": {
+          "passed": 1,
+          "total": 1
+        },
+        "HYPERLINK": {
+          "passed": 4,
+          "total": 4
+        },
+        "IF": {
+          "passed": 3,
+          "total": 3
+        },
+        "IFERROR": {
+          "passed": 4,
+          "total": 4
+        },
+        "IFNA": {
+          "passed": 3,
+          "total": 3
+        },
+        "IFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "INDEX": {
+          "passed": 5,
+          "total": 5
+        },
+        "INT": {
+          "passed": 4,
+          "total": 4
+        },
+        "INTERCEPT": {
+          "passed": 1,
+          "total": 1
+        },
+        "IPMT": {
+          "passed": 1,
+          "total": 1
+        },
+        "IRR": {
+          "passed": 1,
+          "total": 1
+        },
+        "ISBLANK": {
+          "passed": 3,
+          "total": 3
+        },
+        "ISERR": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISERROR": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISEVEN": {
+          "passed": 5,
+          "total": 5
+        },
+        "ISFORMULA": {
+          "passed": 2,
+          "total": 2
+        },
+        "ISLOGICAL": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISNA": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISNUMBER": {
+          "passed": 3,
+          "total": 4
+        },
+        "ISODD": {
+          "passed": 5,
+          "total": 5
+        },
+        "ISOWEEKNUM": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISTEXT": {
+          "passed": 4,
+          "total": 4
+        },
+        "LAMBDA": {
+          "passed": 1,
+          "total": 4
+        },
+        "LARGE": {
+          "passed": 2,
+          "total": 4
+        },
+        "LCM": {
+          "passed": 1,
+          "total": 1
+        },
+        "LEFT": {
+          "passed": 4,
+          "total": 4
+        },
+        "LEN": {
+          "passed": 4,
+          "total": 4
+        },
+        "LET": {
+          "passed": 3,
+          "total": 3
+        },
+        "LINEST": {
+          "passed": 1,
+          "total": 1
+        },
+        "LN": {
+          "passed": 2,
+          "total": 4
+        },
+        "LOG": {
+          "passed": 2,
+          "total": 4
+        },
+        "LOG10": {
+          "passed": 2,
+          "total": 4
+        },
+        "LOOKUP": {
+          "passed": 4,
+          "total": 4
+        },
+        "LOWER": {
+          "passed": 3,
+          "total": 3
+        },
+        "MAKEARRAY": {
+          "passed": 0,
+          "total": 1
+        },
+        "MAP": {
+          "passed": 0,
+          "total": 1
+        },
+        "MATCH": {
+          "passed": 4,
+          "total": 4
+        },
+        "MAX": {
+          "passed": 4,
+          "total": 4
+        },
+        "MAXIFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "MEDIAN": {
+          "passed": 4,
+          "total": 4
+        },
+        "MID": {
+          "passed": 4,
+          "total": 4
+        },
+        "MIN": {
+          "passed": 4,
+          "total": 4
+        },
+        "MINIFS": {
+          "passed": 3,
+          "total": 3
+        },
+        "MINUTE": {
+          "passed": 3,
+          "total": 3
+        },
+        "MOD": {
+          "passed": 4,
+          "total": 4
+        },
+        "MODE": {
+          "passed": 3,
+          "total": 4
+        },
+        "MODE.MULT": {
+          "passed": 2,
+          "total": 2
+        },
+        "MODE.SNGL": {
+          "passed": 4,
+          "total": 5
+        },
+        "MONTH": {
+          "passed": 2,
+          "total": 3
+        },
+        "MROUND": {
+          "passed": 4,
+          "total": 5
+        },
+        "MULTINOMIAL": {
+          "passed": 3,
+          "total": 3
+        },
+        "N": {
+          "passed": 5,
+          "total": 5
+        },
+        "NA": {
+          "passed": 4,
+          "total": 4
+        },
+        "NETWORKDAYS": {
+          "passed": 4,
+          "total": 4
+        },
+        "NETWORKDAYS.INTL": {
+          "passed": 1,
+          "total": 1
+        },
+        "NOMINAL": {
+          "passed": 1,
+          "total": 1
+        },
+        "NOT": {
+          "passed": 5,
+          "total": 5
+        },
+        "NPER": {
+          "passed": 1,
+          "total": 1
+        },
+        "NPV": {
+          "passed": 1,
+          "total": 1
+        },
+        "NUMBERVALUE": {
+          "passed": 4,
+          "total": 4
+        },
+        "OCT2BIN": {
+          "passed": 3,
+          "total": 3
+        },
+        "OCT2DEC": {
+          "passed": 3,
+          "total": 3
+        },
+        "OCT2HEX": {
+          "passed": 3,
+          "total": 3
+        },
+        "ODD": {
+          "passed": 1,
+          "total": 1
+        },
+        "OR": {
+          "passed": 5,
+          "total": 5
+        },
+        "PEARSON": {
+          "passed": 3,
+          "total": 3
+        },
+        "PERCENTILE": {
+          "passed": 1,
+          "total": 1
+        },
+        "PERCENTILE.EXC": {
+          "passed": 2,
+          "total": 4
+        },
+        "PERCENTILE.INC": {
+          "passed": 3,
+          "total": 4
+        },
+        "PERCENTRANK": {
+          "passed": 3,
+          "total": 4
+        },
+        "PI": {
+          "passed": 3,
+          "total": 3
+        },
+        "PIVOTBY": {
+          "passed": 0,
+          "total": 1
+        },
+        "PMT": {
+          "passed": 1,
+          "total": 1
+        },
+        "POWER": {
+          "passed": 4,
+          "total": 5
+        },
+        "PPMT": {
+          "passed": 1,
+          "total": 1
+        },
+        "PRODUCT": {
+          "passed": 1,
+          "total": 1
+        },
+        "PROPER": {
+          "passed": 3,
+          "total": 3
+        },
+        "PV": {
+          "passed": 1,
+          "total": 1
+        },
+        "QUARTILE": {
+          "passed": 1,
+          "total": 1
+        },
+        "QUARTILE.EXC": {
+          "passed": 3,
+          "total": 3
+        },
+        "QUARTILE.INC": {
+          "passed": 4,
+          "total": 5
+        },
+        "QUOTIENT": {
+          "passed": 1,
+          "total": 1
+        },
+        "RADIANS": {
+          "passed": 4,
+          "total": 4
+        },
+        "RANK": {
+          "passed": 3,
+          "total": 3
+        },
+        "RANK.AVG": {
+          "passed": 3,
+          "total": 3
+        },
+        "RANK.EQ": {
+          "passed": 3,
+          "total": 3
+        },
+        "RATE": {
+          "passed": 1,
+          "total": 1
+        },
+        "REDUCE": {
+          "passed": 0,
+          "total": 1
+        },
+        "REPLACE": {
+          "passed": 4,
+          "total": 4
+        },
+        "REPT": {
+          "passed": 4,
+          "total": 4
+        },
+        "RIGHT": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROMAN": {
+          "passed": 1,
+          "total": 1
+        },
+        "ROUND": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROUNDDOWN": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROUNDUP": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROW": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROWS": {
+          "passed": 3,
+          "total": 3
+        },
+        "RSQ": {
+          "passed": 2,
+          "total": 2
+        },
+        "SCAN": {
+          "passed": 0,
+          "total": 1
+        },
+        "SEARCH": {
+          "passed": 4,
+          "total": 4
+        },
+        "SECOND": {
+          "passed": 3,
+          "total": 3
+        },
+        "SEQUENCE": {
+          "passed": 4,
+          "total": 4
+        },
+        "SHEET": {
+          "passed": 1,
+          "total": 1
+        },
+        "SHEETS": {
+          "passed": 1,
+          "total": 1
+        },
+        "SIGN": {
+          "passed": 4,
+          "total": 4
+        },
+        "SLN": {
+          "passed": 1,
+          "total": 1
+        },
+        "SLOPE": {
+          "passed": 1,
+          "total": 1
+        },
+        "SMALL": {
+          "passed": 2,
+          "total": 4
+        },
+        "SORT": {
+          "passed": 4,
+          "total": 4
+        },
+        "SORTBY": {
+          "passed": 1,
+          "total": 1
+        },
+        "SQRT": {
+          "passed": 3,
+          "total": 4
+        },
+        "STANDARDIZE": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEV": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEV.P": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEV.S": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEVA": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEVP": {
+          "passed": 4,
+          "total": 4
+        },
+        "STDEVPA": {
+          "passed": 2,
+          "total": 2
+        },
+        "SUBSTITUTE": {
+          "passed": 4,
+          "total": 4
+        },
+        "SUBTOTAL": {
+          "passed": 3,
+          "total": 3
+        },
+        "SUM": {
+          "passed": 3,
+          "total": 4
+        },
+        "SUMIF": {
+          "passed": 5,
+          "total": 5
+        },
+        "SUMIFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "SUMPRODUCT": {
+          "passed": 5,
+          "total": 5
+        },
+        "SUMSQ": {
+          "passed": 1,
+          "total": 1
+        },
+        "SWITCH": {
+          "passed": 4,
+          "total": 4
+        },
+        "SYD": {
+          "passed": 1,
+          "total": 1
+        },
+        "TAKE": {
+          "passed": 1,
+          "total": 1
+        },
+        "TEXT": {
+          "passed": 6,
+          "total": 6
+        },
+        "TEXTAFTER": {
+          "passed": 4,
+          "total": 4
+        },
+        "TEXTBEFORE": {
+          "passed": 5,
+          "total": 5
+        },
+        "TEXTJOIN": {
+          "passed": 4,
+          "total": 4
+        },
+        "TEXTSPLIT": {
+          "passed": 4,
+          "total": 4
+        },
+        "TIME": {
+          "passed": 3,
+          "total": 3
+        },
+        "TIMEVALUE": {
+          "passed": 1,
+          "total": 1
+        },
+        "TOCOL": {
+          "passed": 1,
+          "total": 1
+        },
+        "TOROW": {
+          "passed": 1,
+          "total": 1
+        },
+        "TRANSPOSE": {
+          "passed": 4,
+          "total": 4
+        },
+        "TREND": {
+          "passed": 1,
+          "total": 1
+        },
+        "TRIM": {
+          "passed": 3,
+          "total": 4
+        },
+        "TRIMMEAN": {
+          "passed": 1,
+          "total": 1
+        },
+        "TRUE": {
+          "passed": 3,
+          "total": 3
+        },
+        "TRUNC": {
+          "passed": 4,
+          "total": 4
+        },
+        "TYPE": {
+          "passed": 4,
+          "total": 5
+        },
+        "UNICHAR": {
+          "passed": 4,
+          "total": 5
+        },
+        "UNICODE": {
+          "passed": 4,
+          "total": 4
+        },
+        "UNIQUE": {
+          "passed": 4,
+          "total": 4
+        },
+        "UPPER": {
+          "passed": 3,
+          "total": 3
+        },
+        "VALUE": {
+          "passed": 3,
+          "total": 4
+        },
+        "VAR": {
+          "passed": 4,
+          "total": 4
+        },
+        "VAR.S": {
+          "passed": 4,
+          "total": 4
+        },
+        "VARA": {
+          "passed": 3,
+          "total": 3
+        },
+        "VARP": {
+          "passed": 4,
+          "total": 4
+        },
+        "VLOOKUP": {
+          "passed": 4,
+          "total": 5
+        },
+        "VSTACK": {
+          "passed": 1,
+          "total": 1
+        },
+        "WEEKDAY": {
+          "passed": 5,
+          "total": 6
+        },
+        "WEEKNUM": {
+          "passed": 5,
+          "total": 5
+        },
+        "WORKDAY": {
+          "passed": 4,
+          "total": 4
+        },
+        "WORKDAY.INTL": {
+          "passed": 1,
+          "total": 1
+        },
+        "WRAPCOLS": {
+          "passed": 1,
+          "total": 1
+        },
+        "WRAPROWS": {
+          "passed": 1,
+          "total": 1
+        },
+        "XIRR": {
+          "passed": 1,
+          "total": 1
+        },
+        "XLOOKUP": {
+          "passed": 6,
+          "total": 6
+        },
+        "XMATCH": {
+          "passed": 1,
+          "total": 1
+        },
+        "XNPV": {
+          "passed": 1,
+          "total": 1
+        },
+        "XOR": {
+          "passed": 5,
+          "total": 5
+        },
+        "YEAR": {
+          "passed": 2,
+          "total": 3
+        },
+        "YEARFRAC": {
+          "passed": 5,
+          "total": 6
+        }
+      },
+      "rate": 0.9284833538840938
+    },
+    "formualizer_unchanged": {
+      "passed": 746,
+      "total": 811,
+      "by_function": {
+        "ABS": {
+          "passed": 6,
+          "total": 6
+        },
+        "ADDRESS": {
+          "passed": 6,
+          "total": 6
+        },
+        "AGGREGATE": {
+          "passed": 0,
+          "total": 1
+        },
+        "AND": {
+          "passed": 4,
+          "total": 5
+        },
+        "ARABIC": {
+          "passed": 1,
+          "total": 1
+        },
+        "ARRAYTOTEXT": {
+          "passed": 4,
+          "total": 4
+        },
+        "AVEDEV": {
+          "passed": 3,
+          "total": 3
+        },
+        "AVERAGE": {
+          "passed": 4,
+          "total": 4
+        },
+        "AVERAGEIF": {
+          "passed": 4,
+          "total": 4
+        },
+        "AVERAGEIFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "BASE": {
+          "passed": 1,
+          "total": 1
+        },
+        "BIN2DEC": {
+          "passed": 3,
+          "total": 3
+        },
+        "BIN2HEX": {
+          "passed": 3,
+          "total": 3
+        },
+        "BIN2OCT": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITAND": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITLSHIFT": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITOR": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITRSHIFT": {
+          "passed": 3,
+          "total": 3
+        },
+        "BITXOR": {
+          "passed": 3,
+          "total": 3
+        },
+        "BYCOL": {
+          "passed": 0,
+          "total": 1
+        },
+        "BYROW": {
+          "passed": 0,
+          "total": 1
+        },
+        "CEILING": {
+          "passed": 4,
+          "total": 6
+        },
+        "CEILING.MATH": {
+          "passed": 3,
+          "total": 4
+        },
+        "CEILING.PRECISE": {
+          "passed": 3,
+          "total": 3
+        },
+        "CHAR": {
+          "passed": 4,
+          "total": 4
+        },
+        "CHOOSE": {
+          "passed": 5,
+          "total": 5
+        },
+        "CHOOSECOLS": {
+          "passed": 1,
+          "total": 1
+        },
+        "CHOOSEROWS": {
+          "passed": 1,
+          "total": 1
+        },
+        "CLEAN": {
+          "passed": 4,
+          "total": 4
+        },
+        "CODE": {
+          "passed": 4,
+          "total": 4
+        },
+        "COLUMN": {
+          "passed": 4,
+          "total": 4
+        },
+        "COLUMNS": {
+          "passed": 3,
+          "total": 3
+        },
+        "COMBIN": {
+          "passed": 1,
+          "total": 1
+        },
+        "COMBINA": {
+          "passed": 3,
+          "total": 3
+        },
+        "CONCAT": {
+          "passed": 4,
+          "total": 4
+        },
+        "CONCATENATE": {
+          "passed": 3,
+          "total": 3
+        },
+        "CONVERT": {
+          "passed": 1,
+          "total": 3
+        },
+        "CORREL": {
+          "passed": 1,
+          "total": 1
+        },
+        "COUNT": {
+          "passed": 4,
+          "total": 4
+        },
+        "COUNTA": {
+          "passed": 3,
+          "total": 3
+        },
+        "COUNTBLANK": {
+          "passed": 4,
+          "total": 4
+        },
+        "COUNTIF": {
+          "passed": 5,
+          "total": 5
+        },
+        "COUNTIFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "COVAR": {
+          "passed": 2,
+          "total": 2
+        },
+        "COVARIANCE.P": {
+          "passed": 2,
+          "total": 2
+        },
+        "COVARIANCE.S": {
+          "passed": 2,
+          "total": 2
+        },
+        "CUMIPMT": {
+          "passed": 0,
+          "total": 1
+        },
+        "CUMPRINC": {
+          "passed": 0,
+          "total": 1
+        },
+        "DATE": {
+          "passed": 0,
+          "total": 3
+        },
+        "DATEDIF": {
+          "passed": 5,
+          "total": 5
+        },
+        "DATEVALUE": {
+          "passed": 0,
+          "total": 1
+        },
+        "DAVERAGE": {
+          "passed": 2,
+          "total": 2
+        },
+        "DAY": {
+          "passed": 3,
+          "total": 3
+        },
+        "DAYS": {
+          "passed": 3,
+          "total": 4
+        },
+        "DAYS360": {
+          "passed": 4,
+          "total": 4
+        },
+        "DB": {
+          "passed": 1,
+          "total": 1
+        },
+        "DCOUNT": {
+          "passed": 2,
+          "total": 2
+        },
+        "DDB": {
+          "passed": 1,
+          "total": 1
+        },
+        "DEC2BIN": {
+          "passed": 3,
+          "total": 3
+        },
+        "DEC2HEX": {
+          "passed": 3,
+          "total": 3
+        },
+        "DEC2OCT": {
+          "passed": 3,
+          "total": 3
+        },
+        "DECIMAL": {
+          "passed": 1,
+          "total": 1
+        },
+        "DEGREES": {
+          "passed": 4,
+          "total": 4
+        },
+        "DEVSQ": {
+          "passed": 3,
+          "total": 3
+        },
+        "DGET": {
+          "passed": 2,
+          "total": 2
+        },
+        "DMAX": {
+          "passed": 2,
+          "total": 2
+        },
+        "DMIN": {
+          "passed": 2,
+          "total": 2
+        },
+        "DOLLAR": {
+          "passed": 0,
+          "total": 1
+        },
+        "DROP": {
+          "passed": 1,
+          "total": 1
+        },
+        "DSUM": {
+          "passed": 3,
+          "total": 3
+        },
+        "EDATE": {
+          "passed": 4,
+          "total": 4
+        },
+        "EFFECT": {
+          "passed": 1,
+          "total": 1
+        },
+        "EOMONTH": {
+          "passed": 4,
+          "total": 4
+        },
+        "ERROR.TYPE": {
+          "passed": 5,
+          "total": 7
+        },
+        "EVEN": {
+          "passed": 1,
+          "total": 1
+        },
+        "EXACT": {
+          "passed": 4,
+          "total": 4
+        },
+        "EXP": {
+          "passed": 4,
+          "total": 4
+        },
+        "EXPAND": {
+          "passed": 0,
+          "total": 2
+        },
+        "FACT": {
+          "passed": 1,
+          "total": 1
+        },
+        "FACTDOUBLE": {
+          "passed": 3,
+          "total": 3
+        },
+        "FALSE": {
+          "passed": 3,
+          "total": 3
+        },
+        "FILTER": {
+          "passed": 3,
+          "total": 5
+        },
+        "FIND": {
+          "passed": 4,
+          "total": 4
+        },
+        "FIXED": {
+          "passed": 1,
+          "total": 1
+        },
+        "FLOOR": {
+          "passed": 3,
+          "total": 6
+        },
+        "FLOOR.MATH": {
+          "passed": 3,
+          "total": 4
+        },
+        "FORECAST": {
+          "passed": 2,
+          "total": 2
+        },
+        "FORECAST.ETS": {
+          "passed": 0,
+          "total": 1
+        },
+        "FORECAST.LINEAR": {
+          "passed": 1,
+          "total": 1
+        },
+        "FORMULATEXT": {
+          "passed": 2,
+          "total": 4
+        },
+        "FREQUENCY": {
+          "passed": 1,
+          "total": 1
+        },
+        "FV": {
+          "passed": 1,
+          "total": 1
+        },
+        "GCD": {
+          "passed": 1,
+          "total": 1
+        },
+        "GEOMEAN": {
+          "passed": 1,
+          "total": 1
+        },
+        "GROUPBY": {
+          "passed": 0,
+          "total": 1
+        },
+        "GROWTH": {
+          "passed": 0,
+          "total": 1
+        },
+        "HARMEAN": {
+          "passed": 3,
+          "total": 3
+        },
+        "HEX2BIN": {
+          "passed": 3,
+          "total": 3
+        },
+        "HEX2DEC": {
+          "passed": 3,
+          "total": 3
+        },
+        "HEX2OCT": {
+          "passed": 3,
+          "total": 3
+        },
+        "HLOOKUP": {
+          "passed": 4,
+          "total": 4
+        },
+        "HOUR": {
+          "passed": 3,
+          "total": 3
+        },
+        "HSTACK": {
+          "passed": 1,
+          "total": 1
+        },
+        "HYPERLINK": {
+          "passed": 3,
+          "total": 4
+        },
+        "IF": {
+          "passed": 3,
+          "total": 3
+        },
+        "IFERROR": {
+          "passed": 4,
+          "total": 4
+        },
+        "IFNA": {
+          "passed": 3,
+          "total": 3
+        },
+        "IFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "INDEX": {
+          "passed": 5,
+          "total": 5
+        },
+        "INT": {
+          "passed": 4,
+          "total": 4
+        },
+        "INTERCEPT": {
+          "passed": 1,
+          "total": 1
+        },
+        "IPMT": {
+          "passed": 1,
+          "total": 1
+        },
+        "IRR": {
+          "passed": 1,
+          "total": 1
+        },
+        "ISBLANK": {
+          "passed": 3,
+          "total": 3
+        },
+        "ISERR": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISERROR": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISEVEN": {
+          "passed": 5,
+          "total": 5
+        },
+        "ISFORMULA": {
+          "passed": 1,
+          "total": 2
+        },
+        "ISLOGICAL": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISNA": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISNUMBER": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISODD": {
+          "passed": 5,
+          "total": 5
+        },
+        "ISOWEEKNUM": {
+          "passed": 4,
+          "total": 4
+        },
+        "ISTEXT": {
+          "passed": 4,
+          "total": 4
+        },
+        "LAMBDA": {
+          "passed": 1,
+          "total": 4
+        },
+        "LARGE": {
+          "passed": 4,
+          "total": 4
+        },
+        "LCM": {
+          "passed": 1,
+          "total": 1
+        },
+        "LEFT": {
+          "passed": 4,
+          "total": 4
+        },
+        "LEN": {
+          "passed": 4,
+          "total": 4
+        },
+        "LET": {
+          "passed": 3,
+          "total": 3
+        },
+        "LINEST": {
+          "passed": 1,
+          "total": 1
+        },
+        "LN": {
+          "passed": 4,
+          "total": 4
+        },
+        "LOG": {
+          "passed": 4,
+          "total": 4
+        },
+        "LOG10": {
+          "passed": 4,
+          "total": 4
+        },
+        "LOOKUP": {
+          "passed": 4,
+          "total": 4
+        },
+        "LOWER": {
+          "passed": 3,
+          "total": 3
+        },
+        "MAKEARRAY": {
+          "passed": 0,
+          "total": 1
+        },
+        "MAP": {
+          "passed": 0,
+          "total": 1
+        },
+        "MATCH": {
+          "passed": 4,
+          "total": 4
+        },
+        "MAX": {
+          "passed": 4,
+          "total": 4
+        },
+        "MAXIFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "MEDIAN": {
+          "passed": 4,
+          "total": 4
+        },
+        "MID": {
+          "passed": 4,
+          "total": 4
+        },
+        "MIN": {
+          "passed": 4,
+          "total": 4
+        },
+        "MINIFS": {
+          "passed": 3,
+          "total": 3
+        },
+        "MINUTE": {
+          "passed": 3,
+          "total": 3
+        },
+        "MOD": {
+          "passed": 4,
+          "total": 4
+        },
+        "MODE": {
+          "passed": 4,
+          "total": 4
+        },
+        "MODE.MULT": {
+          "passed": 2,
+          "total": 2
+        },
+        "MODE.SNGL": {
+          "passed": 5,
+          "total": 5
+        },
+        "MONTH": {
+          "passed": 3,
+          "total": 3
+        },
+        "MROUND": {
+          "passed": 5,
+          "total": 5
+        },
+        "MULTINOMIAL": {
+          "passed": 3,
+          "total": 3
+        },
+        "N": {
+          "passed": 5,
+          "total": 5
+        },
+        "NA": {
+          "passed": 4,
+          "total": 4
+        },
+        "NETWORKDAYS": {
+          "passed": 3,
+          "total": 4
+        },
+        "NETWORKDAYS.INTL": {
+          "passed": 1,
+          "total": 1
+        },
+        "NOMINAL": {
+          "passed": 1,
+          "total": 1
+        },
+        "NOT": {
+          "passed": 5,
+          "total": 5
+        },
+        "NPER": {
+          "passed": 1,
+          "total": 1
+        },
+        "NPV": {
+          "passed": 1,
+          "total": 1
+        },
+        "NUMBERVALUE": {
+          "passed": 4,
+          "total": 4
+        },
+        "OCT2BIN": {
+          "passed": 3,
+          "total": 3
+        },
+        "OCT2DEC": {
+          "passed": 3,
+          "total": 3
+        },
+        "OCT2HEX": {
+          "passed": 3,
+          "total": 3
+        },
+        "ODD": {
+          "passed": 1,
+          "total": 1
+        },
+        "OR": {
+          "passed": 4,
+          "total": 5
+        },
+        "PEARSON": {
+          "passed": 3,
+          "total": 3
+        },
+        "PERCENTILE": {
+          "passed": 1,
+          "total": 1
+        },
+        "PERCENTILE.EXC": {
+          "passed": 4,
+          "total": 4
+        },
+        "PERCENTILE.INC": {
+          "passed": 4,
+          "total": 4
+        },
+        "PERCENTRANK": {
+          "passed": 4,
+          "total": 4
+        },
+        "PI": {
+          "passed": 3,
+          "total": 3
+        },
+        "PIVOTBY": {
+          "passed": 0,
+          "total": 1
+        },
+        "PMT": {
+          "passed": 1,
+          "total": 1
+        },
+        "POWER": {
+          "passed": 3,
+          "total": 5
+        },
+        "PPMT": {
+          "passed": 1,
+          "total": 1
+        },
+        "PRODUCT": {
+          "passed": 1,
+          "total": 1
+        },
+        "PROPER": {
+          "passed": 2,
+          "total": 3
+        },
+        "PV": {
+          "passed": 1,
+          "total": 1
+        },
+        "QUARTILE": {
+          "passed": 1,
+          "total": 1
+        },
+        "QUARTILE.EXC": {
+          "passed": 3,
+          "total": 3
+        },
+        "QUARTILE.INC": {
+          "passed": 5,
+          "total": 5
+        },
+        "QUOTIENT": {
+          "passed": 1,
+          "total": 1
+        },
+        "RADIANS": {
+          "passed": 4,
+          "total": 4
+        },
+        "RANK": {
+          "passed": 3,
+          "total": 3
+        },
+        "RANK.AVG": {
+          "passed": 3,
+          "total": 3
+        },
+        "RANK.EQ": {
+          "passed": 3,
+          "total": 3
+        },
+        "RATE": {
+          "passed": 1,
+          "total": 1
+        },
+        "REDUCE": {
+          "passed": 0,
+          "total": 1
+        },
+        "REPLACE": {
+          "passed": 4,
+          "total": 4
+        },
+        "REPT": {
+          "passed": 4,
+          "total": 4
+        },
+        "RIGHT": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROMAN": {
+          "passed": 1,
+          "total": 1
+        },
+        "ROUND": {
+          "passed": 3,
+          "total": 4
+        },
+        "ROUNDDOWN": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROUNDUP": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROW": {
+          "passed": 4,
+          "total": 4
+        },
+        "ROWS": {
+          "passed": 3,
+          "total": 3
+        },
+        "RSQ": {
+          "passed": 2,
+          "total": 2
+        },
+        "SCAN": {
+          "passed": 0,
+          "total": 1
+        },
+        "SEARCH": {
+          "passed": 4,
+          "total": 4
+        },
+        "SECOND": {
+          "passed": 3,
+          "total": 3
+        },
+        "SEQUENCE": {
+          "passed": 4,
+          "total": 4
+        },
+        "SHEET": {
+          "passed": 1,
+          "total": 1
+        },
+        "SHEETS": {
+          "passed": 1,
+          "total": 1
+        },
+        "SIGN": {
+          "passed": 4,
+          "total": 4
+        },
+        "SLN": {
+          "passed": 1,
+          "total": 1
+        },
+        "SLOPE": {
+          "passed": 1,
+          "total": 1
+        },
+        "SMALL": {
+          "passed": 4,
+          "total": 4
+        },
+        "SORT": {
+          "passed": 4,
+          "total": 4
+        },
+        "SORTBY": {
+          "passed": 1,
+          "total": 1
+        },
+        "SQRT": {
+          "passed": 4,
+          "total": 4
+        },
+        "STANDARDIZE": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEV": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEV.P": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEV.S": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEVA": {
+          "passed": 3,
+          "total": 3
+        },
+        "STDEVP": {
+          "passed": 4,
+          "total": 4
+        },
+        "STDEVPA": {
+          "passed": 2,
+          "total": 2
+        },
+        "SUBSTITUTE": {
+          "passed": 4,
+          "total": 4
+        },
+        "SUBTOTAL": {
+          "passed": 2,
+          "total": 3
+        },
+        "SUM": {
+          "passed": 4,
+          "total": 4
+        },
+        "SUMIF": {
+          "passed": 5,
+          "total": 5
+        },
+        "SUMIFS": {
+          "passed": 4,
+          "total": 4
+        },
+        "SUMPRODUCT": {
+          "passed": 5,
+          "total": 5
+        },
+        "SUMSQ": {
+          "passed": 1,
+          "total": 1
+        },
+        "SWITCH": {
+          "passed": 4,
+          "total": 4
+        },
+        "SYD": {
+          "passed": 1,
+          "total": 1
+        },
+        "TAKE": {
+          "passed": 1,
+          "total": 1
+        },
+        "TEXT": {
+          "passed": 1,
+          "total": 6
+        },
+        "TEXTAFTER": {
+          "passed": 4,
+          "total": 4
+        },
+        "TEXTBEFORE": {
+          "passed": 5,
+          "total": 5
+        },
+        "TEXTJOIN": {
+          "passed": 4,
+          "total": 4
+        },
+        "TEXTSPLIT": {
+          "passed": 4,
+          "total": 4
+        },
+        "TIME": {
+          "passed": 0,
+          "total": 3
+        },
+        "TIMEVALUE": {
+          "passed": 0,
+          "total": 1
+        },
+        "TOCOL": {
+          "passed": 1,
+          "total": 1
+        },
+        "TOROW": {
+          "passed": 1,
+          "total": 1
+        },
+        "TRANSPOSE": {
+          "passed": 4,
+          "total": 4
+        },
+        "TREND": {
+          "passed": 1,
+          "total": 1
+        },
+        "TRIM": {
+          "passed": 2,
+          "total": 4
+        },
+        "TRIMMEAN": {
+          "passed": 1,
+          "total": 1
+        },
+        "TRUE": {
+          "passed": 3,
+          "total": 3
+        },
+        "TRUNC": {
+          "passed": 4,
+          "total": 4
+        },
+        "TYPE": {
+          "passed": 4,
+          "total": 5
+        },
+        "UNICHAR": {
+          "passed": 5,
+          "total": 5
+        },
+        "UNICODE": {
+          "passed": 4,
+          "total": 4
+        },
+        "UNIQUE": {
+          "passed": 3,
+          "total": 4
+        },
+        "UPPER": {
+          "passed": 3,
+          "total": 3
+        },
+        "VALUE": {
+          "passed": 4,
+          "total": 4
+        },
+        "VAR": {
+          "passed": 4,
+          "total": 4
+        },
+        "VAR.S": {
+          "passed": 4,
+          "total": 4
+        },
+        "VARA": {
+          "passed": 3,
+          "total": 3
+        },
+        "VARP": {
+          "passed": 4,
+          "total": 4
+        },
+        "VLOOKUP": {
+          "passed": 5,
+          "total": 5
+        },
+        "VSTACK": {
+          "passed": 1,
+          "total": 1
+        },
+        "WEEKDAY": {
+          "passed": 6,
+          "total": 6
+        },
+        "WEEKNUM": {
+          "passed": 5,
+          "total": 5
+        },
+        "WORKDAY": {
+          "passed": 3,
+          "total": 4
+        },
+        "WORKDAY.INTL": {
+          "passed": 1,
+          "total": 1
+        },
+        "WRAPCOLS": {
+          "passed": 0,
+          "total": 1
+        },
+        "WRAPROWS": {
+          "passed": 0,
+          "total": 1
+        },
+        "XIRR": {
+          "passed": 1,
+          "total": 1
+        },
+        "XLOOKUP": {
+          "passed": 6,
+          "total": 6
+        },
+        "XMATCH": {
+          "passed": 1,
+          "total": 1
+        },
+        "XNPV": {
+          "passed": 1,
+          "total": 1
+        },
+        "XOR": {
+          "passed": 5,
+          "total": 5
+        },
+        "YEAR": {
+          "passed": 3,
+          "total": 3
+        },
+        "YEARFRAC": {
+          "passed": 6,
+          "total": 6
+        }
+      },
+      "rate": 0.9198520345252774
+    }
+  },
+  "exclusions": {
+    "ERROR.TYPE_ref": "volatile",
+    "INDIRECT_basic_cell_text": "volatile",
+    "INDIRECT_concatenated_ref": "volatile",
+    "INDIRECT_malformed_ref_error": "volatile",
+    "INDIRECT_r1c1_style": "volatile",
+    "INDIRECT_ref_to_blank_cell": "volatile",
+    "LET_odd_arg_count_error": "excel-formula-rejected",
+    "NOW_exists_and_plausible": "volatile",
+    "NOW_self_difference_is_deterministic": "volatile",
+    "NOW_on_or_after_today": "volatile",
+    "OFFSET_basic_single_cell": "volatile",
+    "OFFSET_range_with_height_width": "volatile",
+    "OFFSET_negative_out_of_bounds_error": "volatile",
+    "OFFSET_zero_offset_returns_same_cell": "volatile",
+    "RAND_exists_and_in_unit_range": "volatile",
+    "RANDARRAY_shape_is_deterministic": "volatile",
+    "RANDARRAY_default_unit_range": "volatile",
+    "RANDBETWEEN_exists_bounds": "volatile",
+    "RANDBETWEEN_degenerate_equal_bounds": "volatile",
+    "RANDBETWEEN_negative_range": "volatile",
+    "TODAY_exists_and_plausible": "volatile",
+    "TODAY_year_is_plausible": "volatile",
+    "TODAY_self_difference_is_deterministic": "volatile"
+  },
+  "mismatches": {
+    "libreoffice": [
+      {
+        "id": "AND_literal_text_error",
+        "classification": "error",
+        "excel": true,
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "43d908ed66948d42393089d7b38c61775aa97032a13e28867f07153d08057ccc",
+          "output_sha256": "12d3e7230006f3cd5838fd1180a66252a5d1188ff04b9cbc50731d750122dbca",
+          "canary": 3333.0,
+          "file": "case-0017.xlsx"
+        }
+      },
+      {
+        "id": "ARRAYTOTEXT_default_format",
+        "classification": "value",
+        "excel": "1, 2, 3",
+        "actual": {
+          "status": "ok",
+          "value": "#NAME?",
+          "input_sha256": "dc742dde05512d612bdb842a9fe8c5ba9dedf435235ed32d417797da3e350001",
+          "output_sha256": "83d29de9cc6dcbac0d7850a88747e6bd132c69fad63342cfd34217f04e855ef6",
+          "canary": 3333.0,
+          "file": "case-0019.xlsx"
+        }
+      },
+      {
+        "id": "ARRAYTOTEXT_strict_format",
+        "classification": "value",
+        "excel": "{1,2,3}",
+        "actual": {
+          "status": "ok",
+          "value": "#NAME?",
+          "input_sha256": "eb7954eafce9b3128466f0ce0d9ca92ffbcb66a6111f76b2d64013a679ee1d25",
+          "output_sha256": "2f9a045db2e885e3068cbe644de6729f8dc7feaf6e3d6b564e8e6482bf0c1af8",
+          "canary": 3333.0,
+          "file": "case-0020.xlsx"
+        }
+      },
+      {
+        "id": "ARRAYTOTEXT_2d_array",
+        "classification": "value",
+        "excel": "1, 2, 3, 4",
+        "actual": {
+          "status": "ok",
+          "value": "#NAME?",
+          "input_sha256": "950f0167d06f455115a6db3b1128d7307fe8c510344d968f0fc381d8036f6e3c",
+          "output_sha256": "ce226b38b21421d073a74f11618f474d8c4327b434647fb9815d6b16467df740",
+          "canary": 3333.0,
+          "file": "case-0021.xlsx"
+        }
+      },
+      {
+        "id": "ARRAYTOTEXT_text_elements_strict",
+        "classification": "value",
+        "excel": "{\"a\",\"b\"}",
+        "actual": {
+          "status": "ok",
+          "value": "#NAME?",
+          "input_sha256": "d450c09d84c3348ec6236432af189ddca6eec2e4d4e84d52ee83df4535d32dfa",
+          "output_sha256": "a0d95ef92fc6af76580f0bc3fafc54ab0d57ac2dfa09fe54734130ed89d899b0",
+          "canary": 3333.0,
+          "file": "case-0022.xlsx"
+        }
+      },
+      {
+        "id": "BYCOL_colsums",
+        "classification": "array",
+        "excel": [
+          4.0,
+          6.0
+        ],
+        "actual": {
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            "#NAME?"
+          ],
+          "input_sha256": "43c4362e1d5dfbdce908153ebcd4ee0ec701a4ceba0374a6db3890fba6c3527f",
+          "output_sha256": "390f2a23378178db4baff2d505235a66db3102e8c250a4c129d65d174367414f",
+          "canary": 3333.0,
+          "file": "case-0063.xlsx"
+        }
+      },
+      {
+        "id": "BYROW_rowsums",
+        "classification": "array",
+        "excel": [
+          3.0,
+          7.0
+        ],
+        "actual": {
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            "#NAME?"
+          ],
+          "input_sha256": "f38af18a62b1ff7b5de1e5581e4e8272b50f40b5457803b95089c6c5a34f66c5",
+          "output_sha256": "20810b8b0f8658eecbfbcc14aab187127830fb65ce4aaf0eeead0662fa762852",
+          "canary": 3333.0,
+          "file": "case-0064.xlsx"
+        }
+      },
+      {
+        "id": "CHAR_out_of_range_zero",
+        "classification": "error",
+        "excel": "#VALUE!",
+        "actual": {
+          "status": "ok",
+          "value": "_x0000_",
+          "input_sha256": "3651926b83187cffdcdb4cd7b1149e74ecee9070ca03d5d8d3adfdb913defc6f",
+          "output_sha256": "4c965ba169584de3020420f7bfa871689aadaf6ea644563a65dece705b801e85",
+          "canary": 3333.0,
+          "file": "case-0080.xlsx"
+        }
+      },
+      {
+        "id": "COUNT_mixed_types_range",
+        "classification": "value",
+        "excel": 2.0,
+        "actual": {
+          "status": "ok",
+          "value": 3.0,
+          "input_sha256": "c806c23d5385889b972838eb373af36d43a983d2151d7d85df051f61545b488c",
+          "output_sha256": "6d68415cf88cf45c520e978b2bf96b4b9f7fc526f4400d7fb2f286dd13c72923",
+          "canary": 3333.0,
+          "file": "case-0119.xlsx"
+        }
+      },
+      {
+        "id": "COUNT_boolean_in_range_excluded",
+        "classification": "value",
+        "excel": 0.0,
+        "actual": {
+          "status": "ok",
+          "value": 1.0,
+          "input_sha256": "7f05a0481b139c298dd39d63613726d67f955582586d7b17d023b93ec503270d",
+          "output_sha256": "a6bd2b3adbf345016bab9b1b535ae18cf7a488b6b8212483da910c03f54af31d",
+          "canary": 3333.0,
+          "file": "case-0120.xlsx"
+        }
+      },
+      {
+        "id": "DATEDIF_end_before_start",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "7f73fbc15997ad7004686c96081118715d7ea7358c7828e1df83695adb9f52b2",
+          "output_sha256": "2b36280c3afdd52385227c5cd61c4570ebad6de8f0fd58e2b2ed48fea11c8c35",
+          "canary": 3333.0,
+          "file": "case-0154.xlsx"
+        }
+      },
+      {
+        "id": "DAY_of_raw_serial_epoch",
+        "classification": "value",
+        "excel": 1.0,
+        "actual": {
+          "status": "ok",
+          "value": 31.0,
+          "input_sha256": "3e04d6e46292009212002627a56c394d3eef94e8fcec067e1f89e5ed9a4c70c1",
+          "output_sha256": "7f0af840d51d8404465070e31cb0a6dd0915628fbff5ab1ba95e3a97e804ad9b",
+          "canary": 3333.0,
+          "file": "case-0159.xlsx"
+        }
+      },
+      {
+        "id": "DGET_multiple_matches_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "1513bcd344d6b08383643745161c3f45920ea65a1426b05b07adbee89a71fd7a",
+          "output_sha256": "fca385fbf1678d54787e4403d59be2df7d5782f949f35bd339f51aca250c5a86",
+          "canary": 3333.0,
+          "file": "case-0191.xlsx"
+        }
+      },
+      {
+        "id": "DOLLAR_basic",
+        "classification": "value",
+        "excel": "¥1,234.57",
+        "actual": {
+          "status": "ok",
+          "value": "$1,234.57",
+          "input_sha256": "11935c81d72783ddef75fe6dcb647d63c0ebdd02d7fea0eec307d5d1ef046347",
+          "output_sha256": "198f48767b22a6a32accf95bfa240da9ceede1b2973ef8e24bb543e6316ad584",
+          "canary": 3333.0,
+          "file": "case-0196.xlsx"
+        }
+      },
+      {
+        "id": "ERROR.TYPE_num",
+        "classification": "value",
+        "excel": 6.0,
+        "actual": {
+          "status": "ok",
+          "value": "#N/A",
+          "input_sha256": "3e36232ecbc6a4fe5555a69afb486e2956a352b0656866d04f1952b327b76102",
+          "output_sha256": "aecea90520052d15eac4bf517703931935d09a374fb42711d0c5e3c540726405",
+          "canary": 3333.0,
+          "file": "case-0215.xlsx"
+        }
+      },
+      {
+        "id": "FILTER_all_false_no_default",
+        "classification": "error",
+        "excel": "#VALUE!",
+        "actual": {
+          "status": "ok",
+          "value": "#N/A",
+          "input_sha256": "6ec3f24ee7b412d70efc1d543c97b70ddc07c64e9be867c98afc015bb7d09b5b",
+          "output_sha256": "5c15e783ff797fbf3a84210b7b92d5b76ee2c39fd33989601007a81b0fccac9c",
+          "canary": 3333.0,
+          "file": "case-0238.xlsx"
+        }
+      },
+      {
+        "id": "FLOOR_mismatched_sign_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "b0bf7430ec4f65deb2ae1d807e2bc9ebf05ec42c9beb6c05f8a3e6fa246986e1",
+          "output_sha256": "460d3b95005188e8bfc224b3958110526291a3b4db2c28aa927986b41547bf10",
+          "canary": 3333.0,
+          "file": "case-0249.xlsx"
+        }
+      },
+      {
+        "id": "GROUPBY_exists_sum",
+        "classification": "probe",
+        "excel": "a",
+        "actual": {
+          "status": "ok",
+          "value": "#NAME?",
+          "input_sha256": "1d22afccbb689c93f4b3d0cee9d80775ac964965b8941dc891740d8fa72f5680",
+          "output_sha256": "895f14317b8d52c86457b9fed64b5c2c4991728042c944c7bbc714947c2e5ec0",
+          "canary": 3333.0,
+          "file": "case-0268.xlsx"
+        }
+      },
+      {
+        "id": "HLOOKUP_row_index_out_of_range",
+        "classification": "error",
+        "excel": "#REF!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "6a13168fc62130a0c039d455cbb48317ec0dab72fb82f1fd046ffae9ee691713",
+          "output_sha256": "b1218d9bd360f64c385d262431f0cb9060c3094baae5e5467b4393ed244ae7f3",
+          "canary": 3333.0,
+          "file": "case-0285.xlsx"
+        }
+      },
+      {
+        "id": "ISNUMBER_boolean",
+        "classification": "value",
+        "excel": false,
+        "actual": {
+          "status": "ok",
+          "value": true,
+          "input_sha256": "8c0659595691a590871bd17026bba9bbb669ac85e36376363c6c916bdc1cb67f",
+          "output_sha256": "ba958c36ec0475e20a0377663c34335ecd95a5181b4bdc745a97fb7f8f08efda",
+          "canary": 3333.0,
+          "file": "case-0353.xlsx"
+        }
+      },
+      {
+        "id": "LAMBDA_basic_invoke",
+        "classification": "value",
+        "excel": 10.0,
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "f6a8264e36b32ae07e921fe1def77e40844050a701ba86b3344fd7593fbafc35",
+          "output_sha256": "165d54eed81cadeda0608a2f983b06e114f909b3fca686e9562550e43d87776d",
+          "canary": 3333.0,
+          "file": "case-0368.xlsx"
+        }
+      },
+      {
+        "id": "LAMBDA_two_params",
+        "classification": "value",
+        "excel": 7.0,
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "a19bf8dbaa87995f52c4076599abf3dcef7c30bfd609b5a9b53fb681224889da",
+          "output_sha256": "8ca9a57ebf4711447f1015a46566b1c108c05b4a91c04cda29a1718b6ac7d77c",
+          "canary": 3333.0,
+          "file": "case-0369.xlsx"
+        }
+      },
+      {
+        "id": "LAMBDA_via_LET",
+        "classification": "value",
+        "excel": 16.0,
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "06fdfd8c98162db74e594c57c16925edb488a44f29f1e24f017fe2ab8ec2692c",
+          "output_sha256": "474c86581aa1119bda38deb109925405ce06837dcf45aaee7114686af8e7d2d6",
+          "canary": 3333.0,
+          "file": "case-0370.xlsx"
+        }
+      },
+      {
+        "id": "LARGE_k_out_of_range",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "b5f731865fe24523c9f725164d27c40af3f82840d1e5e01307ed2ef9c203bf23",
+          "output_sha256": "049a2b25a19448549b0577f2dd76d4fc5045c55a751c5f011030dbc7bc9e87a5",
+          "canary": 3333.0,
+          "file": "case-0374.xlsx"
+        }
+      },
+      {
+        "id": "LARGE_k_zero_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "2cd9b207a2541d4942f99e4e932941e50cda9a170758acb8bb7469458f28aa96",
+          "output_sha256": "95cb75e98f7bbcc54e9f22ad5feb6291d03395513a8510c50ec254f954eeb1a6",
+          "canary": 3333.0,
+          "file": "case-0375.xlsx"
+        }
+      },
+      {
+        "id": "LN_zero_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "cd53fbd4cab47dd4d1077db91e97611239359c9ce3879c539e4d4b694aa116cc",
+          "output_sha256": "564c9f47c587b6ae27127aef625bd3de1178e7425b9fc7a912fd21891d98faac",
+          "canary": 3333.0,
+          "file": "case-0392.xlsx"
+        }
+      },
+      {
+        "id": "LN_negative_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "48dfd14b49bcafd5675e15774890033a179d23dc0304042f8cce71bc2715d73f",
+          "output_sha256": "a635d0275bb8c88206fae6d371469bfd79b4da632cea8a034b57f1217ab4c475",
+          "canary": 3333.0,
+          "file": "case-0393.xlsx"
+        }
+      },
+      {
+        "id": "LOG_zero_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "b00f9d7d71c4e9fe8647b06f5007d3f90dd48fe61093569ab665ccb608d186b5",
+          "output_sha256": "12ebb868339239be7e17e49eca4e4796204b525d37b869b06e874bb635f2c863",
+          "canary": 3333.0,
+          "file": "case-0396.xlsx"
+        }
+      },
+      {
+        "id": "LOG_negative_number_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "37364d4828bf07755f2ae9672e48fe68163967f9769125d8af3d59b8fb075ff6",
+          "output_sha256": "4d1ca7cf19829efecff313d4a708a747521e679c6fc36c54e8bfb6457ece33b2",
+          "canary": 3333.0,
+          "file": "case-0397.xlsx"
+        }
+      },
+      {
+        "id": "LOG10_zero_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "1ee7c228d5261e17e0ad10b0f738465df7a94904c687872dd504171a1c984e1c",
+          "output_sha256": "1cb01703d27d30c56914a4f0498c200d2f52e5a2156d29b0ba39007b120db0cc",
+          "canary": 3333.0,
+          "file": "case-0400.xlsx"
+        }
+      },
+      {
+        "id": "LOG10_negative_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "28b6715ef8e2ff376844785b89a8731086a1adaadfe5882c431d987e6af7d8e4",
+          "output_sha256": "9f6923ca0a6e54b2a7df7a9dce14ff7decadd3f0ac5b7f57d0e09c082cf39e54",
+          "canary": 3333.0,
+          "file": "case-0401.xlsx"
+        }
+      },
+      {
+        "id": "MAKEARRAY_rc",
+        "classification": "array",
+        "excel": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            2.0,
+            4.0
+          ]
+        ],
+        "actual": {
+          "status": "ok",
+          "value": [
+            [
+              "#NAME?",
+              "#NAME?"
+            ],
+            [
+              "#NAME?",
+              "#NAME?"
+            ]
+          ],
+          "input_sha256": "bfd32f03abeb66dbd32f4bbd0fe4566f1407031e653930a085450d1c176f145b",
+          "output_sha256": "cb695835462b36c2a076162443b35c818f6d464cc3eab68124bc358f51f7c1ba",
+          "canary": 3333.0,
+          "file": "case-0409.xlsx"
+        }
+      },
+      {
+        "id": "MAP_double",
+        "classification": "array",
+        "excel": [
+          2.0,
+          4.0,
+          6.0
+        ],
+        "actual": {
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            "#NAME?",
+            "#NAME?"
+          ],
+          "input_sha256": "04fd9306cee737a7d2536b2fd6f5ff6813cf9b07908d1c4a2a2bb0f7cbcdd01f",
+          "output_sha256": "a3b01abb9a99f1dc9603c05818cb00379e22c0bc4e04a834a07b63e7f20f7781",
+          "canary": 3333.0,
+          "file": "case-0410.xlsx"
+        }
+      },
+      {
+        "id": "MODE_no_repeated_value_na",
+        "classification": "error",
+        "excel": "#N/A",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "6234770dcc560940efa05918f5dc318f2d4ff5cdbd10f4a15f62e43073d4930e",
+          "output_sha256": "d55602fe56fadf9688d5995cee43c76f08528cc2f47d9f47a03ce9267eebc762",
+          "canary": 3333.0,
+          "file": "case-0446.xlsx"
+        }
+      },
+      {
+        "id": "MODE_SNGL_no_repeats_error",
+        "classification": "error",
+        "excel": "#N/A",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "f2ea9f577a003bfbdff0b882483fc48777e064237e40e6f50e43a09fd8905b07",
+          "output_sha256": "168e59ea50748a24b86c7a131c8310b7a4e41a62c839b71cec729f10ef353bec",
+          "canary": 3333.0,
+          "file": "case-0455.xlsx"
+        }
+      },
+      {
+        "id": "MONTH_of_raw_serial_epoch",
+        "classification": "value",
+        "excel": 1.0,
+        "actual": {
+          "status": "ok",
+          "value": 12.0,
+          "input_sha256": "0ef855fb0969b631c3b2c9c797b107bce57534e23564ed83e85d7205be2fef02",
+          "output_sha256": "c2bd5ea925df93a647309ae4d44b9185ce2af914e948159b218cc75dbca2953a",
+          "canary": 3333.0,
+          "file": "case-0457.xlsx"
+        }
+      },
+      {
+        "id": "MROUND_mismatched_signs_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": 6.0,
+          "input_sha256": "68d5e0d176614ddba13d9041bbbabfad5b246b039bbdb45d6fbeed4c6991ca8c",
+          "output_sha256": "60f371445f84b1b72ce1a40058cbebf922f822bc0e770595d4f437260cbce68f",
+          "canary": 3333.0,
+          "file": "case-0462.xlsx"
+        }
+      },
+      {
+        "id": "PERCENTILE.EXC_k_zero_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "dafa017f659ad5dd398821b54083cdec570b2ac0128a2f9b69cf8c16888e0fe2",
+          "output_sha256": "38c8b8ab893f03470fe310973cd894fc959876430375b517fbe1c4aadb902303",
+          "canary": 3333.0,
+          "file": "case-0519.xlsx"
+        }
+      },
+      {
+        "id": "PERCENTILE.EXC_k_one_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "47afdf9d2712d9c022ecf24192a3e7dd1ab8074f65c8c0834e2ec1e3d98975ae",
+          "output_sha256": "e5949a347f9ab254a17641989d1632911a62ba43b2b0e85b73aba69facfc9215",
+          "canary": 3333.0,
+          "file": "case-0520.xlsx"
+        }
+      },
+      {
+        "id": "PERCENTILE.INC_k_out_of_range",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "c7a6a50eae4f41f13471c7fdeaa218c9f30a60aad8b5aa52954f65e7f1ae4266",
+          "output_sha256": "b5acf7acbed60b407e6fa9c032a7229eba7448f3b10f7e2fafa3319ec074e340",
+          "canary": 3333.0,
+          "file": "case-0526.xlsx"
+        }
+      },
+      {
+        "id": "PERCENTRANK_middle",
+        "classification": "value",
+        "excel": 0.666,
+        "actual": {
+          "status": "ok",
+          "value": 0.667,
+          "input_sha256": "cd3057e25addf5fed7f1c0e63a14ab11d37f0a2d45e6115a241fbc084bb4d900",
+          "output_sha256": "590df4ce6ca58bcc7d1b62b50b004fe1ceb85a960e15e87ebb147e9c62ccaa5f",
+          "canary": 3333.0,
+          "file": "case-0527.xlsx"
+        }
+      },
+      {
+        "id": "PIVOTBY_exists_sum",
+        "classification": "probe",
+        "excel": "",
+        "actual": {
+          "status": "ok",
+          "value": "#NAME?",
+          "input_sha256": "edc0e7bac0c46a53aeeace515efd271c95c675264e1b45983937712bf736f96d",
+          "output_sha256": "81cced0bcd6ec949775d503b182be6ec39405a48c1440e89c578789e9cccf915",
+          "canary": 3333.0,
+          "file": "case-0534.xlsx"
+        }
+      },
+      {
+        "id": "POWER_zero_to_zero",
+        "classification": "value",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": 1.0,
+          "input_sha256": "53afb45a147764a680a124d71f20cc474999bd201f17e9c2b628cfbf85696845",
+          "output_sha256": "be9358e5c7dfd20bc26dff07de2d121f6c7cb17560fb3d60a35a8ebc3b6f4695",
+          "canary": 3333.0,
+          "file": "case-0540.xlsx"
+        }
+      },
+      {
+        "id": "QUARTILE.INC_quart_out_of_range",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "6507ebc753fe398dd446ea719e6791ff344ad6bf077666713b263584ea6cfd43",
+          "output_sha256": "2f099a86c641e8c7e1c38935890371103422ba491e9dd55603713f4e29528c98",
+          "canary": 3333.0,
+          "file": "case-0555.xlsx"
+        }
+      },
+      {
+        "id": "REDUCE_sum",
+        "classification": "value",
+        "excel": 6.0,
+        "actual": {
+          "status": "ok",
+          "value": "#NAME?",
+          "input_sha256": "917ab60a1dab6d4eeed067225c38257d072af30ba99b94ff7b2acdb99d981e9a",
+          "output_sha256": "f809a2eb85afd39c986350dc3b384539bf662d6254de7a36cd6b9c4fb53a918a",
+          "canary": 3333.0,
+          "file": "case-0577.xlsx"
+        }
+      },
+      {
+        "id": "SCAN_running_sum",
+        "classification": "array",
+        "excel": [
+          1.0,
+          3.0,
+          6.0
+        ],
+        "actual": {
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            "#NAME?",
+            "#NAME?"
+          ],
+          "input_sha256": "85f69f612a9f6ff92ed43ef795f5663b81cab241a5b8db8842d3328585f38bf7",
+          "output_sha256": "479e288bed8bb7ab0c9318a79260b93db16de755c8bd59c0577be425b6c38a66",
+          "canary": 3333.0,
+          "file": "case-0612.xlsx"
+        }
+      },
+      {
+        "id": "SMALL_k_out_of_range",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "148a036f15cd8925d534b98d3da8caa6a6d43c936fbb744a77134bfc08e59490",
+          "output_sha256": "56a0d7fcbd7e105a6665ff74126e0ac4cd3936b541114aebfbc9b77936a2fcdb",
+          "canary": 3333.0,
+          "file": "case-0634.xlsx"
+        }
+      },
+      {
+        "id": "SMALL_k_zero_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "3922287afb248ed21db56ba1179c4cbff495b65824302326a37df0cf8e702f72",
+          "output_sha256": "a1d61e639b715352000a30fb6d36e652bbf8d1467417a37a26cc98aa69081aac",
+          "canary": 3333.0,
+          "file": "case-0635.xlsx"
+        }
+      },
+      {
+        "id": "SQRT_negative_returns_num_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "6475338e8cb0e7be42645c741a31444620d89c492ee096bf606d6d6c04fa8766",
+          "output_sha256": "70e44a79a2895850eeb5f61343af741fa7dfbab15708c62779610df4ad436058",
+          "canary": 3333.0,
+          "file": "case-0643.xlsx"
+        }
+      },
+      {
+        "id": "SUM_literal_numeric_string_argument_coerced",
+        "classification": "value",
+        "excel": 6.0,
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "ff6b4aa3fa93e90a483451a49fe5cdec7a89e93e2c2eff80da70eced145ad243",
+          "output_sha256": "57a81dc99e59161cbd903204764d73703882d2e4d6e416a9063397e9948a3bdc",
+          "canary": 3333.0,
+          "file": "case-0675.xlsx"
+        }
+      },
+      {
+        "id": "TRIM_nonbreaking_space_not_removed",
+        "classification": "value",
+        "excel": "†Hello†",
+        "actual": {
+          "status": "ok",
+          "value": "�Hello�",
+          "input_sha256": "59ba35313ab4f2e1c8384b289297d5fb5b7224d9e8632af01b371e8aba843ea5",
+          "output_sha256": "635bfc352ec4878d7a1aa6116de9b69bea5afc1b8c479fa6e6c670a3bbd164f7",
+          "canary": 3333.0,
+          "file": "case-0737.xlsx"
+        }
+      },
+      {
+        "id": "TYPE_logical",
+        "classification": "value",
+        "excel": 4.0,
+        "actual": {
+          "status": "ok",
+          "value": 1.0,
+          "input_sha256": "753a3c2e9102813fc78d2d0a0bdaf47dbcc78402e56dcf230eeace69c1f0b486",
+          "output_sha256": "db9a1f7dfa3ad3b974bcfd31212f46663c6c2058b955f051a6a960619329ee1c",
+          "canary": 3333.0,
+          "file": "case-0749.xlsx"
+        }
+      },
+      {
+        "id": "UNICHAR_zero_error",
+        "classification": "error",
+        "excel": "#VALUE!",
+        "actual": {
+          "status": "ok",
+          "value": "_x0000_",
+          "input_sha256": "14a5f178e8af4ca67c9e628681509d698746b9387ffa74ec0eee54b11c2ca535",
+          "output_sha256": "f09660af90a60031aff91cd7ee2036100169d1c97a105fa88377f7950438a386",
+          "canary": 3333.0,
+          "file": "case-0755.xlsx"
+        }
+      },
+      {
+        "id": "VALUE_currency_string",
+        "classification": "value",
+        "excel": "#VALUE!",
+        "actual": {
+          "status": "ok",
+          "value": 1000.0,
+          "input_sha256": "766dbd52b0e538ec49b1dd8ecf462ed5cace87611d88e6845c54c41b3f910676",
+          "output_sha256": "8abe0a1283a6dab7ba898de322edb8035bb0bcd0c0895ef195881af97f2169b3",
+          "canary": 3333.0,
+          "file": "case-0770.xlsx"
+        }
+      },
+      {
+        "id": "VLOOKUP_col_index_out_of_range",
+        "classification": "error",
+        "excel": "#REF!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "f1218a93cea07f6193adec8cb09bb1706fc969c18f1d5f2286cdce80f2ab6d17",
+          "output_sha256": "88ce2daa2268ef1c282e63b747f657c37c330d17f9c9daad3af2a53274d92b30",
+          "canary": 3333.0,
+          "file": "case-0790.xlsx"
+        }
+      },
+      {
+        "id": "WEEKDAY_invalid_return_type",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "0cbb23b15528fd097f365748562c169fe13f8f4bbc79513ad6be5f8a6e2b583d",
+          "output_sha256": "1590a9c1129463ea7fbe1d0c0acf4992063e6e1d53831b7f044ed979f0492c82",
+          "canary": 3333.0,
+          "file": "case-0798.xlsx"
+        }
+      },
+      {
+        "id": "YEAR_of_raw_serial_epoch",
+        "classification": "value",
+        "excel": 1900.0,
+        "actual": {
+          "status": "ok",
+          "value": 1899.0,
+          "input_sha256": "67955d9d1d98530a61416ec4bb1fe95d256539b44b2990bf5aabadc0687f491f",
+          "output_sha256": "a88a7413a7fe0a23478ff2dc3b47c61d4b229c32aeba3efca9d883fcc1b07ee0",
+          "canary": 3333.0,
+          "file": "case-0826.xlsx"
+        }
+      },
+      {
+        "id": "YEARFRAC_invalid_basis_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "status": "ok",
+          "value": "#VALUE!",
+          "input_sha256": "6d980993989af433ffb2c5fc789ec1f0f3f5d0631fa67d521a2cd851c5be1593",
+          "output_sha256": "f267457d33a321957a2c1891363685b8ff56b85955f6c2c930136d37ed0bbb53",
+          "canary": 3333.0,
+          "file": "case-0833.xlsx"
+        }
+      }
+    ],
+    "formualizer_unchanged": [
+      {
+        "id": "AGGREGATE_sum_ignoring_errors",
+        "classification": "value",
+        "excel": 70.0,
+        "actual": {
+          "id": "AGGREGATE_sum_ignoring_errors",
+          "function": "AGGREGATE",
+          "status": "ok",
+          "value": "#N/IMPL!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "AND_literal_text_error",
+        "classification": "error",
+        "excel": true,
+        "actual": {
+          "id": "AND_literal_text_error",
+          "function": "AND",
+          "status": "ok",
+          "value": "#VALUE!",
+          "matches_upstream": true
+        }
+      },
+      {
+        "id": "BYCOL_colsums",
+        "classification": "array",
+        "excel": [
+          4.0,
+          6.0
+        ],
+        "actual": {
+          "id": "BYCOL_colsums",
+          "function": "BYCOL",
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            null
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "BYROW_rowsums",
+        "classification": "array",
+        "excel": [
+          3.0,
+          7.0
+        ],
+        "actual": {
+          "id": "BYROW_rowsums",
+          "function": "BYROW",
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            null
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "CEILING_both_negative_away_from_zero",
+        "classification": "value",
+        "excel": -4.0,
+        "actual": {
+          "id": "CEILING_both_negative_away_from_zero",
+          "function": "CEILING",
+          "status": "ok",
+          "value": -2.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "CEILING_libreoffice_default_mode_divergence",
+        "classification": "value",
+        "excel": -46.0,
+        "actual": {
+          "id": "CEILING_libreoffice_default_mode_divergence",
+          "function": "CEILING",
+          "status": "ok",
+          "value": -44.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "CEILING.MATH_negative_mode_nonzero_away_from_zero",
+        "classification": "value",
+        "excel": -6.0,
+        "actual": {
+          "id": "CEILING.MATH_negative_mode_nonzero_away_from_zero",
+          "function": "CEILING.MATH",
+          "status": "ok",
+          "value": "#VALUE!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "CONVERT_day_to_hour",
+        "classification": "value",
+        "excel": 24.0,
+        "actual": {
+          "id": "CONVERT_day_to_hour",
+          "function": "CONVERT",
+          "status": "ok",
+          "value": "#N/A",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "CONVERT_hour_to_minute",
+        "classification": "value",
+        "excel": 60.0,
+        "actual": {
+          "id": "CONVERT_hour_to_minute",
+          "function": "CONVERT",
+          "status": "ok",
+          "value": "#N/A",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "CUMIPMT_first_period",
+        "classification": "value",
+        "excel": -1500.0,
+        "actual": {
+          "id": "CUMIPMT_first_period",
+          "function": "CUMIPMT",
+          "status": "ok",
+          "value": 1500.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "CUMPRINC_first_period",
+        "classification": "value",
+        "excel": -298.65,
+        "actual": {
+          "id": "CUMPRINC_first_period",
+          "function": "CUMPRINC",
+          "status": "ok",
+          "value": -3298.65,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "DATE_basic",
+        "classification": "value",
+        "excel": 45366.0,
+        "actual": {
+          "id": "DATE_basic",
+          "function": "DATE",
+          "status": "ok",
+          "value": "2024-03-15",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "DATE_month_rollover_above_12",
+        "classification": "value",
+        "excel": 45658.0,
+        "actual": {
+          "id": "DATE_month_rollover_above_12",
+          "function": "DATE",
+          "status": "ok",
+          "value": "2025-01-01",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "DATE_month_rollback_below_1",
+        "classification": "value",
+        "excel": 39327.0,
+        "actual": {
+          "id": "DATE_month_rollback_below_1",
+          "function": "DATE",
+          "status": "ok",
+          "value": "2007-09-02",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "DATEVALUE_iso",
+        "classification": "value",
+        "excel": 46224.0,
+        "actual": {
+          "id": "DATEVALUE_iso",
+          "function": "DATEVALUE",
+          "status": "ok",
+          "value": "2026-07-21",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "DAYS_doc_example_text_dates",
+        "classification": "value",
+        "excel": 42.0,
+        "actual": {
+          "id": "DAYS_doc_example_text_dates",
+          "function": "DAYS",
+          "status": "ok",
+          "value": "#VALUE!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "DOLLAR_basic",
+        "classification": "value",
+        "excel": "¥1,234.57",
+        "actual": {
+          "id": "DOLLAR_basic",
+          "function": "DOLLAR",
+          "status": "ok",
+          "value": "$1,234.57",
+          "matches_upstream": true
+        }
+      },
+      {
+        "id": "ERROR.TYPE_null",
+        "classification": "value",
+        "excel": 1.0,
+        "actual": {
+          "id": "ERROR.TYPE_null",
+          "function": "ERROR.TYPE",
+          "status": "ok",
+          "value": "#N/IMPL!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "ERROR.TYPE_name",
+        "classification": "value",
+        "excel": 5.0,
+        "actual": {
+          "id": "ERROR.TYPE_name",
+          "function": "ERROR.TYPE",
+          "status": "ok",
+          "value": "#NAME?",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "EXPAND_pad_rows",
+        "classification": "array",
+        "excel": [
+          5.0,
+          7.0,
+          0.0
+        ],
+        "actual": {
+          "id": "EXPAND_pad_rows",
+          "function": "EXPAND",
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            null,
+            null
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "EXPAND_pad_cols",
+        "classification": "array",
+        "excel": [
+          5.0,
+          0.0,
+          0.0
+        ],
+        "actual": {
+          "id": "EXPAND_pad_cols",
+          "function": "EXPAND",
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            null,
+            null
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "FILTER_all_false_no_default",
+        "classification": "error",
+        "excel": "#VALUE!",
+        "actual": {
+          "id": "FILTER_all_false_no_default",
+          "function": "FILTER",
+          "status": "ok",
+          "value": "#CALC!",
+          "matches_upstream": true
+        }
+      },
+      {
+        "id": "FILTER_inline_array_literal",
+        "classification": "array",
+        "excel": [
+          1.0,
+          3.0
+        ],
+        "actual": {
+          "id": "FILTER_inline_array_literal",
+          "function": "FILTER",
+          "status": "ok",
+          "value": [
+            1.0,
+            2.0
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "FLOOR_both_negative_toward_zero",
+        "classification": "value",
+        "excel": -2.0,
+        "actual": {
+          "id": "FLOOR_both_negative_toward_zero",
+          "function": "FLOOR",
+          "status": "ok",
+          "value": -4.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "FLOOR_mismatched_sign_error",
+        "classification": "error",
+        "excel": "#NUM!",
+        "actual": {
+          "id": "FLOOR_mismatched_sign_error",
+          "function": "FLOOR",
+          "status": "ok",
+          "value": 2.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "FLOOR_libreoffice_default_mode_divergence",
+        "classification": "value",
+        "excel": -44.0,
+        "actual": {
+          "id": "FLOOR_libreoffice_default_mode_divergence",
+          "function": "FLOOR",
+          "status": "ok",
+          "value": -46.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "FLOOR.MATH_negative_mode_nonzero_toward_zero",
+        "classification": "value",
+        "excel": -4.0,
+        "actual": {
+          "id": "FLOOR.MATH_negative_mode_nonzero_toward_zero",
+          "function": "FLOOR.MATH",
+          "status": "ok",
+          "value": "#VALUE!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "FORECAST_ETS_exists",
+        "classification": "probe",
+        "excel": 70.0,
+        "actual": {
+          "id": "FORECAST_ETS_exists",
+          "function": "FORECAST.ETS",
+          "status": "probe",
+          "value": "#NAME?"
+        }
+      },
+      {
+        "id": "FORMULATEXT_basic_arithmetic",
+        "classification": "value",
+        "excel": "=1+2",
+        "actual": {
+          "id": "FORMULATEXT_basic_arithmetic",
+          "function": "FORMULATEXT",
+          "status": "ok",
+          "value": "=1 + 2",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "FORMULATEXT_preserves_exact_text",
+        "classification": "value",
+        "excel": "=CONCATENATE(\"a\",\"b\")",
+        "actual": {
+          "id": "FORMULATEXT_preserves_exact_text",
+          "function": "FORMULATEXT",
+          "status": "ok",
+          "value": "=CONCATENATE(\"a\", \"b\")",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "GROUPBY_exists_sum",
+        "classification": "probe",
+        "excel": "a",
+        "actual": {
+          "id": "GROUPBY_exists_sum",
+          "function": "GROUPBY",
+          "status": "probe",
+          "value": "#NAME?"
+        }
+      },
+      {
+        "id": "GROWTH_exact_exponential",
+        "classification": "value",
+        "excel": 16.0,
+        "actual": {
+          "id": "GROWTH_exact_exponential",
+          "function": "GROWTH",
+          "status": "ok",
+          "value": "#VALUE!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "HYPERLINK_friendly_name_numeric",
+        "classification": "value",
+        "excel": 42.0,
+        "actual": {
+          "id": "HYPERLINK_friendly_name_numeric",
+          "function": "HYPERLINK",
+          "status": "ok",
+          "value": "42",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "ISFORMULA_true_on_formula_cell",
+        "classification": "value",
+        "excel": true,
+        "actual": {
+          "id": "ISFORMULA_true_on_formula_cell",
+          "function": "ISFORMULA",
+          "status": "ok",
+          "value": false,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "LAMBDA_basic_invoke",
+        "classification": "value",
+        "excel": 10.0,
+        "actual": {
+          "id": "LAMBDA_basic_invoke",
+          "function": "LAMBDA",
+          "status": "ok",
+          "value": "#N/IMPL!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "LAMBDA_two_params",
+        "classification": "value",
+        "excel": 7.0,
+        "actual": {
+          "id": "LAMBDA_two_params",
+          "function": "LAMBDA",
+          "status": "ok",
+          "value": "#N/IMPL!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "LAMBDA_wrong_arg_count",
+        "classification": "error",
+        "excel": "#VALUE!",
+        "actual": {
+          "id": "LAMBDA_wrong_arg_count",
+          "function": "LAMBDA",
+          "status": "ok",
+          "value": "#N/IMPL!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "MAKEARRAY_rc",
+        "classification": "array",
+        "excel": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            2.0,
+            4.0
+          ]
+        ],
+        "actual": {
+          "id": "MAKEARRAY_rc",
+          "function": "MAKEARRAY",
+          "status": "ok",
+          "value": [
+            [
+              "#NAME?",
+              null
+            ],
+            [
+              null,
+              null
+            ]
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "MAP_double",
+        "classification": "array",
+        "excel": [
+          2.0,
+          4.0,
+          6.0
+        ],
+        "actual": {
+          "id": "MAP_double",
+          "function": "MAP",
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            null,
+            null
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "NETWORKDAYS_with_holiday",
+        "classification": "value",
+        "excel": 4.0,
+        "actual": {
+          "id": "NETWORKDAYS_with_holiday",
+          "function": "NETWORKDAYS",
+          "status": "ok",
+          "value": 5.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "OR_range_text_ignored",
+        "classification": "value",
+        "excel": false,
+        "actual": {
+          "id": "OR_range_text_ignored",
+          "function": "OR",
+          "status": "ok",
+          "value": "#VALUE!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "PIVOTBY_exists_sum",
+        "classification": "probe",
+        "excel": "",
+        "actual": {
+          "id": "PIVOTBY_exists_sum",
+          "function": "PIVOTBY",
+          "status": "probe",
+          "value": "#NAME?"
+        }
+      },
+      {
+        "id": "POWER_negative_base_fractional_exponent",
+        "classification": "error",
+        "excel": -1.9999999999999998,
+        "actual": {
+          "id": "POWER_negative_base_fractional_exponent",
+          "function": "POWER",
+          "status": "ok",
+          "value": "#NUM!",
+          "matches_upstream": true
+        }
+      },
+      {
+        "id": "POWER_zero_to_zero",
+        "classification": "value",
+        "excel": "#NUM!",
+        "actual": {
+          "id": "POWER_zero_to_zero",
+          "function": "POWER",
+          "status": "ok",
+          "value": 1.0,
+          "matches_upstream": true
+        }
+      },
+      {
+        "id": "PROPER_digit_letter_boundary",
+        "classification": "value",
+        "excel": "76Budget",
+        "actual": {
+          "id": "PROPER_digit_letter_boundary",
+          "function": "PROPER",
+          "status": "ok",
+          "value": "76budget",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "REDUCE_sum",
+        "classification": "value",
+        "excel": 6.0,
+        "actual": {
+          "id": "REDUCE_sum",
+          "function": "REDUCE",
+          "status": "ok",
+          "value": "#NAME?",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "ROUND_float_representation_quirk",
+        "classification": "value",
+        "excel": 1.01,
+        "actual": {
+          "id": "ROUND_float_representation_quirk",
+          "function": "ROUND",
+          "status": "ok",
+          "value": 1.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "SCAN_running_sum",
+        "classification": "array",
+        "excel": [
+          1.0,
+          3.0,
+          6.0
+        ],
+        "actual": {
+          "id": "SCAN_running_sum",
+          "function": "SCAN",
+          "status": "ok",
+          "value": [
+            "#NAME?",
+            null,
+            null
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "SUBTOTAL_ignores_nested_subtotal",
+        "classification": "value",
+        "excel": 100.0,
+        "actual": {
+          "id": "SUBTOTAL_ignores_nested_subtotal",
+          "function": "SUBTOTAL",
+          "status": "ok",
+          "value": 200.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TEXT_currency_format",
+        "classification": "value",
+        "excel": "$1,234.57",
+        "actual": {
+          "id": "TEXT_currency_format",
+          "function": "TEXT",
+          "status": "ok",
+          "value": "1,234.57",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TEXT_percentage_format",
+        "classification": "value",
+        "excel": "28.5%",
+        "actual": {
+          "id": "TEXT_percentage_format",
+          "function": "TEXT",
+          "status": "ok",
+          "value": "28%",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TEXT_scientific_format",
+        "classification": "value",
+        "excel": "1.22E+07",
+        "actual": {
+          "id": "TEXT_scientific_format",
+          "function": "TEXT",
+          "status": "ok",
+          "value": "12200000.00",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TEXT_zero_padding",
+        "classification": "value",
+        "excel": "0001234",
+        "actual": {
+          "id": "TEXT_zero_padding",
+          "function": "TEXT",
+          "status": "ok",
+          "value": "1234",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TEXT_weekday_name_format",
+        "classification": "value",
+        "excel": "Tuesday",
+        "actual": {
+          "id": "TEXT_weekday_name_format",
+          "function": "TEXT",
+          "status": "ok",
+          "value": "0505",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TIME_basic",
+        "classification": "value",
+        "excel": 0.5625,
+        "actual": {
+          "id": "TIME_basic",
+          "function": "TIME",
+          "status": "ok",
+          "value": "13:30:00",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TIME_hour_wraps_modulo_24",
+        "classification": "value",
+        "excel": 0.04166666666666674,
+        "actual": {
+          "id": "TIME_hour_wraps_modulo_24",
+          "function": "TIME",
+          "status": "ok",
+          "value": "01:00:00",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TIME_doc_example_27_hours",
+        "classification": "value",
+        "excel": 0.125,
+        "actual": {
+          "id": "TIME_doc_example_27_hours",
+          "function": "TIME",
+          "status": "ok",
+          "value": "03:00:00",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TIMEVALUE_6am",
+        "classification": "value",
+        "excel": 0.25,
+        "actual": {
+          "id": "TIMEVALUE_6am",
+          "function": "TIMEVALUE",
+          "status": "ok",
+          "value": "06:00:00",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TRIM_tab_not_removed",
+        "classification": "value",
+        "excel": "\tHello",
+        "actual": {
+          "id": "TRIM_tab_not_removed",
+          "function": "TRIM",
+          "status": "ok",
+          "value": "Hello",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TRIM_nonbreaking_space_not_removed",
+        "classification": "value",
+        "excel": "†Hello†",
+        "actual": {
+          "id": "TRIM_nonbreaking_space_not_removed",
+          "function": "TRIM",
+          "status": "ok",
+          "value": "Hello",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "TYPE_error",
+        "classification": "value",
+        "excel": 16.0,
+        "actual": {
+          "id": "TYPE_error",
+          "function": "TYPE",
+          "status": "ok",
+          "value": "#DIV/0!",
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "UNIQUE_by_column",
+        "classification": "array",
+        "excel": [
+          1.0,
+          2.0
+        ],
+        "actual": {
+          "id": "UNIQUE_by_column",
+          "function": "UNIQUE",
+          "status": "ok",
+          "value": [
+            1.0,
+            1.0
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "WORKDAY_with_single_holiday",
+        "classification": "value",
+        "excel": 45300.0,
+        "actual": {
+          "id": "WORKDAY_with_single_holiday",
+          "function": "WORKDAY",
+          "status": "ok",
+          "value": 45299.0,
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "WRAPCOLS_2",
+        "classification": "array",
+        "excel": [
+          [
+            1.0,
+            3.0
+          ],
+          [
+            2.0,
+            4.0
+          ]
+        ],
+        "actual": {
+          "id": "WRAPCOLS_2",
+          "function": "WRAPCOLS",
+          "status": "ok",
+          "value": [
+            [
+              "#NAME?",
+              null
+            ],
+            [
+              null,
+              null
+            ]
+          ],
+          "matches_upstream": false
+        }
+      },
+      {
+        "id": "WRAPROWS_2",
+        "classification": "array",
+        "excel": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ],
+        "actual": {
+          "id": "WRAPROWS_2",
+          "function": "WRAPROWS",
+          "status": "ok",
+          "value": [
+            [
+              "#NAME?",
+              null
+            ],
+            [
+              null,
+              null
+            ]
+          ],
+          "matches_upstream": false
+        }
+      }
+    ]
+  },
+  "excel_version": "16.112.4",
+  "libreoffice_version": "LibreOffice 25.8.2.2 d401f2107ccab8f924a8e2df40f573aab7605b6f",
+  "formualizer_version": "formualizer-workbook/0.9.3",
+  "corpus_sha256": "d4740551ddcae1828c8e1c59784a5594a9bb0802423271148e225589acbab8bd",
+  "input_sha256": {
+    "goldens.json": "dc15998545a4c84fb47da336057e9e6b64a6854d72f8bd682ac2bdaa0e1b2b1f",
+    "libreoffice-25.8.2.2.json": "63e4c3e78a2f713d50c1edc5f8a4140298dcbef462e77ff63794f492c3284e59",
+    "formualizer-0.9.3-unchanged.json": "13257f4c3811c91c881219c9c213c508f586264a79e444259f021d0e87167bd4"
+  },
+  "at_or_above_libreoffice": false
+}
