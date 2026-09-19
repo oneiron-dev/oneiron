@@ -6,6 +6,41 @@ use std::sync::Arc;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ctl_shed_enters_during_real_outbound_dispatch_and_preserves_journal() -> anyhow::Result<()>
 {
+    struct Sink {
+        state: Arc<ManagedState>,
+        vault: Arc<oneiron::Vault>,
+        runtime: tokio::runtime::Handle,
+    }
+    impl OutboundExecutionSink for Sink {
+        fn execute(&mut self, _: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+            let before =
+                oneiron::outbound_intent_ledger::intent_ledger_records(&self.vault).unwrap();
+            assert_eq!(before.records.len(), 1);
+            assert_eq!(
+                before.records[0].state,
+                oneiron::outbound_intent_ledger::IntentState::Pending
+            );
+            let response = self
+                .runtime
+                .block_on(self.state.handle_request(CtlRequest::Shed {
+                    cause: ShedCause::LongOutboundWait,
+                    waited_secs: 2,
+                }))
+                .unwrap();
+            assert!(matches!(
+                response,
+                CtlResponse::Slim {
+                    status: ShedStatus::Entered,
+                    slim: true,
+                    ..
+                }
+            ));
+            let after =
+                oneiron::outbound_intent_ledger::intent_ledger_records(&self.vault).unwrap();
+            assert_eq!(before.records, after.records);
+            OutboundExecutionOutcome::delivered_to_channel("test-reply")
+        }
+    }
     let dir = tempfile::tempdir()?;
     let vault = Arc::new(oneiron::Vault::open(
         dir.path(),
@@ -50,41 +85,6 @@ async fn ctl_shed_enters_during_real_outbound_dispatch_and_preserves_journal() -
         &credentials,
     )?;
     let state = Arc::new(ManagedState::new("ctl-test".into(), server, ledger));
-    struct Sink {
-        state: Arc<ManagedState>,
-        vault: Arc<oneiron::Vault>,
-        runtime: tokio::runtime::Handle,
-    }
-    impl OutboundExecutionSink for Sink {
-        fn execute(&mut self, _: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-            let before =
-                oneiron::outbound_intent_ledger::intent_ledger_records(&self.vault).unwrap();
-            assert_eq!(before.records.len(), 1);
-            assert_eq!(
-                before.records[0].state,
-                oneiron::outbound_intent_ledger::IntentState::Pending
-            );
-            let response = self
-                .runtime
-                .block_on(self.state.handle_request(CtlRequest::Shed {
-                    cause: ShedCause::LongOutboundWait,
-                    waited_secs: 2,
-                }))
-                .unwrap();
-            assert!(matches!(
-                response,
-                CtlResponse::Slim {
-                    status: ShedStatus::Entered,
-                    slim: true,
-                    ..
-                }
-            ));
-            let after =
-                oneiron::outbound_intent_ledger::intent_ledger_records(&self.vault).unwrap();
-            assert_eq!(before.records, after.records);
-            OutboundExecutionOutcome::delivered_to_channel("test-reply")
-        }
-    }
     let runtime = tokio::runtime::Handle::current();
     let job = tokio::task::spawn_blocking(move || {
         let intent = OutboundIntent::from_trigger(

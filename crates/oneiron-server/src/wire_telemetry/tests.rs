@@ -1,9 +1,9 @@
 use super::*;
+use tower::ServiceExt;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fifty_thousand_agents_are_observed_not_refused_and_manifest_is_live() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
-    use tower::ServiceExt;
     let config = crate::config::SyncServerConfig {
         auth_secret: Some("test-secret".into()),
         ..Default::default()
@@ -88,7 +88,6 @@ fn router_can_be_constructed_before_entering_a_runtime() {
         .build()
         .unwrap();
     let response = runtime.block_on(async {
-        use tower::ServiceExt;
         router
             .oneshot(
                 axum::http::Request::builder()

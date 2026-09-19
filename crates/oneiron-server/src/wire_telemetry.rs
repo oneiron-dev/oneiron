@@ -160,11 +160,11 @@ impl WireTelemetry {
             .active
             .lock()
             .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
-        if !active.persisted {
-            if let Some(window) = &active.window {
-                self.persist(window)?;
-                active.persisted = true;
-            }
+        if !active.persisted
+            && let Some(window) = &active.window
+        {
+            self.persist(window)?;
+            active.persisted = true;
         }
         Ok(())
     }
@@ -203,8 +203,7 @@ pub(crate) async fn observe_http(
     let route = request
         .extensions()
         .get::<axum::extract::MatchedPath>()
-        .map(|path| path.as_str())
-        .unwrap_or("unmatched");
+        .map_or("unmatched", axum::extract::MatchedPath::as_str);
     let verb = format!("{} {route}", request.method());
     let auth = crate::auth::CoreAuth::from_headers(
         request.headers(),
@@ -212,10 +211,9 @@ pub(crate) async fn observe_http(
         server.vault().as_ref(),
     )
     .ok();
-    let actor = auth
-        .as_ref()
-        .map(|a| a.principal_ref().unwrap_or(a.principal()))
-        .unwrap_or("unauthenticated");
+    let actor = auth.as_ref().map_or("unauthenticated", |a| {
+        a.principal_ref().unwrap_or(a.principal())
+    });
     start_window_receipts(&server);
     let _ = server
         .wire_telemetry

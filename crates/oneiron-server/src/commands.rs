@@ -472,6 +472,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
+    use oneiron_vault_contract::host::{Host, HostLimits};
+
     tracing::info!(
         vault_path = %config.vault_path.display(),
         dimensions = config.dimensions,
@@ -545,7 +547,6 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let managed::BoundServeListener::Tcp(listener) = listener else {
         anyhow::bail!("unmanaged serve requires a TCP listener");
     };
-    use oneiron_vault_contract::host::{Host, HostLimits};
     let mut host = oneiron_vault_contract::host_adapters::InProcessHost::new(
         listener.into_std()?,
         HostLimits::unbounded(),
