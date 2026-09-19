@@ -493,9 +493,23 @@ fn whole_vault_model_restore_reports_local_creation_and_repeat_mapping() -> Resu
     let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
     let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
     let original = source.ensure_model_substrate("archive fixture model", "v2", 6)?;
+    let claim = crate::EntityId::now();
+    source.put_claim(
+        &claim,
+        &ClaimBody::new(
+            "model.note",
+            ClaimSubject::Entity(original),
+            "fixture".into(),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        ),
+        range(),
+        789,
+    )?;
     let bytes = source.export_whole_vault(PackFormat::Json)?;
     let first = target.import_whole_vault_json(bytes.bytes())?;
-    assert_eq!(first.inserted_entities, 1);
+    assert_eq!(first.inserted_entities, 2);
     let local = target.ensure_model_substrate("archive fixture model", "v2", 7)?;
     assert_eq!(
         first.remapped_entities.get(&original.to_hex()),
@@ -503,7 +517,11 @@ fn whole_vault_model_restore_reports_local_creation_and_repeat_mapping() -> Resu
     );
     let second = target.import_whole_vault_json(bytes.bytes())?;
     assert_eq!(second.inserted_entities, 0);
-    assert_eq!(second.unchanged_entities, 1);
+    assert_eq!(second.unchanged_entities, 2);
+    assert_eq!(
+        target.get_claim(&claim)?.unwrap().subject,
+        ClaimSubject::Entity(local)
+    );
     assert_eq!(second.remapped_entities, first.remapped_entities);
     Ok(())
 }

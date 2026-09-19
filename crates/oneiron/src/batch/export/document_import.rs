@@ -95,7 +95,7 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
-                let body = imported_body(row)?;
+                let body = imported_body(row, models)?;
                 if matches_row(
                     row,
                     &existing,
@@ -113,7 +113,7 @@ impl Vault {
                 return Err(invalid("import ID collides with different entity data"));
             }
             self.store.validate_public_entity_type(row.entity_type)?;
-            pending.insert(id, (row, imported_body(row)?));
+            pending.insert(id, (row, imported_body(row, models)?));
         }
         let inserted_ids: BTreeSet<_> = pending.keys().copied().collect();
         let mut inserted_entities = pending.len() + model_imports.inserted;
@@ -301,11 +301,18 @@ pub(super) fn matches_row(row: &ExportEntity, raw: &[u8], expected: &ExportBody)
         && ExportBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..], row.entity_type) == *expected
 }
 
-fn imported_body(row: &ExportEntity) -> Result<Vec<u8>> {
+fn imported_body(row: &ExportEntity, models: &BTreeMap<EntityId, EntityId>) -> Result<Vec<u8>> {
     let bytes = row.body.to_bytes()?;
     match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let mut body = decode_claim_body(&bytes, false)?;
+            match &mut body.subject {
+                ClaimSubject::Entity(id) => *id = models.get(id).copied().unwrap_or(*id),
+                ClaimSubject::Edge { source, target, .. } => {
+                    *source = models.get(source).copied().unwrap_or(*source);
+                    *target = models.get(target).copied().unwrap_or(*target);
+                }
+            }
             body.source = Some(ClaimSource::Imported);
             if body.approval != ClaimApprovalStatus::Rejected {
                 body.approval = ClaimApprovalStatus::Proposed;
