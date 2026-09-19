@@ -36,12 +36,18 @@ pub(super) fn auto_check_signals(
     let Some(actor_ref) = actor_ref else {
         return Ok(signals);
     };
-    store.for_each_gate_decision_in_txn(txn, |record| {
+    // These are advisory observations, not admission counters. Bound work
+    // even when unrelated actors dominate the ledger; report the recent sample.
+    for record in store
+        .gate_decisions_page_in_txn(txn, None, 1_024)?
+        .into_iter()
+        .rev()
+    {
         if record.actor_ref.as_deref() != Some(actor_ref)
             || record.content_kind != "claim"
             || record.created_at > now
         {
-            return Ok(());
+            continue;
         }
         if now.saturating_sub(record.created_at) < config.window_secs {
             signals.recent_writes = signals.recent_writes.saturating_add(1);
@@ -59,7 +65,6 @@ pub(super) fn auto_check_signals(
             }
             _ => {}
         }
-        Ok(())
-    })?;
+    }
     Ok(signals)
 }

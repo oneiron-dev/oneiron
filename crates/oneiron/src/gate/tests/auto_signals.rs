@@ -71,3 +71,54 @@ fn thirty_first_in_window_write_keeps_auto_and_has_no_trip_receipt() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn soft_signals_bound_the_receipt_sample_without_changing_authority() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let mut data = encode_policy_manifest(vec![
+        source_trust_entry(ClaimSource::Generated, 0),
+        signatures_entry(),
+    ]);
+    append_actor_ceiling(
+        &mut data,
+        actor_ceiling_row_for_ref("agent", &actor.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, test_id(0x70), &data)?;
+    run_write(
+        &vault,
+        EntityId::now(),
+        actor,
+        0x50,
+        "signal-sample",
+        ClaimApprovalStatus::Auto,
+        1,
+    )?;
+    let mut record = vault.store.gate_decisions(1)?.remove(0);
+    record.created_at = 1_000;
+    record.outcome = "deny".into();
+    vault.with_write_txn(|txn| {
+        for _ in 0..1_025 {
+            record.decision_id = crate::store::GateDecisionId::now();
+            vault.store.append_gate_decision_in_txn(txn, &record)?;
+        }
+        Ok(())
+    })?;
+    let txn = vault.store.env.read_txn()?;
+    let signals = super::super::auto_signals::auto_check_signals(
+        &vault.store,
+        &txn,
+        Some(&actor.to_hex()),
+        1_000,
+    )?;
+    assert_eq!(signals.recent_writes, 1_024);
+    assert_eq!(signals.failure_streak, 1_024);
+    let foreign = super::super::auto_signals::auto_check_signals(
+        &vault.store,
+        &txn,
+        Some(&test_id(0x41).to_hex()),
+        1_000,
+    )?;
+    assert_eq!(foreign.recent_writes, 0);
+    Ok(())
+}
