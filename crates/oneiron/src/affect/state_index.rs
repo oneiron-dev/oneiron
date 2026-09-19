@@ -152,6 +152,7 @@ impl Vault {
                         body.approval,
                         ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
                     )
+                    || !producer_bound(self, txn, &id, &body)?
                 {
                     continue;
                 }
@@ -181,6 +182,13 @@ impl Vault {
             body.valid_from = Some(at);
             body.evidence = Some(refs);
             self.put_claim_in_txn(txn, &id, &body, TimeRange { start: at, end: at }, at)?;
+            let stored = self
+                .get_claim_in_txn(txn, &id)?
+                .ok_or(Error::EntityNotFound)?;
+            let digest = blake3::hash(&crate::claim::encode_claim_body(&stored)?);
+            self.store
+                .vault_meta
+                .put(txn, &producer_key(&id), digest.as_bytes())?;
             for old in previous {
                 self.supersede_claim_in_txn(txn, &id, &old, at)?;
             }
@@ -210,6 +218,7 @@ impl Vault {
                     body.approval,
                     ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
                 )
+                || !producer_bound(self, &txn, &id, &body)?
             {
                 continue;
             }
@@ -247,6 +256,26 @@ impl Vault {
             observed_at: Some(at),
         })
     }
+}
+
+// Derived heads are local cache state, not authority asserted by a raw or
+// replicated CLAIM. Receiving vaults derive their own index from admitted inputs.
+// The identifier/digest-only binding also detects later replacement of a head.
+fn producer_key(id: &EntityId) -> Vec<u8> {
+    let mut key = b"state:composite:producer:v1:".to_vec();
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+fn producer_bound(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<bool> {
+    let Some(stamp) = vault.store.vault_meta.get(txn, &producer_key(id))? else {
+        return Ok(false);
+    };
+    Ok(stamp == blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
 }
 
 impl crate::memory::Memory<'_> {

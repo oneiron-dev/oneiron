@@ -42,6 +42,45 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
         goal_velocity: signal(GOAL_VELOCITY, 0.7)?,
         engagement: signal(ENGAGEMENT, 0.8)?,
     };
+    // Raw/replay peers can assert ordinary claims, not producer-bound derived
+    // heads. In particular a forged future row must not veto local derivation.
+    let mut forged = ClaimBody::new(
+        COMPOSITE_INDEX,
+        ClaimSubject::Entity(subject),
+        Value::Map(
+            ["value", "affect", "goal_velocity", "engagement"]
+                .into_iter()
+                .map(|key| (Value::from(key), Value::F32(1.0)))
+                .collect(),
+        ),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    forged.source = Some(ClaimSource::Observed);
+    forged.valid_from = Some(1000);
+    vault.put_claim(
+        &EntityId::now(),
+        &forged,
+        TimeRange {
+            start: 1000,
+            end: 1000,
+        },
+        10,
+    )?;
+    forged.valid_from = Some(5);
+    let forged_bytes = crate::claim::encode_claim_body(&forged)?;
+    vault
+        .batch()
+        .put_replicated(
+            &EntityId::now(),
+            crate::registry::ENTITY_TYPE_CLAIM,
+            time,
+            10,
+            &forged_bytes,
+        )
+        .commit()?;
+    assert_eq!(vault.state_index_at(&subject, 1000)?, StateIndex::default());
     let id = vault.derive_state_index(&subject, &evidence, 11)?;
     assert_eq!(vault.derive_state_index(&subject, &evidence, 12)?, id);
     let index = vault
@@ -97,6 +136,20 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
     assert_eq!(vault.state_index(&subject)?.claim, Some(newer.to_hex()));
     assert_eq!(vault.state_index_at(&subject, 14)?, StateIndex::default());
     assert!(vault.derive_state_index(&subject, &evidence, 14).is_err());
+    let mut replaced = vault.get_claim(&newer)?.unwrap();
+    replaced.value = forged.value;
+    vault.put_claim(&newer, &replaced, TimeRange { start: 15, end: 15 }, 15)?;
+    assert_eq!(vault.state_index_at(&subject, 16)?, StateIndex::default());
+    let repaired = vault.derive_state_index(&subject, &changed, 16)?;
+    assert_ne!(repaired, newer);
+    assert_eq!(
+        vault
+            .state_index_at(&subject, 16)?
+            .inputs
+            .unwrap()
+            .goal_velocity,
+        0.4
+    );
     let unknown = EntityId::now();
     assert_eq!(
         vault
@@ -104,6 +157,12 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
             .state_index(&unknown.to_hex())
             .expect("unknown read"),
         StateIndex::default()
+    );
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    assert_eq!(
+        reopened.state_index_at(&subject, 16)?.claim,
+        Some(repaired.to_hex())
     );
     Ok(())
 }
