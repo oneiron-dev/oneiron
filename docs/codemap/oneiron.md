@@ -1196,7 +1196,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/step/execute.rs` | src | m | 2 fn · 1 crate-vis | — | Durable step execution: memo/admission/deadline orchestration plus deadline-race, retry, and lease-settle… |
 | `src/llm/step/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record… |
 | `src/llm/step/peer_wait.rs` | src | m | 1 struct · 3 fn · 4 crate-vis | PeerResultWaitBinding | Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile |
-| `src/llm/step/schema.rs` | src | s | 1 fn · 1 crate-vis | — | One-shot structured-output policy |
+| `src/llm/step/schema.rs` | src | s | 1 fn · 2 crate-vis | — | One-shot structured-output policy |
 | `src/llm/step/step_claim.rs` | src | m | 12 crate-vis | — | Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance |
 | `src/llm/step/step_state.rs` | src | s | 5 crate-vis | — | Device-local step progression rows (Started/ResponseReceived/Logged) in vault_meta |
 | `src/llm/step/tests.rs` | test | XL | — | — | — |
@@ -1945,7 +1945,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_identity/codec_records.rs` | src | m | 10 crate-vis | — | Print/evidence/segment/roster encode_/decode_ pairs; roster pair is the interlocutor-seam wire shape |
 | `src/voice_identity/math_keys.rs` | src | s | 15 crate-vis | — | Vector-math door (normalize/cosine/same-space check) and vault_meta key builders with the pointer==prefix… |
 | `src/voice_identity/mod.rs` | src | s | 1 mod · 1 re-export · 1 crate-vis | — | VOX-02 voice identity substrate: consent log, enrollment, local matching |
-| `src/voice_identity/ref_bank.rs` | src | s | 3 struct · 1 enum · 4 fn | OwnerVoiceRefPack, VoiceRefOrigin, VoiceRegisterClip, VoiceTargetClone | Private per-vault owner reference bank |
+| `src/voice_identity/ref_bank.rs` | src | s | 3 struct · 1 enum · 4 fn · 1 crate-vis | OwnerVoiceRefPack, VoiceRefOrigin, VoiceRegisterClip, VoiceTargetClone | Private per-vault owner reference bank |
 | `src/voice_identity/storage_admission.rs` | src | m | 22 crate-vis | — | Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination… |
 | `src/voice_identity/tests.rs` | test | XL | — | — | — |
 | `src/voice_identity/types.rs` | src | m | 12 struct · 7 enum · 17 fn · 3 const · 7 crate-vis | VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest +11 | Public domain types, request/receipt structs, thresholds, key prefixes, and validators |

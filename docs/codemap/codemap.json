@@ -15297,7 +15297,7 @@
      "path": "src/llm/step/schema.rs",
      "purpose": "One-shot structured-output policy",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -24074,6 +24074,7 @@
      "path": "src/voice_identity/ref_bank.rs",
      "purpose": "Private per-vault owner reference bank",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -27715,22 +27716,18 @@
      "purpose": "Gemini wire adapter",
      "surface": {
       "fn": 1,
-      "re-export": 3,
+      "re-export": 1,
       "struct": 1
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "GeminiAccumulator"
-     ],
+     "notable": [],
      "path": "src/stream.rs",
      "purpose": "Gemini typed stream decoding",
      "surface": {
-      "crate-vis": 2,
-      "fn": 2,
-      "struct": 1
+      "crate-vis": 5
      }
     },
     {
@@ -27766,7 +27763,7 @@
      "path": "src/wire.rs",
      "purpose": "Gemini generateContent request and response mapping plus status taxonomy",
      "surface": {
-      "fn": 3
+      "crate-vis": 3
      }
     }
    ],
@@ -28050,7 +28047,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/remote_transport.rs",
@@ -28481,7 +28478,7 @@
      "path": "src/remote.rs",
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -29729,6 +29726,24 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/llm.rs",
+     "purpose": "Owner-authenticated raw inference",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/llm/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -31416,7 +31431,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 6,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -31764,7 +31779,7 @@
    ],
    "modules": {
     "api": {
-     "files": 126,
+     "files": 128,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -31913,8 +31928,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 185,
-   "test_files": 71
+   "source_files": 186,
+   "test_files": 72
   },
   "oneiron-uniffi": {
    "files": [

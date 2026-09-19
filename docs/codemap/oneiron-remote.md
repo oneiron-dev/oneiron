@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
 | `src/lib.rs` | src | m | 2 struct · 15 fn · 3 const · 1 mod · 2 re-export | OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
 | `src/llm.rs` | src | s | 1 struct · 1 trait · 2 fn | OwnServerTransport, RemoteLlmClient | Own-server raw LLM transport over the SDK's single authenticated HTTP client |
-| `src/remote.rs` | src | m | 5 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
+| `src/remote.rs` | src | m | 6 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 | `tests/error_mapping.rs` | test | s | — | — | ONE-1441 error-contract tests (blueprint §Test/Shared #5–#6, §Typed error contract) |
 | `tests/facade_contract.rs` | test | s | — | — | ONE-1441 shared-backend contract tests (blueprint §Test/Shared #1–#4) |
 | `tests/numeric_boundaries.rs` | test | s | — | — | The shared timestamp bound must agree with JavaScript's safe integers |
