@@ -118,7 +118,10 @@ pub(in crate::authority) fn revocation_bypass_states(
     pending: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
 ) -> Option<BTreeMap<AuthorityEntryHash, FoldState>> {
-    if !matches!(entry.op, AuthorityOp::RevokeActor { .. }) {
+    if !matches!(
+        entry.op,
+        AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDoorSlip { .. }
+    ) {
         return None;
     }
     let mut substitutes = BTreeMap::new();

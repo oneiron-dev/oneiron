@@ -210,6 +210,7 @@ impl Store {
         let id = crate::gate::default_policy_manifest_id()?;
         seed_default_policy_manifest_in_txn(
             &self.entities,
+            &self.sync_state,
             &self.type_index,
             &self.temporal_occurred_start,
             &self.temporal_learned,

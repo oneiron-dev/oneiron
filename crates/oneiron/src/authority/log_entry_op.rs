@@ -21,6 +21,16 @@ use crate::error::RecordError;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityOp {
+    /// Immutable class-bound capability, authorized by the authority roster.
+    MintDoorSlip(AuthorityDoorSlip),
+    /// Issuer-serialized consume-once event. The log is the only spend ledger.
+    SpendDoorSlip {
+        mint_hash: AuthorityEntryHash,
+    },
+    /// Revokes a slip and all descendants; merged by union.
+    RevokeDoorSlip {
+        mint_hash: AuthorityEntryHash,
+    },
     /// Vault genesis. `vault_id` is `None` on the containing entry and is
     /// derived as BLAKE3(canonical signed genesis).
     Genesis {
@@ -291,6 +301,14 @@ pub(super) fn transcript_value_with_genesis_delay(
 
 pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
     match op {
+        AuthorityOp::MintDoorSlip(scope) => scope.validate(),
+        AuthorityOp::SpendDoorSlip { mint_hash } | AuthorityOp::RevokeDoorSlip { mint_hash } => {
+            if *mint_hash == [0; 32] {
+                Err(invalid_authority())
+            } else {
+                Ok(())
+            }
+        }
         AuthorityOp::Genesis {
             device,
             genesis_nonce,

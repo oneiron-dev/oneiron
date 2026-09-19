@@ -15,7 +15,7 @@ use crate::error::RecordError;
 pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 2;
 
 /// Pinned on-disk MessagePack key set for AccessGrant bodies.
-pub const ACCESS_GRANT_BODY_KEYS: [&str; 7] = [
+pub const ACCESS_GRANT_BODY_KEYS: [&str; 8] = [
     "schema_version",
     "principal_ref",
     "scope",
@@ -23,6 +23,7 @@ pub const ACCESS_GRANT_BODY_KEYS: [&str; 7] = [
     "status",
     "created_at",
     "revoked_at",
+    "expires_at",
 ];
 
 pub(crate) const ACCESS_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "capability", "status"];
@@ -80,6 +81,10 @@ pub fn encode_access_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
             Value::from(KEY_REVOKED_AT),
             grant.revoked_at.map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from("expires_at"),
+            grant.expires_at.map_or(Value::Nil, Value::from),
+        ),
     ]);
 
     let mut out = Vec::new();
@@ -135,6 +140,10 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
         Some(revoked_value.as_u64().ok_or_else(invalid_grant)?)
     };
 
+    let expires_at = match required_value(entries, "expires_at")? {
+        Value::Nil => None,
+        value => Some(value.as_u64().ok_or_else(invalid_grant)?),
+    };
     let grant = AccessGrant {
         principal_ref,
         scope,
@@ -142,6 +151,7 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
         status,
         created_at,
         revoked_at,
+        expires_at,
     };
     grant.validate()?;
     Ok(grant)
@@ -149,6 +159,19 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
 
 pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {
     match scope {
+        AccessGrantScope::Messages { space_ref }
+        | AccessGrantScope::Summaries { space_ref }
+        | AccessGrantScope::RelationshipClaims { space_ref } => Value::Map(vec![
+            (
+                Value::from("kind"),
+                Value::from(match scope {
+                    AccessGrantScope::Messages { .. } => "messages",
+                    AccessGrantScope::Summaries { .. } => "summaries",
+                    _ => "relationshipClaims",
+                }),
+            ),
+            (Value::from("space_ref"), Value::from(space_ref.to_hex())),
+        ]),
         AccessGrantScope::SharedBrief { .. } => crate::share::encode_shared_brief_scope(scope),
         AccessGrantScope::ChannelIdentity {
             identity_ref,
@@ -210,6 +233,15 @@ fn decode_scope(value: &Value) -> Result<AccessGrantScope> {
         .ok_or_else(invalid_grant)?;
 
     match kind {
+        "messages" | "summaries" | "relationshipClaims" => {
+            validate_keys(entries, &["kind", "space_ref"])?;
+            let space_ref = decode_entity_ref(required_value(entries, "space_ref")?)?;
+            Ok(match kind {
+                "messages" => AccessGrantScope::Messages { space_ref },
+                "summaries" => AccessGrantScope::Summaries { space_ref },
+                _ => AccessGrantScope::RelationshipClaims { space_ref },
+            })
+        }
         "shared_brief" => crate::share::decode_shared_brief_scope(entries),
         "channel_identity" => {
             validate_keys(entries, &["kind", "identity_ref", "envelope_ref"])?;

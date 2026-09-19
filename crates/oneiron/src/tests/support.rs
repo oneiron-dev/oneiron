@@ -90,6 +90,7 @@ pub(super) fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result
     payload.extend_from_slice(&data);
 
     let mut wtxn = vault.store.env.write_txn()?;
+    crate::gate::stamp_manifest_origin(&vault.store, &mut wtxn, &id, &data, false)?;
     vault
         .store
         .entities

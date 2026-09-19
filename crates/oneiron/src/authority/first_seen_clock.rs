@@ -141,7 +141,15 @@ impl AuthorityLocalClock {
                 anchored
             }
             None => {
-                let observed = candidate_wall_secs.max(previous_floor);
+                // A reopen resumes the persisted logical clock. Wall-clock
+                // changes while closed cannot age an approval or mature a
+                // widen. The wall value is only an arbitrary origin for a
+                // vault that has never recorded an observation.
+                let observed = if previous_floor == 0 {
+                    candidate_wall_secs
+                } else {
+                    previous_floor
+                };
                 self.anchor = Some(AuthorityClockAnchor {
                     anchor_instant: now,
                     anchor_secs: observed,

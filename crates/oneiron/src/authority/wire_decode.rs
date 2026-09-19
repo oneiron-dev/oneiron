@@ -51,6 +51,66 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
         .as_str()
         .ok_or_else(invalid_authority)?;
     match kind {
+        "mint_door_slip" => {
+            validate_keys(
+                entries,
+                &[
+                    OP_KEY_KIND,
+                    "holder_ref",
+                    "verb_class",
+                    "records",
+                    "channels",
+                    "parent",
+                    "pact",
+                    "issued_at",
+                    "expires_at",
+                    "single_use",
+                ],
+            )?;
+            Ok(AuthorityOp::MintDoorSlip(AuthorityDoorSlip {
+                holder_ref: required(entries, "holder_ref")?
+                    .as_str()
+                    .ok_or_else(invalid_authority)?
+                    .to_owned(),
+                verb_class: required(entries, "verb_class")?
+                    .as_str()
+                    .ok_or_else(invalid_authority)?
+                    .to_owned(),
+                records: decode_door_tokens(required(entries, "records")?)?,
+                channels: decode_door_tokens(required(entries, "channels")?)?,
+                parent: decode_optional_hash(required(entries, "parent")?)?,
+                pact: match required(entries, "pact")? {
+                    Value::Nil => None,
+                    Value::Array(pair) if pair.len() == 2 => {
+                        let text = pair[0].as_str().ok_or_else(invalid_authority)?;
+                        let grant = EntityId::from_hex(text).map_err(|_| invalid_authority())?;
+                        if grant.to_hex() != text {
+                            return Err(invalid_authority());
+                        }
+                        Some((grant, decode_federation_direction_scope_value(&pair[1])?))
+                    }
+                    _ => return Err(invalid_authority()),
+                },
+                issued_at: required(entries, "issued_at")?
+                    .as_u64()
+                    .ok_or_else(invalid_authority)?,
+                expires_at: required(entries, "expires_at")?
+                    .as_u64()
+                    .ok_or_else(invalid_authority)?,
+                single_use: required(entries, "single_use")?
+                    .as_bool()
+                    .ok_or_else(invalid_authority)?,
+            }))
+        }
+        "spend_door_slip" | "revoke_door_slip" => {
+            validate_keys(entries, &[OP_KEY_KIND, "mint_hash"])?;
+            let mint_hash = decode_hash(required(entries, "mint_hash")?)?;
+            Ok(if kind == "spend_door_slip" {
+                AuthorityOp::SpendDoorSlip { mint_hash }
+            } else {
+                AuthorityOp::RevokeDoorSlip { mint_hash }
+            })
+        }
         OP_KIND_GENESIS => {
             let pending_widen_delay = optional(entries, "pending_widen_delay_secs");
             if pending_widen_delay.is_some() {
@@ -541,4 +601,24 @@ pub(super) fn is_terminal_federation_lifecycle(entry: &AuthorityLogEntry) -> boo
                     | FederationLifecycleKind::Promote
             )
     )
+}
+
+fn decode_door_tokens(value: &Value) -> Result<std::collections::BTreeSet<String>> {
+    let values = value.as_array().ok_or_else(invalid_authority)?;
+    if values.len() > 256 {
+        return Err(invalid_authority());
+    }
+    let tokens = values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(invalid_authority)
+        })
+        .collect::<Result<std::collections::BTreeSet<_>>>()?;
+    if tokens.len() != values.len() {
+        return Err(invalid_authority());
+    }
+    Ok(tokens)
 }

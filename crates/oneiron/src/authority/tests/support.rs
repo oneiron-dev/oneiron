@@ -440,6 +440,7 @@ impl LocalFoldContext {
     pub(super) fn context(&self) -> FoldContext<'_> {
         FoldContext {
             first_seen_at_secs: &self.first_seen_at_secs,
+            sequence_floors: None,
             now_secs: None,
             enforce_seen_time_delay: false,
             vetoed_widens: &self.vetoed_widens,
@@ -472,6 +473,8 @@ pub(super) fn single_owner_state(
     let parent = [seed.wrapping_add(90); 32];
     let vault_id = [seed.wrapping_add(91); 32];
     let state = FoldState {
+        door_slips: BTreeMap::new(),
+        spent_door_slips: BTreeSet::new(),
         vault_id,
         roster: BTreeMap::from([(
             owner_key.clone(),
@@ -821,6 +824,8 @@ pub(super) fn fold_state_with_pact(
 ) -> FoldState {
     let owner_key = authority_key_from_ed(&fixture.owner);
     let mut state = FoldState {
+        door_slips: BTreeMap::new(),
+        spent_door_slips: BTreeSet::new(),
         vault_id: fixture.vault_id,
         roster: BTreeMap::from([(
             owner_key.clone(),

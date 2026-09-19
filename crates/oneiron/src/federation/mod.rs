@@ -8,6 +8,10 @@
 mod codec;
 mod coreference;
 mod grant;
+mod rulings;
+mod shared_creation;
+pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
+pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;
 mod pact_scope;
 mod peer_authority;
@@ -69,6 +73,8 @@ pub(crate) use self::stale::federation_stale_key;
 #[cfg(test)]
 use self::stale::register_foreign_world_for_pact;
 
+#[cfg(test)]
+mod shared_creation_tests;
 #[cfg(test)]
 mod tests;
 

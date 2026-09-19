@@ -50,6 +50,7 @@ fn valid_entries() -> Vec<(Value, Value)> {
         (Value::from(KEY_STATUS), Value::from("active")),
         (Value::from(KEY_CREATED_AT), Value::from(42_u64)),
         (Value::from(KEY_REVOKED_AT), Value::Nil),
+        (Value::from("expires_at"), Value::Nil),
     ]
 }
 
@@ -268,6 +269,7 @@ fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
         (Value::from(KEY_STATUS), Value::from("active")),
         (Value::from(KEY_CREATED_AT), Value::from(42_u64)),
         (Value::from(KEY_REVOKED_AT), Value::Nil),
+        (Value::from("expires_at"), Value::Nil),
     ]);
     assert_eq!(
         decode_access_grant_body(&hybrid)
@@ -519,6 +521,7 @@ fn shared_brief_grant() -> AccessGrant {
         status: AccessGrantStatus::Active,
         created_at: 42,
         revoked_at: None,
+        expires_at: None,
     }
 }
 
@@ -673,6 +676,7 @@ fn schema_v2_carries_every_access_scope_and_rejects_other_versions() -> Result<(
             status: AccessGrantStatus::Active,
             created_at: 42,
             revoked_at: None,
+            expires_at: None,
         };
         let bytes = encode_access_grant_body(&grant)?;
         assert_eq!(decode_access_grant_body(&bytes)?, grant);
@@ -723,5 +727,46 @@ fn channel_identity_scope_rejects_hybrid_capability_and_unknown_keys() -> Result
     };
     scope.push((Value::from("world_refs"), Value::Array(Vec::new())));
     assert!(decode_access_grant_body(&encode_value(&value)).is_err());
+    Ok(())
+}
+
+#[test]
+fn relationship_scopes_and_expiry_fail_closed() -> Result<()> {
+    let principal = entity(0x52);
+    let space = entity(0xB1);
+    for scope in [
+        AccessGrantScope::Messages { space_ref: space },
+        AccessGrantScope::Summaries { space_ref: space },
+        AccessGrantScope::RelationshipClaims { space_ref: space },
+    ] {
+        let mut grant = AccessGrant {
+            principal_ref: principal,
+            capability: scope.required_capability(),
+            scope,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: Some(u64::MAX),
+        };
+        assert_eq!(
+            decode_access_grant_body(&encode_access_grant_body(&grant)?)?,
+            grant
+        );
+        assert!(grant.allows_relationship_read(principal, space, grant.capability));
+        assert!(!grant.allows_relationship_read(principal, entity(0xB2), grant.capability));
+        if grant.capability == AccessGrantCapability::MessagesRead {
+            assert!(!grant.allows_relationship_read(
+                principal,
+                space,
+                AccessGrantCapability::SummariesRead
+            ));
+        }
+        grant.expires_at = Some(2);
+        assert_eq!(grant.effective_status_at(2), AccessGrantStatus::Expired);
+        assert!(!grant.allows_relationship_read(principal, space, grant.capability));
+        let revoked = grant.revoked(3)?;
+        assert_eq!(revoked.effective_status_at(4), AccessGrantStatus::Revoked);
+    }
+    assert!(AccessGrantCapability::parse("messages.write").is_none());
     Ok(())
 }
