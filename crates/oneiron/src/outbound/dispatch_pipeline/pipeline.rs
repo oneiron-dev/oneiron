@@ -129,7 +129,22 @@ impl OutboundDispatchPipeline {
                 request.channel_identity_ref,
             )?
         };
-        let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
+        let space_posting = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            vault.outbound_space_posting_in_txn(
+                &txn,
+                request.channel_identity_ref,
+                &request.intent.target,
+            )?
+        };
+        let policy_risk = if space_posting
+            .as_ref()
+            .is_some_and(|posting| posting.policy_risk())
+        {
+            ExternalEffectPolicyRisk::HoldToProposal
+        } else {
+            outbound_dispatch_policy_risk(request.gate, verb_contract)
+        };
         // The live claims are read once, here, at execute time. No schedule-time
         // window verdict is persisted or replayed.
         let window_resolution =
@@ -208,6 +223,7 @@ impl OutboundDispatchPipeline {
                 intent: &request.intent,
                 hygiene_headers,
                 calendar_invite: request.calendar_invite.as_ref(),
+                space_posting: space_posting.as_ref(),
                 actor_class: &request.actor.actor_class,
                 actor_ref: request.actor.actor_ref.as_deref(),
                 actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
@@ -255,6 +271,20 @@ impl OutboundDispatchPipeline {
 
         let mut engine_receipt_fields = BTreeMap::new();
         let mut engine_policy_trace = Vec::new();
+        if let Some(posting) = &space_posting {
+            engine_receipt_fields.insert(
+                "space_posting".to_owned(),
+                posting.preset_token().to_owned(),
+            );
+            engine_receipt_fields.insert(
+                "space_posting_setting_ref".to_owned(),
+                posting.setting_ref().to_owned(),
+            );
+            engine_receipt_fields.insert(
+                "space_posting_policy_risk".to_owned(),
+                posting.policy_risk().to_string(),
+            );
+        }
         let linkedin_action = linkedin_decision.take().map(|decision| {
             engine_receipt_fields.extend(decision.receipt_fields);
             engine_policy_trace.extend(decision.policy_trace);
@@ -359,6 +389,17 @@ impl OutboundDispatchPipeline {
                     .ok_or(OutboundDispatchError::InvalidBoundActor)?;
                 crate::provenance::validate_actor_class(entity_type, actor_class)?;
             }
+            let mut held_value = serde_json::json!({
+                "actor_class": request.actor.actor_class, "channel_identity_ref": request.channel_identity_ref.map(|id| id.to_hex()),
+                "target": request.intent.target,
+            });
+            if let Some(posting) = &space_posting {
+                held_value["space_posting"] = serde_json::to_value(posting)
+                    .map_err(|_| Error::InvariantViolation("posting gate payload"))?;
+            }
+            let held_bytes = serde_json::to_vec(&held_value)
+                .map_err(|_| Error::InvariantViolation("posting gate payload"))?;
+            let effect = vault.space_posting_gate_in_txn(&wtxn, &held_bytes, &effect)?;
             let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
             let (gate_decision_id, gate_decision, _) = gate::check_external_effect_policy(
                 &vault.store,

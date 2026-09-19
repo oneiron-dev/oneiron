@@ -56,5 +56,11 @@ use crate::write_envelope::WriteActor;
 #[cfg(test)]
 use rmpv::Value;
 
+mod posting_dispatch;
 mod space_posting;
-pub use space_posting::{SpacePostingMode, GroupPostingPreset, SpacePostingReceipt, SpacePostingPlan};
+pub use space_posting::{
+    GroupPostingPreset, SpacePostingMode, SpacePostingPlan, SpacePostingReceipt,
+};
+
+pub use posting_dispatch::FrozenSpacePosting;
+pub(crate) use posting_dispatch::frozen_space_posting;
