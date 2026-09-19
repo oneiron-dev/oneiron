@@ -67,6 +67,9 @@ class CompleteCorpusReceipts(unittest.TestCase):
         receipt = read_json("spreadsheetbench-completed-lanes.json")
         self.assertEqual(receipt["workbooks"], len(manifest))
         lo = receipt["libreoffice"]
+        pins = read_json("engine-comparison-pins.json")
+        self.assertEqual(pins["libreoffice"], lo["identity"]["engine"])
+        self.assertEqual(pins["native"], read_json("retained-native-v2-executable.json")["executable_sha256"])
         rows = read_rows("spreadsheetbench-libreoffice-rows.jsonl.gz", lo["rows_sha256"])
         self.complete(rows, manifest)
         self.classification(rows, lo)
@@ -84,6 +87,7 @@ class CompleteCorpusReceipts(unittest.TestCase):
         manifest = self.manifest("fuse")
         receipt = read_json("fuse-unchanged-classification.json")
         summary = read_json("fuse-unchanged-saved-cache-diagnostic.json")
+        self.assertEqual(read_json("engine-comparison-pins.json")["formualizer_unchanged"], summary["executable_sha256"])
         self.assertEqual(receipt["rows_sha256"], summary["rows_sha256"])
         rows = read_rows("fuse-unchanged-rows.jsonl.gz", receipt["rows_sha256"])
         self.complete(rows, manifest)

@@ -401,5 +401,15 @@
         "OK"
       ]
     }
-  ]
+  ],
+  "real_workbook_reporter": {
+    "summary_tests": 5,
+    "engine_role_pin_tests": 2,
+    "exit_code": 0,
+    "logs": [
+      "target/w7-checks/receipt-ci/summary-tests.log",
+      "target/w7-checks/receipt-ci/pin-tests.log"
+    ],
+    "actual_report": "pending complete comparisons; no default changed"
+  }
 }
