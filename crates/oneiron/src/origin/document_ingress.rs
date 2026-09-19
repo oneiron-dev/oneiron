@@ -148,10 +148,10 @@ impl Vault {
         ]
         .concat();
         self.with_write_txn(|txn| {
-            if let Some(old) = self.store.vault_meta.get(txn, &receipt_key)? {
-                if old.as_ref() != encoded {
-                    return Err(Error::ConcurrentWrite("push operation receipt changed"));
-                }
+            if let Some(old) = self.store.vault_meta.get(txn, &receipt_key)?
+                && old.as_ref() != encoded
+            {
+                return Err(Error::ConcurrentWrite("push operation receipt changed"));
             }
             // A conflicting aggregate must refuse before any document effect.
             // Both receipt layers commit together or the entire ref aborts.
