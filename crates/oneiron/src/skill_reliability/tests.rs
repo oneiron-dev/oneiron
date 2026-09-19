@@ -1289,7 +1289,8 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
             at,
         )?;
     }
-    let native = skill_reliability_posterior(&source, &skill)?.unwrap();
+    let native = project_skill_reliability_for(&source, &skill, 30)?;
+    assert_eq!(skill_reliability_posterior(&source, &skill)?, Some(native));
     let id = source
         .claims_for_subject(&skill)?
         .into_iter()
