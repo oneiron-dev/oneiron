@@ -57,7 +57,7 @@ fn rows_control_holds_strength_and_fan_in_order() -> Result<()> {
             .held
             .is_empty()
     );
-    let mut changed = config.clone();
+    let mut changed = config;
     changed.soak_ms = 0;
     changed.evidence_minimum = 1;
     vault.set_consolidation_selection(&changed)?;

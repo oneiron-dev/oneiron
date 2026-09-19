@@ -43,7 +43,7 @@ pub(crate) enum PreparedAuthorization {
     ScopedMcp {
         grant_id: EntityId,
         principal_ref: String,
-        prepared: PreparedToolCall,
+        prepared: Box<PreparedToolCall>,
     },
 }
 

@@ -2447,9 +2447,9 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
     let b = candidate(subject, "profile.name", "B", None);
     assert_eq!(plan_candidate_buckets(&[a.clone(), b.clone()])?.len(), 1);
     assert_eq!(detect_conflicts(&[a.clone(), b.clone()], &[])?.len(), 1);
-    let mut scoped_a = a.clone();
+    let mut scoped_a = a;
     scoped_a.candidate = scoped_a.candidate.with_relationship(rel_a);
-    let mut scoped_b = b.clone();
+    let mut scoped_b = b;
     scoped_b.candidate = scoped_b.candidate.with_relationship(rel_b);
     let buckets = plan_candidate_buckets(&[scoped_a.clone(), scoped_b.clone()])?;
     assert_eq!(buckets.len(), 2);

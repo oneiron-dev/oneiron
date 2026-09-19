@@ -171,7 +171,7 @@ fn attach_ref(
                 Value::from(crate::claim::CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
                 Value::from(ClaimSource::Generated.as_str()),
             ),
-            (Value::from("derived_evidence"), derived_evidence.clone()),
+            (Value::from("derived_evidence"), derived_evidence),
         ]);
         let forward = vault.store.edges_out.get(txn, &edge_key)?;
         let reverse_key = crate::store::Store::encode_edge_key(&head, EdgeKind::Supports, &source);

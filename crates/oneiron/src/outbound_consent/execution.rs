@@ -98,17 +98,17 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
         call_seq,
-        server: call.server.clone(),
-        tool: call.tool.clone(),
+        server: call.server,
+        tool: call.tool,
         payload: prepared_call.frozen_bytes().to_vec(),
         idempotency_supported,
-        resolved_endpoint: Some(call.resolved_endpoint.clone()),
+        resolved_endpoint: Some(call.resolved_endpoint),
         gate,
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
         authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
             grant_id,
             principal_ref: principal_ref.to_owned(),
-            prepared: prepared_call.clone(),
+            prepared: Box::new(prepared_call.clone()),
         },
         verified_actor: None,
     };

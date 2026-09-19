@@ -177,17 +177,17 @@ pub(crate) async fn context_board_hydrate(
     auth.require(CoreScope::Read)?;
     let mut req = json_payload(payload)?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
-    if let Some(prefix) = &standing {
-        if let Some(retrieval) = &mut req.retrieval {
-            if prefix.other_context_tokens == 0 {
-                return Err(crate::error::ApiError::bad_request(
-                    "standing floor leaves no retrieval budget",
-                    Some("standing.token_budget"),
-                )
-                .into());
-            }
-            retrieval.cap_serialized_tokens(prefix.other_context_tokens);
+    if let Some(prefix) = &standing
+        && let Some(retrieval) = &mut req.retrieval
+    {
+        if prefix.other_context_tokens == 0 {
+            return Err(crate::error::ApiError::bad_request(
+                "standing floor leaves no retrieval budget",
+                Some("standing.token_budget"),
+            )
+            .into());
         }
+        retrieval.cap_serialized_tokens(prefix.other_context_tokens);
     }
     // Identity keys on the authenticated actor, never on a free label: the
     // same key the MEMORIES cursor store already uses.

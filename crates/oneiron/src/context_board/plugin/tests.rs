@@ -733,7 +733,7 @@ fn scratchpad_is_persisted_actor_scoped_board_state_under_live_registration() {
         .expect("replicated approved install fixture");
     let registry =
         PluginSectionRegistry::rebuild(&vault, &AllowAll).expect("registered board section");
-    let section = envelope.manifest.section_id.clone();
+    let section = envelope.manifest.section_id;
     assert!(registry.get(&section).is_some());
     let input = BoardBlockWriteEnvelope {
         section_id: section.clone(),

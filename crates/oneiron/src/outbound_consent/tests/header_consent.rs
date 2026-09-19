@@ -378,7 +378,7 @@ fn prepared_effect(
         authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
             grant_id,
             principal_ref: grant.principal_ref.clone(),
-            prepared,
+            prepared: Box::new(prepared),
         },
         verified_actor: None,
     }

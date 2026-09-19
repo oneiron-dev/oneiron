@@ -148,7 +148,7 @@ pub(super) fn oracle_prepared_effect(
             brief_ref: None,
             send_ref: None,
             standing_grant_ref: None,
-            scoped_mcp_call: Some(call.clone()),
+            scoped_mcp_call: Some(call),
             counterparty_first_touch: None,
             counterparty_opted_out: false,
             counterparty_opt_out_receipt_reason: None,
@@ -160,7 +160,7 @@ pub(super) fn oracle_prepared_effect(
         authorization: PreparedAuthorization::ScopedMcp {
             grant_id: fixture.grant_id,
             principal_ref: fixture.principal_ref.clone(),
-            prepared,
+            prepared: Box::new(prepared),
         },
         verified_actor: None,
     }
