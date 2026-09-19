@@ -426,5 +426,20 @@
     "command": "python3 -m unittest discover -s scripts/tests -p test_docedit_direction.py -v",
     "tests": 1,
     "exit_code": 0
+  },
+  "fuse_native_v1_complete": {
+    "source_head_before_repair": "fc424c51",
+    "rows": 10702,
+    "recalculated": 3539,
+    "refused_or_failed": 7163,
+    "process_stack_aborts": 2,
+    "timeouts": 22,
+    "evidence": "crates/oneiron-docedit/tests/fixtures/real-workbooks/fuse-native-v1-saved-cache-diagnostic.json",
+    "rows_sha256": "78d921280ef3fece96d40a46bfafe219da1643a5f9ae9e368af494c41c8aec13",
+    "tests": {
+      "command": "python3 -m unittest discover -s scripts/tests -p test_real_workbook_receipts.py -v",
+      "passed": 4
+    },
+    "acceptance_boundary": "complete historical native run and saved-cache diagnostic only; no fresh Excel accuracy or repaired-source proof"
   }
 }

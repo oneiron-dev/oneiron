@@ -96,6 +96,18 @@ class CompleteCorpusReceipts(unittest.TestCase):
         self.assertEqual(receipt["identity"]["executable_sha256"], summary["executable_sha256"])
         self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["spreadsheetbench"]["manifest_sha256"])
 
+    def test_historical_native_fuse_lane_covers_complete_cohort(self):
+        manifest = self.manifest("fuse")
+        receipt = read_json("fuse-native-v1-classification.json")
+        summary = read_json("fuse-native-v1-saved-cache-diagnostic.json")
+        self.assertEqual(receipt["rows_sha256"], summary["rows_sha256"])
+        rows = read_rows("fuse-native-v1-rows.jsonl.gz", summary["rows_sha256"])
+        self.complete(rows, manifest)
+        self.classification(rows, receipt)
+        self.diagnostic(rows, summary)
+        self.assertEqual(summary["executable_sha256"], read_json("spreadsheetbench-completed-lanes.json")["retained_native"]["identity"]["executable_sha256"])
+        self.assertEqual(summary["manifest_sha256"], read_json("provenance.json")["fuse"]["manifest_sha256"])
+
     def test_fuse_unchanged_complete_lane_matches_pinned_extraction(self):
         manifest = self.manifest("fuse")
         receipt = read_json("fuse-unchanged-classification.json")

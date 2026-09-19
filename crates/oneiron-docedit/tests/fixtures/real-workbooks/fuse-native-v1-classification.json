@@ -1,0 +1,37 @@
+{
+  "identity": {
+    "mode": "saved-cache-diagnostic",
+    "fresh_excel_truth": false,
+    "executable_sha256": "a627b1f69e1ea86144d5ca9cc188e5aa128e350ee007db78d60f246bce5e2203",
+    "manifest_sha256": "f211b1a811d493afe0e82b5faadc6093ec5fefaff7579aa021e2de8cef438404",
+    "comparator_sha256": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+    "timeout_seconds": 120
+  },
+  "workbooks": 10702,
+  "recalculated": 3539,
+  "refused": 7163,
+  "failure_counts": {
+    "Error: UnsupportedWorkbook(\"external-rels-target\")\n": 1625,
+    "Error: UnsupportedWorkbook(\"defined names\")\n": 3753,
+    "Error: UnsupportedWorkbook(\"external-links-part\")\n": 855,
+    "Error: UnsupportedWorkbook(\"shared, array, or data-table formula\")\n": 719,
+    "Error: UnsupportedWorkbook(\"iterative calculation settings\")\n": 21,
+    "timed-out": 22,
+    "Error: UnsupportedWorkbook(\"table references\")\n": 45,
+    "Error: Package(InvalidPackage(\"missing EOCD\"))\n": 43,
+    "Error: UnsupportedWorkbook(\"non-worksheet sheet\")\n": 20,
+    "Error: UnsupportedWorkbook(\"OOXML escaped input text\")\n": 17,
+    "Error: UnsupportedWorkbook(\"formula needs caller context or volatile reference semantics\")\n": 4,
+    "Error: UnsupportedWorkbook(\"external-formula-reference\")\n": 2,
+    "Error: Engine(\"Engine error: #CIRC!: Self-reference detected\")\n": 1,
+    "Error: InvalidWorkbook(\"XML node or depth limit\")\n": 25,
+    "Error: InvalidWorkbook(\"shared string index\")\n": 1,
+    "Error: InvalidWorkbook(\"duplicate or out-of-grid cell\")\n": 3,
+    "Error: InvalidWorkbook(\"attribute equals\")\n": 3,
+    "\nthread '<unknown>' (87801958) has overflowed its stack\nfatal runtime error: stack overflow, aborting\n": 1,
+    "\nthread '<unknown>' (88048466) has overflowed its stack\nfatal runtime error: stack overflow, aborting\n": 1,
+    "Error: UnsupportedWorkbook(\"precision-as-displayed\")\n": 2
+  },
+  "rows_sha256": "78d921280ef3fece96d40a46bfafe219da1643a5f9ae9e368af494c41c8aec13",
+  "accuracy_status": "Historical native-v1 saved-cache diagnostic only; repaired native-v2 and fresh Excel comparisons are still running."
+}
