@@ -160,6 +160,14 @@ pub(crate) enum SyncMessage {
         pubkey: [u8; 32],
         pop_sig: [u8; 64],
     },
+    /// Entity-document traffic (v9).
+    Doc {
+        entity: oneiron::EntityId,
+        kind: u8,
+        payload: Vec<u8>,
+    },
+    /// Non-nesting document batch.
+    Batch(Vec<SyncMessage>),
     /// WindowSync (tag 10). Routed to per-window handler.
     WindowSync {
         window_key: String,
@@ -173,17 +181,42 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
     if data.is_empty() {
         return Err(ProtocolError::InvalidPayload("empty message"));
     }
+    use oneiron::sync::transport::{
+        TAG_BATCH, TAG_DOCUMENT, decode_document, decode_document_batch,
+    };
     let tag = data[0];
     let payload = &data[1..];
 
     let max = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
-    if matches!(tag, TAG_RPC | TAG_SUB) && payload.len() > max {
+    if data.len() > max {
         return Err(ProtocolError::FrameTooLarge {
             size: payload.len(),
             max,
         });
     }
     match tag {
+        TAG_DOCUMENT => {
+            let doc = decode_document(payload)
+                .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
+            Ok(SyncMessage::Doc {
+                entity: doc.entity,
+                kind: doc.kind,
+                payload: doc.payload.to_vec(),
+            })
+        }
+        TAG_BATCH => {
+            let docs = decode_document_batch(payload)
+                .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
+            Ok(SyncMessage::Batch(
+                docs.into_iter()
+                    .map(|doc| SyncMessage::Doc {
+                        entity: doc.entity,
+                        kind: doc.kind,
+                        payload: doc.payload.to_vec(),
+                    })
+                    .collect(),
+            ))
+        }
         TAG_RPC => Ok(SyncMessage::Rpc(payload.to_vec())),
         TAG_SUB => Ok(SyncMessage::Sub(payload.to_vec())),
         TAG_SYNC_UPDATE => Ok(SyncMessage::RootUpdate(payload.to_vec())),

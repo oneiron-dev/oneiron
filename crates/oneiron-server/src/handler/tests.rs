@@ -2416,7 +2416,7 @@ fn protocol_hello_validation_literals() {
         Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
     );
     assert_eq!(
-        validate_protocol_hello(&[3, 8]),
+        validate_protocol_hello(&[3, 9]),
         Ok(protocol::PROTOCOL_VERSION)
     );
 
@@ -3520,5 +3520,128 @@ async fn a_silent_peer_gets_re_consulted_on_the_tick_during_the_pre_handover_dra
         guarded.socket.is_none(),
         "the refusal must end the transport: nothing may remain that could drain the \
          application frame later"
+    );
+}
+
+#[tokio::test]
+async fn document_batch_socket_admission_edit_ack_and_revocation() {
+    use oneiron::sync::transport::{
+        self, document_sub_tags, encode_document, encode_document_batch,
+    };
+    let (_dir, server) = test_server();
+    let client_dir = tempfile::tempdir().unwrap();
+    let client_vault =
+        Arc::new(oneiron::Vault::open(client_dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let manager = Arc::new(oneiron::sync::WindowManager::new(
+        client_vault.clone(),
+        Arc::new(oneiron::sync::bridge::Materializer::new()),
+        "client",
+    ));
+    let (mut client, _events) =
+        oneiron::sync::SyncClient::new(manager.clone(), oneiron::sync::SyncClientConfig::default())
+            .unwrap();
+    let id = oneiron::EntityId::now();
+    for vault in [server.vault.as_ref(), client_vault.as_ref()] {
+        vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"ledger",
+            )
+            .unwrap();
+    }
+    let member = oneiron::EntityId::now();
+    let grant_id = oneiron::EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        test_selector_scope(),
+        member,
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&server.vault, &grant_id, &grant, 1).unwrap();
+    let selector = oneiron::sync::SyncSelector::new(
+        grant_id,
+        member,
+        oneiron::sync::SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    let source = server.reassert_manager.documents().open(id).unwrap();
+    source.edit_text(0, 0, "shared").unwrap();
+    manager.documents().subscribe_entity(id, &selector).unwrap();
+    let requests = manager.documents().request_frames().unwrap();
+    let batch = encode_document_batch(&requests).into_result().unwrap();
+    let (direct, mut replies) = mpsc::unbounded_channel();
+    let mut state = test_selector_conn_state();
+    handle_sync_message(
+        &server,
+        1,
+        protocol::parse_message(&batch).unwrap(),
+        &direct,
+        &mut state,
+    )
+    .await
+    .unwrap();
+    let initial = replies.try_recv().unwrap();
+    assert_eq!(
+        transport::decode_document(&initial[1..]).unwrap().kind,
+        document_sub_tags::STATE
+    );
+    for ack in client.handle_server_message(&initial).unwrap() {
+        handle_sync_message(
+            &server,
+            1,
+            protocol::parse_message(&ack).unwrap(),
+            &direct,
+            &mut state,
+        )
+        .await
+        .unwrap();
+    }
+    let local = manager.documents().open(id).unwrap();
+    assert_eq!(local.text().unwrap(), "shared");
+    let edit = local.edit_text(6, 0, " edit").unwrap();
+    assert_eq!(local.pending_frames().unwrap().len(), 1);
+    handle_sync_message(
+        &server,
+        1,
+        protocol::parse_message(&edit).unwrap(),
+        &direct,
+        &mut state,
+    )
+    .await
+    .unwrap();
+    let ack = replies.try_recv().unwrap();
+    client.handle_server_message(&ack).unwrap();
+    assert!(local.pending_frames().unwrap().is_empty());
+    assert_eq!(source.text().unwrap(), "shared edit");
+
+    // A queued notice cannot disclose after its grant is gone.
+    let notice = source.edit_text(11, 0, "!").unwrap();
+    server.vault.delete_entity(&grant_id).unwrap();
+    assert!(
+        super::documents::document_delivery(&server, &state, &notice)
+            .unwrap()
+            .is_empty()
+    );
+    let no_admission = encode_document(
+        oneiron::EntityId::now(),
+        document_sub_tags::UPDATE,
+        b"not-authorized",
+    )
+    .into_result()
+    .unwrap();
+    assert!(
+        handle_sync_message(
+            &server,
+            1,
+            protocol::parse_message(&no_admission).unwrap(),
+            &direct,
+            &mut state
+        )
+        .await
+        .is_err()
     );
 }

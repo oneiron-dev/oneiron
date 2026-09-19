@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
+mod documents;
+pub use documents::{
+    DocumentFrame, TAG_BATCH, TAG_DOCUMENT, decode_document, decode_document_batch,
+    document_sub_tags, encode_document, encode_document_batch,
+};
+
 // ─── Custom Message Tags ──────────────────────────────────────────────────────
 
 /// CRDT update bytes for the root doc.
@@ -77,7 +83,8 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// v7 = Loro-native ephemeral tag 1 payloads for selector-capable clients,
 /// kept distinct from v6 for broadcast filtering.
 /// v8 = in-band bound app-tier RPC and subscription frames.
-pub const PROTOCOL_VERSION: u8 = 8;
+/// v9 = entity-document frames and document batches (ARCH-0023b/0044).
+pub const PROTOCOL_VERSION: u8 = 9;
 /// Sync version that introduces app-tier tags and their close codes.
 pub const APP_TIER_PROTOCOL_VERSION_VERSION: u8 = 8;
 /// Selector-capable sync-only peers retain the v7 wire semantics.

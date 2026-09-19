@@ -242,7 +242,7 @@ fn copy_admitted_entities(
 }
 
 #[cfg(feature = "sync")]
-fn admit_federated_entity_blob(
+pub(crate) fn admit_federated_entity_blob(
     vault: &Vault,
     policy: &crate::gate::PolicyManifestResolution,
     key: &str,
@@ -294,7 +294,7 @@ fn admit_federated_entity_blob(
     }
 
     let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
-    let body = restamp_federated_claim_source(body);
+    let body = downweight_federated_claim(restamp_federated_claim_source(body));
     crate::gate::check_federated_claim_admission(&vault.store, &body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;
 
@@ -302,6 +302,24 @@ fn admit_federated_entity_blob(
     admitted.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
     admitted.extend_from_slice(&encoded);
     Ok(admitted)
+}
+
+/// ARCH-0043 requires a down-weight but does not prescribe a factor.
+/// Both federated roles use one conservative multiplier, pinned by admission tests.
+fn downweight_federated_claim(mut body: crate::claim::ClaimBody) -> crate::claim::ClaimBody {
+    const SCALE: f32 = 0.5;
+    const AUDIT_KEY: &str = "federated_original_confidence";
+    let original = body.confidence;
+    body.confidence *= SCALE;
+    let mut entries = match body.scope.take() {
+        Some(rmpv::Value::Map(entries)) => entries,
+        Some(scope) => vec![(rmpv::Value::from("pre_federated_confidence_scope"), scope)],
+        None => Vec::new(),
+    };
+    entries.retain(|(key, _)| key.as_str() != Some(AUDIT_KEY));
+    entries.push((rmpv::Value::from(AUDIT_KEY), rmpv::Value::F32(original)));
+    body.scope = Some(rmpv::Value::Map(entries));
+    body
 }
 
 /// Per-kind body validation for the non-CLAIM federation admission arm.

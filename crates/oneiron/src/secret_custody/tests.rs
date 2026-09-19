@@ -675,7 +675,7 @@ fn replicated_put_door_rejects_secret_custody_byte() {
     let (_tmp, vault) = temp_vault();
     let rec = record(
         "replicated",
-        CustodyClass::CustodyPortable,
+        CustodyClass::CustodyDeviceBound,
         b"hunter2",
         vec![],
     );
@@ -1041,4 +1041,75 @@ fn device_only_is_stored_but_inert_on_cross_vault() {
             assert_eq!(vault.resolve_secret_ref("xv-wider").expect("resolve"), None,);
         }
     }
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()> {
+    use crate::TimeRange;
+    use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
+    use crate::sync::window::{
+        export_window_updates_since, forward_rematerialize, reverse_rematerialize,
+    };
+    use crate::sync::{WindowKey, bridge::Materializer, schema::create_window_doc};
+    let key = WindowKey::new("2026-03");
+    let ts = key.start_timestamp().unwrap() + 60;
+    for (class, device_only, allowed) in [
+        (CustodyClass::CustodyPortable, false, true),
+        (CustodyClass::CustodyPortable, true, false),
+        (CustodyClass::CustodyDeviceBound, false, false),
+        (CustodyClass::CrossVault, false, false),
+    ] {
+        let (_src_dir, src) = temp_vault();
+        let (_dst_dir, dst) = temp_vault();
+        let mut rec = record("roundtrip", class, b"custody-canary", vec![]);
+        rec.device_only = device_only;
+        rec.registered_at = ts;
+        let id = src.register_secret(rec.clone())?;
+        let raw = src.get_raw_unsealed(&id)?.unwrap();
+        let doc = create_window_doc("source", &key);
+        reverse_rematerialize(&src, &doc, &key)?;
+        assert_eq!(
+            map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_some(),
+            allowed
+        );
+        let bytes = export_window_updates_since(
+            &src,
+            &key,
+            &doc,
+            &loro::VersionVector::default().encode(),
+        )?;
+        let received = create_window_doc("receiver", &key);
+        received.import(&bytes).unwrap();
+        assert_eq!(
+            map_get_bytes(&received.get_map("entities"), &id.to_hex()).is_some(),
+            allowed
+        );
+        forward_rematerialize(&dst, &received, &Materializer::new(), &key)?;
+        assert_eq!(dst.get_raw_unsealed(&id)?.is_some(), allowed);
+        if allowed {
+            assert_eq!(dst.get_raw_unsealed(&id)?.unwrap(), raw);
+        } else {
+            // A hostile peer bypassing egress still cannot write the forbidden row.
+            let hostile = create_window_doc("hostile", &key);
+            map_insert_bytes(&hostile.get_map("entities"), &id.to_hex(), &raw)?;
+            hostile.commit();
+            forward_rematerialize(&dst, &hostile, &Materializer::new(), &key)?;
+            assert!(dst.get_raw_unsealed(&id)?.is_none());
+            let body = encode_secret_custody_body(&rec)?;
+            assert!(
+                dst.batch()
+                    .put_replicated(
+                        &EntityId::now(),
+                        ENTITY_TYPE_SECRET_CUSTODY,
+                        TimeRange { start: ts, end: ts },
+                        ts,
+                        &body
+                    )
+                    .commit()
+                    .is_err()
+            );
+        }
+    }
+    Ok(())
 }

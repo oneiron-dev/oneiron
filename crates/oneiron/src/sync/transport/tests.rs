@@ -4,7 +4,7 @@ use core::assert_matches;
 #[test]
 fn protocol_hello_wire_literals() {
     // Contract literals: the hello frame is EXACTLY
-    // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=8]. A drifted tag or
+    // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=9]. A drifted tag or
     // version byte is a silent wire break — assert the raw bytes.
     // Version pinned 1→2 by the ONE-1140 atomic wire train (OD-5):
     // lease frames + connect sequence + leases registry + attested
@@ -16,7 +16,7 @@ fn protocol_hello_wire_literals() {
     // Version pinned 4/5→6/7 by SYNC-EPH-1 because tag 1 payloads changed
     // from JSON awareness to Loro-native EphemeralStore bytes.
     assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
-    assert_eq!(PROTOCOL_VERSION, 8, "wire protocol version is pinned to 8");
+    assert_eq!(PROTOCOL_VERSION, 9, "wire protocol version is pinned to 9");
     assert_eq!(
         LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 6,
         "legacy full-window version is pinned to 6"

@@ -69,3 +69,16 @@ pub(super) fn validate_protocol_hello(frame: &[u8]) -> Result<u8, u16> {
         _ => Err(close_codes::VERSION_MISMATCH),
     }
 }
+
+#[cfg(test)]
+mod document_version_tests {
+    use super::*;
+    #[test]
+    fn v9_document_protocol_is_accepted_and_v8_is_not() {
+        assert_eq!(validate_protocol_hello(&[3, 9]), Ok(9));
+        assert_eq!(
+            validate_protocol_hello(&[3, 8]),
+            Err(close_codes::VERSION_MISMATCH)
+        );
+    }
+}

@@ -171,21 +171,26 @@ pub(super) fn apply_ops_with_origin(
                         entity_type,
                     )));
                 }
-                // ONE-1865 arm-pending seal (SECRET-01, ONE-1919): the custody
-                // record is the secret VALUE's home, so a replicated carry of
-                // byte 77 would materialize a peer-supplied plaintext
-                // `value_bytes` straight into LMDB. `Vault::register_secret`
-                // is the ONE write path and it uses the engine-internal shape
-                // (`allow_maintenance` WITHOUT `allow_reserved_predicate`);
-                // the both-flags shape here is exclusively the CRDT replay
-                // door (`window::forward_rematerialize` → `put_replicated`),
-                // which must never admit the byte. The custody module owns the
-                // rejection constructor so one grep audits the whole seal.
+                // Same-vault custody replication is opt-out per credential. A
+                // remote portable body cannot widen a locally narrowed record.
                 if allow_maintenance
                     && allow_reserved_predicate
                     && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                 {
-                    return Err(crate::secret_custody::reject_secret_custody_byte());
+                    let incoming_allowed = crate::secret_custody::custody_sync_allowed(&data);
+                    let local_allowed = match store.entities.get(&*wtxn, id.as_bytes())? {
+                        Some(raw)
+                            if raw.first()
+                                == Some(&crate::registry::ENTITY_TYPE_SECRET_CUSTODY) =>
+                        {
+                            raw.get(ENTITY_METADATA_HEADER_LEN..)
+                                .is_some_and(crate::secret_custody::custody_sync_allowed)
+                        }
+                        _ => true,
+                    };
+                    if !incoming_allowed || !local_allowed {
+                        return Err(crate::secret_custody::reject_secret_custody_byte());
+                    }
                 }
                 if allow_maintenance {
                     store.validate_entity_type(entity_type)?;
