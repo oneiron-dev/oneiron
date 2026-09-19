@@ -1,11 +1,8 @@
 //! Headerless-residue delete leg: scope probe, tombstone publish, purge, and conditional receipt.
 
-use uuid::Uuid;
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::unix_seconds_now;
 
 use super::super::gate::{GatedDeletion, reverify_deletion_authority_when_unpublished};
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
@@ -36,7 +33,7 @@ impl Vault {
         }
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
         // above says there is something to erase.
-        let request_uuid = Uuid::now_v7();
+        let request_uuid = uuid::Uuid::from_bytes(self.store.clock.ulid()?);
 
         // ONE-1132: headerless residue previously left NO CRDT record, so
         // the orphan id could re-sync forever. There is no `learned_at` to
@@ -144,8 +141,8 @@ impl Vault {
             });
         }
 
-        let receipt_id = EntityId::now();
-        let hard_purge_complete_at = unix_seconds_now();
+        let receipt_id = self.store.clock.entity_id()?;
+        let hard_purge_complete_at = self.store.clock.now_recorded_at();
         // A headerless residue has no decodable body, so no provenance
         // capture is possible (ARCH-0038: no body ⇒ no EdgeRef to refresh,
         // no refs for the sweep scope).
@@ -153,6 +150,7 @@ impl Vault {
             &mut wtxn,
             &receipt_id,
             RedactionReceiptInput {
+                actor_principal: gate.as_ref().map(|gate| gate.actor_principal()),
                 request_id: request_uuid.to_string(),
                 scope: RedactionScope::entity(id),
                 reason,

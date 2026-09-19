@@ -9,6 +9,16 @@ use crate::error::{Error, Result};
 use crate::{EntityId, TimeRange, Vault};
 use heed::{RoTxn, RwTxn};
 impl DependencyIndex for Vault {
+    fn port_dependency_complete_regeneration(
+        &self,
+        txn: &mut RwTxn<'_>,
+        dependent: &EntityId,
+        regenerated_at: u64,
+        sources: &[SourceSpan],
+    ) -> Result<bool> {
+        super::regeneration::complete(&self.store, txn, dependent, regenerated_at, sources)
+    }
+
     fn port_dependency_put(
         &self,
         txn: &mut RwTxn<'_>,
@@ -30,16 +40,38 @@ const BY_ENTITY: &[u8] = b"ports:change_entity:v1:";
 const BY_ACTOR: &[u8] = b"ports:change_actor:v1:";
 impl ChangeLogStore for Vault {
     fn port_changelog_append(&self, txn: &mut RwTxn<'_>, record: &ChangeLogRecord) -> Result<()> {
+        self.store.port_changelog_append(txn, record)
+    }
+    fn port_changelog_list_by_entity(
+        &self,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        limit: usize,
+    ) -> Result<Vec<ChangeLogRecord>> {
+        self.store.port_changelog_list_by_entity(txn, entity, limit)
+    }
+    fn port_changelog_list_by_actor(
+        &self,
+        txn: &RoTxn<'_>,
+        actor: &EntityId,
+        limit: usize,
+    ) -> Result<Vec<ChangeLogRecord>> {
+        self.store.port_changelog_list_by_actor(txn, actor, limit)
+    }
+}
+impl ChangeLogStore for crate::store::Store {
+    fn port_changelog_append(&self, txn: &mut RwTxn<'_>, record: &ChangeLogRecord) -> Result<()> {
+        recorded_at_in_txn(self, txn)?;
         let key = [CHANGE, &record.id].concat();
         let bytes = rmp_serde::to_vec_named(record)
             .map_err(|_| Error::InvariantViolation("changelog encode"))?;
-        if let Some(prior) = self.store.vault_meta.get(txn, &key)? {
+        if let Some(prior) = self.vault_meta.get(txn, &key)? {
             if prior.as_ref() != bytes.as_slice() {
                 return Err(Error::InvariantViolation("changelog rows are immutable"));
             }
             return Ok(());
         }
-        self.store.vault_meta.put(txn, &key, &bytes)?;
+        self.vault_meta.put(txn, &key, &bytes)?;
         for (family, owner) in [
             (BY_ENTITY, record.entity),
             (BY_ACTOR, record.actor_principal),
@@ -51,7 +83,7 @@ impl ChangeLogStore for Vault {
                 &record.id,
             ]
             .concat();
-            self.store.vault_meta.put(txn, &index, &record.id)?;
+            self.vault_meta.put(txn, &index, &record.id)?;
         }
         Ok(())
     }
@@ -73,7 +105,7 @@ impl ChangeLogStore for Vault {
     }
 }
 fn list_changes(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
     family: &[u8],
     owner: &EntityId,
@@ -81,8 +113,7 @@ fn list_changes(
 ) -> Result<Vec<ChangeLogRecord>> {
     let prefix = [family, owner.as_bytes()].concat();
     let mut result = Vec::new();
-    for row in vault
-        .store
+    for row in store
         .vault_meta
         .prefix_iter(txn, &prefix)?
         .take(limit.min(100_000))
@@ -92,8 +123,7 @@ fn list_changes(
             return Err(Error::CorruptedIndex("changelog index id"));
         }
         let key = [CHANGE, id.as_ref()].concat();
-        let raw = vault
-            .store
+        let raw = store
             .vault_meta
             .get(txn, &key)?
             .ok_or(Error::CorruptedIndex("changelog index"))?;
@@ -201,6 +231,14 @@ impl BlobStore for Vault {
     }
 }
 impl JobQueue for Vault {
+    fn port_job_enqueue_scoped(
+        &self,
+        txn: &mut RwTxn<'_>,
+        input: EnqueueAttempt,
+        scope: JobScope<'_>,
+    ) -> Result<EnqueueOutcome> {
+        AttemptQueue::new(self).port_job_enqueue_scoped(txn, input, scope)
+    }
     fn port_job_enqueue(
         &self,
         txn: &mut RwTxn<'_>,

@@ -87,7 +87,7 @@ impl Vault {
         // ONE-1149: minted only AFTER the header read proves there is
         // something to erase — a delete that finds nothing must never mint a
         // request id (the headerless leg mints after its own scope probe).
-        let request_uuid = Uuid::from_bytes(self.store.clock.ulid());
+        let request_uuid = Uuid::from_bytes(self.store.clock.ulid()?);
 
         let tombstone = TombstoneValueV2 {
             reason: reason.into(),
@@ -332,7 +332,7 @@ impl Vault {
             gate_decision.as_ref().map(|decision| decision.decision_id),
         );
 
-        let receipt_id = EntityId::now();
+        let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
         // The purge txn: the one that actually tears. It re-checks authority
@@ -436,6 +436,7 @@ impl Vault {
             &mut wtxn,
             &receipt_id,
             RedactionReceiptInput {
+                actor_principal: gate.as_ref().map(|gate| gate.actor_principal()),
                 request_id: request_uuid.to_string(),
                 scope,
                 reason,

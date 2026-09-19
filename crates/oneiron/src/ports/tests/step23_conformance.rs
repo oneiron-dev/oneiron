@@ -73,9 +73,10 @@ fn audit_and_blobs<P: Backend>(ports: &P) -> Result<()> {
     ));
     drop(txn);
     let txn = ports.read()?;
-    assert_eq!(
-        ports.port_changelog_list_by_entity(&txn, &a, 10)?,
-        vec![record]
+    assert!(
+        ports
+            .port_changelog_list_by_entity(&txn, &a, 100)?
+            .contains(&record)
     );
     Ok(())
 }
@@ -217,5 +218,136 @@ fn clock_is_injected_and_persisted_floor_survives_reopen() -> Result<()> {
     // Sharing one source in a config must not share the per-vault floor.
     let (_other_temp, other) = crate::test_util::open_test_vault_with(config(&clock));
     assert_eq!(enqueue(&other)?, 1);
+    Ok(())
+}
+
+#[test]
+fn production_mutations_audit_atomically_and_keep_world_time() -> Result<()> {
+    let clock = ManualClock::new(700);
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config(&clock));
+    let entity = vault.new_entity_id()?;
+    let occurred = TimeRange { start: 20, end: 25 };
+    vault.put_entity(&entity, ENTITY_TYPE_PERSON, occurred, 30, b"original")?;
+    let records = {
+        let txn = vault.store.env.read_txn()?;
+        vault.port_changelog_list_by_entity(&txn, &entity, 100)?
+    };
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].op, ChangeOp::Create);
+    assert_eq!(records[0].occurred_at, 20);
+    assert_eq!(records[0].recorded_at, 700);
+    assert_eq!(records[0].actor_person, None);
+    assert_eq!(records[0].patch, None);
+    let failed: Result<()> = vault.with_write_txn(|txn| {
+        vault.port_entity_put(
+            txn,
+            &entity,
+            &EntityRecord {
+                entity_type: ENTITY_TYPE_PERSON,
+                occurred,
+                learned_at: 30,
+                body: b"rolled back".to_vec(),
+            },
+        )?;
+        Err(Error::InvariantViolation("abort fixture"))
+    });
+    assert!(failed.is_err());
+    let after = {
+        let txn = vault.store.env.read_txn()?;
+        vault.port_changelog_list_by_entity(&txn, &entity, 100)?
+    };
+    assert_eq!(records, after);
+    assert_eq!(vault.get(&entity)?, Some(b"original".to_vec()));
+    Ok(())
+}
+
+#[test]
+fn repeated_id_source_never_overwrites_queue_even_after_reopen() -> Result<()> {
+    struct Repeated;
+    impl IdGen for Repeated {
+        fn ulid(&self) -> [u8; 16] {
+            [0x71; 16]
+        }
+    }
+    let clock = ManualClock::new(100);
+    let mut config = config(&clock);
+    config.store_clock = StoreClock::new(clock, std::sync::Arc::new(Repeated));
+    let (dir, vault) = crate::test_util::open_test_vault_with(config.clone());
+    let enqueue = |vault: &Vault| -> Result<AttemptRecord> {
+        match AttemptQueue::new(vault).enqueue(EnqueueAttempt {
+            kind: "clock.unique".into(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now: 900,
+        })? {
+            EnqueueOutcome::Enqueued(record) => Ok(record),
+            EnqueueOutcome::Existing(_) => panic!("no dedupe key"),
+        }
+    };
+    let first = enqueue(&vault)?;
+    let second = enqueue(&vault)?;
+    assert_ne!(first.id, second.id);
+    drop(vault);
+    let vault = Vault::open(dir.path(), config)?;
+    let third = enqueue(&vault)?;
+    assert_ne!(first.id, third.id);
+    assert_ne!(second.id, third.id);
+    assert_eq!(AttemptQueue::new(&vault).get(first.id)?, Some(first));
+    assert_eq!(AttemptQueue::new(&vault).get(second.id)?, Some(second));
+    Ok(())
+}
+
+#[test]
+fn scoped_enqueue_composes_without_collapsing_actor_dedupe() -> Result<()> {
+    let clock = ManualClock::new(300);
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config(&clock));
+    let queue = AttemptQueue::new(&vault);
+    let input = EnqueueAttempt {
+        kind: "scope.clock".into(),
+        payload: vec![],
+        dedupe_key: Some("same".into()),
+        run_id: None,
+        now: 999,
+    };
+    let mut txn = vault.store.env.write_txn()?;
+    let first = queue.port_job_enqueue_scoped(
+        &mut txn,
+        input.clone(),
+        JobScope {
+            task_ref: Some("task-a".into()),
+            dedupe_actor_ref: Some("actor-a"),
+        },
+    )?;
+    let EnqueueOutcome::Enqueued(first) = first else {
+        panic!("first")
+    };
+    let second = queue.port_job_enqueue_scoped(
+        &mut txn,
+        input.clone(),
+        JobScope {
+            task_ref: Some("task-b".into()),
+            dedupe_actor_ref: Some("actor-b"),
+        },
+    )?;
+    let EnqueueOutcome::Enqueued(second) = second else {
+        panic!("second actor")
+    };
+    assert_ne!(first.id, second.id);
+    assert_eq!(first.created_at, 300);
+    assert_eq!(first.task_ref.as_deref(), Some("task-a"));
+    assert_eq!(second.task_ref.as_deref(), Some("task-b"));
+    let repeat = queue.port_job_enqueue_scoped(
+        &mut txn,
+        input,
+        JobScope {
+            task_ref: Some("not-a-rebind".into()),
+            dedupe_actor_ref: Some("actor-a"),
+        },
+    )?;
+    assert_eq!(repeat, EnqueueOutcome::Existing(first.clone()));
+    drop(txn);
+    assert_eq!(queue.get(first.id)?, None);
+    assert_eq!(queue.get(second.id)?, None);
     Ok(())
 }

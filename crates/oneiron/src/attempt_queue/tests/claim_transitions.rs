@@ -5,7 +5,10 @@ use crate::error::ArtifactError;
 
 #[test]
 fn attempt_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let queue = AttemptQueue::new(&vault);
 
     assert_eq!(
@@ -19,13 +22,15 @@ fn attempt_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
     let EnqueueOutcome::Enqueued(first) = queue.enqueue(enqueue("first", None, 10))? else {
         panic!("expected first enqueue");
     };
+    clock.set(20);
     let EnqueueOutcome::Enqueued(second) = queue.enqueue(enqueue("second", None, 20))? else {
         panic!("expected second enqueue");
     };
 
+    clock.set(30);
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 30,
+        now: 999,
     })?
     else {
         panic!("expected claimed attempt");
@@ -39,9 +44,10 @@ fn attempt_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
     let persisted = queue.get(first.id)?.expect("claimed attempt persisted");
     assert_eq!(persisted, claimed);
 
+    clock.set(40);
     let ClaimOutcome::Claimed(next) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
-        now: 40,
+        now: 999,
     })?
     else {
         panic!("expected second claimed attempt");

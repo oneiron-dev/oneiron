@@ -33,7 +33,12 @@ pub fn authorize_sync_selector(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<()> {
-    authorize_sync_selector_at(vault, grant_scope, selector, crate::unix_seconds_now())
+    authorize_sync_selector_at(
+        vault,
+        grant_scope,
+        selector,
+        vault.store.clock.now_recorded_at(),
+    )
 }
 
 /// [`authorize_sync_selector`] against an explicit clock.

@@ -1,15 +1,16 @@
 //! In-memory transactional conformance adapter. Commit is explicit; drop rolls back.
 mod auxiliary;
+mod query;
 use super::*;
 use crate::attempt_queue::*;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-use crate::deletion::{DeleteReason, TombstoneValueV2};
+use crate::deletion::TombstoneValueV2;
 use crate::edge::EdgeInfo;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::*;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
-use crate::{EdgeKind, EntityId, HydratedShortId, TimeRange};
+use crate::{EdgeKind, EntityId, TimeRange};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{Deref, DerefMut};
@@ -20,10 +21,12 @@ pub(super) struct Snapshot {
     edges: BTreeMap<(EntityId, u8, EntityId), Vec<u8>>,
     vectors: BTreeMap<EntityId, Vec<f32>>,
     texts: BTreeMap<EntityId, String>,
+    phonetic: BTreeMap<String, BTreeSet<EntityId>>,
     shorts: BTreeMap<EntityId, (String, u8)>,
     counters: BTreeMap<u8, u64>,
     tombstones: BTreeMap<EntityId, TombstoneValueV2>,
     stale: BTreeSet<EntityId>,
+    stale_revision: BTreeMap<EntityId, u64>,
     dependencies: BTreeMap<SourceSpan, BTreeSet<EntityId>>,
     changes: BTreeMap<[u8; 16], ChangeLogRecord>,
     blobs: BTreeMap<[u8; 32], (Vec<u8>, BTreeSet<EntityId>)>,
@@ -46,6 +49,30 @@ pub(super) struct Memory {
     pub(super) clock: StoreClock,
 }
 impl Memory {
+    fn audit_mutation(
+        &self,
+        txn: &mut MemoryWrite,
+        entity: EntityId,
+        op: ChangeOp,
+        occurred_at: u64,
+        input: &[u8],
+    ) -> Result<()> {
+        self.port_changelog_append(
+            txn,
+            &ChangeLogRecord {
+                id: self.clock.ulid()?,
+                entity,
+                op,
+                actor_principal: super::mutation::storage_service_principal()?,
+                actor_person: None,
+                occurred_at,
+                recorded_at: self.clock.now_recorded_at(),
+                input_hash: *blake3::hash(input).as_bytes(),
+                patch: None,
+                reason: None,
+            },
+        )
+    }
     pub(super) fn new(clock: StoreClock) -> Self {
         Self {
             committed: RefCell::new(Snapshot::default()),
@@ -83,7 +110,9 @@ impl EntityStore for Memory {
         if row.is_some_and(|r| r.entity_type == ENTITY_TYPE_SECRET_CUSTODY) {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
-        Ok(row.cloned())
+        Ok(row
+            .filter(|row| !super::safe_read::body_is_stale(&row.body))
+            .cloned())
     }
     fn port_entity_put(
         &self,
@@ -101,6 +130,14 @@ impl EntityStore for Memory {
                     attempted: row.entity_type,
                 },
             ));
+        }
+        if txn.entities.get(id) != Some(row) {
+            let op = if txn.entities.contains_key(id) {
+                ChangeOp::Update
+            } else {
+                ChangeOp::Create
+            };
+            self.audit_mutation(txn, *id, op, row.occurred.start, &row.body)?;
         }
         txn.entities.insert(*id, row.clone());
         if crate::registry::short_id_prefix(row.entity_type).is_ok() {
@@ -132,7 +169,17 @@ impl EntityStore for Memory {
         txn.shorts.remove(id);
         txn.vectors.remove(id);
         txn.texts.remove(id);
-        Ok(txn.entities.remove(id).is_some())
+        let existed = txn.entities.remove(id).is_some();
+        if existed {
+            self.audit_mutation(
+                txn,
+                *id,
+                ChangeOp::Delete,
+                self.clock.now_recorded_at(),
+                id.as_bytes(),
+            )?;
+        }
+        Ok(existed)
     }
     fn port_list_turns_by_session(
         &self,

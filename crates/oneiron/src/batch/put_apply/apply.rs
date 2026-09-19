@@ -60,6 +60,7 @@ pub(in crate::batch) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     if entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, wtxn, id, data, replicated)?;
     }
@@ -673,6 +674,18 @@ pub(in crate::batch) fn apply_put(
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
+    crate::ports::audit_entity_put_in_txn(
+        store,
+        wtxn,
+        crate::ports::EntityPutAudit {
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            envelope: write_envelope,
+        },
+    )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
@@ -709,7 +722,7 @@ pub(in crate::batch) fn apply_put(
     }
     if let Some(key) = authority_first_seen_key {
         let observed_secs =
-            authority_observation_secs_for_write(store, wtxn, crate::unix_seconds_now())?;
+            authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
         if store.sync_state.get(wtxn, key.as_str())?.is_none() {
             let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
             store.sync_state.put(wtxn, key.as_str(), &first_seen)?;

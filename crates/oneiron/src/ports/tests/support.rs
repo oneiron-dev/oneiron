@@ -2,40 +2,8 @@ use super::super::memory::{Memory, MemoryWrite, Snapshot};
 use super::super::*;
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault, VaultConfig};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-pub(super) struct ManualClock {
-    now: Mutex<u64>,
-    next: Mutex<u64>,
-}
-impl ManualClock {
-    pub(super) fn new(now: u64) -> Arc<Self> {
-        Arc::new(Self {
-            now: Mutex::new(now),
-            next: Mutex::new(1),
-        })
-    }
-    pub(super) fn set(&self, now: u64) {
-        *self.now.lock().unwrap() = now;
-    }
-    pub(super) fn bundle(self: &Arc<Self>) -> StoreClock {
-        StoreClock::new(self.clone(), self.clone())
-    }
-}
-impl Clock for ManualClock {
-    fn now_recorded_at(&self) -> u64 {
-        *self.now.lock().unwrap()
-    }
-}
-impl IdGen for ManualClock {
-    fn ulid(&self) -> [u8; 16] {
-        let mut next = self.next.lock().unwrap();
-        let mut bytes = [0x71; 16];
-        bytes[8..].copy_from_slice(&next.to_be_bytes());
-        *next += 1;
-        bytes
-    }
-}
 pub(super) trait Backend:
     EntityStore
     + ClaimStore

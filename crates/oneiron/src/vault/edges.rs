@@ -2,14 +2,16 @@
 
 use super::Vault;
 use crate::affect::Vad;
-use crate::batch::EntityMetadataHeader;
+
 use crate::edge::{EdgeInfo, EdgeKind, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
-use crate::overlay_db::OverlayDb;
+use crate::ports::EdgeDirection;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use crate::store::Store;
 
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
@@ -45,10 +47,18 @@ fn first_child_of_parent(
     rtxn: &heed::RoTxn<'_>,
     node: &EntityId,
 ) -> Result<Option<EntityId>> {
-    let prefix = edge_kind_prefix(node, EdgeKind::ChildOf);
-    if let Some(entry) = store.edges_out.prefix_iter(rtxn, &prefix)?.next() {
-        let (key, value) = entry?;
-        return Ok(Some(parse_edge_record(&key, &value)?.target));
+    if let Some(entry) = store
+        .port_edges(
+            rtxn,
+            node,
+            crate::ports::EdgeDirection::Out,
+            Some(EdgeKind::ChildOf),
+            None,
+        )?
+        .next()
+    {
+        let edge_row = entry?;
+        return Ok(Some(edge_row.target));
     }
     Ok(None)
 }
@@ -243,7 +253,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         self.filtered_edge_peers(
             &rtxn,
-            &self.store.edges_out,
+            crate::ports::EdgeDirection::Out,
             src,
             kind,
             target_type,
@@ -264,7 +274,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         self.filtered_edge_peers(
             &rtxn,
-            &self.store.edges_in,
+            crate::ports::EdgeDirection::In,
             tgt,
             kind,
             source_type,
@@ -286,7 +296,7 @@ impl Vault {
         limit: usize,
     ) -> Result<Vec<EntityId>> {
         self.filtered_edge_peers_page(
-            &self.store.edges_in,
+            crate::ports::EdgeDirection::In,
             tgt,
             kind,
             source_type,
@@ -303,20 +313,22 @@ impl Vault {
     pub(crate) fn filtered_edge_peers(
         &self,
         rtxn: &heed::RoTxn<'_>,
-        db: &OverlayDb,
+        direction: EdgeDirection,
         prefix_id: &EntityId,
         kind: EdgeKind,
         peer_type: Option<u8>,
         overflow_context: &'static str,
     ) -> Result<Vec<EntityId>> {
-        let prefix = edge_kind_prefix(prefix_id, kind);
         let mut ids = Vec::new();
-        for (scanned, entry) in db.prefix_iter(rtxn, &prefix)?.enumerate() {
+        for (scanned, entry) in self
+            .store
+            .port_edges(rtxn, prefix_id, direction, Some(kind), None)?
+            .enumerate()
+        {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow(overflow_context));
             }
-            let (key, value) = entry?;
-            let peer = parse_edge_record(&key, &value)?.target;
+            let peer = entry?.target;
 
             if let Some(req_type) = peer_type
                 && !self.entity_has_type(rtxn, &peer, req_type)?
@@ -331,7 +343,7 @@ impl Vault {
 
     fn filtered_edge_peers_page(
         &self,
-        db: &OverlayDb,
+        direction: EdgeDirection,
         prefix_id: &EntityId,
         kind: EdgeKind,
         peer_type: Option<u8>,
@@ -344,24 +356,12 @@ impl Vault {
 
         let limit = limit.min(MAX_EDGE_QUERY_RESULTS);
         let rtxn = self.store.env.read_txn()?;
-        let prefix = edge_kind_prefix(prefix_id, kind);
-        let start_key = match after_peer {
-            Some(peer) => Store::encode_edge_key(prefix_id, kind, peer).to_vec(),
-            None => prefix.to_vec(),
-        };
-        let start_bound: std::ops::Bound<&[u8]> = match after_peer {
-            Some(_) => std::ops::Bound::Excluded(&start_key[..]),
-            None => std::ops::Bound::Included(&start_key[..]),
-        };
-        let end_bound: std::ops::Bound<&[u8]> = std::ops::Bound::Unbounded;
-
         let mut ids = Vec::with_capacity(limit.min(1024));
-        for entry in db.range(&rtxn, &(start_bound, end_bound))? {
-            let (key, value) = entry?;
-            if !key.starts_with(&prefix) {
-                break;
-            }
-            let peer = parse_edge_record(&key, &value)?.target;
+        for entry in
+            self.store
+                .port_edges(&rtxn, prefix_id, direction, Some(kind), after_peer.copied())?
+        {
+            let peer = entry?.target;
 
             if let Some(req_type) = peer_type
                 && !self.entity_has_type(&rtxn, &peer, req_type)?
@@ -390,13 +390,11 @@ impl Vault {
         id: &EntityId,
         expected_type: u8,
     ) -> Result<bool> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
             return Ok(false);
         };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            return Ok(false);
-        };
-        Ok(header.entity_type == expected_type)
+
+        Ok(raw.entity_type == expected_type)
     }
 
     /// Bounded neighbor-edge scan for one direction with the kind and
@@ -419,20 +417,18 @@ impl Vault {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let db = if outbound {
-            &self.store.edges_out
+        let direction = if outbound {
+            EdgeDirection::Out
         } else {
-            &self.store.edges_in
-        };
-        let prefix: Vec<u8> = match kind {
-            Some(kind) => edge_kind_prefix(center, kind).to_vec(),
-            None => center.as_bytes().to_vec(),
+            EdgeDirection::In
         };
         let rtxn = self.store.env.read_txn()?;
         let mut edges = Vec::new();
-        for entry in db.prefix_iter(&rtxn, prefix.as_slice())? {
-            let (key, value) = entry?;
-            let edge = parse_edge_record(&key, &value)?;
+        for entry in self
+            .store
+            .port_edges(&rtxn, center, direction, kind, None)?
+        {
+            let edge = entry?;
             if min_weight.is_some_and(|min| edge.weight < min) {
                 continue;
             }
@@ -474,10 +470,16 @@ impl Vault {
             }
 
             // Find children: inbound ChildOf edges (child --ChildOf--> node)
-            let child_prefix = edge_kind_prefix(&node, EdgeKind::ChildOf);
-            for entry in self.store.edges_in.prefix_iter(&rtxn, &child_prefix)? {
-                let (key, value) = entry?;
-                let child = parse_edge_record(&key, &value)?.target;
+
+            for entry in self.store.port_edges(
+                &rtxn,
+                &node,
+                crate::ports::EdgeDirection::In,
+                Some(EdgeKind::ChildOf),
+                None,
+            )? {
+                let edge_row = entry?;
+                let child = edge_row.target;
                 if visited.insert(child) {
                     if result.len() + frontier.len() >= MAX_SUBTREE_RESULTS {
                         return Err(Error::IndexOverflow("subtree"));

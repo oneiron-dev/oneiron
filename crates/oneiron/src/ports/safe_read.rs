@@ -11,16 +11,7 @@ pub fn safe_read_text<P: EntityStore + TombstoneStore>(
         return Ok(None);
     }
     Ok(row
-        .filter(|row| {
-            let Ok(body) = rmpv::decode::read_value(&mut std::io::Cursor::new(&row.body)) else {
-                return true;
-            };
-            !body.as_map().is_some_and(|fields| {
-                fields.iter().any(|(key, value)| {
-                    key.as_str() == Some("stale") && value.as_bool() == Some(true)
-                })
-            })
-        })
+        .filter(|row| !body_is_stale(&row.body))
         .map(|row| row.body))
 }
 pub fn safe_read_asset_text<P: EntityStore + TombstoneStore>(
@@ -34,4 +25,15 @@ pub fn safe_read_asset_text<P: EntityStore + TombstoneStore>(
         return Ok(None);
     }
     safe_read_text(ports, txn, id)
+}
+
+pub(super) fn body_is_stale(bytes: &[u8]) -> bool {
+    let Ok(body) = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes)) else {
+        return false;
+    };
+    body.as_map().is_some_and(|fields| {
+        fields
+            .iter()
+            .any(|(key, value)| key.as_str() == Some("stale") && value.as_bool() == Some(true))
+    })
 }

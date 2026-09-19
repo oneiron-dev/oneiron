@@ -39,6 +39,7 @@ pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_
 use self::base_apply::apply_ops_with_origin;
 pub(crate) use self::base_apply::apply_session_bundle_claim_puts;
 pub(crate) use self::builder::BatchOp;
+#[cfg(feature = "sync")]
 pub(crate) use self::child_of_overlay::child_of_prefix;
 pub(crate) use self::claim_materialization::{ClaimMaterialization, apply_owner_bound_claim_puts};
 #[cfg(test)]

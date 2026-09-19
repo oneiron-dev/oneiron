@@ -15,6 +15,7 @@ pub(super) fn ingest_diagnostic_in_txn(
     blob: &[u8],
     lease_vault_id: u64,
 ) -> Result<bool> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
     let data = &blob[ENTITY_METADATA_HEADER_LEN..];
@@ -37,7 +38,7 @@ pub(super) fn ingest_diagnostic_in_txn(
         vault,
         wtxn,
         quota::peer_key_from_diagnostic_stream(lease_vault_id),
-        crate::unix_seconds_now(),
+        mutation_recorded_at,
     )?;
     let result = vault
         .batch_in()

@@ -6,16 +6,16 @@ use crate::error::{Error, Result};
 use crate::store::ManifestDbs;
 use crate::store::Store;
 use heed::{RoTxn, RwTxn};
-const DEP: &[u8] = b"ports:dependency:v1:";
+pub(super) const DEP: &[u8] = b"ports:dependency:v1:";
 const STALE: &[u8] = b"ports:stale:v1:";
 const TOMBSTONE: &[u8] = b"ports:tombstone:v1:";
 pub(super) fn tombstone_key(id: &EntityId) -> Vec<u8> {
     [TOMBSTONE, id.as_bytes()].concat()
 }
-fn stale_key(id: &EntityId) -> Vec<u8> {
+pub(super) fn stale_key(id: &EntityId) -> Vec<u8> {
     [STALE, id.as_bytes()].concat()
 }
-fn source_prefix(source: SourceSpan) -> Vec<u8> {
+pub(super) fn source_prefix(source: SourceSpan) -> Vec<u8> {
     [
         DEP,
         source.document.as_bytes(),
@@ -32,8 +32,19 @@ pub(crate) fn record_dependency_in_txn(
     if source.document == *dependent {
         return Err(Error::InvariantViolation("self dependency"));
     }
+    let visibility = super::TombstoneStoreRead::port_deletion_state(store, txn, &source.document)?;
+    if visibility.deleted || visibility.stale {
+        return Err(Error::EntityNotFound);
+    }
     let key = [source_prefix(source).as_slice(), dependent.as_bytes()].concat();
     store.vault_meta().put(txn, &key, &[])?;
+    let reverse = [
+        super::regeneration::reverse_prefix(dependent).as_slice(),
+        source.document.as_bytes(),
+        &source.frontier.to_be_bytes(),
+    ]
+    .concat();
+    store.vault_meta().put(txn, &reverse, &[])?;
     Ok(())
 }
 pub(super) fn list_by_source(
@@ -74,7 +85,20 @@ pub(crate) fn stale_in_txn(
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
 }
 pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-    store.vault_meta.put(txn, &stale_key(id), &[1])?;
+    // A second invalidation after a regenerated write fences its completion.
+    let revision = store
+        .entities
+        .get(txn, id.as_bytes())?
+        .map(|raw| {
+            EntityMetadataHeader::parse(&raw)
+                .map(|h| h.learned_at)
+                .ok_or(Error::CorruptedIndex("stale entity header"))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    store
+        .vault_meta
+        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
     crate::bm25::deindex_text(store, txn, id)?;
     let had_vector = store.vectors.delete(txn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, txn, id)?;
@@ -123,7 +147,7 @@ pub(crate) fn record_derived_edge_in_txn(
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("dependency source header"))?;
-    record_dependency_in_txn(
+    super::DependencyIndex::port_dependency_put(
         store,
         txn,
         SourceSpan {
@@ -175,7 +199,12 @@ pub(crate) fn record_source_frontiers_in_txn(
         let frontier = super::lmdb_entity::field(span, "frontier")
             .and_then(rmpv::Value::as_u64)
             .ok_or(Error::CorruptedIndex("source frontier"))?;
-        record_dependency_in_txn(store, txn, SourceSpan { document, frontier }, id)?;
+        super::DependencyIndex::port_dependency_put(
+            store,
+            txn,
+            SourceSpan { document, frontier },
+            id,
+        )?;
     }
     Ok(())
 }

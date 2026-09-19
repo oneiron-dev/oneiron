@@ -71,6 +71,8 @@ pub(super) fn apply_ops_with_origin(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
@@ -531,11 +533,7 @@ pub(super) fn apply_ops_with_origin(
                     deindex_entity(store, wtxn, &id)?;
                 claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
-                    store.let_go_pending_gate_consent_in_txn(
-                        wtxn,
-                        &id,
-                        crate::unix_seconds_now(),
-                    )?;
+                    store.let_go_pending_gate_consent_in_txn(wtxn, &id, mutation_recorded_at)?;
                 }
                 pending_embedding_tokens_written.remove(&id);
                 #[cfg(feature = "sync")]

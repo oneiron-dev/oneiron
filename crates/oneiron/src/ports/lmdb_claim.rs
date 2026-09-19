@@ -35,7 +35,7 @@ impl ClaimStore for Vault {
     fn port_claim_list(&self, rtxn: &RoTxn<'_>, subject: &EntityId) -> Result<Vec<EntityId>> {
         self.filtered_edge_peers(
             rtxn,
-            &self.store.edges_in,
+            crate::ports::EdgeDirection::In,
             subject,
             EdgeKind::ClaimOf,
             Some(ENTITY_TYPE_CLAIM),

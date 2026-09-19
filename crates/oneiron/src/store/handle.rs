@@ -391,18 +391,21 @@ macro_rules! manifest_dbs {
             /// over `&impl ManifestDbs` must record into the vault it is
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
+            fn clock(&self) -> &crate::ports::StoreClock;
         }
 
         impl ManifestDbs for Store {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
         }
     };
 }

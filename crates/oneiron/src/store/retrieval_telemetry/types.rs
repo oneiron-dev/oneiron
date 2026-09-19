@@ -43,11 +43,6 @@ impl RetrievalRunId {
     }
 
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "no P4a path reconstructs a run id from raw bytes; on the ONE-1728 seg-4 \
-                  post-merge delete-list unless ONE-1730's promote replay claims it"
-    )]
     pub(crate) fn from_bytes(bytes: [u8; 16]) -> Self {
         Self { bytes }
     }

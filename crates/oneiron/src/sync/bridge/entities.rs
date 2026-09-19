@@ -336,6 +336,7 @@ pub(super) fn materialize_entity_blob_in_txn(
     blob: &[u8],
     lease_vault_id: u64,
 ) -> Result<bool> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(crate::Error::CorruptedIndex("entity metadata"));
@@ -461,7 +462,7 @@ pub(super) fn materialize_entity_blob_in_txn(
             vault,
             wtxn,
             quota::peer_key_from_redaction_pubkey(&pubkey),
-            crate::unix_seconds_now(),
+            mutation_recorded_at,
         )?
     } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())?
@@ -492,7 +493,7 @@ pub(super) fn materialize_entity_blob_in_txn(
             vault,
             wtxn,
             peer_key,
-            crate::unix_seconds_now(),
+            mutation_recorded_at,
         )?
     } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         // ARCH-0055 identity-topology ledger events route through the ONE

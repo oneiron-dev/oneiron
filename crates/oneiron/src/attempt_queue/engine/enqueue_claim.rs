@@ -129,11 +129,28 @@ impl<'a> AttemptQueue<'a> {
     pub(crate) fn enqueue_with_task_ref_and_dedupe_actor_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        mut input: EnqueueAttempt,
+        input: EnqueueAttempt,
         task_ref: Option<String>,
         dedupe_actor_ref: Option<&str>,
     ) -> Result<EnqueueOutcome> {
-        input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
+        crate::ports::JobQueue::port_job_enqueue_scoped(
+            self,
+            wtxn,
+            input,
+            crate::ports::JobScope {
+                task_ref,
+                dedupe_actor_ref,
+            },
+        )
+    }
+
+    pub(in crate::attempt_queue) fn enqueue_scoped_storage_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueAttempt,
+        task_ref: Option<String>,
+        dedupe_actor_ref: Option<&str>,
+    ) -> Result<EnqueueOutcome> {
         validate_kind(&input.kind)?;
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
         validate_optional_dedupe_actor_ref(dedupe_actor_ref)?;
@@ -164,7 +181,7 @@ impl<'a> AttemptQueue<'a> {
         }
 
         let record = AttemptRecord {
-            id: AttemptId::from_bytes(&self.store.clock.ulid())?,
+            id: AttemptId::from_bytes(&self.store.clock.ulid()?)?,
             kind: input.kind,
             payload: input.payload,
             state: AttemptState::Queued,
@@ -187,6 +204,14 @@ impl<'a> AttemptQueue<'a> {
             result_ref: None,
         };
 
+        if self
+            .store
+            .attempt_records
+            .get(wtxn, record.id.as_bytes())?
+            .is_some()
+        {
+            return Err(crate::Error::InvariantViolation("attempt id collision"));
+        }
         let encoded = encode_record(&record)?;
         self.store
             .attempt_records
@@ -252,9 +277,10 @@ impl<'a> AttemptQueue<'a> {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         kind: &str,
-        now: u64,
+        _now: u64,
     ) -> Result<Option<AttemptId>> {
         validate_kind(kind)?;
+        let now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
 
         let mut scan = ClaimKindReadScan::default();
         for row in self.store.attempt_ready.iter(&*wtxn)? {

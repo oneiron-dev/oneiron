@@ -1,6 +1,6 @@
 //! LMDB entity, edge and place adapters. Reads share the caller's snapshot.
 use super::*;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::registry::*;
@@ -10,25 +10,19 @@ use heed::{RoTxn, RwTxn};
 
 impl EntityStore for Vault {
     fn port_entity_get(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityRecord>> {
-        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+        let Some(row) = self.port_entity_record(txn, id)? else {
             return Ok(None);
         };
-        let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if h.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
+        if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
         if self.port_tombstone_is_deleted(txn, id)? || stale_in_txn(&self.store, txn, id)? {
             return Ok(None);
         }
-        Ok(Some(EntityRecord {
-            entity_type: h.entity_type,
-            occurred: crate::TimeRange {
-                start: h.occurred_start,
-                end: h.occurred_end,
-            },
-            learned_at: h.learned_at,
-            body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
-        }))
+        if super::safe_read::body_is_stale(&row.body) {
+            return Ok(None);
+        }
+        Ok(Some(row))
     }
     fn port_entity_put(
         &self,
@@ -191,29 +185,14 @@ impl EdgeStore for Vault {
             return Ok(Vec::new());
         }
         let mut result = Vec::new();
-        let mut scanned = 0;
-        for (enabled, db) in [
-            (direction != EdgeDirection::In, &self.store.edges_out),
-            (direction != EdgeDirection::Out, &self.store.edges_in),
-        ] {
-            if !enabled {
-                continue;
+        for (scanned, row) in self.port_edges(txn, id, direction, kind, None)?.enumerate() {
+            if scanned >= 100_000 {
+                return Err(Error::IndexOverflow("edge neighbors"));
             }
-            let mut prefix = id.as_bytes().to_vec();
-            if let Some(kind) = kind {
-                prefix.push(kind as u8);
+            if result.len() >= limit {
+                break;
             }
-            for row in db.prefix_iter(txn, &prefix)? {
-                scanned += 1;
-                if scanned > 100_000 {
-                    return Err(Error::IndexOverflow("edge neighbors"));
-                }
-                let (key, value) = row?;
-                result.push(crate::edge::parse_strict_edge_record(&key, &value)?.into_edge_info());
-                if result.len() >= limit {
-                    return Ok(result);
-                }
-            }
+            result.push(row?);
         }
         Ok(result)
     }
@@ -225,16 +204,35 @@ impl EdgeStore for Vault {
         after: Option<&EntityId>,
         limit: usize,
     ) -> Result<Vec<EntityId>> {
-        let mut ids: Vec<_> = self
-            .port_edge_neighbors(txn, id, EdgeDirection::In, kind, 100_000)?
-            .into_iter()
-            .map(|edge| edge.target)
-            .filter(|id| after.is_none_or(|after| id > after))
-            .collect();
-        ids.sort();
-        ids.dedup();
-        ids.truncate(limit);
-        Ok(ids)
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut result = Vec::new();
+        // With a kind the adapter seeks straight to the exclusive peer cursor.
+        if kind.is_some() {
+            for row in self
+                .port_edges(txn, id, EdgeDirection::In, kind, after.copied())?
+                .take(limit.min(100_000))
+            {
+                result.push(row?.target);
+            }
+        } else {
+            let mut peers = std::collections::BTreeSet::new();
+            for (scanned, row) in self
+                .port_edges(txn, id, EdgeDirection::In, None, None)?
+                .enumerate()
+            {
+                if scanned >= 100_000 {
+                    return Err(Error::IndexOverflow("edge neighbors"));
+                }
+                let peer = row?.target;
+                if after.is_none_or(|after| peer > *after) {
+                    peers.insert(peer);
+                }
+            }
+            result.extend(peers.into_iter().take(limit));
+        }
+        Ok(result)
     }
 }
 impl PlaceStore for Vault {

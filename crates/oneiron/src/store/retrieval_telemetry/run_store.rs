@@ -59,6 +59,7 @@ impl SessionStoreView<'_> {
         wtxn: &mut RwTxn<'_>,
         record: &RetrievalRunRecord,
     ) -> Result<()> {
+        crate::ports::recorded_at_in_txn(self, wtxn)?;
         stage_retrieval_run_with_visibility(self, wtxn, record, true)
     }
 
@@ -192,7 +193,7 @@ impl Store {
             reward: outcome.reward,
             accepted: outcome.accepted,
             metadata: outcome.metadata,
-            updated_at: crate::unix_seconds_now(),
+            updated_at: self.clock.now_recorded_at(),
         };
         let key = retrieval_outcome_key(record.run_id, &record.key);
         let value = encode_retrieval_outcome(&record)?;

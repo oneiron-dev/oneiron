@@ -49,8 +49,9 @@ impl AttemptQueue<'_> {
     pub(crate) fn retry_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        input: RetryAttempt,
+        mut input: RetryAttempt,
     ) -> Result<RetryOutcome> {
+        input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
@@ -63,7 +64,7 @@ impl AttemptQueue<'_> {
         validate_optional_failure_reason(input.last_error.as_deref())?;
 
         let next = AttemptRecord {
-            id: AttemptId::now(),
+            id: AttemptId::from_bytes(&self.store.clock.ulid()?)?,
             kind: source.kind.clone(),
             payload: source.payload.clone(),
             state: AttemptState::Scheduled,
@@ -119,6 +120,15 @@ impl AttemptQueue<'_> {
         );
         source.updated_at = input.now;
 
+        if self
+            .store
+            .attempt_records
+            .get(wtxn, next.id.as_bytes())?
+            .is_some()
+        {
+            return Err(Error::InvariantViolation("attempt id collision"));
+        }
+        crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let encoded_source = encode_record(&source)?;
         self.store
             .attempt_records

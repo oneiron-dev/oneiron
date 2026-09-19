@@ -26,25 +26,21 @@ pub use tombstone::{
 };
 
 pub(crate) use gate::{DeletionGateContext, GatedDeletion};
-pub(crate) use receipt::{
-    decode_redaction_audit_receipt, receipt_envelope_header, validate_redaction_receipt_body,
-};
+pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
 pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
 };
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, archive_tombstone_key,
-    entity_id_from_archive_tombstone_key, local_hard_delete_key,
+    local_hard_delete_key,
 };
 // The `pt:` window vocabulary and the replay outcome are read by sync
 // production (`sync::window`, `sync::quarantine`, `sync::types`) and by the
 // white-box test modules that pin the base replay law; a plain no-feature
 // library reaches none of them.
 #[cfg(any(feature = "sync", test))]
-pub(crate) use tombstone::{
-    PENDING_TOMBSTONE_PREFIX, ReplayedTombstoneOutcome, window_label_from_timestamp,
-};
+pub(crate) use tombstone::{PENDING_TOMBSTONE_PREFIX, ReplayedTombstoneOutcome};
 
 #[cfg(feature = "sync")]
 pub(crate) use receipt::{
@@ -71,11 +67,13 @@ pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_SLA_SECS, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
     encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
-#[cfg(test)]
-pub(crate) use tombstone::pending_tombstone_key;
+pub(crate) use tombstone::{pending_tombstone_key, window_label_from_timestamp};
 
 // The flat deletion.rs module used to provide this name to the test module
 // through `use super::*`; after the directory split the seam re-imports it so
 // the sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
 use crate::entity_id::EntityId;
+
+#[cfg(test)]
+pub(crate) use receipt::receipt_envelope_header;

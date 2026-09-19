@@ -28,6 +28,7 @@ pub struct StoreClock {
     source: Arc<dyn Clock>,
     ids: Arc<dyn IdGen>,
     floor: Arc<Mutex<u64>>,
+    last_id: Arc<Mutex<u128>>,
 }
 impl std::fmt::Debug for StoreClock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -54,6 +55,7 @@ impl StoreClock {
             source,
             ids,
             floor: Arc::new(Mutex::new(0)),
+            last_id: Arc::new(Mutex::new(0)),
         }
     }
     /// Fork construction state: sharing the source must not share a vault's floor.
@@ -80,16 +82,58 @@ impl StoreClock {
         *floor = (*floor).max(self.source.now_recorded_at());
         *floor
     }
-    pub fn ulid(&self) -> [u8; 16] {
-        self.ids.ulid()
+    /// Allocate a store-local identity. Repeated source values never reuse an id,
+    /// including two allocations in one transaction or after transaction abort.
+    pub fn ulid(&self) -> Result<[u8; 16]> {
+        let mut last = self
+            .last_id
+            .lock()
+            .map_err(|_| Error::InvariantViolation("id source lock poisoned"))?;
+        let source_bytes = self.ids.ulid();
+        crate::EntityId::from_bytes(source_bytes)?;
+        let source = u128::from_be_bytes(source_bytes);
+        let next = source.max(
+            last.checked_add(1)
+                .ok_or(Error::IndexOverflow("id source"))?,
+        );
+        let bytes = next.to_be_bytes();
+        crate::EntityId::from_bytes(bytes)?;
+        *last = next;
+        Ok(bytes)
+    }
+
+    pub fn entity_id(&self) -> Result<crate::EntityId> {
+        crate::EntityId::from_bytes(self.ulid()?)
+    }
+
+    pub(crate) fn observe_id_floor(&self, persisted: u128) -> Result<u128> {
+        let mut last = self
+            .last_id
+            .lock()
+            .map_err(|_| Error::InvariantViolation("id source lock poisoned"))?;
+        *last = (*last).max(persisted);
+        Ok(*last)
     }
 }
+impl crate::Vault {
+    /// Sample this vault's injected, nondecreasing policy/recording clock.
+    pub fn now_recorded_at(&self) -> u64 {
+        self.store.clock.now_recorded_at()
+    }
+    /// Allocate an id from this vault's injected source without opening a writer.
+    /// A subsequent mutation persists the allocation floor in its transaction.
+    pub fn new_entity_id(&self) -> Result<crate::EntityId> {
+        self.store.clock.entity_id()
+    }
+}
+
+pub(crate) const ID_FLOOR: &[u8] = b"ports:id_floor:v1";
 pub(crate) const CLOCK_FLOOR: &[u8] = b"ports:clock_floor:v1";
 pub(crate) fn recorded_at_in_txn(
-    store: &crate::store::Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
-    let persisted = match store.vault_meta.get(txn, CLOCK_FLOOR)? {
+    let persisted = match store.vault_meta().get(txn, CLOCK_FLOOR)? {
         Some(bytes) => u64::from_be_bytes(
             bytes
                 .as_ref()
@@ -98,7 +142,22 @@ pub(crate) fn recorded_at_in_txn(
         ),
         None => 0,
     };
-    let now = store.clock.observe_floor(persisted)?;
-    store.vault_meta.put(txn, CLOCK_FLOOR, &now.to_be_bytes())?;
+    let id_floor = match store.vault_meta().get(txn, ID_FLOOR)? {
+        Some(bytes) => u128::from_be_bytes(
+            bytes
+                .as_ref()
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("id source floor"))?,
+        ),
+        None => 0,
+    };
+    let id_floor = store.clock().observe_id_floor(id_floor)?;
+    store
+        .vault_meta()
+        .put(txn, ID_FLOOR, &id_floor.to_be_bytes())?;
+    let now = store.clock().observe_floor(persisted)?;
+    store
+        .vault_meta()
+        .put(txn, CLOCK_FLOOR, &now.to_be_bytes())?;
     Ok(now)
 }

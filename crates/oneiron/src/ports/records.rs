@@ -48,3 +48,17 @@ pub struct SourceSpan {
     pub document: EntityId,
     pub frontier: u64,
 }
+
+impl EntityRecord {
+    /// Canonical entity wire envelope for existing signed/hash-bound codecs.
+    /// This encodes a value; it exposes neither a database nor a storage cursor.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(25 + self.body.len());
+        bytes.push(self.entity_type);
+        bytes.extend_from_slice(&self.occurred.start.to_be_bytes());
+        bytes.extend_from_slice(&self.occurred.end.to_be_bytes());
+        bytes.extend_from_slice(&self.learned_at.to_be_bytes());
+        bytes.extend_from_slice(&self.body);
+        bytes
+    }
+}

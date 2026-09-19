@@ -20,9 +20,9 @@ use super::provenance::{
     validate_provenance, write_provenance_value,
 };
 use super::store_keys::{
-    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, blob_artifact_asset_ref_key,
-    blob_artifact_head_key, blob_artifact_version_key, blob_artifact_version_prefix, encode_value,
-    entity_value, hash_from_value, read_value, require_entity_type, u64_value,
+    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, blob_artifact_head_key,
+    blob_artifact_version_key, blob_artifact_version_prefix, encode_value, entity_value,
+    hash_from_value, read_value, require_entity_type, u64_value,
 };
 use crate::error::ArtifactError;
 
@@ -152,7 +152,7 @@ impl Vault {
             )));
         }
         let content_hash = *blake3::hash(bytes).as_bytes();
-        let claim_id = EntityId::from_bytes(self.store.clock.ulid())?;
+        let claim_id = EntityId::from_bytes(self.store.clock.ulid()?)?;
 
         require_entity_type(
             &self.store,
@@ -212,7 +212,7 @@ impl Vault {
             self,
             wtxn,
             &crate::ports::ChangeLogRecord {
-                id: self.store.clock.ulid(),
+                id: self.store.clock.ulid()?,
                 entity: *artifact_id,
                 op: crate::ports::ChangeOp::Update,
                 actor_principal: actor.entity_ref(),
@@ -229,11 +229,6 @@ impl Vault {
         self.store
             .vault_meta
             .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
-        self.store.vault_meta.put(
-            wtxn,
-            &blob_artifact_asset_ref_key(&content_hash, artifact_id),
-            &[],
-        )?;
         Ok(record)
     }
 

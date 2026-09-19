@@ -14,7 +14,7 @@ use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::store::{
     Diagnostics, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
+    GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, GateSystemNoticeRecord,
     PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreOwner,
     decode_pending_gate_consent, gate_decision_upper_bound, load_structural_kind_registry,
     pending_gate_consent_claim_id_from_key, pending_gate_consent_upper_bound,
@@ -113,6 +113,15 @@ impl Store {
         let clock = clock.for_store();
         {
             let txn = env.read_txn()?;
+            if let Some(bytes) = vault_meta_view.get(&txn, crate::ports::ID_FLOOR)? {
+                let floor = u128::from_be_bytes(
+                    bytes
+                        .as_ref()
+                        .try_into()
+                        .map_err(|_| Error::CorruptedIndex("id source floor"))?,
+                );
+                clock.observe_id_floor(floor)?;
+            }
             if let Some(bytes) = vault_meta_view.get(&txn, crate::ports::CLOCK_FLOOR)? {
                 let floor = u64::from_be_bytes(
                     bytes
@@ -242,8 +251,8 @@ impl Store {
         }
         let receipt = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::now(),
-            created_at: crate::unix_seconds_now(),
+            decision_id: crate::store::GateDecisionId::from_bytes(self.clock.ulid()?),
+            created_at: self.clock.now_recorded_at(),
             outcome: "reseeded_after_loss".to_owned(),
             reason_codes: vec!["gate.policy_manifest.reseeded_after_loss".to_owned()],
             receipt_reasons: Vec::new(),

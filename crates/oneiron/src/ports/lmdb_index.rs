@@ -13,6 +13,46 @@ use crate::vault::require_key_len;
 use crate::{EntityId, HydratedShortId, Vault};
 use heed::{RoTxn, RwTxn};
 impl RetrievalIndex for Vault {
+    fn port_retrieval_vector_search_quality(
+        &self,
+        txn: &RoTxn<'_>,
+        query: &[f32],
+        limit: usize,
+        skip_rescore: bool,
+    ) -> Result<Vec<ScoredEntity>> {
+        let rows =
+            crate::hnsw::hnsw_search(&self.store, &self.config, txn, query, limit, skip_rescore)?;
+        filter_results(self, txn, rows)
+    }
+
+    fn port_retrieval_phonetic_upsert(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+        codes: &[&str],
+    ) -> Result<()> {
+        self.batch_in().phonetic(id, codes).apply(txn)
+    }
+
+    fn port_retrieval_vector_get(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<f32>>> {
+        let visibility = self.port_deletion_state(txn, id)?;
+        if visibility.deleted || visibility.stale {
+            return Ok(None);
+        }
+        let Some(raw) = self.store.vectors.get(txn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+        if vector.len() != self.config.dimensions {
+            return Err(Error::CorruptedIndex("vector value"));
+        }
+        Ok(Some(vector))
+    }
+
     fn port_retrieval_upsert(
         &self,
         txn: &mut RwTxn<'_>,
@@ -150,6 +190,9 @@ impl ShortIdStore for Vault {
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
+        if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
         if self.archive_tombstone_in_txn(rtxn, &id)?.is_some() {
             return Ok(Some(HydratedShortId {
@@ -173,7 +216,9 @@ impl ShortIdStore for Vault {
             }));
         }
 
-        let body = (!stale_in_txn(&self.store, rtxn, &id)?).then_some(body);
+        // Hydration must obey the same stale + tombstone fence as normal text.
+        // A tombstone can race ahead of body scrubbing and still suppress content.
+        let body = super::safe_read_text(self, rtxn, &id)?;
         Ok(Some(HydratedShortId {
             id,
             entity_type,
@@ -199,30 +244,7 @@ impl TombstoneStore for Vault {
         super::integrity::mark_stale_in_txn(&self.store, txn, id)
     }
     fn port_tombstone_is_deleted(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-        if self
-            .store
-            .vault_meta
-            .get(txn, &super::integrity::tombstone_key(id))?
-            .is_some()
-            || self
-                .store
-                .sync_state
-                .get(txn, crate::deletion::archive_tombstone_key(id).as_str())?
-                .is_some()
-            || self
-                .store
-                .sync_state
-                .get(txn, crate::deletion::local_hard_delete_key(id).as_str())?
-                .is_some()
-        {
-            return Ok(true);
-        }
-        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
-            return Ok(false);
-        };
-        let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        self.store
-            .entity_deletion_present_in_txn(txn, id, h.learned_at)
+        Ok(self.port_deletion_state(txn, id)?.deleted)
     }
     fn port_tombstone_clean_expired(
         &self,
@@ -233,5 +255,15 @@ impl TombstoneStore for Vault {
         // Canon has no TTL or authorized regeneration-complete receipt yet.
         // Retention is fail closed; wall time alone must never resurrect text.
         Ok(0)
+    }
+}
+
+impl super::RetrievalIndexMaintenance for Vault {
+    fn port_retrieval_validate_rebuild(&self, txn: &RoTxn<'_>) -> Result<()> {
+        for row in self.store.vectors.iter(txn)? {
+            let (id, value) = row?;
+            crate::maintain::validate_rebuild_vector(self, &id, &value)?;
+        }
+        Ok(())
     }
 }

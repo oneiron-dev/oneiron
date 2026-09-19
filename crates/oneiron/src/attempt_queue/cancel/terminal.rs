@@ -69,7 +69,12 @@ impl AttemptQueue<'_> {
         }
 
         let successor = if input.hand_off {
-            Some(landing_successor(&record, input.scheduled_at, input.now))
+            Some(landing_successor(
+                &record,
+                AttemptId::from_bytes(&self.store.clock.ulid()?)?,
+                input.scheduled_at,
+                input.now,
+            ))
         } else {
             None
         };
@@ -130,6 +135,15 @@ impl AttemptQueue<'_> {
             return Ok(FinishLandingOutcome::Landed(record));
         };
 
+        if self
+            .store
+            .attempt_records
+            .get(wtxn, successor.id.as_bytes())?
+            .is_some()
+        {
+            return Err(Error::InvariantViolation("attempt id collision"));
+        }
+        crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let encoded_successor = encode_record(&successor)?;
         self.store
             .attempt_records
@@ -509,9 +523,14 @@ pub(in crate::attempt_queue) fn force_cancel_record(
 /// every existing surface that reduces a chain to its live HEAD — run-tree
 /// parenting, `tasks.cancel` membership, terminal-status folding — treats the
 /// landed row as superseded history without a second lineage concept.
-fn landing_successor(source: &AttemptRecord, scheduled_at: Option<u64>, now: u64) -> AttemptRecord {
+fn landing_successor(
+    source: &AttemptRecord,
+    id: AttemptId,
+    scheduled_at: Option<u64>,
+    now: u64,
+) -> AttemptRecord {
     AttemptRecord {
-        id: AttemptId::now(),
+        id,
         kind: source.kind.clone(),
         payload: source.payload.clone(),
         state: if scheduled_at.is_some() {

@@ -1,6 +1,30 @@
 //! In-memory secondary indexes, immutable audit rows, blobs and queue leases.
 use super::*;
+use crate::error::ArtifactError;
+use crate::{DeleteReason, HydratedShortId};
 impl RetrievalIndex for Memory {
+    fn port_retrieval_phonetic_upsert(
+        &self,
+        txn: &mut MemoryWrite,
+        id: &EntityId,
+        codes: &[&str],
+    ) -> Result<()> {
+        for code in codes {
+            txn.phonetic
+                .entry((*code).to_owned())
+                .or_default()
+                .insert(*id);
+        }
+        Ok(())
+    }
+
+    fn port_retrieval_vector_get(&self, txn: &Snapshot, id: &EntityId) -> Result<Option<Vec<f32>>> {
+        if txn.stale.contains(id) || txn.tombstones.contains_key(id) {
+            return Ok(None);
+        }
+        Ok(txn.vectors.get(id).cloned())
+    }
+
     fn port_retrieval_upsert(
         &self,
         txn: &mut MemoryWrite,
@@ -27,6 +51,8 @@ impl RetrievalIndex for Memory {
         Ok(())
     }
     fn port_retrieval_mark_stale(&self, txn: &mut MemoryWrite, id: &EntityId) -> Result<()> {
+        let revision = txn.entities.get(id).map_or(0, |row| row.learned_at);
+        txn.stale_revision.insert(*id, revision);
         txn.stale.insert(*id);
         txn.vectors.remove(id);
         txn.texts.remove(id);
@@ -124,11 +150,7 @@ impl ShortIdStore for Memory {
             entity_type: row.entity_type,
             learned_at: row.learned_at,
             deletion: None,
-            body: if txn.stale.contains(id) || txn.tombstones.contains_key(id) {
-                None
-            } else {
-                Some(row.body.clone())
-            },
+            body: super::super::safe_read_text(self, txn, id)?,
         }))
     }
 }
@@ -174,6 +196,56 @@ impl TombstoneStore for Memory {
     }
 }
 impl DependencyIndex for Memory {
+    fn port_dependency_complete_regeneration(
+        &self,
+        txn: &mut MemoryWrite,
+        dependent: &EntityId,
+        regenerated_at: u64,
+        sources: &[SourceSpan],
+    ) -> Result<bool> {
+        if sources.len() > 100_000 {
+            return Err(Error::IndexOverflow("regeneration sources"));
+        }
+        let Some(stale_revision) = txn.stale_revision.get(dependent) else {
+            return Ok(false);
+        };
+        if regenerated_at <= *stale_revision || txn.tombstones.contains_key(dependent) {
+            return Ok(false);
+        }
+        let Some(row) = txn.entities.get(dependent) else {
+            return Ok(false);
+        };
+        if row.learned_at != regenerated_at || super::super::safe_read::body_is_stale(&row.body) {
+            return Ok(false);
+        }
+        for source in sources {
+            if source.document == *dependent {
+                return Err(Error::InvariantViolation("self dependency"));
+            }
+            if txn.stale.contains(&source.document) || txn.tombstones.contains_key(&source.document)
+            {
+                return Ok(false);
+            }
+            let Some(row) = txn.entities.get(&source.document) else {
+                return Ok(false);
+            };
+            if row.learned_at != source.frontier
+                || super::super::safe_read::body_is_stale(&row.body)
+            {
+                return Ok(false);
+            }
+        }
+        for ids in txn.dependencies.values_mut() {
+            ids.remove(dependent);
+        }
+        for source in sources {
+            self.port_dependency_put(txn, *source, dependent)?;
+        }
+        txn.stale.remove(dependent);
+        txn.stale_revision.remove(dependent);
+        Ok(true)
+    }
+
     fn port_dependency_put(
         &self,
         txn: &mut MemoryWrite,
@@ -182,6 +254,9 @@ impl DependencyIndex for Memory {
     ) -> Result<()> {
         if source.document == *dependent {
             return Err(Error::InvariantViolation("self dependency"));
+        }
+        if txn.tombstones.contains_key(&source.document) || txn.stale.contains(&source.document) {
+            return Err(Error::EntityNotFound);
         }
         txn.dependencies
             .entry(source)
@@ -301,6 +376,14 @@ impl JobQueue for Memory {
         txn: &mut MemoryWrite,
         input: EnqueueAttempt,
     ) -> Result<EnqueueOutcome> {
+        self.port_job_enqueue_scoped(txn, input, JobScope::default())
+    }
+    fn port_job_enqueue_scoped(
+        &self,
+        txn: &mut MemoryWrite,
+        input: EnqueueAttempt,
+        scope: JobScope<'_>,
+    ) -> Result<EnqueueOutcome> {
         if input.kind.is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 "attempt kind must not be empty",
@@ -310,6 +393,7 @@ impl JobQueue for Memory {
             && let Some(existing) = txn.jobs.values().find(|r| {
                 r.kind == input.kind
                     && r.dedupe_key.as_ref() == Some(dedupe)
+                    && r.dedupe_actor_ref.as_deref() == scope.dedupe_actor_ref
                     && matches!(r.state, AttemptState::Queued | AttemptState::Leased)
             })
         {
@@ -317,7 +401,7 @@ impl JobQueue for Memory {
         }
         let now = self.clock.now_recorded_at();
         let record = AttemptRecord {
-            id: AttemptId::from_bytes(&self.clock.ulid())?,
+            id: AttemptId::from_bytes(&self.clock.ulid()?)?,
             kind: input.kind,
             payload: input.payload,
             state: AttemptState::Queued,
@@ -328,10 +412,14 @@ impl JobQueue for Memory {
             retry_of: None,
             backoff_until: None,
             last_error: None,
-            task_ref: None,
+            task_ref: scope.task_ref,
             run_id: input.run_id,
+            dedupe_actor_ref: input
+                .dedupe_key
+                .as_ref()
+                .and(scope.dedupe_actor_ref)
+                .map(str::to_owned),
             dedupe_key: input.dedupe_key,
-            dedupe_actor_ref: None,
             created_at: now,
             updated_at: now,
             events: Vec::new(),

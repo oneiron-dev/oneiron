@@ -51,6 +51,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
     data: &[u8],
     lease_vault_id: u64,
 ) -> Result<bool> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let byte_identical_replay = vault
         .store
         .entities
@@ -86,7 +87,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         vault,
         wtxn,
         quota::peer_key_from_identity_topology_stream(lease_vault_id),
-        crate::unix_seconds_now(),
+        mutation_recorded_at,
     )?;
     let apply_result = vault
         .batch_in()

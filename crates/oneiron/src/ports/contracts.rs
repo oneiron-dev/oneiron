@@ -22,7 +22,7 @@ impl Transactions for Vault {
     type Write<'a> = heed::RwTxn<'a>;
 }
 
-pub trait EntityStore: Transactions {
+pub trait EntityStore: super::EntityStoreRead {
     fn port_entity_get(&self, txn: &Self::Read<'_>, id: &EntityId) -> Result<Option<EntityRecord>>;
     fn port_entity_put(
         &self,
@@ -104,7 +104,7 @@ pub trait ClaimStore: Transactions {
         predicate: &str,
     ) -> Result<Option<(EntityId, ClaimBody)>>;
 }
-pub trait EdgeStore: Transactions {
+pub trait EdgeStore: super::EdgeStoreRead {
     fn port_edge_upsert(
         &self,
         txn: &mut Self::Write<'_>,
@@ -165,7 +165,31 @@ pub trait PlaceStore: Transactions {
         id: &EntityId,
     ) -> Result<Vec<EntityId>>;
 }
-pub trait RetrievalIndex: Transactions {
+pub trait RetrievalIndex: super::RetrievalIndexRead {
+    fn port_retrieval_vector_search_quality(
+        &self,
+        txn: &Self::Read<'_>,
+        query: &[f32],
+        limit: usize,
+        skip_rescore: bool,
+    ) -> Result<Vec<ScoredEntity>> {
+        let _ = skip_rescore;
+        self.port_retrieval_vector_search(txn, query, limit)
+    }
+
+    fn port_retrieval_phonetic_upsert(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+        codes: &[&str],
+    ) -> Result<()>;
+
+    fn port_retrieval_vector_get(
+        &self,
+        txn: &Self::Read<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<f32>>>;
+
     fn port_retrieval_upsert(
         &self,
         txn: &mut Self::Write<'_>,
@@ -187,7 +211,7 @@ pub trait RetrievalIndex: Transactions {
         limit: usize,
     ) -> Result<Vec<ScoredEntity>>;
 }
-pub trait ShortIdStore: Transactions {
+pub trait ShortIdStore: super::ShortIdStoreRead {
     fn port_short_id_get_or_create(
         &self,
         txn: &mut Self::Write<'_>,
@@ -212,7 +236,7 @@ pub trait ShortIdStore: Transactions {
             .collect()
     }
 }
-pub trait TombstoneStore: Transactions {
+pub trait TombstoneStore: super::TombstoneStoreRead {
     fn port_tombstone_create(
         &self,
         txn: &mut Self::Write<'_>,
@@ -229,6 +253,17 @@ pub trait TombstoneStore: Transactions {
     ) -> Result<u64>;
 }
 pub trait DependencyIndex: Transactions {
+    /// Clear derived staleness only after a newer entity row is written, and every
+    /// replacement source is still live at the version read by the regenerator.
+    /// Never clears a deletion tombstone. False leaves all dependencies unchanged.
+    fn port_dependency_complete_regeneration(
+        &self,
+        txn: &mut Self::Write<'_>,
+        dependent: &EntityId,
+        regenerated_at: u64,
+        sources: &[SourceSpan],
+    ) -> Result<bool>;
+
     fn port_dependency_put(
         &self,
         txn: &mut Self::Write<'_>,
@@ -285,7 +320,20 @@ pub trait BlobStore: Transactions {
         Ok(None)
     }
 }
+/// Trusted admission scope. Actor scope is supplied by the authenticated door,
+/// never decoded from a job payload. Unscoped calls keep their existing key family.
+#[derive(Default)]
+pub struct JobScope<'a> {
+    pub task_ref: Option<String>,
+    pub dedupe_actor_ref: Option<&'a str>,
+}
 pub trait JobQueue: Transactions {
+    fn port_job_enqueue_scoped(
+        &self,
+        txn: &mut Self::Write<'_>,
+        input: EnqueueAttempt,
+        scope: JobScope<'_>,
+    ) -> Result<EnqueueOutcome>;
     fn port_job_enqueue(
         &self,
         txn: &mut Self::Write<'_>,

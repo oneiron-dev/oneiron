@@ -359,7 +359,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         vault,
                         wtxn,
                         quota::peer_key_from_redaction_pubkey(&pubkey),
-                        crate::unix_seconds_now(),
+                        vault.store.clock.now_recorded_at(),
                     )?;
                     vault
                         .batch_in()
@@ -414,7 +414,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         vault,
                         wtxn,
                         peer_key,
-                        crate::unix_seconds_now(),
+                        vault.store.clock.now_recorded_at(),
                     )?;
                     vault
                         .batch_in()

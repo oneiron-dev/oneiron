@@ -10,10 +10,21 @@ impl JobQueue for AttemptQueue<'_> {
     fn port_job_enqueue(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        input: EnqueueAttempt,
+    ) -> Result<EnqueueOutcome> {
+        self.port_job_enqueue_scoped(txn, input, crate::ports::JobScope::default())
+    }
+    fn port_job_enqueue_scoped(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
         mut input: EnqueueAttempt,
+        scope: crate::ports::JobScope<'_>,
     ) -> Result<EnqueueOutcome> {
         input.now = crate::ports::recorded_at_in_txn(self.store, txn)?;
-        self.enqueue_with_task_ref_and_dedupe_actor_in_txn(txn, input, None, None)
+        let outcome =
+            self.enqueue_scoped_storage_in_txn(txn, input, scope.task_ref, scope.dedupe_actor_ref)?;
+        crate::ports::recorded_at_in_txn(self.store, txn)?;
+        Ok(outcome)
     }
     fn port_job_claim(
         &self,

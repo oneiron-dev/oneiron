@@ -40,6 +40,15 @@ impl<'a> TxnBatchBuilder<'a> {
         }
     }
 
+    /// Stages phonetic codes in the caller-owned transaction.
+    pub(crate) fn phonetic(mut self, id: &EntityId, codes: &[&str]) -> Self {
+        self.ops.push(BatchOp::Phonetic {
+            id: *id,
+            codes: codes.iter().map(|code| (*code).to_owned()).collect(),
+        });
+        self
+    }
+
     /// Stages a vector without acquiring a second writer.
     pub fn vector(mut self, id: &EntityId, vector: &[f32]) -> Self {
         if self.validation_error.is_none() {

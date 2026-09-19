@@ -165,6 +165,18 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
+    crate::ports::audit_mutation_in_txn(
+        store,
+        wtxn,
+        crate::ports::MutationAudit {
+            entity: *id,
+            op: crate::ports::ChangeOp::Delete,
+            actor_principal: None,
+            occurred_at: store.clock.now_recorded_at(),
+            input: id.as_bytes(),
+            reason: None,
+        },
+    )?;
     neighbors.sort_unstable();
     neighbors.dedup();
     Ok((true, had_vector, had_graph_mutation, neighbors))
