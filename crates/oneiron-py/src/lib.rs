@@ -191,7 +191,7 @@ impl NativeClient {
         limit: Option<usize>,
         format: Option<String>,
     ) -> PyResult<String> {
-        let effort = oneiron_remote::parse_effort(effort.unwrap_or("standard")).map_err(raise)?;
+        let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope = match scope_json {
             Some(json) => decode(json, "the recall scope")?,
             None => oneiron::memory::RecallScope::default(),

@@ -28,15 +28,15 @@ def test_preserves_code_message_and_suggestions() -> None:
             native_raise(
                 {
                     "code": "LEASE_REQUIRED",
-                    "message": "deep recall requires a budget lease",
-                    "suggestions": ["Use effort 'standard'."],
+                    "message": "high recall requires a budget lease",
+                    "suggestions": ["Use effort 'medium'."],
                 }
             )
         )
     error = caught.value
     assert error.code == "LEASE_REQUIRED"
-    assert error.message == "deep recall requires a budget lease"
-    assert error.suggestions == ("Use effort 'standard'.",)
+    assert error.message == "high recall requires a budget lease"
+    assert error.suggestions == ("Use effort 'medium'.",)
 
 
 def test_unknown_future_codes_pass_through() -> None:

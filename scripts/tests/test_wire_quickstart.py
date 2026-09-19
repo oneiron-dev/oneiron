@@ -97,7 +97,7 @@ def test_remote_sdk_parity():
     # Standard recall uses the server's clock and type-specific recency decay.
     # Writes seconds apart can change rank between sequential SDK reads even
     # without a content write. Separate the fixture ages by weeks instead;
-    # keep standard effort and compare the full ranked packs without sorting.
+    # keep medium effort and compare the full ranked packs without sorting.
     fixture_now = int(time.time())
     node_written = node_result("write", occurred_at=fixture_now - 56 * 86400)
     assert_quickstart(node_written)
@@ -122,7 +122,7 @@ def test_remote_sdk_parity():
         "witnessed": witnessed, "claimed": claimed, "recalled": recalled, "receipts": receipts,
     })
     errors = {
-        "deep": refusal(lambda: memory.recall("window seat", effort="deep"), "LEASE_REQUIRED"),
+        "deep": refusal(lambda: memory.recall("window seat", effort="high"), "LEASE_REQUIRED"),
         "rebind": refusal(
             lambda: memory.as_actor("human:00000000000000000000000000000001"), "FORBIDDEN"
         ),
