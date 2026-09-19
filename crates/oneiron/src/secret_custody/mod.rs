@@ -56,6 +56,7 @@
 mod codec;
 mod doors;
 mod floor;
+mod replication;
 mod types;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
@@ -84,6 +85,7 @@ pub(crate) use self::doors::decode_secret_custody_admission_body;
 pub(crate) use self::floor::{
     PolicyManifestWalkError, policy_manifest_bodies_strict, policy_manifest_body_map,
 };
+pub(crate) use self::replication::plan_replicated_name_index;
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
     SECRET_NAME_INDEX_PREFIX, SECRET_SCOPE_READ, SecretBinding, SecretCustodyFloor,

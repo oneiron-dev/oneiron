@@ -1061,11 +1061,23 @@ fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()>
         (CustodyClass::CrossVault, false, false),
     ] {
         let (_src_dir, src) = temp_vault();
+        let src = std::sync::Arc::new(src);
         let (_dst_dir, dst) = temp_vault();
-        let mut rec = record("roundtrip", class, b"custody-canary", vec![]);
+        let mut rec = record(
+            "roundtrip",
+            class,
+            b"custody-canary",
+            vec![binding("door:roundtrip", CustodyTier::T0Doored)],
+        );
         rec.device_only = device_only;
         rec.registered_at = ts;
         let id = src.register_secret(rec.clone())?;
+        let manager = std::sync::Arc::new(crate::sync::WindowManager::new(
+            src.clone(),
+            std::sync::Arc::new(Materializer::new()),
+            "source",
+        ));
+        assert!(manager.documents().open(id).is_err());
         let raw = src.get_raw_unsealed(&id)?.unwrap();
         let doc = create_window_doc("source", &key);
         reverse_rematerialize(&src, &doc, &key)?;
@@ -1089,7 +1101,14 @@ fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()>
         assert_eq!(dst.get_raw_unsealed(&id)?.is_some(), allowed);
         if allowed {
             assert_eq!(dst.get_raw_unsealed(&id)?.unwrap(), raw);
+            assert_eq!(dst.resolve_secret_ref("roundtrip")?, Some(id));
+            let txn = dst.store.env.read_txn()?;
+            assert_eq!(
+                dst.get_secret_value_in_txn(&txn, &id, "door:roundtrip")?,
+                Some(b"custody-canary".to_vec())
+            );
         } else {
+            assert_eq!(dst.resolve_secret_ref("roundtrip")?, None);
             // A hostile peer bypassing egress still cannot write the forbidden row.
             let hostile = create_window_doc("hostile", &key);
             map_insert_bytes(&hostile.get_map("entities"), &id.to_hex(), &raw)?;
@@ -1111,5 +1130,92 @@ fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()>
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn custody_replay_name_index_is_atomic_and_cannot_displace_live_name() -> crate::Result<()> {
+    use crate::TimeRange;
+    let (_dir, vault) = temp_vault();
+    let original = record(
+        "shared-name",
+        CustodyClass::CustodyPortable,
+        b"first",
+        vec![],
+    );
+    let live = vault.register_secret(original.clone())?;
+    let incoming = record(
+        "shared-name",
+        CustodyClass::CustodyPortable,
+        b"second",
+        vec![],
+    );
+    let peer_id = EntityId::now();
+    let body = encode_secret_custody_body(&incoming)?;
+    let ts = TimeRange { start: 1, end: 1 };
+    let err = vault
+        .batch()
+        .put_replicated(&peer_id, ENTITY_TYPE_SECRET_CUSTODY, ts, 1, &body)
+        .commit()
+        .expect_err("live names cannot be displaced by replay");
+    assert!(matches!(
+        err,
+        Error::Secret(SecretError::SecretNameInUse { .. })
+    ));
+    assert_eq!(vault.resolve_secret_ref("shared-name")?, Some(live));
+    assert!(vault.get_secret_metadata(&peer_id)?.is_none());
+    let renamed = record("renamed", CustodyClass::CustodyPortable, b"first", vec![]);
+    let renamed_bytes = encode_secret_custody_body(&renamed)?;
+    let err = vault
+        .batch()
+        .put_replicated(&live, ENTITY_TYPE_SECRET_CUSTODY, ts, 1, &renamed_bytes)
+        .commit()
+        .expect_err("an indexed credential cannot be renamed by replay");
+    assert!(matches!(
+        err,
+        Error::Secret(SecretError::InvalidSecretCustodyBody(_))
+    ));
+    assert_eq!(vault.resolve_secret_ref("renamed")?, None);
+    assert_eq!(
+        vault.get_secret_metadata(&live)?.unwrap().name,
+        "shared-name"
+    );
+
+    // Failed replay may be quarantined in a transaction that commits other
+    // work. Read-only planning must not create a phantom name in that case.
+    let invalid = record(
+        "rejected-name",
+        CustodyClass::CustodyPortable,
+        b"bad",
+        vec![],
+    );
+    let invalid_id = EntityId::now();
+    let bytes = encode_secret_custody_body(&invalid)?;
+    vault.with_write_txn(|txn| {
+        let err = crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: invalid_id,
+                entity_type: ENTITY_TYPE_SECRET_CUSTODY,
+                occurred: TimeRange { start: 2, end: 1 },
+                learned_at: 1,
+                data: bytes.clone(),
+                allow_maintenance: true,
+                allow_reserved_predicate: true,
+                hub_sync_imported: false,
+            }],
+            true,
+            false,
+            false,
+        )
+        .expect_err("bad range");
+        assert!(matches!(err, Error::InvalidTimeRange { .. }));
+        Ok(())
+    })?;
+    assert_eq!(vault.resolve_secret_ref("rejected-name")?, None);
+    assert!(vault.get_secret_metadata(&invalid_id)?.is_none());
     Ok(())
 }

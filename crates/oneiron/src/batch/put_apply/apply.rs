@@ -94,6 +94,12 @@ pub(in crate::batch) fn apply_put(
     // Registered maintenance kinds with pinned body schemas get the same
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
+    let custody_name_index =
+        if replicated && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            crate::secret_custody::plan_replicated_name_index(store, wtxn, &id, data)?
+        } else {
+            None
+        };
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
     let mut new_agent_definition = None;
@@ -671,6 +677,9 @@ pub(in crate::batch) fn apply_put(
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    if let Some(key) = custody_name_index {
+        store.vault_meta.put(wtxn, &key, id.as_bytes())?;
+    }
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
             store,
