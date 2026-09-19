@@ -255,7 +255,7 @@ fn collect_pull_candidates(
 /// 6. label everything `Data`.
 ///
 /// ONE SNAPSHOT DECIDES ADMISSION AND THE RESULT. There is deliberately no
-/// second, later clamp: re-asking [`ScopedRead::get_entity_parts`] after this
+/// second, later clamp: re-asking `ScopedRead::get_entity_parts` after this
 /// transaction closed would ask a NEWER snapshot, and a candidate that had
 /// already consumed one of the caller's `limit` places could then be dropped
 /// by that newer answer — a concurrent delete or policy change would make the
