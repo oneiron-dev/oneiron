@@ -33,7 +33,7 @@ fn predicate_projection_tracks_overwrites_rollback_and_deletion() -> Result<()> 
     vault.put_claim(&id, &body, at, 1)?;
     assert!(lookup("profile.name")?.is_empty());
     assert_eq!(lookup("profile.alias")?, vec![id]);
-    vault.delete_entity(&id)?;
+    vault.batch().delete(&id).commit()?;
     assert!(lookup("profile.alias")?.is_empty());
     Ok(())
 }
