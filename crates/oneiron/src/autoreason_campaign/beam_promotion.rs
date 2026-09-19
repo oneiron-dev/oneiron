@@ -20,9 +20,19 @@ impl AuthoringStrategyPin {
     /// Dataset, budget and verdict settings cannot mint a new sealed shot.
     pub fn from_campaign(config: &super::CampaignConfig) -> super::CampaignResult<Self> {
         config.validate()?;
-        let bytes = serde_json::to_vec(&(&config.arms, &config.corpus, &config.tournament))
-            .map_err(|_| super::CampaignError::ReportMismatch {
-                reason: "campaign configuration cannot be serialized",
+        // Declaration order is not authoring behavior; config validation accepts
+        // the same three identities in any order.
+        let mut arms = config.arms.clone();
+        arms.sort_by_key(|row| match row.arm {
+            super::CampaignArmId::SinglePass => 0,
+            super::CampaignArmId::Tournament => 1,
+            super::CampaignArmId::StrongCritic => 2,
+        });
+        let bytes =
+            serde_json::to_vec(&(&arms, &config.corpus, &config.tournament)).map_err(|_| {
+                super::CampaignError::ReportMismatch {
+                    reason: "campaign configuration cannot be serialized",
+                }
             })?;
         Ok(Self {
             strategy_id: config.campaign_id.clone(),

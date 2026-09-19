@@ -2313,6 +2313,24 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
     })?;
     assert!(!failed.became_default);
     assert_eq!(default_strategy(&vault)?, None);
+    let mut reordered = test_config();
+    reordered.arms.swap(0, 1);
+    let reordered_pin = AuthoringStrategyPin::from_campaign(&reordered).unwrap();
+    assert_eq!(reordered_pin, pin);
+    let reordered_report = compare_campaign(
+        AttemptId::now(),
+        &reordered,
+        report.single_pass.clone(),
+        report.tournament.clone(),
+        report.decision.clone(),
+    )
+    .unwrap();
+    assert!(
+        measure_once(&vault, &reordered_report, reordered_pin, || panic!(
+            "order-only change must not call the referee again"
+        ))
+        .is_err()
+    );
     assert!(
         measure_once(&vault, &report, pin.clone(), || panic!(
             "second measurement must never execute"
