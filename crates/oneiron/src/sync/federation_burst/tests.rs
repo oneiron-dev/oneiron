@@ -103,7 +103,7 @@ fn peer_baseline_and_vault_growth_reduce_the_same_burst() {
         )
         .unwrap();
     }
-    for _ in 0..64 {
+    for _ in 0..100 {
         let id = EntityId::now();
         vaults[2]
             .batch()
@@ -117,24 +117,31 @@ fn peer_baseline_and_vault_growth_reduce_the_same_burst() {
             .commit()
             .unwrap();
     }
-    let ratios: Vec<_> = vaults
+    let decisions: Vec<_> = vaults
         .iter()
         .zip(&peers)
         .map(|(vault, peer)| {
-            inputs(
-                admit_work_at(
-                    vault,
-                    peer,
-                    &WindowKey::new("2026-02"),
-                    WorkKind::Selector,
-                    &request(peer),
-                    (10, 11),
-                )
-                .unwrap()
-                .0,
+            admit_work_at(
+                vault,
+                peer,
+                &WindowKey::new("2026-02"),
+                WorkKind::Selector,
+                &request(peer),
+                (10, 11),
             )
-            .rate_ratio
+            .unwrap()
+            .0
         })
+        .collect();
+    assert!(matches!(
+        decisions[0],
+        FederationBurstDecision::Defer { .. }
+    ));
+    assert!(matches!(decisions[1], FederationBurstDecision::Allow(_)));
+    assert!(matches!(decisions[2], FederationBurstDecision::Allow(_)));
+    let ratios: Vec<_> = decisions
+        .into_iter()
+        .map(|decision| inputs(decision).rate_ratio)
         .collect();
     assert!(ratios[1] < ratios[0]);
     assert!(ratios[2] < ratios[0]);
