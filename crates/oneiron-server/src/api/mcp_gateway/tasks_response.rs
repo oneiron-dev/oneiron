@@ -215,6 +215,17 @@ pub(crate) async fn execute_mcp_generated_verb(
                         execute_mcp_board_verb(server, &args, actor).await?;
                     (output, source, carrier, Some(epoch))
                 }
+                crate::mcp::McpVerbFamily::Memory => {
+                    let output = super::memory_response::execute(server, &args, actor)?;
+                    // One native response, with its own bounded query/batch
+                    // semantics. Do not invent an MCP cursor over nested DTOs.
+                    (
+                        output,
+                        crate::mcp::McpPageSource::complete(1),
+                        McpCarrierPolicy::Drain,
+                        None,
+                    )
+                }
                 crate::mcp::McpVerbFamily::Tasks => {
                     // Establish the board epoch before reading a continuable
                     // task set. The result itself is retained below, so a
@@ -395,6 +406,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("field".to_owned(), Value::String(field));
+    }
+    if let Some(native) = error.vault_read
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("vault_read".to_owned(), json!(*native));
     }
     if let Some(successor_short_id) = error.successor_short_id
         && let Some(object) = data.as_object_mut()

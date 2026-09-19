@@ -24,6 +24,7 @@ mod mcp_paging_cursors;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
+mod mcp_memory;
 mod mcp_write_guards;
 mod reactive;
 mod retrieval_depth_quality;

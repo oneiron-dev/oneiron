@@ -1227,7 +1227,9 @@ fn tool_first_endpoint_is_generated_from_the_exported_verb_rows() {
     assert_eq!(surface.tool_names(), expected);
     assert_eq!(
         expected.len(),
-        oneiron::board_verb::BOARD_VERBS.len() + oneiron::task_verb::TASKS_VERBS.len(),
+        oneiron::board_verb::BOARD_VERBS.len()
+            + oneiron::task_verb::TASKS_VERBS.len()
+            + oneiron::code_run::vault_read::MEMORY_VERBS.len(),
     );
 
     // Every registered tool IS a projection of a row: nothing hand-written.
@@ -1871,6 +1873,7 @@ fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
             json!({ "task_ref": ACTOR_ID })
         }
         McpVerbBinding::TasksCreate => json!({ "spec": { "kind": "review" } }),
+        McpVerbBinding::Memory(_) => json!({ "request": {} }),
     }
 }
 
@@ -3921,4 +3924,36 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
         Some("review the draft")
     );
     decode("   ").expect_err("a blank label keeps its settled refusal");
+}
+
+#[test]
+fn memory_tool_census_keeps_native_names_schemas_and_reserved_refusals() {
+    use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
+    let surface = registered_surface(McpSurfaceMode::ToolFirst);
+    assert_eq!(MEMORY_VERBS.len(), VaultReadMethod::ALL.len());
+    for method in VaultReadMethod::ALL {
+        assert!(MEMORY_VERBS.contains(&method.tool_name()));
+        let tool = surface.resolve(method.tool_name()).unwrap();
+        let McpEndpointTool::Verb(verb) = tool else {
+            panic!("memory verb")
+        };
+        assert_eq!(verb.binding, McpVerbBinding::Memory(method));
+        assert_eq!(
+            tool.schema().input_schema["properties"]["arguments"]["properties"]["request"],
+            method.request_schema()
+        );
+    }
+    let query = surface.resolve("memory.query").unwrap().schema();
+    assert_eq!(
+        query.input_schema["properties"]["arguments"]["properties"]["request"]["properties"]["query"]
+            ["type"],
+        json!(["string", "null"])
+    );
+    let ask = surface.resolve("memory.ask").unwrap();
+    let mut args = endpoint_census_args(ask);
+    args["arguments"]["request"] = Value::Null;
+    assert!(validate_mcp_endpoint_tool_args(ask, args).is_ok());
+    for retired in ["oneiron.nav", "oneiron.read", "oneiron.ask"] {
+        assert!(surface.resolve(retired).is_none());
+    }
 }

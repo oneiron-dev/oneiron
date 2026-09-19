@@ -119,7 +119,11 @@ pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
     let allowed = verb_argument_fields(tool.binding);
     let mut properties = serde_json::Map::new();
     for field in allowed {
-        properties.insert((*field).to_owned(), verb_argument_field_schema(field));
+        let schema = match (tool.binding, *field) {
+            (super::surface::McpVerbBinding::Memory(method), "request") => method.request_schema(),
+            _ => verb_argument_field_schema(field),
+        };
+        properties.insert((*field).to_owned(), schema);
     }
     let arguments = json!({
         "type": "object",

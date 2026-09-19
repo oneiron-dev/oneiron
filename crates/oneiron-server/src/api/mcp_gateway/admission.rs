@@ -63,6 +63,11 @@ pub(crate) fn mcp_admit_scoped_call(
         // no wire name resolves onto them at all.
         _ => return mcp_admit_unscoped_execution(actor, tool_name, "name"),
     };
+    if matches!(verb.tool.binding, crate::mcp::McpVerbBinding::Memory(_)) {
+        // Actor-scoped reads do NOT by themselves carry a connector's narrower
+        // ceiling. Never confuse the principal's grants with this credential.
+        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.request")?;
+    }
     if let Some(scopes) = verb.payload.arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
     }

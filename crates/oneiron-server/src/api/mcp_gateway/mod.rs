@@ -4,6 +4,7 @@ mod board_setup;
 mod envelope;
 mod exec_board_verbs;
 mod facade_verbs;
+mod memory_response;
 mod tasks_response;
 
 pub(crate) use self::actor_dispatch::{

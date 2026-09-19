@@ -49,6 +49,7 @@ pub(crate) struct McpGatewayError {
     pub(super) kind: &'static str,
     pub(super) message: String,
     pub(super) field: Option<String>,
+    pub(super) vault_read: Option<Box<oneiron::code_run::vault_read::VaultReadError>>,
     /// Set only by the stale-write-verb-target refusal (ONE-1936); surfaces as
     /// `error.data.successor_short_id` so a client reads a FIELD instead of
     /// parsing the message.
@@ -70,6 +71,7 @@ impl McpGatewayError {
             kind,
             message: message.into(),
             field: None,
+            vault_read: None,
             successor_short_id: None,
             effective_scope: None,
         }

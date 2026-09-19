@@ -2,6 +2,7 @@
 
 use super::endpoint_schema::{execute_code_tool_schema, setup_tool_schema, verb_tool_schema};
 use oneiron::board_verb::BOARD_VERBS;
+use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
 use oneiron::task_verb::TASKS_VERBS;
 use serde::Serialize;
 use serde_json::Value;
@@ -114,6 +115,7 @@ impl McpSurfaceMode {
 pub enum McpVerbFamily {
     Board,
     Tasks,
+    Memory,
 }
 
 impl McpVerbFamily {
@@ -122,6 +124,7 @@ impl McpVerbFamily {
         match self {
             Self::Board => "board",
             Self::Tasks => "tasks",
+            Self::Memory => "memory",
         }
     }
 
@@ -129,6 +132,7 @@ impl McpVerbFamily {
         match prefix {
             "board" => Some(Self::Board),
             "tasks" => Some(Self::Tasks),
+            "memory" => Some(Self::Memory),
             _ => None,
         }
     }
@@ -151,6 +155,7 @@ pub enum McpVerbBinding {
     TasksCheck,
     TasksCreate,
     TasksExpand,
+    Memory(VaultReadMethod),
 }
 
 /// One tool-first tool, generated 1:1 from one exported verb row.
@@ -178,9 +183,10 @@ pub enum McpSurfaceConstructionError {
 /// row upstream adds a tool here with no curation decision to make.
 #[must_use]
 pub fn exported_verb_rows() -> Vec<&'static str> {
-    let mut rows = Vec::with_capacity(BOARD_VERBS.len() + TASKS_VERBS.len());
+    let mut rows = Vec::with_capacity(BOARD_VERBS.len() + TASKS_VERBS.len() + MEMORY_VERBS.len());
     rows.extend_from_slice(&BOARD_VERBS);
     rows.extend_from_slice(&TASKS_VERBS);
+    rows.extend_from_slice(&MEMORY_VERBS);
     rows
 }
 
@@ -252,6 +258,10 @@ fn verb_binding(family: McpVerbFamily, verb: &str) -> Option<McpVerbBinding> {
         (McpVerbFamily::Tasks, "check") => Some(McpVerbBinding::TasksCheck),
         (McpVerbFamily::Tasks, "create") => Some(McpVerbBinding::TasksCreate),
         (McpVerbFamily::Tasks, "expand") => Some(McpVerbBinding::TasksExpand),
+        (McpVerbFamily::Memory, _) => VaultReadMethod::ALL
+            .into_iter()
+            .find(|method| method.tool_name().strip_prefix("memory.") == Some(verb))
+            .map(McpVerbBinding::Memory),
         _ => None,
     }
 }
@@ -281,6 +291,9 @@ impl McpEndpointTool {
             // this release. The text states the shipped contract so a schema
             // dump can never read as an offer.
             Self::ExecuteCode => "Not shipped in this release: execute_code is registered on no endpoint and a direct call is refused with execute_code_unavailable before any run is created.".to_owned(),
+            Self::Verb(McpGeneratedVerbTool { binding: McpVerbBinding::Memory(method), .. }) => format!(
+                "{} One atomic native response; nested arrays retain the native request budgets and result metadata. Narrow connector ceilings fail closed.", method.description()
+            ),
             Self::Verb(tool) => format!(
                 "Invoke the exported {family} verb {name} directly, with the same actor ceiling and gate every other door applies.",
                 family = tool.family.as_str(),

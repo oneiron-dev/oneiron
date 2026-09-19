@@ -16,7 +16,7 @@ pub(super) const fn default_limit() -> usize {
 }
 
 /// Read projection requested by the accepted routes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum View {
     /// Compact projection used by list/search results.
@@ -28,7 +28,7 @@ pub enum View {
 }
 
 /// Count precision requested by callers and reported in response metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum CountMode {
     /// Skip count work and report `total = 0`.
@@ -96,7 +96,7 @@ pub struct CoreEntityRecord {
 }
 
 /// Accepted `POST /v1/core/query` request body.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoreQueryRequest {
     /// Optional BM25 text query.
     #[serde(default)]
@@ -142,7 +142,7 @@ pub struct CoreQueryResponse {
 }
 
 /// Accepted `POST /v1/core/hydrate` request body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoreHydrateRequest {
     /// Canonical short reference in `shortId:contentHashHex` form.
     #[serde(default, rename = "ref", alias = "short_ref", alias = "shortRef")]
@@ -194,7 +194,7 @@ pub struct CoreHydrateResponse {
 }
 
 /// Accepted `POST /v1/core/batch/shortId/hydrate` request body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoreBatchShortIdHydrateRequest {
     /// Canonical short references in `shortId:contentHashHex` form.
     #[serde(
@@ -251,7 +251,7 @@ pub struct CoreBatchShortIdHydrateResponse {
 /// An HTTP `WireTransport` places `id` in the route path and `view` in the
 /// query while still carrying this canonical JSON body at the `round_trip`
 /// seam.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoreMemoryTimelineRequest {
     /// Hex entity id whose supersession chain is requested.
     pub id: String,
@@ -303,7 +303,7 @@ pub struct CoreMemoryTimelineResponse {
 }
 
 /// M8-reserved ask request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct AskRequest(pub Value);
 
@@ -313,7 +313,7 @@ pub struct AskRequest(pub Value);
 pub struct AskResponse(pub Value);
 
 /// M8-reserved code-search request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct CodeSearchRequest(pub Value);
 
@@ -323,7 +323,7 @@ pub struct CodeSearchRequest(pub Value);
 pub struct CodeSearchResponse(pub Value);
 
 /// M8-reserved code-execute request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct CodeExecuteRequest(pub Value);
 

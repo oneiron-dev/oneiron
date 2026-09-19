@@ -47,8 +47,9 @@ pub use self::context_pack::{
     CoreContextPackSignal, CoreContextPackStats, CoreContextPackTokenStats, CoreContextPackVad,
 };
 pub use self::contract::{
-    VAULT_READ_METHOD_MAP, VaultReadAdapterKind, VaultReadAvailability, VaultReadClient,
-    VaultReadMethod, VaultReadMethodMapping, VaultReadRequest, VaultReadResponse, VaultReadWireOp,
+    MEMORY_VERBS, VAULT_READ_METHOD_MAP, VaultReadAdapterKind, VaultReadAvailability,
+    VaultReadClient, VaultReadMethod, VaultReadMethodMapping, VaultReadRequest, VaultReadResponse,
+    VaultReadWireOp,
 };
 pub use self::error::{VaultReadError, VaultReadResult};
 pub use self::in_process::InProcessVaultReadAdapter;
