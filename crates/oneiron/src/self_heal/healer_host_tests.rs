@@ -179,6 +179,21 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
         check.count,
         super::healer_host::PROPOSAL_BURST_THRESHOLD + 1
     );
+    let backup_dir = tempfile::tempdir().unwrap();
+    let checkpoint = backup_dir.path().join("checkpoint");
+    v.snapshot_checkpoint(&checkpoint, 100).unwrap();
+    let (restored, _) = Vault::restore_checkpoint(
+        &checkpoint,
+        &backup_dir.path().join("restored"),
+        crate::VaultConfig::device(),
+        crate::recovery::checkpoint::RestoreReason::Restore,
+        101,
+    )
+    .unwrap();
+    assert_eq!(
+        restored.proposal_burst_check(&actor.entity_ref()).unwrap(),
+        Some(check.clone())
+    );
     let receipt = v
         .reverse_healer_run(&owner, &actor.entity_ref(), "burst")
         .unwrap();
@@ -298,4 +313,39 @@ fn actor_burst_reversal_covers_distinct_run_names() {
                 .reversed
         );
     }
+}
+
+#[test]
+fn production_refs_refuse_encoded_namespace_components() {
+    let (_dir, v, _owner, actor) = fixture();
+    let prod = v.register_prod_healer(actor);
+    for target in [
+        "tenant%2Fengine",
+        "%2Fcore",
+        "tenant%2fsoul",
+        "%65ngine/index",
+        "tenant%252Fengine",
+    ] {
+        for operation in [
+            RepairOperation::Reindex {
+                scope_ref: target.into(),
+            },
+            RepairOperation::Retry {
+                run_ref: target.into(),
+            },
+        ] {
+            let proposal = patch(operation);
+            let id = proposal.proposal_id;
+            assert!(matches!(
+                prod.submit("encoded", "session", proposal),
+                Err(crate::Error::InvalidConfig(_))
+            ));
+            assert!(v.healer_proposal(&id).unwrap().is_none());
+        }
+    }
+    assert!(
+        v.healer_run_receipt(&actor.entity_ref(), "encoded")
+            .unwrap()
+            .is_none()
+    );
 }

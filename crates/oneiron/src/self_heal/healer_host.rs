@@ -427,8 +427,12 @@ impl HealerRegistration<'_> {
 
 fn protected_target(target: &str) -> bool {
     // Refs are opaque text, not predicates. Treat every non-identifier byte as
-    // a namespace boundary, including slash, backslash and encoded separators.
+    // a namespace boundary, including slash and backslash. Percent syntax is
+    // refused outright: encoded separators or identifier bytes are ambiguous.
     // Reserved components stay protected even behind a path or URI prefix.
+    if target.contains('%') {
+        return true;
+    }
     target
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .any(|component| {
