@@ -1,0 +1,10 @@
+{
+  "executable_sha256": "3a9cb2cb63ee3743417716387e3826e8066ac0d5c06d428473e8c9cb776bd7c3",
+  "source_commit": "523799c9",
+  "engine": {
+    "engine": "oneiron-xlsx-formula",
+    "version": "0.1.0+formualizer.0.9.3"
+  },
+  "precision_fallback": false,
+  "blank_cell_probe": "passed"
+}

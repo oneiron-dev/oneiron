@@ -318,6 +318,32 @@
       "exit_code": 0
     },
     "test_summary": "19 passed, 0 failed",
-    "measurement_status": "A separate Mac executable must pass the blank-cell probe before repaired-candidate corpus runs start."
+    "measurement_status": "Mac executable passed the blank-cell probe; full repaired-candidate corpus runs admitted, not yet accepted.",
+    "mac_build": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "build",
+        "--locked",
+        "-p",
+        "oneiron-xlsx-formula",
+        "--bin",
+        "recalc_native"
+      ],
+      "exit_code": 0,
+      "started_at": 1789821010.2436724,
+      "finished_at": 1789822530.063201
+    }
+  },
+  "office_recovery_supervisor": {
+    "tests": 8,
+    "status": "passed",
+    "log": "target/w7-checks/excel-resume-v2-tests.log",
+    "current_corpus_status": "SpreadsheetBench supervised run active; FUSE waits without a second Excel session."
   }
 }
