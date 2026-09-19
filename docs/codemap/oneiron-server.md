@@ -221,7 +221,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/oauth_client/tests.rs` | test | s | — | — | — |
 | `src/mcp/paging.rs` | src | m | 2 struct · 3 enum · 19 fn · 1 const · 4 crate-vis | McpPageBudget, McpPageCursorError, McpPageSource, McpResultEnd, McpRetrievalHealth | MCP page budgets, cursors, snapshots, and canonical-JSON digests |
 | `src/mcp/qualification.rs` | src | m | 10 struct · 3 enum · 3 trait · 2 fn | GroundingOracle, ProbeCitation, ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent, ProbeTraceKind +8 | Connector qualification probes |
-| `src/mcp/qualification/tests.rs` | test | s | — | — | — |
+| `src/mcp/qualification/tests.rs` | test | m | — | — | — |
 | `src/mcp/registry.rs` | src | m | 1 struct · 19 fn · 3 crate-vis | McpConnectorActorRegistry | MCP connector actor registry: cursors, board epochs, and stream proxy |
 | `src/mcp/results.rs` | src | s | 3 struct · 1 enum · 9 fn | McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError | MCP result envelopes: metadata, board keyframes, and setup payloads |
 | `src/mcp/schema_parts.rs` | src | s | 16 crate-vis | — | Shared JSON-schema fragments: actors, scopes, subjects, and envelope pieces |

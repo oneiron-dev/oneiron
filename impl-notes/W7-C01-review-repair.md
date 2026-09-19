@@ -206,3 +206,80 @@ terminal evidence. Publication and remaining factory stages remain separate.
 Raw refreshed reviews, IDs/head bindings, the intake ledger, exact failure,
 commands and logs are in
 `/home/lexi/w7-build/tickets/W7-C01/recovery-fix-tests-after-review/`.
+
+## Recovered-review and bot-thread closure
+
+Fresh intake before this pass: local HEAD `9cfc08b636cc04f5cf67d685531dd0fb2e5186f7`,
+published PR934 HEAD `dde11af41fc748496a1308408cff5063ce47d879`. The complete snapshot contains
+12 issue comments, two reviews, 23 inline comments and 23 review threads.
+REST pagination was exhausted; GraphQL had no remaining thread or nested-comment
+pages, and all inline IDs matched. The 23 original bot findings are unchanged
+from the complete repair snapshot, not from the obsolete seven-comment snapshot.
+
+Raw JSON, exact heads, body timestamps, original internal root/child transcripts,
+reply IDs, validation commands and logs are retained at
+`/home/lexi/w7-build/recovery/pr934-bots-20260919T140317Z`. The R01–R19 table above remains the deduplicated bot/internal ledger.
+All 23 inline threads now have individual fix/skip explanations referencing the
+existing local repairs and completed standard-test evidence. No thread resolution
+flag, published branch, or PR state was changed.
+
+The original Opus root ended with a substantive verdict at 11:07Z; its ten
+children had no terminal verdict, and the root explicitly completed those lanes
+inline. Their raw transcripts and final root findings were retained, not discarded
+or counted as independent clean reviews. The later Grok root's existing seven
+completed lane reports and one unfinished connector lane were recovered; the
+root completed the connector assessment and identified the missing OF-188 test.
+No new reviewers or editors were spawned.
+
+### Current-code adjudication of the recheck
+
+| ID | Source | Finding and disposition |
+| --- | --- | --- |
+| I20 | review-opus-2 | projection_index file allegedly truncated. Skip: the complete projection_index.rs is present and compiled by terminal standard tests; review input truncation is not a code defect. |
+| I21 | review-opus-2 | MCP nav allegedly bypasses authority/world scope. Skip: project_nav_results always uses Summary -> ScopedRead::get_entity_parts -> live claim policy gate. Connector authority is resolved upstream; mcp_admit_scoped_call refuses retired nav adapters for world/facet-narrowed credentials. Those adapters are not registered wire tool names. There is no demonstrated bypass. |
+| I22 | review-opus-2 | standing key allegedly omits world/facet/relationship checks. Skip: begin_standing_block_session rechecks exact registered handle and agent; ScopedRead::is_entity_readable checks live policy, and body subject/world are matched to handle. Scope envelope attenuation is a different door, not raw key-constructor validation. |
+| I23 | review-opus-2 | whole-vault export allegedly needs extra companion/standing privacy filter. Skip: step 35 explicitly requires enumerate every row and exclude only overlay membership; identity-only local Vault API is not an agent/companion export authorization door. |
+| I24 | review-opus-2 | dispatch allegedly merges cross-axis scope. Skip: dispatch calls Scope::attenuate before enqueue; it rejects any changed/erased bound axis plus non-subset resource sets. No union/merge widens resources. |
+| I25 | review-opus-2 | projection deindex removal allegedly missing. Skip: maintain_claim_projection_index removes old keys before replacement; batch/deindex.rs:166 removes keys on delete. Active/Proposed eligibility rebuilt from new ClaimBody on lifecycle writes. |
+| I26 | review-grok-2 | OF-188 request-id/idempotency-key equality negative fixture absent. Fix test coverage: assert IdempotencyArgument for both designated write and timeout-retry cases when key equals request id. Production rejects equality already. |
+
+I26 is repaired in `54361d57`: the new qualification fixture asserts the typed
+`IdempotencyArgument` refusal for both the write and timeout-retry probes when
+the explicit key equals the transport request ID. Production rejection already
+existed; no production behavior changed. The added test moved its file from the
+small to medium code-map bucket, so the two generated map artifacts were updated.
+No canon-page correction or docs-repo edit was needed.
+
+### Cross-ticket recovery boundary
+
+The supplied PR933 F01–F24 report and original root adjudication were consumed.
+O01 (three calls versus three corrective retries) and O02 (conflict-fallback
+coverage) were rejected as blocking by that root; child previews were not promoted
+to final findings. Each F01–F24 group is routed in `pr933-applicability.json`.
+Only F05 shares a C01-changed file path; its C08-added test is not in this branch.
+All other candidate paths are unchanged by C01. These are C08-owned findings,
+not C01 dismissals of their merits. The updated PR933 snapshot (16 issue comments, 22 reviews, 40 complete threads
+and 96 inline comments/replies) is preserved separately. Its original root now
+has a terminal DEFECTS verdict: it recovered nine child transcripts and closed
+the six incomplete lanes inline. That verdict confirms the O01/O02 rejection
+and rejects F05 as a false positive (the C08 test has function-local imports).
+No C08 source or review state was edited.
+
+### Validation boundary
+
+The factory's **completed** standard six-crate rerun returned exit 0 at 13:28:36Z
+on `9cfc08b6`, after the HNSW repair. The final complete log section is preserved
+as `prior-standard-tests.log`. Earlier interrupted or failing sections are not
+counted as terminal passes. Existing scoped regression/lint results above are
+reused because production Rust bytes did not change in this pass.
+
+The changed server crate's standard `cargo test -p oneiron-server --no-fail-fast
+-- --test-threads=3` run is pending under the existing factory build-host wrapper,
+with at most three Cargo jobs and a ticket-owned target. No duplicate build was
+started. Native rustfmt passed for the changed test file; final map/whitespace
+checks and terminal test results will be recorded before the final PR explanation.
+
+Codex is completed, not quota-failed or pending. Qodo is completed. CodeRabbit
+explicitly skipped the 235-file PR because its limit is 150, Cursor reported an
+explicit usage-limit error, and Greptile is disabled. None is being blindly waited
+on or described as an approval of unpublished repair commits.

@@ -31409,7 +31409,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/mcp/qualification/tests.rs",
