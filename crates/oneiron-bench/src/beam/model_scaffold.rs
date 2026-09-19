@@ -248,16 +248,15 @@ pub(super) fn run_with_session(
     let mut manifest = parse_manifest_json(&std::fs::read_to_string(&plan.retrieval_manifest)?)?;
     resolve_manifest_paths(&mut manifest, &plan.retrieval_manifest);
     manifest.outputs = None;
-    if let Some(chroma) = &plan.chroma {
-        if !manifest
+    if let Some(chroma) = &plan.chroma
+        && !manifest
             .competitors
             .iter()
             .any(|row| row.arm == ArmKind::VanillaRag && row.competitor_id == chroma.card_id)
-        {
-            return Err(refusal(
-                "Chroma card id must name the manifest vanilla-RAG competitor",
-            ));
-        }
+    {
+        return Err(refusal(
+            "Chroma card id must name the manifest vanilla-RAG competitor",
+        ));
     }
     if manifest.case_ids.len() != plan.amortized_question_count {
         return Err(refusal(
