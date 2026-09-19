@@ -46,7 +46,26 @@ pub(super) fn park_open_conflict(
         Value::Map(vec![
             (
                 Value::from("predicate"),
-                Value::from(conflict.identity.predicate.clone()),
+                if members.iter().all(|member| {
+                    super::conflict::candidate_facts(&member.candidate)
+                        .is_ok_and(|facts| facts.predicate == conflict.identity.predicate)
+                }) {
+                    Value::from(conflict.identity.predicate.clone())
+                } else {
+                    Value::Nil
+                },
+            ),
+            (
+                Value::from("predicates"),
+                Value::Array(
+                    members
+                        .iter()
+                        .map(|member| {
+                            super::conflict::candidate_facts(&member.candidate)
+                                .map(|facts| Value::from(facts.predicate))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                ),
             ),
             (
                 Value::from("prior_head"),

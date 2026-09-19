@@ -11,6 +11,7 @@ pub(super) struct AssembledCandidates {
     pub(super) candidates: Vec<PromotionCandidate>,
     pub(super) conflicts: Vec<ConflictSet>,
     pub(super) held: bool,
+    pub(super) retry_at_ms: u64,
 }
 
 pub(super) fn assemble(
@@ -36,6 +37,23 @@ pub(super) fn assemble(
         }
     }
     let plan = select_candidates(&inputs, now, &config)?;
+    let retry_at_ms = plan
+        .held
+        .iter()
+        .filter_map(|(id, hold)| {
+            inputs
+                .iter()
+                .find(|input| input.claim_id == *id)
+                .map(|input| match hold {
+                    super::selection::SelectionHold::Soak => {
+                        input.first_seen_ms.saturating_add(config.soak_ms)
+                    }
+                    super::selection::SelectionHold::EvidenceCount => now.saturating_add(60_000),
+                })
+        })
+        .min()
+        .unwrap_or(now)
+        .max(now.saturating_add(1));
     let mut by_id: BTreeMap<EntityId, PromotionCandidate> =
         candidates.into_iter().map(|c| (c.claim_id, c)).collect();
     let ready: Vec<_> = plan
@@ -49,6 +67,7 @@ pub(super) fn assemble(
         candidates: ready,
         conflicts,
         held: !plan.held.is_empty(),
+        retry_at_ms,
     })
 }
 
@@ -67,11 +86,17 @@ fn selection_input(
     let mut count = 0;
     let mut sessions = BTreeSet::new();
     for id in refs {
-        let learned_at = resources.evidence_time(resources.scope(), &id)?;
+        let learned_at = resources
+            .evidence_time(resources.scope(), &id)?
+            .saturating_mul(1_000);
         earliest = Some(earliest.map_or(learned_at, |at: u64| at.min(learned_at)));
         latest = latest.max(learned_at);
         count += 1;
-        sessions.insert(resources.conversation());
+        // A partition has one conversation, but its evidence can come from
+        // distinct speakers. Count those store-backed sources, not the partition.
+        if let Some(speaker) = resources.turn(resources.scope(), &id)?.speaker {
+            sessions.insert(speaker.trim().to_lowercase());
+        }
     }
     let signals = StrengthSignals {
         type_prior: config
@@ -86,7 +111,7 @@ fn selection_input(
     };
     Ok(SelectionCandidate {
         claim_id: candidate.claim_id,
-        first_seen_ms: earliest.unwrap_or(candidate.learned_at),
+        first_seen_ms: earliest.unwrap_or(candidate.learned_at.saturating_mul(1_000)),
         evidence_count: count,
         fan_in,
         new_refs,

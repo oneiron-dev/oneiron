@@ -378,65 +378,91 @@ fn scoped_signals_preserve_ranking_and_filter_foreign_and_private_refs() -> Resu
 
 #[test]
 fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let store = DreamerRunnerStore::new(&vault);
-    let (attempt, turns, _) =
-        admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts")])?;
-    let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
-    let mut items = Vec::new();
-    for predicate in ["profile.name", "profile.alias"] {
-        let mut output = candidate(subject, predicate, "same text", None);
-        derive_id(&mut output, attempt.status.attempt.id)?;
-        vault.put_vector(&output.claim_id, &vec![1.0; vault.config.dimensions])?;
-        items.push(
-            serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
+    for resolution in ["accumulate", "merge", "missing", "unlisted"] {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let store = DreamerRunnerStore::new(&vault);
+        let (attempt, turns, _) =
+            admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts")])?;
+        let subject = EntityId::now();
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
+        let mut items = Vec::new();
+        let mut selected_id = EntityId::now();
+        for predicate in ["profile.name", "profile.alias"] {
+            let mut output = candidate(subject, predicate, "same text", None);
+            derive_id(&mut output, attempt.status.attempt.id)?;
+            if predicate == "profile.alias" {
+                selected_id = output.claim_id;
+            }
+            vault.put_vector(&output.claim_id, &vec![1.0; vault.config.dimensions])?;
+            items.push(
+                serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
             "value": "same text", "evidence_turn_refs": [turns[0].to_hex()]}),
-        );
-    }
-    let backend = ScopeBackend {
+            );
+        }
+        let backend = ScopeBackend {
         seen: Mutex::new(Vec::new()),
         inner: ScriptedBackend::new(vec![
             Ok(text_response(
                 serde_json::json!({"candidates": items}).to_string(),
             )),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".to_owned())),
+            Ok(text_response(match resolution {
+                "accumulate" => serde_json::json!({"resolution":"accumulate"}),
+                "merge" => serde_json::json!({"resolution":"merge", "candidate_ref":selected_id.to_hex(), "value":"selected alias"}),
+                "missing" => serde_json::json!({"resolution":"merge", "value":"unbound"}),
+                _ => serde_json::json!({"resolution":"merge", "candidate_ref":EntityId::now().to_hex(), "value":"unlisted"}),
+            }.to_string())),
         ]),
     };
-    let guard = crate::BudgetGuard::with_reserve_units(
-        "wake",
-        10_000,
-        100,
-        BudgetExhaustionPolicy::Suspend,
-    );
-    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
-    let mut sink = CapturingSink::default();
-    let mut executor = ConsolidationExecutor {
-        backend: &backend,
-        guard: &guard,
-        strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: vault.dreamer_authority()?,
-        model: crate::ModelId::new("test/model@r1").unwrap(),
-        sink: &mut sink,
-        scope: None,
-    };
-    let mut ctx = WakeAttemptContext {
-        vault: &vault,
-        deadline: &deadline,
-        budget_id: "wake",
-        now_ms: 21_000,
-    };
-    assert!(matches!(
-        block_on_ready(executor.execute(&attempt, &mut ctx))?,
-        DreamerAttemptExecution::Completed { .. }
-    ));
-    drop(executor);
-    // Different predicate keys only reach this judge through stored cosine input.
-    assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 2);
-    assert_eq!(sink.accepted.len(), 2); // nomination alone did not merge them
-    let scopes = backend.seen.lock().unwrap();
-    assert_eq!(scopes[0], scopes[1]);
+        let guard = crate::BudgetGuard::with_reserve_units(
+            "wake",
+            10_000,
+            100,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+        let mut sink = CapturingSink::default();
+        let mut executor = ConsolidationExecutor {
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: vault.dreamer_authority()?,
+            model: crate::ModelId::new("test/model@r1").unwrap(),
+            sink: &mut sink,
+            scope: None,
+        };
+        let mut ctx = WakeAttemptContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms: 21_000,
+        };
+        let result = block_on_ready(executor.execute(&attempt, &mut ctx));
+        if matches!(resolution, "missing" | "unlisted") {
+            assert!(result.is_err());
+        } else {
+            assert!(matches!(result?, DreamerAttemptExecution::Completed { .. }));
+        }
+        drop(executor);
+        // Different predicate keys only reach this judge through stored cosine input.
+        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            sink.accepted.len(),
+            match resolution {
+                "accumulate" => 2,
+                "merge" => 1,
+                _ => 0,
+            }
+        );
+        if resolution == "merge" {
+            assert_eq!(
+                super::super::conflict::candidate_facts(&sink.accepted[0].candidate)?.predicate,
+                "profile.alias"
+            );
+        }
+        let scopes = backend.seen.lock().unwrap();
+        assert_eq!(scopes[0], scopes[1]);
+    }
     Ok(())
 }
 
@@ -785,5 +811,225 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
         .count();
     assert!(expected > 0);
     assert_eq!(fan_in, expected as u64);
+    Ok(())
+}
+
+#[test]
+fn production_epoch_timestamps_hold_then_release_and_rank_source_diversity() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, _) = admitted_attempt_fixture(
+        &vault,
+        &store,
+        0x69,
+        &[("user", "first source"), ("assistant", "second source")],
+    )?;
+    let epoch = 1_800_000_000_u64;
+    for (offset, turn) in turns.iter().enumerate() {
+        let bytes = vault.get(turn)?.unwrap();
+        vault.put_entity(
+            turn,
+            ENTITY_TYPE_TURN,
+            occurred(epoch + offset as u64),
+            epoch + offset as u64,
+            &bytes,
+        )?;
+    }
+    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let branch = BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        attempt.status.attempt.id,
+        None,
+    )?;
+    let mut one = candidate(
+        partition.conversation_ref,
+        "profile.name",
+        "single source",
+        None,
+    );
+    one.evidence_turn_refs = vec![turns[0]];
+    derive_id(&mut one, attempt.status.attempt.id)?;
+    let mut diverse = candidate(
+        partition.conversation_ref,
+        "profile.alias",
+        "two sources",
+        None,
+    );
+    diverse.evidence_turn_refs = turns.clone();
+    derive_id(&mut diverse, attempt.status.attempt.id)?;
+    let config = selection::SelectionConfig {
+        soak_ms: 50_000,
+        evidence_minimum: 1,
+        ..Default::default()
+    };
+    vault.set_consolidation_selection(&config)?;
+    let candidates = vec![one.clone(), diverse.clone()];
+    let held = super::super::assembly::assemble(
+        &vault,
+        &branch,
+        candidates.clone(),
+        epoch * 1_000 + 49_999,
+    )?;
+    assert!(held.held && held.candidates.is_empty());
+    let released = super::super::assembly::assemble(
+        &vault,
+        &branch,
+        candidates.clone(),
+        epoch * 1_000 + 50_000,
+    )?;
+    assert!(!released.held);
+    assert_eq!(released.candidates.len(), 2);
+    let mut diversity = config.clone();
+    diversity.type_priors.clear();
+    diversity.weights = selection::StrengthWeights {
+        type_prior: 0.8,
+        frequency: 0.0,
+        recency: 0.0,
+        diversity: 0.2,
+    };
+    vault.set_consolidation_selection(&diversity)?;
+    let ranked =
+        super::super::assembly::assemble(&vault, &branch, candidates, epoch * 1_000 + 50_000)?;
+    assert_eq!(ranked.candidates[0].claim_id, diverse.claim_id);
+    let mut recent = one.clone();
+    recent.candidate = ClaimCandidate::new(
+        "profile.alias",
+        ClaimSubject::Entity(partition.conversation_ref),
+        Value::from("newer"),
+        0.8,
+    );
+    recent.evidence_turn_refs = vec![turns[1]];
+    derive_id(&mut recent, attempt.status.attempt.id)?;
+    diversity.soak_ms = 0;
+    diversity.weights = selection::StrengthWeights {
+        type_prior: 0.8,
+        frequency: 0.0,
+        recency: 0.2,
+        diversity: 0.0,
+    };
+    vault.set_consolidation_selection(&diversity)?;
+    let ranked = super::super::assembly::assemble(
+        &vault,
+        &branch,
+        vec![one, recent.clone()],
+        epoch * 1_000 + 1_000,
+    )?;
+    assert_eq!(ranked.candidates[0].claim_id, recent.claim_id);
+    Ok(())
+}
+
+#[test]
+fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, conversation) =
+        admitted_attempt_fixture(&vault, &store, 0x6A, &[("user", "initial evidence")])?;
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        evidence_minimum: 2,
+        soak_ms: 0,
+        ..Default::default()
+    })?;
+    let subject = conversation;
+    let response = |ids: &[EntityId]| {
+        text_response(
+            serde_json::json!({"candidates":[{
+                "subject":subject.to_hex(),"predicate":"profile.name","value":"supported",
+                "evidence_turn_refs":ids.iter().map(EntityId::to_hex).collect::<Vec<_>>()
+            }]})
+            .to_string(),
+        )
+    };
+    let backend = ScriptedBackend::new(vec![Ok(response(&turns))]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+    };
+    let result = {
+        let mut executor = ConsolidationExecutor {
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: vault.dreamer_authority()?,
+            model: crate::ModelId::new("test/model@r1").unwrap(),
+            sink: &mut sink,
+            scope: None,
+        };
+        block_on_ready(executor.execute(&attempt, &mut ctx))?
+    };
+    let DreamerAttemptExecution::Deferred {
+        completed_units,
+        retry_at,
+    } = result
+    else {
+        panic!("selection hold must defer");
+    };
+    assert!(sink.accepted.is_empty());
+    store.defer_selection(
+        &attempt,
+        crate::dreamer_runner::SettleDreamerBudget {
+            budget_id: "wake".into(),
+            child_attempt: attempt.status.attempt.id,
+            actual_units: completed_units,
+            now: 21,
+        },
+        retry_at,
+    )?;
+    let next_turn = seed_turn(
+        &vault,
+        &conversation,
+        "assistant",
+        "independent new evidence",
+        22,
+    );
+    let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "worker".into(),
+            budget_id: "wake".into(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            now: retry_at,
+            started_milestone: None,
+        },
+    })? {
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            next,
+        )) => next,
+        other => panic!("{other:?}"),
+    };
+    let backend = ScriptedBackend::new(vec![Ok(response(&[turns[0], next_turn]))]);
+    ctx.now_ms = retry_at * 1_000;
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").unwrap(),
+        sink: &mut sink,
+        scope: None,
+    };
+    assert!(matches!(
+        block_on_ready(executor.execute(&next, &mut ctx))?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    drop(executor);
+    assert_eq!(sink.accepted.len(), 1);
+    assert!(sink.accepted[0].evidence_turn_refs.contains(&next_turn));
     Ok(())
 }

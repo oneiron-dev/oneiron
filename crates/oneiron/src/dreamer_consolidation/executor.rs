@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 mod extraction;
+mod retry;
 
 use super::resources::BranchResources;
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
@@ -72,6 +73,7 @@ enum PartitionRun {
     Held {
         candidates: Vec<PromotionCandidate>,
         spent: u64,
+        retry_at_ms: u64,
     },
 }
 
@@ -153,9 +155,11 @@ impl ConsolidationExecutor<'_> {
             PartitionRun::Held {
                 candidates,
                 spent: merge_spent,
+                retry_at_ms,
             } => Ok(PartitionRun::Held {
                 candidates,
                 spent: spent.saturating_add(merge_spent),
+                retry_at_ms,
             }),
         }
     }
@@ -181,6 +185,7 @@ impl ConsolidationExecutor<'_> {
                 PartitionRun::Held {
                     candidates,
                     spent: 0,
+                    retry_at_ms: assembled.retry_at_ms,
                 }
             } else {
                 PartitionRun::Completed {
@@ -259,10 +264,36 @@ impl ConsolidationExecutor<'_> {
 
             match decode_merge_resolution(&response)? {
                 MergeResolution::Accumulate => {} // keep every member
-                MergeResolution::Merge { value } => {
+                MergeResolution::Merge {
+                    value,
+                    candidate_ref,
+                } => {
+                    let mut selected = conflict.clone();
+                    if let Some(id) = candidate_ref {
+                        let member = members
+                            .iter()
+                            .find(|member| member.claim_id == id)
+                            .ok_or_else(|| {
+                                invalid_consolidation("merge selected an unlisted candidate")
+                            })?;
+                        selected.identity =
+                            super::routing::candidate_keys(member, resources.key_rules())?.identity;
+                        selected.prior_head = resources
+                            .matching_priors(member, resources.key_rules())?
+                            .first()
+                            .map(|(id, _)| *id);
+                    } else if members.iter().any(|member| {
+                        candidate_facts(&member.candidate)
+                            .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
+                    }) {
+                        return Err(invalid_consolidation(
+                            "cross-predicate merge requires a candidate identity",
+                        )
+                        .into());
+                    }
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     merged.push(merged_candidate(
-                        conflict,
+                        &selected,
                         &members,
                         value,
                         step_identity.0,
@@ -290,6 +321,7 @@ impl ConsolidationExecutor<'_> {
             PartitionRun::Held {
                 candidates: surviving,
                 spent,
+                retry_at_ms: assembled.retry_at_ms,
             }
         } else {
             PartitionRun::Completed {
@@ -318,14 +350,15 @@ impl ConsolidationExecutor<'_> {
         for member in members {
             let facts = candidate_facts(&member.candidate)?;
             lines.push_str(&format!(
-                "- predicate: {} value: {}\n",
+                "- candidate_ref: {} predicate: {} value: {}\n",
+                member.claim_id.to_hex(),
                 facts.predicate,
                 serde_json::to_string(&rmpv_to_json(&facts.value)).unwrap_or_default()
             ));
         }
         let system = "Conflicting values were extracted for one claim identity. Respond \
              with JSON: {\"resolution\": \"merge\"|\"accumulate\"|\"escalate\", \
-             \"value\": <json when resolution is merge>}. Choose accumulate only for \
+             \"value\": <json when resolution is merge>, \"candidate_ref\": <listed candidate id>}. Select a candidate identity for cross-predicate merges. Choose accumulate only for \
              genuinely multi-valued predicates; escalate real contradictions.";
         Ok(LlmRequest {
             model: self.model.clone(),
@@ -340,7 +373,11 @@ impl ConsolidationExecutor<'_> {
                     global_default: ModelTierRef("consolidation".to_owned()),
                 },
                 response_format: ResponseFormat::Json {
-                    schema: serde_json::json!({"type": "object"}),
+                    schema: serde_json::json!({"type": "object", "properties": {
+                        "resolution": {"enum": ["merge", "supersede", "accumulate", "escalate"]},
+                        "candidate_ref": {"type": "string", "enum": members.iter().map(|member| member.claim_id.to_hex()).collect::<Vec<_>>()},
+                        "value": {}
+                    }, "required": ["resolution"]}),
                 },
                 locality: ModelLocality::OwnServer,
             },
@@ -366,7 +403,10 @@ impl ConsolidationExecutor<'_> {
 }
 
 enum MergeResolution {
-    Merge { value: Value },
+    Merge {
+        value: Value,
+        candidate_ref: Option<EntityId>,
+    },
     Accumulate,
     Escalate,
 }
@@ -387,6 +427,15 @@ fn decode_merge_resolution(response: &LlmResponse) -> Result<MergeResolution> {
         // With no prior head in scope, supersede degrades to merge (D7: at
         // most one prior head; the promotion writer owns the supersession).
         Some("merge" | "supersede") => Ok(MergeResolution::Merge {
+            candidate_ref: parsed
+                .get("candidate_ref")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .and_then(|id| EntityId::from_hex(id).ok())
+                        .ok_or_else(|| invalid_consolidation("invalid merge candidate identity"))
+                })
+                .transpose()?,
             value: json_to_rmpv(parsed.get("value").unwrap_or(&serde_json::Value::Null)),
         }),
         Some("accumulate") => Ok(MergeResolution::Accumulate),
@@ -584,7 +633,13 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
 
-        let (partition, turns, _) = decode_partition_payload(&attempt.status.payload.input)?;
+        let payload = retry::refreshed_input(
+            ctx.vault,
+            self.actor,
+            &attempt.status,
+            branch_scope.as_ref(),
+        )?;
+        let (partition, turns, _) = decode_partition_payload(&payload)?;
         let resources = BranchResources::open(
             ctx.vault,
             self.actor,
@@ -595,13 +650,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         )?;
         let run_id = attempt.status.attempt.run_id.clone();
         match self
-            .run_partition_attempt(
-                &attempt.status.payload.input,
-                &resources,
-                ctx,
-                attempt.status.attempt.id,
-                run_id,
-            )
+            .run_partition_attempt(&payload, &resources, ctx, attempt.status.attempt.id, run_id)
             .await
         {
             Ok(PartitionRun::Completed { candidates, spent }) => {
@@ -610,11 +659,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     completed_units: spent,
                 })
             }
-            Ok(PartitionRun::Held { candidates, spent }) => {
+            Ok(PartitionRun::Held {
+                candidates,
+                spent,
+                retry_at_ms,
+            }) => {
                 resources.accept(resources.scope(), self.sink, candidates)?;
-                let _ = spent;
-                Ok(DreamerAttemptExecution::Park {
-                    reason: "consolidation selection hold".into(),
+                Ok(DreamerAttemptExecution::Deferred {
+                    completed_units: spent,
+                    retry_at: retry_at_ms.div_ceil(1_000),
                 })
             }
             // The step layer already parked the trapped attempt; Park it for resume

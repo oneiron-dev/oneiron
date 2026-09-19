@@ -218,6 +218,7 @@ impl<'a> DreamerWakeDriver<'a> {
             admitted: 0,
             completed: 0,
             failed: 0,
+            deferred: 0,
             parked: 0,
             landed: 0,
             stop: WakePassStop::QueueEmpty,
@@ -534,6 +535,27 @@ impl<'a> DreamerWakeDriver<'a> {
                     self.complete_attempt(&admitted, input.now)?;
                     self.write_milestone(attempt_id, DreamerMilestoneKind::Done, input.now)?;
                     report.completed += 1;
+                }
+                DreamerAttemptExecution::Deferred {
+                    completed_units,
+                    retry_at,
+                } => {
+                    self.store.defer_selection(
+                        &admitted,
+                        SettleDreamerBudget {
+                            budget_id: self.budget_id.clone(),
+                            child_attempt: attempt_id,
+                            actual_units: completed_units,
+                            now: input.now,
+                        },
+                        retry_at,
+                    )?;
+                    self.write_milestone(
+                        attempt_id,
+                        DreamerMilestoneKind::CheckpointReached,
+                        input.now,
+                    )?;
+                    report.deferred += 1;
                 }
                 DreamerAttemptExecution::Landed {
                     completed_units,

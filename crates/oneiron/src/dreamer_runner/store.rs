@@ -331,6 +331,43 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    pub(crate) fn defer_selection(
+        &self,
+        admitted: &super::DreamerAdmittedAttempt,
+        budget: super::SettleDreamerBudget,
+        retry_at: u64,
+    ) -> Result<()> {
+        let source = &admitted.status.attempt;
+        if budget.child_attempt != source.id || retry_at <= budget.now {
+            return Err(invalid_dreamer_runner("invalid selection retry"));
+        }
+        self.vault.with_write_txn(|txn| {
+            self.settle_budget_in_txn(txn, budget.clone())?;
+            let crate::attempt_queue::RetryOutcome::Retried(record) = self.attempts.retry_in_txn(
+                txn,
+                crate::attempt_queue::RetryAttempt {
+                    id: source.id,
+                    lease_owner: source
+                        .lease_owner
+                        .clone()
+                        .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
+                    attempt_count: source.attempt_count,
+                    backoff_until: retry_at,
+                    last_error: Some("consolidation selection deferred".into()),
+                    now: budget.now,
+                },
+            )?;
+            super::authority::stamp_attempt(
+                self.vault,
+                txn,
+                &record,
+                &admitted.status.payload.attempt_type,
+            )?;
+            ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
+            Ok(())
+        })
+    }
+
     /// Marks a leased Dreamer attempt complete through the generic queue.
     pub fn complete(&self, input: CompleteDreamerAttempt) -> Result<CompleteDreamerAttemptOutcome> {
         self.ensure_terminal_transition_target(input.id)?;

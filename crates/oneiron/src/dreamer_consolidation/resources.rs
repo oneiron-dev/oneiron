@@ -223,10 +223,6 @@ impl<'a> BranchResources<'a> {
         Ok(self.source(scope, id)?.0)
     }
 
-    pub(super) fn conversation(&self) -> EntityId {
-        self.partition.conversation_ref
-    }
-
     pub(super) fn require_output(&self, scope: &Scope) -> Result<()> {
         self.check_axes(scope)?;
         if !scope.allows_write(&self.output) {
