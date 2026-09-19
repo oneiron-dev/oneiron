@@ -117,7 +117,7 @@ fn memory_archives_keep_history_as_records_not_new_entity_types() {
         ),
         (
             "mem0",
-            serde_json::json!({"memories":[{"id":"1","memory":"new","history":[{"id":"2","old_memory":"earlier","new_memory":"old"}]}]}),
+            serde_json::json!({"memories":[{"id":"1","user_id":"different-user","memory":"new","history":[{"id":"2","old_memory":"earlier","new_memory":"old"}]}]}),
         ),
     ];
     for (source, fixture) in fixtures {
@@ -138,6 +138,21 @@ fn memory_archives_keep_history_as_records_not_new_entity_types() {
             BTreeSet::from(["old", "new"])
         };
         assert_eq!(texts, expected);
+        if source == "mem0" {
+            assert!(
+                imported
+                    .messages
+                    .iter()
+                    .all(|message| message.conversation_id == "1")
+            );
+            assert!(
+                imported
+                    .normalized
+                    .records
+                    .iter()
+                    .all(|record| record.thread_id.as_deref() == Some("1"))
+            );
+        }
         assert!(
             imported
                 .messages

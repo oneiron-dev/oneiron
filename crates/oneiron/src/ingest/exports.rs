@@ -236,7 +236,7 @@ impl IngestSource for ExportSource {
                             self.push(
                                 &mut out,
                                 memory,
-                                self.id(memory, "user_id").unwrap_or("memory"),
+                                self.id(memory, "id").unwrap_or("memory"),
                                 recorded_at,
                             )?;
                             if let Some(history) = memory.get("history").and_then(Value::as_array) {

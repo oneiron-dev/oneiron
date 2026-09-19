@@ -100,10 +100,10 @@ fn ui_event_and_agent_call_share_definition_gate_effect_and_replay() -> Result<(
         args: vec![ActionArgument::Text(LensText::new("Ada")?)],
         idempotency_key: "one-click".into(),
     };
-    assert!(std::ptr::eq(
+    assert_eq!(
         registry.resolve_ui(&validated)?,
         registry.resolve(call.verb_id.as_str())?
-    ));
+    );
     let ui = registry.execute_ui(&vault, actor, &validated, &call.idempotency_key)?;
     let before = vault.store.gate_decisions(100)?;
     let agent = registry.execute_agent(&vault, actor, &principal, &call)?;
