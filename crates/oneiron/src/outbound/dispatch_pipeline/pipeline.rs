@@ -131,15 +131,7 @@ impl OutboundDispatchPipeline {
             outbound_delivery_window_decision_at_door(&request, &window_resolution);
         // Carry the policy's effective APNs ceiling all the way to the sink;
         // receipts alone must never be the only enforcement surface.
-        if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = &window_decision {
-            request.delivery_window_apns_interruption_level = match to.as_str() {
-                "push:passive" => Some(DeliveryWindowApnsInterruptionLevel::Passive),
-                "push:active" => Some(DeliveryWindowApnsInterruptionLevel::Active),
-                "push:time_sensitive" => Some(DeliveryWindowApnsInterruptionLevel::TimeSensitive),
-                "push:critical" => Some(DeliveryWindowApnsInterruptionLevel::Critical),
-                _ => request.delivery_window_apns_interruption_level,
-            };
-        }
+        apply_apns_window_cap(&mut request, &window_decision);
         let effect = ExternalEffectGateInput {
             actor: request.actor.gate_actor(),
             provenance: request.actor.provenance(),
@@ -612,6 +604,21 @@ impl OutboundDispatchPipeline {
             effector_budget,
             budget_ladder_events,
         })
+    }
+}
+
+fn apply_apns_window_cap(
+    request: &mut OutboundDispatchRequest,
+    decision: &OutboundDeliveryWindowDecision,
+) {
+    if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = decision {
+        request.delivery_window_apns_interruption_level = match to.as_str() {
+            "push:passive" => Some(DeliveryWindowApnsInterruptionLevel::Passive),
+            "push:active" => Some(DeliveryWindowApnsInterruptionLevel::Active),
+            "push:time_sensitive" => Some(DeliveryWindowApnsInterruptionLevel::TimeSensitive),
+            "push:critical" => Some(DeliveryWindowApnsInterruptionLevel::Critical),
+            _ => request.delivery_window_apns_interruption_level,
+        };
     }
 }
 
