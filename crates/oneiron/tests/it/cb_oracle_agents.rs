@@ -1809,7 +1809,7 @@ mod peer_fixture {
                 .unwrap()
                 .expect("proposal bytes");
             self.vault
-                .approve_inbox_member_with_edit(&candidate.claim_id, &proposed)
+                .approve_inbox_member_with_edit_at(&candidate.claim_id, &proposed, PEER_NOW + 1)
                 .expect("owner confirms attributed correction");
             let pending = self.vault.pending_gate_consents(1_000).unwrap();
             assert!(
