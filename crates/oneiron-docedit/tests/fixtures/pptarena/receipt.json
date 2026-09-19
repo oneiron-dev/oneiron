@@ -1,0 +1,1308 @@
+{
+  "manifest_sha256": "61ee4034487a37fb1342e972ea1472aeeda8773414dac75d41fe0cfdce331f73",
+  "engine": "oneiron-docedit/0.1.0",
+  "native_identity_results": [
+    {
+      "file": " HighlightImportantWords_GroundTestA.pptx",
+      "input_blake3": "b1f898a21309d9ba5ec51c2813015afb7fbf2cba22faa535ff44667459474209",
+      "bytes": 847478,
+      "parts": 65,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "1ea18Lamda_TestA.pptx",
+      "input_blake3": "a036a3cfd215022c69bdd30dd9165bae2643f4a7992eed15aca6d5f27426954f",
+      "bytes": 7245477,
+      "parts": 248,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "1ea18StructuralFix_TestA copy.pptx",
+      "input_blake3": "a036a3cfd215022c69bdd30dd9165bae2643f4a7992eed15aca6d5f27426954f",
+      "bytes": 7245477,
+      "parts": 248,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AccessibilityMasterCleanup_TestA.pptx",
+      "input_blake3": "f234ba887262c3b61ec769199ea4dad5d2e220a1f11421d075628093497a8131",
+      "bytes": 814760,
+      "parts": 94,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddAgendaSlide_TestA.pptx",
+      "input_blake3": "1ce4ba0d30f4ead151d6128c5b16261871756ab8a531c3aa70df80b0be3c31b2",
+      "bytes": 591862,
+      "parts": 76,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddBibliography_TestA.pptx",
+      "input_blake3": "2b225ffa2c803bb0af974154ebe3acc786584eeebceecd7c2414fd08d7fb3ba1",
+      "bytes": 1361519,
+      "parts": 124,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddCompanyLogoTestA_MonthlyScoreboardInfographic.pptx",
+      "input_blake3": "d6e80ab9a9adab50a7860ebd1dd27727e6e52faaaa8a0693adcd2e5a51055460",
+      "bytes": 1659976,
+      "parts": 107,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddFooterSourceTestA_Q1-2025-Earnings-Call-update.pptx",
+      "input_blake3": "b9a1c70d1d22786c33a23426b77a176584b077bc30fe9405ccb9129352441fe3",
+      "bytes": 471140,
+      "parts": 93,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddPictureBorders_TestA.pptx",
+      "input_blake3": "367bac8bd8543146cd6cf3ddb338a8755e543676cc6efcfce05e1f7be4447c25",
+      "bytes": 22028433,
+      "parts": 280,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddPictures_Test.pptx",
+      "input_blake3": "920f8d152e6d0730e00881a0bbff61779f439c2d7093d8b3e050bd7b1726f3cf",
+      "bytes": 36877,
+      "parts": 33,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddProgressBarTestC_ProjectManagementWorkflowInfographic.pptx",
+      "input_blake3": "5d396c01691c8f76e271e6e2730e431deb234f422e1f2c08fbca4f68ef8ed820",
+      "bytes": 748871,
+      "parts": 60,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddQRCode_TestA.pptx",
+      "input_blake3": "4c9cd05a567a5ed2a167e4b5e9045e33a59f8e5d389eb097e28840cef10401fc",
+      "bytes": 12664261,
+      "parts": 192,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddSlideBorderTestB_AccountantCVResume.pptx",
+      "input_blake3": "1df7118006f09fa2144dcf57f08c7d5b1316de7540e7529dd7af4ea26bdb2d9d",
+      "bytes": 964243,
+      "parts": 81,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddSlideNumber_TestB.pptx",
+      "input_blake3": "55d612f0fcec57513f94b7136faae1e4330ca1c7d044594f4acfa5997eaedd5f",
+      "bytes": 60863,
+      "parts": 56,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddSource_TestA.pptx",
+      "input_blake3": "53a2fd0e8f56d18ea180ca114d6d113c9f76ecf064fdd6d49279109f422d2037",
+      "bytes": 436760,
+      "parts": 56,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddSpeakerNotes_TestA.pptx",
+      "input_blake3": "38d034e6681402e7b8d7821d0971029cfa27cd53f3d870ddc0b3334aeb178d32",
+      "bytes": 948105,
+      "parts": 92,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddThankYouSlide_TestA.pptx",
+      "input_blake3": "30a657d4d40056d7b1cca559ce57639bb8c679d01c28cf6411b013fecfad8176",
+      "bytes": 1103953,
+      "parts": 104,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddTransitions_TestA.pptx",
+      "input_blake3": "d8d83700847af3338dc3414401fbbae52fe19903afe2177ab0c78a86725638a8",
+      "bytes": 945680,
+      "parts": 88,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AddWaterMark_Test.pptx",
+      "input_blake3": "b6f4ee2b00e287d9018a40600ecc06e5cb90267bce717a2d697015a9b571c828",
+      "bytes": 4847131,
+      "parts": 202,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AestheticMakeover_TestA.pptx",
+      "input_blake3": "105f277e7765af8998b7c0392048a4f703235ceb4db9e46a50ad65a23583a46c",
+      "bytes": 8027261,
+      "parts": 52,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AnimalResearchPoster.pptx",
+      "input_blake3": "12f17aa18a9eb6adea0395902d1233ffc763a271c362bd978a6c7c69fae77b86",
+      "bytes": 1564057,
+      "parts": 68,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AnimationCanonicalization_Bullets_TestA.pptx",
+      "input_blake3": "2aa87d434cd271348ae260c34a2bc9cd4c73e68d34c2ec85f0e14285110479cf",
+      "bytes": 110600,
+      "parts": 48,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "AvatarCircleCrop_TestA.pptx",
+      "input_blake3": "4c51e9de065f9aac7467f1bd1a944da564a40374bb3638ec5ca77e396a17b381",
+      "bytes": 10039347,
+      "parts": 24,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "BoldTitleTestA_Game_theory_4.pptx",
+      "input_blake3": "23164668c54498c39fc331000fd208050443c22bf0c4193a77485611ac9f5040",
+      "bytes": 1144147,
+      "parts": 207,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "BoldTitleTestB_cse1300-ai.pptx",
+      "input_blake3": "db14ad677ca2868793127d426b9b8200ce3a430048da43b3be20984b90424ca4",
+      "bytes": 166581,
+      "parts": 68,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "BulletsNormalizeLevels_Test.pptx",
+      "input_blake3": "b84daf6f82086c5f963392d88c44b975a75dbcfce77a22a851ceeaed3c5997ae",
+      "bytes": 37362,
+      "parts": 37,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "CalibriToTimesTestA.pptx",
+      "input_blake3": "7f9272f104097557b787d509ed9ab338bc358206ca4c7dd25d8226a350a30127",
+      "bytes": 1511752,
+      "parts": 119,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "CenterAlignTitles_TestA.pptx",
+      "input_blake3": "2f56b88f84dff0aea325d63a8e0ae0dce1048eb502b440984c9412d44b930a32",
+      "bytes": 1640984,
+      "parts": 92,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ChangeLineGraphtoBar_TestA.pptx",
+      "input_blake3": "c8858e641ebbff9d5c3f135dc63f12532f5be0b8ec6a60e700058773f1ea18b0",
+      "bytes": 58165,
+      "parts": 48,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ChartThemeColor_TestA.pptx",
+      "input_blake3": "4deb4f9ed03211f544caf521febc5ccc8ceede8e4215b8b4efebcda96fc49700",
+      "bytes": 1437854,
+      "parts": 125,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ColorblindPalette_TestA.pptx",
+      "input_blake3": "daf32c25328f790f3576e3fc2ebafd5f6e6184903550817c7657636ab0e6f352",
+      "bytes": 46185,
+      "parts": 40,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ConditionalTableFormatting_Negatives_TestA.pptx",
+      "input_blake3": "7c1d6a91c4f24b12790536c91bf844071064206e9fca7a73bf96be4df174a42b",
+      "bytes": 36847,
+      "parts": 43,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ConvertHyperLink_Test.pptx",
+      "input_blake3": "2d68275ae531454d10b353cd5c3e99746a29d7e7a4036fe8b45280f88bcd86e3",
+      "bytes": 456747,
+      "parts": 45,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ConvertText&Arrows2SmartArt_TestA.pptx",
+      "input_blake3": "ff24fb3f530346e9a9148b8ad154a51f877a2dda5fce3406f9c09303ebcdb559",
+      "bytes": 92618,
+      "parts": 59,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "CrossSlideDataConsolidation_TestA.pptx",
+      "input_blake3": "aa2487a78f1565ebfe0e067f99084853cc894dd636ef9f0aa25558afdce4e3be",
+      "bytes": 6425544,
+      "parts": 52,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "CrossSlideStatusToTimeline_TestA.pptx",
+      "input_blake3": "0754d868dd4ba53ec64e8d9960053ebec49663a0565f153e3bed8120ff820536",
+      "bytes": 18791,
+      "parts": 28,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "CurrencySwap_Test.pptx",
+      "input_blake3": "2d36a8d973f240fef48aed035368ac5097c98b9440ba79c3507efd982a27250b",
+      "bytes": 87425,
+      "parts": 45,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "DashMinusNormalization_TestEasy.pptx",
+      "input_blake3": "ed935f30d27e419ee09beb65029b85285ed96699b586527334c4191e70f4b8ff",
+      "bytes": 36781,
+      "parts": 37,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "DeleteDuplicate_TestA.pptx",
+      "input_blake3": "0987698bdfc742dec2ed7277e72abad1fa5184e8d825423f641b7ec74255fd52",
+      "bytes": 9833359,
+      "parts": 232,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "DynamicDataLabelPlacement_TestA.pptx",
+      "input_blake3": "b6b3043300a693e5b177ba05ca978aaca3fefee6141cbb26b69f8d608bf50a8b",
+      "bytes": 35726,
+      "parts": 41,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "DynamicSmartArtTimeline_TestA.pptx",
+      "input_blake3": "9a670ee73782298f3a31ee4014731d8a58d0b642d5e90045b889d1e3bf6c3569",
+      "bytes": 34029,
+      "parts": 39,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "EducationalMakeoverSolarSystem_TestA.pptx",
+      "input_blake3": "b48b6671d3a5dbd6e3e596db4b380863b4f94777224bc2a235b35bfd780b0f7a",
+      "bytes": 721242,
+      "parts": 47,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "EducationalRockRecognition_TestA.pptx",
+      "input_blake3": "4d3894da40294635ffa43f25e85b0d503fa5446ae2caba09acace773d5a75abf",
+      "bytes": 583655,
+      "parts": 45,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "EmbedVideoPlayback_TestA.pptx",
+      "input_blake3": "544555fff95614f945479d59f501934fafc41fe73ac3fdcfcd1c0a3ce5d9611c",
+      "bytes": 21144,
+      "parts": 29,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "EnsembleCategoryTest.pptx",
+      "input_blake3": "3f437b855b3399958bee2eb0b6d658244f76c853cdc757cac914905fc8085115",
+      "bytes": 26525049,
+      "parts": 47,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FillTablefromData_TestA.pptx",
+      "input_blake3": "b680e3f84856a7930e1dee96f16d1b13e8d392c6797e20e89945c0476f4d244c",
+      "bytes": 82715,
+      "parts": 42,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixAgendaAndOrder_TestA.pptx",
+      "input_blake3": "248e900f71d8b2bef57095b4561418837b45af316c077b7ce4a9214286381119",
+      "bytes": 7640124,
+      "parts": 176,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixImage&TextOverFlow_TestB.pptx",
+      "input_blake3": "6ee327672090154a5e16bc365895613a90ef2e3b8f36011cf61579abb5ece5a0",
+      "bytes": 392455,
+      "parts": 42,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixImagePorportions_TestA.pptx",
+      "input_blake3": "2b6187e15fe029acea2c36577916ec2cab34bf8b4b6268fa6efe4bddfe72ea05",
+      "bytes": 4373662,
+      "parts": 42,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixMisspellingsTestA_activities_ss_week_presentation.pptx",
+      "input_blake3": "5d86593c80b34f356b1b4bbd616037feed393e26ea00936f5d999cb5c2cf6be8",
+      "bytes": 334145,
+      "parts": 60,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixSlideColorScheme_TestA.pptx",
+      "input_blake3": "3b53d4153193003e9a091ae85347db43bc8cafe3cb423d8af69f0fe20c4470db",
+      "bytes": 7297877,
+      "parts": 171,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixTableThemeColor_TestA.pptx",
+      "input_blake3": "648f6f760538c571933de774014e5249bec1f47425c02401c6ac034b34350fdb",
+      "bytes": 558750,
+      "parts": 49,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixTextOverFlow_TestA.pptx",
+      "input_blake3": "9583df501aedd7ac57692cf7c162b963048cfb6f384f0de147729bd33ed76f43",
+      "bytes": 8132227,
+      "parts": 139,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixTextPlacement_Test.pptx",
+      "input_blake3": "88b65426c78f360a85dadb6491f4b6fd4cafe2ca31327f50c3c22cc1e6f2cfbc",
+      "bytes": 739545,
+      "parts": 45,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixThemeScheme_TestA.pptx",
+      "input_blake3": "15dee7b0f39fcf87121c149ac36d3720c20200a29e6332c6053b14366533f609",
+      "bytes": 8040088,
+      "parts": 87,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FixTitleCase_TestA.pptx",
+      "input_blake3": "b94ef55ec3842e5257187de3c756a20cd3ccbb9b81570991edc325a76d0ef5b4",
+      "bytes": 1052351,
+      "parts": 107,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FontSizePlus2Slide8TestA.pptx",
+      "input_blake3": "89871d8ca69ceda4d995e268f19738453fc82580fef252740f14d418ba7ff9fc",
+      "bytes": 1012979,
+      "parts": 259,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "FormatPythonCodeBlock_DarkMulti_TestA.pptx",
+      "input_blake3": "259a79d79e3c4617505045bf935853734cfcb54883ca8bd631e10c743ffa9965",
+      "bytes": 36255,
+      "parts": 43,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "GenerateCompConclusion_TestA.pptx",
+      "input_blake3": "891294c7247dee7197759d498b298dcc41504e773571686bdf7ef857e6596450",
+      "bytes": 666922,
+      "parts": 100,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "GridBaselineReasoning_TestA.pptx",
+      "input_blake3": "d290d9ade04608fbfe4f9a8780c194865ada4689086d98d289f22b2018a95cb2",
+      "bytes": 1364608,
+      "parts": 47,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "HinduCenterTitles_TestA.pptx",
+      "input_blake3": "37fa4bcaf10c7ce10f752b15f5fbcc3caf7ce27215331394cdb23e4da649f90a",
+      "bytes": 5632062,
+      "parts": 110,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ImageTextCorrelation_TestA.pptx",
+      "input_blake3": "e28f949425991ba74d2def1a859147732b901963f6cdab2c61fcff2f1bccdb9f",
+      "bytes": 118053,
+      "parts": 50,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ItalicizeSubheadingsTestA_Career_Banding_Job_Description_Training.pptx",
+      "input_blake3": "34358f6e3c3c567b681ed02079e5774012b7d7ca54b6123f91934ae5d8db3462",
+      "bytes": 781641,
+      "parts": 254,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ItalicizeSubheadingsTestB_COVID19-Healthcare-Tabletop-Facilitator-PPT.pptx",
+      "input_blake3": "75e6557bf372d09b31eeefded671c1bad1d09510d124f02e0d2c97b50531d4d7",
+      "bytes": 1677937,
+      "parts": 142,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ItalicizeSubheadingsTestD_teachout.pptx",
+      "input_blake3": "1523226f6c74e78444fd9dc4ddf892583d5e6638462c4059eb4551e151252b8c",
+      "bytes": 268204,
+      "parts": 160,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "LaTeXtoOMML_TestA.pptx",
+      "input_blake3": "08814725ef85a5553072edf44a2a6001ef13884b7bfca3ac29f891586cac3ff9",
+      "bytes": 46083,
+      "parts": 44,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "LegendBottomMultiTypes_TestA.pptx",
+      "input_blake3": "ce0fb6595ce4b1575e45381a03313e5b5f7cadc9a627ea6e38c5aeb9675068c8",
+      "bytes": 79573,
+      "parts": 60,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "LighterColors_TestA.pptx",
+      "input_blake3": "1235a9718aea13e5cea635df067348c6b165cfecfa7c71b2f23820330add167f",
+      "bytes": 499116,
+      "parts": 53,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "LineGraph_TestA.pptx",
+      "input_blake3": "b4dc0c72f50cc0d456c50a9e4a679ca15c886ee9a9ef6eb6a5d26f06adc48ca6",
+      "bytes": 314437,
+      "parts": 132,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "MasterRebind_TestA.pptx",
+      "input_blake3": "4b9f1e4ffe05ffc405990acb0abb1c4e1cb4cd393d38c69d35885da81a4e62c4",
+      "bytes": 1595389,
+      "parts": 44,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "MatchBackgroundtoPicture_TestA.pptx",
+      "input_blake3": "04d1d2b94c98bf1f6fbbb37e11ee1d46b05abe731814eff8afc451c6ab3e7406",
+      "bytes": 149374,
+      "parts": 24,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "MatchFlagtoText_TestA.pptx",
+      "input_blake3": "502cb174f4e70846b8708a98b940c269fdda2f739bf374c36dd3d292813ec967",
+      "bytes": 180299,
+      "parts": 48,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "MatchSlideDeck_TestA.pptx",
+      "input_blake3": "8788f55b32dde98a8eed390c1d24c0bb13c25527a99a5b856845958f985bef71",
+      "bytes": 1357616,
+      "parts": 68,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "MatchStockPhotos_Test.pptx",
+      "input_blake3": "fd2e4717d6d68b313ff2514d14af6daa708b046dc47bbf65db4bba7f06da560d",
+      "bytes": 10508498,
+      "parts": 40,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "NormalizeDate_Test.pptx",
+      "input_blake3": "2ad9d8152e48c9ed8b883bf37a0128281fe0928c67df7fd4fe38f08adad8456b",
+      "bytes": 573498,
+      "parts": 67,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "NormalizeThousandSeperators_Test.pptx",
+      "input_blake3": "b35105c52829f1db24940e8e841f37e52ca8af89dc5c21e5cb4c524814116472",
+      "bytes": 704270,
+      "parts": 125,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ObjectDistance_TestA.pptx",
+      "input_blake3": "d053690564afde066922f85cc8f4a031c8f61914d4bfe383e78cb5a76e2053c8",
+      "bytes": 31755615,
+      "parts": 129,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "OrderPhotosTest.pptx",
+      "input_blake3": "11a21215755dbbe8d95287f3f2cb1eb2a23b9a489af4b19ebbd5d12b8650777b",
+      "bytes": 5676140,
+      "parts": 43,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "OrganizeResearchPoster_TestA.pptx",
+      "input_blake3": "e33e49d154bc05f6527cf7682f757aca430a9cc74eca41fb5041dd9637fe6680",
+      "bytes": 88076,
+      "parts": 39,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "PieChart_TestA.pptx",
+      "input_blake3": "34f56046f1065fc7d62cf456dfdc22e85ddfe97924110f0386496509428eaac3",
+      "bytes": 322109,
+      "parts": 137,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "QuarterTwoTestA___2302222_Presentation_Stats_SA_Q1_Q2_Q3_of_202223.pptx",
+      "input_blake3": "4063d3188b99f76a5df5cf390b873b98524c2135b890b4d793a4516f9f72f85c",
+      "bytes": 1716368,
+      "parts": 136,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "QuarterTwoTestB_7302020.pptx",
+      "input_blake3": "f67d960a44d43705d4e2f7a4f34cbcaa228d65da7af706dc7b14b48db34075b3",
+      "bytes": 906689,
+      "parts": 140,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ReadingOrderComplex_TestA.pptx",
+      "input_blake3": "cc3fdf1999db361fe09d2bab9e6d06737a9a4a14734ed0fc04158e6e74676cff",
+      "bytes": 472147,
+      "parts": 48,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "RemoveFillerWords_TestA.pptx",
+      "input_blake3": "be34214e3f4a320d96d20b37681339a977d5423f441c19af273c5854d7463672",
+      "bytes": 28529544,
+      "parts": 425,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ShortenBulletPointsTestB_Opioid-Addiction-Response-in-VA.pptx",
+      "input_blake3": "710af9e5053d69464861034d4720b1da7f5f99b343acc98ba47e4e85d07bea6b",
+      "bytes": 214307,
+      "parts": 104,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ShortenTextOnSlides_TestA.pptx",
+      "input_blake3": "4f1c1c12a33d8b997016b4f8082a7df6622643a9379ac9f04f3c0047d32944d6",
+      "bytes": 166654,
+      "parts": 72,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "Size43to169_DifferentContent_TestA.pptx",
+      "input_blake3": "55918579851df0933ac7559d0c2430ff6c84b08e179ee596a798ea59132db887",
+      "bytes": 211490,
+      "parts": 50,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "SortByScoreAndCropImage169_Test.pptx",
+      "input_blake3": "bf5b5df63d124e8686fcd95e1e549f95910ed9d1e31eef14e60f43787711a822",
+      "bytes": 94508,
+      "parts": 38,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "SpatialLogicLayout_TestA.pptx",
+      "input_blake3": "ef9937ae67274bf52337e65b74d05ff550e785e1d9c6c19f33f424ff5dd9d84f",
+      "bytes": 35676,
+      "parts": 37,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "SummarizeParagraphsTestA_.pptx",
+      "input_blake3": "e56b52100e6861b4fb9a27fb0a2789008017c79cb71a0d4a17490f9b1f10e0e3",
+      "bytes": 140269,
+      "parts": 62,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "SwimlaneFlowCanonicalization_TestA.pptx",
+      "input_blake3": "1b8acc87cbdc7607618002c9a1db59ffd1c5f434555027bf168b480737af85f6",
+      "bytes": 33869,
+      "parts": 39,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "TransitionarySlides_TestA.pptx",
+      "input_blake3": "eae4663427e3c6249308a2a7024c97027f59ad8780bd91c8c9405ffff7bde4cc",
+      "bytes": 1470258,
+      "parts": 120,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "TranslateArabicLTR_TestB.pptx",
+      "input_blake3": "968d5e6b161e78ae53145c89aab21a1c276d6e509605bfea9f9f64265d8d2452",
+      "bytes": 1321607,
+      "parts": 231,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "TranslateChineseTestA.pptx",
+      "input_blake3": "9cd6cf9b5d90201290bc87fa87572020ccc5bf11e16d1408a43c739836fedc1d",
+      "bytes": 1650184,
+      "parts": 100,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "TranslateToEnglishButKeepallFrenchTestA_Bonjour mes amis!.pptx",
+      "input_blake3": "33b5af66b58d516861dd226ae24340a4ca43f59c13823b0d9dab4948705f76d7",
+      "bytes": 3873562,
+      "parts": 94,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "UB_Title_Screenshot_TestA.pptx",
+      "input_blake3": "3d7b2f032356e600605a78d65ffab5cad6d2e0d6e1eee5a771a6bfb39d86ea71",
+      "bytes": 2190599,
+      "parts": 77,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "UnitConversionTemps_TestA.pptx",
+      "input_blake3": "2dcc8267c18c144cc9bfd3bae66249b3899fbd8213785fea75fcb77c051fccaf",
+      "bytes": 35157,
+      "parts": 41,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "ZOrder_Test.pptx",
+      "input_blake3": "cedb267b3392e95d178099e23e86a1ac1cfb3658c8d476d821f4ae3730193e4f",
+      "bytes": 89068,
+      "parts": 38,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "climate_original.pptx",
+      "input_blake3": "1a4b3b90736f25d128f94284d5954b2cc8437ee42010174f37ad121ced89beb5",
+      "bytes": 991223,
+      "parts": 50,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    },
+    {
+      "file": "updatetheme_TestA.pptx",
+      "input_blake3": "cfb3ebecc824df6efa63a1fde6ffc4b7ba1e1b4e54d04fa25348c84d2adeb73d",
+      "bytes": 1297227,
+      "parts": 140,
+      "no_op_archive_exact": true,
+      "edit_unknown_xml_in_place": true,
+      "untouched_part_payloads_exact": true
+    }
+  ],
+  "input_sha256": [
+    {
+      "name": " HighlightImportantWords_GroundTestA.pptx",
+      "sha256": "7e2c0d854df9e57a0a054c6ce4684cedb2087a79b0978ee38864c5675a6b68a7"
+    },
+    {
+      "name": "1ea18Lamda_TestA.pptx",
+      "sha256": "9776f091155a23d27bc4f8e8b83502da1a39ce1dff033159ff2c312edd4bea55"
+    },
+    {
+      "name": "1ea18StructuralFix_TestA copy.pptx",
+      "sha256": "9776f091155a23d27bc4f8e8b83502da1a39ce1dff033159ff2c312edd4bea55"
+    },
+    {
+      "name": "AccessibilityMasterCleanup_TestA.pptx",
+      "sha256": "8e3ecec6a46f3ef3a41d764d4853359d919c840baaf5834a15e2c0814dc7e35b"
+    },
+    {
+      "name": "AddAgendaSlide_TestA.pptx",
+      "sha256": "5f45a8cbc594d747c1053a1dbda0ff9553166a473a4553b9a4a3e4898c05411b"
+    },
+    {
+      "name": "AddBibliography_TestA.pptx",
+      "sha256": "17e05107cdcf497fe70bc857d7285515b1775aed43a63b32ec13458796b5670d"
+    },
+    {
+      "name": "AddCompanyLogoTestA_MonthlyScoreboardInfographic.pptx",
+      "sha256": "7c987d1c0c4fe1aedfa6bf33a02ba511ad297158128d10be3c26feae9d0c811d"
+    },
+    {
+      "name": "AddFooterSourceTestA_Q1-2025-Earnings-Call-update.pptx",
+      "sha256": "01238cae60124a40312629aa2f8ec5c6735ef4e38bc56f0f85691336cf1fe400"
+    },
+    {
+      "name": "AddPictureBorders_TestA.pptx",
+      "sha256": "21138064d9036a4165d87e4d5f224d0a9c79f8a7b033be2989edc9e4e20c6793"
+    },
+    {
+      "name": "AddPictures_Test.pptx",
+      "sha256": "9afba1bb2b3187f04207aae09a5f106d2c344d3535c8267c4f5a4cf353d1f36c"
+    },
+    {
+      "name": "AddProgressBarTestC_ProjectManagementWorkflowInfographic.pptx",
+      "sha256": "7e24df1c7187d84904c735c27d6f26125f2dcd7d07a51fbcc8b2b685fbf068e5"
+    },
+    {
+      "name": "AddQRCode_TestA.pptx",
+      "sha256": "9e0945ede9946d3401380bb07f9eb33de387dda381a069e5e0d7516fb10bb23a"
+    },
+    {
+      "name": "AddSlideBorderTestB_AccountantCVResume.pptx",
+      "sha256": "bff930968572cce3f83f3bbb3eb26889090edfb7aceb681b109958ea78216ff2"
+    },
+    {
+      "name": "AddSlideNumber_TestB.pptx",
+      "sha256": "814d5271f2efbafdf715fa150ae9cce284dfaa95a00776cbdee7a36fd32f559b"
+    },
+    {
+      "name": "AddSource_TestA.pptx",
+      "sha256": "5e5d9b9726cc95bfa14856bd44f7f8412775cce010dc3017bc4fa6b44064a3f5"
+    },
+    {
+      "name": "AddSpeakerNotes_TestA.pptx",
+      "sha256": "a81cd08f0bdd05079ba350c1fa32b95db8111e504ae657613707e69abf8fd201"
+    },
+    {
+      "name": "AddThankYouSlide_TestA.pptx",
+      "sha256": "cd6c301ffa1fe987814217e02220e63404c9481e20aebc9d2fb3c3394727ebbc"
+    },
+    {
+      "name": "AddTransitions_TestA.pptx",
+      "sha256": "a5557a252a8b8668a916a106b54c9935dd5d1eef2eb76d5f2fa4efa5bd4529b4"
+    },
+    {
+      "name": "AddWaterMark_Test.pptx",
+      "sha256": "bf45dac0fa1d87e0e49cd84d99c4c571258ab70bea1803eb738384ef3ac70896"
+    },
+    {
+      "name": "AestheticMakeover_TestA.pptx",
+      "sha256": "654b76f93aaf238c4c68803afd0e9f3ddbaff0b20e6c7283ceec7a8df37b3769"
+    },
+    {
+      "name": "AnimalResearchPoster.pptx",
+      "sha256": "85c7d22456447f64cc7201a9647c35988cac3a6c04aa4e1d08f6298676e71f12"
+    },
+    {
+      "name": "AnimationCanonicalization_Bullets_TestA.pptx",
+      "sha256": "b11d1282533116e234138fa4eb6035816b8f5c66f68a23165756485d0fd5cd2c"
+    },
+    {
+      "name": "AvatarCircleCrop_TestA.pptx",
+      "sha256": "5eb9dcd58ee3a0a02f1f421a60c2ca410745faaf180d2cc4ce14262652e8d215"
+    },
+    {
+      "name": "BoldTitleTestA_Game_theory_4.pptx",
+      "sha256": "a8f00f2d2c814e5ef9c81a7757a72588ee911af67c7d120c5ca078d3a29395c1"
+    },
+    {
+      "name": "BoldTitleTestB_cse1300-ai.pptx",
+      "sha256": "02687b50c86639c32501eefdf04cfb45e1687f45f9502c7896f4bf46f9e892b0"
+    },
+    {
+      "name": "BulletsNormalizeLevels_Test.pptx",
+      "sha256": "f272077dc5ba7be90c5300b31ce728bc02e94e0a5a5c9c9b9a2e2be8d753303d"
+    },
+    {
+      "name": "CalibriToTimesTestA.pptx",
+      "sha256": "c967bc446a09125ebcbe76b2347380fb659a5d9b3651e463460d562aa6a37c54"
+    },
+    {
+      "name": "CenterAlignTitles_TestA.pptx",
+      "sha256": "9a542fa9c7a732edf9d414fd024d6bf4807aae67c724d44a7664ac24700690ed"
+    },
+    {
+      "name": "ChangeLineGraphtoBar_TestA.pptx",
+      "sha256": "badd9134a75308729132505dc232413229bf20914fa0fddb42f4bf186b420114"
+    },
+    {
+      "name": "ChartThemeColor_TestA.pptx",
+      "sha256": "95532c530697838e51403d43066cf690c6422fb893db69d462d7fe3dd1e7f82a"
+    },
+    {
+      "name": "ColorblindPalette_TestA.pptx",
+      "sha256": "a14d9499a9bea4738c648bfb686a25e2759edc753154cd439abbef9c8444d60e"
+    },
+    {
+      "name": "ConditionalTableFormatting_Negatives_TestA.pptx",
+      "sha256": "0b64628a3f1169dc6dcfca2ea0acca80e1cc6aeba7b9aa9bc456e8f36b9a305f"
+    },
+    {
+      "name": "ConvertHyperLink_Test.pptx",
+      "sha256": "33132900f1422268aec0a20ba9e6ba0c2be1e6b9a4baeb9f0887c371506792f5"
+    },
+    {
+      "name": "ConvertText&Arrows2SmartArt_TestA.pptx",
+      "sha256": "b49607373e4f8bc3beb1573862f272b639c54c77ffb1a1243d528b98cbd5c166"
+    },
+    {
+      "name": "CrossSlideDataConsolidation_TestA.pptx",
+      "sha256": "76214e891a723b38a67f17012099427b66c201b066150a76e0de5ed7befe3c07"
+    },
+    {
+      "name": "CrossSlideStatusToTimeline_TestA.pptx",
+      "sha256": "2054094715f3bfffd6118462222b109d1708d0307eb8475f1625a36ac1ffde8f"
+    },
+    {
+      "name": "CurrencySwap_Test.pptx",
+      "sha256": "db61710aa1bf35d8ee3064b3e23efbaa06a81d4055727e61d0e3226c896f0df7"
+    },
+    {
+      "name": "DashMinusNormalization_TestEasy.pptx",
+      "sha256": "aaca1a52fef232730895bfb1be160335d05d7fde8ef82d56655f068d32fee3ad"
+    },
+    {
+      "name": "DeleteDuplicate_TestA.pptx",
+      "sha256": "e4d83a79bf2565e931a7167b2f087b9b6d018e6b0453f7af2d3b5fb1a82ffb65"
+    },
+    {
+      "name": "DynamicDataLabelPlacement_TestA.pptx",
+      "sha256": "b6f0a98d4c673ecc8a23e38866e2f27358e3d59f343576ff46faf39e7b9a1c37"
+    },
+    {
+      "name": "DynamicSmartArtTimeline_TestA.pptx",
+      "sha256": "0f2c7c36793b3540da0b967ad0e931ff0c57721f431a7c8288a00b860c2ffd29"
+    },
+    {
+      "name": "EducationalMakeoverSolarSystem_TestA.pptx",
+      "sha256": "6f19789728666c36a4c9c4ec9137efa17dbd16b8f21bece709f44346c9ae429f"
+    },
+    {
+      "name": "EducationalRockRecognition_TestA.pptx",
+      "sha256": "aac72f769b292baf704ea7d9ab7a98caf67f3116d3673fcef939aad90e458440"
+    },
+    {
+      "name": "EmbedVideoPlayback_TestA.pptx",
+      "sha256": "9b35f1ff3a8baae7d10b082b736298f96e4ff708223fc67a8ab32f29e41730ce"
+    },
+    {
+      "name": "EnsembleCategoryTest.pptx",
+      "sha256": "5110cec13fc276f1f801520944a390caaef747a6cadfc6ab7c0e087c688b0dd4"
+    },
+    {
+      "name": "FillTablefromData_TestA.pptx",
+      "sha256": "69eb80458f9c78ee867e27812af34f63d12483fb1e4b4a9dd3eb63c3cdc37f99"
+    },
+    {
+      "name": "FixAgendaAndOrder_TestA.pptx",
+      "sha256": "bcbdf13b305029f1fca7c33d0b6b0020f84acf963bf066471d4be00971c2175b"
+    },
+    {
+      "name": "FixImage&TextOverFlow_TestB.pptx",
+      "sha256": "208ddc48591845ae015635168c8434044cda86c098a923a9c3ee0ef2b48f8a07"
+    },
+    {
+      "name": "FixImagePorportions_TestA.pptx",
+      "sha256": "026285dad008ed551128b04548909d8e4377324b67f8428cb6a68d2c87d9555f"
+    },
+    {
+      "name": "FixMisspellingsTestA_activities_ss_week_presentation.pptx",
+      "sha256": "d7bafc1afc1ab5486e3d8019d087f690c19b5594c1ece7827a129d14e572d5db"
+    },
+    {
+      "name": "FixSlideColorScheme_TestA.pptx",
+      "sha256": "c30b345bd69d97b4796c54ea2e90e10b177f455cc3a15df2afe95ead01ad9554"
+    },
+    {
+      "name": "FixTableThemeColor_TestA.pptx",
+      "sha256": "d0b3c9d5b9988a375252315d3300b3237f25684af23ed77a4330aa8021d10c30"
+    },
+    {
+      "name": "FixTextOverFlow_TestA.pptx",
+      "sha256": "183e662d0738577cee4c177dfcefc8620c664538e239b818aab47ee319b9a46e"
+    },
+    {
+      "name": "FixTextPlacement_Test.pptx",
+      "sha256": "31013e63d3de8cdf5f7a078355ce96b7730d8538a5474cf7b8b01e5f3c27e206"
+    },
+    {
+      "name": "FixThemeScheme_TestA.pptx",
+      "sha256": "5f779773768e51530fda065b710a096686b7b2190c4d07da232510c66a8fecdd"
+    },
+    {
+      "name": "FixTitleCase_TestA.pptx",
+      "sha256": "5462ea413b6ecdf5ee13b0893c360e744886283949fed7a8b44fd78ed01e727f"
+    },
+    {
+      "name": "FontSizePlus2Slide8TestA.pptx",
+      "sha256": "6beba374b051d77ba11636d826535fc3e391f245daf14d7547383a02798affd6"
+    },
+    {
+      "name": "FormatPythonCodeBlock_DarkMulti_TestA.pptx",
+      "sha256": "8505dbed7e9858ba6537f3530bcb59fc0193ce7c4e28e576e868815f80cbbdd1"
+    },
+    {
+      "name": "GenerateCompConclusion_TestA.pptx",
+      "sha256": "22e8036273ec11797223f430136ece7ebf8adcfe3cf5c79752bec3d8055e9260"
+    },
+    {
+      "name": "GridBaselineReasoning_TestA.pptx",
+      "sha256": "109deea671c0185352b48203120f4600272ccba8b184c120890e332ebd406af2"
+    },
+    {
+      "name": "HinduCenterTitles_TestA.pptx",
+      "sha256": "54f1ac027a562918dd92fd3983b9eb3828be5c77a3cf55cf8cd01fa605392438"
+    },
+    {
+      "name": "ImageTextCorrelation_TestA.pptx",
+      "sha256": "54c018aabce999ee1ac916208862be81e7f93dde6be522c1373413bd0d83ea6e"
+    },
+    {
+      "name": "ItalicizeSubheadingsTestA_Career_Banding_Job_Description_Training.pptx",
+      "sha256": "53b505433a922afb40316a2cae2e6abc4b72b92cf10e88ea1494d8e9667558e7"
+    },
+    {
+      "name": "ItalicizeSubheadingsTestB_COVID19-Healthcare-Tabletop-Facilitator-PPT.pptx",
+      "sha256": "07f90ef2f3dd19ad52c0fa89ecf8826b1e85448e6075de5fc881885999220492"
+    },
+    {
+      "name": "ItalicizeSubheadingsTestD_teachout.pptx",
+      "sha256": "228745f5e0604d89681f553f917506bb5204659adeb7d2bf7685240ae30936e4"
+    },
+    {
+      "name": "LaTeXtoOMML_TestA.pptx",
+      "sha256": "d48240c92f4e053bdffc33b31c8a10b94aad8399c3b432c8fd464072290ac7d2"
+    },
+    {
+      "name": "LegendBottomMultiTypes_TestA.pptx",
+      "sha256": "829d52a4294db1eb06d9d6a0f28f482b67c1415ba94c8558a7d0b17fa6731dd1"
+    },
+    {
+      "name": "LighterColors_TestA.pptx",
+      "sha256": "58c381286c5a0fe49a705e08c4c8537bea2763484f2b5b5f3dbf1a390e3db7ed"
+    },
+    {
+      "name": "LineGraph_TestA.pptx",
+      "sha256": "72fb98cc839fc54dc4b07dcdb4bf7eb8c6552ac6549d00c0010e3ab021c1f3e6"
+    },
+    {
+      "name": "MasterRebind_TestA.pptx",
+      "sha256": "97b8fedee259207179f2deab21576748793988e2dff7bff4270d1c9fa6e6e972"
+    },
+    {
+      "name": "MatchBackgroundtoPicture_TestA.pptx",
+      "sha256": "8c789d83d7063549ab3a198a7363e7e6d9feda84ea20865ae00a6307d3be52cd"
+    },
+    {
+      "name": "MatchFlagtoText_TestA.pptx",
+      "sha256": "8c2c6f409684507f2d56cc205c8a6b17d69e65d5036748dbe6d2098e24f325e2"
+    },
+    {
+      "name": "MatchSlideDeck_TestA.pptx",
+      "sha256": "c7e1d25f6713145eb44fea0cd48e1c8924b663d12c466128c54b52dbc78e4c6f"
+    },
+    {
+      "name": "MatchStockPhotos_Test.pptx",
+      "sha256": "7d90466e94ed72b8edb15c3389197c22bc93658ba9c0baebbad957f50b935948"
+    },
+    {
+      "name": "NormalizeDate_Test.pptx",
+      "sha256": "3f7fecef5d4f4c23b882124ef9d0fb79faa56d7fce53979e18ce5909f65c46f0"
+    },
+    {
+      "name": "NormalizeThousandSeperators_Test.pptx",
+      "sha256": "88a820907abc9105ace8d26fbb5de8c8495ecbdb429d90b644a58440cd366a44"
+    },
+    {
+      "name": "ObjectDistance_TestA.pptx",
+      "sha256": "d98fe76ddfadb6e470c6b2cbb6782b9b6beaae3471e50deee838460012414594"
+    },
+    {
+      "name": "OrderPhotosTest.pptx",
+      "sha256": "c17f8b37992c462006bf62a151b3f346df2dade7253f97027f69d715ab7f657c"
+    },
+    {
+      "name": "OrganizeResearchPoster_TestA.pptx",
+      "sha256": "a3cb46d32c6477edc54772928245c39873333002dd0deb073c827743b4f61503"
+    },
+    {
+      "name": "PieChart_TestA.pptx",
+      "sha256": "07911f768a13823f9e8a4a426a7d2667a16f8283a4237f2883abe8b24527415e"
+    },
+    {
+      "name": "QuarterTwoTestA___2302222_Presentation_Stats_SA_Q1_Q2_Q3_of_202223.pptx",
+      "sha256": "d838a1479d592eff762744e8a824f5327c12ba78e600d3cc3fcd057de800d375"
+    },
+    {
+      "name": "QuarterTwoTestB_7302020.pptx",
+      "sha256": "9122d0f503b33e2df83acd175a8282b41bb4a7c752f6dca484f72b05a352eab0"
+    },
+    {
+      "name": "ReadingOrderComplex_TestA.pptx",
+      "sha256": "18ed5ab16c440bb36a609697d58a99126abf03c1cc0b1a27d6656a2d418f23f7"
+    },
+    {
+      "name": "RemoveFillerWords_TestA.pptx",
+      "sha256": "728b48eac2f7f910cdb758fbcc25be7eeb04efd223b1a711deb745f91f13cd80"
+    },
+    {
+      "name": "ShortenBulletPointsTestB_Opioid-Addiction-Response-in-VA.pptx",
+      "sha256": "ac583734aabf163922ae56450f5f49e029a5e772f43762acefe55da7786fc58e"
+    },
+    {
+      "name": "ShortenTextOnSlides_TestA.pptx",
+      "sha256": "e5c7c5e2081d4f05a15c320b6cc53dedfb05fa4dcb308d37f83a03ae8dd78310"
+    },
+    {
+      "name": "Size43to169_DifferentContent_TestA.pptx",
+      "sha256": "aafdb523698a7e996e519c668c312c6d955505bd4bd4887c7b7aa8da291e4e9f"
+    },
+    {
+      "name": "SortByScoreAndCropImage169_Test.pptx",
+      "sha256": "dd2ee0141319451ea8b33b20c06b49e2985932f302ba6de1349566a864f7995c"
+    },
+    {
+      "name": "SpatialLogicLayout_TestA.pptx",
+      "sha256": "dfd07b8b262d3b8ebcbbb9fff5f4d07a244089915ba997efbcc0a617e083e539"
+    },
+    {
+      "name": "SummarizeParagraphsTestA_.pptx",
+      "sha256": "ad3b2cd926ddc7928f564579f4aa4c8cbcf6767f99639300d571fb7f8f887182"
+    },
+    {
+      "name": "SwimlaneFlowCanonicalization_TestA.pptx",
+      "sha256": "c5f0e852c29a8347cb29de3897d2c16cb11c84c5a9cd32dfec0e69444c756982"
+    },
+    {
+      "name": "TransitionarySlides_TestA.pptx",
+      "sha256": "723b73947e48916389b9482b9c01cf215c0cb51c0c9b781c482bd54ba287854c"
+    },
+    {
+      "name": "TranslateArabicLTR_TestB.pptx",
+      "sha256": "871e2808ffc966cb396b2bd0c8eefd8afcde19e4924471109b2f8a5283f4d175"
+    },
+    {
+      "name": "TranslateChineseTestA.pptx",
+      "sha256": "598b2efd8ad89bd14fc25cf65797aeeea18dc35d1a05b488a0e00a75b4c9acf6"
+    },
+    {
+      "name": "TranslateToEnglishButKeepallFrenchTestA_Bonjour mes amis!.pptx",
+      "sha256": "166e95dcf7883aa0ed60768e184c225851161a908f82223a7f8443f45cdd32dd"
+    },
+    {
+      "name": "UB_Title_Screenshot_TestA.pptx",
+      "sha256": "22ad5a23a84352431f9c780f82edf49b9c01717485633f27a983fac4655cf66c"
+    },
+    {
+      "name": "UnitConversionTemps_TestA.pptx",
+      "sha256": "a7b92dad84ea048245ff03ce946f9242df6e52cf1dae1ab192125653ad425f49"
+    },
+    {
+      "name": "ZOrder_Test.pptx",
+      "sha256": "7c20e2112a55652a93cd369f5087e2297c911146de66875f0b799b28ad855319"
+    },
+    {
+      "name": "climate_original.pptx",
+      "sha256": "14660dfd35f3ddb9aafe873159ca3871ecd2250d3e8f08db4e36cb61ca094fc7"
+    },
+    {
+      "name": "updatetheme_TestA.pptx",
+      "sha256": "d0b332612b46b151889c55dd247ef450742a498ac9bc846c6d345a85748722fa"
+    }
+  ]
+}
