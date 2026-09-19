@@ -151,3 +151,40 @@ fn unchanged_observation_advances_watermark_without_diff_and_blocks_stale_change
     assert_eq!(vault.model_score_diffs(&model)?.len(), 1);
     Ok(())
 }
+
+#[test]
+fn newer_multi_benchmark_snapshot_uses_prior_watermark_and_replay_is_atomic() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let row = row("one");
+    vault.put_model_registry_row(&row)?;
+    let model = row.catalog.model;
+    let snapshot = |at, a, b| ScoreSnapshot {
+        source: "bench".into(),
+        fetched_at: at,
+        observations: vec![
+            ScoreObservation {
+                model: model.clone(),
+                benchmark: "a".into(),
+                score: a,
+            },
+            ScoreObservation {
+                model: model.clone(),
+                benchmark: "b".into(),
+                score: b,
+            },
+        ],
+    };
+    assert_eq!(vault.apply_model_scores(&snapshot(10, 1.0, 2.0))?.len(), 2);
+    assert_eq!(vault.apply_model_scores(&snapshot(20, 3.0, 4.0))?.len(), 2);
+    assert!(
+        vault
+            .apply_model_scores(&snapshot(20, 3.0, 4.0))?
+            .is_empty()
+    );
+    assert!(vault.apply_model_scores(&snapshot(20, 3.0, 5.0)).is_err());
+    let stored = vault.model_registry_row(&model)?.unwrap();
+    assert_eq!(stored.scores["bench"]["a"], 3.0);
+    assert_eq!(stored.scores["bench"]["b"], 4.0);
+    assert_eq!(vault.model_score_diffs(&model)?.len(), 4);
+    Ok(())
+}

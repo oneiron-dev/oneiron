@@ -200,6 +200,7 @@ impl Vault {
         let mut seen = std::collections::BTreeSet::new();
         let mut txn = self.store.env.write_txn()?;
         let mut diffs = Vec::new();
+        let mut prior_watermarks = BTreeMap::new();
         for observation in &snapshot.observations {
             if observation.benchmark.trim().is_empty()
                 || observation.benchmark.len() > 128
@@ -215,16 +216,15 @@ impl Vault {
                 .get(&txn, &key)?
                 .ok_or_else(|| invalid("score model is not registered"))?;
             let mut row = decode(&bytes)?;
-            if row
-                .fetched_at
-                .get(&snapshot.source)
-                .is_some_and(|at| *at > snapshot.fetched_at)
-            {
+            let prior_watermark = *prior_watermarks
+                .entry(observation.model.clone())
+                .or_insert_with(|| row.fetched_at.get(&snapshot.source).copied());
+            if prior_watermark.is_some_and(|at| at > snapshot.fetched_at) {
                 return Err(invalid("stale benchmark snapshot"));
             }
             let scores = row.scores.entry(snapshot.source.clone()).or_default();
             let previous = scores.get(&observation.benchmark).copied();
-            if row.fetched_at.get(&snapshot.source) == Some(&snapshot.fetched_at)
+            if prior_watermark == Some(snapshot.fetched_at)
                 && previous.is_some_and(|score| score != observation.score)
             {
                 return Err(invalid("conflicting equal-time benchmark snapshot"));
