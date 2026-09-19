@@ -61,11 +61,14 @@ pub(super) fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
         .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
     let to = CString::new(to.as_os_str().as_bytes())
         .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-    // SAFETY: both C strings remain live through the call. No descriptor or
-    // pointer escapes. EXCL/NOREPLACE prevents overwriting even a symlink.
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    // SAFETY: both C strings remain live through the call. The syscall takes
+    // two directory-fd/path pairs and flags; NOREPLACE forbids overwriting even
+    // a symlink. Use the kernel entry point because Bionic's renameat2 symbol
+    // requires API 30, while the embedded adapter supports API 26.
     let rc = unsafe {
-        libc::renameat2(
+        libc::syscall(
+            libc::SYS_renameat2,
             libc::AT_FDCWD,
             from.as_ptr(),
             libc::AT_FDCWD,
