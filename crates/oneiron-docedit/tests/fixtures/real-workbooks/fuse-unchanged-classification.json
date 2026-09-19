@@ -1,0 +1,31 @@
+{
+  "identity": {
+    "mode": "saved-cache-diagnostic",
+    "fresh_excel_truth": false,
+    "executable_sha256": "629713a16bbf3ac6389adaeaec746e3bde5e9c0dbb8089c7d87dc2f87d8df0e4",
+    "manifest_sha256": "f211b1a811d493afe0e82b5faadc6093ec5fefaff7579aa021e2de8cef438404",
+    "comparator_sha256": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+    "timeout_seconds": 120
+  },
+  "workbooks": 10702,
+  "recalculated": 327,
+  "refused": 10375,
+  "failure_counts": {
+    "Error: Unsupported { feature: \"ZIP local extra metadata\", context: \"[Content_Types].xml\" }\n": 9963,
+    "Error: Unsupported { feature: \"ZIP data descriptor\", context: \"xl/worksheets/sheet1.xml\" }\n": 271,
+    "Error: Unsupported { feature: \"ambiguous/missing ZIP footer\", context: \"XLSX package\" }\n": 43,
+    "Error: Unsupported { feature: \"ZIP local extra metadata\", context: \"xl/workbook.xml\" }\n": 42,
+    "Error: Unsupported { feature: \"ZIP data descriptor\", context: \"_rels/.rels\" }\n": 3,
+    "Error: Unsupported { feature: \"ZIP data descriptor\", context: \"xl/drawings/drawing1.xml\" }\n": 5,
+    "Error: Unsupported { feature: \"ZIP entry extra metadata or comment\", context: \"docProps/\" }\n": 1,
+    "Error: Unsupported { feature: \"ZIP data descriptor\", context: \"xl/comments1.xml\" }\n": 26,
+    "Error: Unsupported { feature: \"ZIP local extra metadata\", context: \"_rels/.rels\" }\n": 10,
+    "Error: Unsupported { feature: \"worksheet width limit\", context: \"worksheet\" }\n": 1,
+    "Error: Unsupported { feature: \"literal scalar payload is not supported by Calamine\", context: \"worksheet\" }\n": 3,
+    "Error: Unsupported { feature: \"ZIP data descriptor\", context: \"xl/charts/chart1.xml\" }\n": 5,
+    "Error: Unsupported { feature: \"missing r attribute\", context: \"XLSX XML\" }\n": 1,
+    "Error: Unsupported { feature: \"ZIP data descriptor\", context: \"xl/pivotCache/pivotCacheDefinition1.xml\" }\n": 1
+  },
+  "rows_sha256": "8e920bc490ffb64fe697e706c6ea5e3bc8b76839ec415090843e9be82c1bbd73",
+  "accuracy_status": "Saved-cache diagnostic only. Fresh Excel comparisons remain pending."
+}
