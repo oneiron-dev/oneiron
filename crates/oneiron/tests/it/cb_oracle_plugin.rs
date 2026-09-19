@@ -21,6 +21,9 @@
 // Contract shapes are constructed only once their arming ticket lands.
 #![allow(dead_code)]
 
+#[path = "cb_oracle_plugin/admission.rs"]
+mod admission;
+
 // ════════════════════════════════════════════════════════════════════════
 // CB-X — plugin sections (ONE-1706 admission/lifecycle/fuzz · ONE-1707
 //        plugin suggestions)
@@ -912,6 +915,7 @@ mod plugin_fixture {
         /// When false, `admit_candidate_under_claim` leaves the skill
         /// `Candidate` so the `PendingActivation` arm is reachable.
         activate: bool,
+        admission: &'a super::admission::Admission,
     }
 
     impl PluginInstallSource for CrmPackSource<'_> {
@@ -969,24 +973,8 @@ mod plugin_fixture {
             _approved_claim_id: &EntityId,
             now: u64,
         ) -> PluginResult<SkillRecord> {
-            let mut record = vault.get_skill_record(skill_ref)?.ok_or_else(|| {
-                PluginSectionError::MissingInstallTarget {
-                    reference: skill_ref.to_hex(),
-                }
-            })?;
             if self.activate {
-                // The existing Candidate→Active door, under the SAME approved
-                // install claim — no second consent prompt.
-                record.lifecycle_status = SkillLifecycle::Active;
-                vault.update_skill_record(
-                    skill_ref,
-                    &record,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )?;
+                return Ok(self.admission.activate(vault, *skill_ref, now)?);
             }
             vault.get_skill_record(skill_ref)?.ok_or_else(|| {
                 PluginSectionError::MissingInstallTarget {
@@ -1021,6 +1009,7 @@ mod plugin_fixture {
         skill_ref: EntityId,
         package: HubPackage,
         content_hash_hex: String,
+        admission: super::admission::Admission,
     }
 
     impl PluginFixture {
@@ -1045,11 +1034,8 @@ mod plugin_fixture {
                 .expect("seed the proposing actor");
             // The claim subject for an UNINSTALLED package is the existing
             // hub/provider entity — never the unwritten skill row.
-            vault
-                .put_entity(&hub_id, 4, occurred, now, b"crm hub")
-                .expect("seed the hub entity");
-
             let package = crm_package();
+            let admission = super::admission::Admission::new(&vault, hub_id, &package);
             let content_hash_hex = package.content_hash().expect("canonical hash").to_hex();
 
             Self {
@@ -1060,6 +1046,7 @@ mod plugin_fixture {
                 skill_ref,
                 package,
                 content_hash_hex,
+                admission,
             }
         }
 
@@ -1076,6 +1063,7 @@ mod plugin_fixture {
                 hub: self.hub(),
                 skill_ref: self.skill_ref,
                 activate,
+                admission: &self.admission,
             }
         }
 
@@ -1311,7 +1299,9 @@ mod plugin_fixture {
         }
 
         pub(crate) fn activate_skill(&self) {
-            self.set_lifecycle(SkillLifecycle::Active);
+            self.admission
+                .activate(&self.vault, self.skill_ref, 5_000)
+                .expect("held-out activation");
         }
 
         /// The plugin leaves canon. `Stale` is a lifecycle exit, not a
@@ -1777,7 +1767,7 @@ mod plugin_fixture {
         );
         HubPackage::new(
             record,
-            vec![HubFile::new("SKILL.md", b"# CRM contacts".to_vec())],
+            vec![HubFile::new("SKILL.md", format!("---\nname: {CRM_SKILL_ID}\ndescription: CRM contact pack\nversion: {CRM_SKILL_VERSION}\n---\n# CRM contacts\n").into_bytes())],
             SkillCapabilitySurface::default(),
         )
     }

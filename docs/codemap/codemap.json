@@ -25550,6 +25550,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/cb_oracle_plugin/admission.rs",
+     "purpose": "Real marketplace admission for the plugin rendering fixtures",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -27257,7 +27267,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1563,
-   "test_files": 563
+   "test_files": 564
   },
   "oneiron-bench": {
    "files": [
