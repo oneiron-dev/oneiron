@@ -575,8 +575,8 @@
     "fresh_excel_truth": false,
     "native_default_eligible": false
   },
-  "current_office_blocker": {
-    "status": "ownership-unproved-after-timeouts",
+  "office_timeout_6_recovery": {
+    "status": "resolved-by-existing-process-activation",
     "corpus": "SpreadsheetBench",
     "recorded_rows": 2128,
     "last_input_sha256": "9d67e745514b7cf7f9bfd1056457e7faf0f53edee854b8c8f29ed47393d825de",
@@ -588,6 +588,45 @@
     "staging_retained": true,
     "workbooks_closed_during_failed_recovery": 0,
     "source": "target/w7-checks/sb-custody-recovery-6/",
-    "required_action": "Owner restores Excel responsiveness without discarding foreign or recovered work; prove exact ownership before resuming unchanged oracle."
+    "required_action": null,
+    "activation": {
+      "pid": 77119,
+      "bundle": "com.microsoft.Excel",
+      "activated": true,
+      "application_launched_or_restarted": false,
+      "inline_script_sha256": "a35dba6518b0bc1b1978ea91156c787880aed3f73602619c5b7e54958d33c656"
+    },
+    "recovery": {
+      "status": "custody-restored",
+      "timeout_row_preserved": {
+        "sha256": "9d67e745514b7cf7f9bfd1056457e7faf0f53edee854b8c8f29ed47393d825de",
+        "path": "all_data_912_v0.1/spreadsheet/42181/1_42181_answer.xlsx",
+        "status": "timed-out",
+        "exit_code": -14
+      },
+      "final_workbooks": 0,
+      "foreign_workbooks_touched": false,
+      "identity_unchanged": {
+        "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+        "script_sha256": "4a3227fad8f78b5b3e485c7c5c427d4dc7bc930f459f436b334f79dcf0401e56",
+        "driver_sha256": "4457f4f2c42a49e13d1211917c4907b0b9f96b11efd0c470788965ff77ed3832"
+      },
+      "supervisor_sha256": "11e7654ca2936c6781358e72805e66e6666fa121b957a0625e9e9cd09fd7ad05",
+      "completed_rows_reused": 2077,
+      "owned_workbook_closed_without_saving": true
+    },
+    "whole_corpus_acceptance": false
+  },
+  "office_activation_supervisor": {
+    "supervisor_sha256": "617e99b4a9de523f33a510bbbb0e3ca13b2dd0505f58e8d9ce329786ff146845",
+    "activation_script_sha256": "df6f5f4a13c4a78eaae7e62b0e12f8cab872471ebbecad19d6d4c28cd42e2b12",
+    "command": "python3 -m unittest discover -s scripts/tests -p test_excel_resume.py -v",
+    "exit_code": 0,
+    "tests": 13,
+    "mac_jxa_compilation_exit_code": 0,
+    "frozen_supervisor_dir": "/Users/olety/w7-oracle/W7-C14/real-workbook-oracle/excel-custody-supervisor-activation-v1",
+    "live_admission": "not substituted into the active recovery-6 job; optional new supervisor reserved for subsequent recovery",
+    "office_driver_or_identity_changed": false,
+    "behavior": "At most one existing-PID activation between the two bounded inventory reads. No application launch/restart/quit or workbook mutation; exact workbook proof still required."
   }
 }

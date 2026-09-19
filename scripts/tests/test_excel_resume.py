@@ -144,6 +144,85 @@ class ExcelResumeTests(unittest.TestCase):
                 self.assertEqual(self.rows.read_bytes(), prior_rows)
                 self.assertFalse(list(self.args.output.glob("recovery-*")))
 
+    def enable_activation(self):
+        self.args.activate_existing = self.args.output / "activate-existing.js"
+        self.args.activate_existing.write_text("activate explicitly identified existing process")
+        self.args.activate_pid = 1234
+
+    def activation_reply(self, **changes):
+        value = dict(pid=1234, bundle="com.microsoft.Excel", activated=True)
+        value.update(changes)
+        return json.dumps(value)
+
+    def test_existing_process_activation_still_requires_owned_inventory_before_close(self):
+        self.enable_activation()
+        remaining = self.runner([self.owned(), "0\n", "0\n"])
+        def activate_then_ready(command, **kwargs):
+            if not self.calls:
+                self.calls.append(command)
+                return subprocess.CompletedProcess(command, -14, "", "")
+            if command[-2] == str(self.args.activate_existing):
+                self.calls.append(command)
+                self.assertEqual(command[-4:], ["-l", "JavaScript", str(self.args.activate_existing), "1234"])
+                return subprocess.CompletedProcess(command, 0, self.activation_reply(), "")
+            return remaining(command, **kwargs)
+        before = self.rows.read_bytes()
+        self.assertEqual(MODULE.recover(self.args, activate_then_ready), 2)
+        self.assertEqual(self.rows.read_bytes(), before)
+        receipt = json.loads(next(self.args.output.glob("activation-*.json")).read_text())
+        self.assertEqual(receipt["status"], "activated-existing")
+        self.assertEqual(self.calls[3][-3:], [str(self.args.close_owned), "input.xlsx", str(self.case)])
+        self.assertFalse(self.args.lock.exists())
+
+    def test_activation_refusal_or_owner_change_never_closes_a_workbook(self):
+        self.enable_activation()
+        for mode in ["false", "wrong-pid", "wrong-app", "invalid-json", "timeout", "exit",
+                     "owner-before", "owner-during"]:
+            with self.subTest(mode=mode):
+                self.calls.clear()
+                (self.args.lock / "owner").write_text(self.owner)
+                before = self.rows.read_bytes()
+                def refused(command, **kwargs):
+                    self.calls.append(command)
+                    if len(self.calls) == 1:
+                        if mode == "owner-before":
+                            (self.args.lock / "owner").write_text("another owner")
+                        return subprocess.CompletedProcess(command, -14, "", "")
+                    self.assertEqual(command[-2], str(self.args.activate_existing))
+                    if mode == "timeout":
+                        raise subprocess.TimeoutExpired(command, 40)
+                    if mode == "owner-during":
+                        (self.args.lock / "owner").write_text("another owner")
+                    reply = {"false": self.activation_reply(activated=False),
+                             "wrong-pid": self.activation_reply(pid=9),
+                             "wrong-app": self.activation_reply(bundle="other.app"),
+                             "invalid-json": "not JSON"}.get(mode, self.activation_reply())
+                    return subprocess.CompletedProcess(command, 1 if mode == "exit" else 0, reply, "")
+                with self.assertRaises((RuntimeError, ValueError)):
+                    MODULE.recover(self.args, refused)
+                self.assertEqual(len(self.calls), 1 if mode == "owner-before" else 2)
+                self.assertTrue(self.args.lock.exists())
+                self.assertTrue(self.input.exists())
+                self.assertEqual(self.rows.read_bytes(), before)
+                self.assertFalse(list(self.args.output.glob("recovery-*")))
+
+    def test_activation_does_not_authorize_closing_foreign_or_recovered_books(self):
+        self.enable_activation()
+        for book in ["Book1\t\tfalse", "User.xlsx\t/foreign\ttrue",
+                     f"input.xlsx (Recovered)\t{self.case}\tfalse"]:
+            with self.subTest(book=book):
+                self.calls.clear()
+                replies = iter([(-14, ""), (0, self.activation_reply()), (0, "1\n" + book + "\n")])
+                def foreign(command, **kwargs):
+                    self.calls.append(command)
+                    code, output = next(replies)
+                    return subprocess.CompletedProcess(command, code, output, "")
+                with self.assertRaises(ValueError):
+                    MODULE.recover(self.args, foreign)
+                self.assertEqual(len(self.calls), 3)
+                self.assertTrue(self.input.exists())
+                self.assertTrue(self.args.lock.exists())
+
     def test_foreign_unsaved_recovered_and_extra_workbooks_refuse_without_close(self):
         for books in ["1\nBook1\t\tfalse\n", "1\ninput.xlsx\t/foreign\ttrue\n",
                       f"1\ninput.xlsx (Recovered)\t{self.case}\tfalse\n",

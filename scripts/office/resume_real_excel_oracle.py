@@ -56,6 +56,42 @@ def app_call(script, arguments, runner):
                    str(script), *map(str, arguments)], capture_output=True, text=True, timeout=130)
 
 
+def activate_existing(args, runner, expected_owner):
+    script = getattr(args, "activate_existing", None)
+    if script is None:
+        return
+    pid = args.activate_pid
+    if type(pid) is not int or not 0 < pid <= 2147483647:
+        raise ValueError("invalid existing Excel PID")
+    if (args.lock / "owner").read_text().strip() != expected_owner:
+        raise ValueError("Office lock changed before activation")
+    command = ["/usr/bin/perl", "-e", "alarm 30; exec @ARGV", "/usr/bin/osascript",
+               "-l", "JavaScript", str(script), str(pid)]
+    receipt = dict(pid=pid, script_sha256=sha(script), lock_retained=True)
+    try:
+        result = runner(command, capture_output=True, text=True, timeout=40)
+        receipt.update(exit_code=result.returncode, stdout=result.stdout, stderr=result.stderr)
+    except subprocess.TimeoutExpired:
+        receipt.update(exit_code=None, stdout="", stderr="activation timed out")
+    try:
+        activated = json.loads(receipt["stdout"])
+    except (ValueError, TypeError):
+        activated = {}
+    valid = (receipt["exit_code"] == 0 and isinstance(activated, dict)
+             and type(activated.get("pid")) is int and activated["pid"] == pid
+             and activated.get("bundle") == "com.microsoft.Excel"
+             and activated.get("activated") is True)
+    receipt["status"] = "activated-existing" if valid else "activation-refused"
+    path = args.output / f"activation-{time.time_ns()}.json"
+    with path.open("x") as stream:
+        stream.write(json.dumps(receipt, indent=2) + "\n")
+    if (args.lock / "owner").read_text().strip() != expected_owner:
+        raise ValueError("Office lock changed during activation")
+    if not valid:
+        raise RuntimeError("existing Excel activation failed; preserve custody")
+    # Activation is not ownership proof. The next bounded inventory must succeed.
+
+
 def inventory(args, runner):
     # Inventory is read-only. One extra bounded read can let a busy Excel finish
     # after the input deadline; it never authorizes closing an unidentified book.
@@ -86,6 +122,7 @@ def inventory(args, runner):
             stream.write(json.dumps(failure, indent=2) + "\n")
         if not timed_out or attempt == 2:
             raise RuntimeError("Excel inventory failed; preserve custody")
+        activate_existing(args, runner, expected_owner)
     lines = result.stdout.strip().splitlines()
     if not lines or not lines[0].isdigit():
         raise ValueError("invalid workbook inventory")
@@ -187,4 +224,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("driver", "corpus", "manifest", "output", "script", "lock", "inventory", "close-owned", "container"):
         parser.add_argument("--" + name, type=Path, required=True)
-    run(parser.parse_args())
+    parser.add_argument("--activate-existing", type=Path,
+                        help="Optional bounded JXA activation of an already-running Excel PID")
+    parser.add_argument("--activate-pid", type=int)
+    args = parser.parse_args()
+    if (args.activate_existing is None) != (args.activate_pid is None):
+        parser.error("--activate-existing and --activate-pid must be supplied together")
+    run(args)
