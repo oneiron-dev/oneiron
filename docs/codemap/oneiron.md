@@ -1235,8 +1235,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/outbound/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | Outbound schedule/dispatch and the calendar read/search/freebusy/invite surface |
 | `src/memory/outbound/schedule.rs` | src | m | 2 fn · 1 const · 1 crate-vis | — | Schedule-only dispatch of connector sends through the OF-327 chokepoint |
 | `src/memory/outbound/types.rs` | src | s | 3 struct · 1 crate-vis | OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext | Outbound schedule DTOs: context, draft input, and intent receipt |
-| `src/memory/reads.rs` | src | m | 5 struct · 10 fn · 3 crate-vis | ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts | Entity/claim read surface plus BM25 and neighbor queries |
+| `src/memory/reads.rs` | src | m | 5 struct · 10 fn · 4 crate-vis | ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts | Entity/claim read surface plus BM25 and neighbor queries |
 | `src/memory/recall.rs` | src | m | 6 struct · 1 enum · 10 fn · 1 const · 4 crate-vis | Effort, MemoryItem, MemoryPack, MemoryProvenance, RecallScope, RetrievalMeta, ScopeHonesty | Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing |
+| `src/memory/recall/items.rs` | src | s | 1 crate-vis | — | Builds typed recall items from the exact selected entity revision |
 | `src/memory/structural/affiliated.rs` | src | s | 3 fn | — | Attributed takes, companion records, and imported-claim admission verbs |
 | `src/memory/structural/codec.rs` | src | s | 4 crate-vis | — | Edge-kind string codec and registry kind lookups for structural puts |
 | `src/memory/structural/guards.rs` | src | s | 1 crate-vis | — | Create-only guards for the structural write door (ONE-1889) |
@@ -1258,6 +1259,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/tests_regressions/mod.rs` | src | s | — | — | Security-regression suite from a cross-cutting review batch: tests span witness, structural puts, actor… |
 | `src/memory/tests_regressions/outbound_actor_scope.rs` | src | s | — | — | ONE-1876 actor-scoped outbound dedupe index regressions |
 | `src/memory/tests_regressions/recall.rs` | src | m | — | — | BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits |
+| `src/memory/tests_regressions/recall_revision.rs` | src | s | — | — | Exact revision consistency across facade recall, hydration, and document chat |
 | `src/memory/tests_regressions/retrieval_quality.rs` | src | s | — | — | Retrieval-quality facade metadata regressions |
 | `src/memory/witness/base.rs` | src | m | 1 fn · 2 crate-vis | — | Base witness program: container resolve, K7 door, batch write, text ops, session bump |
 | `src/memory/witness/codec.rs` | src | s | 6 crate-vis | — | Turn-speaker and message-envelope codec plus session alias formatting |
@@ -1743,7 +1745,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/structural_kind_registry/rekey.rs` | src | m | 4 crate-vis | — | One-shot byte-space v3 type-byte migration over entities, type_index, counters, and registry rows |
 | `src/store/test_hooks.rs` | src | s | 15 crate-vis | — | The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it |
 | `src/store/tests.rs` | test | XL | — | — | — |
-| `src/store/writer_lease.rs` | src | s | 1 struct · 4 fn · 2 const · 2 crate-vis | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `src/store/writer_lease.rs` | src | s | 1 struct · 5 fn · 2 const · 2 crate-vis | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `src/store/writer_lease/tests.rs` | test | s | — | — | Focused process-owner lease and bootstrap regressions |
 | `src/subject_model.rs` | src | m | 1 struct · 2 enum · 12 fn · 3 const · 6 crate-vis | ActorSubjectAnchor, PersonSubstrate, SubjectKind | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `src/subject_model/tests.rs` | test | L | 2 crate-vis | — | — |
@@ -1917,7 +1919,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_revision/mod.rs` | src | s | 1 re-export · 3 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
 | `src/vault/entity_revision/pending_index.rs` | src | s | 4 crate-vis | — | Caller-supplied index inputs retained until atomic idle publication |
 | `src/vault/entity_revision/phonetic.rs` | src | s | 3 crate-vis | — | Host-derived phonetic codes publish with the same indexed text frontier |
-| `src/vault/entity_revision/storage.rs` | src | m | 2 fn · 21 crate-vis | — | Transactional revision ledger |
+| `src/vault/entity_revision/storage.rs` | src | m | 2 fn · 22 crate-vis | — | Transactional revision ledger |
 | `src/vault/entity_revision/tests.rs` | test | m | — | — | Acceptance laws exercise the existing put/index/read engines, not a side store |
 | `src/vault/entity_revision/types.rs` | src | s | 5 struct · 1 enum · 1 trait · 3 fn | IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode, ResolvedCitation, RevisionRef | Exact read frontiers and idle refresh contracts for editable entity text |
 | `src/vault/mod.rs` | src | s | 1 struct · 5 re-export · 5 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |

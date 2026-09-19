@@ -15723,7 +15723,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 10,
       "struct": 5
      }
@@ -15748,6 +15748,16 @@
       "enum": 1,
       "fn": 10,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/items.rs",
+     "purpose": "Builds typed recall items from the exact selected entity revision",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -15950,6 +15960,14 @@
      "notable": [],
      "path": "src/memory/tests_regressions/recall.rs",
      "purpose": "BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall_revision.rs",
+     "purpose": "Exact revision consistency across facade recall, hydration, and document chat",
      "surface": {}
     },
     {
@@ -21733,7 +21751,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -23676,7 +23694,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 2
      }
     },
@@ -25971,7 +25989,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 49,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26477,7 +26495,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1520,
+   "source_files": 1522,
    "test_files": 539
   },
   "oneiron-bench": {

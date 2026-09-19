@@ -125,3 +125,38 @@ not passing macOS evidence. All changed benchmark tests still run.
 The complete bot surfaces were refreshed again before these corrections. No new
 findings appeared. Qodo replies `4053503849` and `4053504033` explicitly confirm
 the telemetry decisions as intentional. Codex remains Running, not failed.
+
+
+## Codex terminal refresh — six findings at b4e0d63d
+
+Codex comment `5742741731` now reports Completed, not quota failure. Complete
+comments/reviews/inline threads were collected before new repairs. The six inline
+findings are retained with original head `b4e0d63d` and stable IDs:
+
+- C1 `4053512297`: facade items reread live after indexed pack hydration. Carry
+  each entity's source revision into typed item construction.
+- C2 `4053512305`: a single pack-level pin is applied to unrelated entities.
+  Restrict that pin to its own entity; do not approximate another entity's history.
+- C3 `4053512315`: filesystem isolation evidence is path-racy. Bind the isolation
+  check and vault open to the same directory identity; add a deterministic swap test.
+- C4 `4053512327`: missing VAD is scored as maximally unlike. Use neutral VAD.
+- C5 `4053512335`: cached duplicate IDs can inflate scores/propagation mass.
+  Validate unique score IDs and frontier/residual `(id,hops)` keys at decode.
+- C6 `4053512344`: document chat drops a caller's revision pin in hydrated refs.
+  Preserve the resolved pin in the hydrated view and both projections.
+
+The queued r3 validator was stopped before admission so these repairs are in the
+next tested snapshot. No active compiler was interrupted; no test pass is claimed.
+
+
+C3 uses a single descriptor, not adjacent pathname checks: managed open uses
+`Vault::open_owned`; the writer lease exposes its borrowed pinned directory for
+both fscrypt ioctl and UID/mode fstat. Linux LMDB open uses that same lease fd.
+A final lease/path check rejects a renamed root, even for a canary, before the
+DEK MAC gate. The swap regression uses the existing per-call probe seam, not a
+process-global hook. macOS native isolation remains false; its canary rule is
+unchanged. No unsafe block or process global was added.
+
+The exact-revision item projector moved unchanged into `memory/recall/items.rs`
+after the repair reached the 800-line bar. Its new regression has its own module.
+No baseline was raised. All four ratchets and the 701-name root surface still pass.
