@@ -59,10 +59,8 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     serve_with_config(config).await
 }
 
-pub fn init(args: VaultArgs) -> anyhow::Result<()> {
-    let vault = open_vault_for_command(&args)?;
-    print_doctor_report(&vault)
-}
+mod init;
+pub use init::init;
 
 pub fn doctor(args: VaultArgs) -> anyhow::Result<()> {
     let vault = open_vault_for_command(&args)?;

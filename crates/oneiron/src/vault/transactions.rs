@@ -175,6 +175,9 @@ impl Vault {
             hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
             hnsw::increment_vector_version(&self.store, wtxn)?;
             hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
+            self.store
+                .hnsw_meta
+                .delete(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY)?;
             crate::embed::remark_all_claims_pending_in_txn(
                 self,
                 wtxn,

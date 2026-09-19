@@ -792,6 +792,8 @@ async fn selector_vv_request_sends_filtered_update_only() {
             ),
             (Value::from("appr"), Value::from(claim.approval.as_str())),
             (Value::from("life"), Value::from(claim.lifecycle.as_str())),
+            (Value::from("world"), Value::from("base")),
+            (Value::from("rel"), Value::from("all")),
         ]);
         let mut encoded = Vec::new();
         rmpv::encode::write_value(&mut encoded, &body).unwrap();

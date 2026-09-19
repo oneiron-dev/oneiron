@@ -67,5 +67,6 @@ pub(super) fn stage_vector_row(
 
     let bytes = crate::store::encode_vector_row_v1(vector)?;
     store.vectors().put(wtxn, id.as_bytes(), &bytes)?;
+    crate::embed::clear_embedding_locality_in_txn(store, wtxn, id)?;
     Ok(())
 }

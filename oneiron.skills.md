@@ -1400,3 +1400,18 @@ Closed code catalog currently emitted by server API code:
 - Missing entity: do not invent a record. Report no record and keep any search result as stale or deleted.
 - Idempotency conflict: reuse the original body for the same key, or generate a fresh key for a new mutation attempt.
 - Internal server error: retry later and inspect server logs if repeated.
+
+
+## First-run self-hosted embedder onboarding
+
+Ask once whether the user wants `local`, `endpoint`, or `none`.
+Local downloads the pinned Harrier model (~1.2 GB) and uses ~0.7 GB steady memory.
+Use `oneiron-server init <vault-path> --config <config-path> --embedder local`.
+For an existing OpenAI-compatible server, add `--embedder endpoint --embedder-endpoint <url>`
+and its `--embedder-model-key <served-key>`. A non-default model also needs
+`--embedder-model-id <model_id@revision> --dimensions <dimensions>`.
+Keys come from an environment variable named by `--embedder-api-key-env NAME`.
+Never put key values in argv, chat, or TOML. `--embedder none` keeps lexical-only operation.
+Run `oneiron-server serve --config <config-path>` with the file init reports.
+Do not reimplement the config write or model download. Hosted provisioning passes
+these flags noninteractively and does not ask the user.

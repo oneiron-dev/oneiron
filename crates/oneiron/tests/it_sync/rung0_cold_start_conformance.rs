@@ -444,7 +444,6 @@ fn rung0_fresh_vault_answers_all_model_free_channels() -> Result<()> {
 /// exception in `push_embed_job_in_txn`: that would weaken urgency
 /// preservation for every caller to serve one fixture.
 #[test]
-#[ignore = "blocked on <engine-ticket-id>: cold-attach backfill"]
 fn rung0_attach_uses_priority_three_without_migration_or_double_fill() -> Result<()> {
     let dir = tempfile::tempdir().expect("temporary vault directory");
 
@@ -478,6 +477,8 @@ fn rung0_attach_uses_priority_three_without_migration_or_double_fill() -> Result
 
     // ─── Phase 2: attach one embedder over the same physical vault ───
     let vault = Arc::new(Vault::open(dir.path(), attached_config())?);
+    assert_eq!(vault.cold_attach_embedder()?, 3);
+    assert_eq!(vault.cold_attach_embedder()?, 0);
 
     let queue = SyncQueue::new(Arc::clone(&vault))?;
     let jobs = queue.drain_embed_jobs()?;

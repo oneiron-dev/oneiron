@@ -37,7 +37,7 @@ pub enum Command {
     /// Print or locate the agentskills-compatible skill pack.
     SkillsPack(SkillsPackArgs),
     /// Create a vault and print its doctor report.
-    Init(VaultArgs),
+    Init(InitArgs),
     /// Open a vault and print its doctor report.
     Doctor(VaultArgs),
     /// Resolve repo commit provenance trailers against a vault claim.
@@ -192,6 +192,35 @@ pub struct SkillsPackArgs {
     pub path: bool,
 }
 
+#[derive(Args, Clone, Debug, Default)]
+pub struct InitArgs {
+    /// Vault directory to create.
+    pub path: PathBuf,
+    /// Same config file that `serve --config` reads. Defaults to the XDG path.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    /// Choose local, endpoint, or none. Noninteractive omission selects none.
+    #[arg(long)]
+    pub embedder: Option<crate::config::EmbedderProvider>,
+    #[arg(long)]
+    pub embedder_endpoint: Option<String>,
+    /// Model key served by an OpenAI-compatible embedding endpoint.
+    #[arg(long)]
+    pub embedder_model_key: Option<String>,
+    /// Pinned embedding space identity, model_id@revision.
+    #[arg(long)]
+    pub embedder_model_id: Option<String>,
+    /// Environment variable NAME holding the key, not the key itself.
+    #[arg(long)]
+    pub embedder_api_key_env: Option<String>,
+    #[arg(long)]
+    pub dimensions: Option<usize>,
+    #[arg(long, default_value_t = DEFAULT_SERVER_MAP_SIZE)]
+    pub map_size: usize,
+    #[arg(long = "dict-search-paths", value_delimiter = ',', num_args = 1..)]
+    pub dict_search_paths: Option<Vec<PathBuf>>,
+}
+
 #[derive(Args, Clone, Debug)]
 pub struct VaultArgs {
     /// Path to the LMDB vault directory.
@@ -272,7 +301,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Serve(args) => commands::serve(*args).await,
         Command::Revoke(args) => commands::revoke(*args).await,
         Command::SkillsPack(args) => commands::skills_pack(args),
-        Command::Init(args) => commands::init(args),
+        Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
         Command::Doctor(args) => commands::doctor(args),
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Mint(args)) => commands::token_mint(*args),

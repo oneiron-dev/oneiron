@@ -3,6 +3,7 @@
 pub mod embedder;
 mod lookup;
 pub mod merge;
+pub mod remote_embedder;
 pub mod serve_args;
 pub mod server_config;
 

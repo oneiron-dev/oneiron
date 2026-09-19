@@ -165,7 +165,16 @@ fn init_creates_vault_and_doctor_reports() {
         dict_search_paths: Some(Vec::new()),
     };
 
-    init(args.clone()).unwrap();
+    init(crate::cli::InitArgs {
+        path: args.path.clone(),
+        config: Some(dir.path().join("oneiron.toml")),
+        embedder: Some(crate::config::EmbedderProvider::None),
+        dimensions: Some(args.dimensions),
+        map_size: args.map_size,
+        dict_search_paths: args.dict_search_paths.clone(),
+        ..Default::default()
+    })
+    .unwrap();
     assert!(vault_path.join("data.mdb").is_file());
 
     let vault = open_vault_for_command(&args).unwrap();
@@ -184,7 +193,16 @@ fn doctor_opens_existing_vault() {
         dict_search_paths: Some(Vec::new()),
     };
 
-    init(args.clone()).unwrap();
+    init(crate::cli::InitArgs {
+        path: args.path.clone(),
+        config: Some(dir.path().join("oneiron.toml")),
+        embedder: Some(crate::config::EmbedderProvider::None),
+        dimensions: Some(args.dimensions),
+        map_size: args.map_size,
+        dict_search_paths: args.dict_search_paths.clone(),
+        ..Default::default()
+    })
+    .unwrap();
     doctor(args).unwrap();
 }
 
