@@ -42,6 +42,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) apply_confidence: bool,
     pub(super) apply_gravity: bool,
     pub(super) apply_contiguity: bool,
+    /// Internal memory allocation mask, not a caller authority predicate.
+    pub(super) memory_category: bool,
     pub(super) candidate_filter: Option<&'a super::CandidateFilter<'a>>,
     pub(super) type_filter: Option<Vec<u8>>,
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
@@ -100,6 +102,7 @@ impl<'a> PipelineBuilder<'a> {
             apply_confidence: false,
             apply_gravity: false,
             apply_contiguity: false,
+            memory_category: false,
             candidate_filter: None,
             type_filter: None,
             authority_filter: None,

@@ -224,7 +224,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bm25/index.rs` | src | m | 2 crate-vis | — | Index/deindex mutation paths plus the missing-posting repair proof |
 | `src/bm25/mod.rs` | src | s | 2 re-export · 8 crate-vis | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `src/bm25/query.rs` | src | m | 17 crate-vis | — | Query-side: term collection, prefix expansion, search entry points, hint collapse |
-| `src/bm25/scoped.rs` | src | s | 1 crate-vis | — | Bounded exact top-k over the existing BM25F scorer, under one read snapshot |
+| `src/bm25/scoped.rs` | src | s | 3 crate-vis | — | Bounded exact top-k over the existing BM25F scorer, under one read snapshot |
 | `src/bm25/scoring.rs` | src | s | 3 crate-vis | — | Shared BM25F scoring |
 | `src/bm25/tests.rs` | test | XL | — | — | — |
 | `src/board_verb.rs` | src | m | 3 struct · 4 enum · 1 trait · 5 fn · 2 const | BoardVerb, BoardVerbCall, BoardVerbContext, BoardVerbError, BoardVerbOutput, BoardWorldScope, LiveBoardSource, LiveBoardView | — |
@@ -519,7 +519,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/mod.rs` | src | s | 6 re-export · 4 crate-vis | — | One Rust vault-read contract whose behavior does not change with deployment topology (ONE-1433) |
 | `src/code_run/vault_read/projection.rs` | src | s | 5 crate-vis | — | Turning vault-side records into the contract's response shapes |
 | `src/code_run/vault_read/remote.rs` | src | s | 2 struct · 1 trait · 1 fn · 1 crate-vis | CloudVaultReadAdapter, WireTransport, WireTransportVaultReadAdapter | Transport-injected and cloud adapters over the same validated dispatch |
-| `src/code_run/vault_read/tests.rs` | test | L | — | — | Contract, validation, projection and adapter tests for the vault-read module |
+| `src/code_run/vault_read/tests.rs` | test | XL | — | — | Contract, validation, projection and adapter tests for the vault-read module |
 | `src/code_run/vault_read/tests/regressions.rs` | test | m | — | — | Regressions for request policy freshness, wire identity, opaque bodies and post-filter durable trace… |
 | `src/code_run/vault_read/types.rs` | src | m | 18 struct · 4 enum · 1 fn · 1 const · 4 crate-vis | AskRequest, AskResponse, CodeExecuteRequest, CodeExecuteResponse, CodeSearchRequest, CodeSearchResponse, CoreBatchShortIdHydrateItem, CoreBatchShortIdHydrateRequest +14 | Query, hydrate, timeline and runtime-deferred request/response shapes |
 | `src/code_run/vault_read/validate.rs` | src | s | 7 crate-vis | — | Request-shape validation and short-reference parsing, run before any dispatch |
@@ -1423,7 +1423,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/blend.rs` | src | m | 10 crate-vis | — | — |
 | `src/pipeline/budget.rs` | src | s | 2 crate-vis | — | — |
 | `src/pipeline/builder.rs` | src | m | 1 struct · 42 fn · 8 crate-vis | PipelineBuilder | — |
-| `src/pipeline/capabilities.rs` | src | s | 7 crate-vis | — | Capability candidates have a separate turn budget, never the memory budget |
+| `src/pipeline/capabilities.rs` | src | s | 8 crate-vis | — | Capability candidates have a separate turn budget, never the memory budget |
 | `src/pipeline/channels.rs` | src | m | 11 crate-vis | — | — |
 | `src/pipeline/corpus_coping_tests.rs` | test | s | — | — | — |
 | `src/pipeline/corpus_filter.rs` | src | s | 7 crate-vis | — | — |

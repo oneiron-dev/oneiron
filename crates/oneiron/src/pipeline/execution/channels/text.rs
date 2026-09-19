@@ -162,15 +162,8 @@ impl PipelineBuilder<'_> {
                 .map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
                 });
-            let search = if self.candidate_filter.is_some() {
-                crate::bm25::search_text_filtered_with_recency
-            } else {
-                crate::bm25::search_text_scoped_with_recency
-            };
-            let mut text_results = search(
-                &self.vault.store,
+            let mut text_results = self.search_text_candidates(
                 rtxn,
-                &self.vault.analyzer,
                 inputs.bm25_config,
                 text_query,
                 if self.candidate_filter.is_some() {
@@ -242,15 +235,8 @@ impl PipelineBuilder<'_> {
                         &mut retry_prefix_probe_claim_gate,
                     )
                 };
-                let retry_search = if self.candidate_filter.is_some() {
-                    crate::bm25::search_text_filtered_with_recency
-                } else {
-                    crate::bm25::search_text_scoped_with_recency
-                };
-                let mut results = retry_search(
-                    &self.vault.store,
+                let mut results = self.search_text_candidates(
                     rtxn,
-                    &self.vault.analyzer,
                     inputs.bm25_config,
                     query,
                     if self.candidate_filter.is_some() {
@@ -298,5 +284,77 @@ impl PipelineBuilder<'_> {
             }
         }
         Ok(text_channel_index)
+    }
+    fn search_text_candidates<F>(
+        &self,
+        rtxn: &RoTxn<'_>,
+        config: &Bm25Config,
+        query: &str,
+        limit: usize,
+        options: crate::bm25::Bm25SearchOptions<'_, F>,
+    ) -> Result<Vec<crate::pipeline::ScoredEntity>>
+    where
+        F: FnMut(&EntityId) -> Result<bool>,
+    {
+        let in_category = |id: &EntityId| {
+            super::super::super::capabilities::CapabilityLane::Memory.admits(
+                &self.vault.store,
+                rtxn,
+                id,
+            )
+        };
+        let mut matches_scope = |id: &EntityId| {
+            if self.memory_category && !in_category(id)? {
+                return Ok(false);
+            }
+            (options.exact_posting_matches_scope)(id)
+        };
+        let scope = crate::bm25::Bm25SearchOptions {
+            recency: options.recency,
+            exact_posting_matches_scope: &mut matches_scope,
+        };
+        if self.candidate_filter.is_some() {
+            crate::bm25::search_text_filtered_with_recency(
+                &self.vault.store,
+                rtxn,
+                &self.vault.analyzer,
+                config,
+                query,
+                limit,
+                scope,
+            )
+        } else if self.memory_category {
+            // Category admission consumes no claim body. D19 decisions made by
+            // prefix/widening probes remain reusable by fusion and projection.
+            let mut category = |id: &EntityId| {
+                super::super::super::capabilities::CapabilityLane::Memory.admits(
+                    &self.vault.store,
+                    rtxn,
+                    id,
+                )
+            };
+            crate::bm25::search_text_category_with_recency(
+                &self.vault.store,
+                rtxn,
+                &self.vault.analyzer,
+                config,
+                query,
+                limit,
+                crate::bm25::Bm25CategorySearchOptions {
+                    scope,
+                    category: &mut category,
+                },
+            )
+        } else {
+            crate::bm25::search_text_scoped_with_recency(
+                &self.vault.store,
+                rtxn,
+                &self.vault.analyzer,
+                config,
+                query,
+                limit,
+                scope,
+            )
+        }
     }
 }

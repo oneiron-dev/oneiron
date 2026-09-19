@@ -2496,7 +2496,7 @@
      "path": "src/bm25/scoped.rs",
      "purpose": "Bounded exact top-k over the existing BM25F scorer, under one read snapshot",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -6455,7 +6455,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/code_run/vault_read/tests.rs",
@@ -17872,7 +17872,7 @@
      "path": "src/pipeline/capabilities.rs",
      "purpose": "Capability candidates have a separate turn budget, never the memory budget",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {

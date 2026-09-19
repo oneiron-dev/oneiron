@@ -29,8 +29,13 @@ impl PipelineBuilder<'_> {
                     lane.admits(store, txn, id)
                 };
             let mut query = self.clone();
-            query.candidate_filter = Some(&predicate);
-            if lane != CapabilityLane::Memory {
+            if lane == CapabilityLane::Memory {
+                // Do not turn an ordinary memory query into an authority-scoped
+                // query. That moves user filters and D19 before fusion, loses
+                // suppression counts, and decodes admitted CLAIMs twice.
+                query.memory_category = true;
+            } else {
+                query.candidate_filter = Some(&predicate);
                 query.result_limit = PER_KIND_CAPABILITY_LIMIT;
                 if let Some((_, limit)) = &mut query.text_search
                     && *limit > 0

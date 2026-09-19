@@ -315,6 +315,13 @@ impl PipelineBuilder<'_> {
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
             for scores in &mut acc.ranked_lists {
+                if self.memory_category {
+                    super::super::capabilities::retain_memory_candidates(
+                        scores,
+                        &self.vault.store,
+                        rtxn,
+                    )?;
+                }
                 super::authority::apply_types(
                     scores,
                     authority_filter,

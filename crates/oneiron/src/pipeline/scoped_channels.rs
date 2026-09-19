@@ -44,7 +44,10 @@ impl PipelineBuilder<'_> {
             &self.vault.store,
             rtxn,
             requested,
-            codebase_scope_active || corpus_scope_active || filters.candidate_filter.is_some(),
+            codebase_scope_active
+                || corpus_scope_active
+                || filters.candidate_filter.is_some()
+                || self.memory_category,
         )?;
         let mut scores = crate::hnsw::hnsw_search(
             &self.vault.store,
@@ -81,7 +84,8 @@ impl PipelineBuilder<'_> {
             config.limit,
             self.has_codebase_scope_filter()
                 || filters.corpus_scope != &CorpusScope::All
-                || filters.candidate_filter.is_some(),
+                || filters.candidate_filter.is_some()
+                || self.memory_category,
         )?;
         // Widen before the temporal collector's scan caps and score truncation.
         let mut scores =
@@ -106,9 +110,15 @@ impl PipelineBuilder<'_> {
         metadata_cache: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<()> {
+        if self.memory_category {
+            super::capabilities::retain_memory_candidates(scores, &self.vault.store, rtxn)?;
+        }
         if (filters.corpus_scope == &CorpusScope::All && filters.candidate_filter.is_none())
             || requested == 0
         {
+            if self.memory_category && !self.has_codebase_scope_filter() {
+                scores.truncate(requested);
+            }
             return Ok(());
         }
         // Codebase retrieval already carries the widened list into fusion. Keep

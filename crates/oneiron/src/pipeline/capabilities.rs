@@ -140,3 +140,20 @@ impl CapabilityLane {
         }
     }
 }
+
+/// Removes capabilities before a memory channel spends its top-k or seeds PPR.
+/// Claim lifecycle and user filters retain their normal post-fusion stages.
+pub(super) fn retain_memory_candidates(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    txn: &RoTxn<'_>,
+) -> Result<()> {
+    let mut memory = Vec::with_capacity(scores.len());
+    for score in std::mem::take(scores) {
+        if CapabilityLane::Memory.admits(store, txn, &score.id)? {
+            memory.push(score);
+        }
+    }
+    *scores = memory;
+    Ok(())
+}

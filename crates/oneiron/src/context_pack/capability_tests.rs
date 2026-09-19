@@ -127,6 +127,20 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
             .iter()
             .any(|hit| hit.id == crate::test_util::entity(9))
     );
+    // A kind filter is a post-fusion relevance decision, not a category or
+    // authority predicate. Discoveries must not erase the memory accounting.
+    let filtered = vault
+        .context_pack()
+        .search_text("channel", 20)
+        .filter_types(&[ENTITY_TYPE_SKILL])
+        .run()?;
+    assert!(filtered.results.is_empty());
+    assert_eq!(filtered.stats.candidates_considered, 1);
+    assert_eq!(filtered.capabilities.len(), 5);
+    assert_eq!(
+        filtered.empty.as_ref().map(|empty| empty.reason),
+        Some(super::EmptyReason::FilterMatchedNone)
+    );
     // Reverse pressure: more high-ranked memory rows still cannot remove discovery.
     for seed in 100..130 {
         let id = crate::test_util::entity(seed);
