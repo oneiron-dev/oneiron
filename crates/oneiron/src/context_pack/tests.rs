@@ -610,6 +610,9 @@ fn raw_entity_record(
 
 fn overwrite_raw_entity(vault: &Vault, id: &EntityId, raw: &[u8]) -> Result<()> {
     vault.with_write_txn(|wtxn| {
+        // These fixtures exercise live-row validation, not a torn revision ledger.
+        // Keep the forged row unversioned so indexed pin capture reaches the same bytes.
+        crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
         vault.store.entities.put(wtxn, id.as_bytes(), raw)?;
         Ok(())
     })
@@ -3000,7 +3003,8 @@ fn context_pack_serialized_telemetry_reflects_budget_surviving_results() -> Resu
         .context_pack()
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
         .format(PackFormat::Plaintext)
-        .token_budget(24)
+        // Revision-qualified citations are longer; still admit exactly one row.
+        .token_budget(48)
         .run_serialized_with_telemetry()?;
     assert!(!serialized.value.is_empty());
     let run_id = serialized.run_id.expect("serialized telemetry run id");
