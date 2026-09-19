@@ -1448,8 +1448,6 @@ fn no_fabricated_belief_writes() -> Result<()> {
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
     let conversation = seed_session(&vault, 0x27, 1);
     let turn = seed_turn(&vault, &conversation, "user", "my name is Oleksii", 10);
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
 
     let watermark = read_watermark(&vault, scope)?;
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
@@ -1489,7 +1487,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
@@ -1757,8 +1755,6 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         0x2A,
         &[("user", "call me Oleksii"), ("user", "or Alex")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
 
@@ -1780,7 +1776,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
@@ -1810,8 +1806,6 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         0x2B,
         &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x39; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
 
@@ -1831,7 +1825,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
@@ -2132,8 +2126,6 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         0x2C,
         &[("user", "call me Oleksii"), ("user", "or Alex")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
 
     // No script: admission is denied up-front, so generate is never called.
     let backend = ScriptedBackend::new(Vec::new());
@@ -2147,7 +2139,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
@@ -2191,8 +2183,6 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         0x2D,
         &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x3B; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
 
@@ -2211,7 +2201,7 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
@@ -2266,8 +2256,6 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x2E, &[("user", "my name is Oleksii")])?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x37; 16]).expect("subject");
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turns[0]))]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2284,7 +2272,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
-            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
         };
@@ -2331,8 +2319,6 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
         0x2F,
         &[("user", "call me Oleksii"), ("user", "or Alex")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let backend = ScriptedBackend::new(vec![
@@ -2355,7 +2341,7 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
-            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
         };

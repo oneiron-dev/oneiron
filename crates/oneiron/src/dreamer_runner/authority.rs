@@ -47,7 +47,23 @@ impl Vault {
             }
             return Ok(WriteActor::new(id, EdgeActorClass::Agent));
         }
-        let actor = EntityId::now();
+        // Like the embedded owner bootstrap, the engine principal has one
+        // namespace identity across nodes. Queue-local caches do not mint peers.
+        let actor =
+            crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])?;
+        if let Some(raw) = self.store.entities.get(&*txn, actor.as_bytes())? {
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+                || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                    != Some(b"Dreamer authority".as_slice())
+            {
+                return Err(invalid());
+            }
+            self.store
+                .vault_meta
+                .put(txn, ACTOR_KEY, actor.as_bytes())?;
+            return Ok(WriteActor::new(actor, EdgeActorClass::Agent));
+        }
         apply_ops(
             &self.store,
             &self.config,
@@ -110,6 +126,13 @@ impl Vault {
             ClaimApprovalStatus::Proposed,
         ))
     }
+    pub(crate) fn dreamer_actor_for_attempt(
+        &self,
+        id: crate::attempt_queue::AttemptId,
+    ) -> Result<WriteActor> {
+        let stamp = self.dreamer_attempt_authority(id)?.ok_or_else(invalid)?;
+        Ok(WriteActor::new(stamp.actor, EdgeActorClass::Agent))
+    }
     pub fn dreamer_attempt_authority(
         &self,
         id: crate::attempt_queue::AttemptId,
@@ -122,7 +145,17 @@ impl Vault {
             .map(|raw| {
                 let stamp: DreamerAuthorityStamp =
                     serde_json::from_slice(&raw).map_err(|_| invalid())?;
-                if stamp.attempt_id != *id.as_bytes() {
+                if stamp.attempt_id != *id.as_bytes()
+                    || stamp.facet.trim().is_empty()
+                    || self.store.vault_meta.get(&txn, ACTOR_KEY)?.as_deref()
+                        != Some(stamp.actor.as_bytes().as_slice())
+                    || self
+                        .store
+                        .entities
+                        .get(&txn, stamp.actor.as_bytes())?
+                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
+                        .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+                {
                     return Err(invalid());
                 }
                 Ok(stamp)
@@ -138,7 +171,10 @@ pub(super) fn stamp_attempt(
 ) -> Result<()> {
     // The generic runner also carries independent agent dispatch. Those jobs
     // retain their own principals and are NOT Dreamer facets.
-    if !record.kind.starts_with("dreamer.") && !facet.starts_with("dreamer.") {
+    if facet == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+        || (record.kind != super::DREAMER_RUNNER_ATTEMPT_KIND
+            && !record.kind.starts_with("dreamer."))
+    {
         return Ok(());
     }
     let actor = vault.dreamer_authority_in_txn(txn, record.created_at)?;

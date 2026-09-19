@@ -41,6 +41,7 @@ pub struct ConsolidationExecutor<'a> {
     pub backend: &'a dyn LlmBackend,
     pub guard: &'a BudgetGuard,
     pub strategy: DreamerClaimAuthoringStrategy,
+    /// The resolved vault Dreamer authority, checked against the queued stamp.
     pub actor: WriteActor,
     pub model: ModelId,
     pub sink: &'a mut dyn ConsolidationSink,
@@ -623,6 +624,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         attempt: &crate::dreamer_runner::DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
+        if self.actor
+            != ctx
+                .vault
+                .dreamer_actor_for_attempt(attempt.status.attempt.id)?
+        {
+            return Err(invalid_consolidation(
+                "executor actor is not the queued Dreamer authority",
+            ));
+        }
         // ED-04 (ONE-1760): the recurring-substitution miner is a
         // consolidation-scope job like the gap scan — deterministic, no LLM
         // step, so it spends no units. The payload shape and the pass itself

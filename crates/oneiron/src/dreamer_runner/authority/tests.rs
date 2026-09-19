@@ -55,5 +55,7 @@ fn micro_meso_and_skill_optimization_share_actor_and_receipt_ledger() -> Result<
             .all(|r| r.actor_ref.as_deref() == Some(&authority.entity_ref().to_hex()))
     );
     assert_eq!(vault.dreamer_authority()?, authority);
+    let (_other_dir, other_node) = open_test_vault_with(embedding_test_config());
+    assert_eq!(other_node.dreamer_authority()?, authority);
     Ok(())
 }

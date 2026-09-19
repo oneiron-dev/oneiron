@@ -7,8 +7,6 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, conversation) =
         admitted_attempt_fixture(&vault, &store, 0x2F, &[("user", "I met Casey and Morgan")])?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let person = EntityId::now();
     let ordinary = EntityId::now();
     vault.put_entity(
@@ -54,7 +52,7 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("regression fixture"),
         sink: &mut sink,
     };

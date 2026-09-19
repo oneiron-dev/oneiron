@@ -64,7 +64,7 @@ pub use crate::dreamer_consolidation::PromotionCandidate;
 pub struct DreamerRunContext {
     pub run_id: String,
     pub attempt_id: AttemptId,
-    /// The dreamer agent actor (`EdgeActorClass::Agent`).
+    /// The vault Dreamer authority (`Vault::dreamer_authority`), never a facet actor.
     pub agent_actor: WriteActor,
     pub now_ms: u64,
 }
@@ -127,6 +127,11 @@ pub fn promote_consolidated_claims_with_checker(
     candidates: Vec<PromotionCandidate>,
     checker: Option<&BoundedAutoChecker>,
 ) -> Result<PromotionOutcome> {
+    if run.agent_actor != vault.dreamer_actor_for_attempt(run.attempt_id)? {
+        return Err(Error::InvalidConfig(
+            "promotion actor is not the queued Dreamer authority".into(),
+        ));
+    }
     let mut outcome = PromotionOutcome::default();
 
     for candidate in candidates {
