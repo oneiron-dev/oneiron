@@ -137,3 +137,44 @@ The GitHub explanation is comment `5741670831` on PR 934. These are scoped repai
 results, not a full-workspace VERDICT. No full gate, internal-review completion,
 provider success, merge rehearsal or merge is claimed. The PR stays open for the
 factory's remaining verification, review and publication steps.
+
+
+## Tests-after-review regression repair
+
+Before this repair, complete GitHub receipts were refreshed again: PR 934 has
+11 issue comments, two reviews, 23 inline comments and 23 complete review
+threads at published head `dde11af41fc748496a1308408cff5063ce47d879`.
+There are no new or edited provider findings relative to the prior repair;
+the only changed comment is the repair explanation `5741670831`. The final
+original Opus and Grok verdicts were recovered and reconciled with R01–R19
+above. No new review fanout was started. Codex completed; CodeRabbit skipped
+the file-count limit; Cursor reported a provider usage-limit error.
+
+PR 933 was also refreshed: 15 comments, six reviews and 40 complete inline
+threads at `8504e48978737cc41eae473f85d88ef3087131e4`, branch `w7/W7-C08`.
+The supplied F01–F24 candidates, original root adjudication rejecting O01/O02
+as blocking, and newer C08 findings remain that ticket's responsibility.
+The C08 owner's explanation `5741607767` records its individual F01–F24
+fix/skip decisions. They are not C01 findings and are not dismissed as invalid
+for C08. No C08 source or resolution flags were changed here.
+
+The standard six-crate test stage then exposed one R11 regression:
+`hnsw::tests::hnsw_corruption_variants_fail_closed` returned an empty vector
+for a populated graph whose stored count was corrupted to zero. All other
+core library cases passed (7,081 passed, one failed, four ignored), and the
+other crate/integration/doctest targets passed. Those unchanged results are
+retained, not relabeled as a successful complete run.
+
+R11's `limit.min(population)` turned a nonzero caller request into a zero-limit
+HNSW call. That call correctly short-circuits explicit zero-limit requests,
+but this hid the existing graph consistency check. The first requested size
+now uses `limit.min(population.max(1))`. Positive requests reach consistency
+validation even at population zero; explicit caller zero still stays zero.
+Visible-neighbor expansion, filtering and SLIM source-vector counting are
+unchanged. The existing corruption regression and typed-error assertions are
+retained without weakening or duplicating them. No canon-page change is needed.
+
+Validation results for this repair are recorded below after completion.
+Raw refreshed reviews, IDs/head bindings, the intake ledger, exact failure,
+commands and logs are in
+`/home/lexi/w7-build/tickets/W7-C01/recovery-fix-tests-after-review/`.

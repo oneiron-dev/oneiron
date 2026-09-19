@@ -258,7 +258,9 @@ impl Vault {
             // feature (a `fast_dims`-length query is inherently prefix-only
             // on every path — no full query exists to rescore).
             let population = hnsw::hnsw_entity_count(&self.store, &rtxn)?;
-            let mut requested = limit.min(population);
+            // A zero population still needs the HNSW consistency checks for a
+            // nonzero request. Only the caller's zero limit may skip search.
+            let mut requested = limit.min(population.max(1));
             loop {
                 let candidates =
                     hnsw::hnsw_search(&self.store, &self.config, &rtxn, query, requested, false)?;
