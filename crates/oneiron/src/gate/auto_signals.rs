@@ -55,7 +55,7 @@ pub(super) fn auto_check_signals(
                     .iter()
                     .any(|code| code.starts_with("gate.pending.checker")) =>
             {
-                signals.failure_streak = signals.failure_streak.saturating_add(1)
+                signals.failure_streak = signals.failure_streak.saturating_add(1);
             }
             _ => {}
         }

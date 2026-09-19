@@ -1,5 +1,5 @@
 //! Shared pre-semantic import shape. Source data cannot supply trust or approval.
-use super::{IngestResult, NormalizedIngestBatch, NormalizedIngestRecord};
+use super::{NormalizedIngestBatch, NormalizedIngestRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -28,7 +28,7 @@ pub struct ParsedImport {
 }
 
 impl ParsedImport {
-    pub(super) fn from_batch(batch: NormalizedIngestBatch, recorded_at: u64) -> IngestResult<Self> {
+    pub(super) fn from_batch(batch: NormalizedIngestBatch, recorded_at: u64) -> Self {
         let messages = batch
             .records
             .iter()
@@ -45,11 +45,11 @@ impl ParsedImport {
                 is_group_chat: false,
             })
             .collect();
-        Ok(Self {
+        Self {
             messages,
             normalized: batch,
             resource_uris: Vec::new(),
-        })
+        }
     }
 }
 

@@ -248,7 +248,7 @@ pub fn dependency_inventory(package: &HubPackage) -> Result<Vec<DependencyCoordi
                     let Some((_, name)) = path.rsplit_once("node_modules/") else {
                         continue;
                     };
-                    if row.get("link").and_then(|v| v.as_bool()) == Some(true) {
+                    if row.get("link").and_then(serde_json::Value::as_bool) == Some(true) {
                         continue;
                     }
                     let version = row

@@ -114,7 +114,10 @@ pub trait IngestSource: Send + Sync {
     fn normalize(&self, input: &str) -> IngestResult<NormalizedIngestBatch>;
 
     fn parse_import(&self, input: &str, recorded_at: u64) -> IngestResult<super::ParsedImport> {
-        super::ParsedImport::from_batch(self.normalize(input)?, recorded_at)
+        Ok(super::ParsedImport::from_batch(
+            self.normalize(input)?,
+            recorded_at,
+        ))
     }
 
     fn normalize_binary(&self, _bytes: &[u8]) -> IngestResult<NormalizedIngestBatch> {

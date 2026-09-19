@@ -393,12 +393,14 @@ impl ExportSource {
         let id = ["id", "uuid", "message_id"]
             .iter()
             .find_map(|key| self.id(value, key))
-            .map(str::to_owned)
-            .unwrap_or_else(|| {
-                let identity =
-                    serde_json::to_vec(&(thread, out.messages.len(), value)).expect("JSON encodes");
-                blake3::hash(&identity).to_hex().to_string()
-            });
+            .map_or_else(
+                || {
+                    let identity = serde_json::to_vec(&(thread, out.messages.len(), value))
+                        .expect("JSON encodes");
+                    blake3::hash(&identity).to_hex().to_string()
+                },
+                str::to_owned,
+            );
         out.messages.push(ParsedMessage {
             message_id: id,
             conversation_id: thread.into(),

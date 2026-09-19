@@ -59,17 +59,17 @@ fn map_field<'a>(v: &'a Value, field: &str) -> Option<&'a Value> {
 }
 fn normalized_value(value: &Value) -> Value {
     match value {
-        Value::String(s) => s
-            .as_str()
-            .map(|s| {
+        Value::String(s) => s.as_str().map_or_else(
+            || value.clone(),
+            |s| {
                 Value::from(
                     s.split_whitespace()
                         .collect::<Vec<_>>()
                         .join(" ")
                         .to_lowercase(),
                 )
-            })
-            .unwrap_or_else(|| value.clone()),
+            },
+        ),
         // Structured values preserve every qualifier (severity, recipient,
         // polarity). The equality key must not collapse reversed answers.
         Value::Map(entries) => Value::Map(
