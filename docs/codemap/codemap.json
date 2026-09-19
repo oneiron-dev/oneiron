@@ -1933,6 +1933,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WholeVaultExportRow"
+     ],
+     "path": "src/batch/export/export_enumerate.rs",
+     "purpose": "Snapshot enumeration for whole-vault exports, independent of type whitelists",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -2001,7 +2014,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -7306,6 +7319,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 10,
+      "mod": 1,
       "re-export": 2,
       "struct": 3
      }
@@ -7351,6 +7365,33 @@
       "fn": 2,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputAffordance",
+      "OutputContextEntry",
+      "OutputContextView",
+      "OutputDecayPolicy",
+      "OutputRef",
+      "OutputTier"
+     ],
+     "path": "src/compaction/output.rs",
+     "purpose": "Recoverable output references and local derived summaries (ARCH-0026)",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/compaction/output/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -9615,6 +9656,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/assembly.rs",
+     "purpose": "Store-backed mechanical inputs for the consolidation executor",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -9630,7 +9681,7 @@
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 10,
       "struct": 8
      }
@@ -9680,7 +9731,18 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
+      "mod": 2,
       "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/open_conflict.rs",
+     "purpose": "A judge outage is an open question, persisted through the shared write gate",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -9721,6 +9783,56 @@
       "struct": 5,
       "trait": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CandidateKeys",
+      "PredicateKeyRule"
+     ],
+     "path": "src/dreamer_consolidation/routing.rs",
+     "purpose": "Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations",
+     "surface": {
+      "fn": 5,
+      "struct": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/routing/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SelectionCandidate",
+      "SelectionConfig",
+      "SelectionHold",
+      "SelectionPlan",
+      "StrengthSignals",
+      "StrengthWeights"
+     ],
+     "path": "src/dreamer_consolidation/selection.rs",
+     "purpose": "Mechanical candidate selection",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/selection/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -13876,6 +13988,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ExportLayout",
+      "ExportSource"
+     ],
+     "path": "src/ingest/exports.rs",
+     "purpose": "Native export layouts with catalog-supplied platform identity (ARCH-0027)",
+     "surface": {
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/exports/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ExifEvidence",
       "GeoPoint",
       "ImageCaptionRecognizer",
@@ -13903,8 +14037,22 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "mod": 1,
-      "re-export": 6
+      "mod": 2,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ParsedImport",
+      "ParsedMessage"
+     ],
+     "path": "src/ingest/parsed.rs",
+     "purpose": "Shared pre-semantic import shape",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 2
      }
     },
     {
@@ -24061,8 +24209,8 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 13,
-      "fn": 25,
+      "crate-vis": 14,
+      "fn": 26,
       "struct": 5
      }
     },
@@ -24848,7 +24996,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25065,7 +25213,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 6,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -25198,8 +25346,8 @@
      "purpose": "—"
     },
     "dreamer_consolidation": {
-     "files": 12,
-     "impl_vault": false,
+     "files": 18,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)"
@@ -25429,7 +25577,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 8,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26005,8 +26153,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1487,
-   "test_files": 532
+   "source_files": 1495,
+   "test_files": 536
   },
   "oneiron-bench": {
    "files": [
@@ -28817,6 +28965,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/client_metadata.rs",
+     "purpose": "Public CIMD documents derived only from the configured OAuth resource origin",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/companion/access_grants.rs",
      "purpose": "Companion access-grant routes and DTOs",
      "surface": {
@@ -30633,8 +30791,36 @@
      "purpose": "MCP connector actor registry",
      "surface": {
       "crate-vis": 3,
+      "mod": 2,
       "re-export": 11
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorizationResponse",
+      "ClientApplication",
+      "OAuthClientError",
+      "OAuthTokenCache",
+      "TokenCacheKey"
+     ],
+     "path": "src/mcp/oauth_client.rs",
+     "purpose": "Issuer-bound OAuth client state and pinned client metadata (ARCH-0028)",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/mcp/oauth_client/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -30655,6 +30841,44 @@
       "fn": 19,
       "struct": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GroundingOracle",
+      "ProbeCitation",
+      "ProbeDisposition",
+      "ProbeReply",
+      "ProbeRequest",
+      "ProbeTool",
+      "ProbeTraceEvent",
+      "ProbeTraceKind",
+      "ProbeWrite",
+      "QualificationCase",
+      "QualificationConnection",
+      "QualificationConnector",
+      "QualificationFailure",
+      "QualificationLimits",
+      "QualificationPlan",
+      "QualificationReport"
+     ],
+     "path": "src/mcp/qualification.rs",
+     "purpose": "Connector qualification probes",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "struct": 10,
+      "trait": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/mcp/qualification/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -31269,7 +31493,7 @@
    ],
    "modules": {
     "api": {
-     "files": 126,
+     "files": 127,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -31353,7 +31577,7 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
     "mcp": {
-     "files": 17,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -31418,8 +31642,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 185,
-   "test_files": 71
+   "source_files": 188,
+   "test_files": 73
   },
   "oneiron-uniffi": {
    "files": [
