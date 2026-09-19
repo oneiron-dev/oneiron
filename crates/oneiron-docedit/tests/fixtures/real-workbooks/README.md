@@ -9,8 +9,12 @@ xlsx-corpus-bench harness is Apache-2.0.
 The acquired SpreadsheetBench archive yields 5,455 distinct workbooks. The FUSE
 source returned HTTP 504 on the initial and repeated download. The API endpoint
 subsequently delivered the complete archive. Its published size and MD5 passed;
-`fuse-download-receipt.json` pins the resulting SHA-256. Extraction and fresh
-comparisons remain pending. Witan's full
+`fuse-download-receipt.json` pins the resulting SHA-256. Extraction classified 249,376 members and retained 10,702 unique XLSX files.
+`fuse-manifest.jsonl.gz` pins their hashes and source-member names; its decompressed
+SHA-256 is recorded in the provenance and extraction receipt. The archive
+contains split `FUSE.7z` volumes; the selected inner archive is
+`fuse-cc-binaries.tar.gz`. Non-ZIP and non-XLSX inputs are classified separately.
+Fresh comparisons remain pending. Witan's full
 15,970-workbook result excludes its Excel skips and uses freshly recalculated
 Excel truth files that are not published with the harness. Original saved
 caches can support a diagnostic measurement, not a claim of the same oracle.

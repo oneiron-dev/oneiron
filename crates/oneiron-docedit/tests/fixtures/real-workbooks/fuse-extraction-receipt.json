@@ -1,0 +1,16 @@
+{
+  "source": {
+    "size": 9392830118,
+    "md5": "13e955c44f0b77d1c36088c0bbb3366d",
+    "sha256": "4f9126bd83aa27118366b2b16b3b378d3bdb27b27728337b392e48c0ef3d93bb",
+    "url": "https://zenodo.org/api/records/581678/files/fuse.zip/content"
+  },
+  "classification": {
+    "files": 249376,
+    "kept": 10702,
+    "not-zip": 238673,
+    "zip-not-xlsx": 1
+  },
+  "manifest_sha256": "f211b1a811d493afe0e82b5faadc6093ec5fefaff7579aa021e2de8cef438404",
+  "corpus": "/Volumes/Cinema/w7-build/wt/W7-C14/target/w7-checks/corpus-fuse"
+}
