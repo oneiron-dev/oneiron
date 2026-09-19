@@ -8,23 +8,23 @@ Internal Grok and final Opus findings from the recovery are merged below, includ
 
 | Group | Finding | Inline IDs | Disposition |
 |---|---|---|---|
-| R01 | Timestamp units | 4052813444 | Implemented; runtime validation pending. |
-| R02 | Held budget settlement and rescheduling | 4052803187, 4052813445 | Implemented; runtime validation pending. |
-| R03 | Maintenance live owner proofs | 4052813454 | Implemented; runtime validation pending. |
-| R04 | Tool argument schema | 4052803184 | Implemented; runtime validation pending. |
-| R05 | OSV unavailable receipts and hub update path | 4052803171, 4052813453 | Implemented; runtime validation pending. |
-| R06 | Qualification observed writes and idempotency | 4052803165, 4052813436 | Implemented; runtime validation pending. |
-| R07 | Archived diary author | 4052803177 | Implemented; runtime validation pending. |
-| R08 | Connector-scoped OAuth issuer drift | 4052813434 | Implemented; runtime validation pending. |
-| R09 | Cross-key predicate identity | 4052803163 | Implemented; runtime validation pending. |
-| R10 | Evidence diversity | 4052813449 | Implemented; runtime validation pending. |
-| R11 | Visible vector top-k | 4052803173, 4052813437 | Implemented; runtime validation pending. |
-| R12 | Typed owner intent and digest scan | 4052813447 | Implemented; runtime validation pending. |
-| R13 | Memory history thread | 4052803168 | Implemented; runtime validation pending. |
-| R14 | Stored widen proposer type | 4052813441 | Implemented; runtime validation pending. |
-| R15 | Bounded gate auto signals | 4052813438 | Implemented; runtime validation pending. |
-| R16 | Observable action definition test | 4052803153 | Implemented; runtime validation pending. |
-| R17 | Connector subscription lookup | 4052813451 | Implemented; runtime validation pending. |
+| R01 | Timestamp units | 4052813444 | Implemented; focused regressions passed. |
+| R02 | Held budget settlement and rescheduling | 4052803187, 4052813445 | Implemented; focused regressions passed. |
+| R03 | Maintenance live owner proofs | 4052813454 | Implemented; focused regressions passed. |
+| R04 | Tool argument schema | 4052803184 | Implemented; focused regressions passed. |
+| R05 | OSV unavailable receipts and hub update path | 4052803171, 4052813453 | Implemented; focused regressions passed. |
+| R06 | Qualification observed writes and idempotency | 4052803165, 4052813436 | Implemented; focused regressions passed. |
+| R07 | Archived diary author | 4052803177 | Implemented; focused regressions passed. |
+| R08 | Connector-scoped OAuth issuer drift | 4052813434 | Implemented; focused regressions passed. |
+| R09 | Cross-key predicate identity | 4052803163 | Implemented; focused regressions passed. |
+| R10 | Evidence diversity | 4052813449 | Implemented; focused regressions passed. |
+| R11 | Visible vector top-k | 4052803173, 4052813437 | Implemented; focused regressions passed. |
+| R12 | Typed owner intent and digest scan | 4052813447 | Implemented; focused regressions passed. |
+| R13 | Memory history thread | 4052803168 | Implemented; focused regressions passed. |
+| R14 | Stored widen proposer type | 4052813441 | Implemented; focused regressions passed. |
+| R15 | Bounded gate auto signals | 4052813438 | Implemented; focused regressions passed. |
+| R16 | Observable action definition test | 4052803153 | Implemented; focused regressions passed. |
+| R17 | Connector subscription lookup | 4052813451 | Implemented; focused regressions passed. |
 | R18 | BM25 diary visibility (already filtered) | 4052803159 | Skip: already enforces visibility before BM25 top-k. |
 | R19 | Import source IDs (contract required) | 4052803145 | Skip: OF-201 requires per-source adapters; third-party format identifiers are not downstream product modules. |
 
@@ -83,26 +83,57 @@ one connector registration, not the whole actor. Existing docs-repo pages were
 not changed. The previous seven-comment disposition remains historical only;
 it predates the completed Qodo/Codex reviews collected for this repair.
 
-## Validation status (in progress)
+## Repair validation
 
-- Native `rustfmt --edition 2024` on changed files: passed.
-- `scripts/ratchet/root-surface-check.sh`: passed, 701 names.
-- `scripts/ratchet/check.sh`: passed, 2/2 giant files, 97/98 allows,
-  91/91 prints, 33/33 process globals.
-- `python3 scripts/codemap/codemap.py`: generated 2,558-file navigation.
-- `git diff --check`: passed.
-- Factory-routed focused core nextest is still queued for shared host capacity.
-  No compilation or runtime pass is claimed yet. The wrapper found the Mini
-  below its 30 GiB reserve and continued its normal host admission loop.
+Source revision `24e1cb89` contains the final regression corrections. The
+following navigation-only commit `2cb9d2cd` changes no Rust bytes. Production
+Rust bytes have not changed since `778817e6`.
 
-Source commits are local; PR 934 remains open. No review or merge completion is
-claimed. Final crate test results and the GitHub explanation will be recorded
-when the queued validation completes.
+- **556 distinct selected sync/test-hooks tests passed**, across `oneiron` and
+  `oneiron-server`. The union retains 172 passes from the first run and 389
+  passes from the second (eight overlap), then reruns the three corrected
+  regressions successfully. The retained passing cases were not disabled or
+  reclassified. The first fixture's missing subject was corrected before its
+  successful second-run result.
+- **361 selected featureless library tests passed**: 358 unchanged passes plus
+  the same three corrected regressions rerun with no default features.
+- Production-server clippy passed: `cargo clippy -p oneiron-server -- -D warnings`.
+- Featureless all-target clippy passed:
+  `cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings`.
+- Sync/test-hooks all-target clippy passed:
+  `cargo clippy -p oneiron -p oneiron-server --all-targets --features sync,test-hooks -- -D warnings`.
+- Native `rustfmt --edition 2024 --config skip_children=true --check` on every
+  changed Rust file passed. `scripts/codemap/check.sh` passed (2,558 files,
+  16 current artifacts). Root surface passed (701 names). Ratchet passed
+  (2/2 giant files, 97/98 allows, 91/91 prints, 33/33 process globals).
+  `git diff --check 1bf652c0 HEAD` passed.
 
-Follow-up before runtime validation: the first compiler run found the merge
-prior lookup was private to the resources subtree. Its visibility now reaches
-only the owning consolidation module. Scheduled retries also copy a private
-execution-scope pin in the settlement transaction, so removing an ephemeral
-caller scope on a later worker cannot widen the retry. The retry regression
-runs both unbounded and caller-attenuated branches. The timestamp test also
-covers evidence-free candidates: extraction timestamps are already milliseconds.
+The runtime commands used `cargo nextest run`, three test threads, and explicit
+module filters. Both changed crates compiled with `--features sync,test-hooks`;
+base-mode coverage used `-p oneiron --lib --no-default-features`. After fixing
+fixtures, only these three tests were rerun in both modes:
+
+- `production_executor_carries_scope_and_refuses_unlisted_evidence_and_output`
+- `diary_note_is_actor_private_across_reads_recall_and_pack_neighbors`
+- `hub_updates_scan_new_dependencies_before_exposing_them`
+
+The corrected fixtures retain the stronger assertions: the diary test keeps
+the default policy manifest while configuring vectors; the scope test asserts
+the durable attenuation refusal, with independent missing-signal coverage;
+the hub test advances the version and still requires Proposed on risky bytes.
+The epoch test also covers evidence-free candidates, whose extraction timestamp
+is already milliseconds. Moving its last config value removes a redundant clone.
+
+Full command arguments, raw outputs, complete review snapshots and successful
+test-name sets are retained under
+`/home/lexi/w7-build/tickets/W7-C01/recovery-fix-review/`. The files
+`sync-final-passed.json`, `featureless-final-passed.json`, `validation-summary.json`
+and the `*-unit.json` records identify the evidence and commands. The fresh
+pre-fix review refresh had 11 issue comments (the added one was this repair's
+explanation), two unchanged reviews and 23 complete inline threads. No newer
+provider finding was omitted.
+
+The GitHub explanation is comment `5741670831` on PR 934. These are scoped repair
+results, not a full-workspace VERDICT. No full gate, internal-review completion,
+provider success, merge rehearsal or merge is claimed. The PR stays open for the
+factory's remaining verification, review and publication steps.
