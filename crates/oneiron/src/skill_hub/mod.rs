@@ -121,3 +121,5 @@ pub(crate) mod test_support;
 
 #[cfg(test)]
 mod source_birth_tests;
+
+pub mod pack_catalog;

@@ -2235,6 +2235,8 @@
       "ExportEdge",
       "ExportEntity",
       "ExportLedger",
+      "ExportPack",
+      "ExportPackSource",
       "ExportSourceVault",
       "WholeVaultDocument",
       "WholeVaultDocumentManifest",
@@ -2246,8 +2248,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
+      "enum": 1,
       "fn": 4,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -21573,8 +21576,78 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
       "crate-vis": 7,
+      "mod": 1,
       "re-export": 15
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/codec.rs",
+     "purpose": "Canonical source-bearing ASSET envelopes: immutable content, not authority",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/doors.rs",
+     "purpose": "Source staging/readback",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackAdapter",
+      "PackKind",
+      "PackManifest"
+     ],
+     "path": "src/skill_hub/pack_catalog/manifest.rs",
+     "purpose": "Closed PACK.md manifest parser",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/mod.rs",
+     "purpose": "Exact, inert PACK.md source catalogs",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackSource"
+     ],
+     "path": "src/skill_hub/pack_catalog/source.rs",
+     "purpose": "Validated exact source trees",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/tests.rs",
+     "purpose": "Source custody tests: exact bytes, inert imports, generic/replay parity and rollback",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -27061,7 +27134,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 27,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27266,8 +27339,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1563,
-   "test_files": 564
+   "source_files": 1568,
+   "test_files": 565
   },
   "oneiron-bench": {
    "files": [

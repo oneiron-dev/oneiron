@@ -52,11 +52,7 @@ impl WholeVaultDocumentManifest {
             crate::context_pack::PackFormat::Markdown => "markdown",
             crate::context_pack::PackFormat::Plaintext => "plaintext",
         };
-        if self.source_boundaries
-            != [
-                ExportSourceBoundary::PredicatePackCatalogUnavailable,
-                ExportSourceBoundary::BuiltinAdapterCodeNotStored,
-            ]
+        if self.source_boundaries != [ExportSourceBoundary::BuiltinAdapterCodeNotStored]
             || self.manifest_version != WHOLE_VAULT_DOCUMENT_VERSION
             || self.format != format
             || self.serializer != ExportSerializerManifest::current()
@@ -107,7 +103,7 @@ pub struct WholeVaultDocument {
     pub manifest: WholeVaultDocumentManifest,
     pub evidence_ledger: ExportLedger,
     pub claims: Vec<ExportEntity>,
-    pub packs: Vec<ExportAdapterDescriptor>,
+    pub packs: Vec<ExportPack>,
     pub skills: Vec<ExportSkillBundle>,
     pub agent_packs: Vec<ExportAgentBundle>,
     pub derivation_envelopes: Vec<ExportDerivationEnvelope>,
@@ -141,6 +137,27 @@ pub struct ExportEdge {
     pub created_at: u64,
     pub vad: Option<[f32; 3]>,
     pub provenance: Option<[u8; 2]>,
+}
+
+/// Source packages and compiled registrations are intentionally distinct.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum ExportPack {
+    BuiltinAdapter(ExportAdapterDescriptor),
+    Source(ExportPackSource),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportPackSource {
+    /// The replicated source ASSET, never a grant or executable installation.
+    pub entity_id: String,
+    pub source_tree: super::ExportFileTree,
 }
 
 /// Built-in adapters are code registrations, not runtime SKILL records. The

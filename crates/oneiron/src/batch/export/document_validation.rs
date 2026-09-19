@@ -108,7 +108,38 @@ impl WholeVaultDocument {
             .map(|config| (config.source_id, config.adapter_skill))
             .collect();
         let mut sources = BTreeSet::new();
-        for descriptor in &self.packs {
+        let mut pack_ids = BTreeSet::new();
+        for pack in &self.packs {
+            let super::ExportPack::BuiltinAdapter(descriptor) = pack else {
+                let super::ExportPack::Source(source) = pack else {
+                    unreachable!()
+                };
+                let id = parse_id(&source.entity_id)?;
+                if !pack_ids.insert(id) {
+                    return Err(invalid("duplicate pack source"));
+                }
+                source.source_tree.validate()?;
+                let row = self
+                    .evidence_ledger
+                    .entities
+                    .iter()
+                    .find(|row| row.id == source.entity_id)
+                    .ok_or_else(|| invalid("pack source entity missing"))?;
+                if row.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+                    return Err(invalid("pack source is not an asset"));
+                }
+                if source.source_tree.content_hash.is_some() {
+                    let pack = crate::skill_hub::pack_catalog::PackSource::from_files(
+                        source.source_tree.import_files()?,
+                    )?;
+                    if crate::skill_hub::pack_catalog::export_source_body(&pack)? != row.body
+                        || pack.entity_id()? != id
+                    {
+                        return Err(invalid("pack source disagrees with its evidence row"));
+                    }
+                }
+                continue;
+            };
             if !sources.insert(descriptor.source_id.as_str()) {
                 return Err(invalid("duplicate import adapter descriptor"));
             }
@@ -119,6 +150,15 @@ impl WholeVaultDocument {
                 || descriptor.adapter_version.as_deref() != adapter.map(|a| a.version)
             {
                 return Err(invalid("unsupported import adapter version"));
+            }
+        }
+        for row in &self.evidence_ledger.entities {
+            if row.entity_type == crate::registry::ENTITY_TYPE_ASSET
+                && let Ok(bytes) = row.body.to_bytes()
+                && crate::skill_hub::pack_catalog::decode_source_body(&bytes)?.is_some()
+                && !pack_ids.contains(&parse_id(&row.id)?)
+            {
+                return Err(invalid("source asset missing pack facet"));
             }
         }
         self.validate_bundles()?;

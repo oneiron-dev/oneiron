@@ -37,7 +37,6 @@ pub(crate) fn serialize_vault_snapshot(
         import_refusals: Vec::new(),
         bundle_omissions: Vec::new(),
         source_boundaries: vec![
-            crate::batch::export::ExportSourceBoundary::PredicatePackCatalogUnavailable,
             crate::batch::export::ExportSourceBoundary::BuiltinAdapterCodeNotStored,
         ],
     };
@@ -48,7 +47,11 @@ pub(crate) fn serialize_vault_snapshot(
             edges: snapshot.edges,
         },
         claims: Vec::new(),
-        packs: snapshot.adapters,
+        packs: snapshot
+            .adapters
+            .into_iter()
+            .map(crate::batch::export::ExportPack::BuiltinAdapter)
+            .collect(),
         skills: Vec::new(),
         agent_packs: Vec::new(),
         derivation_envelopes: Vec::new(),
@@ -80,6 +83,24 @@ pub(crate) fn serialize_vault_snapshot(
             learned_at: raw.header.learned_at,
             body,
         };
+        if let Some(source) = snapshot.pack_sources.remove(&raw.id) {
+            let mut tree = super::export_source_tree(source.files())?;
+            if raw.tainted {
+                tree.content_hash = None;
+                for file in &mut tree.files {
+                    file.content = None;
+                    file.sha256 = None;
+                }
+            }
+            document
+                .packs
+                .push(crate::batch::export::ExportPack::Source(
+                    crate::batch::export::ExportPackSource {
+                        entity_id: raw.id.to_hex(),
+                        source_tree: tree,
+                    },
+                ));
+        }
         match entity.entity_type {
             ENTITY_TYPE_CLAIM => document.claims.push(entity),
             ENTITY_TYPE_SKILL => {

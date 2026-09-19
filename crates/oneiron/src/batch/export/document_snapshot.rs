@@ -23,6 +23,7 @@ pub(crate) struct ExportSnapshot {
     pub(crate) exported_at: u64,
     pub(crate) skill_packages: BTreeMap<EntityId, crate::skill_hub::HubPackage>,
     pub(crate) agent_fork_hashes: BTreeMap<EntityId, String>,
+    pub(crate) pack_sources: BTreeMap<EntityId, crate::skill_hub::pack_catalog::PackSource>,
 }
 
 pub(crate) struct ExportSnapshotEntity {
@@ -119,6 +120,11 @@ impl Vault {
                 adapter_version: config.adapter_skill.map(|a| a.version.to_owned()),
             })
             .collect();
+        let pack_sources = self
+            .pack_sources_in_txn(&rtxn)?
+            .into_iter()
+            .filter(|(id, _)| included.contains(id))
+            .collect();
         drop(rtxn);
         crate::serialize::serialize_vault_snapshot(
             ExportSnapshot {
@@ -129,6 +135,7 @@ impl Vault {
                 exported_at: crate::unix_seconds_now(),
                 skill_packages,
                 agent_fork_hashes,
+                pack_sources,
             },
             format,
         )
