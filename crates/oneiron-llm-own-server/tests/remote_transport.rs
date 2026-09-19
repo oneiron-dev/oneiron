@@ -38,7 +38,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 fn request() -> LlmRequest {
     LlmRequest {
-        model: ModelId::new("own/model@1").unwrap(),
+        model: ModelId::new("own/model@1").expect("valid fixture model"),
         envelope: CallEnvelope {
             purpose: CallPurpose::AnswerGen,
             class: CallClass::BestEffort,
@@ -78,58 +78,67 @@ fn response() -> LlmResponse {
         finish_reason: FinishReason::Stop,
     }
 }
+type CapturedRequest = (String, BTreeMap<String, String>, Value);
+
 // The peer returns the received request so assertions cannot be lost in a background thread.
-fn peer(
-    status: u16,
-    body: String,
-) -> (
-    RemoteLlmClient,
-    thread::JoinHandle<(String, BTreeMap<String, String>, Value)>,
-) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+fn peer(status: u16, body: String) -> (RemoteLlmClient, thread::JoinHandle<CapturedRequest>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture listener");
     let client = RemoteLlmClient::connect(
-        &format!("http://{}", listener.local_addr().unwrap()),
+        &format!(
+            "http://{}",
+            listener
+                .local_addr()
+                .expect("read fixture listener address")
+        ),
         "fixture-bearer",
     )
-    .unwrap();
+    .expect("connect fixture client");
     let handle = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
+        let (mut socket, _) = listener.accept().expect("accept fixture request");
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
+            .expect("set fixture read timeout");
         let mut reader = BufReader::new(&mut socket);
         let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
+        reader
+            .read_line(&mut line)
+            .expect("read fixture request line");
         let first = line.trim().to_owned();
         let mut headers = BTreeMap::new();
         loop {
             line.clear();
-            assert!(reader.read_line(&mut line).unwrap() > 0);
+            assert!(reader.read_line(&mut line).expect("read fixture header") > 0);
             if line == "\r\n" {
                 break;
             }
-            let (key, value) = line.trim().split_once(':').unwrap();
+            let (key, value) = line
+                .trim()
+                .split_once(':')
+                .expect("fixture header has a colon");
             headers.insert(key.to_ascii_lowercase(), value.trim().to_owned());
         }
-        let mut bytes = vec![0; headers["content-length"].parse::<usize>().unwrap()];
-        reader.read_exact(&mut bytes).unwrap();
-        let request = serde_json::from_slice(&bytes).unwrap();
+        let mut bytes = vec![
+            0;
+            headers["content-length"]
+                .parse::<usize>()
+                .expect("parse fixture content length")
+        ];
+        reader
+            .read_exact(&mut bytes)
+            .expect("read fixture request body");
+        let request = serde_json::from_slice(&bytes).expect("decode fixture JSON request");
         write!(
             socket,
             "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         )
-        .unwrap();
+        .expect("write fixture HTTP response");
         (first, headers, request)
     });
     (client, handle)
 }
-fn assert_request(
-    handle: thread::JoinHandle<(String, BTreeMap<String, String>, Value)>,
-    stream: bool,
-    lease: &BudgetLease,
-) {
-    let (line, headers, body) = handle.join().unwrap();
+fn assert_request(handle: thread::JoinHandle<CapturedRequest>, stream: bool, lease: &BudgetLease) {
+    let (line, headers, body) = handle.join().expect("join fixture peer");
     assert_eq!(
         line,
         if stream {
@@ -148,7 +157,10 @@ fn assert_request(
             "application/json"
         }
     );
-    assert_eq!(body, serde_json::to_value(request()).unwrap());
+    assert_eq!(
+        body,
+        serde_json::to_value(request()).expect("encode fixture JSON request")
+    );
 }
 
 #[test]

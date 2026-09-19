@@ -333,3 +333,39 @@ findings and root adjudications. CodeRabbit follow-up `4053384666` withdraws F18
 confirms the upstream-provider distinction, and resolves the thread. It requires
 no source change. The corrected guideline interpretation is already recorded in
 this ledger; no external bot-learning record was deleted or modified.
+
+
+### Final completed validation
+
+**Validation is complete.** All seven commands in the final retained service completed with exit 0; the service ended with `Result=success`, `ExecMainStatus=0`, `MainPID=0`.
+
+| Command / scope | Actual result |
+| --- | --- |
+| Standard nine-package command below, Arch factory slot 2/2 | Completed with Cargo **101**: **8,880 passed, 1 failed, 21 pre-existing ignored**. The sole failure was the temporary-directory fixture described below. This original command is not relabeled as a pass. |
+| Same nine-package selection, no nested-TMPDIR config, exact Git fixture retry | Arch slot 2/2, exit **0**: **1 passed**, 0 failed; core target had 7,088 filtered. |
+| `cargo test -p oneiron-llm-own-server --test remote_transport -- --test-threads=3` | Arch slot 1/2, exit **0**: **4 passed**, 0 failed. Fresh after the test-helper lint changes. |
+| `cargo fmt -p oneiron -p oneiron-remote -p oneiron-llm-own-server --check` | Arch slot 1/2, exit **0**. |
+| `cargo clippy -p oneiron -p oneiron-remote -p oneiron-llm-own-server --all-targets --all-features -- -D warnings` | Arch slot 1/2, exit **0**. |
+| Focused featureless command below | MacBook slot 2/3, exit **0**: **19 passed**, 6,549 filtered by the stated selection. The complete featureless library test target compiled. |
+| `scripts/codemap/check.sh` | Exit **0**: 2,534 files, 18 current artifacts. |
+| `git diff --check` | Exit **0**. |
+
+Standard command actually executed:
+```text
+cargo test --no-fail-fast -p oneiron -p oneiron-driver -p oneiron-llm-anthropic -p oneiron-llm-gemini -p oneiron-llm-local -p oneiron-llm-openai -p oneiron-llm-own-server -p oneiron-remote -p oneiron-server --config .w7/real-tmp.toml -- --test-threads=3
+```
+The override put temporary Git repositories inside this checkout's `target/`. When `git_wire::tests::git_wire_reads_absence_positively_and_keeps_fatal_failures_typed` deleted its `.git`, Git found the parent checkout rather than reporting a fatal missing repository. The retry used the identical nine-package selection, removed `--config .w7/real-tmp.toml`, and used:
+```text
+-- --exact git_wire::tests::git_wire_reads_absence_positively_and_keeps_fatal_failures_typed --test-threads=3
+```
+No production fix, test assertion change, or ignore was needed. All 13 repaired Rust files matched the standard-run source hashes at that retry. Its one pass closes the sole failure; the other 8,880 completed passing outcomes are retained instead of rerunning unchanged tests.
+
+Focused featureless command:
+```text
+cargo nextest run -p oneiron --no-default-features --lib -E 'test(llm::step::tests::native_) | test(llm::step::tests::schema_) | test(llm::registry::tests) | test(llm::streaming_tests) | test(ingest::tests::provider_)' --test-threads 3
+```
+Final validation also caught and repaired one deterministic rustfmt line join plus 15 fixture-helper `unwrap()` diagnostics and a complex tuple type. The changes only add `expect()` diagnostics and a private `CapturedRequest` alias. Production code and integration test bodies remain unchanged; all four transport cases were rerun. The final hashes retain 11 of the 13 original files byte-for-byte; the two changed test files have only these reviewed formatting/diagnostic changes.
+
+All Cargo commands used factory host/ticket locks with three compiler jobs and three test threads. Full command, output, hash and exit receipts are retained under `validation-standard.*`, `post-standard-followup/`, `final-checks/`, and `lint-checks/`. Failed fmt/Clippy receipts remain recorded; the final commands supersede them. Two earlier interrupted starts are excluded entirely, including the corrected first durable start that omitted host-routing settings. No partial run is counted as a pass. This is changed-crate and focused featureless validation, **not a claim that the nine-stage workspace verification script ran**.
+
+Final read-only GitHub intake: 16 issue comments, 22 reviews, 96 inline comments, 40 complete threads; published head remains `8504e489`. No new inline finding. C03 comment `5741434829` updated its own test evidence, which is not used for C08. CodeRabbit withdrawal `4053384666` closes F18. All original 40 findings have replies; no additional review/draft mutation, push, merge, or close was performed.

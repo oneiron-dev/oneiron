@@ -255,8 +255,7 @@ fn remote_terminal_variants_are_validated_for_generate_and_stream() {
     cases.push((wrong_role, Some(FatalLlmError::InvalidRequest)));
     let mut empty = response();
     empty.message.content = vec![ContentPart::Reasoning {
-        text: " \n"
-        .into(),
+        text: " \n".into(),
         signature: None,
     }];
     cases.push((empty, Some(FatalLlmError::EmptyResponse)));
