@@ -255,3 +255,31 @@ fn source_failure_closes_subscribers_without_durable_cancellation() {
         assert!(ledger.lock().unwrap().is_empty());
     }
 }
+
+#[test]
+fn voice_chunker_never_emits_whitespace_only_chunks() {
+    let mut chunker = VoiceChunker::default();
+    let delta = |text: &str| LlmStreamEvent::TextDelta {
+        part_id: "t".into(),
+        text: text.into(),
+    };
+    assert_eq!(chunker.observe(&delta("Hello. "), 0), vec!["Hello."]);
+    assert_eq!(chunker.tick(150), None);
+    assert!(chunker.observe(&delta("\n\t "), 151).is_empty());
+    assert_eq!(chunker.tick(301), None);
+    // Real speech and its leading whitespace are preserved.
+    assert!(chunker.observe(&delta(" next"), 302).is_empty());
+    assert_eq!(chunker.tick(452), Some(" next".into()));
+    assert!(chunker.observe(&delta(" "), 453).is_empty());
+    let done = LlmStreamEvent::Done {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content: vec![ContentPart::Text {
+                text: "Hello. next".into(),
+            }],
+        },
+        usage: LlmUsage::zero(),
+        finish_reason: FinishReason::Stop,
+    };
+    assert!(chunker.observe(&done, 454).is_empty());
+}

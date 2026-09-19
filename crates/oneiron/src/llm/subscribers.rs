@@ -73,6 +73,6 @@ impl VoiceChunker {
     fn flush(&mut self) -> Option<String> {
         self.since_ms = None;
         let text = std::mem::take(&mut self.pending);
-        (!text.is_empty()).then_some(text)
+        (!text.trim().is_empty()).then_some(text)
     }
 }
