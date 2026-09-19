@@ -127,6 +127,51 @@ Fixed: source IDs and benchmark identifiers over 128 bytes are rejected during s
 
 Fixed: Soniox string error codes are extracted as strings; numeric/non-string codes retain JSON fallback.
 
-## Validation
+## New Codex findings on `ff98e02b`
 
-Pending touched-crate tests on the repaired source. No prior green result or interrupted job is a pass for these changes.
+The latest complete refresh has 12 top-level comments, 4 reviews, and 34 inline comments/threads. Codex review 5255585686 completed (not quota-blocked). Original 24 groups remain above; these six additions are assessed and fixed separately. Qodo marks its six valid original items resolved and repeats F05, whose function-local imports still refute it. Cursor reported usage exhaustion; CodeRabbit auto-review is disabled. The C03 cross-ticket clarification is not C08 validation.
+
+- **F25**, inline **4053051176**: Fix. Add bearer/auth/API token and passphrase aliases to pre-truncation redaction.
+- **F26**, inline **4053051180**: Fix. Compare every benchmark in one snapshot against the pre-snapshot source watermark; newer multi-benchmark updates and equal-time conflict rollback are tested.
+- **F27**, inline **4053051182**: Fix. Require matching declared block types; untyped text is restricted to Gemini parts.
+- **F28**, inline **4053051185**: Fix. Derive server budget locality from the vault model catalog, never from the client envelope; ContinueOnLocal cannot turn a third-party call into free local spend.
+- **F29**, inline **4053051189**: Fix. Refuse empty reasoning and malformed structured fallback messages before memoization.
+- **F30**, inline **4053051191**: Fix. Started calls without terminal usage conservatively charge their own reservation; terminal usage still settles exactly once. Cancellation and stream-error paths are tested.
+
+Server-production Clippy initially refused a large Response error variant; the admission helper now boxes that internal error rather than suppressing the lint. Final-source regressions passed: 56 featureless core tests and 3 real/controlled server route tests. Production server Clippy passed after boxing the error. The detailed command evidence follows.
+
+
+## Completed repair validation
+
+All six touched crates were tested on the MacBook through the normal factory wrapper, with at most 3 Cargo jobs and 3 test threads, and `.w7/real-tmp.toml`:
+
+```text
+cargo test --no-fail-fast -p oneiron -p oneiron-remote -p oneiron-server -p oneiron-llm-gemini -p oneiron-llm-anthropic -p oneiron-llm-own-server --config .w7/real-tmp.toml -- --test-threads=3
+```
+
+That completed command recorded **8,746 passes, 21 ignored, and one failing socket-closure assertion**. The cancellation implementation closed the macOS connection with `ConnectionReset` rather than EOF. The fixture was corrected to accept either closed-socket result, but not a timeout or live connection. Its entire target was rerun:
+
+```text
+cargo test -p oneiron-llm-own-server --test remote_transport --config .w7/real-tmp.toml -- --test-threads=3
+```
+
+**4 passed, exit 0**, including active-read cancellation. The other completed target passes are reused, not rerun:
+- Core: **7,061** library tests; **473** main integration tests; **184** sync tests; other integration/compile-fail/doctest targets passed.
+- Server: **749** library tests and **91** main integration tests; managed, privacy, and WebSocket tests passed. Both real own-server route tests passed.
+- Anthropic **10**, Gemini **3**, own-server **1**, remote SDK **7** unit tests passed, plus all remote SDK integration targets.
+- `cargo test -p oneiron --lib --no-default-features --config .w7/real-tmp.toml -- --test-threads=3`: **6,558 passed, 0 failed, 4 ignored**, exit 0.
+- `cargo clippy -p oneiron-llm-gemini --all-targets -- -D warnings`: **exit 0**. This covers the private production import correction; its unit-test expansion did not change.
+- Server-production Clippy initially failed only on the new admission helper's large `Response` error variant. The helper now boxes that internal response; repeat Clippy passed (exit 0).
+
+Additional completed Codex findings were fixed after the broad runs. The exact final-core command was:
+
+```text
+cargo nextest run -p oneiron --no-default-features --lib -E 'test(llm::registry::tests) | test(llm::step::tests) | test(ingest::tests::provider_) | test(serialize::tests::provider_)' --test-threads 3
+```
+
+It passed **56 tests**, exit 0. `cargo test -p oneiron-server --lib api::llm::tests --config .w7/real-tmp.toml -- --test-threads=3` passed **3 tests**, exit 0. These cover real authenticated remote routes, catalog-derived locality under exhausted ContinueOnLocal, and both cancellation/error reservation settlement.
+
+`cargo clippy -p oneiron-server --all-features -- -D warnings`: **exit 0**, checking the production `sync` selection without test-feature unification.
+Formatting applied with `cargo fmt -p oneiron -p oneiron-server` (exit 0), then the final source compiled and passed the focused tests. Code-map pin **CODEMAP-OK** (2534 files); structural ratchet **RATCHET-OK** (2/98/91/33); root-surface **ROOT-SURFACE-OK** (701); `git diff --check` exit 0.
+
+Source hashes and exact command logs/exit receipts are retained in `tickets/W7-C08/fix-review-receipts/`. No interrupted or partial run is counted as a passing command. This is scoped ticket validation, not the full workspace gate.
