@@ -3,6 +3,7 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { ChanLine, ChanLinkedin, ChanMail, ChanSlack, Chevron } from '~/components/safelight/icons'
 import { DraftCard, Throbber } from '~/components/safelight/Widgets'
 import { cue, markCued, useDocumentEvent, useEscape } from '~/components/safelight/hooks'
+import { previewReply, settleFixture, type FixtureAction, type FixtureReceipt, type ReplyPreview } from '~/components/safelight/inbox-fixture'
 import inboxCss from '~/styles/inbox.css?url'
 
 export const Route = createFileRoute('/app/inbox')({
@@ -14,7 +15,7 @@ export const Route = createFileRoute('/app/inbox')({
 
 /* ── rows settle in place: the dot fills, the verbs become the record.
    no toast ever — the outcome IS the row (08-14) ── */
-type Settled = { ok: boolean; word: string } | null
+type Settled = FixtureReceipt | null
 
 function dotClass(settled: Settled, rest: string) {
   if (!settled) return `dot ${rest}`
@@ -22,7 +23,7 @@ function dotClass(settled: Settled, rest: string) {
 }
 function dotTitle(settled: Settled, rest: string) {
   if (!settled) return rest
-  return settled.ok ? 'approved · yours' : 'rejected · kept, struck'
+  return `${settled.word} · ${settled.clock}`
 }
 /* one icon: the channel glyph takes the outcome ink */
 function chanClass(settled: Settled) {
@@ -31,7 +32,7 @@ function chanClass(settled: Settled) {
 }
 function chanTitle(settled: Settled, rest: string) {
   if (!settled) return rest
-  return settled.ok ? `${settled.word} · receipted` : settled.word
+  return `${settled.word} · ${settled.clock}`
 }
 function claimClass(settled: Settled, base: string) {
   return settled && !settled.ok ? `${base} retracted` : base
@@ -67,62 +68,92 @@ function useOpenLaw(): OpenLaw {
   return law
 }
 
-/* a row that settles in place but inspects in the column */
+/* Native title buttons inspect; clicks on unused row space do the same.
+   Nested controls own their events, never a parent button or key handler. */
+function rowSurface(handler: (e: React.MouseEvent) => void) {
+  return (e: React.MouseEvent) => {
+    if ((e.target as Element).closest('a, button, input, textarea, select, [contenteditable]')) return
+    handler(e)
+  }
+}
+
+function Receipt({ value }: { value: FixtureReceipt }) {
+  return <span className="meta-line">{value.word} · {value.clock}</span>
+}
+
+/* The first local decision wins. Nothing here is an engine receipt. */
 function useSettle() {
   const [settled, setSettled] = React.useState<Settled>(null)
-  const act = (ok: boolean, word: string) => (e: React.MouseEvent) => {
+  const decided = React.useRef<Settled>(null)
+  const focusAfter = React.useRef<{ from: HTMLElement; to: HTMLElement | null } | null>(null)
+  React.useLayoutEffect(() => {
+    const pending = focusAfter.current
+    if (pending && !pending.from.isConnected && pending.to?.isConnected) pending.to.focus()
+    focusAfter.current = null
+  }, [settled])
+  const act = (action: FixtureAction) => (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     markCued(e)
-    setSettled({ ok, word })
-    cue(ok ? 'success' : 'press')
+    if (decided.current) return
+    const from = e.currentTarget as HTMLElement
+    focusAfter.current = {
+      from,
+      to: from.closest('[data-inbox-row]')?.querySelector<HTMLElement>('[data-inbox-trigger]')
+        ?? from.closest('aside.context')?.querySelector<HTMLElement>('.chat-close') ?? null,
+    }
+    decided.current = settleFixture(decided.current, action)
+    setSettled(decided.current)
+    cue(decided.current.ok ? 'success' : 'press')
   }
   return { settled, act }
 }
 
-/* the ROW is the inspect unit: click unfolds it in place, click again
-   closes. A commit verb settles it and never toggles it. */
+/* Draft/consent rows retain their in-place act surface under kind/gesture. */
 function useBrow() {
+  const decision = useSettle()
   const [open, setOpen] = React.useState(false)
-  const [settled, setSettled] = React.useState<Settled>(null)
-
-  const toggle = React.useCallback(() => {
-    setOpen((o) => !o)
-    cue('toggle')
-  }, [])
-
-  const onLineClick = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('a')) return
-    toggle()
-  }
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    const target = e.target as HTMLElement
-    if (
-      (e.key === 'Enter' || e.key === ' ') &&
-      !target.closest('a') &&
-      !/^(INPUT|TEXTAREA)$/.test(target.tagName)
-    ) {
-      e.preventDefault()
-      toggle()
-    }
-  }
-
-  const act = (ok: boolean, word: string) => (e: React.MouseEvent) => {
-    e.preventDefault()
-    markCued(e)
-    setSettled({ ok, word })
-    cue(ok ? 'success' : 'press')
-  }
-
-  /* "read" opens the row — the commit verb waits where the draft is visible */
+  const [replyText, setReplyText] = React.useState('')
+  const [reply, setReply] = React.useState<ReplyPreview | null>(null)
   const openRow = (e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     markCued(e)
-    toggle()
+    setOpen((o) => !o)
+    cue('toggle')
   }
+  return { ...decision, open, openRow, replyText, setReplyText, reply, setReply }
+}
 
-  return { open, settled, onLineClick, onKeyDown, act, openRow }
+function ReplyInput({ row, placeholder }: { row: ReturnType<typeof useBrow>; placeholder: string }) {
+  const noteId = React.useId()
+  return (
+    <div className="reply-preview">
+      <input
+        className="reply-input"
+        type="text"
+        placeholder={placeholder}
+        aria-label="local reply preview for Eiri"
+        aria-describedby={`inbox-preview-scope ${noteId}`}
+        title="Enter keeps these words here only; nothing is sent to Eiri"
+        value={row.replyText}
+        onChange={(e) => row.setReplyText(e.target.value)}
+        onKeyDown={(e) => {
+          const next = previewReply(row.reply, e.currentTarget.value, {
+            key: e.key, isComposing: e.nativeEvent.isComposing, keyCode: e.nativeEvent.keyCode,
+            repeat: e.repeat, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+          })
+          if (next === row.reply) return
+          e.preventDefault()
+          e.stopPropagation()
+          row.setReply(next)
+        }}
+      />
+      <span id={noteId} className="fixture-feedback" role="status" aria-atomic="true">
+        {row.reply && <>Kept here, not sent: “{row.reply.text}” · {row.reply.clock}</>}
+      </span>
+    </div>
+  )
 }
 
 /* headings collapse in place (owner 08-14 eve) */
@@ -185,6 +216,12 @@ function Inbox() {
   }, [])
   const [summon, setSummon] = React.useState({ left: 0, top: 0, on: false })
   const [ctx, setCtx] = React.useState<CtxKey | null>(null)
+  const closeRef = React.useRef<HTMLButtonElement>(null)
+  const ctxInvoker = React.useRef<{ key: CtxKey; element: HTMLElement } | null>(null)
+  const glanceInvoker = React.useRef<{ key: CtxKey; element: HTMLElement } | null>(null)
+  const [feedback, setFeedback] = React.useState<Record<string, string>>({})
+  const [revealWire, setRevealWire] = React.useState(false)
+  const wireRef = React.useRef<HTMLElement>(null)
   const law = useOpenLaw()
   /* gesture law: the row that is unfolded under itself */
   const [glance, setGlance] = React.useState<CtxKey | null>(null)
@@ -199,26 +236,96 @@ function Inbox() {
   const b2 = useBrow()
   const d1 = useSettle()
 
-  /* a row click: under the law of the day. gesture → unfold under the row;
-     column · kind → select into the column; the same row closes it */
+  const restoreFocus = (invoker: { key: CtxKey; element: HTMLElement } | null) => {
+    if (!invoker) return
+    const row = paneRef.current?.querySelector<HTMLElement>(`[data-inbox-row="${invoker.key}"]`)
+    const fallback = row?.querySelector<HTMLElement>('[data-inbox-trigger]') ?? row
+    const heading = row?.closest('.bundle')?.querySelector<HTMLElement>('.head')
+    for (const element of [invoker.element, fallback, heading, paneRef.current?.querySelector<HTMLElement>('.pane-tools button')]) {
+      if (element?.isConnected && !element.closest('[inert]') &&
+          element.getClientRects().length && getComputedStyle(element).visibility === 'visible') {
+        element.focus()
+        return
+      }
+    }
+  }
+  const closeColumn = () => {
+    setCtx(null)
+    restoreFocus(ctxInvoker.current)
+  }
+  const toggleColumn = (key: CtxKey, e: React.MouseEvent) => {
+    if (ctx === key) closeColumn()
+    else {
+      const target = e.currentTarget as HTMLElement
+      ctxInvoker.current = {
+        key,
+        element: target.matches('.brow-line')
+          ? target.querySelector<HTMLElement>('[data-inbox-trigger]') ?? target
+          : target,
+      }
+      setCtx(key)
+    }
+  }
+  React.useEffect(() => {
+    if (ctx) closeRef.current?.focus()
+  }, [ctx])
+
+  /* Gesture selects a glance only; kind/column summons the record. */
   const select = (key: CtxKey) => (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('a')) return
-    if (law === 'gesture') setGlance((cur) => (cur === key ? null : key))
-    else setCtx((cur) => (cur === key ? null : key))
+    e.preventDefault()
+    e.stopPropagation()
+    markCued(e)
+    if (law === 'gesture') {
+      const target = e.currentTarget as HTMLElement
+      glanceInvoker.current = {
+        key,
+        element: target.matches('.brow-line')
+          ? target.querySelector<HTMLElement>('[data-inbox-trigger]') ?? target
+          : target,
+      }
+      setGlance((cur) => (cur === key ? null : key))
+    } else toggleColumn(key, e)
     cue('toggle')
   }
-  /* an explicit door into the column (the `open` / `read` acts) */
   const openCol = (key: CtxKey) => (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     markCued(e)
-    setCtx((cur) => (cur === key ? null : key))
+    toggleColumn(key, e)
     cue('toggle')
   }
   useEscape(() => {
-    if (ctx) setCtx(null)
-    else setGlance(null)
+    // Preserve the current asymmetry: column first, then gesture glance.
+    // Kind/gesture draft unfolds are not dismissed by Escape.
+    if (ctx) closeColumn()
+    else if (glance) {
+      setGlance(null)
+      restoreFocus(glanceInvoker.current)
+    }
   })
+  const trigger = (key: CtxKey) => ({
+    'data-inbox-trigger': key,
+    'aria-expanded': law === 'gesture' ? glance === key : ctx === key,
+    'aria-controls': law === 'gesture' ? `inbox-glance-${key}` : 'inbox-context',
+    onClick: select(key),
+  })
+  const explain = (key: string, message: string) => (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    markCued(e)
+    setFeedback((current) => current[key] === message ? current : { ...current, [key]: message })
+  }
+  const feedbackFor = (key: string, inColumn = false) => (
+    <span className="fixture-feedback" role={(ctx === key) === inColumn ? 'status' : undefined} aria-atomic="true">
+      {feedback[key]}
+    </span>
+  )
+  React.useEffect(() => {
+    if (!revealWire) return
+    wireRef.current?.focus()
+    wireRef.current?.scrollIntoView({ block: 'nearest' })
+    setRevealWire(false)
+  }, [revealWire])
   const rowCls = (key: CtxKey, base = 'brow') =>
     `${base}${ctx === key ? ' sel' : ''}${law === 'gesture' && glance === key ? ' open' : ''}`
 
@@ -258,11 +365,11 @@ function Inbox() {
       body: 'Held: a critical-class claim from one April mention. The floor wants a second source.',
       acts: (
         <>
-          <a className="act" href="#" title="the April mention · LINE thread">
+          <button type="button" className="act" title="the April mention · LINE thread" onClick={explain('a1', 'The full April source is not included in this preview.')}>
             source
-          </a>
-          <Link className="act" to="/app/vault" title="claim cl_58aa · confidence, occurred, learned, actor">
-            open the claim
+          </button>
+          <Link className="act" to="/app/vault" title="Browse the fixture claims; no individual claim is selected">
+            browse claims
           </Link>
         </>
       ),
@@ -273,14 +380,11 @@ function Inbox() {
       body: 'Held: it contradicts the standing claim that Hokuei is expanding the supplier base (0.77, May). Accepting supersedes it.',
       acts: (
         <>
-          <Link className="act" to="/app/vault" title="cl_31f0 · the standing claim">
-            the standing claim
-          </Link>
-          <a className="act" href="#" title="scout run rx_8c41 · public filings">
+          <button type="button" className="act" title="the supplier scout’s public filings" onClick={explain('a2', 'The scout’s source filings are not included in this preview.')}>
             source
-          </a>
-          <Link className="act" to="/app/vault" title="claim cl_9d17 · confidence, occurred, learned, actor">
-            open the claim
+          </button>
+          <Link className="act" to="/app/vault" title="Browse the fixture claims; no individual claim is selected">
+            browse claims
           </Link>
         </>
       ),
@@ -315,20 +419,20 @@ function Inbox() {
             rows={3}
             ariaLabel="the draft to Mika Tanaka"
             defaultValue="お見積もりの件、承知しました。火曜までに正式版をお送りします。先に概算だけ共有します…"
-            sendTitle="verb: send_message · your click is the consent"
-            onSend={b1.act(true, 'sent')}
+            sendTitle="Local send preview only · nothing is sent"
+            onSend={b1.act('send')}
           />
-          <input className="reply-input" type="text" placeholder="or tell Eiri what to change…" aria-label="reply to Eiri" />
+          <ReplyInput row={b1} placeholder="or tell Eiri what to change…" />
         </>
       ),
       acts: (
         <>
-          <a className="act" href="/app/threads" title="LINE · Mika Tanaka · the whole thread">
-            the thread
+          <a className="act" href="/app/threads" title="Browse channel records, including Mika’s LINE quote request">
+            browse threads
           </a>
-          <a className="act" href="#" title="LINE OA grant · scoped, budgeted, revocable">
+          <button type="button" className="act" title="LINE OA grant" onClick={explain('b1', 'This LINE send grant is not included in the preview. No grant was created.')}>
             the grant
-          </a>
+          </button>
         </>
       ),
     },
@@ -346,28 +450,32 @@ function Inbox() {
             A new audience for the LinkedIn grant, so it asks before it reaches. Every send stays
             a human click.
           </span>
-          <span className="bd-msg-meta" title="the narrowest standing rule the click would mint · it lands on the grants ledger with a receipt">
-            allow + grant remembers: LinkedIn · Hokuei people · through Yurii’s account
+          <span className="bd-msg-meta" title="Proposed scope only · the preview creates no grant">
+            proposed grant: LinkedIn · Hokuei people · through Yurii’s account
           </span>
           <span className="bd-acts">
-            <a className="act" href="#" title="this one send only · it asks again next time" onClick={b2.act(true, 'allowed')}>
-              allow once
-            </a>
-            <a className="act" href="#" title="mints a scoped, budgeted, revocable grant (OF-050) · a row lands on the grants ledger" onClick={b2.act(true, 'granted')}>
-              allow + grant
-            </a>
-            <a className="act" href="#" onClick={b2.act(false, 'denied')}>
-              deny
-            </a>
+            {!b2.settled && (
+              <>
+                <button type="button" className="act" title="Preview this choice locally · nothing is sent" onClick={b2.act('allow')}>
+                  allow once
+                </button>
+                <button type="button" className="act" title="Preview this choice locally · no grant is created" onClick={b2.act('grant')}>
+                  allow + grant
+                </button>
+                <button type="button" className="act" onClick={b2.act('deny')}>
+                  deny
+                </button>
+              </>
+            )}
           </span>
-          <input className="reply-input" type="text" placeholder="or answer Eiri in your words…" aria-label="reply to Eiri" />
+          <ReplyInput row={b2} placeholder="or answer Eiri in your words…" />
         </>
       ),
       acts: (
         <>
-          <a className="act" href="#" title="linkedin grant · yurii's account · scope, budget, expiry">
+          <button type="button" className="act" title="LinkedIn grant · Yurii’s account" onClick={explain('b2', 'This LinkedIn grant is not included in the preview. No grant was created.')}>
             the grant
-          </a>
+          </button>
           <a className="act" href="/app/orgs" title="Hokuei · the org dossier">
             who they are
           </a>
@@ -396,19 +504,19 @@ function Inbox() {
       title: 'Night-shift note: the 03:12 run',
       body: 'What the night did, in the order it did it. One line per receipt, nothing summarised away.',
       acts: (
-        <a className="act" href="/app/agents" title="run rx_7b12 · the run's receipts">
+        <button type="button" className="act" onClick={explain('c2', 'Only the note summary is included here; the run’s individual receipts are not.')}>
           the receipts
-        </a>
+        </button>
       ),
     },
     d1: {
       crumb: 'linkedin import · paused',
       title: 'The burst guard stopped this import',
-      body: 'Unusual write volume for this source, so the run paused itself. The bundle waits as one decision.',
+      body: 'Unusual write volume for this source, so the run paused itself. The bundle waits as one decision. Individual writes are not included in this preview.',
       acts: (
-        <a className="act" href="/app/agents" title="run rx_9a04 · the run's receipts">
+        <button type="button" className="act" onClick={explain('d1', 'The paused run’s full record is not included in this preview.')}>
           the run
-        </a>
+        </button>
       ),
     },
     w1: {
@@ -423,12 +531,12 @@ function Inbox() {
       body: 'The answer cites the scope note; the citation is its receipt.',
       acts: (
         <>
-          <a className="act" href="/app/threads" title="slack · #ops · the whole thread">
-            the thread
+          <a className="act" href="/app/threads" title="Browse the Slack channel records">
+            browse threads
           </a>
-          <a className="act" href="#">
+          <button type="button" className="act" onClick={explain('w1', 'The full receipt is not included here; this record is a fixture summary.')}>
             the receipt
-          </a>
+          </button>
         </>
       ),
     },
@@ -447,12 +555,12 @@ function Inbox() {
       body: "Sent from Yurii's account under the outreach grant.",
       acts: (
         <>
-          <a className="act" href="/app/threads" title="linkedin · the whole thread">
+          <button type="button" className="act" onClick={explain('w2', 'The LinkedIn thread is not included in this preview.')}>
             the thread
-          </a>
-          <a className="act" href="/app/settings" title="linkedin grant · scope, budget, expiry">
-            the grant
-          </a>
+          </button>
+          <Link className="act" to="/settings/grants" title="Browse the fixture grants ledger; this LinkedIn grant is not included">
+            grants ledger
+          </Link>
         </>
       ),
     },
@@ -468,12 +576,12 @@ function Inbox() {
       body: 'Verified in the thread; the receipt holds the delivery.',
       acts: (
         <>
-          <a className="act" href="/app/threads" title="email · the whole thread">
-            the thread
+          <a className="act" href="/app/threads" title="Browse channel records, including the pilot scope email">
+            browse threads
           </a>
-          <a className="act" href="#">
+          <button type="button" className="act" onClick={explain('w3', 'The full receipt is not included here; this record is a fixture summary.')}>
             the receipt
-          </a>
+          </button>
         </>
       ),
     },
@@ -492,11 +600,11 @@ function Inbox() {
       body: 'A quote request. The claim it carried is already in the vault.',
       acts: (
         <>
-          <a className="act" href="/app/threads" title="LINE · the whole thread">
-            the thread
+          <a className="act" href="/app/threads" title="Browse channel records, including Mika’s LINE quote request">
+            browse threads
           </a>
-          <Link className="act" to="/app/vault" title="the extracted claim">
-            open the claim
+          <Link className="act" to="/app/vault" title="Browse the fixture claims; no individual claim is selected">
+            browse claims
           </Link>
         </>
       ),
@@ -509,15 +617,15 @@ function Inbox() {
     if (law !== 'gesture') return null
     const g = CTX[key]
     return (
-      <div className="brow-detail">
+      <div className="brow-detail" id={`inbox-glance-${key}`} inert={glance !== key}>
         <div className="bd-inner">
           {typeof g.body === 'string' ? <span className="bd-why">{g.body}</span> : g.body}
           <span className="bd-acts">
             {g.acts}
             {g.read && (
-              <a className="act" href="#" title="read it in the column" onClick={openCol(key)}>
+              <button type="button" className="act" title="read it in the column" aria-expanded={ctx === key} aria-controls="inbox-context" onClick={openCol(key)}>
                 open →
-              </a>
+              </button>
             )}
           </span>
         </div>
@@ -528,7 +636,10 @@ function Inbox() {
     law === 'gesture' ? <div className={rowCls(key, 'brow w-glance')}>{glanceFor(key)}</div> : null
 
   return (
-    <main className={ctx ? 'pane ctx-on' : 'pane'} id="pane">
+    <main className={ctx ? 'pane ctx-on' : 'pane'} id="pane" onClickCapture={(e) => {
+      // Existing bare-act sound delegation must not add navigation sounds.
+      if ((e.target as Element).closest('a[href^="/"]')) markCued(e)
+    }}>
       <div className="pane-body" ref={paneRef}>
       {/* select anything → hand it to an agent (OF-248) */}
       <span
@@ -536,9 +647,7 @@ function Inbox() {
         id="summon"
         style={{ left: summon.left, top: summon.top }}
       >
-        <a className="act" href="#" title="engine-issued handle, read reach only · never a text blob">
-          hand to agent
-        </a>
+        <span className="meta-line">Agent hand-off is not available in this preview.</span>
       </span>
 
       {/* the view filter lives quietly in the sheet head (owner 08-14 eve):
@@ -573,6 +682,10 @@ function Inbox() {
           </button>
         </span>
       </div>
+      <p className="inbox-preview-scope" id="inbox-preview-scope">
+        Local preview · actions stay on this screen until you leave. Nothing is sent or changed in an engine.
+        Times are fixture times. Reply fields: Enter keeps your words here.
+      </p>
       <div className="dial-why" id="dial-why" hidden={!hintOpen}>
         <span className="why-voice">
           This is the queue of things waiting for your click. By default it shows only those; show
@@ -622,81 +735,82 @@ function Inbox() {
           </span>
         </div>
         <div className="brows">
-          <div className={rowCls('a1')}>
-            <div className="brow-line" onClick={select('a1')}>
+          <div className={rowCls('a1')} data-inbox-row="a1">
+            <div className="brow-line" onClick={rowSurface(select('a1'))}>
               <span
                 className={dotClass(a1.settled, 'dot-proposed')}
                 title={dotTitle(a1.settled, 'proposed · held for review')}
               ></span>
-              <span
+              <button type="button" {...trigger('a1')}
                 className={claimClass(a1.settled, 'claim conf-3')}
                 title="0.52 · held: low-confidence critical, one mention in April"
               >
                 May be allergic to shellfish
-              </span>
-              <span className="rverbs">
+              </button>
+              <span className="rverbs" role="status" aria-atomic="true">
                 {a1.settled ? (
-                  <span className="meta-line">{a1.settled.word} 14:09</span>
+                  <Receipt value={a1.settled} />
                 ) : (
                   <>
-                    <a
+                    <button type="button"
                       className="act"
-                      href="#"
-                      title="verb: approve_claim"
-                      onClick={a1.act(true, 'accepted')}
+                      title="Accept in this local preview"
+                      onClick={a1.act('accept')}
                     >
                       accept
-                    </a>
-                    <a
+                    </button>
+                    <button type="button"
                       className="act"
-                      href="#"
-                      title="verb: reject_claim"
-                      onClick={a1.act(false, 'rejected')}
+                      title="Reject in this local preview"
+                      onClick={a1.act('reject')}
                     >
                       reject
-                    </a>
+                    </button>
                   </>
                 )}
               </span>
             </div>
+            {feedbackFor('a1')}
             {glanceFor('a1')}
           </div>
-          <div className={rowCls('a2')}>
-            <div className="brow-line" onClick={select('a2')}>
+          <div className={rowCls('a2')} data-inbox-row="a2">
+            <div className="brow-line" onClick={rowSurface(select('a2'))}>
               <span
                 className={dotClass(a2.settled, 'dot-proposed')}
                 title={dotTitle(a2.settled, 'proposed · held for review')}
               ></span>
-              <span
+              <button type="button" {...trigger('a2')}
                 className={claimClass(a2.settled, 'claim conf-2')}
                 title="0.81 · held: it contradicts a standing claim"
               >
                 Hokuei may be consolidating suppliers this fiscal year
-              </span>
-              <span className="rverbs">
+              </button>
+              <span className="rverbs" role="status" aria-atomic="true">
                 {a2.settled ? (
-                  <span className="meta-line">{a2.settled.word} 14:09</span>
+                  <Receipt value={a2.settled} />
                 ) : (
                   <>
-                    <a className="act" href="#" onClick={a2.act(true, 'accepted')}>
+                    <button type="button" className="act" onClick={a2.act('accept')}>
                       accept
-                    </a>
-                    <a className="act" href="#" onClick={a2.act(false, 'rejected')}>
+                    </button>
+                    <button type="button" className="act" onClick={a2.act('reject')}>
                       reject
-                    </a>
+                    </button>
                   </>
                 )}
               </span>
             </div>
+            {feedbackFor('a2')}
             {glanceFor('a2')}
           </div>
         </div>
         {/* the 40 that went in on their own are AUTO-ACCEPTED (owner
             08-15): no bundle verbs — the count is a door, nothing more */}
         <div className="bmore">
-          <a className="act" href="#" title="the 40 that went in on their own · every write receipted">
+          <button type="button" className="act" title="the other 40 claims" onClick={explain('more', 'Only the two held claims are included here; the other 40 are not listed in this preview.')}>
             40 more
-          </a>
+          </button>
+          {feedbackFor('more')}
         </div>
       </Bundle>
 
@@ -704,14 +818,14 @@ function Inbox() {
           [data-work] well in herald's ink; the byline signs the authorship */}
       <Bundle
         label="Eiri session"
-        titleTip="Eiri works the Hokuei outreach · session sn_31a8 · live"
+        titleTip="Eiri works the Hokuei outreach · session sn_31a8 · fixture"
         title={
           <>
             <span className="aname" data-agent="eiri">Eiri</span>: Hokuei outreach
           </>
         }
         meta={
-          <span className="meta-line" title="session sn_31a8 · live">
+          <span className="meta-line" title="session sn_31a8 · fixture">
             2 wait · working <Throbber initial="⠧" />
           </span>
         }
@@ -719,39 +833,42 @@ function Inbox() {
         <div className="brows">
           <div
             className={law === 'column' ? rowCls('b1') : b1.open ? 'brow open' : 'brow'}
-            aria-expanded={law === 'column' ? ctx === 'b1' : b1.open}
-            tabIndex={0}
-            onKeyDown={b1.onKeyDown}
+            data-inbox-row="b1"
           >
-            <div className="brow-line" onClick={law === 'column' ? select('b1') : b1.onLineClick}>
+            <div className="brow-line" onClick={rowSurface(law === 'column' ? select('b1') : b1.openRow)}>
               <span
                 className={chanClass(b1.settled)}
                 title={chanTitle(b1.settled, 'LINE · a draft waits on your click')}
               >
                 <ChanLine />
               </span>
-              <span
+              <button
+                type="button"
+                data-inbox-trigger="b1"
+                aria-expanded={law === 'column' ? ctx === 'b1' : b1.open}
+                aria-controls={law === 'column' ? 'inbox-context' : 'inbox-detail-b1'}
+                onClick={law === 'column' ? select('b1') : b1.openRow}
                 className={claimClass(b1.settled, 'claim conf-1')}
-                title="open the row to read and send"
+                title="Open the draft and its local send preview"
               >
                 Reply to Mika Tanaka: the quote for Tuesday
-              </span>
-              <span className="rverbs">
+              </button>
+              <span className="rverbs" role="status" aria-atomic="true">
                 {b1.settled ? (
-                  <span className="meta-line">{b1.settled.word} 14:09</span>
+                  <Receipt value={b1.settled} />
                 ) : (
-                  <a
+                  <button type="button"
                     className="act"
-                    href="#"
                     title="the draft opens here; send sits beside it"
                     onClick={law === 'column' ? openCol('b1') : b1.openRow}
                   >
                     read
-                  </a>
+                  </button>
                 )}
               </span>
             </div>
-            <div className="brow-detail">
+            {feedbackFor('b1')}
+            <div className="brow-detail" id="inbox-detail-b1" inert={law === 'column' || !b1.open}>
               <div className="bd-inner">
                 {/* what it answers (owner): the message being replied to, then
                     the editable draft with send right beside it */}
@@ -775,91 +892,84 @@ function Inbox() {
                   rows={2}
                   ariaLabel="the draft to Mika Tanaka"
                   defaultValue="お見積もりの件、承知しました。火曜までに正式版をお送りします。先に概算だけ共有します…"
-                  sendTitle="verb: send_message · your click is the consent"
-                  onSend={b1.act(true, 'sent')}
+                  sendTitle="Local send preview only · nothing is sent"
+                  onSend={b1.act('send')}
                 />
-                <input
-                  className="reply-input"
-                  type="text"
-                  placeholder="or tell Eiri what to change…"
-                  aria-label="reply to Eiri"
-                />
+                <ReplyInput row={b1} placeholder="or tell Eiri what to change…" />
                 <span className="bd-acts">
-                  <a className="act" href="/app/threads" title="LINE · Mika Tanaka · the whole thread">
-            the thread
+                  <a className="act" href="/app/threads" title="Browse channel records, including Mika’s LINE quote request">
+            browse threads
           </a>
-                  <a className="act" href="#" title="LINE OA grant · scoped, budgeted, revocable">
+                  <button type="button" className="act" title="LINE OA grant" onClick={explain('b1', 'This LINE send grant is not included in the preview. No grant was created.')}>
                     the grant
-                  </a>
+                  </button>
                 </span>
               </div>
             </div>
           </div>
           <div
             className={law === 'column' ? rowCls('b2') : b2.open ? 'brow open' : 'brow'}
-            aria-expanded={law === 'column' ? ctx === 'b2' : b2.open}
-            tabIndex={0}
-            onKeyDown={b2.onKeyDown}
+            data-inbox-row="b2"
           >
-            <div className="brow-line" onClick={law === 'column' ? select('b2') : b2.onLineClick}>
+            <div className="brow-line" onClick={rowSurface(law === 'column' ? select('b2') : b2.openRow)}>
               <span
                 className={chanClass(b2.settled)}
                 title={chanTitle(b2.settled, 'LinkedIn · a consent ask waits on you')}
               >
                 <ChanLinkedin />
               </span>
-              <span
+              <button
+                type="button"
+                data-inbox-trigger="b2"
+                aria-expanded={law === 'column' ? ctx === 'b2' : b2.open}
+                aria-controls={law === 'column' ? 'inbox-context' : 'inbox-detail-b2'}
+                onClick={law === 'column' ? select('b2') : b2.openRow}
                 className={claimClass(b2.settled, 'claim conf-2')}
                 title="a new audience for the linkedin grant"
               >
                 <span className="aname" data-agent="eiri" title="Eiri · outbound · every send waits for your click">Eiri</span> asks: reach the Hokuei COO through Yurii’s account?
-              </span>
-              <span className="rverbs">
+              </button>
+              <span className="rverbs" role="status" aria-atomic="true">
                 {b2.settled ? (
-                  <span className="meta-line">{b2.settled.word} 14:09</span>
+                  <Receipt value={b2.settled} />
                 ) : (
                   <>
-                    <a
+                    <button type="button"
                       className="act"
-                      href="#"
-                      title="this one send only · it asks again next time"
-                      onClick={b2.act(true, 'allowed')}
+                      title="Preview this choice locally · nothing is sent"
+                      onClick={b2.act('allow')}
                     >
                       allow once
-                    </a>
-                    <a className="act" href="#" title="mints a scoped, budgeted, revocable grant (OF-050) · a row lands on the grants ledger" onClick={b2.act(true, 'granted')}>
+                    </button>
+                    <button type="button" className="act" title="Preview this choice locally · no grant is created" onClick={b2.act('grant')}>
                       allow + grant
-                    </a>
-                    <a className="act" href="#" onClick={b2.act(false, 'denied')}>
+                    </button>
+                    <button type="button" className="act" onClick={b2.act('deny')}>
                       deny
-                    </a>
+                    </button>
                   </>
                 )}
               </span>
             </div>
-            <div className="brow-detail">
+            {feedbackFor('b2')}
+            <div className="brow-detail" id="inbox-detail-b2" inert={law === 'column' || !b2.open}>
               <div className="bd-inner">
                 <span className="bd-why">
                   A new audience for the LinkedIn grant, so it asks before it reaches. Every send
                   stays a human click.
                 </span>
-                <span className="bd-msg-meta" title="the narrowest standing rule the click would mint · it lands on the grants ledger with a receipt">
-                  allow + grant remembers: LinkedIn · Hokuei people · through Yurii’s account
+                <span className="bd-msg-meta" title="Proposed scope only · the preview creates no grant">
+                  proposed grant: LinkedIn · Hokuei people · through Yurii’s account
                 </span>
-                <input
-                  className="reply-input"
-                  type="text"
-                  placeholder="or answer Eiri in your words…"
-                  aria-label="reply to Eiri"
-                />
+                <ReplyInput row={b2} placeholder="or answer Eiri in your words…" />
                 <span className="bd-acts">
-                  <a
+                  <button type="button"
                     className="act"
-                    href="#"
-                    title="linkedin grant · yurii's account · scope, budget, expiry"
+                    title="LinkedIn grant · Yurii’s account"
+                    onClick={explain('b2', 'This LinkedIn grant is not included in the preview. No grant was created.')}
                   >
                     the grant
-                  </a>
+                  </button>
                   <a className="act" href="/app/orgs" title="Hokuei · the org dossier">
                     who they are
                   </a>
@@ -873,35 +983,37 @@ function Inbox() {
       {/* prepared work */}
       <Bundle label="prepared work" title="Prepared for you">
         <div className="brows">
-          <div className={rowCls('c1')}>
-            <div className="brow-line" onClick={select('c1')}>
+          <div className={rowCls('c1')} data-inbox-row="c1">
+            <div className="brow-line" onClick={rowSurface(select('c1'))}>
               <span className="dot dot-auto" title="prepared · nothing waits on you"></span>
-              <span
+              <button type="button" {...trigger('c1')}
                 className="claim conf-2"
                 title="brief · compiled for Thursday 10:00, cites every claim under it"
               >
                 Meeting brief: Hokuei pilot call, Thursday 10:00
-              </span>
+              </button>
               <span className="rverbs">
                 <a className="act" href="/app/briefs">
             open brief
           </a>
               </span>
             </div>
+            {feedbackFor('c1')}
             {glanceFor('c1')}
           </div>
-          <div className={rowCls('c2')}>
-            <div className="brow-line" onClick={select('c2')}>
+          <div className={rowCls('c2')} data-inbox-row="c2">
+            <div className="brow-line" onClick={rowSurface(select('c2'))}>
               <span className="dot dot-auto" title="prepared · nothing waits on you"></span>
-              <span className="claim conf-3" title="note · the 03:12 run, one line per receipt">
+              <button type="button" {...trigger('c2')} className="claim conf-3" title="note · the 03:12 run, one line per receipt">
                 Night-shift note: 03:12 run, one line per receipt
-              </span>
+              </button>
               <span className="rverbs">
-                <a className="act" href="#">
+                <button type="button" className="act" aria-expanded={ctx === 'c2'} aria-controls="inbox-context" onClick={openCol('c2')}>
                   read
-                </a>
+                </button>
               </span>
             </div>
+            {feedbackFor('c2')}
             {glanceFor('c2')}
           </div>
         </div>
@@ -921,41 +1033,41 @@ function Inbox() {
         }
       >
         <div className="brows">
-          <div className={rowCls('d1')}>
-            <div className="brow-line" onClick={select('d1')}>
+          <div className={rowCls('d1')} data-inbox-row="d1">
+            <div className="brow-line" onClick={rowSurface(select('d1'))}>
               <span
                 className={dotClass(d1.settled, 'dot-proposed')}
                 title={dotTitle(d1.settled, 'paused · waiting on you')}
               ></span>
-              <span
+              <button type="button" {...trigger('d1')}
                 className={claimClass(d1.settled, 'claim conf-2')}
                 title="paused run · the burst guard stopped it, nothing landed"
               >
                 The burst guard stopped this import before anything landed
-              </span>
-              <span className="rverbs">
+              </button>
+              <span className="rverbs" role="status" aria-atomic="true">
                 {d1.settled ? (
-                  <span className="meta-line">{d1.settled.word} 14:09</span>
+                  <Receipt value={d1.settled} />
                 ) : (
                   <>
-                    <a className="act" href="#">
+                    <button type="button" className="act" aria-expanded={ctx === 'd1'} aria-controls="inbox-context" onClick={openCol('d1')}>
                       review bundle
-                    </a>
-                    <a className="act" href="#" title="verb: resume_run">
+                    </button>
+                    <button type="button" className="act" title="Resume is unavailable in this preview" onClick={explain('d1', 'Resume is unavailable in this preview. The import remains paused.')}>
                       resume
-                    </a>
-                    <a
+                    </button>
+                    <button type="button"
                       className="act"
-                      href="#"
-                      title="verb: cancel_run"
-                      onClick={d1.act(false, 'discarded')}
+                      title="Discard locally · the run is unchanged"
+                      onClick={d1.act('discard')}
                     >
                       discard
-                    </a>
+                    </button>
                   </>
                 )}
               </span>
             </div>
+            {feedbackFor('d1')}
             {glanceFor('d1')}
           </div>
         </div>
@@ -969,9 +1081,15 @@ function Inbox() {
           Your agents handled 14 messages across LINE, email and Slack this week. Two drafts waited
           for you; everything else carries a receipt.
         </span>
-        <a className="act" href="#">
+        <button type="button" className="act" onClick={(e) => {
+          e.preventDefault()
+          markCued(e)
+          setDialAll(true)
+          setRevealWire(true)
+          cue('toggle')
+        }}>
           open receipts
-        </a>
+        </button>
       </div>
 
       {/* DIAL = REVIEW EVERYTHING · the live stream unfolds. one tight
@@ -979,13 +1097,13 @@ function Inbox() {
           a row clicks into the context column (owner 08-15). agent
           events carry the NAME in ink (rule 15: seals are humans only —
           herald was internal vocabulary). */}
-      <section className="wire" aria-label="every surface event">
+      <section className={dialAll ? 'wire revealed' : 'wire'} aria-label="fixture channel receipts" tabIndex={-1} ref={wireRef}>
         <div className="wire-head">
           Everything that crossed a channel today, in order. Reads only; the receipts hold the
           detail.
         </div>
         <div className="thread">
-          <div className={rowCls('w1', 'w-row')} onClick={select('w1')}>
+          <button type="button" className={rowCls('w1', 'w-row')} data-inbox-row="w1" {...trigger('w1')}>
             <span className="w-time">14:05</span>
             <span className="w-chan" title="slack">
               <ChanSlack />
@@ -996,9 +1114,10 @@ function Inbox() {
             <span className="t-msg conf-3">
               Answered #ops: pilot timeline question, cited the scope note.
             </span>
-          </div>
+          </button>
+          {feedbackFor('w1')}
           {wireGlance('w1')}
-          <div className={rowCls('w2', 'w-row')} onClick={select('w2')}>
+          <button type="button" className={rowCls('w2', 'w-row')} data-inbox-row="w2" {...trigger('w2')}>
             <span className="w-time">14:02</span>
             <span className="w-chan" title="linkedin">
               <ChanLinkedin />
@@ -1007,9 +1126,10 @@ function Inbox() {
               y
             </span>
             <span className="t-msg conf-3">DM to Hokuei COO sent · verifying</span>
-          </div>
+          </button>
+          {feedbackFor('w2')}
           {wireGlance('w2')}
-          <div className={rowCls('w3', 'w-row')} onClick={select('w3')}>
+          <button type="button" className={rowCls('w3', 'w-row')} data-inbox-row="w3" {...trigger('w3')}>
             <span className="w-time">11:48</span>
             <span className="w-chan" title="email">
               <ChanMail />
@@ -1020,9 +1140,10 @@ function Inbox() {
             <span className="t-msg conf-3">
               Pilot scope summary delivered · verified in thread · receipted
             </span>
-          </div>
+          </button>
+          {feedbackFor('w3')}
           {wireGlance('w3')}
-          <div className={rowCls('w4', 'w-row')} onClick={select('w4')}>
+          <button type="button" className={rowCls('w4', 'w-row')} data-inbox-row="w4" {...trigger('w4')}>
             <span className="w-time">09:15</span>
             <span className="w-chan" title="LINE">
               <ChanLine />
@@ -1033,7 +1154,8 @@ function Inbox() {
             <span className="t-msg conf-3">
               Inbound from Mika Tanaka · quote request · claim extracted
             </span>
-          </div>
+          </button>
+          {feedbackFor('w4')}
           {wireGlance('w4')}
         </div>
       </section>
@@ -1041,7 +1163,7 @@ function Inbox() {
 
       {/* the context column (owner 08-15, the Slack model): read-only
           detail docks here; the draft rows keep their in-place thread */}
-      <aside className="context" hidden={!ctx} aria-label="the record">
+      <aside className="context" id="inbox-context" hidden={!ctx} aria-label="the record">
         {c && (
           <>
             <div className="ctx-head">
@@ -1050,7 +1172,8 @@ function Inbox() {
                 className="chat-close"
                 aria-label="close the record"
                 title="close · esc"
-                onClick={() => setCtx(null)}
+                ref={closeRef}
+                onClick={closeColumn}
               >
                 ×
               </button>
@@ -1059,6 +1182,12 @@ function Inbox() {
             {c.by && <div className="ctx-by">{c.by}</div>}
             {typeof c.body === 'string' ? <span className="bd-why">{c.body}</span> : c.body}
             <span className="bd-acts">{c.acts}</span>
+            {ctx && feedbackFor(ctx, true)}
+            {ctx === 'a1' && a1.settled && <Receipt value={a1.settled} />}
+            {ctx === 'a2' && a2.settled && <Receipt value={a2.settled} />}
+            {ctx === 'b1' && b1.settled && <Receipt value={b1.settled} />}
+            {ctx === 'b2' && b2.settled && <Receipt value={b2.settled} />}
+            {ctx === 'd1' && d1.settled && <Receipt value={d1.settled} />}
           </>
         )}
       </aside>
