@@ -28,12 +28,15 @@ impl AuthoringStrategyPin {
             super::CampaignArmId::Tournament => 1,
             super::CampaignArmId::StrongCritic => 2,
         });
-        let bytes =
-            serde_json::to_vec(&(&arms, &config.corpus, &config.tournament)).map_err(|_| {
-                super::CampaignError::ReportMismatch {
-                    reason: "campaign configuration cannot be serialized",
-                }
-            })?;
+        let mut tournament = config.tournament;
+        if tournament.uncertainty_tau == 0.0 {
+            tournament.uncertainty_tau = 0.0;
+        }
+        let bytes = serde_json::to_vec(&(&arms, &config.corpus, &tournament)).map_err(|_| {
+            super::CampaignError::ReportMismatch {
+                reason: "campaign configuration cannot be serialized",
+            }
+        })?;
         Ok(Self {
             strategy_id: config.campaign_id.clone(),
             revision: format!("schema-{}", config.schema_version),

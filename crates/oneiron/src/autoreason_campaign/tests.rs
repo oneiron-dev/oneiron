@@ -2286,6 +2286,14 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
         AuthoringStrategyPin::from_campaign(&relabelled).unwrap(),
         pin
     );
+    let mut zero_threshold = test_config();
+    zero_threshold.tournament.uncertainty_tau = 0.0;
+    let zero_pin = AuthoringStrategyPin::from_campaign(&zero_threshold).unwrap();
+    zero_threshold.tournament.uncertainty_tau = -0.0;
+    assert_eq!(
+        AuthoringStrategyPin::from_campaign(&zero_threshold).unwrap(),
+        zero_pin
+    );
     for foreign in [
         AuthoringStrategyPin {
             strategy_id: "unrelated".into(),
@@ -2339,7 +2347,7 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
     );
     // A genuinely different evaluated configuration earns a different shot.
     let mut config = test_config();
-    config.tournament.max_rounds_k = 1;
+    config.tournament.fanout_m = 3;
     let baseline = arm_report(
         &config,
         CampaignExecutableArm::SinglePass,
@@ -2385,7 +2393,7 @@ fn promotion_reports_reject_mixed_or_relabelled_configuration_pins() {
         0.05,
     );
     let mut config = fixture.config.clone();
-    config.tournament.max_rounds_k = 1;
+    config.tournament.fanout_m = 3;
     assert!(
         compare_campaign(
             AttemptId::now(),
