@@ -1183,13 +1183,14 @@ fn bucket_hash_conformance() {
     let key = ConsolidationBucketKey {
         subject,
         predicate_root: "profile".to_owned(),
+        rel: None,
         world: None,
         facet: None,
     };
     // Pinned known-answer vector for the domain-separated hash.
     assert_eq!(
         bytes_to_hex_lower(&key.bucket_hash()),
-        "c096c3dfc3c02e94daa1347a58a7686939930e2e113f4507992f2452ab29d0a7",
+        "d317aabf2d943d106457feac194b64d955b825777bce237ae930232d76b2be6b",
         "bucket hash known-answer vector"
     );
 
@@ -1198,6 +1199,7 @@ fn bucket_hash_conformance() {
         facet: None,
         world: None,
         predicate_root: String::from("profile"),
+        rel: None,
         subject,
     };
     assert_eq!(key.bucket_hash(), rebuilt.bucket_hash());
@@ -2421,4 +2423,51 @@ pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
         }
     }
     Ok(predicates)
+}
+
+#[test]
+fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
+    use super::conflict::deterministic_claim_id;
+    let subject = EntityId::now();
+    let rel_a = EntityId::now();
+    let rel_b = EntityId::now();
+    let a = candidate(subject, "profile.name", "A", None);
+    let b = candidate(subject, "profile.name", "B", None);
+    assert_eq!(plan_candidate_buckets(&[a.clone(), b.clone()])?.len(), 1);
+    assert_eq!(detect_conflicts(&[a.clone(), b.clone()], &[])?.len(), 1);
+    let mut scoped_a = a.clone();
+    scoped_a.candidate = scoped_a.candidate.with_relationship(rel_a);
+    let mut scoped_b = b.clone();
+    scoped_b.candidate = scoped_b.candidate.with_relationship(rel_b);
+    let buckets = plan_candidate_buckets(&[scoped_a.clone(), scoped_b.clone()])?;
+    assert_eq!(buckets.len(), 2);
+    assert_ne!(buckets[0].key.bucket_hash(), buckets[1].key.bucket_hash());
+    assert!(detect_conflicts(&[scoped_a.clone(), scoped_b], &[])?.is_empty());
+    let mut prior = prior_head(
+        subject,
+        "profile.name",
+        "B",
+        ClaimApprovalStatus::Auto,
+        ClaimSource::Observed,
+    );
+    prior.body.rel = Some(rel_b);
+    assert!(detect_conflicts(&[scoped_a.clone()], &[prior.clone()])?.is_empty());
+    prior.body.rel = Some(rel_a);
+    assert_eq!(detect_conflicts(&[scoped_a], &[prior])?.len(), 1);
+    let attempt = crate::attempt_queue::AttemptId::now();
+    let id = |rel| {
+        deterministic_claim_id(
+            attempt,
+            subject,
+            "profile.name",
+            &Value::from("A"),
+            None,
+            None,
+            rel,
+        )
+    };
+    assert_ne!(id(Some(rel_a)), id(Some(rel_b)));
+    assert_ne!(id(None), id(Some(rel_a)));
+    assert_eq!(id(None), id(None));
+    Ok(())
 }

@@ -27,12 +27,16 @@
 //! layer) own that contract; this module only reads the index and cannot
 //! enforce it.
 
+mod assembly;
 mod conflict;
 mod executor;
 mod extracted_people;
 mod gap;
+mod open_conflict;
 mod partition;
 mod provenance;
+pub mod routing;
+pub mod selection;
 mod support;
 mod watermark;
 

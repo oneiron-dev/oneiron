@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use super::conflict::{
-    ConflictIdentity, ConflictSet, candidate_facts, detect_conflicts, deterministic_claim_id,
-};
+use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
 use super::gap::{ReflectionGap, ReflectionGapKind, scan_reflection_gaps, upsert_gap_queue};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
 use super::provenance::{
@@ -62,6 +60,10 @@ enum PartitionRun {
         spent: u64,
     },
     Trapped,
+    Held {
+        candidates: Vec<PromotionCandidate>,
+        spent: u64,
+    },
 }
 
 impl ConsolidationExecutor<'_> {
@@ -153,6 +155,15 @@ impl ConsolidationExecutor<'_> {
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or(0.5) as f32;
             let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
+            let rel = match item.get("rel") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(
+                    value
+                        .as_str()
+                        .and_then(entity_id_from_hex)
+                        .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
+                ),
+            };
             let claim_id = deterministic_claim_id(
                 attempt_id,
                 subject,
@@ -160,6 +171,7 @@ impl ConsolidationExecutor<'_> {
                 &value,
                 partition.world_ref,
                 partition.facet_ref,
+                rel,
             );
             let evidence_turn_refs: Vec<EntityId> = item
                 .get("evidence_turn_refs")
@@ -173,6 +185,9 @@ impl ConsolidationExecutor<'_> {
 
             let mut candidate =
                 ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence);
+            if let Some(rel) = rel {
+                candidate = candidate.with_relationship(rel);
+            }
             if let Some(world) = partition.world_ref {
                 candidate = candidate.with_world(world);
             }
@@ -271,6 +286,13 @@ impl ConsolidationExecutor<'_> {
                 spent: spent.saturating_add(merge_spent),
             }),
             PartitionRun::Trapped => Ok(PartitionRun::Trapped),
+            PartitionRun::Held {
+                candidates,
+                spent: merge_spent,
+            } => Ok(PartitionRun::Held {
+                candidates,
+                spent: spent.saturating_add(merge_spent),
+            }),
         }
     }
 
@@ -286,11 +308,20 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
     ) -> DurableStepResult<PartitionRun> {
-        let conflicts = detect_conflicts(&candidates, &[])?;
+        let assembled = super::assembly::assemble(ctx.vault, candidates, ctx.now_ms)?;
+        let candidates = assembled.candidates;
+        let conflicts = assembled.conflicts;
         if conflicts.is_empty() {
-            return Ok(PartitionRun::Completed {
-                candidates,
-                spent: 0,
+            return Ok(if assembled.held {
+                PartitionRun::Held {
+                    candidates,
+                    spent: 0,
+                }
+            } else {
+                PartitionRun::Completed {
+                    candidates,
+                    spent: 0,
+                }
             });
         }
 
@@ -316,7 +347,22 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
-            let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await?;
+            let outcome = match call_as_step(&step_ctx, self.backend, self.guard, request).await {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    // Budget/consent traps are StepOutcome, not judge outages.
+                    // A failed admitted judge leaves an observable open question.
+                    super::open_conflict::park_open_conflict(
+                        ctx.vault,
+                        self.actor,
+                        step_identity.0,
+                        conflict,
+                        &members,
+                        ctx.now_ms,
+                    )?;
+                    return Err(error);
+                }
+            };
             let response = match outcome {
                 StepOutcome::Finished { response, .. } => {
                     spent = spent.saturating_add(
@@ -368,9 +414,16 @@ impl ConsolidationExecutor<'_> {
             .filter_map(|(index, candidate)| (!dropped.contains(&index)).then_some(candidate))
             .collect();
         surviving.extend(merged);
-        Ok(PartitionRun::Completed {
-            candidates: surviving,
-            spent,
+        Ok(if assembled.held {
+            PartitionRun::Held {
+                candidates: surviving,
+                spent,
+            }
+        } else {
+            PartitionRun::Completed {
+                candidates: surviving,
+                spent,
+            }
         })
     }
 
@@ -383,7 +436,8 @@ impl ConsolidationExecutor<'_> {
         for member in members {
             let facts = candidate_facts(&member.candidate)?;
             lines.push_str(&format!(
-                "- value: {}\n",
+                "- predicate: {} value: {}\n",
+                facts.predicate,
                 serde_json::to_string(&rmpv_to_json(&facts.value)).unwrap_or_default()
             ));
         }
@@ -485,6 +539,8 @@ fn merged_candidate(
         meet = source_meet(meet, member.evidence_meet);
         confidence = confidence.max(0.5);
     }
+    evidence.sort();
+    evidence.dedup();
     let claim_id = deterministic_claim_id(
         attempt_id,
         conflict.identity.subject,
@@ -492,6 +548,7 @@ fn merged_candidate(
         &value,
         conflict.identity.world,
         conflict.identity.facet,
+        conflict.identity.rel,
     );
     let mut candidate = ClaimCandidate::new(
         conflict.identity.predicate.clone(),
@@ -499,6 +556,9 @@ fn merged_candidate(
         value,
         confidence,
     );
+    if let Some(rel) = conflict.identity.rel {
+        candidate = candidate.with_relationship(rel);
+    }
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
@@ -658,6 +718,13 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 self.sink.accept(candidates)?;
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: spent,
+                })
+            }
+            Ok(PartitionRun::Held { candidates, spent }) => {
+                self.sink.accept(candidates)?;
+                let _ = spent;
+                Ok(DreamerAttemptExecution::Park {
+                    reason: "consolidation selection hold".into(),
                 })
             }
             // The step layer already parked the trapped attempt; Park it for resume
