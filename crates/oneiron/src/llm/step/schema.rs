@@ -66,7 +66,7 @@ pub(super) async fn generate(
                 spend.armed = false;
                 return Err(DurableStepError::SpentLlm {
                     source,
-                    usage: spend.usage.clone(),
+                    usage: Box::new(spend.usage.clone()),
                 });
             }
         };

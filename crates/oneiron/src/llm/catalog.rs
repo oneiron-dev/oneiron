@@ -84,7 +84,7 @@ impl LlmCatalogEntry {
             match part {
                 super::ContentPart::ToolCall { .. } => self.require(LlmCapability::ToolCalling)?,
                 super::ContentPart::ToolResult { .. } => {
-                    self.require(LlmCapability::ToolResults)?
+                    self.require(LlmCapability::ToolResults)?;
                 }
                 super::ContentPart::Image { .. } => self.require(LlmCapability::ImageInput)?,
                 super::ContentPart::Reasoning { .. } => self.require(LlmCapability::Reasoning)?,

@@ -6176,6 +6176,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-llm-gemini"
+version = "0.1.0"
+dependencies = [
+ "futures-core",
+ "oneiron",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "oneiron-llm-local"
 version = "0.1.0"
 dependencies = [
@@ -6195,6 +6205,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "oneiron-llm-own-server"
+version = "0.1.0"
+dependencies = [
+ "futures-core",
+ "oneiron",
+ "oneiron-remote",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -6246,6 +6267,7 @@ dependencies = [
 name = "oneiron-remote"
 version = "0.1.0"
 dependencies = [
+ "futures-channel",
  "oneiron",
  "reqwest 0.12.28",
  "serde",

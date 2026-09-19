@@ -55,7 +55,7 @@ fn scrub(key: &str, value: &mut Value) {
             if crate::batch::secret_scan::scan_file_content("provider-export", text.as_bytes())
                 .is_some() =>
         {
-            *value = Value::Null
+            *value = Value::Null;
         }
         Value::Array(values) => values.iter_mut().for_each(|v| scrub("", v)),
         Value::Object(values) => values.iter_mut().for_each(|(k, v)| scrub(k, v)),

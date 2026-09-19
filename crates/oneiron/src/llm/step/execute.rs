@@ -177,7 +177,7 @@ pub async fn call_as_step_with_fallbacks(
     };
     let (generated, failed_usage) = match generated {
         Err(DurableStepError::SpentLlm { source, usage }) => {
-            (Err(DurableStepError::Llm(source)), usage)
+            (Err(DurableStepError::Llm(source)), *usage)
         }
         result => (result, super::LlmUsage::zero()),
     };
@@ -191,7 +191,7 @@ pub async fn call_as_step_with_fallbacks(
             };
             match fallbacks.run(fallback, &request, &error) {
                 Ok(mut response) => {
-                    response.usage = failed_usage.clone();
+                    response.usage = failed_usage;
                     response
                 }
                 Err(error) => {

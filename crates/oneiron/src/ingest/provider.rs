@@ -92,8 +92,7 @@ impl IngestSource for ProviderSource {
                 source_record_id: message
                     .get("id")
                     .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("{}:{index}", self.id())),
+                    .map_or_else(|| format!("{}:{index}", self.id()), str::to_owned),
                 thread_id: root.get("id").and_then(Value::as_str).map(str::to_owned),
                 speaker: Some(if role == "model" { "assistant" } else { role }.into()),
                 occurred_at: None,
@@ -124,8 +123,7 @@ fn blocks_text(value: &Value) -> Option<String> {
                 .get("text")
                 .or_else(|| block.get("thinking"))
                 .and_then(Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or_else(|| block.to_string()),
+                .map_or_else(|| block.to_string(), str::to_owned),
         );
     }
     Some(text.join("\n"))
