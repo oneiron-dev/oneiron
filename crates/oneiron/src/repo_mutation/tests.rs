@@ -2175,7 +2175,11 @@ fn blake3_snapshot_capture_keeps_sha256_history_recoverable() {
     assert_ne!(legacy, hash);
     // Model one genuinely persisted pre-change row: its snapshot bytes are
     // unchanged, but both the oplog reference and key use the old digest.
-    let key = repo_mutation_oplog_key(&repo_mutation_repo_key_hash(&reference), landed.entry.seq);
+    // The mutation door canonicalizes aliases such as macOS /var -> /private/var.
+    let key = repo_mutation_oplog_key(
+        &repo_mutation_repo_key_hash(&landed.entry.repo_ref),
+        landed.entry.seq,
+    );
     let mut txn = vault.store.env.write_txn().unwrap();
     let mut row =
         decode_stored_oplog_entry(&vault.store.vault_meta.get(&txn, &key).unwrap().unwrap())

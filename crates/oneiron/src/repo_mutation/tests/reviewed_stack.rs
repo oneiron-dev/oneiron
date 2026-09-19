@@ -448,7 +448,8 @@ fn stale_later_document_refuses_whole_stack_before_first_effect() {
     let second = commit(&vault, &repo, "second.rs", b"second\n");
     approve(&vault, &first);
     approve(&vault, &second);
-    let scope = super::super::oplog::repo_mutation_repo_key(&repo_ref(&repo));
+    // Edit the canonical document scope captured by the proposal, not a path alias.
+    let scope = super::super::oplog::repo_mutation_repo_key(&RepoRef::parse(&second.repo).unwrap());
     let mut session = vault
         .open_code_document(&scope, "second.rs", "", second.session)
         .unwrap();
