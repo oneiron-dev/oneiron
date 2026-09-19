@@ -59,3 +59,5 @@ pub(crate) use create_validation::{
     settled_task_result_binding, task_human_assignee, task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;
+
+pub(crate) use create_validation::completed_task_at_in_txn;

@@ -23,6 +23,7 @@
 //! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
+mod archive_purge;
 mod booking;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
@@ -46,6 +47,7 @@ mod tests;
 #[cfg(test)]
 mod tests_regressions;
 
+pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use booking::EmergencyInstructionInput;
 pub use chat::{
     ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
