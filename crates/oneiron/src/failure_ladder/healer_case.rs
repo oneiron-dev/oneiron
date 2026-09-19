@@ -18,6 +18,8 @@ pub(super) fn record_in_txn(
     txn: &mut heed::RwTxn<'_>,
     case: &HealerCase,
 ) -> Result<()> {
+    // The lease-fenced failure shares this transaction: invalid context aborts both rows.
+    crate::agent_dispatch::validate_healer_case(case)?;
     let key = key(case);
     if vault.store.vault_meta.get(txn, &key)?.is_some() {
         return Err(Error::CorruptedIndex("duplicate durable healer case"));

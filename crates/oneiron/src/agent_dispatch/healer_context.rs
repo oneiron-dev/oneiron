@@ -3,7 +3,7 @@
 use crate::failure_ladder::{HealerCase, failure_case_ref};
 use crate::{EntityId, Error, Result};
 
-pub(super) fn validate(case: &HealerCase) -> Result<()> {
+pub(crate) fn validate(case: &HealerCase) -> Result<()> {
     if case.case_ref != failure_case_ref(case.failing_attempt_id)
         || case.blocked_reports.len() > 128
     {
