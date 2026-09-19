@@ -29325,7 +29325,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking_anti_abuse/guards.rs",
