@@ -9,6 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
+use crate::secret_custody::validate_replicated_custody_put;
 use crate::store::Store;
 
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
@@ -177,9 +178,7 @@ pub(super) fn apply_ops_with_origin(
                     && allow_reserved_predicate
                     && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                 {
-                    crate::secret_custody::validate_replicated_custody_put(
-                        store, wtxn, &id, &data,
-                    )?;
+                    validate_replicated_custody_put(store, wtxn, &id, &data)?;
                 }
                 if allow_maintenance {
                     store.validate_entity_type(entity_type)?;
