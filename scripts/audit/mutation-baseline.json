@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "runner": "cargo-mutants 25.3.1",
+  "minimum_score": 0.80,
+  "minimum_tested": 1,
+  "scope": ["oneiron", "oneiron-server"],
+  "measured": false,
+  "note": "Initial required floor; replace measured=false with audit evidence after the first real engine run."
+}
