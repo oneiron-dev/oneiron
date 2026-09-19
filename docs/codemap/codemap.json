@@ -729,6 +729,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/anchored_annotation/docx.rs",
+     "purpose": "Native Word anchor adapter; pure span transforms belong to the document organ",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/anchored_annotation/mod.rs",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
@@ -798,29 +808,124 @@
      "notable": [
       "ArtifactPointer",
       "ArtifactPointerChannel",
-      "ArtifactPublishVerbOutcome",
-      "ArtifactPublishVerbRequest",
-      "ArtifactPublishVerbStatus",
       "ArtifactServedFile",
       "ArtifactSnapshotRef",
       "ArtifactSnapshotSelector"
      ],
      "path": "src/artifact_hosting.rs",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots",
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
       "const": 2,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 10,
+      "re-export": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactBirthBody",
+      "ArtifactBirthEnvelope",
+      "ArtifactBirthProjection",
+      "ArtifactPurpose",
+      "ArtifactTrigger"
+     ],
+     "path": "src/artifact_hosting/provenance.rs",
+     "purpose": "One immutable born-from envelope in the claim ledger for either artifact family kind",
+     "surface": {
+      "crate-vis": 5,
       "enum": 3,
-      "fn": 12,
-      "struct": 5
+      "fn": 3,
+      "struct": 2
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/provenance/guard.rs",
+     "purpose": "Birth ledger admission at the shared local and replicated put chokepoint",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/provenance/imports.rs",
+     "purpose": "Input records for existing import doors and attributed producer exports",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/artifact_hosting/provenance/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactPublishVerbOutcome",
+      "ArtifactPublishVerbRequest",
+      "ArtifactPublishVerbStatus"
+     ],
+     "path": "src/artifact_hosting/publish.rs",
+     "purpose": "The one production publish door: OF-327 dispatch and its durable receipts",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/artifact_hosting/publish/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/publish_receipt.rs",
+     "purpose": "Publication receipts co-commit with the pointer, not with a later response write",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/artifact_hosting/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactPinnedVersion"
+     ],
+     "path": "src/artifact_hosting/version.rs",
+     "purpose": "Pinned export identity",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1
+     }
     },
     {
      "bucket": "s",
@@ -2057,7 +2162,7 @@
      "path": "src/batch/lexical_query_hints.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -2269,7 +2374,7 @@
      "path": "src/batch/txn_builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 13,
       "struct": 1
      }
@@ -2281,7 +2386,7 @@
      "path": "src/batch/types.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -2326,7 +2431,8 @@
      "path": "src/blob_artifact/lifecycle.rs",
      "purpose": "Blob artifact delete path: version-chain, head, and asset-ref cleanup",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -2383,8 +2489,8 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
-      "fn": 7,
+      "crate-vis": 11,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -4972,7 +5078,7 @@
      "path": "src/channel_identity/mod.rs",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 9
      }
     },
@@ -5227,9 +5333,36 @@
      "path": "src/channel_identity_provider/gmail.rs",
      "purpose": "Gmail/Workspace read-side adapter for `delegated_grant` rows",
      "surface": {
-      "const": 5,
+      "const": 6,
       "fn": 18,
       "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/gmail/read_scope.rs",
+     "purpose": "MailSend never authorizes an inbox read; the read adapter checks its own scope",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GmailDelegatedSendSink",
+      "GmailSendMessage",
+      "GmailSendWire"
+     ],
+     "path": "src/channel_identity_provider/gmail_send.rs",
+     "purpose": "Gmail send-as: one human-approved immutable message, one attempted provider call",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 4,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -5276,7 +5409,7 @@
      "path": "src/channel_identity_provider/mod.rs",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
-      "mod": 1,
+      "mod": 2,
       "re-export": 5
      }
     },
@@ -5741,6 +5874,16 @@
       "crate-vis": 3,
       "fn": 20,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/as_of.rs",
+     "purpose": "Bitemporal ledger reads under the same authority and admission as lexical reads",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -7764,7 +7907,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/consent/adapters.rs",
@@ -8911,6 +9054,126 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/conversation/mod.rs",
+     "purpose": "Conversation rooms, witnessed messages, and CONV-09 reactions (OF-372, ONE-1991)",
+     "surface": {
+      "crate-vis": 1,
+      "mod": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LiveReaction",
+      "ReactInput",
+      "ReactOutcome",
+      "ReactionBody",
+      "ReactionExternalId",
+      "ReactionGrouping",
+      "ReactionPill",
+      "ReactionSignal",
+      "ReactionSignalKind",
+      "ReactionState",
+      "ReactionsOutbound"
+     ],
+     "path": "src/conversation/reaction/codec.rs",
+     "purpose": "Pinned REACTION body codec and transport types",
+     "surface": {
+      "const": 8,
+      "enum": 3,
+      "fn": 5,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/reaction/lifecycle.rs",
+     "purpose": "Serialized toggle admission and mirrored delivery deduplication",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/reaction/materialize.rs",
+     "purpose": "Shared admission and rebuildable inbox projection across local and replay writes",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/reaction/mod.rs",
+     "purpose": "Reactions: append-only records, message-scoped visibility, and derived projections",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/reaction/outbound.rs",
+     "purpose": "Capability-scoped outbound attempt enqueue; actual sends belong to adapters",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/reaction/projection.rs",
+     "purpose": "One-transaction grouped reads and person-addressed reaction signals",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/reaction/replay.rs",
+     "purpose": "Soft-tombstoned reaction audit recovery across sync observer and full remat",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/conversation/reaction/tests.rs",
+     "purpose": "CONV-09 behavioral acceptance, replay, and batch-read laws",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/visibility.rs",
+     "purpose": "Message visibility shared by reaction writes, reads, and room listing",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CorpusId",
       "CorpusScope"
@@ -9164,6 +9427,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/reaction.rs",
+     "purpose": "Atomic reaction revocation using the existing replicated user-delete tombstone",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -9396,29 +9669,92 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DisclosureScopeAuthorization"
+     ],
+     "path": "src/disclosure/authorization.rs",
+     "purpose": "Exact-action owner intent",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/disclosure/exposure_floor.rs",
+     "purpose": "Monotone record exposure",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DisclosureGeneration",
+      "DisclosureSession"
+     ],
+     "path": "src/disclosure/generation.rs",
+     "purpose": "Live generation barrier",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 8,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 3
+      "crate-vis": 4,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/disclosure/position.rs",
+     "purpose": "Record exposure, source inheritance, and positive invariant proof",
+     "surface": {
+      "const": 3,
+      "crate-vis": 8
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "DisclosureScope",
-      "DisclosureScopeStatus"
+      "ScopeCeiling",
+      "ScopeIdAxis",
+      "ScopeKindAxis",
+      "ScopePosition"
      ],
-     "path": "src/disclosure/scope_codec.rs",
-     "purpose": "DisclosureScope type with canonical msgpack codec and key validation",
+     "path": "src/disclosure/scope.rs",
+     "purpose": "One Scope lattice for disclosure (OF-453/OF-365 ILDF2 steps 9-11)",
      "surface": {
-      "const": 4,
-      "crate-vis": 7,
-      "enum": 1,
-      "fn": 8,
-      "struct": 1
+      "const": 9,
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 13,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/disclosure/test_support.rs",
+     "purpose": "Shared fixtures for Scope admission tests",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -9440,7 +9776,7 @@
      "purpose": "Mode/tier classification and disclosure-claim structural validation",
      "surface": {
       "const": 6,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 3
      }
@@ -9455,8 +9791,8 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 7,
-      "fn": 11,
+      "crate-vis": 9,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -11037,98 +11373,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "Axis",
-      "CellRef",
-      "OfficeFormat",
-      "RangeRef"
-     ],
-     "path": "src/edit_roundtrip/address.rs",
-     "purpose": "Cell addressing, ranges and op validation",
-     "surface": {
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 8,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CrossSheetDep",
-      "SheetSummary",
-      "StructureSummary"
-     ],
-     "path": "src/edit_roundtrip/inspect.rs",
-     "purpose": "Workbook inspect scanners",
-     "surface": {
-      "crate-vis": 4,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "EditManifest",
-      "EditWarning",
-      "MutationMode",
-      "WarningCode"
-     ],
-     "path": "src/edit_roundtrip/manifest.rs",
-     "purpose": "Edit manifest and warnings",
-     "surface": {
-      "const": 1,
-      "enum": 2,
-      "fn": 5,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "re-export": 6
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/edit_roundtrip/opc.rs",
-     "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
-     "surface": {
-      "crate-vis": 13
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/edit_roundtrip/opc/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AnchorEffect",
-      "CellValue",
-      "CellWrite",
-      "EditOp",
-      "StructuralShift"
-     ],
-     "path": "src/edit_roundtrip/ops.rs",
-     "purpose": "Edit operation vocabulary and anchor effects",
-     "surface": {
-      "enum": 3,
-      "fn": 5,
-      "struct": 2
+      "re-export": 3
      }
     },
     {
@@ -11136,44 +11385,30 @@
      "kind": "src",
      "notable": [
       "EditOutcome",
-      "EditProposal",
-      "RecalcStatus"
+      "EditProposal"
      ],
      "path": "src/edit_roundtrip/pipeline.rs",
-     "purpose": "Round-trip pipeline entry",
+     "purpose": "Vault adapter and retained proposal compatibility over the document organ",
      "surface": {
-      "enum": 2,
-      "fn": 3,
+      "enum": 1,
+      "fn": 4,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "AppliedEdit",
-      "EditPlan",
-      "EditSession",
-      "OfficeDoc",
-      "ValidationCheck",
-      "ValidationReport"
+      "DocumentSession",
+      "EditSession"
      ],
      "path": "src/edit_roundtrip/session_validate.rs",
-     "purpose": "Edit session seam and validation",
+     "purpose": "Engine adapter for the storage-independent edit session seam",
      "surface": {
-      "crate-vis": 6,
-      "fn": 2,
-      "struct": 5,
+      "fn": 1,
+      "struct": 1,
       "trait": 1
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/edit_roundtrip/tests.rs",
-     "purpose": "ARTL-3 pipeline tests",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -11249,11 +11484,27 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_settle/tests.rs",
      "purpose": "ARTL-4 settle tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_settle/tests/crash.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_settle/tests/docx.rs",
+     "purpose": "Native Word proposals use the same ledger, byte append and anchor sweep",
      "surface": {}
     },
     {
@@ -11447,7 +11698,7 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 12,
       "struct": 4
      }
@@ -12358,7 +12609,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -12372,7 +12623,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/input.rs",
@@ -14279,7 +14530,7 @@
      "purpose": "Backing refs, selection requests, and engine-issued read handles",
      "surface": {
       "enum": 3,
-      "fn": 21,
+      "fn": 22,
       "struct": 6
      }
     },
@@ -14292,7 +14543,7 @@
      "path": "src/lens/mediation/mediation_frame_read.rs",
      "purpose": "Read phase of the render frame: backing refs and read handles",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 9,
       "struct": 1
      }
@@ -14340,7 +14591,25 @@
      "path": "src/lens/mediation/mod.rs",
      "purpose": "Host mediation — the lens security chokepoint",
      "surface": {
-      "re-export": 4
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LensQuoteRange",
+      "LensQuoteTriple",
+      "LensResolvedSpan",
+      "LensSpanGrain",
+      "LensSpanSelectionRequest"
+     ],
+     "path": "src/lens/mediation/span_handles.rs",
+     "purpose": "Span-grain selection handles over Loro cursors, and the quote pointer triple",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 9,
+      "struct": 5
      }
     },
     {
@@ -14350,7 +14619,24 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 5
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensIntentRegenerator",
+      "LensMountId",
+      "LensMountRegistry"
+     ],
+     "path": "src/lens/mounts.rs",
+     "purpose": "Pack-aware lens mounts and regeneration from vault-owned intent records",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -14410,6 +14696,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/mounts.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -14437,11 +14731,27 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/lens/tests/span_handles.rs",
+     "purpose": "Span-grain selection handles and quote triples (OF-248 steps 2-3)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/lens/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the lens behaviour tests",
      "surface": {
       "crate-vis": 52
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/vault_lens.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -14459,6 +14769,23 @@
      "purpose": "Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VaultLensAction",
+      "VaultLensProjection",
+      "VaultLensRequest"
+     ],
+     "path": "src/lens/vault_lens.rs",
+     "purpose": "Default vault browsing projection over actor-scoped, bounded engine reads",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -14495,7 +14822,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 159,
+      "mod": 160,
       "re-export": 71
      }
     },
@@ -14627,7 +14954,7 @@
       "const": 13,
       "enum": 5,
       "fn": 16,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -14640,6 +14967,32 @@
      "surface": {
       "crate-vis": 18
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinkedInContainerCommandRuntime",
+      "LinkedInContainerRuntime",
+      "LinkedInContainerSpec",
+      "LinkedInRemoteLogin",
+      "ProductionLinkedInSandboxHost"
+     ],
+     "path": "src/linkedin_connector/sandbox_host.rs",
+     "purpose": "Vault-scoped container host for LinkedIn seats",
+     "surface": {
+      "fn": 6,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/linkedin_connector/sandbox_host/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -14660,6 +15013,25 @@
       "enum": 1,
       "fn": 19,
       "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinkedInConnectionState",
+      "LinkedInMcpConnectRequest",
+      "LinkedInMcpConnectTransport",
+      "LinkedInMcpVerifiedConnectSink",
+      "LinkedInVerifiedConnectPlan"
+     ],
+     "path": "src/linkedin_connector/verified_connect.rs",
+     "purpose": "Connection requests: observe, durably claim, send once, then observe again",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -15292,6 +15664,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArtifactBirthView"
+     ],
+     "path": "src/memory/artifact_birth.rs",
+     "purpose": "One ledger projection for task/run/skill output lists and artifact born-from views",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/artifact_publish.rs",
+     "purpose": "Owner-granted, per-artifact outbound publish authority",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EmergencyInstructionInput"
      ],
      "path": "src/memory/booking.rs",
@@ -15443,12 +15839,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/gmail.rs",
+     "purpose": "Human per-message approval for delegated Gmail sends",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 6,
-      "mod": 1,
-      "re-export": 12
+      "mod": 2,
+      "re-export": 15
      }
     },
     {
@@ -15538,6 +15944,20 @@
      "surface": {
       "crate-vis": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactToMessageInput",
+      "ReactionReceipt"
+     ],
+     "path": "src/memory/react.rs",
+     "purpose": "CONV-09 reaction facade verbs (OF-372, ONE-1991)",
+     "surface": {
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -15789,6 +16209,188 @@
      "path": "src/memory/tests_regressions/retrieval_quality.rs",
      "purpose": "Retrieval-quality facade metadata regressions",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContextPackBuilder",
+      "QueryBuilder"
+     ],
+     "path": "src/memory/verb_table/builders.rs",
+     "purpose": "Builder plans accumulate locally; run crosses one facade boundary",
+     "surface": {
+      "fn": 17,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/verb_table/dispatch.rs",
+     "purpose": "Typed adapters for signatures that borrow or take more than one argument",
+     "surface": {
+      "crate-vis": 63
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignArchiveRequest",
+      "CampaignCreateRequest",
+      "CampaignDefinitionDto",
+      "CampaignMembersRequest",
+      "CampaignRecordDto",
+      "CampaignRefRequest",
+      "CampaignUpdateRequest",
+      "MembershipPageDto",
+      "MembershipRowDto",
+      "QueryEvalDto",
+      "QueryFilterDto",
+      "QueryLifecycleDto",
+      "QueryMatcherDto",
+      "QueryScopeDto",
+      "RecordLookup",
+      "SavedQueryArchiveRequest",
+      "SavedQueryCreateRequest",
+      "SavedQueryDefinitionDto",
+      "SavedQueryMembersRequest",
+      "SavedQueryRecordDto",
+      "SavedQueryRefRequest",
+      "SavedQueryUpdateRequest"
+     ],
+     "path": "src/memory/verb_table/domains.rs",
+     "purpose": "Typed wire adapters for campaign and saved-query Memory operations",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "struct": 19
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AppendBlobVersionRequest",
+      "ApproveGmailMessageRequest",
+      "ArtifactsBornFromRequest",
+      "AskRequest",
+      "AuthorTakeRequest",
+      "BlobBytesResponse",
+      "CalendarFreebusyRequest",
+      "ClaimRefRequest",
+      "CommitRequest",
+      "EmergencyBatchPlanDto",
+      "EntityRefRequest",
+      "ExecuteRequest",
+      "ExecuteResponse",
+      "ForgetSelector",
+      "GrantArtifactPublishRequest",
+      "GrantArtifactPublishResponse",
+      "HydrateRequest",
+      "JobRefRequest",
+      "LimitRequest",
+      "MirroredReactionRequest",
+      "NeighborsRequest",
+      "PlanEmergencyRescheduleRequest",
+      "QueryRequest",
+      "ReactionPillsRequest",
+      "ReactionsSinceRequest",
+      "ReadBlobVersionRequest",
+      "RecallRequestDto",
+      "RecallViewRequest",
+      "SafeDeleteRequest",
+      "ScheduleOutboundContextDto",
+      "ScheduleOutboundRequest",
+      "SearchHit",
+      "SearchRequest",
+      "UnitResponse"
+     ],
+     "path": "src/memory/verb_table/dto.rs",
+     "purpose": "Wire DTO adapters for the facade verb table: each adapter packs one `Memory` signature into the table's…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 34
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExpressionPreferenceReceiptDto",
+      "ExpressionPreferenceViewDto",
+      "ExpressionPreferencesRequest",
+      "ExpressionValueDto",
+      "SetExpressionPreferenceRequest"
+     ],
+     "path": "src/memory/verb_table/expression.rs",
+     "purpose": "Wire adapters for the existing typed expression-preference doors",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FacadeClient",
+      "FacadeRequest",
+      "FacadeResponse",
+      "FacadeScope",
+      "FacadeTransport",
+      "FacadeVerb"
+     ],
+     "path": "src/memory/verb_table/mod.rs",
+     "purpose": "One typed verb table for embedded SDK, HTTP, WS and language bindings",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 15,
+      "re-export": 5,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/verb_table/table.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/verb_table/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/verb_table/validate.rs",
+     "purpose": "Shared pre-dispatch caps for every transport, including embedded calls",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/verb_table/verbs.rs",
+     "purpose": "Engine-side remember / forget / ask / search / execute verbs",
+     "surface": {
+      "fn": 5
+     }
     },
     {
      "bucket": "m",
@@ -16426,6 +17028,7 @@
       "OutboundDeliverySemanticsKind",
       "OutboundInterruptionClass",
       "OutboundPermissionState",
+      "OutboundReactionVocabulary",
       "OutboundRetryClass",
       "OutboundVerbContract",
       "UnsupportedOutboundCapability"
@@ -16435,7 +17038,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 1,
-      "enum": 4,
+      "enum": 5,
       "fn": 10,
       "struct": 5
      }
@@ -16497,7 +17100,7 @@
      "path": "src/outbound/dispatch_pipeline/pipeline.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -16679,6 +17282,22 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/gmail_send.rs",
+     "purpose": "Gmail delegated sends require both live MailSend custody and one human approval",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/linkedin_connect.rs",
+     "purpose": "Verify-after-send and fail-closed retry tests for connection requests",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -16708,6 +17327,14 @@
      "notable": [],
      "path": "src/outbound/tests/quiet_window.rs",
      "purpose": "Quiet-window delivery, timezone fields, host refresh, human-explicit-instant override and APNS mapping",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/reaction_capabilities.rs",
+     "purpose": "Reaction discovery must distinguish provider support from message support",
      "surface": {}
     },
     {
@@ -18725,12 +19352,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ArtifactFamilyKind"
+     ],
+     "path": "src/registry/family.rs",
+     "purpose": "Shared deliverable-family identity, independent of storage body or export format",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/registry/mod.rs",
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
      "surface": {
       "crate-vis": 3,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -18772,7 +19412,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 42
+      "const": 43
      }
     },
     {
@@ -20580,6 +21220,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/artifact.rs",
+     "purpose": "The optimizer's candidate is a Proposed artifact beside the live skill",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SkillEditDraft",
       "SkillOptimizeAuthor",
@@ -21416,7 +22066,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -21639,7 +22289,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/surface_event/tests.rs",
@@ -24813,18 +25463,18 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 2,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots"
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
      "files": 31,
@@ -24939,7 +25589,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 9,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -24960,7 +25610,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -25134,6 +25784,13 @@
      "layout": "dir",
      "purpose": "Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead…"
     },
+    "conversation": {
+     "files": 10,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Conversation rooms, witnessed messages, and CONV-09 reactions (OF-372, ONE-1991)"
+    },
     "corpus": {
      "files": 2,
      "impl_vault": false,
@@ -25163,7 +25820,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25177,7 +25834,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 5,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25261,14 +25918,14 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 10,
+     "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 7,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25443,8 +26100,8 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 32,
-     "impl_vault": false,
+     "files": 38,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
@@ -25464,7 +26121,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 5,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25499,7 +26156,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 49,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25527,7 +26184,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 31,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25653,7 +26310,7 @@
      "purpose": "Canonical recovery artifact loader shell"
     },
     "registry": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25807,7 +26464,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26005,8 +26662,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1487,
-   "test_files": 532
+   "source_files": 1527,
+   "test_files": 543
   },
   "oneiron-bench": {
    "files": [
@@ -26848,6 +27505,519 @@
    "source_files": 70,
    "test_files": 12
   },
+  "oneiron-docedit": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/docx_corpus.rs",
+     "purpose": "Deterministic native-only DOCX corpus measurement and paragraph-join oracle input",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/docx_tracked_change.rs",
+     "purpose": "Deterministic native-docx oracle input: tracked changes + span comment",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/retained_corpus.rs",
+     "purpose": "Check retained OPC identity against a hash-pinned external corpus directory",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalcReport",
+      "CalcSetup",
+      "CalcValue",
+      "EngineId",
+      "RecalcEngine",
+      "RouteDecision"
+     ],
+     "path": "src/calc.rs",
+     "purpose": "Storage-independent recalc seam for the xlsx formula engine",
+     "surface": {
+      "enum": 3,
+      "fn": 6,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/docx/anchor.rs",
+     "purpose": "Pure final-view Word character-span replay, without any storage dependency",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommentWrite"
+     ],
+     "path": "src/docx/comments.rs",
+     "purpose": "Span-anchored docx comments: ranges in `word/document.xml` plus rows",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/docx/handoff.rs",
+     "purpose": "Lower native Word edits into the shared checked document settlement input",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocxStructure"
+     ],
+     "path": "src/docx/inspect.rs",
+     "purpose": "docx inspect-first: paragraph census plus revision and comment ids",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/docx/join.rs",
+     "purpose": "Track a paragraph join as a deleted paragraph mark, preserving both bodies",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocxLinkCheck",
+      "DocxLinkReport"
+     ],
+     "path": "src/docx/linker.rs",
+     "purpose": "docx linker: cross-part reference checks after a native edit",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/docx/mod.rs",
+     "purpose": "Native docx editing: tracked-change part writer plus span comments",
+     "surface": {
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocxAnchorEffect",
+      "DocxOp",
+      "DocxSpan"
+     ],
+     "path": "src/docx/ops.rs",
+     "purpose": "Native docx edit operations and span locators",
+     "surface": {
+      "enum": 2,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DocxManifest",
+      "DocxOutcome",
+      "DocxPlan",
+      "DocxProposal",
+      "DocxValidationCheck",
+      "DocxValidationReport"
+     ],
+     "path": "src/docx/pipeline.rs",
+     "purpose": "Native docx round trip: inspect, tracked-change write, link, prepare",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/docx/retained_run.rs",
+     "purpose": "Re-emit the permitted simple run without dropping unknown attributes",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/docx/revision.rs",
+     "purpose": "Native carrier serialization from the forked Stemma typed revision model",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DocxProtection",
+      "DocxSettings"
+     ],
+     "path": "src/docx/settings.rs",
+     "purpose": "Inspect Word settings without rewriting them; enforced protection is a hard edit refusal",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/docx/settings/tests.rs",
+     "purpose": "Protection refuses at the package door; settings bytes never change",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocxEngineStamp"
+     ],
+     "path": "src/docx/stamp.rs",
+     "purpose": "Stable engine and version stamps for native docx revisions",
+     "surface": {
+      "const": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/docx/tests.rs",
+     "purpose": "Native docx writer tests: observable XML, guards, and determinism",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RevisionMark",
+      "TextWrite"
+     ],
+     "path": "src/docx/writer.rs",
+     "purpose": "Native docx part writer: `w:ins`/`w:del` revision marks",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Error"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Storage-independent document editing",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "mod": 4,
+      "re-export": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OpcPackage",
+      "OpcPart",
+      "PartClass"
+     ],
+     "path": "src/opc/archive.rs",
+     "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/opc/archive/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/opc/mod.rs",
+     "purpose": "OPC inspection and retained editing; no-op writes preserve the entire archive",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Limits",
+      "Package"
+     ],
+     "path": "src/opc/retained.rs",
+     "purpose": "Retained ZIP records: untouched local records and central metadata are copied verbatim",
+     "surface": {
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/opc/retained/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PreparationReport",
+      "PrepareInput",
+      "PreparedEdit"
+     ],
+     "path": "src/prepared.rs",
+     "purpose": "Checked handoff commitment for retained bytes, base, writes, and validation report",
+     "surface": {
+      "fn": 3,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Axis",
+      "CellRef",
+      "OfficeFormat",
+      "RangeRef"
+     ],
+     "path": "src/roundtrip/address.rs",
+     "purpose": "Cell addressing, ranges and op validation",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 8,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CrossSheetDep",
+      "SheetSummary",
+      "StructureSummary"
+     ],
+     "path": "src/roundtrip/inspect.rs",
+     "purpose": "Workbook inspect scanners",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EditManifest",
+      "EditWarning",
+      "MutationMode",
+      "WarningCode"
+     ],
+     "path": "src/roundtrip/manifest.rs",
+     "purpose": "Edit manifest and warnings",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/roundtrip/mod.rs",
+     "purpose": "ARTL inspect/edit/recalculate/validate stages, independent of storage and authority",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnchorEffect",
+      "CellValue",
+      "CellWrite",
+      "EditOp",
+      "StructuralShift"
+     ],
+     "path": "src/roundtrip/ops.rs",
+     "purpose": "Edit operation vocabulary and anchor effects",
+     "surface": {
+      "enum": 3,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EditOutcome",
+      "EditProposal",
+      "RecalcStatus"
+     ],
+     "path": "src/roundtrip/pipeline.rs",
+     "purpose": "Round-trip pipeline entry",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AppliedEdit",
+      "EditPlan",
+      "EditSession",
+      "OfficeDoc",
+      "ValidationCheck",
+      "ValidationReport"
+     ],
+     "path": "src/roundtrip/session_validate.rs",
+     "purpose": "Edit session seam and validation",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocumentHead",
+      "DocumentStore"
+     ],
+     "path": "src/roundtrip/store.rs",
+     "purpose": "Narrow storage interface: the document organ cannot open a vault or write a ledger",
+     "surface": {
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/roundtrip/tests.rs",
+     "purpose": "ARTL-3 pipeline tests",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "calc": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Storage-independent recalc seam for the xlsx formula engine"
+    },
+    "docx": {
+     "files": 16,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Native docx editing: tracked-change part writer plus span comments"
+    },
+    "opc": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "OPC inspection and retained editing; no-op writes preserve the entire archive"
+    },
+    "prepared": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Checked handoff commitment for retained bytes, base, writes, and validation report"
+    },
+    "roundtrip": {
+     "files": 9,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "ARTL inspect/edit/recalculate/validate stages, independent of storage and authority"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Storage-independent document editing",
+   "source_files": 31,
+   "test_files": 5
+  },
   "oneiron-driver": {
    "files": [
     {
@@ -27661,18 +28831,18 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 7,
+      "fn": 9,
       "struct": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/facade/convert.rs",
-     "purpose": "DTO to/from engine converters plus the forget paging helper",
+     "purpose": "DTO to/from engine converters",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
     },
     {
@@ -27981,7 +29151,7 @@
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
       "const": 3,
-      "fn": 15,
+      "fn": 24,
       "re-export": 2,
       "struct": 2
      }
@@ -29386,7 +30556,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -29457,6 +30627,16 @@
      "purpose": "Shared query/body param extractors, hex-id parsing, and small scalar helpers",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/reactions.rs",
+     "purpose": "CONV-09 reaction routes (OF-372, ONE-1991)",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -29602,6 +30782,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/disclosure_scope_fixture.rs",
+     "purpose": "Shared fixtures for Scope admission tests",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -29666,6 +30856,14 @@
      "surface": {
       "crate-vis": 64
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/reactions.rs",
+     "purpose": "Reaction HTTP toggle/list/inbox projection and context admission",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -30290,7 +31488,7 @@
      "path": "src/livequery/error.rs",
      "purpose": "The HTTP facade error body on app frames",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -30326,9 +31524,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/reads.rs",
-     "purpose": "The eight existing WS read verbs call the engine facade, without write aliases",
+     "purpose": "WS names and typed dispatch project the engine table",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -31269,7 +32467,7 @@
    ],
    "modules": {
     "api": {
-     "files": 126,
+     "files": 129,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -31418,8 +32616,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 185,
-   "test_files": 71
+   "source_files": 186,
+   "test_files": 73
   },
   "oneiron-uniffi": {
    "files": [
@@ -31690,6 +32888,272 @@
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
    "source_files": 8,
    "test_files": 1
+  },
+  "oneiron-xlsx-formula": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/recalculate_native.rs",
+     "purpose": "Emit retained native XLSX bytes for one-time application-oracle checks",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/measure.rs",
+     "purpose": "Step-19 measurement executable: unchanged formualizer over `cases.json`",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cache.rs",
+     "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context.rs",
+     "purpose": "Keep ambient context out of the deterministic production recalc path",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FormualizerEngine"
+     ],
+     "path": "src/engine.rs",
+     "purpose": "Storage-independent recalc seam over the pinned upstream engine",
+     "surface": {
+      "const": 6,
+      "crate-vis": 3,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FormulaError"
+     ],
+     "path": "src/error.rs",
+     "purpose": "Typed failures for the formula crate",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "In-process xlsx formula evaluation behind the docedit recalc seam",
+     "surface": {
+      "mod": 7,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_parity.rs",
+     "purpose": "Workbook-local Excel-for-Mac function availability, never global overrides",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CaseResult",
+      "CorpusCase",
+      "CorpusReport",
+      "MeasureOptions"
+     ],
+     "path": "src/measure.rs",
+     "purpose": "Step-19 corpus runner: honest per-case results over the pinned 834 cases",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/routing.rs",
+     "purpose": "External-link routing (step 25): linked workbooks stay off this engine",
+     "surface": {
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InProcessSession"
+     ],
+     "path": "src/session.rs",
+     "purpose": "Explicit opt-in recalc adapter for the actual document round-trip seam",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WorkbookRecalc"
+     ],
+     "path": "src/workbook.rs",
+     "purpose": "Load a bounded XLSX graph and update only formula XML and cached values",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlfn.rs",
+     "purpose": "`_xlfn.` storage-prefix mapping for post-2007 functions (step 25)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xml.rs",
+     "purpose": "Namespace-aware XML offsets for narrow cache edits; never a reserializer",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/corpus.rs",
+     "purpose": "Corpus honesty: every case emits exactly one row, probes never score",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/session.rs",
+     "purpose": "Actual XLSX in/out tests through the production EditSession pipeline",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "cache": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML"
+    },
+    "context": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Keep ambient context out of the deterministic production recalc path"
+    },
+    "engine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Storage-independent recalc seam over the pinned upstream engine"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Typed failures for the formula crate"
+    },
+    "mac_parity": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Workbook-local Excel-for-Mac function availability, never global overrides"
+    },
+    "measure": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Step-19 corpus runner: honest per-case results over the pinned 834 cases"
+    },
+    "routing": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "External-link routing (step 25): linked workbooks stay off this engine"
+    },
+    "session": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Explicit opt-in recalc adapter for the actual document round-trip seam"
+    },
+    "workbook": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Load a bounded XLSX graph and update only formula XML and cached values"
+    },
+    "xlfn": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "`_xlfn.` storage-prefix mapping for post-2007 functions (step 25)"
+    },
+    "xml": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Namespace-aware XML offsets for narrow cache edits; never a reserializer"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "In-process xlsx formula evaluation behind the docedit recalc seam",
+   "source_files": 14,
+   "test_files": 2
   }
  }
 }
