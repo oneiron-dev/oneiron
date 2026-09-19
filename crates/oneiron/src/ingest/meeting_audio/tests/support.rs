@@ -7,6 +7,7 @@ use super::super::*;
 pub(super) enum Fault {
     None,
     EmptyDecode,
+    BackendUnavailable,
     NoSpeech,
     EmptyAsr,
     WrongRoute,
@@ -132,6 +133,16 @@ fn provenance(id: &str, model: &str, hash: &str) -> InferenceProvenance {
 }
 
 impl MeetingAudioHost for FixtureHost {
+    fn preflight_artifact(&mut self) -> AudioResult<()> {
+        if self.fault == Fault::BackendUnavailable {
+            Err(AudioError::Host {
+                stage: "capabilities".into(),
+                code: "ArtifactBackendUnavailable".into(),
+            })
+        } else {
+            Ok(())
+        }
+    }
     fn decode(&mut self, _file: &AudioFile<'_>) -> AudioResult<Pcm16> {
         self.requests.push(HostRequest::Decode);
         let count = if self.fault == Fault::EmptyDecode {

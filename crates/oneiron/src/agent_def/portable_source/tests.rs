@@ -145,3 +145,145 @@ fn imported_definition_does_not_mint_a_local_birth_source() -> Result<()> {
     assert!(vault.get_entity_type(&birth_source_id(&id)?)?.is_none());
     Ok(())
 }
+
+fn captured_root() -> Result<(tempfile::TempDir, crate::Vault, EntityId, EntityId, Vec<u8>)> {
+    let (dir, vault) = open();
+    let child = EntityId::now();
+    let at = crate::temporal::TimeRange { start: 10, end: 10 };
+    vault.put_agent_definition(&child, &definition("birth.custody", None), at, 10)?;
+    let asset = birth_source_id(&child)?;
+    let bytes = vault.get_raw(&asset)?.unwrap();
+    Ok((
+        dir,
+        vault,
+        child,
+        asset,
+        bytes[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+    ))
+}
+fn tombstone(reason: crate::deletion::TombstoneReason) -> Vec<u8> {
+    crate::deletion::TombstoneValueV2 {
+        reason,
+        deleted_at: 20,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode()
+    .to_vec()
+}
+#[test]
+fn agent_source_erasure_covers_pending_replay_and_retired_targets() -> Result<()> {
+    use crate::deletion::{DeleteReason, TombstoneReason};
+    for reason in [DeleteReason::UserDelete, DeleteReason::GdprDelete] {
+        let (_dir, vault, child, asset, _) = captured_root()?;
+        let outcome = vault.delete_entity_with_reason(&child, reason)?;
+        assert!(vault.get_raw(&asset)?.is_none());
+        if let Some(receipt) = outcome.receipt_id {
+            let raw = vault.get_raw(&receipt)?.unwrap();
+            let receipt = crate::deletion::decode_redaction_audit_receipt(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            assert!(receipt.scope.entity_ids.contains(&asset.to_hex()));
+        }
+    }
+    let (_dir, _source, child, asset, body) = captured_root()?;
+    let at = crate::temporal::TimeRange { start: 10, end: 10 };
+    for reason in [TombstoneReason::UserDelete, TombstoneReason::GdprDelete] {
+        for carrier_first in [true, false] {
+            let (_dir, vault) = open();
+            if carrier_first {
+                vault
+                    .batch()
+                    .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, &body)
+                    .commit()?;
+            }
+            vault.apply_replayed_tombstone(&child, &tombstone(reason))?;
+            assert!(vault.get_raw(&asset)?.is_none());
+            assert!(
+                vault
+                    .batch()
+                    .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, &body)
+                    .commit()
+                    .is_err()
+            );
+        }
+    }
+    let (_dir, vault) = open();
+    vault.put_entity(&asset, ENTITY_TYPE_ASSET, at, 10, &body)?;
+    vault.put_entity(
+        &child,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        10,
+        b"unrelated person",
+    )?;
+    assert!(vault.get_raw(&asset)?.is_none());
+    assert_eq!(
+        vault.get_entity_type(&child)?,
+        Some(crate::registry::ENTITY_TYPE_PERSON)
+    );
+    Ok(())
+}
+#[cfg(feature = "sync")]
+#[test]
+fn agent_historical_source_erases_without_widening_from_a_forged_key() -> Result<()> {
+    let (_dir, _source, child, asset, body) = captured_root()?;
+    let (_dir, vault) = open();
+    vault.apply_replayed_tombstone(
+        &child,
+        &tombstone(crate::deletion::TombstoneReason::GdprDelete),
+    )?;
+    let label = crate::deletion::window_label_from_timestamp(1_771_027_200);
+    let key = crate::sync::types::WindowKey::new(&label);
+    let doc = crate::sync::schema::create_window_doc("birth-source-fixture", &key);
+    let mut blob = vec![ENTITY_TYPE_ASSET];
+    for stamp in [1_u64, 1, 1] {
+        blob.extend_from_slice(&stamp.to_be_bytes());
+    }
+    blob.extend_from_slice(&body);
+    crate::sync::loro_support::map_insert_bytes(&doc.get_map("entities"), &asset.to_hex(), &blob)?;
+    let mut malformed = blob.clone();
+    malformed.truncate(malformed.len() - 10);
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("entities"),
+        "malformed-source",
+        &malformed,
+    )?;
+    let unrelated = EntityId::now();
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("entities"),
+        &unrelated.to_hex(),
+        &blob,
+    )?;
+    // A forged key may contain doomed bytes, but does not confer erasure of
+    // other structures under that unrelated identity.
+    let other = EntityId::now();
+    let edge_key =
+        crate::sync::bridge::format_edge_key(&unrelated, crate::edge::EdgeKind::Mentions, &other);
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("edges"),
+        &edge_key,
+        b"unrelated-edge",
+    )?;
+    doc.commit();
+    let snapshot = crate::sync::loro_support::export_snapshot(&doc)?;
+    vault.with_write_txn(|txn| {
+        vault
+            .store
+            .sync_state
+            .put(txn, &format!("d:w:{label}"), &snapshot)?;
+        Ok(())
+    })?;
+    crate::sweep::run_hard_erase_sweep(&vault)?;
+    let txn = vault.store.env.read_txn()?;
+    let compacted = vault
+        .store
+        .sync_state
+        .get(&txn, &format!("d:w:{label}"))?
+        .unwrap();
+    let doc = crate::sync::loro_support::doc_from_snapshot(&compacted)?;
+    assert!(doc.get_map("entities").get(&asset.to_hex()).is_none());
+    assert!(doc.get_map("entities").get("malformed-source").is_none());
+    assert!(doc.get_map("entities").get(&unrelated.to_hex()).is_none());
+    assert!(doc.get_map("edges").get(&edge_key).is_some());
+    Ok(())
+}

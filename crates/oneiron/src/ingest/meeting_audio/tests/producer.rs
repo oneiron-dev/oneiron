@@ -299,3 +299,12 @@ fn pending_import_can_retry_the_same_artifact_without_another_inference_run() {
     assert_eq!(authorizer.requests[0], authorizer.requests[1]);
     assert_eq!(host.requests, calls);
 }
+
+#[test]
+fn incomplete_native_backend_refuses_before_the_decode_port() {
+    let mut host = FixtureHost::small(Fault::BackendUnavailable);
+    host.duration_ms = 0; // Decode would produce InvalidAudio if reached first.
+    assert!(
+        matches!(produce_meeting_transcript(&file(),&options(),&mut host),Err(AudioError::Host {stage,code}) if stage=="capabilities" && code=="ArtifactBackendUnavailable")
+    );
+}
