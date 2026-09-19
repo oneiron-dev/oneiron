@@ -7,7 +7,6 @@ use oneiron::{
     LlmRequest, LlmStream, LlmStreamResult, ModelId,
 };
 use std::collections::BTreeMap;
-#[cfg(test)]
 use stream::GeminiAccumulator;
 pub use transport::*;
 use wire::{build_request, classify_status, parse_response};
