@@ -110,50 +110,28 @@ pub(super) fn run(
         load_row(vault, THRESHOLDS_KEY, include_str!("retune_defaults.json"))?;
     thresholds.validate()?;
     let key = [BASELINE_PREFIX, evaluation.artifact.as_bytes()].concat();
-    let txn = vault.store.env.read_txn()?;
-    let prior: Option<Baseline> = vault
-        .store
-        .vault_meta
-        .get(&txn, &key)?
-        .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
-        .transpose()?;
-    drop(txn);
-    if prior
-        .as_ref()
-        .is_some_and(|p| p.version > evaluation.version || p.observed_at > now)
-    {
-        return Ok(None);
-    }
-    let proposal = if let Some(prior) = prior {
-        let backbone_changed = prior.backbone != current.backbone;
-        let regressed = prior.score - evaluation.score > thresholds.score_regression;
-        if backbone_changed || regressed {
-            let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":regressed,"targets":["prompts","weights","manifest_thresholds"],"previous_score":prior.score,"score":evaluation.score});
-            Some(proposals::emit(
-                vault,
-                attempt.status.attempt.id,
-                HARNESS_FACET,
-                evaluation.artifact,
-                "dreamer.harness.retune_proposal",
-                &value,
-                now,
-            )?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let baseline = Baseline {
-        version: evaluation.version,
-        score: evaluation.score,
-        backbone: current.backbone,
-        observed_at: now,
-    };
-    let bytes = serde_json::to_vec(&baseline).map_err(|_| invalid())?;
+    // Resolve the bound envelope before taking the writer. Baseline comparison,
+    // proposal, receipt and new baseline then commit as one serializable decision.
+    let envelope = vault.dreamer_proposal_envelope(HARNESS_FACET, attempt.status.attempt.id)?;
     vault.with_write_txn(|txn| {
-        vault.store.vault_meta.put(txn, &key, &bytes)?;
-        Ok(())
-    })?;
-    Ok(proposal)
+        let prior: Option<Baseline> = vault.store.vault_meta.get(&*txn, &key)?
+            .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
+            .transpose()?;
+        if prior.as_ref().is_some_and(|p| p.version > evaluation.version || p.observed_at > now) {
+            return Ok(None);
+        }
+        let proposal = if let Some(prior) = prior {
+            let backbone_changed = prior.backbone != current.backbone;
+            let regressed = prior.score - evaluation.score > thresholds.score_regression;
+            if backbone_changed || regressed {
+                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":regressed,"targets":["prompts","weights","manifest_thresholds"],"previous_score":prior.score,"score":evaluation.score});
+                Some(proposals::emit_in_txn(vault, txn, evaluation.artifact,
+                    "dreamer.harness.retune_proposal", &value, &envelope, now)?)
+            } else { None }
+        } else { None };
+        let baseline = Baseline { version: evaluation.version, score: evaluation.score,
+            backbone: current.backbone, observed_at: now };
+        vault.store.vault_meta.put(txn, &key, &serde_json::to_vec(&baseline).map_err(|_| invalid())?)?;
+        Ok(proposal)
+    })
 }

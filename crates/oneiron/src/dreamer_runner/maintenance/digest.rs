@@ -167,7 +167,8 @@ impl Vault {
                 }
             }
             let is_urgent = !due && breakthrough;
-            let identity = serde_json::to_vec(&(now, &groups, is_urgent)).map_err(|_| invalid())?;
+            let identity =
+                serde_json::to_vec(&(now, &groups, is_urgent, &rendered)).map_err(|_| invalid())?;
             let digest = ProactivityDigest {
                 id: *blake3::hash(&identity).as_bytes(),
                 created_at: now,
@@ -196,9 +197,13 @@ impl Vault {
             .map(|bytes| {
                 let digest: ProactivityDigest =
                     serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-                let identity =
-                    serde_json::to_vec(&(digest.created_at, &digest.groups, digest.urgent))
-                        .map_err(|_| invalid())?;
+                let identity = serde_json::to_vec(&(
+                    digest.created_at,
+                    &digest.groups,
+                    digest.urgent,
+                    &digest.rendered,
+                ))
+                .map_err(|_| invalid())?;
                 if digest.id != id || blake3::hash(&identity).as_bytes() != &id {
                     return Err(invalid());
                 }
