@@ -5667,7 +5667,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 8
      }
     },
@@ -5708,6 +5708,24 @@
       "fn": 2,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/projection_index.rs",
+     "purpose": "Rebuildable claim projections maintained at the shared put chokepoint",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/claim/projection_index/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -9812,6 +9830,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/executor/retry.rs",
+     "purpose": "Fresh source reads for scheduled selection retries, within the original partition",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/extracted_people.rs",
      "purpose": "Explicit PERSON outputs from the production extraction response",
      "surface": {
@@ -9903,7 +9931,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 15,
       "re-export": 1
      }
     },
@@ -10029,7 +10057,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_consolidation/tests/scope_enforcement.rs",
@@ -10237,6 +10265,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/admission/settlement.rs",
+     "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -10536,7 +10574,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 13,
       "struct": 1
      }
@@ -17479,10 +17517,20 @@
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 9,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/tool_schema.rs",
+     "purpose": "Fail-closed structural JSON Schema subset for resolved outbound descriptors",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21056,7 +21104,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 8
      }
@@ -21085,7 +21133,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DependencyCoordinate",
@@ -21098,7 +21146,7 @@
      "purpose": "Dependency-only OSV queries on dynamic installs, using the existing scan ledger",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 2,
       "struct": 3,
@@ -21599,7 +21647,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -25573,7 +25621,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 17,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -25811,7 +25859,7 @@
      "purpose": "—"
     },
     "dreamer_consolidation": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25839,7 +25887,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26154,7 +26202,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26618,8 +26666,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1522,
-   "test_files": 543
+   "source_files": 1526,
+   "test_files": 544
   },
   "oneiron-bench": {
    "files": [
