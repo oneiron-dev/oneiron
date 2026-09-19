@@ -2644,3 +2644,45 @@ fn commitment_record_is_critical_and_promise_is_absent() {
         Some(absent_sibling.as_str())
     );
 }
+
+#[test]
+fn credentials_are_null_in_every_format_without_an_opt_out() {
+    let secret = format!("ghp_{}", "a".repeat(36));
+    let mut pack = sample_pack();
+    let fields = pack.results[0].fields.as_mut().unwrap();
+    fields.insert(
+        "val".into(),
+        serde_json::json!({
+            "api_key": "opaque-key",
+            "nested": [{"accessToken": "opaque-token", "password": "opaque-password"}],
+            "content": secret,
+            "ordinary": "retained"
+        }),
+    );
+    for format in [
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Plaintext,
+    ] {
+        let mut cfg = savings_config(format, FieldProfile::Full);
+        cfg.max_field_chars = 0;
+        let output = String::from_utf8(serialize_pack(&pack, &cfg)).unwrap();
+        for forbidden in ["opaque-key", "opaque-token", "opaque-password", &secret] {
+            assert!(
+                !output.contains(forbidden),
+                "{format:?} leaked a credential"
+            );
+        }
+        assert!(output.contains("retained"));
+        assert!(output.contains("null"));
+    }
+    let output: Value = serde_json::from_slice(&serialize_pack(
+        &pack,
+        &savings_config(PackFormat::Json, FieldProfile::Full),
+    ))
+    .unwrap();
+    assert!(output["claims"][0]["val"]["api_key"].is_null());
+    assert!(output["claims"][0]["val"]["nested"][0]["accessToken"].is_null());
+}
