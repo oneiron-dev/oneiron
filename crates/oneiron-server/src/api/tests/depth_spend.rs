@@ -133,11 +133,11 @@ fn deep_request(reason: bool) -> Request<Body> {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "launch", "depth": "high"}),
+            json!({"query": "launch", "depth": "max"}),
         )
     } else {
         Request::builder()
-            .uri("/api/search/text?query=launch&depth=deep")
+            .uri("/api/search/text?query=launch&depth=max")
             .body(Body::empty())
             .unwrap()
     }
@@ -184,7 +184,7 @@ async fn deep_reason_composition_errors_settle_retrieval_and_error_spend() {
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "high", "tokenBudget": 19 }),
+                json!({ "query": "launch", "depth": "max", "tokenBudget": 19 }),
             ),
         )
         .await;

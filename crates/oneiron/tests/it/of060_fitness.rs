@@ -291,6 +291,17 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
 
 fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
     BTreeMap::from([
+        // W7-C10: host-owned key metadata and observed wire receipts, never
+        // guest entity writes. Their fixed prefixes stay service-private.
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &key, &encode(&row)?)?;".to_owned()}, 3),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &new_key, &encode(&new)?)?;".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &old_key, &encode(&old)?)?;".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn".to_owned(),line:"let result = self.vault.try_with_write_txn(|txn| {".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn".to_owned(),line:"self.vault.try_with_write_txn(|txn| {".to_owned()}, 3),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(MANIFEST, &encode(thresholds)?)".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &key, &encode(&question)?)?;".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"with_write_txn".to_owned(),line:"self.vault.with_write_txn(|txn| {".to_owned()}, 1),
         (
             RawHit {
                 path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
@@ -519,6 +530,7 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
                 SelfEffect::MemorySupersedeClaim,
             ),
             ("self.memory.put_edge", SelfEffect::MemoryPutEdge),
+            ("self.report_blocked", SelfEffect::ReportBlocked),
         ]),
         "OF-060 P3: write imports must map exactly to the authorized memory effects",
     );

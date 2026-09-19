@@ -128,7 +128,7 @@ async fn retrieval_quality_depth_standard_projects_disabled_ppr_without_changing
     let (status, search) = route_json(
         server,
         Request::builder()
-            .uri("/api/search/text?query=qualitydepth&depth=standard&view=standard")
+            .uri("/api/search/text?query=qualitydepth&depth=medium&view=standard")
             .body(Body::empty())
             .unwrap(),
     )
@@ -153,7 +153,7 @@ async fn retrieval_quality_depth_minimal_search_keeps_existing_ranked_items() {
     let (status, response) = route_json(
         server.clone(),
         Request::builder()
-            .uri("/api/search/text?query=qualitydepth&depth=minimal&view=standard")
+            .uri("/api/search/text?query=qualitydepth&depth=light&view=standard")
             .body(Body::empty())
             .unwrap(),
     )
@@ -243,7 +243,7 @@ async fn retrieval_quality_depth_composition_fallback_keeps_report_and_actual_sp
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({"query": "qualitydepth", "depth": "high", "format": "plaintext"}),
+                json!({"query": "qualitydepth", "depth": "max", "format": "plaintext"}),
             ),
         )
         .await;
@@ -283,7 +283,7 @@ async fn retrieval_quality_depth_unavailable_and_ungrounded_requests_still_refus
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "high"}),
+            json!({"query": "qualitydepth", "depth": "max"}),
         ),
     )
     .await;
@@ -293,7 +293,7 @@ async fn retrieval_quality_depth_unavailable_and_ungrounded_requests_still_refus
     let (status, response) = route_json(
         server.clone(),
         Request::builder()
-            .uri("/api/search/text?query=qualitydepth&depth=deep")
+            .uri("/api/search/text?query=qualitydepth&depth=max")
             .body(Body::empty())
             .unwrap(),
     )
@@ -303,7 +303,7 @@ async fn retrieval_quality_depth_unavailable_and_ungrounded_requests_still_refus
     let (status, response) = route_json(
         server,
         Request::builder()
-            .uri("/api/search/vector?query=1,0,0,0&depth=deep&queryText=%20")
+            .uri("/api/search/vector?query=1,0,0,0&depth=max&queryText=%20")
             .body(Body::empty())
             .unwrap(),
     )
@@ -355,7 +355,7 @@ async fn retrieval_quality_depth_reason_requires_read_auth_before_admission() {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let body = json!({"query": "qualitydepth", "depth": "high"});
+    let body = json!({"query": "qualitydepth", "depth": "max"});
     let (status, response) = route_json(
         server.clone(),
         json_request("POST", "/v1/companion/memory/reason", body.clone()),
@@ -410,7 +410,7 @@ async fn retrieval_quality_depth_budget_refusal_does_not_run_backend() {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "high"}),
+            json!({"query": "qualitydepth", "depth": "max"}),
         ),
     )
     .await;

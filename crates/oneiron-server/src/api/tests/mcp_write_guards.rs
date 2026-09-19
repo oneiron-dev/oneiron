@@ -524,7 +524,7 @@ async fn mcp_ask_returns_accepted_without_mutation() {
                 "context_pack": mcp_context_pack_json(result_id),
                 "consent": mcp_consent_json("ask_memory", false),
                 "query": "What does this context say?",
-                "effort": "medium",
+                "effort": "standard",
                 "citation_mode": "claim_refs",
             }),
         ),

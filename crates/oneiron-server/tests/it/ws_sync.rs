@@ -246,6 +246,27 @@ async fn expect_no_binary(ws: &mut WsStream, duration: Duration) {
     );
 }
 
+async fn assert_ws_responds_after_burst(ws: &mut WsStream) {
+    let nonce = b"after-burst".to_vec();
+    ws.send(Message::Ping(nonce.clone().into())).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match ws
+                .next()
+                .await
+                .expect("socket remains open")
+                .expect("valid frame")
+            {
+                Message::Pong(bytes) if bytes.as_ref() == nonce.as_slice() => break,
+                Message::Close(frame) => panic!("rate must not close the socket: {frame:?}"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("socket responds after exceeding the retired rate setting");
+}
+
 async fn assert_ws_closes(ws: &mut WsStream, reason: &str) {
     let closed = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -2203,7 +2224,7 @@ async fn window_creation_cap_closes_on_fabricated_distinct_keys_only() {
 }
 
 #[tokio::test]
-async fn inbound_message_rate_limit_closes_over_limit_connection() {
+async fn inbound_message_burst_is_observed_without_rate_close() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let config = SyncServerConfig {
@@ -2223,17 +2244,13 @@ async fn inbound_message_rate_limit_closes_over_limit_connection() {
         .await
         .unwrap();
 
-    assert_ws_closes(
-        &mut ws,
-        "server must close when one connection exceeds max_messages_per_sec",
-    )
-    .await;
+    assert_ws_responds_after_burst(&mut ws).await;
 
     handle.abort();
 }
 
 #[tokio::test]
-async fn inbound_ping_pong_frames_count_toward_rate_limit() {
+async fn inbound_ping_pong_burst_does_not_rate_close() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let config = SyncServerConfig {
@@ -2249,11 +2266,7 @@ async fn inbound_ping_pong_frames_count_toward_rate_limit() {
     ws.send(Message::Ping(Vec::new().into())).await.unwrap();
     ws.send(Message::Pong(Vec::new().into())).await.unwrap();
 
-    assert_ws_closes(
-        &mut ws,
-        "server must count Ping/Pong frames toward max_messages_per_sec",
-    )
-    .await;
+    assert_ws_responds_after_burst(&mut ws).await;
 
     handle.abort();
 }

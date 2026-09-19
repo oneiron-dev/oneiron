@@ -1,4 +1,5 @@
 use super::*;
+use oneiron::genui::{GrantMintIntent, GrantMintIntentScope};
 use oneiron::outbound::*;
 use oneiron_vault_contract::{Credentials, CtlRequest, CtlResponse, ShedCause, ShedStatus};
 use std::sync::Arc;
@@ -10,7 +11,7 @@ async fn ctl_shed_enters_during_real_outbound_dispatch_and_preserves_journal() -
         dir.path(),
         oneiron::VaultConfig::default(),
     )?);
-    let actor_id = oneiron::EntityId::from_bytes([0xBA; 16])?;
+    let actor_id = oneiron::EntityId::from_bytes([0xE1; 16])?;
     vault.put_entity(
         &actor_id,
         oneiron::registry::ENTITY_TYPE_PERSON,
@@ -19,16 +20,20 @@ async fn ctl_shed_enters_during_real_outbound_dispatch_and_preserves_journal() -
         b"sender",
     )?;
     let actor = OutboundDispatchActor::agent(actor_id);
-    let manifest = serde_json::json!({"schema_version":"1.1","pack_id":"ctl-test","pack_version":"v1","min_engine_version":env!("CARGO_PKG_VERSION"),
-        "defaults":{"criticality":"normal","sensitivity":"normal"},"rules":[],
-        "actor_ceilings":[{"actor_class":"agent","actor_ref":actor.actor_ref,"ceiling":"auto"}],
-        "scoped_grants":[{"actor_ref":actor.actor_ref,"effector":"external:send","scope":{"channel":"feedback_collector"}}]});
-    vault.put_entity(
-        &oneiron::EntityId::from_bytes([0xBB; 16])?,
-        oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST,
-        oneiron::TimeRange { start: 1, end: 1 },
-        1,
-        &rmp_serde::to_vec_named(&manifest)?,
+    // The seeded first-party actor ceiling plus a real owner grant authorizes
+    // the send. Maintenance policy bytes remain forbidden at the public put door.
+    vault.mint_standing_outbound_grant(
+        &oneiron::EntityId::from_bytes([0xBC; 16])?,
+        &GrantMintIntent {
+            principal_ref: actor_id.to_hex(),
+            origin_component_id: "ctl-test".into(),
+            origin_action_id: "escalate_always_this_verb_class".into(),
+            origin_receipt_ref: None,
+            scope: GrantMintIntentScope::VerbClass {
+                verb_class: "send".into(),
+            },
+        },
+        2,
     )?;
     let server = Arc::new(crate::SyncServer::new(
         vault.clone(),

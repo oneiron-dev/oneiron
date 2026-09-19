@@ -22,11 +22,16 @@ impl<'a> PipelineBuilder<'a> {
     pub fn retrieval_effort(mut self, effort: Effort, seeds: &[EntityId]) -> Self {
         let now = self.temporal_now.unwrap_or_else(crate::unix_seconds_now);
         let limit = self.result_limit;
-        self = if effort == Effort::Max {
-            self.search_temporal_bitemporal(0, now, 0, now, now.max(1), limit)
-        } else {
-            self.search_temporal(0, now, limit)
-        };
+        // Respect a host-resolved interval. With no temporal hint, an exact
+        // now anchor contributes no historical scan; the effort dial must not
+        // turn every lexical query into "return the entire vault since birth".
+        if self.temporal_search.is_none() {
+            self = if effort == Effort::Max {
+                self.search_temporal_bitemporal(now, now, 0, now, now.max(1), limit)
+            } else {
+                self.search_temporal(now, now, limit)
+            };
+        }
         if effort != Effort::Light {
             self = self
                 .search_ppr(seeds, 1)
