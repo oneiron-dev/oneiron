@@ -64,6 +64,8 @@ pub enum BoardHistoryError {
     BeyondCompactionHorizon { turn: EntityId, retained_from: u64 },
     #[error("board turn {0:?} has no frontier anchor")]
     UnknownTurn(EntityId),
+    #[error("board owner {0:?} is no longer live")]
+    UnknownOwner(EntityId),
     #[error("board frontier is missing or invalid")]
     MissingFrontier,
     #[error("board document {0:?} is not currently readable by its owner")]

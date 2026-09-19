@@ -360,3 +360,61 @@ fn deleted_turns_cannot_reconstruct_shared_board_history() {
         assert_eq!(vault.reconstruct_board(&sibling).unwrap(), retained);
     }
 }
+
+#[test]
+fn deleted_owners_cannot_reconstruct_retained_turns() {
+    for reason in [
+        crate::DeleteReason::UserHardDelete,
+        crate::DeleteReason::UserDelete,
+    ] {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let owner = put(&vault, ENTITY_TYPE_PERSON, "removed owner");
+        let sibling_owner = put(&vault, ENTITY_TYPE_PERSON, "retained owner");
+        let document = put(&vault, ENTITY_TYPE_ASSET_TEXT, "shared pinned body");
+        let first = put(&vault, ENTITY_TYPE_TURN, "first");
+        let second = put(&vault, ENTITY_TYPE_TURN, "second");
+        let sibling = put(&vault, ENTITY_TYPE_TURN, "sibling");
+        for (turn, owner, at) in [
+            (first, owner, 1),
+            (second, owner, 2),
+            (sibling, sibling_owner, 3),
+        ] {
+            vault
+                .record_board_turn(
+                    &BoardTurn {
+                        turn,
+                        owner,
+                        at,
+                        selection: BoardSelection {
+                            pinned: BTreeSet::from([document]),
+                            ..Default::default()
+                        },
+                    },
+                    at,
+                )
+                .unwrap();
+        }
+        let retained = vault.reconstruct_board(&sibling).unwrap();
+        assert!(
+            vault
+                .reconstruct_board(&first)
+                .unwrap()
+                .documents
+                .contains_key(&document)
+        );
+        vault.delete_entity_with_reason(&owner, reason).unwrap();
+        for turn in [first, second] {
+            assert!(
+                matches!(vault.reconstruct_board(&turn), Err(BoardHistoryError::UnknownOwner(id)) if id == owner)
+            );
+            assert!(
+                vault
+                    .get_with_mode(&turn, crate::vault::ReadMode::Live)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert_eq!(vault.reconstruct_board(&sibling).unwrap(), retained);
+    }
+}

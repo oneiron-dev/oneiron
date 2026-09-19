@@ -346,6 +346,13 @@ impl Vault {
         if reference(&anchor.owner, &anchor.frontier) != anchor.source_revision_ref {
             return Err(BoardHistoryError::MissingFrontier);
         }
+        crate::vault::entity_revision::read_entity_revision_in_txn(
+            self,
+            &txn,
+            &anchor.owner,
+            ReadMode::Live,
+        )?
+        .ok_or(BoardHistoryError::UnknownOwner(anchor.owner))?;
         let frontier =
             Frontiers::decode(&anchor.frontier).map_err(|_| BoardHistoryError::MissingFrontier)?;
         let doc = load_doc(self, &txn, &anchor.owner)?
