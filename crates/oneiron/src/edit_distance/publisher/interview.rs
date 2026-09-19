@@ -160,10 +160,39 @@ pub fn open_interview(
     actor: &WriteActor,
     draft: &str,
 ) -> PublisherResult<(InterviewSession, ProposalTextArtifact)> {
-    let digest = ProposalTextArtifact::open(draft, actor, Some(*topic))?;
+    let digest = ProposalTextArtifact::open(vault, draft, actor, Some(*topic))?;
     // Without the binding ED-00 refuses the stamp and every later edit
     // attributes to the device peer instead of the human doing the reviewing.
-    super::register_peer_actor(vault, digest.peer_id(), actor)?;
+    let session = InterviewSession {
+        topic_ref: *topic,
+        digest_artifact: digest.artifact_ref().entity_id(),
+        state: InterviewState::Drafting,
+    };
+    put_interview(vault, session)?;
+    Ok((session, digest))
+}
+
+/// Opens a generated digest with the same prompt/trigger receipt as every
+/// other generated text artifact. Model identity and parameters come from
+/// the caller's pinned generation process, never from the reviewing user.
+#[cfg(feature = "sync")]
+pub fn open_generated_interview(
+    vault: &Vault,
+    topic: &EntityId,
+    actor: &WriteActor,
+    draft: &str,
+    prompt: EntityId,
+    trigger: crate::provenance::made_by::MadeByTrigger,
+    process: crate::provenance::made_by::MadeByProcess,
+) -> PublisherResult<(InterviewSession, ProposalTextArtifact)> {
+    let digest =
+        ProposalTextArtifact::open_generated(vault, draft, actor, prompt, trigger, process)?;
+    if digest.provenance(vault)?.is_none() {
+        return Err(crate::Error::InvalidConfig(
+            "generated digest requires existing prompt and trigger rows".into(),
+        )
+        .into());
+    }
     let session = InterviewSession {
         topic_ref: *topic,
         digest_artifact: digest.artifact_ref().entity_id(),

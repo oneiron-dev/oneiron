@@ -65,6 +65,13 @@ impl PipelineBuilder<'_> {
             metadata_cache,
             claim_gate,
         )?;
+        if self.made_by != crate::provenance::made_by::MadeByPredicate::All {
+            scores.retain(|scored| match claim_gate.decisions.get(&scored.id) {
+                Some(Some(body)) => self.made_by.matches(body.made_by_class()),
+                Some(None) => false,
+                None => false,
+            });
+        }
         if before_filters > 0 && scores.is_empty() {
             empty_reason = Some(EmptyReason::FilterMatchedNone);
         }

@@ -78,6 +78,14 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
         evidence.world_authority,
     );
     fork_hash_corpus_scope(&mut hasher, &builder.corpus_scope);
+    fork_hash_bytes(
+        &mut hasher,
+        match builder.made_by {
+            crate::provenance::made_by::MadeByPredicate::All => b"made_by:all",
+            crate::provenance::made_by::MadeByPredicate::Stated => b"made_by:stated",
+            crate::provenance::made_by::MadeByPredicate::Concluded => b"made_by:concluded",
+        },
+    );
     fork_hash_authority_filter(&mut hasher, builder.authority_filter.as_ref());
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);

@@ -134,9 +134,12 @@
 mod actor_substrate;
 mod codec;
 mod edge_ref;
+mod entity_ref_wire;
 mod imported;
 mod lifecycle;
+pub mod made_by;
 mod queries;
+pub mod text_commit;
 mod writes;
 
 #[cfg(test)]

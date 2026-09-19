@@ -37,6 +37,8 @@ mod tests;
 // its home.
 #[cfg(test)]
 mod decay_tests;
+#[cfg(test)]
+mod made_by_tests;
 
 #[cfg(test)]
 mod authority_tests;

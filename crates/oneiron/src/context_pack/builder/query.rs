@@ -302,6 +302,22 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Filters provenance after admission and before result truncation.
+    /// Supplies per-claim OF-095 access-factor overrides. Closed claims remain
+    /// closed; the query door validates every override before retrieval.
+    pub fn with_access_factor_overrides(
+        mut self,
+        overrides: &'a std::collections::HashMap<crate::EntityId, f32>,
+    ) -> Self {
+        self.pipeline = self.pipeline.with_access_factor_overrides(overrides);
+        self
+    }
+
+    pub fn made_by(mut self, predicate: crate::provenance::made_by::MadeByPredicate) -> Self {
+        self.pipeline = self.pipeline.made_by(predicate);
+        self
+    }
+
     pub fn limit(mut self, n: usize) -> Self {
         self.pipeline = self.pipeline.limit(n);
         self

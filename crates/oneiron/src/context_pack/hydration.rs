@@ -146,6 +146,18 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
             serde_json::Value::String(source.as_str().to_owned()),
         );
     }
+    if let Some(class) = body.made_by_class() {
+        out.insert(
+            "made_by".to_owned(),
+            serde_json::Value::String(
+                match class {
+                    crate::provenance::made_by::MadeByClass::Stated => "stated",
+                    crate::provenance::made_by::MadeByClass::Concluded => "concluded",
+                }
+                .to_owned(),
+            ),
+        );
+    }
     if body.world.is_some() {
         // On-disk `world` is a 16-byte binary id (ONE-1117); the generic
         // projection renders binary as null, and so does this one — same as
