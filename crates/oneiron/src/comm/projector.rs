@@ -33,9 +33,14 @@ pub(super) enum ProjectorAction {
     LeaveThread,
 }
 
-const PROJECTOR_RULES: [ProjectorRule; 4] = [
+const PROJECTOR_RULES: [ProjectorRule; 5] = [
     ProjectorRule {
         event_kind: CommEventKind::SendSucceeded,
+        predicate: PREDICATE_COMM_LAST_TOUCH,
+        action: ProjectorAction::UpsertLastTouch,
+    },
+    ProjectorRule {
+        event_kind: CommEventKind::InboundReply,
         predicate: PREDICATE_COMM_LAST_TOUCH,
         action: ProjectorAction::UpsertLastTouch,
     },
@@ -107,6 +112,24 @@ pub fn record_comm_send_receipt(
         Some(channel_class),
         None,
         CommEventKind::SendSucceeded,
+        occurred_at,
+    )
+}
+
+/// Records an inbound reply receipt. Content remains in TURN/SESSION;
+/// only the standing last-touch state is projected from this event.
+pub fn record_comm_inbound_reply(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    occurred_at: u64,
+) -> CommResult<()> {
+    record_event(
+        vault,
+        party,
+        Some(channel_class),
+        None,
+        CommEventKind::InboundReply,
         occurred_at,
     )
 }

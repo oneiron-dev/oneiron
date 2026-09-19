@@ -25,13 +25,20 @@ fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
                 ),
                 (
                     Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::effect_preset(),
+                    )
+                    .expect("scope fixture"),
+                ),
+                (
+                    Value::from("selectors"),
                     Value::Map(vec![(Value::from("channel"), Value::from(channel))]),
                 ),
             ])
         })
         .collect::<Vec<_>>();
     let entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("cid-2-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (

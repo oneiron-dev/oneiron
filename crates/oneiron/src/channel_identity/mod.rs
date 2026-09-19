@@ -16,7 +16,9 @@
 //!   THIS MAILBOX, so the proof carries the mailbox and only the engine can
 //!   mint one.
 
+mod actors;
 mod address;
+mod auth_mode;
 mod binding;
 mod codec;
 mod custody;
@@ -27,6 +29,7 @@ mod shape;
 mod transition;
 mod vault_doors;
 
+pub use actors::{ChannelActorRegistration, RegisteredChannelActor};
 pub use address::{
     AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr, normalize_email_domain,
 };
@@ -77,3 +80,5 @@ use crate::error::{Error, Result};
 use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
+
+pub use auth_mode::ChannelAuthMode;

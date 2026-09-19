@@ -2,6 +2,7 @@ mod guard;
 mod ladders;
 mod ledger;
 mod policy;
+mod rsi;
 mod state;
 mod templates;
 mod types;
@@ -43,3 +44,7 @@ use super::{LlmRequest, LlmUsage, ModelLocality};
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::write_envelope::WriteActor;
+
+pub use rsi::{
+    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiSettlement, RsiSpendPurpose,
+};
