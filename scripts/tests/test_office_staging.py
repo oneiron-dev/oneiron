@@ -22,7 +22,7 @@ def package(path, organ):
 
 
 class OfficeStaging(unittest.TestCase):
-    def exercise(self, name, organ, timeout):
+    def exercise(self, name, organ, timeout, custody_changed=False):
         driver = importlib.import_module(name)
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -63,19 +63,26 @@ class OfficeStaging(unittest.TestCase):
                     result = {"run_word_oracle": "16.112.4\t2\t0\t1\t0\t0\n",
                               "run_powerpoint_oracle": "16.112.4\t1\t0\t0\n",
                               "run_excel_file_oracle": "16.112.4\t2\t1\t1\t[user>saved]\t[user>saved]\n"}[name]
+                if custody_changed:
+                    # Same workbook count, but an unsaved user workbook disappeared.
+                    result = "16.112.4\t2\t1\t1\t[Book7>>false;]\t[Book8>>false;]\n"
                 return subprocess.CompletedProcess(command, 0, result, "")
             stage_fn = "word_stage" if name in ("run_word_oracle", "run_word_revision_oracle") else "app_stage"
             with patch.object(driver.sys, "platform", "darwin"), patch.object(driver, stage_fn, return_value=stage), patch.object(driver.subprocess, "run", side_effect=invoke):
                 if timeout:
                     with self.assertRaises(subprocess.TimeoutExpired): driver.run(args)
+                elif custody_changed:
+                    with self.assertRaisesRegex(RuntimeError, "custody changed"): driver.run(args)
                 else:
                     driver.run(args)
             receipt = json.loads((args.output / "receipt.json").read_text())
-            self.assertEqual(receipt["lock_retained"], timeout)
-            self.assertEqual(args.lock.exists(), timeout)
-            self.assertEqual(stage.exists(), timeout)
+            retained = timeout or custody_changed
+            self.assertEqual(receipt["lock_retained"], retained)
+            self.assertEqual(args.lock.exists(), retained)
+            self.assertEqual(stage.exists(), retained)
             self.assertEqual(source.read_bytes(), original)
-            if timeout:
+            if retained:
+                self.assertIn(receipt["status"], ("timed-out", "validation-error"))
                 self.assertEqual(Path(receipt["stage"]), stage)
                 self.assertTrue((stage / source.name).is_file())
             else:
@@ -90,6 +97,9 @@ class OfficeStaging(unittest.TestCase):
     def test_timeouts_keep_only_owned_staging_and_lock_for_recovery(self):
         for name, organ in [("run_word_oracle", "word"), ("run_word_revision_oracle", "word"), ("run_powerpoint_oracle", "ppt"), ("run_excel_file_oracle", "excel")]:
             with self.subTest(driver=name): self.exercise(name, organ, True)
+
+    def test_same_count_cannot_hide_changed_unsaved_workbook_identity(self):
+        self.exercise("run_excel_file_oracle", "excel", False, custody_changed=True)
 
     def test_container_names_include_case_sensitive_powerpoint_spelling(self):
         from run_word_oracle import app_stage

@@ -71,6 +71,8 @@ def run(args):
         receipt["status"] = "timed-out"
         raise
     except Exception as error:
+        if receipt["status"] == "running":
+            receipt["status"] = "validation-error"
         receipt["error"] = str(error)
         raise
     finally:
