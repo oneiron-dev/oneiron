@@ -6043,8 +6043,10 @@ dependencies = [
  "criterion",
  "loro",
  "oneiron",
+ "oneiron-llm-openai",
  "parking_lot",
  "rand 0.8.7",
+ "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
  "serde",
@@ -6053,6 +6055,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]

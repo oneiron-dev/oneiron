@@ -30,6 +30,8 @@ pub(super) struct FixedBeamScorer;
 impl BeamScorer for FixedBeamScorer {
     fn metadata(&self) -> ScorerReport {
         ScorerReport {
+            convention: super::nuggets::CONVENTION.into(),
+            judge_instruction_sha256: super::llm_judge::instruction_hash(),
             scorer_id: "beam-fixed-scorer".to_owned(),
             version: BEAM_SCORER_VERSION.to_owned(),
             comparator_version: BEAM_COMPARATOR_VERSION.to_owned(),
@@ -58,6 +60,7 @@ impl BeamScorer for FixedBeamScorer {
         let overall_score = mean_score(&abilities);
 
         ScoreReport {
+            beam: None,
             scorer_version: BEAM_SCORER_VERSION.to_owned(),
             overall_score,
             abilities,

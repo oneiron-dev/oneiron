@@ -106,6 +106,7 @@ pub(super) struct DatasetLoadReport {
     pub(super) pending_vectors: usize,
 }
 pub(super) struct LoadedDataset {
+    pub(super) offline: CostComponentReport,
     pub(super) ppr_vad_fixture: Option<BeamFixture>,
     pub(super) report: DatasetLoadReport,
     pub(super) fixture_id: String,
@@ -243,6 +244,8 @@ pub(super) struct CaseReport {
     pub(super) offline_amortized_cost: CostComponentReport,
     pub(super) arms: Vec<ArmReport>,
     pub(super) competitors: Vec<CompetitorReport>,
+    pub(super) appendix: Vec<CompetitorReport>,
+    pub(super) dropped: Vec<CompetitorReport>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -292,6 +295,8 @@ pub(super) struct ContextPackReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ScorerReport {
+    pub(super) judge_instruction_sha256: String,
+    pub(super) convention: String,
     pub(super) scorer_id: String,
     pub(super) version: String,
     pub(super) comparator_version: String,
@@ -320,6 +325,7 @@ impl AbilityKind {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct CompetitorReport {
+    pub(super) citation_disposition: super::comparability::CitationDisposition,
     pub(super) competitor_id: String,
     pub(super) arm: ArmKind,
     pub(super) card: CompetitorCardConfig,
@@ -349,6 +355,7 @@ pub(super) struct CostComponentReport {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ScoreReport {
+    pub(super) beam: Option<super::nuggets::NuggetColumns>,
     pub(super) scorer_version: String,
     pub(super) overall_score: Option<f32>,
     pub(super) abilities: Vec<AbilityScoreReport>,

@@ -6,7 +6,7 @@ use self::report_model::NotReadyState;
 
 pub(crate) const BEAM_128K_TOKEN_BUDGET: usize = 128 * 1024;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 const BEAM_CONTEXT_PACK_FORMAT: PackFormat = PackFormat::Yaml;
 
@@ -52,6 +52,8 @@ type BeamResult<T> = Result<T, BeamError>;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum BeamError {
+    #[error("BEAM comparability refusal: {reason}")]
+    Comparability { reason: String },
     #[error("unsupported BEAM schema version {actual}; expected {expected}")]
     UnsupportedSchemaVersion { expected: u32, actual: u32 },
     #[error("invalid BEAM fixture `{fixture_id}`: {reason}")]
@@ -117,14 +119,28 @@ pub(crate) enum BeamError {
     TempVault(#[from] std::io::Error),
 }
 
+mod ablations;
 mod arms;
+mod chroma;
+mod citations;
 mod community;
+mod comparability;
+mod corpus_clock;
+mod edit_path;
+mod fixture_protocol;
+mod infra;
 mod judge;
+mod llm_host;
+mod llm_judge;
 mod load;
 mod model;
+mod model_scaffold;
+mod model_usage;
+mod nuggets;
 mod ppr_vad;
 mod report;
 mod report_model;
+mod rung_fixture;
 mod runner;
 mod scorer;
 #[cfg(test)]
@@ -139,6 +155,7 @@ mod tests_judge_cost;
 mod tests_ppr_vad;
 #[cfg(test)]
 mod tests_smoke_manifest;
+mod tiers;
 mod util;
 mod validate;
 

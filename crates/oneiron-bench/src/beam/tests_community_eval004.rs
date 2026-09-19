@@ -231,6 +231,15 @@ pub(crate) mod tests {
         manifest_json["runId"] = serde_json::json!(case_id);
         manifest_json["dataset"]["fixtureId"] = serde_json::json!(fixture.fixture_id.as_str());
         manifest_json["caseIds"] = serde_json::json!([case_id]);
+        let limit = fixture
+            .cases
+            .iter()
+            .find(|case| case.case_id == case_id)
+            .unwrap()
+            .limit;
+        for row in manifest_json["competitors"].as_array_mut().unwrap() {
+            row["card"]["axes"]["retrievalK"] = serde_json::json!(limit);
+        }
 
         parse_manifest_json(&manifest_json.to_string()).expect("EVAL-004 manifest parses")
     }

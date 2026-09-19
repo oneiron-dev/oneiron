@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "repo": "quote-fixture",
+  "tasks": [
+    {
+      "id": "small_edit",
+      "shape": "small_edit",
+      "instruction": "Change the displayed currency from USD to EUR. Keep quote behavior.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": "#[test] fn totals() { assert_eq!(subject::quote(2, 10), Some(25)); }\n#[test] fn task() { assert_eq!(subject::currency(), \"EUR\"); }\n",
+      "contracts": "#[test] fn contract_zero_and_overflow() { assert_eq!(subject::quote(0, 10), Some(0)); assert_eq!(subject::quote(u64::MAX, 2), None); }\n"
+    },
+    {
+      "id": "cross_file_refactor",
+      "shape": "cross_file_refactor",
+      "instruction": "Rename math::subtotal to math::items_total and update every caller.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": "#[test] fn totals() { assert_eq!(subject::quote(2, 10), Some(25)); }\n#[test] fn task() { assert_eq!(subject::math::items_total(2,10), Some(20)); }\n",
+      "contracts": "#[test] fn contract_zero_and_overflow() { assert_eq!(subject::quote(0, 10), Some(0)); assert_eq!(subject::quote(u64::MAX, 2), None); }\n"
+    },
+    {
+      "id": "rename",
+      "shape": "rename",
+      "instruction": "Rename quote to price, including public callers.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": "#[test] fn totals() { assert_eq!(subject::price(2, 10), Some(25)); }\n",
+      "contracts": "#[test] fn contract_zero_and_overflow() { assert_eq!(subject::price(0, 10), Some(0)); assert_eq!(subject::price(u64::MAX, 2), None); }\n"
+    },
+    {
+      "id": "concurrent_merge",
+      "shape": "concurrent_merge",
+      "instruction": "Merge a bulk discount: subtract 1 from subtotal for quantity at least 10. Keep the concurrent currency change to EUR.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"EUR\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": "#[test] fn totals() { assert_eq!(subject::quote(2, 10), Some(25)); }\n#[test] fn task() { assert_eq!(subject::quote(10,10), Some(104)); }\n",
+      "contracts": "#[test] fn contract_zero_and_overflow() { assert_eq!(subject::quote(0, 10), Some(0)); assert_eq!(subject::quote(u64::MAX, 2), None); }\n#[test] fn concurrent() { assert_eq!(subject::currency(), \"EUR\"); }\n"
+    },
+    {
+      "id": "contract_cleanup",
+      "shape": "contract_preserving_cleanup",
+      "instruction": "Simplify shipping to a single expression without changing zero-quantity behavior or overflow handling.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": "#[test] fn totals() { assert_eq!(subject::quote(2, 10), Some(25)); }\n",
+      "contracts": "#[test] fn contract_zero_and_overflow() { assert_eq!(subject::quote(0, 10), Some(0)); assert_eq!(subject::quote(u64::MAX, 2), None); }\n"
+    }
+  ]
+}

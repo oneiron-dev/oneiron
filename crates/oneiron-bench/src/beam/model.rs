@@ -196,6 +196,7 @@ pub(super) struct CompetitorConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct CompetitorCardConfig {
+    pub(super) axes: super::comparability::ComparabilityAxes,
     pub(super) display_name: String,
     pub(super) public_parity_status: PublicParityStatus,
     pub(super) judge: JudgeMetadata,

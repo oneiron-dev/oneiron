@@ -140,18 +140,32 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        [sub, manifest_path] if sub == "run" => match run_manifest_path(Path::new(manifest_path))
-            .and_then(|report| serde_json::to_string_pretty(&report).map_err(BeamError::from))
+        [sub, manifest_path]
+            if matches!(
+                sub.as_str(),
+                "run"
+                    | "edit-path"
+                    | "edit-path-pack"
+                    | "fixture-protocol"
+                    | "score-nuggets"
+                    | "tiers"
+                    | "judge"
+                    | "measure"
+                    | "infra"
+                    | "rung-fixture"
+            ) =>
         {
-            Ok(report_json) => {
-                println!("{report_json}");
-                ExitCode::SUCCESS
+            match run_report(sub, Path::new(manifest_path)) {
+                Ok(report_json) => {
+                    println!("{report_json}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("BEAM run failed: {err}");
+                    ExitCode::FAILURE
+                }
             }
-            Err(err) => {
-                eprintln!("BEAM run failed: {err}");
-                ExitCode::FAILURE
-            }
-        },
+        }
         [sub, fixture_path] if sub == "community" => {
             match run_community_beam(Path::new(fixture_path))
                 .and_then(|report| serde_json::to_string_pretty(&report).map_err(BeamError::from))
@@ -328,4 +342,29 @@ pub(super) fn temporal_result_ids(
         .into_iter()
         .map(|entity| entity.id.to_hex())
         .collect())
+}
+
+fn run_report(sub: &str, path: &Path) -> BeamResult<String> {
+    match sub {
+        "rung-fixture" => Ok(serde_json::to_string_pretty(&super::rung_fixture::run(
+            path,
+        )?)?),
+        "infra" => Ok(serde_json::to_string_pretty(&super::infra::run(path)?)?),
+        "measure" => Ok(serde_json::to_string_pretty(&super::model_scaffold::run(
+            path,
+        )?)?),
+        "judge" => Ok(serde_json::to_string_pretty(&super::llm_judge::run(path)?)?),
+        "tiers" => Ok(serde_json::to_string_pretty(&super::tiers::run(path)?)?),
+        "score-nuggets" => Ok(serde_json::to_string_pretty(&super::nuggets::run(path)?)?),
+        "fixture-protocol" => Ok(serde_json::to_string_pretty(
+            &super::fixture_protocol::run(path)?,
+        )?),
+        "edit-path" => Ok(serde_json::to_string_pretty(
+            &super::edit_path::run_manifest(path)?,
+        )?),
+        "edit-path-pack" => Ok(serde_json::to_string_pretty(
+            &super::edit_path::write_pack(path)?,
+        )?),
+        _ => Ok(serde_json::to_string_pretty(&run_manifest_path(path)?)?),
+    }
 }

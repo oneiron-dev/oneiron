@@ -1,15 +1,15 @@
 {
   "schemaVersion": 3,
-  "runId": "beam-128k-contract-smoke",
+  "runId": "beam-1m-adapter-conformance",
   "dataset": {
     "kind": "jsonl",
-    "path": "beam_128k_contract.run.jsonl",
+    "path": "beam-1m.run.jsonl",
     "armId": "oneiron",
     "limit": 5,
     "expectedMinResults": 1
   },
   "caseIds": [
-    "beam_128k_contract_context_pack_smoke"
+    "beam-1m-clock"
   ],
   "arms": [
     "deterministic",
@@ -38,11 +38,11 @@
         },
         "axes": {
           "tier": {
-            "row": "fixture",
-            "reference": "fixture"
+            "row": "beam-1m",
+            "reference": "beam-1m"
           },
           "regime": "full",
-          "nativeScale": "fixture-only; not a public native-scale measurement",
+          "nativeScale": "adapter conformance sample; full tier run required",
           "backbone": {
             "modelPin": "not-applicable/deterministic@v1",
             "soloRow": "backbone-solo"
@@ -53,7 +53,7 @@
           },
           "retrievalK": 5,
           "provenance": {
-            "source": "fixture://beam_128k_contract.run.json",
+            "source": "fixture://beam-1m.run.jsonl",
             "independent": true,
             "caveat": "Synthetic conformance only; not public benchmark accuracy.",
             "withdrawn": false
@@ -83,11 +83,11 @@
         },
         "axes": {
           "tier": {
-            "row": "fixture",
-            "reference": "fixture"
+            "row": "beam-1m",
+            "reference": "beam-1m"
           },
           "regime": "full",
-          "nativeScale": "fixture-only; not a public native-scale measurement",
+          "nativeScale": "adapter conformance sample; full tier run required",
           "backbone": {
             "modelPin": "not-applicable/deterministic@v1",
             "soloRow": "backbone-solo"
@@ -98,7 +98,7 @@
           },
           "retrievalK": 5,
           "provenance": {
-            "source": "fixture://beam_128k_contract.run.json",
+            "source": "fixture://beam-1m.run.jsonl",
             "independent": true,
             "caveat": "Synthetic conformance only; not public benchmark accuracy.",
             "withdrawn": false
@@ -111,6 +111,6 @@
     "format": "json"
   },
   "outputs": {
-    "packsJsonl": "packs.jsonl"
+    "packsJsonl": "beam-1m.packs.jsonl"
   }
 }
