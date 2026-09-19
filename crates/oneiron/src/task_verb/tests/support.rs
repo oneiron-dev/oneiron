@@ -920,9 +920,17 @@ pub(in crate::task_verb) fn permit_outcome_fixture_predicates(vault: &Vault) -> 
     let bytes = crate::gate::default_policy_manifest();
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
     let rules = manifest["rules"].as_array_mut().expect("policy rules");
-    for predicate in ["outcome.earned", "outcome.changed", "judgment.answer"] {
+    for predicate in [
+        "outcome.earned",
+        "outcome.changed",
+        "judgment.answer",
+        "crm.stage",
+    ] {
         rules.push(serde_json::json!({"prefix":predicate,"exact":true,"axes":{"criticality":"normal","sensitivity":"normal"}}));
     }
-    crate::test_util::put_policy_manifest_bytes(vault, crate::gate::default_policy_manifest_id()?,
-        &rmp_serde::to_vec_named(&manifest).expect("fixture policy"))
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest).expect("fixture policy"),
+    )
 }

@@ -765,10 +765,9 @@ fn validate_lexical_hint_put(
                 "lexical query hint target must be claim",
             ));
         }
-        let Ok(target_body) = crate::claim::decode_claim_body(
-            &target_raw[ENTITY_METADATA_HEADER_LEN..],
-            true,
-        ) else {
+        let Ok(target_body) =
+            crate::claim::decode_claim_body(&target_raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
             return Err(Error::InvalidClaimBody(
                 "lexical query hint target must be claim",
             ));

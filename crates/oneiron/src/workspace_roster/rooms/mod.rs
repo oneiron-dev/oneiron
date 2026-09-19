@@ -123,12 +123,7 @@ impl Memory<'_> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
         let mut rows: Vec<RoomTurn> = Vec::new();
-        for row in self
-            .vault()
-            .store
-            .vault_meta
-            .prefix_iter(&txn, TURNS)?
-        {
+        for row in self.vault().store.vault_meta.prefix_iter(&txn, TURNS)? {
             let (_, bytes) = row?;
             let turn: RoomTurn = decode(&bytes)?;
             if turn.room_id == room.to_hex() {

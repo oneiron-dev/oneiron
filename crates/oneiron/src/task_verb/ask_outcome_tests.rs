@@ -376,7 +376,7 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
         vault.put_claim_in_txn(txn, &fact_id, &body, occurred, at)?;
         Err(crate::Error::ConcurrentWrite("fixture rollback"))
     });
-    assert!(rolled_back.is_err());
+    assert!(matches!(rolled_back, Err(crate::Error::ConcurrentWrite(_))));
     assert!(vault.get_claim(&fact_id)?.is_none());
     assert!(facade.tasks_ask_outcomes(&handle)?.is_empty());
     for _ in 0..2 {
@@ -399,7 +399,10 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
 
     // The preceding case removed this edge to prove link revocation. A real
     // edge must exist before a provenance claim can describe it.
-    vault.batch().edge(&unit, EdgeKind::About, &linked, 1.0).commit()?;
+    vault
+        .batch()
+        .edge(&unit, EdgeKind::About, &linked, 1.0)
+        .commit()?;
     let mut edge = spec(unit);
     edge.idempotency_key = "edge-outcome".into();
     let binding = edge.outcome_binding.as_mut().unwrap();

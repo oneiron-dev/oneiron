@@ -937,9 +937,21 @@ fn link_border_style_overrides_legacy_border_before_flattening() {
     let prepared = evidence.prepare(&mut input).unwrap();
     let pdf = Document::load_mem(&prepared.bytes).unwrap();
     assert!(all_text(&pdf, 1, 2).contains("Original page one"));
-    assert!(!pdf.get_dictionary(pdf.get_pages()[&1]).unwrap().has(b"Annots"));
-    let annotation = input.pdf.get_object_mut(link).unwrap().as_dict_mut().unwrap();
+    assert!(
+        !pdf.get_dictionary(pdf.get_pages()[&1])
+            .unwrap()
+            .has(b"Annots")
+    );
+    let annotation = input
+        .pdf
+        .get_object_mut(link)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap();
     annotation.set("BS", dictionary! {"W" => 1});
-    annotation.set("Border", vec![0.into(),0.into(),0.into()]);
-    assert!(matches!(evidence.prepare(&mut input), Err(PdfPreparationError::UnsupportedPdf)));
+    annotation.set("Border", vec![0.into(), 0.into(), 0.into()]);
+    assert!(matches!(
+        evidence.prepare(&mut input),
+        Err(PdfPreparationError::UnsupportedPdf)
+    ));
 }

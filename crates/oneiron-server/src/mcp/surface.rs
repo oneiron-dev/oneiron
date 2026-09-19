@@ -143,7 +143,7 @@ impl McpVerbFamily {
 /// exported row and can never introduce a tool name of its own. A row with no
 /// binding is unprojectable and fails endpoint construction rather than
 /// listing a tool nothing can execute.
-
+///
 /// One tool-first tool, generated 1:1 from one exported verb row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct McpGeneratedVerbTool {

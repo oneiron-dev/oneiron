@@ -135,11 +135,18 @@ fn nonvisual_link(source: &Document, annotation: &Dictionary) -> Result<bool> {
     }
     let width = if let Ok(style) = annotation.get(b"BS") {
         let style = resolved(source, style)?.as_dict()?;
-        match style.get(b"W") { Ok(width) => number(source, width)?, Err(_) => 1.0 }
+        match style.get(b"W") {
+            Ok(width) => number(source, width)?,
+            Err(_) => 1.0,
+        }
     } else if let Ok(border) = annotation.get(b"Border") {
         let border = resolved(source, border)?.as_array()?;
-        if !(3..=4).contains(&border.len()) { return Err(PdfPreparationError::MalformedPdf); }
+        if !(3..=4).contains(&border.len()) {
+            return Err(PdfPreparationError::MalformedPdf);
+        }
         number(source, &border[2])?
-    } else { 1.0 };
+    } else {
+        1.0
+    };
     Ok(width == 0.0)
 }

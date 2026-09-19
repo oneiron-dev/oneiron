@@ -420,13 +420,12 @@ fn walk(
                 let prefix = if ordered {
                     format!(
                         "{}. ",
-                        node.parent()
-                            .map_or(1, |p| p
-                                .element_children()
-                                .iter()
-                                .take_while(|n| n.id != node.id)
-                                .count()
-                                + 1)
+                        node.parent().map_or(1, |p| p
+                            .element_children()
+                            .iter()
+                            .take_while(|n| n.id != node.id)
+                            .count()
+                            + 1)
                     )
                 } else {
                     "- ".into()

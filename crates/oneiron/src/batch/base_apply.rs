@@ -562,20 +562,8 @@ pub(super) fn apply_ops_with_origin(
                 // Hand each id its own preflight receipt identity, in the
                 // order the preflight recorded them, so the unconsumed-identity
                 // invariant below stays exact.
-                let mut lapse_decision_ids: HashMap<
-                    EntityId,
-                    VecDeque<Option<crate::store::GateDecisionId>>,
-                > = HashMap::new();
-                for id in &ids {
-                    let decision_id = preflight_gate_decision_ids
-                        .get_mut(id)
-                        .and_then(VecDeque::pop_front)
-                        .flatten();
-                    lapse_decision_ids
-                        .entry(*id)
-                        .or_default()
-                        .push_back(decision_id);
-                }
+                let lapse_decision_ids =
+                    take_lapse_decisions(&mut preflight_gate_decision_ids, &ids);
                 crate::commitment::lapse_commitments_in_txn(
                     store,
                     config,
@@ -657,8 +645,15 @@ pub(super) fn apply_ops_with_origin(
         }
     }
 
-    finalize_batch_indexes(store, config, wtxn, &materialized_entity_ids,
-        pending_hnsw_rebuild, had_graph_mutation, had_vector_mutation)
+    finalize_batch_indexes(
+        store,
+        config,
+        wtxn,
+        &materialized_entity_ids,
+        pending_hnsw_rebuild,
+        had_graph_mutation,
+        had_vector_mutation,
+    )
 }
 
 /// Publish derived arrivals and index versions only after the complete batch.
@@ -671,11 +666,7 @@ fn finalize_batch_indexes(
     had_graph_mutation: bool,
     had_vector_mutation: bool,
 ) -> Result<()> {
-    crate::llm::decision::questions::project_arrivals_in_txn(
-        store,
-        wtxn,
-        materialized_entity_ids,
-    )?;
+    crate::llm::decision::questions::project_arrivals_in_txn(store, wtxn, materialized_entity_ids)?;
 
     crate::hnsw::run_pending_legacy_rebuild(store, config, wtxn, pending_hnsw_rebuild)?;
 
@@ -687,4 +678,21 @@ fn finalize_batch_indexes(
     }
 
     Ok(())
+}
+
+type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;
+
+fn take_lapse_decisions(
+    preflight: &mut PreflightDecisionIds,
+    ids: &[EntityId],
+) -> PreflightDecisionIds {
+    let mut decisions = PreflightDecisionIds::new();
+    for id in ids {
+        let decision_id = preflight
+            .get_mut(id)
+            .and_then(VecDeque::pop_front)
+            .flatten();
+        decisions.entry(*id).or_default().push_back(decision_id);
+    }
+    decisions
 }

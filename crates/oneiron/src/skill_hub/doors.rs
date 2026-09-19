@@ -214,7 +214,11 @@ impl Vault {
             }
             Some(_) => {}
             None => {
-                self.write_admitted_capability_surface_in_txn(wtxn, &entity, &package.capabilities)?;
+                self.write_admitted_capability_surface_in_txn(
+                    wtxn,
+                    &entity,
+                    &package.capabilities,
+                )?;
             }
         }
         self.append_hub_provenance_in_txn(

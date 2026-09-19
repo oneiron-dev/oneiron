@@ -184,13 +184,13 @@ async fn image(
     }
 }
 async fn page() -> Response {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
     let script = [
         include_str!("esign/field-renderer.js"),
         include_str!("esign/ceremony.js"),
     ]
     .join("\n");
-    use base64::Engine;
-    use sha2::{Digest, Sha256};
     let digest =
         base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes()));
     let csp = format!(
@@ -229,6 +229,15 @@ async fn private_response(
     );
     response
 }
+
+fn unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({"error":{"code":"signing_transport_unavailable"}})),
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,8 +306,10 @@ mod tests {
     #[tokio::test]
     async fn geometry_upload_accepts_the_full_renderer_input_budget() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-        let server = Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server =
+            Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
         let app = routes().with_state(server);
         let mut pdf = b"%PDF-1.7\n".to_vec();
         let mut offsets = Vec::new();
@@ -307,7 +318,10 @@ mod tests {
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
             "<< /Length 0 >>\nstream\nendstream",
-        ].into_iter().enumerate() {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             offsets.push(pdf.len());
             pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, body).as_bytes());
         }
@@ -317,22 +331,30 @@ mod tests {
         pdf.extend_from_slice(b")\nendobj\n");
         let xref = pdf.len();
         pdf.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
-        for offset in offsets { pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes()); }
-        pdf.extend_from_slice(format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes());
-        let response = app.oneshot(Request::builder().method("POST").uri("/sign/geometry")
-            .header(header::CONTENT_TYPE, "application/pdf").body(Body::from(pdf)).unwrap()).await.unwrap();
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sign/geometry")
+                    .header(header::CONTENT_TYPE, "application/pdf")
+                    .body(Body::from(pdf))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
         assert_eq!(body["pages"].as_array().unwrap().len(), 1);
-        assert_eq!(body["pages"][0]["crop"], serde_json::json!([0.0,0.0,100.0,100.0]));
+        assert_eq!(
+            body["pages"][0]["crop"],
+            serde_json::json!([0.0, 0.0, 100.0, 100.0])
+        );
     }
-
-}
-
-fn unavailable() -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({"error":{"code":"signing_transport_unavailable"}})),
-    )
-        .into_response()
 }
