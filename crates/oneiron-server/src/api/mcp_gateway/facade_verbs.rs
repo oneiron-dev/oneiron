@@ -5,9 +5,9 @@ use super::{
     mcp_text_content,
 };
 use crate::api::CORE_MAX_LIST_LIMIT;
-use crate::api::hydrate_short_id_response;
+use crate::api::hydrate_short_id_response_with_mode;
 use crate::api::parse_entity_id_param;
-use crate::api::parse_short_ref;
+use crate::api::parse_revision_short_ref;
 use crate::api::unix_seconds_now;
 use crate::mcp::McpAskToolArgs;
 use crate::mcp::McpEditToolArgs;
@@ -221,9 +221,16 @@ pub(crate) fn execute_mcp_read(
         }));
     }
     if let Some(short_ref) = args.target.short_ref.as_deref() {
-        let (short_id, content_hash) = parse_short_ref(short_ref).map_err(mcp_api_error)?;
-        let item = hydrate_short_id_response(&scoped_read, short_id, content_hash, View::Full)
-            .map_err(mcp_api_error)?;
+        let (short_id, content_hash, mode) =
+            parse_revision_short_ref(short_ref).map_err(mcp_api_error)?;
+        let item = hydrate_short_id_response_with_mode(
+            &scoped_read,
+            short_id,
+            content_hash,
+            View::Full,
+            mode,
+        )
+        .map_err(mcp_api_error)?;
         return Ok(json!({
             "content": [mcp_text_content(if item.is_some() { "short ref found" } else { "short ref not found" })],
             "structuredContent": {

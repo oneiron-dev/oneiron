@@ -361,6 +361,46 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         );
     }
     assert_eq!(*backend.candidates.lock().unwrap(), vec![inside]);
+    let original = server.vault.get(&inside).unwrap().unwrap();
+    let changed =
+        rmp_serde::to_vec_named(&json!({"txt": "changed", "spkr": "user", "at": 701_u64})).unwrap();
+    server
+        .vault
+        .batch()
+        .put(
+            &inside,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: 701,
+                end: 701,
+            },
+            701,
+            &changed,
+        )
+        .commit()
+        .unwrap();
+    for path in ["/v1/core/hydrate", "/v1/core/batch/shortId/hydrate"] {
+        let payload = if path.contains("/batch/") {
+            json!({"refs": [pinned_ref.clone()]})
+        } else {
+            json!({"ref": pinned_ref.clone()})
+        };
+        let (status, body) = route_json(server.clone(), json_request("POST", path, payload)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body:?}");
+        let item = if path.contains("/batch/") {
+            &body["results"][0]["result"]["item"]
+        } else {
+            &body["item"]
+        };
+        let expected = crate::projection::project_entity_parts(
+            &inside,
+            ENTITY_TYPE_TURN,
+            700,
+            &original,
+            crate::projection::View::Full,
+        );
+        assert_eq!(item, &expected, "{path}: {body:?}");
+    }
 }
 
 #[tokio::test]
