@@ -122,6 +122,35 @@ improvement (nextest was slightly slower); a contaminated third pair was exclude
 No precise pooled Linux effect is claimed. These results do not show a speedup for
 the current 10/16-thread CI recipes, which remain unchanged.
 
+## Diagnosing macOS vault-open ENOSPC
+
+`StorageFull` / OS error 28 at vault open does not always mean the disk is full.
+The macOS build explicitly enables LMDB's `posix-sem` feature to avoid SysV
+semaphore key collisions (ONE-1148). Opening an LMDB environment needs two named
+POSIX semaphores. Exhausting that host-wide pool also returns ENOSPC.
+
+Check the actual failed allocation before deleting build output. Check free space
+on both the build and temporary volumes; on APFS inspect the container as well:
+
+```sh
+df -h /Volumes/Cinema /private/tmp
+diskutil apfs list
+sysctl kern.posix.sem.max
+```
+
+A single successful `sem_open` is not enough to rule out pool exhaustion. In one
+test-host incident, file writes, `F_FULLFSYNC` and memory maps succeeded. One
+uniquely named semaphore opened, but a second **simultaneously held** semaphore
+returned ENOSPC. Changing TMPDIR and reducing test threads did not fix vault open.
+Any diagnostic semaphore must have a fresh exclusive name and must be closed and
+unlinked by its creator. Never unlink another process's semaphores or change the
+host-wide limit as an uncoordinated ticket repair.
+
+Use the next available, capacity-guarded test host when the preferred host cannot
+allocate the required pair. Keep the same feature set and tests, and record the
+actual host. A host failure is not a reason to disable vault tests, weaken storage
+errors, remove the macOS `posix-sem` selection or delete shared caches/snapshots.
+
 ## Measure a candidate
 
 Use one heavy build per host. Check CPU load, active Rust/runner processes, and
