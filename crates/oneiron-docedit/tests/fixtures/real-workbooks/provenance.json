@@ -26,14 +26,16 @@
     "doi": "10.5281/zenodo.581678",
     "url": "https://zenodo.org/records/581678/files/fuse.zip?download=1",
     "license": "CC BY 4.0",
-    "download_status": "HTTP 504 (retried)",
-    "measurement": "blocked on source download",
+    "download_status": "verified",
+    "measurement": "pending extraction and fresh Excel/engine comparisons",
     "macbook_status": "HEAD also returned HTTP 504",
     "recovery": {
       "url": "https://zenodo.org/api/records/581678/files/fuse.zip/content",
       "size": 9392830118,
       "published_md5": "13e955c44f0b77d1c36088c0bbb3366d",
-      "status": "exact-range download in progress; not yet hash-verified"
+      "status": "published size and MD5 verified; SHA-256 recorded",
+      "sha256": "4f9126bd83aa27118366b2b16b3b378d3bdb27b27728337b392e48c0ef3d93bb",
+      "receipt": "fuse-download-receipt.json"
     }
   },
   "truth_status": "Upstream Excel recalculated truth workbooks are not distributed; original saved caches are not equivalent to a fresh same-corpus Excel oracle. Do not use cached-source diagnostics to select a production default."
