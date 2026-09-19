@@ -34,7 +34,11 @@ pub(super) fn serialize_provider(format: PackFormat, prepared: PreparedPack) -> 
     serde_json::to_vec(&body).expect("provider value is serializable")
 }
 fn scrub(key: &str, value: &mut Value) {
-    let lower: String = key.chars().filter(char::is_ascii_alphanumeric).flat_map(char::to_lowercase).collect();
+    let lower: String = key
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect();
     if [
         "secret",
         "password",
@@ -54,7 +58,11 @@ fn scrub(key: &str, value: &mut Value) {
     }
     match value {
         Value::String(text)
-            if contains_private_key(text) || crate::batch::secret_scan::scan_file_content("provider-export", text.as_bytes())
+            if contains_private_key(text)
+                || crate::batch::secret_scan::scan_file_content(
+                    "provider-export",
+                    text.as_bytes(),
+                )
                 .is_some() =>
         {
             *value = Value::Null;

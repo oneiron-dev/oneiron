@@ -22,18 +22,29 @@ pub fn validate_json_schema(
     }
 }
 
-pub(super) fn validate_fallback(request: &LlmRequest, response: &LlmResponse) -> DurableStepResult<()> {
+pub(super) fn validate_fallback(
+    request: &LlmRequest,
+    response: &LlmResponse,
+) -> DurableStepResult<()> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
         return Ok(());
     };
-    let text: String = response.message.content.iter().filter_map(|part| match part {
-        ContentPart::Text { text } => Some(text.as_str()),
-        _ => None,
-    }).collect();
+    let text: String = response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
     serde_json::from_str::<serde_json::Value>(&text)
         .map_err(|e| e.to_string())
         .and_then(|value| validate_json_schema(schema, &value))
-        .map_err(|error| DurableStepError::SchemaValidation { attempts: 1, errors: vec![error] })
+        .map_err(|error| DurableStepError::SchemaValidation {
+            attempts: 1,
+            errors: vec![error],
+        })
 }
 
 pub(super) async fn generate(

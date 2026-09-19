@@ -34,7 +34,11 @@ impl<T: SonioxTransport> SonioxAsrClient<T> {
                 tokens: vec![],
                 provider_latency_ms: None,
                 endpoint_delay_ms: None,
-                error: Some(frame["error_code"].as_str().map_or_else(|| frame["error_code"].to_string(), str::to_owned)),
+                error: Some(
+                    frame["error_code"]
+                        .as_str()
+                        .map_or_else(|| frame["error_code"].to_string(), str::to_owned),
+                ),
             }]);
         }
         let mut partial = Vec::new();
@@ -166,7 +170,10 @@ mod tests {
         for event in final_events {
             event.validate()?;
         }
-        for (code, expected) in [(serde_json::json!("auth_failed"), "auth_failed"), (serde_json::json!(429), "429")] {
+        for (code, expected) in [
+            (serde_json::json!("auth_failed"), "auth_failed"),
+            (serde_json::json!(429), "429"),
+        ] {
             let events = client.receive(&serde_json::json!({"error_code":code}))?;
             assert_eq!(events[0].error.as_deref(), Some(expected));
             assert_eq!(events[0].kind, AsrEventKind::Error);

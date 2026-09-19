@@ -167,14 +167,20 @@ fn failed_terminal_write_is_not_published_and_can_be_retried() {
         fn record(&mut self, _: &LlmResponse) -> LlmResult<()> {
             if std::mem::replace(&mut self.0, false) {
                 Err(RetryableLlmError::ServerError.into())
-            } else { Ok(()) }
+            } else {
+                Ok(())
+            }
         }
     }
     let mut bus = LlmEventBus::new(Box::new(FailOnce(true)));
     let mut sub = bus.subscribe();
     let terminal = LlmStreamEvent::Done {
-        message: LlmMessage { role: LlmMessageRole::Assistant, content: vec![] },
-        usage: LlmUsage::zero(), finish_reason: FinishReason::Stop,
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content: vec![],
+        },
+        usage: LlmUsage::zero(),
+        finish_reason: FinishReason::Stop,
     };
     assert!(bus.publish(terminal.clone()).is_err());
     assert!(drain(&mut sub).is_empty());
@@ -183,4 +189,21 @@ fn failed_terminal_write_is_not_published_and_can_be_retried() {
     bus.publish(terminal.clone()).unwrap();
     assert_eq!(drain(&mut sub), vec![terminal.clone()]);
     assert_eq!(drain(&mut late), vec![terminal]);
+}
+
+#[test]
+fn failed_sink_on_drop_closes_subscribers_without_false_done() {
+    struct Fail;
+    impl TerminalSink for Fail {
+        fn record(&mut self, _: &LlmResponse) -> LlmResult<()> {
+            Err(RetryableLlmError::ServerError.into())
+        }
+    }
+    let mut bus = LlmEventBus::new(Box::new(Fail));
+    let mut subscriber = bus.subscribe();
+    drop(bus);
+    assert!(matches!(
+        Pin::new(&mut subscriber).poll_next(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(None)
+    ));
 }

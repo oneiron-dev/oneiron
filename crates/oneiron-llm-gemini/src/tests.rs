@@ -56,10 +56,16 @@ impl GeminiTransport for Transport {
         assert!(request.path.ends_with(":streamGenerateContent?alt=sse"));
         Ok(Box::pin(Sequence(
             vec![
-                Ok(GeminiFrame::Status(GeminiHttpResponse { status: 200, body: Value::Null })),
-                Ok(GeminiFrame::Chunk(json!({"candidates":[{"content":{"parts":[{"thoughtSignature":"metadata"}]}}]}))),
-                Ok(GeminiFrame::Chunk(fixture()))
-            ].into(),
+                Ok(GeminiFrame::Status(GeminiHttpResponse {
+                    status: 200,
+                    body: Value::Null,
+                })),
+                Ok(GeminiFrame::Chunk(
+                    json!({"candidates":[{"content":{"parts":[{"thoughtSignature":"metadata"}]}}]}),
+                )),
+                Ok(GeminiFrame::Chunk(fixture())),
+            ]
+            .into(),
         )))
     }
 }

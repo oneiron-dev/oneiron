@@ -144,7 +144,9 @@ impl Stream for GeminiEventStream<'_> {
                     .pending
                     .extend(this.accumulator.abort(usage).into_iter().map(Ok)),
                 Poll::Ready(Some(Ok(GeminiFrame::Status(response)))) => {
-                    if (200..300).contains(&response.status) { continue; }
+                    if (200..300).contains(&response.status) {
+                        continue;
+                    }
                     return Poll::Ready(Some(Err(classify_status(
                         response.status,
                         &response.body,

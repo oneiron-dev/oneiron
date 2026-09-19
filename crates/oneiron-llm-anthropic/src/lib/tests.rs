@@ -317,7 +317,10 @@ fn thinking_text_and_tool_blocks_keep_ids_signatures_and_executable_input() {
     };
     assert_eq!(usage.input.total, 9);
     assert_eq!(usage.output.total, 7);
-    assert_eq!(usage.raw_provider, json!({"input_tokens":9,"output_tokens":7}));
+    assert_eq!(
+        usage.raw_provider,
+        json!({"input_tokens":9,"output_tokens":7})
+    );
     assert_eq!(*finish_reason, FinishReason::ToolCalls);
     assert_eq!(
         message.content[0],

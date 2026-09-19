@@ -2575,18 +2575,27 @@ fn invalid_fallback_schema_is_terminal_settles_spend_and_is_not_memoized() -> Re
     let ctx = ctx(&vault, &fixture, 10_000);
     let guard = guard_with_limit(10_000);
     let backend = ScriptedBackend::new(vec![
-        Ok(response_fixture("not json")), Err(FatalLlmError::Auth.into()),
+        Ok(response_fixture("not json")),
+        Err(FatalLlmError::Auth.into()),
         Err(FatalLlmError::Auth.into()),
     ]);
     let mut request = request_fixture();
-    request.envelope.response_format = ResponseFormat::Json { schema: json!({"type":"integer"}) };
-    request.envelope.class = CallClass::Durable { fallback: DeterministicFallback {
-        name: "json_rules_v1".into(),
-        config: Some(json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]})),
-    }};
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"integer"}),
+    };
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
     for _ in 0..2 {
-        assert!(matches!(block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
-            Err(DurableStepError::SchemaValidation { attempts: 1, .. })));
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
+            Err(DurableStepError::SchemaValidation { attempts: 1, .. })
+        ));
         assert_eq!(guard.read().reserved_units, 0);
     }
     assert_eq!(backend.calls(), 3);
@@ -2605,14 +2614,39 @@ fn invalid_previous_tags_refuse_before_paid_render() -> Result<()> {
     for case in 0..4 {
         let mut before = RetrievalTags::default();
         match case {
-            0 => before.mentions.push(MentionTag { start: 0, end: 9, entity: fixture.subject, weight: 1.0 }),
-            1 => before.coreference.push(CoreferenceTag { mention: 0, antecedent: 0 }),
-            2 => before.ppr_seeds.push(PprSeed { entity: fixture.subject, weight: f32::NAN }),
+            0 => before.mentions.push(MentionTag {
+                start: 0,
+                end: 9,
+                entity: fixture.subject,
+                weight: 1.0,
+            }),
+            1 => before.coreference.push(CoreferenceTag {
+                mention: 0,
+                antecedent: 0,
+            }),
+            2 => before.ppr_seeds.push(PprSeed {
+                entity: fixture.subject,
+                weight: f32::NAN,
+            }),
             _ => before.affect[0] = 2.0,
         }
-        let delta = InputDelta { turn: fixture.subject, text: "Ada".into(), before,
-            after: RetrievalTags::default(), threshold: 0.5 };
-        assert!(block_on(render_on_delta(&ctx, &backend, &guard, request_fixture(), &delta)).is_err());
+        let delta = InputDelta {
+            turn: fixture.subject,
+            text: "Ada".into(),
+            before,
+            after: RetrievalTags::default(),
+            threshold: 0.5,
+        };
+        assert!(
+            block_on(render_on_delta(
+                &ctx,
+                &backend,
+                &guard,
+                request_fixture(),
+                &delta
+            ))
+            .is_err()
+        );
     }
     assert_eq!(backend.calls(), 0);
     assert_eq!(guard.read().reserved_units, 0);

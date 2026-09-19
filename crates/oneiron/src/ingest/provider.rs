@@ -47,7 +47,10 @@ impl IngestSource for ProviderSource {
         {
             let text = blocks_text(system).ok_or_else(|| self.invalid("system"))?;
             if text.trim().is_empty() {
-                return Err(IngestError::EmptyText { source_id: self.id(), line: 0 });
+                return Err(IngestError::EmptyText {
+                    source_id: self.id(),
+                    line: 0,
+                });
             }
             records.push(NormalizedIngestRecord {
                 source_record_id: "system".into(),

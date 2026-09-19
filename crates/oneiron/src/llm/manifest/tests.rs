@@ -110,10 +110,16 @@ fn verdict_modes_preserve_legacy_refusals_and_reasons() {
             floor: ConfidenceBand::High,
             mode,
         };
-        for outcome in [AutoCheckOutcome::Unavailable, AutoCheckOutcome::Hold {
-            reasons: vec!["host_policy".into(), "missing_evidence".into()],
-        }] {
-            assert_eq!(apply_verdict_floor(Some(&binding), outcome.clone()), (outcome, None));
+        for outcome in [
+            AutoCheckOutcome::Unavailable,
+            AutoCheckOutcome::Hold {
+                reasons: vec!["host_policy".into(), "missing_evidence".into()],
+            },
+        ] {
+            assert_eq!(
+                apply_verdict_floor(Some(&binding), outcome.clone()),
+                (outcome, None)
+            );
         }
     }
 }

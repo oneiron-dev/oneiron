@@ -2662,13 +2662,23 @@ fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation(
             serde_json::json!("ghp_0123456789abcdefghijklmnopqrstuvwxyz"),
         );
         let fields = pack.results[1].fields.as_mut().unwrap();
-        for key in ["apiKey", "accessToken", "refreshToken", "privateKey", "ssh_key", "API-KEY"] {
+        for key in [
+            "apiKey",
+            "accessToken",
+            "refreshToken",
+            "privateKey",
+            "ssh_key",
+            "API-KEY",
+        ] {
             fields.insert(key.into(), serde_json::json!("must-not-export"));
         }
-        fields.insert("nested".into(), serde_json::json!([
-            {"private_key": "must-not-export"},
-            {"note": "-----BEGIN RSA PRIVATE KEY-----\nbody\n-----END RSA PRIVATE KEY-----"}
-        ]));
+        fields.insert(
+            "nested".into(),
+            serde_json::json!([
+                {"private_key": "must-not-export"},
+                {"note": "-----BEGIN RSA PRIVATE KEY-----\nbody\n-----END RSA PRIVATE KEY-----"}
+            ]),
+        );
         let wire = serialize_pack(&pack, &config(format));
         let text = String::from_utf8(wire).unwrap();
         assert!(!text.contains("ghp_"));

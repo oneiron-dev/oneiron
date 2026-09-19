@@ -95,8 +95,11 @@ fn configured_scraper_diffs_only_changes_and_only_nominates() -> Result<()> {
     };
     for field in ["id", "benchmark"] {
         let mut invalid = config.clone();
-        if field == "id" { invalid.sources[0].id = "a".repeat(129); }
-        else { invalid.sources[0].benchmark = "a".repeat(129); }
+        if field == "id" {
+            invalid.sources[0].id = "a".repeat(129);
+        } else {
+            invalid.sources[0].benchmark = "a".repeat(129);
+        }
         assert!(invalid.validate().is_err());
     }
     let snapshot = |score| serde_json::json!({"data":[{"model":"external-name","score":score}]});

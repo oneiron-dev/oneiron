@@ -78,13 +78,11 @@ impl LlmEventBus {
                 message,
                 usage,
                 finish_reason,
-            } => {
-                Some(LlmResponse {
-                    message: message.clone(),
-                    usage: usage.clone(),
-                    finish_reason: finish_reason.clone(),
-                })
-            }
+            } => Some(LlmResponse {
+                message: message.clone(),
+                usage: usage.clone(),
+                finish_reason: finish_reason.clone(),
+            }),
             _ => None,
         };
         if let Some(terminal) = terminal {
@@ -214,6 +212,21 @@ impl LlmEventBus {
 }
 impl Drop for LlmEventBus {
     fn drop(&mut self) {
-        let _ = self.abort(LlmUsage::zero());
+        if self.abort(LlmUsage::zero()).is_err() {
+            // A sink failure must not strand subscribers after the producer dies.
+            // EOF is not a successful Done and no uncommitted terminal is replayed.
+            for weak in &self.subscribers {
+                if let Some(state) = weak.upgrade() {
+                    let waker = {
+                        let mut state = state.lock().expect("subscriber lock");
+                        state.closed = true;
+                        state.waker.take()
+                    };
+                    if let Some(waker) = waker {
+                        waker.wake();
+                    }
+                }
+            }
+        }
     }
 }

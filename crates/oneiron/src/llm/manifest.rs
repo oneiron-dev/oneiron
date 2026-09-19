@@ -269,7 +269,10 @@ pub(crate) fn apply_verdict_floor(
         );
     };
     // A floor evaluates calibrated verdicts only; legacy checker refusals survive.
-    if matches!(&outcome, AutoCheckOutcome::Hold { .. } | AutoCheckOutcome::Unavailable) {
+    if matches!(
+        &outcome,
+        AutoCheckOutcome::Hold { .. } | AutoCheckOutcome::Unavailable
+    ) {
         return (outcome, None);
     }
     let pass = matches!(&outcome, AutoCheckOutcome::Verdict(v) if v.validate().is_ok() && v.model == binding.model && v.allow && v.band >= binding.floor && v.basis == VerdictBasis::CalibratedModel);
