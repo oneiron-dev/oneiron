@@ -287,3 +287,28 @@ fn agent_historical_source_erases_without_widening_from_a_forged_key() -> Result
     assert!(doc.get_map("edges").get(&edge_key).is_some());
     Ok(())
 }
+
+#[test]
+fn retained_birth_hash_without_captured_bytes_is_an_explicit_archive_omission() -> Result<()> {
+    let (_dir, vault, child, asset, _) = captured_root()?;
+    let complete = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    assert!(
+        !complete
+            .manifest()
+            .bundle_omissions
+            .iter()
+            .any(|omission| omission.entity_id == child.to_hex())
+    );
+    vault.batch().delete(&asset).commit()?;
+    let incomplete = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    assert!(
+        incomplete
+            .manifest()
+            .bundle_omissions
+            .iter()
+            .any(|omission| omission.entity_id == child.to_hex()
+                && omission.reason
+                    == crate::batch::export::BundleOmissionReason::AgentBirthSourceUnavailable)
+    );
+    Ok(())
+}

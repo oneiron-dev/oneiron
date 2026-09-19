@@ -180,6 +180,31 @@ impl WholeVaultDocument {
             }
         }
         for bundle in &self.agent_packs {
+            if let Some(hash) = &bundle.fork_hash {
+                let available = document_import::parse_id(&bundle.entity_id)
+                    .ok()
+                    .is_some_and(|child| {
+                        crate::agent_def::birth_source_id(&child)
+                            .ok()
+                            .is_some_and(|carrier| {
+                                self.entities().any(|row| {
+                                    row.id == carrier.to_hex()
+                                        && row.entity_type == crate::registry::ENTITY_TYPE_ASSET
+                                        && row.body.to_bytes().ok().is_some_and(|bytes| {
+                                            crate::agent_def::archived_birth_source_matches(
+                                                &child, hash, &bytes,
+                                            )
+                                        })
+                                })
+                            })
+                    });
+                if !available {
+                    bundles.push(ExportBundleOmission {
+                        entity_id: bundle.entity_id.clone(),
+                        reason: BundleOmissionReason::AgentBirthSourceUnavailable,
+                    });
+                }
+            }
             if let Some(omission) = bundle.omission {
                 let reason = match omission {
                     AgentBundleOmission::ForkBindingUnavailable => {

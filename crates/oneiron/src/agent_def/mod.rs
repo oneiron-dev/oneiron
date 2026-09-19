@@ -131,3 +131,5 @@ pub(crate) use birth_custody::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use portable_source::{birth_source_holder, birth_source_matches_id};
+
+pub(crate) use portable_source::{archived_birth_source_matches, birth_source_id};

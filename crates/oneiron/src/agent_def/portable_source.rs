@@ -276,3 +276,13 @@ pub(crate) fn birth_source_holder(bytes: &[u8]) -> Option<EntityId> {
 pub(crate) fn birth_source_matches_id(child: &EntityId, id: &EntityId) -> bool {
     birth_source_id(child).is_ok_and(|expected| expected == *id)
 }
+
+/// Byte availability only. An imported archive never proves local authorship.
+pub(crate) fn archived_birth_source_matches(child: &EntityId, hash: &str, bytes: &[u8]) -> bool {
+    decode_birth_source(bytes)
+        .ok()
+        .flatten()
+        .is_some_and(|source| {
+            source.child().ok() == Some(*child) && source.tree.content_hash.as_deref() == Some(hash)
+        })
+}

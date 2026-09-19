@@ -65,6 +65,8 @@ pub enum BundleOmissionReason {
     SkillSourceUnavailable,
     SkillSourceRedacted,
     AgentForkBindingUnavailable,
+    /// A retained fork hash is not a substitute for the actual captured bytes.
+    AgentBirthSourceUnavailable,
     AgentUnresolvedSkill,
     AgentCredentialRedaction,
 }
