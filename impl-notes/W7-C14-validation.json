@@ -411,5 +411,15 @@
       "target/w7-checks/receipt-ci/pin-tests.log"
     ],
     "actual_report": "pending complete comparisons; no default changed"
+  },
+  "spreadsheetbench_native_v2": {
+    "workbooks": 5455,
+    "recalculated": 2525,
+    "refused": 2930,
+    "executable_sha256": "3a9cb2cb63ee3743417716387e3826e8066ac0d5c06d428473e8c9cb776bd7c3",
+    "rows_sha256": "7edace0e39195a41d6fe1575492a8d474f5194ba33b4470f186fecb46ffbcb0c",
+    "receipt_tests": 3,
+    "test_exit_code": 0,
+    "fresh_excel_accuracy": "pending"
   }
 }
