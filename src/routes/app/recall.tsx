@@ -3,6 +3,7 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { Chevron } from '~/components/safelight/icons'
 import { cue, markCued, useEscape } from '~/components/safelight/hooks'
 import recallCss from '~/styles/recall.css?url'
+import { recallSceneAssets, useRecallScene } from '~/runtime/recall-scene'
 
 export const Route = createFileRoute('/app/recall')({
   head: () => ({
@@ -195,6 +196,7 @@ function Watch({ watched, onWatch }: { watched: boolean; onWatch: () => void }) 
 }
 
 function Recall() {
+  const [scene] = useRecallScene()
   const askRef = React.useRef<HTMLTextAreaElement>(null)
   const ledgerRef = React.useRef<HTMLTableElement>(null)
   const [draft, setDraft] = React.useState('')
@@ -297,30 +299,61 @@ function Recall() {
   )
 
   const key = asked?.key ?? null
+  const sceneAssets = !asked ? recallSceneAssets(scene) : null
 
   return (
-    <main className="pane recall" id="pane">
+    <main className={sceneAssets ? 'pane recall has-scene' : 'pane recall'} id="pane">
+      {sceneAssets && (
+        <div className="recall-scene-backdrop" aria-hidden="true">
+          <div className="art-day" style={{ backgroundImage: `url("${sceneAssets.day}")` }} />
+          <div className="art-night" style={{ backgroundImage: `url("${sceneAssets.night}")` }} />
+        </div>
+      )}
       <div className="pane-body">
-        {/* the question IS the pane title */}
-        <div className="pane-head">
-          <textarea
-            id="ask"
-            ref={askRef}
-            aria-label="ask the vault"
-            className="ask"
-            rows={1}
-            placeholder="Ask the vault"
-            value={draft}
-            autoFocus
-            spellCheck={false}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                run(draft)
-              }
-            }}
-          />
+        <div className="recall-entry">
+          {/* the question IS the pane title */}
+          <div className="pane-head">
+            <textarea
+              id="ask"
+              ref={askRef}
+              aria-label="ask the vault"
+              className="ask"
+              rows={1}
+              placeholder="Ask the vault"
+              value={draft}
+              autoFocus
+              spellCheck={false}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  run(draft)
+                }
+              }}
+            />
+          </div>
+
+          {/* the empty door (rule 40): the flock, one line, the two sample doors */}
+          {!asked && (
+            <div className="recall-empty">
+              <img className="spot" src="/art/spot-flock.png" width={150} alt="" />
+              <span className="lead">
+                <span className="line">Ask the vault. Every answer shows what it stands on.</span>
+                <span className="doors">
+                  {SAMPLES.map((s) => (
+                    <button
+                      key={s.key}
+                      className="chip"
+                      title={s.title}
+                      onClick={() => run(s.question)}
+                    >
+                      {s.chip}
+                    </button>
+                  ))}
+                </span>
+              </span>
+            </div>
+          )}
         </div>
 
         {/* the sample asks: chips under the title once a question is live */}
@@ -338,28 +371,6 @@ function Recall() {
                 {s.chip}
               </button>
             ))}
-          </div>
-        )}
-
-        {/* the empty door (rule 40): the flock, one line, the two sample doors */}
-        {!asked && (
-          <div className="recall-empty">
-            <img className="spot" src="/art/spot-flock.png" width={150} alt="" />
-            <span className="lead">
-              <span className="line">Ask the vault. Every answer shows what it stands on.</span>
-              <span className="doors">
-                {SAMPLES.map((s) => (
-                  <button
-                    key={s.key}
-                    className="chip"
-                    title={s.title}
-                    onClick={() => run(s.question)}
-                  >
-                    {s.chip}
-                  </button>
-                ))}
-              </span>
-            </span>
           </div>
         )}
 
