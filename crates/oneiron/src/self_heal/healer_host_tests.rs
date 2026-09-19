@@ -192,7 +192,7 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
     .unwrap();
     assert_eq!(
         restored.proposal_burst_check(&actor.entity_ref()).unwrap(),
-        Some(check.clone())
+        Some(check)
     );
     let receipt = v
         .reverse_healer_run(&owner, &actor.entity_ref(), "burst")
