@@ -43,6 +43,9 @@ pub struct SyncClient {
     pub(crate) server_vvs: HashMap<String, VersionVector>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
+    pub(crate) _message_stream_subscription: Subscription,
+    pub(crate) lfs_download: Option<crate::sync::chunks::ChunkDownload>,
+    pub(crate) last_lfs_download: Option<crate::origin::lfs::LfsPutOutcome>,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -101,6 +104,22 @@ impl SyncClient {
                 true
             }));
 
+        let stream_event_tx = event_tx.clone();
+        let message_stream_subscription = vault.message_streams.presence.store.subscribe(Box::new(
+            move |event: &EphemeralStoreEvent| {
+                let _ = stream_event_tx.send(SyncEvent::EphemeralChanged {
+                    origin: match event.by {
+                        EphemeralEventTrigger::Local => EphemeralChangeOrigin::Local,
+                        EphemeralEventTrigger::Import => EphemeralChangeOrigin::Remote,
+                        EphemeralEventTrigger::Timeout => EphemeralChangeOrigin::Timeout,
+                    },
+                    added: event.added.as_ref().clone(),
+                    updated: event.updated.as_ref().clone(),
+                    removed: event.removed.as_ref().clone(),
+                });
+                true
+            },
+        ));
         let client = Self {
             vault,
             manager,
@@ -111,6 +130,9 @@ impl SyncClient {
             server_vvs: HashMap::new(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
+            _message_stream_subscription: message_stream_subscription,
+            lfs_download: None,
+            last_lfs_download: None,
             status: SyncStatus::Disconnected,
             event_tx,
         };
@@ -164,12 +186,21 @@ impl SyncClient {
 
     /// Reads the current non-expired ephemeral value for `key`.
     pub fn ephemeral(&self, key: &str) -> Option<LoroValue> {
-        self.ephemeral_store.get(key)
+        self.vault
+            .message_streams
+            .presence
+            .store
+            .get(key)
+            .or_else(|| self.ephemeral_store.get(key))
     }
 
     /// Returns all currently stored non-deleted ephemeral keys.
     pub fn ephemeral_keys(&self) -> Vec<String> {
-        self.ephemeral_store.keys()
+        let mut keys = self.ephemeral_store.keys();
+        keys.extend(self.vault.message_streams.presence.store.keys());
+        keys.sort();
+        keys.dedup();
+        keys
     }
 
     /// Sets a local ephemeral key and returns the wire frame to send.
@@ -191,6 +222,7 @@ impl SyncClient {
     /// Runs the Rust-side `EphemeralStore` timeout housekeeping tick.
     pub fn remove_outdated_ephemeral(&self) {
         self.ephemeral_store.remove_outdated();
+        self.vault.message_streams.presence.store.remove_outdated();
     }
 
     /// Returns the list of window keys from the root doc (set by server).

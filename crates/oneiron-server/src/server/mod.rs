@@ -3,6 +3,7 @@ mod core;
 mod embedding;
 mod leases;
 mod lifecycle;
+mod message_stream;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;

@@ -43,6 +43,7 @@
 mod base;
 mod federated;
 mod inbound;
+mod lfs;
 mod sync_frames;
 mod types;
 

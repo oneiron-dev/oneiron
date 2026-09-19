@@ -261,7 +261,7 @@ fn sync_client_generate_initial_sync() {
     // It MUST be the first frame.
     assert_eq!(
         messages[0],
-        transport::encode_legacy_full_window_protocol_hello()
+        transport::encode_chunk_full_window_protocol_hello()
     );
 
     // Frame 1: lease request — 105 B pinned layout, client_id BE at

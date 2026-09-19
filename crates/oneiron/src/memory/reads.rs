@@ -399,5 +399,9 @@ pub(super) const fn edge_kind_name(kind: EdgeKind) -> &'static str {
         EdgeKind::Fulfills => "fulfills",
         EdgeKind::DischargedBy => "discharged_by",
         EdgeKind::SameAs => "same_as",
+        EdgeKind::Parent => "parent",
+        EdgeKind::SpawnedBy => "spawned_by",
+        EdgeKind::AddressedTo => "addressed_to",
+        EdgeKind::RepliesTo => "replies_to",
     }
 }

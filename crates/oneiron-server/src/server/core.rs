@@ -37,7 +37,7 @@ pub struct SyncServer {
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
-    pub(crate) ephemeral_store: EphemeralStore,
+    pub(crate) ephemeral_store: Arc<EphemeralStore>,
     /// Producer state for Dreamer live attempt-progress rows on the ephemeral lane.
     pub(crate) dreamer_progress: Mutex<DreamerAttemptProgressProducer>,
     /// Broadcast channel for fan-out to all connected clients.
@@ -162,11 +162,18 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
+        let ephemeral_store = Arc::new(EphemeralStore::new(config.ephemeral_timeout_ms));
+        super::message_stream::spawn_message_stream_producer(
+            &vault,
+            &ephemeral_store,
+            &broadcast_tx,
+            &config,
+        );
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
             vault,
             root_doc,
-            ephemeral_store: EphemeralStore::new(config.ephemeral_timeout_ms),
+            ephemeral_store,
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
