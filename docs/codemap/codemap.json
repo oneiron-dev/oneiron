@@ -348,7 +348,7 @@
      "path": "src/agent_def/birth_custody.rs",
      "purpose": "Physical custody of captured agent source, without authorship or delete grants",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {

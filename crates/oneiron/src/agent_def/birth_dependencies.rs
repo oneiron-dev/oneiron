@@ -101,13 +101,40 @@ pub(super) fn retire_input(
     txn: &mut heed::RwTxn<'_>,
     input: &EntityId,
 ) -> Result<()> {
-    store.vault_meta.put(txn, &key(RETIRED_INPUT, input), &[])?;
-    for child in children_for_input(store, txn, input)? {
-        // Mark-before-deindex makes malicious cyclic payload references finite.
-        // Retirement is permanent; replay cannot put bytes behind this marker.
-        if !super::birth_custody::birth_source_retired(store, txn, &child)? {
-            retire_birth_source_holder_in_txn(store, txn, &child)?;
+    let mut children = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    let mut pending = vec![*input];
+    while let Some(input) = pending.pop() {
+        if !visited.insert(input) {
+            continue;
         }
+        store
+            .vault_meta
+            .put(txn, &key(RETIRED_INPUT, &input), &[])?;
+        for child in children_for_input(store, txn, &input)? {
+            if children.insert(child) {
+                pending.extend(birth_carriers_for_holder_in_txn(store, txn, &child)?);
+            }
+        }
+    }
+    // Seal the full dependent set before calling deindex. Its normal custody
+    // hook then sees retired sources, so even adversarial cross-links cannot
+    // turn a long dependency chain into recursive stack growth.
+    let children = children
+        .into_iter()
+        .filter_map(
+            |child| match super::birth_custody::birth_source_retired(store, txn, &child) {
+                Ok(true) => None,
+                Ok(false) => Some(Ok(child)),
+                Err(error) => Some(Err(error)),
+            },
+        )
+        .collect::<Result<Vec<_>>>()?;
+    for child in &children {
+        super::birth_custody::mark_birth_source_retired(store, txn, child)?;
+    }
+    for child in children {
+        retire_birth_source_holder_in_txn(store, txn, &child)?;
     }
     Ok(())
 }

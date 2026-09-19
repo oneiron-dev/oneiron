@@ -27,6 +27,14 @@ pub(super) fn birth_source_retired(
 ) -> Result<bool> {
     Ok(store.vault_meta.get(txn, &key(RETIRED, child))?.is_some())
 }
+pub(super) fn mark_birth_source_retired(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    child: &EntityId,
+) -> Result<()> {
+    store.vault_meta.put(txn, &key(RETIRED, child), &[])?;
+    Ok(())
+}
 pub(super) fn check_birth_custody(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -128,7 +136,7 @@ pub(crate) fn retire_birth_source_holder_in_txn(
     txn: &mut heed::RwTxn<'_>,
     child: &EntityId,
 ) -> Result<()> {
-    store.vault_meta.put(txn, &key(RETIRED, child), &[])?;
+    mark_birth_source_retired(store, txn, child)?;
     for id in birth_carriers_for_holder_in_txn(store, txn, child)? {
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             continue;
