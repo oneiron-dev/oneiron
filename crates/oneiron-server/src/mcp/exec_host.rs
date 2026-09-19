@@ -118,7 +118,7 @@ impl McpCodeExecutionError {
     #[must_use]
     pub const fn error_code(&self) -> &'static str {
         match self {
-            Self::HostUnbound => "code_host_unbound",
+            Self::HostUnbound => super::MCP_CODE_HOST_UNBOUND_CODE,
             Self::RunBusy => "code_run_busy",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",

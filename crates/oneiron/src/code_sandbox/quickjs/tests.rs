@@ -6,12 +6,13 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 fn artifact(tier: &str) -> (Vec<u8>, [u8; 32]) {
-    let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
+    let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR").map_or_else(
+        || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../components/code-run-quickjs/artifacts")
-        });
+        },
+        PathBuf::from,
+    );
     let manifest: Value = serde_json::from_slice(
         &std::fs::read(directory.join("manifest.json"))
             .expect("build the real QuickJS components; see components/code-run-quickjs/README.md"),

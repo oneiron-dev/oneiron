@@ -1678,7 +1678,7 @@ fn every_structured_error_code_carries_recovery_suggestions() {
         "scoped_mcp_grant_required",
         "board_render_failed",
         "verb_dispatch_failed",
-        MCP_EXECUTE_CODE_UNAVAILABLE_CODE,
+        MCP_CODE_HOST_UNBOUND_CODE,
         MCP_PAGE_CURSOR_INVALID_CODE,
         "an_error_code_no_one_has_minted_yet",
     ] {

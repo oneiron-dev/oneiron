@@ -238,7 +238,7 @@ pub(super) fn mcp_validated_call_args(
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
     let Some(tool) = server.mcp_surface(mode).resolve(&params.name) else {
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
-            return Err(mcp_execute_code_unavailable());
+            return Err(mcp_code_host_unbound());
         }
         return Err(McpGatewayError::new(
             -32602,
@@ -261,10 +261,10 @@ pub(super) fn mcp_validated_call_args(
 }
 
 /// Refuse an unavailable interpreter before decoding arguments or creating a run.
-pub(super) fn mcp_execute_code_unavailable() -> McpGatewayError {
+pub(super) fn mcp_code_host_unbound() -> McpGatewayError {
     McpGatewayError::new(
         -32020,
-        crate::mcp::MCP_EXECUTE_CODE_UNAVAILABLE_CODE,
+        crate::mcp::MCP_CODE_HOST_UNBOUND_CODE,
         format!(
             "{tool} has no verified production runtime on this server; no run was created",
             tool = crate::mcp::MCP_EXECUTE_CODE_TOOL,

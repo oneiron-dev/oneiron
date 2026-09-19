@@ -40,12 +40,13 @@ impl LlmBackend for Backend {
 }
 
 fn factory() -> QuickJsRuntimeFactory {
-    let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
+    let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR").map_or_else(
+        || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../components/code-run-quickjs/artifacts")
-        });
+        },
+        PathBuf::from,
+    );
     let manifest: Value = serde_json::from_slice(
         &std::fs::read(directory.join("manifest.json")).expect("build the real QuickJS artifacts"),
     )
@@ -64,9 +65,9 @@ fn factory() -> QuickJsRuntimeFactory {
 async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let actor_id = seeded_test_entity_id(0x2465_01);
-    let subject = seeded_test_entity_id(0x2465_02);
-    let claim = seeded_test_entity_id(0x2465_03);
+    let actor_id = seeded_test_entity_id(0x0024_6501);
+    let subject = seeded_test_entity_id(0x0024_6502);
+    let claim = seeded_test_entity_id(0x0024_6503);
     vault
         .put_entity(
             &subject,
@@ -91,7 +92,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         }),
         BudgetLease::for_test("quickjs-wire"),
         EngineExecutorConfig {
-            run_id: seeded_test_entity_id(0x2465_04),
+            run_id: seeded_test_entity_id(0x0024_6504),
             task: "template".into(),
             prompt_package_root: oneiron::prompt::workspace_prompt_package_root().unwrap(),
             model: ModelId::new("fixture/quickjs@v1").unwrap(),

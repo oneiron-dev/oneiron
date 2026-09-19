@@ -6,7 +6,7 @@ use crate::{EdgeActorClass, TimeRange, Vault, VaultConfig, WriteActor};
 use std::ops::ControlFlow;
 
 fn person(vault: &Vault, byte: u8) -> EntityId {
-    let id = EntityId::from_bytes([byte; 16]).unwrap();
+    let id = EntityId::from_bytes([byte; 16]).expect("valid fixture person id");
     vault
         .put_entity(
             &id,
@@ -15,7 +15,7 @@ fn person(vault: &Vault, byte: u8) -> EntityId {
             1,
             b"person",
         )
-        .unwrap();
+        .expect("store fixture person");
     id
 }
 
@@ -169,7 +169,7 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     let brief = memory
         .author_brief(
             "# Overview\nAuthored text <script>",
-            &[pin_a.clone(), pin_b.clone()],
+            &[pin_a.clone(), pin_b],
         )
         .unwrap();
     let brief = EntityId::from_hex(&brief.id_hex).unwrap();

@@ -175,7 +175,7 @@ fn gate_refusal_preserves_current_value_and_never_parks_a_replacement() {
         &vault,
         vec![("agent".into(), actor.to_hex(), "proposed".into())],
     );
-    let mut refused = first.clone();
+    let mut refused = first;
     refused.request_id = "requires-review".into();
     refused.value = json!({"n":2});
     assert!(memory.key_value_put(&refused).is_err());
@@ -353,7 +353,10 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
         for revision in [&old.item.revision, &current.item.revision] {
             assert!(facade.get_entity(revision).unwrap().is_none());
             assert_eq!(
-                facade.hydrate(&[revision.clone()]).unwrap_err().code,
+                facade
+                    .hydrate(std::slice::from_ref(revision))
+                    .unwrap_err()
+                    .code,
                 MEMORY_CODE_NOT_FOUND
             );
             assert!(facade.claim_history(revision).unwrap().is_empty());
@@ -713,7 +716,7 @@ fn malformed_keyed_payloads_are_absent_without_fallback_to_superseded_values() {
         body.value = json_to_rmpv(&value);
         malformed.push(body);
     }
-    let mut bad_rung = original.clone();
+    let mut bad_rung = original;
     let Some(rmpv::Value::Map(entries)) = &mut bad_rung.scope else {
         panic!("scope")
     };
@@ -873,7 +876,7 @@ fn replacement_keeps_source_trust_and_refuses_generated_over_user_truth_atomical
         memory
             .key_value_get(&address(&["private"], "truth"))
             .unwrap(),
-        Some(first.item.clone())
+        Some(first.item)
     );
     assert_eq!(memory.receipts(100).unwrap(), before);
     assert_eq!(memory.pending_writes(100).unwrap(), pending_before);

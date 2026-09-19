@@ -1069,15 +1069,10 @@ pub(super) fn resolve_short_ref(server: &SyncServer, short_ref: &str) -> oneiron
 // ═══════════════════════════════════════════════════════════════════════════
 // ONE-1704 M2 — the INJECTED execute_code host SEAM
 //
-// This crate ships no `JsCodeModeRuntime`, LLM backend, or budget lease, so the
-// fixture below binds a PROVIDER into the shipped `McpEngineNativeCodeHost`
-// adapter — the seam production would use.
-//
-// ONE-1704 B2: binding it here is a NEGATIVE control, not a positive one. With a
-// host bound in this very process, a direct `execute_code` call is still refused
-// at the wire with `execute_code_unavailable` and the counter below stays at
-// zero, which is what proves the retirement is the registered surface's and not
-// an accident of a missing provider.
+// This fixture binds an unverified provider, not the shipped QuickJS runtime.
+// It is a negative control: a fixture binding alone cannot enable the wire
+// surface. Calls return code_host_unbound and the counter stays zero. The
+// separate real-QuickJS test covers the verified production binding.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -349,8 +349,8 @@ fn mcp_scope_admits_row(
 
 /// What a caller can actually DO next on this endpoint.
 ///
-/// ONE-1704 B1: every line is true of the release that is shipping. There is no
-/// `execute_code` lane to point at, so none is offered.
+/// Execution help follows the server's verified host binding, not a static
+/// release-wide assumption that no interpreter exists.
 fn mcp_setup_help(server: &SyncServer) -> Vec<String> {
     vec![
         "register the tool-first endpoint for one generated tool per verb".to_owned(),
@@ -358,7 +358,7 @@ fn mcp_setup_help(server: &SyncServer) -> Vec<String> {
             "execute_code resumes a durable run when called with the same run_ref and task"
                 .to_owned()
         } else {
-            "execute_code has no verified runtime on this server; direct calls receive execute_code_unavailable".to_owned()
+            "execute_code has no verified runtime on this server; direct calls receive code_host_unbound".to_owned()
         },
         "a More result carries an opaque cursor; send it back as page.cursor with the same \
          arguments"

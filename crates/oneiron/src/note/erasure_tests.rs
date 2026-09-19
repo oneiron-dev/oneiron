@@ -281,7 +281,7 @@ fn source_and_claim_erasure_keep_other_pin_prose_authorship_and_refuse_replay() 
         replay
             .doc
             .get_map("pins")
-            .delete(&blake3::hash(value.as_bytes()).to_hex().to_string())
+            .delete(blake3::hash(value.as_bytes()).to_hex().as_ref())
             .unwrap();
         replay.doc.commit();
         // Its live state is now lawful, but its full history still carries the

@@ -16,7 +16,7 @@ fn actor(vault: &Vault) -> EntityId {
             1,
             b"actor",
         )
-        .unwrap();
+        .expect("store fixture entity or grant");
     id
 }
 fn selector(vault: &Vault, actor: EntityId, role: FederationGrantRole) -> SyncSelector {
@@ -34,17 +34,20 @@ fn selector(vault: &Vault, actor: EntityId, role: FederationGrantRole) -> SyncSe
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
-            &crate::federation::encode_federation_grant_body(&grant).unwrap(),
+            &crate::federation::encode_federation_grant_body(&grant).expect("encode fixture grant"),
         )
         .commit()
-        .unwrap();
+        .expect("store fixture entity or grant");
     SyncSelector::new(id, actor, SyncSelectorWorld::All, vec![], vec![])
 }
 fn edit(vault: &Vault, note: EntityId, start: usize, delete: usize, insert: &str) -> NoteOperation {
     NoteOperation {
         request_id: EntityId::now(),
         change: NoteChange::Edit {
-            base: vault.note_document(note).unwrap().frontier,
+            base: vault
+                .note_document(note)
+                .expect("read fixture note")
+                .frontier,
             edits: vec![NoteEdit {
                 start,
                 delete,
@@ -54,8 +57,12 @@ fn edit(vault: &Vault, note: EntityId, start: usize, delete: usize, insert: &str
     }
 }
 fn replicate_row(from: &Vault, to: &Vault, id: EntityId) {
-    let raw = from.get_raw(&id).unwrap().unwrap();
-    let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    let raw = from
+        .get_raw(&id)
+        .expect("read fixture row")
+        .expect("fixture row exists");
+    let header =
+        crate::batch::EntityMetadataHeader::parse(&raw).expect("valid fixture entity header");
     to.batch()
         .put_replicated(
             &id,
@@ -65,7 +72,7 @@ fn replicate_row(from: &Vault, to: &Vault, id: EntityId) {
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
         .commit()
-        .unwrap();
+        .expect("store fixture entity or grant");
 }
 fn manager(vault: Arc<Vault>) -> Arc<WindowManager> {
     Arc::new(WindowManager::new(
