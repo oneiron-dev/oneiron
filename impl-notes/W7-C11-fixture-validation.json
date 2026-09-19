@@ -1,0 +1,187 @@
+{
+  "ticket": "W7-C11",
+  "validation_source": "da7c04c529525bef4c03e9659bf458cea8a32ccf",
+  "fixture_commits": [
+    "415632c6",
+    "da7c04c5"
+  ],
+  "host": "MacBook olety@100.124.216.116",
+  "temporary_root": "native macOS default; no TMPDIR override",
+  "durable_unit": "w7-c11-fixture-validation-chain-01.service",
+  "terminal": {
+    "ActiveState": "inactive",
+    "SubState": "dead",
+    "Result": "success",
+    "ExecMainStatus": 0
+  },
+  "chain_log": "target/w7-logs/fixture-validation-chain-1.log",
+  "chain_log_sha256": "82e79368a67691333f3a43221cf8c9b70bf4d4e191a961ebdf78663c672c8261",
+  "full_run_per_package": {
+    "oneiron": {
+      "passed": 7842,
+      "failed": 0,
+      "ignored": 16,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-android": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-bench": {
+      "passed": 295,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-driver": {
+      "passed": 85,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-napi": {
+      "passed": 22,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-server": {
+      "passed": 884,
+      "failed": 0,
+      "ignored": 5,
+      "measured": 0,
+      "filtered": 0
+    }
+  },
+  "ignored_set_matches_pre_repair_factory_run": true,
+  "claim_boundary": "Original six-package Cargo test is green; this is not a Linux or scripts/verify.sh full-workspace VERDICT.",
+  "commands": [
+    {
+      "argv": [
+        "test",
+        "--locked",
+        "--no-fail-fast",
+        "-p",
+        "oneiron",
+        "--lib",
+        "--no-default-features",
+        "--config",
+        "profile.test.package.oneiron.debug=0",
+        "-j",
+        "2",
+        "secret_",
+        "--",
+        "--test-threads=4"
+      ],
+      "log": "fixture-secret-focus-1.log",
+      "exit_code": 0,
+      "totals": {
+        "passed": 132,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 6456
+      }
+    },
+    {
+      "argv": [
+        "test",
+        "--locked",
+        "--no-fail-fast",
+        "-p",
+        "oneiron-bench",
+        "--bin",
+        "oneiron-bench",
+        "--config",
+        "profile.test.package.oneiron.debug=0",
+        "-j",
+        "2",
+        "eval::tests::",
+        "--",
+        "--test-threads=4"
+      ],
+      "log": "fixture-bench-focus-1.log",
+      "exit_code": 0,
+      "totals": {
+        "passed": 26,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 259
+      }
+    },
+    {
+      "argv": [
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron",
+        "--all-targets",
+        "--no-default-features",
+        "-j",
+        "2",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "log": "fixture-core-lint-1.log",
+      "exit_code": 0,
+      "totals": null
+    },
+    {
+      "argv": [
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron-bench",
+        "--all-targets",
+        "--all-features",
+        "-j",
+        "2",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "log": "fixture-bench-lint-1.log",
+      "exit_code": 0,
+      "totals": null
+    },
+    {
+      "argv": [
+        "test",
+        "--locked",
+        "--no-fail-fast",
+        "-p",
+        "oneiron",
+        "-p",
+        "oneiron-android",
+        "-p",
+        "oneiron-bench",
+        "-p",
+        "oneiron-driver",
+        "-p",
+        "oneiron-napi",
+        "-p",
+        "oneiron-server",
+        "-j",
+        "2",
+        "--",
+        "--test-threads=4"
+      ],
+      "log": "fixture-full-six-1.log",
+      "exit_code": 0,
+      "totals": {
+        "passed": 9129,
+        "failed": 0,
+        "ignored": 21,
+        "measured": 0,
+        "filtered": 0
+      }
+    }
+  ]
+}
