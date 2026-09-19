@@ -130,7 +130,7 @@ pub(super) fn canonical_source_package(package: &HubPackage) -> Result<HubPackag
         false,
         true,
         vec![],
-        rmpv::Value::Nil,
+        rmpv::Value::Map(vec![("source".into(), "byte-custody".into())]),
     )
     .with_content_hash(package.content_hash()?);
     let mut canonical =
