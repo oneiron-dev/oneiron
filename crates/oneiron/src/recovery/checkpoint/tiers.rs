@@ -36,10 +36,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
             } else if [
                 b"provider_confidence/".as_slice(),
                 b"ppr_community_cache:",
-                b"dreamer:prefilter:member",
-                b"dreamer:prefilter:round",
-                b"dreamer:prefilter:skip",
-                b"retr_blend_weights:",
                 b"skill_hub/content_hash_index/v1\0",
                 b"skill_hub/content_hash_index_schema_version",
                 b"skill_convert/source_index/v1\0",
@@ -69,6 +65,8 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
             {
                 Derived
             } else {
+                // Prefilter receipts/membership and tuned blend weights are
+                // historical decisions, not reconstructable projections.
                 Canonical
             }
         }

@@ -63,7 +63,7 @@ fn recency_half_life_table_is_contract_pinned() {
 
 #[test]
 fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
+    let (dir, vault) = open_test_vault();
     let high = entity_id(0xB0);
     let mid = entity_id(0xB1);
     let low = entity_id(0xB2);
@@ -143,6 +143,17 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
 
     assert_ne!(baseline_score.to_bits(), rescored_score.to_bits());
     assert!(rescored_score > baseline_score);
+
+    let image = dir.path().join("checkpoint");
+    vault.snapshot_checkpoint(&image, 300)?;
+    let (restored, _) = Vault::restore_checkpoint(
+        &image,
+        &dir.path().join("restored"),
+        crate::VaultConfig::device(),
+        crate::recovery::checkpoint::RestoreReason::Restore,
+        400,
+    )?;
+    assert_eq!(restored.retrieval_blend_weight_table()?, updated);
     Ok(())
 }
 
