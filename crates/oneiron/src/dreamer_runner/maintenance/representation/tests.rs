@@ -337,13 +337,10 @@ fn wake_cites_scoped_sources_owner_accept_delivers_via_of327_decline_sends_nothi
         1
     );
     assert_eq!(sink.sent, vec![bytes]);
-    let replay =
-        schedule_approved_representation(&facade, approved, &context, 106).unwrap();
+    let replay = schedule_approved_representation(&facade, approved, &context, 106).unwrap();
     assert!(replay.deduped);
     assert_eq!(
-        f.vault
-            .run_connector_task_executor(&mut sink, 107)
-            .unwrap(),
+        f.vault.run_connector_task_executor(&mut sink, 107).unwrap(),
         0
     );
     let receipts = f

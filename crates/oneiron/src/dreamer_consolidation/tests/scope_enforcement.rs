@@ -378,7 +378,8 @@ fn scoped_signals_preserve_ranking_and_filter_foreign_and_private_refs() -> Resu
 
 #[test]
 fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts")])?;

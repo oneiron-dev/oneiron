@@ -1063,7 +1063,7 @@ mod cb_a {
         use oneiron::edge::EdgeActorClass;
         use oneiron::{ClaimApprovalStatus, ClaimSource};
 
-        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
+        let fixture = super::peer_fixture::PeerFixture::open_without_generated_permit();
         let run = fixture.run();
         assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
         let answer = fixture.land_peer_answer("ACME");
@@ -1089,10 +1089,7 @@ mod cb_a {
         assert!(fixture.entity_exists(answer.consult_task_ref));
         assert_eq!(fixture.pending_gate_consents(), 0);
 
-        fixture
-            .vault
-            .install_generated_source_permit_for_test(run.agent_actor.entity_ref())
-            .expect("bind only the Generated permit to this Dreamer");
+        let fixture = fixture.with_generated_source_permit(run.agent_actor.entity_ref());
         let outcome = promote_consolidated_claims(&fixture.vault, &run, vec![candidate])
             .expect("retry the same candidate through the same Dreamer");
         assert_eq!(outcome.landed, vec![claim_id]);
@@ -1110,15 +1107,12 @@ mod cb_a {
         use oneiron::dreamer_promotion::promote_consolidated_claims;
         use oneiron::edge::EdgeActorClass;
 
-        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
+        let fixture = super::peer_fixture::PeerFixture::open_without_generated_permit();
         let run = fixture.run();
         let wrong_actor = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
         assert_ne!(wrong_actor, run.agent_actor.entity_ref());
         assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
-        fixture
-            .vault
-            .install_generated_source_permit_for_test(wrong_actor)
-            .expect("permit the peer, not the Dreamer");
+        let fixture = fixture.with_generated_source_permit(wrong_actor);
         let answer = fixture.land_peer_answer("ACME");
         let candidate = fixture.public_peer_candidate(&answer, "ACME", 0.7);
         let claim_id = candidate.claim_id;
@@ -1150,8 +1144,8 @@ mod cb_a {
         use oneiron::dreamer_promotion::promote_consolidated_claims;
         use oneiron::edge::EdgeActorClass;
 
-        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
-        fixture.permit_generated_source();
+        let fixture = super::peer_fixture::PeerFixture::open_without_generated_permit();
+        let fixture = fixture.permit_generated_source();
         let run = fixture.run();
         assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
         let answer = fixture.land_peer_answer("ACME");
@@ -1182,7 +1176,7 @@ mod cb_a {
         use oneiron::{EntityId, Error};
         use rmpv::Value;
 
-        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
+        let fixture = super::peer_fixture::PeerFixture::open_without_generated_permit();
         let ids = fixture
             .vault
             .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
@@ -1450,13 +1444,14 @@ mod peer_fixture {
         }
     }
 
-    /// Provision this fixture's owner policy without opening a production
-    /// policy-write door. Public puts reject POLICY_MANIFEST, and adding a
-    /// second manifest would fail closed: source rows with different actor
-    /// bindings merge to no permit. Replace only the two source rows in the
-    /// CLOSED temporary vault; keep every other default-policy axis intact.
-    fn open_peer_policy_vault(path: &std::path::Path, config: VaultConfig) -> Vault {
-        let vault = Vault::open(path, config.clone()).expect("open the fixture vault");
+    /// Edit only this fixture's policy after dropping its sole Vault handle.
+    /// No production policy door or actor-wide permit is introduced.
+    fn rewrite_peer_policy(
+        vault: Vault,
+        path: &std::path::Path,
+        config: VaultConfig,
+        edit: impl FnOnce(&mut Vec<(Value, Value)>),
+    ) -> Vault {
         let manifests = vault
             .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
             .expect("read the default policy manifest id");
@@ -1475,29 +1470,7 @@ mod peer_fixture {
         let Value::Map(entries) = &mut manifest else {
             panic!("default policy must be a map");
         };
-        let (_, source_trust) = entries
-            .iter_mut()
-            .find(|(key, _)| key.as_str() == Some("source_trust"))
-            .expect("default policy has source trust");
-        let Value::Map(rows) = source_trust else {
-            panic!("source trust must be a map");
-        };
-        let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
-        for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
-            let (_, row) = rows
-                .iter_mut()
-                .find(|(key, _)| key.as_str() == Some(source.as_str()))
-                .expect("default policy has this restricted source row");
-            *row = Value::Map(vec![
-                (Value::from("actor_ref"), Value::from(owner.to_hex())),
-                (
-                    Value::from("max_auto_sensitivity"),
-                    Value::from(PEER_SOURCE_SENSITIVITY_FLOOR),
-                ),
-                (Value::from("receipted"), Value::Boolean(true)),
-                (Value::from("warned"), Value::Boolean(true)),
-            ]);
-        }
+        edit(entries);
         // Preserve the existing entity header and all of its index keys.
         raw.truncate(raw.len() - body.len());
         rmpv::encode::write_value(&mut raw, &manifest).expect("encode fixture policy");
@@ -1534,25 +1507,82 @@ mod peer_fixture {
         vault
     }
 
+    fn peer_vault_config() -> VaultConfig {
+        let mut config = VaultConfig::device();
+        config.map_size = 32 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = None;
+        config
+    }
+
+    fn bind_source_permit(entries: &mut [(Value, Value)], source: ClaimSource, actor: EntityId) {
+        let (_, Value::Map(rows)) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("source_trust"))
+            .expect("source trust")
+        else {
+            panic!("source trust map")
+        };
+        let (_, row) = rows
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(source.as_str()))
+            .expect("source row");
+        *row = Value::Map(vec![
+            (Value::from("actor_ref"), Value::from(actor.to_hex())),
+            (
+                Value::from("max_auto_sensitivity"),
+                Value::from(PEER_SOURCE_SENSITIVITY_FLOOR),
+            ),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ]);
+    }
+
+    fn open_peer_policy_vault(
+        path: &std::path::Path,
+        config: VaultConfig,
+        source_permits: bool,
+    ) -> Vault {
+        let vault = Vault::open(path, config.clone()).expect("open fixture");
+        let dreamer = vault
+            .dreamer_authority()
+            .expect("Dreamer authority")
+            .entity_ref();
+        rewrite_peer_policy(vault, path, config, |entries| {
+            let (_, Value::Array(ceilings)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("actor_ceilings"))
+                .expect("actor ceilings")
+            else {
+                panic!("ceiling rows")
+            };
+            ceilings.push(Value::Map(vec![
+                (Value::from("actor_class"), Value::from("agent")),
+                (Value::from("actor_ref"), Value::from(dreamer.to_hex())),
+                (Value::from("ceiling"), Value::from("auto")),
+            ]));
+            if source_permits {
+                for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
+                    bind_source_permit(entries, source, dreamer);
+                }
+            }
+        })
+    }
+
     impl PeerFixture {
         pub(crate) fn open() -> Self {
-            Self::open_with_policy(open_peer_policy_vault)
+            Self::open_with_policy(|path, config| open_peer_policy_vault(path, config, true))
         }
 
-        /// Exact stock policy: Generated is not permitted for this Dreamer.
-        pub(crate) fn open_stock_policy() -> Self {
-            Self::open_with_policy(|path, config| {
-                Vault::open(path, config).expect("open the fixture vault")
-            })
+        /// Stock source policy plus an explicit ceiling for this Dreamer.
+        /// Generated still names the projector and cannot authorize this writer.
+        pub(crate) fn open_without_generated_permit() -> Self {
+            Self::open_with_policy(|path, config| open_peer_policy_vault(path, config, false))
         }
 
         fn open_with_policy(open_vault: fn(&std::path::Path, VaultConfig) -> Vault) -> Self {
             let dir = tempfile::tempdir().expect("temporary vault directory");
-            let mut config = VaultConfig::device();
-            config.map_size = 32 * 1024 * 1024;
-            config.dimensions = 4;
-            config.embedding_model = None;
-            let vault = open_vault(dir.path(), config);
+            let vault = open_vault(dir.path(), peer_vault_config());
 
             let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
             let peer = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
@@ -1561,27 +1591,66 @@ mod peer_fixture {
                 put_entity(&vault, id, ENTITY_TYPE_PERSON, label.as_bytes());
             }
 
+            let (oneiron::EnqueueDreamerAttemptOutcome::Enqueued(status)
+            | oneiron::EnqueueDreamerAttemptOutcome::Existing(status)) =
+                oneiron::DreamerRunnerStore::new(&vault)
+                    .enqueue(oneiron::dreamer_runner::EnqueueDreamerAttempt {
+                        attempt_type: "cb-b-1710".to_owned(),
+                        input: Value::Nil,
+                        parent_attempt: None,
+                        dedupe_key: None,
+                        run_id: Some("cb-b-1710".to_owned()),
+                        now: PEER_NOW,
+                    })
+                    .expect("enqueue real Dreamer attempt") else {
+                panic!("unexpected enqueue outcome");
+            };
             Self {
                 _dir: dir,
                 vault,
                 owner,
                 peer,
                 subject,
-                attempt: AttemptId::now(),
+                attempt: status.attempt.id,
             }
         }
 
-        pub(crate) fn permit_generated_source(&self) {
-            self.vault
-                .install_generated_source_permit_for_test(self.owner)
-                .expect("permit this Dreamer's Generated lineage hop");
+        pub(crate) fn with_generated_source_permit(self, actor: EntityId) -> Self {
+            let Self {
+                _dir,
+                vault,
+                owner,
+                peer,
+                subject,
+                attempt,
+            } = self;
+            let vault = rewrite_peer_policy(vault, _dir.path(), peer_vault_config(), |entries| {
+                bind_source_permit(entries, ClaimSource::Generated, actor);
+            });
+            Self {
+                _dir,
+                vault,
+                owner,
+                peer,
+                subject,
+                attempt,
+            }
+        }
+
+        pub(crate) fn permit_generated_source(self) -> Self {
+            let actor = self
+                .vault
+                .dreamer_authority()
+                .expect("Dreamer authority")
+                .entity_ref();
+            self.with_generated_source_permit(actor)
         }
 
         pub(crate) fn run(&self) -> DreamerRunContext {
             DreamerRunContext {
                 run_id: "cb-b-1710".to_owned(),
                 attempt_id: self.attempt,
-                agent_actor: WriteActor::new(self.owner, EdgeActorClass::Agent),
+                agent_actor: self.vault.dreamer_authority().expect("Dreamer authority"),
                 now_ms: PEER_NOW,
             }
         }
