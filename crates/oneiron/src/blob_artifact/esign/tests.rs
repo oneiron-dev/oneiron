@@ -129,14 +129,7 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
         value: FieldValue::Text("accepted".into()),
         at: 5,
     };
-    event(
-        &vault,
-        id,
-        EsignEvent::FieldSaved {
-            signature,
-        },
-        5,
-    )?;
+    event(&vault, id, EsignEvent::FieldSaved { signature }, 5)?;
     let pending = event(
         &vault,
         id,
