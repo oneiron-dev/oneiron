@@ -8,9 +8,15 @@
 //! first-party writes are linked as typed traps, and foreign writes leave the
 //! sandbox as reviewable proposal deltas rather than commit authority.
 
+/// Host-pinned production QuickJS artifact loader and runtime factory.
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub mod quickjs;
 /// Fuel-limited Component Model request boundary (no WASI).
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub mod wasmtime_boundary;
+/// Typed Component Model adapter shared with the canonical CODE host boundary.
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub mod wasmtime_runtime;
 
 mod adapter;
 mod contract;

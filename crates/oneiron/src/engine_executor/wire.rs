@@ -629,6 +629,9 @@ fn looks_like_plain_js(text: &str) -> bool {
         "import ",
         "export ",
         "self.",
+        "finish(",
+        "console.log(",
+        "writeOutput(",
     ]
     .iter()
     .any(|prefix| first_line.starts_with(prefix))

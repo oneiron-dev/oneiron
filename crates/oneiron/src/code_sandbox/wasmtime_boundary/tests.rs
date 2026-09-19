@@ -179,3 +179,47 @@ fn fuel_and_memory_exhaustion_trap() {
         .unwrap();
     assert!(request.call::<(), (i32,)>("grow", ()).is_err());
 }
+
+#[test]
+fn foreign_proposal_paths_and_claims_are_validated_without_writing() {
+    use super::{bindings, validate_step_result};
+    let file = |path: &str| bindings::StepResult {
+        result_json: "{}".into(),
+        proposals: vec![bindings::ProposalDelta::FileWrite(bindings::FileProposal {
+            path: path.into(),
+            bytes: vec![1, 2],
+        })],
+    };
+    for path in [
+        "/etc/passwd",
+        "/mnt/uploads/private",
+        "/mnt/skills/code",
+        "/mnt/outputs/../escape",
+        "/mnt/workspace//bad",
+    ] {
+        assert!(validate_step_result(&file(path), SandboxGuestTier::Foreign).is_err());
+    }
+    for path in ["/mnt/outputs/result.txt", "/mnt/workspace/patch.txt"] {
+        assert!(validate_step_result(&file(path), SandboxGuestTier::Foreign).is_ok());
+        assert!(validate_step_result(&file(path), SandboxGuestTier::FirstPartyDreamer).is_err());
+    }
+    let mut claim = bindings::ClaimInput {
+        id: "01010101010101010101010101010101e1".into(),
+        predicate: "test.proposal".into(),
+        subject: "\"01010101010101010101010101010101e2\"".into(),
+        value: "{\"value\":1}".into(),
+        confidence: Some(0.8),
+        occurred: None,
+        learned_at: None,
+    };
+    let output = |claim| bindings::StepResult {
+        result_json: "{}".into(),
+        proposals: vec![bindings::ProposalDelta::ClaimCandidate(claim)],
+    };
+    assert!(validate_step_result(&output(claim.clone()), SandboxGuestTier::Foreign).is_ok());
+    claim.confidence = Some(f32::NAN);
+    assert!(validate_step_result(&output(claim.clone()), SandboxGuestTier::Foreign).is_err());
+    claim.confidence = None;
+    claim.subject = "not-json".into();
+    assert!(validate_step_result(&output(claim), SandboxGuestTier::Foreign).is_err());
+}

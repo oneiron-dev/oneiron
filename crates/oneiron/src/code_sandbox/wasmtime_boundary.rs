@@ -29,6 +29,7 @@ struct RequestState<H> {
 pub struct WasmtimeRequest<H: 'static> {
     store: Store<RequestState<H>>,
     instance: Instance,
+    tier: SandboxGuestTier,
 }
 
 impl WasmtimeBoundary {
@@ -72,13 +73,27 @@ impl WasmtimeBoundary {
         };
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
-        store.set_fuel(20_000_000)?;
+        store.set_fuel(100_000_000)?;
         let instance = linker.instantiate(&mut store, component)?;
-        Ok(WasmtimeRequest { store, instance })
+        Ok(WasmtimeRequest {
+            store,
+            instance,
+            tier,
+        })
     }
 }
 
 impl<H: 'static> WasmtimeRequest<H> {
+    /// Execute the canonical step and validate every returned proposal as inert data.
+    /// Foreign proposal admission never dispatches an engine write.
+    pub fn run_step(&mut self, source: String) -> wasmtime::Result<bindings::StepResult> {
+        let (result,): (std::result::Result<bindings::StepResult, String>,) =
+            self.call("run-step", (source,))?;
+        let result = result.map_err(wasmtime::Error::msg)?;
+        validate_step_result(&result, self.tier)?;
+        Ok(result)
+    }
+
     /// Call one typed export, including canonical ABI post-return cleanup.
     pub fn call<P, R>(&mut self, export: &str, params: P) -> wasmtime::Result<R>
     where
@@ -179,3 +194,65 @@ fn link<H: bindings::GuestImports + 'static>(
 
 #[cfg(test)]
 mod tests;
+
+/// Validate the canonical typed output before a foreign host stores it for review.
+/// This grants no authority to commit a proposed file or claim.
+pub fn validate_step_result(
+    result: &bindings::StepResult,
+    tier: SandboxGuestTier,
+) -> wasmtime::Result<()> {
+    const MAX_BYTES: usize = 1024 * 1024;
+    if result.result_json.len() > MAX_BYTES || result.proposals.len() > 256 {
+        return Err(wasmtime::Error::msg("component output limit"));
+    }
+    let _: serde_json::Value = serde_json::from_str(&result.result_json)?;
+    if tier != SandboxGuestTier::Foreign && !result.proposals.is_empty() {
+        return Err(wasmtime::Error::msg("first-party proposals refused"));
+    }
+    let mut bytes = result.result_json.len();
+    for proposal in &result.proposals {
+        match proposal {
+            bindings::ProposalDelta::FileWrite(file) => {
+                let path = super::SandboxVirtualPath::try_new(&file.path)?;
+                if !matches!(
+                    path.mount(),
+                    super::SandboxMount::Outputs | super::SandboxMount::Workspace
+                ) {
+                    return Err(wasmtime::Error::msg(
+                        "foreign proposal path outside writable virtual mounts",
+                    ));
+                }
+                bytes = bytes
+                    .saturating_add(file.path.len())
+                    .saturating_add(file.bytes.len());
+            }
+            bindings::ProposalDelta::ClaimCandidate(claim) => {
+                crate::EntityId::from_hex(&claim.id)?;
+                let subject: String = serde_json::from_str(&claim.subject)?;
+                crate::EntityId::from_hex(&subject)?;
+                crate::claim::validate_predicate(&claim.predicate, false)?;
+                let _: serde_json::Value = serde_json::from_str(&claim.value)?;
+                if claim
+                    .confidence
+                    .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+                    || claim
+                        .occurred
+                        .as_ref()
+                        .is_some_and(|range| range.start > range.end)
+                {
+                    return Err(wasmtime::Error::msg("invalid claim proposal"));
+                }
+                bytes = bytes
+                    .saturating_add(claim.id.len())
+                    .saturating_add(claim.subject.len())
+                    .saturating_add(claim.predicate.len())
+                    .saturating_add(claim.value.len())
+                    .saturating_add(32);
+            }
+        }
+        if bytes > MAX_BYTES {
+            return Err(wasmtime::Error::msg("component proposal limit"));
+        }
+    }
+    Ok(())
+}
