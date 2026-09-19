@@ -1292,7 +1292,7 @@ fn endpoint_listings_are_frozen_and_carry_no_actor_material() {
         .register(
             credential,
             McpConnectorActorRecord::new(
-                ACTOR_ID.parse().expect("actor id"),
+                EntityId::from_hex(ACTOR_ID).expect("actor id"),
                 EdgeActorClass::Agent,
                 McpConnectorScope::vault_wide(),
             ),
