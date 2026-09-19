@@ -441,9 +441,6 @@ pub(in crate::batch) fn apply_put(
         None
     };
     let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
-    let breaker_demoted_claim_body =
-        super::gate_staging::demote_claim_body(staged_claim_gate, &mut decoded_claim_body)?;
-    let data = breaker_demoted_claim_body.as_deref().unwrap_or(data);
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin

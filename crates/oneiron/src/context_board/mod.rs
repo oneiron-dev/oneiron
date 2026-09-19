@@ -112,7 +112,6 @@ mod test_support {
             failure: None,
             events: Vec::new(),
             children: Vec::new(),
-            gate_breaker_paused: false,
         }
     }
 }

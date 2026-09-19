@@ -80,6 +80,7 @@ impl ConsolidationExecutor<'_> {
         LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
+                scope: crate::llm::Scope::default(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence {
@@ -448,6 +449,7 @@ impl ConsolidationExecutor<'_> {
         Ok(LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
+                scope: crate::llm::Scope::default(),
                 purpose: CallPurpose::Consolidation,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence {
