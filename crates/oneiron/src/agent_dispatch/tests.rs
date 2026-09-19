@@ -2904,7 +2904,7 @@ fn healer_admission_binds_scope_and_evidence_at_both_public_dispatch_doors() -> 
     let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
     let mut wrong_scope = case.clone();
     wrong_scope.scope.agent_ref = test_id(0x71).to_hex();
-    let mut wrong_evidence = case.clone();
+    let mut wrong_evidence = case;
     wrong_evidence.evidence_ref = test_id(0x72).to_hex();
     let queue = AttemptQueue::new(&vault);
     let before = queue.list()?;

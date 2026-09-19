@@ -328,3 +328,28 @@ fixture fix still has 15 issue comments, 62 reviews and 95 inline comments,
 with complete thread pagination and the same seven unresolved findings. No new
 review finding appeared. Raw results, command logs, run ID and review receipts
 are retained in `review-recovery/review-repairs-r5/` and its adjacent PR snapshot.
+
+
+## Published e4aa9af6: seven repairs proved; Clippy follow-up
+
+The corrected world-scope regression passed 1/1 in run
+`5a37caaf-3fc0-4607-a0b9-5f0d310b22e4` (7890 skipped). The other 83 passes from
+`6254d64e-a238-4bfa-9fa7-7717b7e0056c` remain byte-unchanged; only fixture ID
+literals and notes changed between those heads. These are combined focused
+receipts, not a claim that 84 tests ran in the second invocation.
+
+Ten small commits were published at `e4aa9af6`. All seven latest finding threads
+received proof replies and confirmed resolutions, with none skipped. The exact
+head merged cleanly in a read-only rehearsal against `debda0758`. The new exact-head
+Codex review is genuinely running (summary 5742741731, started 22:27:57 UTC), with a
+single 22:57:57 UTC reminder. Qodo reports zero active findings; CodeRabbit remains
+skipped/disabled, not approved. The latest complete refresh before this lint fix
+has 15 issue comments, 69 reviews and 102 inline comments, complete pagination,
+and no new finding. All original review/subreview receipts remain retained.
+
+The full script passed code-map and formatting, then failed workspace Clippy on
+one redundant `case.clone()` in the new healer-authentication test. The fixture
+now moves the otherwise unused value. No production code or test assertion
+changes; prior focused behavior evidence remains applicable. Later full-script
+stages and the narrow sync lane were unrun. The successor must complete them;
+no full-gate pass is claimed.
