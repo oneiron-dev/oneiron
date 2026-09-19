@@ -13,19 +13,45 @@ fn repeated_tree_paths_consume_a_cumulative_budget() {
     assert!(
         std::process::Command::new("git")
             .arg("init")
-            .arg("--bare")
+            .arg("-q")
             .arg(&root)
             .status()
             .unwrap()
             .success()
     );
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args([
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "initial"
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let head = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(head.status.success());
+    let commit = String::from_utf8(head.stdout).unwrap().trim().to_owned();
     let vault = Vault::open(temp.path().join("vault"), VaultConfig::default()).unwrap();
     let git = GitWire::new(&vault).unwrap();
     let repo = git
         .open_repo(
             RepoRef::LocalFolder {
                 path: root.to_str().unwrap().into(),
-                commit: "HEAD".into(),
+                commit,
             },
             &root,
         )
