@@ -15,6 +15,7 @@ mod metrics;
 mod packing;
 mod producer;
 mod provenance;
+mod recorded_evaluation;
 mod types;
 
 pub use alignment::align_words_to_speakers;
@@ -26,6 +27,10 @@ pub use evaluation::{CohortFile, CohortManifest, E1Arm, E1SelectionReceipt, WerC
 pub use metrics::{E3Score, WerCounts, aggregate_wer, e3_score, wer_counts};
 pub use packing::pack_speech;
 pub use producer::produce_meeting_transcript;
+pub use recorded_evaluation::{
+    LabelledReference, RecordedArm, RecordedEvaluation, RecordedFile, ReferenceDocument,
+    SpeakerScore, WordCluster, evaluate_recorded_audio,
+};
 pub use types::{
     AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest,
     BatchDefault, BulkImportAuthorizer, BulkImportBinding, BulkImportReceipt, CleanupOutput,

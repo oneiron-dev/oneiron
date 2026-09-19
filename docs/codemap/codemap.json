@@ -14,6 +14,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "examples/meeting_audio_evaluate.rs",
+     "purpose": "Offline recorded-output evaluator",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "examples/meeting_audio_native_probe.rs",
      "purpose": "Manual native-port proof",
      "surface": {}
@@ -14615,7 +14623,7 @@
      "path": "src/ingest/meeting_audio/mod.rs",
      "purpose": "Boundary-preserving batch meeting-audio producer for the existing ingest adapter",
      "surface": {
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -14651,6 +14659,25 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LabelledReference",
+      "RecordedArm",
+      "RecordedEvaluation",
+      "RecordedFile",
+      "ReferenceDocument",
+      "SpeakerScore",
+      "WordCluster"
+     ],
+     "path": "src/ingest/meeting_audio/recorded_evaluation.rs",
+     "purpose": "Offline evaluation of recorded outputs",
+     "surface": {
+      "fn": 1,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/meeting_audio/tests.rs",
@@ -14679,6 +14706,14 @@
      "notable": [],
      "path": "src/ingest/meeting_audio/tests/producer.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/tests/recorded_evaluation.rs",
+     "purpose": "Offline harness fixtures, not native model quality or host provisioning evidence",
      "surface": {}
     },
     {
@@ -27034,7 +27069,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 27,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27610,8 +27645,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1587,
-   "test_files": 570
+   "source_files": 1589,
+   "test_files": 571
   },
   "oneiron-bench": {
    "files": [
