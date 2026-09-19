@@ -115,6 +115,10 @@ pub struct DreamerWakeDriver<'a> {
     pub(super) wrap_notice_fired: bool,
     pub(super) finalize_entered: bool,
     pub(super) steering: Vec<BudgetSteeringSignal>,
+    tournament_candidate: Option<(
+        crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
+        crate::dreamer_runner::DreamerTournamentAdmission,
+    )>,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
 }
@@ -133,9 +137,41 @@ impl<'a> DreamerWakeDriver<'a> {
             wrap_notice_fired: false,
             finalize_entered: false,
             steering: Vec::new(),
+            tournament_candidate: None,
             #[cfg(feature = "sync")]
             progress: None,
         }
+    }
+
+    /// Supplies the loaded candidate and its per-claim gate metadata. It stays
+    /// inactive until the exact strategy pin has won the one-shot sealed test.
+    #[must_use]
+    pub fn with_tournament_candidate(
+        mut self,
+        strategy: crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
+        candidate: crate::dreamer_runner::DreamerTournamentAdmission,
+    ) -> Self {
+        self.tournament_candidate = Some((strategy, candidate));
+        self
+    }
+
+    fn selected_claim_authoring(&self) -> Result<DreamerClaimAuthoringAdmission> {
+        let Some(default) =
+            crate::autoreason_campaign::beam_promotion::default_strategy(self.vault)?
+        else {
+            return Ok(DreamerClaimAuthoringAdmission::single_pass());
+        };
+        let Some((pin, candidate)) = &self.tournament_candidate else {
+            return Err(crate::Error::InvalidConfig(
+                "promoted authoring strategy is not loaded by this wake driver".into(),
+            ));
+        };
+        if *pin != default {
+            return Err(crate::Error::InvalidConfig(
+                "loaded authoring candidate does not match the promoted default".into(),
+            ));
+        }
+        crate::autoreason_campaign::beam_promotion::default_admission(self.vault, candidate.clone())
     }
 
     /// Configures the wake-budget counter for legibility and the 80% wrap
@@ -285,7 +321,7 @@ impl<'a> DreamerWakeDriver<'a> {
                             scope: input.scope,
                             local_node_id: input.local_node_id,
                             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+                            claim_authoring: self.selected_claim_authoring()?,
                             admission: AdmitDreamerAttempt {
                                 lease_owner: input.lease_owner.clone(),
                                 now: input.now,

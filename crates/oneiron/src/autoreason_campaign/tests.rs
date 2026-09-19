@@ -116,6 +116,7 @@ fn extraction_run(dataset: &Of360GoldDataset, run_id: &str) -> Of360ExtractionRu
         .iter()
         .take(1)
         .map(|case| Of360CaseExtractionOutput {
+            qa_answers: Vec::new(),
             case_id: case.case_id.clone(),
             extracted_claims: case
                 .gold_memory_points
@@ -1290,6 +1291,7 @@ fn gold_diagnostic_campaign_report(scores: &[Of360ExtractionScore]) -> CampaignC
             .cases
             .iter()
             .map(|case| Of360CaseExtractionOutput {
+                qa_answers: Vec::new(),
                 case_id: case.case_id.clone(),
                 extracted_claims: case
                     .gold_memory_points
@@ -2261,4 +2263,50 @@ fn held_out_anchor_must_match_external_gold() {
         .expect_err("the comparison builder refuses a foreign anchor");
         assert!(matches!(err, CampaignError::HeldOutAnchorMismatch));
     }
+}
+
+#[test]
+fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Result<()> {
+    use super::beam_promotion::{
+        AuthoringStrategyPin, SealedRefereeMeasurement, default_strategy, measure_once,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+    let report = compare(&held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.05,
+    ));
+    let pin = AuthoringStrategyPin {
+        strategy_id: "tournament-authoring".into(),
+        revision: "candidate-1".into(),
+        config_sha256: "a".repeat(64),
+    };
+    let failed = measure_once(&vault, &report, pin.clone(), || {
+        SealedRefereeMeasurement::from_referee_scores(0.4, 0.5, "CompanionMem@sealed-v1")
+    })?;
+    assert!(!failed.became_default);
+    assert_eq!(default_strategy(&vault)?, None);
+    assert!(
+        measure_once(&vault, &report, pin.clone(), || panic!(
+            "second measurement must never execute"
+        ))
+        .is_err()
+    );
+    let winner = AuthoringStrategyPin {
+        revision: "candidate-2".into(),
+        ..pin
+    };
+    let receipt = measure_once(&vault, &report, winner.clone(), || {
+        SealedRefereeMeasurement::from_referee_scores(0.6, 0.5, "CompanionMem@sealed-v1")
+    })?;
+    assert!(receipt.became_default);
+    assert_eq!(default_strategy(&vault)?, Some(winner.clone()));
+    drop(vault);
+    let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(default_strategy(&vault)?, Some(winner));
+    let mut reward = serde_json::to_value(&report).unwrap();
+    reward["sealed_referee_score"] = serde_json::json!(0.99);
+    assert!(serde_json::from_value::<CampaignComparisonReport>(reward).is_err());
+    Ok(())
 }
