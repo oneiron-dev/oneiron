@@ -435,3 +435,116 @@ fn explicit_owner_retraction_is_a_durable_override_not_implicit_self_grant() {
         1
     );
 }
+
+#[test]
+fn authored_source_save_update_and_fork_keep_real_files_atomic_and_candidate() {
+    use crate::skill_hub::HubFile;
+    let (dir, vault) = open_vault();
+    let resident = put_person(&vault, 0x21);
+    let stranger = put_person(&vault, 0x22);
+    let id = EntityId::now();
+    let fork = EntityId::now();
+    let files = |version: &str| {
+        vec![
+        HubFile::new("SKILL.md",format!("---\nname: local.skill\nversion: {version}\n---\n\nUse the supplied rows only.\n").into_bytes()),
+        HubFile::new("scripts/check.py",b"print(17)\n".to_vec()),
+    ]
+    };
+    let source_files = |vault: &crate::Vault, id: EntityId| {
+        let txn = vault.store.env.read_txn().unwrap();
+        vault
+            .export_hub_package_in_txn(&txn, &id)
+            .unwrap()
+            .unwrap()
+            .files
+    };
+    let receipt = vault
+        .memory(resident, EdgeActorClass::Agent)
+        .skill_save_with_source(id, &skill(), files("1"), None, 100)
+        .unwrap();
+    assert_eq!(receipt.author, resident);
+    let original = vault.get_skill_record(&id).unwrap().unwrap();
+    assert_eq!(original.source, ClaimSource::Generated);
+    assert_eq!(original.lifecycle_status, SkillLifecycle::Candidate);
+    assert_eq!(original.approval_status, ClaimApprovalStatus::Proposed);
+    assert_eq!(source_files(&vault, id), files("1"));
+    let mut edited = original.clone();
+    edited.version = "2".into();
+    edited.content_hash = None;
+    assert!(
+        vault
+            .memory(stranger, EdgeActorClass::Agent)
+            .skill_save_with_source(id, &edited, files("2"), Some("1"), 101)
+            .is_err()
+    );
+    assert_eq!(source_files(&vault, id), files("1"));
+    // Missing SKILL.md is rejected after candidate staging but rolls back the
+    // candidate bytes, source retirement and author receipt in the same txn.
+    assert!(
+        vault
+            .memory(resident, EdgeActorClass::Agent)
+            .skill_save_with_source(
+                id,
+                &edited,
+                vec![HubFile::new("scripts/check.py", b"print(19)\n".to_vec())],
+                Some("1"),
+                101
+            )
+            .is_err()
+    );
+    assert_eq!(vault.get_skill_record(&id).unwrap(), Some(original.clone()));
+    assert_eq!(source_files(&vault, id), files("1"));
+    vault
+        .memory(resident, EdgeActorClass::Agent)
+        .skill_save_with_source(id, &edited, files("2"), Some("1"), 102)
+        .unwrap();
+    let fork_receipt = vault
+        .memory(stranger, EdgeActorClass::Agent)
+        .skill_fork(id, fork, "local.copy", 103)
+        .unwrap();
+    assert_eq!(fork_receipt.author, stranger);
+    let fork_record = vault.get_skill_record(&fork).unwrap().unwrap();
+    assert_eq!(fork_record.forked_from, Some(id));
+    assert_eq!(fork_record.lifecycle_status, SkillLifecycle::Candidate);
+    let copied = source_files(&vault, fork);
+    assert_eq!(
+        copied
+            .iter()
+            .find(|file| file.path == "scripts/check.py")
+            .unwrap()
+            .content,
+        b"print(17)\n"
+    );
+    assert!(
+        std::str::from_utf8(
+            &copied
+                .iter()
+                .find(|file| file.path == "SKILL.md")
+                .unwrap()
+                .content
+        )
+        .unwrap()
+        .contains("name: \"local.copy\"")
+    );
+    drop(vault);
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    assert_eq!(source_files(&vault, id), files("2"));
+    assert_eq!(source_files(&vault, fork), copied);
+    let export = vault
+        .export_whole_vault(crate::context_pack::PackFormat::Json)
+        .unwrap();
+    let (_other_dir, target) = open_vault();
+    target.import_whole_vault_json(export.bytes()).unwrap();
+    assert_eq!(source_files(&target, id), files("2"));
+    assert_eq!(source_files(&target, fork), copied);
+    let imported = target.get_skill_record(&id).unwrap().unwrap();
+    assert_eq!(imported.source, ClaimSource::Imported);
+    assert_eq!(imported.lifecycle_status, SkillLifecycle::Candidate);
+    // A copied foreign author-proof field cannot authenticate a new local act.
+    assert!(
+        target
+            .memory(resident, EdgeActorClass::Agent)
+            .skill_save_with_source(id, &imported, files("2"), Some("2"), 104)
+            .is_err()
+    );
+}

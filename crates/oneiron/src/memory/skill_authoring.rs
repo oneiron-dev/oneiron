@@ -78,31 +78,120 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<SkillAuthoringReceipt> {
         self.with_verified_actor_write_txn(|txn| {
-            let actor = WriteActor::new(self.actor, self.actor_class);
-            verify_live_actor(self.vault, txn, actor)?;
-            if self.vault.local_hard_delete_marker_exists_in_txn(txn, &id)? { return Err(super::hard_deleted_refusal(&id)); }
-            let mut record = proposed.clone();
-            let proof = if self.vault.get_raw_in(txn, &id)?.is_some() {
-                let stored = self.vault.read_skill_record_in_txn(txn, &id)?;
-                let (author, proof) = author_proof(self.vault, txn, id, &stored)?;
-                require_authorship_in_txn(self.vault, txn, actor, id, Some(author), "memory.skill.edit")?;
-                if expected_version != Some(stored.version.as_str()) { return Err(Error::ConcurrentWrite("skill version changed").into()); }
-                if stored.lifecycle_status != SkillLifecycle::Candidate
-                    || record.lifecycle_status != stored.lifecycle_status
-                    || record.approval_status != stored.approval_status
-                    || record.governance_tier != stored.governance_tier
-                    || record.provenance != stored.provenance {
-                    return Err(authority_denied("self-Grant changes candidate content, not admission, governance or attribution").into());
-                }
-                self.vault.put_skill_record_in_txn(txn, &id, &record, TimeRange { start: now, end: now }, now)?;
-                (author, proof)
-            } else {
-                if expected_version.is_some() { return Err(Error::EntityNotFound.into()); }
-                if record.forked_from.is_some() { return Err(authority_denied("fork lineage must be created by skill_fork").into()); }
-                require_authorship_in_txn(self.vault, txn, actor, id, Some(self.actor), "memory.skill.create")?;
-                self.birth_skill_in_txn(txn, id, &mut record, now)?
-            };
-            Ok(SkillAuthoringReceipt { skill_id: id, author: proof.0, author_receipt: format!("gate:{}", proof.1.to_hex()), version: record.version })
+            self.save_skill_in_txn(txn, id, proposed, expected_version, now, None)
+        })
+    }
+
+    /// Saves exact source files atomically with the authored candidate and its
+    /// author receipt. Source capture grants no activation or scan clearance.
+    /// A supplied content hash must match; use `None` to derive it from files.
+    pub fn skill_save_with_source(
+        &self,
+        id: EntityId,
+        proposed: &SkillRecord,
+        files: Vec<crate::skill_hub::HubFile>,
+        expected_version: Option<&str>,
+        now: u64,
+    ) -> MemoryResult<SkillAuthoringReceipt> {
+        self.with_verified_actor_write_txn(|txn| {
+            self.save_skill_in_txn(txn, id, proposed, expected_version, now, Some(files))
+        })
+    }
+
+    fn save_skill_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        proposed: &SkillRecord,
+        expected_version: Option<&str>,
+        now: u64,
+        source: Option<Vec<crate::skill_hub::HubFile>>,
+    ) -> MemoryResult<SkillAuthoringReceipt> {
+        let actor = WriteActor::new(self.actor, self.actor_class);
+        verify_live_actor(self.vault, txn, actor)?;
+        if self
+            .vault
+            .local_hard_delete_marker_exists_in_txn(txn, &id)?
+        {
+            return Err(super::hard_deleted_refusal(&id));
+        }
+        let mut record = proposed.clone();
+        if let Some(files) = &source {
+            let hash = crate::skill::canonical_skill_tree_hash(
+                files
+                    .iter()
+                    .map(|file| (file.path.as_str(), file.content.as_slice())),
+            )?;
+            if record.content_hash.is_some_and(|expected| expected != hash) {
+                return Err(
+                    authority_denied("provided source differs from declared content hash").into(),
+                );
+            }
+            record.content_hash = Some(hash);
+        }
+        let proof = if self.vault.get_raw_in(txn, &id)?.is_some() {
+            let stored = self.vault.read_skill_record_in_txn(txn, &id)?;
+            let (author, proof) = author_proof(self.vault, txn, id, &stored)?;
+            require_authorship_in_txn(
+                self.vault,
+                txn,
+                actor,
+                id,
+                Some(author),
+                "memory.skill.edit",
+            )?;
+            if expected_version != Some(stored.version.as_str()) {
+                return Err(Error::ConcurrentWrite("skill version changed").into());
+            }
+            if stored.lifecycle_status != SkillLifecycle::Candidate
+                || record.lifecycle_status != stored.lifecycle_status
+                || record.approval_status != stored.approval_status
+                || record.governance_tier != stored.governance_tier
+                || record.provenance != stored.provenance
+            {
+                return Err(authority_denied("self-Grant changes candidate content, not admission, governance or attribution").into());
+            }
+            self.vault.put_skill_record_in_txn(
+                txn,
+                &id,
+                &record,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )?;
+            (author, proof)
+        } else {
+            if expected_version.is_some() {
+                return Err(Error::EntityNotFound.into());
+            }
+            if record.forked_from.is_some() {
+                return Err(authority_denied("fork lineage must be created by skill_fork").into());
+            }
+            require_authorship_in_txn(
+                self.vault,
+                txn,
+                actor,
+                id,
+                Some(self.actor),
+                "memory.skill.create",
+            )?;
+            self.birth_skill_in_txn(txn, id, &mut record, now)?
+        };
+        if let Some(files) = source {
+            let package = crate::skill_hub::package_from_source(
+                &record,
+                files,
+                crate::skill_hub::SkillPackageFormat::Native,
+            )?;
+            self.vault.persist_hub_package_in_txn(txn, &id, &package)?;
+        }
+        Ok(SkillAuthoringReceipt {
+            skill_id: id,
+            author: proof.0,
+            author_receipt: format!("gate:{}", proof.1.to_hex()),
+            version: record.version,
         })
     }
 
@@ -150,15 +239,26 @@ impl Memory<'_> {
                 1.0,
                 true,
                 false,
-                stored.dependencies,
+                stored.dependencies.clone(),
                 Value::Map(vec![
                     (Value::from("forkOfEntity"), Value::from(parent.to_hex())),
-                    (Value::from("forkOfVersion"), Value::from(stored.version)),
-                    (Value::from("upstreamProvenance"), stored.provenance),
+                    (
+                        Value::from("forkOfVersion"),
+                        Value::from(stored.version.clone()),
+                    ),
+                    (Value::from("upstreamProvenance"), stored.provenance.clone()),
                 ]),
             );
             record.forked_from = Some(parent);
+            let package =
+                self.vault
+                    .fork_skill_package_in_txn(txn, &parent, &stored, &mut record)?;
             let (author, proof) = self.birth_skill_in_txn(txn, id, &mut record, now)?;
+            if let Some(package) = package {
+                let package =
+                    crate::skill_hub::package_from_source(&record, package.files, package.format)?;
+                self.vault.persist_hub_package_in_txn(txn, &id, &package)?;
+            }
             self.vault
                 .batch_in()
                 .edge(

@@ -16559,7 +16559,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SkillAuthoringReceipt"
@@ -16567,7 +16567,7 @@
      "path": "src/memory/skill_authoring.rs",
      "purpose": "Authored skill saves and forks over the existing skill lifecycle gate",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
