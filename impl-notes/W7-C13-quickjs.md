@@ -124,3 +124,13 @@ Native execution evidence (not a WAT stand-in):
 
 C04 must retain canonical proposal validation and its own host-tier admission.
 This handoff does not claim C04's Firecracker integration is tested by C13.
+
+
+## Final admission qualification
+
+Source `92c67833` removes the historical `execute_code_unavailable` code. A
+server without a verified host reports `code_host_unbound` with an explicit
+backend/budget binding recovery path. The final native three-case MCP selection
+passes this refusal, recovery suggestions and actual QuickJS wire resume without
+repeated writes. Production server Clippy passes without test-hook unification.
+Both pinned guest binaries and their hashes above are unchanged.
