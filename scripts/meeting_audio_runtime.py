@@ -91,10 +91,35 @@ def aligned_words(items, transcript, duration_ms, error=RuntimeRefusal):
         previous_end = end
     # Permit token boundary whitespace only. Do not invent punctuation, replace
     # words or relabel another transcript as alignment of the ASR result.
-    compact = lambda text: "".join(unicodedata.normalize("NFC", text).split())
-    if not words or compact("".join(word["text"] for word in words)) != compact(transcript):
+    if not words:
         raise error("AlignmentTextMismatch")
-    return words
+    return restore_unspoken_punctuation(words, transcript, error)
+
+
+def restore_unspoken_punctuation(words, transcript, error):
+    # Qwen emits acoustic word tokens without sentence punctuation. Preserve
+    # the ASR's original characters; do not time punctuation independently or
+    # normalize a changed/missing spoken token into a match.
+    source = unicodedata.normalize("NFC", transcript)
+    audible = lambda c: not c.isspace() and not unicodedata.category(c).startswith("P")
+    letters = [(c, i) for i, char in enumerate(source) if audible(char) for c in char.casefold()]
+    key = "".join(c for c, _ in letters)
+    cursor, start = 0, 0
+    result = []
+    for word in words:
+        token = "".join(c.casefold() for c in unicodedata.normalize("NFC", word["text"]) if audible(c))
+        end = cursor + len(token)
+        if not token or key[cursor:end] != token or end > len(letters):
+            raise error("AlignmentTextMismatch")
+        # Do not split a Unicode character whose case fold has multiple letters.
+        if end < len(letters) and letters[end - 1][1] == letters[end][1]:
+            raise error("AlignmentTextMismatch")
+        stop = letters[end][1] if end < len(letters) else len(source)
+        result.append(dict(word, text=source[start:stop].strip()))
+        start, cursor = stop, end
+    if cursor != len(letters):
+        raise error("AlignmentTextMismatch")
+    return result
 
 
 def exclusive_tracks(items, duration_ms, error=RuntimeRefusal):
@@ -213,7 +238,9 @@ class LocalRuntime:
                     config = strict_json(files[name].read_bytes())
                 except (ValueError, UnicodeError):
                     raise self.error("UnsupportedModelConfig") from None
-                if not isinstance(config, dict) or config.get("auto_map"):
+                if not isinstance(config, dict):
+                    raise self.error("UnsupportedModelConfig")
+                if config.get("auto_map") and not (stage == "moss" and name == "config.json" and registered_moss_config(config)):
                     raise self.error("UnsupportedModelConfig")
         if stage == "cleanup":
             self.instructions(spec)
@@ -350,8 +377,7 @@ class LocalRuntime:
 
     def moss(self, audio, duration_ms):
         spec = self.require("moss")
-        from mlx_audio.stt.utils import load_model
-        model = load_model(Path(spec["snapshot"]), strict=True)
+        model = load_registered_moss(Path(spec["snapshot"]), self.error)
         if not type(model).__module__.startswith("mlx_audio.stt.models.moss_transcribe_diarize."):
             raise self.error("MossApiMismatch")
         if model.sample_rate != 16000:
@@ -481,3 +507,46 @@ def checked_process_tracks(tracks, duration_ms, error):
             raise error("InvalidExclusiveDiarization")
         previous = track["end_ms"]
     return tracks
+
+
+def registered_moss_config(config):
+    # Metadata only. The loader below never calls AutoConfig/AutoModel or the
+    # SDK's post_load_hook, which enables trust_remote_code unconditionally.
+    expected = {"AutoConfig": "configuration_moss_transcribe_diarize.MossTranscribeDiarizeConfig",
+                "AutoModel": "modeling_moss_transcribe_diarize.MossTranscribeDiarizeModel",
+                "AutoModelForCausalLM": "modeling_moss_transcribe_diarize.MossTranscribeDiarizeForConditionalGeneration",
+                "AutoProcessor": "processing_moss_transcribe_diarize.MossTranscribeDiarizeProcessor"}
+    return config.get("model_type") == "moss_transcribe_diarize" and config.get("auto_map") == expected
+
+
+def load_registered_moss(snapshot, error):
+    from mlx_audio.stt.models.moss_transcribe_diarize import Model
+    from mlx_audio.stt.models.moss_transcribe_diarize.config import ModelConfig
+    from mlx_audio.utils import load_weights
+    from transformers import Qwen2Tokenizer, WhisperFeatureExtractor
+    config = strict_json((snapshot / "config.json").read_bytes())
+    tokenizer = strict_json((snapshot / "tokenizer_config.json").read_bytes())
+    if (config.get("model_type") != "moss_transcribe_diarize" or config.get("quantization")
+            or config.get("auto_map") and not registered_moss_config(config)
+            or tokenizer.get("auto_map") or tokenizer.get("tokenizer_class") != "Qwen2Tokenizer"):
+        raise error("UnsupportedModelConfig")
+    model = Model(ModelConfig.from_dict(config))
+    model.load_weights(list(Model.sanitize(load_weights(snapshot)).items()), strict=True)
+    model.eval()
+    # Registered classes only: no snapshot Python imports, remote-code loader,
+    # config mutation, converted-weight duplicate, or model acquisition.
+    model._tokenizer = Qwen2Tokenizer.from_pretrained(str(snapshot), local_files_only=True)
+    model._feature_extractor = WhisperFeatureExtractor.from_pretrained(str(snapshot), local_files_only=True)
+    processor = strict_json((snapshot / "processor_config.json").read_bytes())
+    rate = processor.get("audio_tokens_per_second", model.audio_tokens_per_second)
+    marker = processor.get("time_marker_every_seconds", model.time_marker_every_seconds)
+    enabled = processor.get("enable_time_marker", model.enable_time_marker)
+    if (type(rate) not in {int, float} or not math.isfinite(rate) or rate <= 0
+            or type(marker) is not int or marker <= 0 or type(enabled) is not bool):
+        raise error("UnsupportedModelConfig")
+    model.audio_tokens_per_second, model.time_marker_every_seconds, model.enable_time_marker = float(rate), marker, enabled
+    digits = {digit: model._tokenizer.encode(digit, add_special_tokens=False) for digit in "0123456789"}
+    if any(len(ids) != 1 for ids in digits.values()):
+        raise error("MossTokenizerMismatch")
+    model._digit_token_ids = {digit: int(ids[0]) for digit, ids in digits.items()}
+    return model

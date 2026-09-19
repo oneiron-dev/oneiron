@@ -9,7 +9,7 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
         map_size: 64 * 1024 * 1024,
         ..VaultConfig::default()
     };
-    let vault = Vault::open(dir.path(), config.clone())?;
+    let vault = Vault::open(dir.path(), config.clone()).expect("open source state-index fixture");
     let subject = EntityId::now();
     let time = TimeRange { start: 10, end: 10 };
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time, 10, b"subject")?;
@@ -110,7 +110,8 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
     // Reference strings survive credential nulling without a generic binary exemption.
     let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
     let target_dir = tempfile::tempdir()?;
-    let target = Vault::open(target_dir.path(), config.clone())?;
+    let target =
+        Vault::open(target_dir.path(), config.clone()).expect("open restore state-index fixture");
     target.import_whole_vault_json(export.bytes())?;
     let restored = target.get_claim(&id)?.unwrap();
     assert_eq!(
@@ -163,7 +164,7 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
         StateIndex::default()
     );
     drop(vault);
-    let reopened = Vault::open(dir.path(), config)?;
+    let reopened = Vault::open(dir.path(), config).expect("reopen state-index fixture");
     assert_eq!(
         reopened.state_index_at(&subject, 16)?.claim,
         Some(repaired.to_hex())

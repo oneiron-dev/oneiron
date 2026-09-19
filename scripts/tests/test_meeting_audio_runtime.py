@@ -95,6 +95,17 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(runtime.RuntimeRefusal):
                 runtime.milliseconds(timestamp, 500)
 
+    def test_acoustic_tokens_keep_original_unspoken_punctuation_and_refuse_missing_words(self):
+        items = [SimpleNamespace(text="hello", start_time=0.0, end_time=0.2),
+                 SimpleNamespace(text="world", start_time=0.3, end_time=0.5)]
+        words = runtime.aligned_words(items, '“Hello, world!”', 500)
+        self.assertEqual([w["text"] for w in words], ['“Hello,', 'world!”'])
+        self.assertEqual([(w["start_ms"], w["end_ms"]) for w in words], [(0,200), (300,500)])
+        for text in ["hello changed world", "hello there", "hello world extra"]:
+            with self.assertRaisesRegex(runtime.RuntimeRefusal, "AlignmentTextMismatch"):
+                runtime.aligned_words(items, text, 500)
+        self.assertFalse(runtime.registered_moss_config({"model_type":"moss_transcribe_diarize", "auto_map":{"AutoModel":"evil.run"}}))
+
     def test_ukrainian_timing_is_explicit_and_is_not_russian_asr(self):
         self.configure("uk_alignment", runtime.UK_ALIGNER)
         loaded = self.load()
@@ -238,12 +249,11 @@ class RuntimeTests(unittest.TestCase):
                     {"start": 0.0, "end": 0.2, "text": "[S01] hello", "speaker_id": "S01"},
                     {"start": 0.2, "end": 0.4, "text": "[S02] there", "speaker_id": "S02"}])
         FixtureModel.__module__ = "mlx_audio.stt.models.moss_transcribe_diarize.moss_transcribe_diarize"
-        def load_model(path, strict):
+        def load_model(path, error):
             self.assertEqual(path, self.snapshot)
-            self.assertTrue(strict)
+            self.assertIs(error, runtime.RuntimeRefusal)
             return FixtureModel()
-        with patch.object(runtime, "version", return_value="fixture"), patch.dict("sys.modules", {
-                "mlx_audio.stt.utils": SimpleNamespace(load_model=load_model)}):
+        with patch.object(runtime, "version", return_value="fixture"), patch.object(runtime, "load_registered_moss", side_effect=load_model):
             tracks = loaded.moss([0.0] * 6400, 400)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], 6400)
@@ -256,8 +266,7 @@ class RuntimeTests(unittest.TestCase):
         # speaker_id. It is not a real parsed speaker segment and must refuse.
         FixtureModel.generate = lambda *args, **kwargs: SimpleNamespace(generation_tokens=12,
             segments=[{"start":0.0,"end":0.4,"text":"unparsed output"}])
-        with patch.object(runtime, "version", return_value="fixture"), patch.dict("sys.modules", {
-                "mlx_audio.stt.utils": SimpleNamespace(load_model=load_model)}):
+        with patch.object(runtime, "version", return_value="fixture"), patch.object(runtime, "load_registered_moss", side_effect=load_model):
             with self.assertRaisesRegex(runtime.RuntimeRefusal, "InvalidMossOutput"):
                 loaded.moss([0.0]*6400,400)
         self.profile["moss"]["model_id"] = "unrelated-model"
