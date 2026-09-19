@@ -1800,62 +1800,75 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
 
 #[test]
 fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_attempt_fixture(
-        &vault,
-        &store,
-        0x2B,
-        &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
-    )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
-    let subject = EntityId::from_bytes([0x39; 16]).expect("subject");
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    for fatal_merge in [false, true] {
+        let (_dir, vault) = open_vault();
+        let store = DreamerRunnerStore::new(&vault);
+        let (admitted, turns, _) = admitted_attempt_fixture(
+            &vault,
+            &store,
+            0x2B,
+            &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
+        )?;
+        let actor = EntityId::now();
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
+        let subject = EntityId::from_bytes([0x39; 16]).expect("subject");
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
 
-    let backend = ScriptedBackend::new(vec![
-        Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
-        Ok(text_response("{\"resolution\": \"escalate\"}".to_owned())),
-    ]);
-    let guard = crate::BudgetGuard::with_reserve_units(
-        "wake",
-        10_000,
-        100,
-        BudgetExhaustionPolicy::Suspend,
-    );
-    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
-    let mut sink = CapturingSink::default();
-    let mut executor = ConsolidationExecutor {
-        backend: &backend,
-        guard: &guard,
-        strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
-        model: crate::ModelId::new("test/model@r1").expect("model"),
-        sink: &mut sink,
-    };
-    let mut ctx = WakeAttemptContext {
-        vault: &vault,
-        deadline: &deadline,
-        budget_id: "wake",
-        now_ms: 21_000,
-    };
-    block_on_ready(executor.execute(&admitted, &mut ctx))?;
+        let backend = ScriptedBackend::new(vec![
+            Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
+            if fatal_merge {
+                Err(crate::FatalLlmError::Auth.into())
+            } else {
+                Ok(text_response(r#"{"resolution":"escalate"}"#.to_owned()))
+            },
+        ]);
+        let guard = crate::BudgetGuard::with_reserve_units(
+            "wake",
+            10_000,
+            100,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+        let mut sink = CapturingSink::default();
+        let mut executor = ConsolidationExecutor {
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            model: crate::ModelId::new("test/model@r1").expect("model"),
+            sink: &mut sink,
+        };
+        let mut ctx = WakeAttemptContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms: 21_000,
+        };
+        let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
+        let expected_spend = if fatal_merge { 50 } else { 100 };
+        assert!(
+            matches!(outcome, DreamerAttemptExecution::Completed { completed_units } if completed_units == expected_spend)
+        );
+        assert_eq!(guard.read().used_units, expected_spend);
+        assert_eq!(guard.read().reserved_units, 0);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
 
-    // Contradictions never land silently: nothing sinks, the gap row exists
-    // (a re-upsert of the same identity refreshes rather than creates).
-    assert!(sink.accepted.is_empty());
-    let probe = ReflectionGap {
-        kind: ReflectionGapKind::ContradictionLeftStanding,
-        subject,
-        evidence_turn_refs: turns,
-        first_seen: 0,
-        last_seen: 0,
-        escalations: 0,
-        decayed: false,
-    };
-    let delta = upsert_gap_queue(&vault, vec![probe], 22_000)?;
-    assert_eq!(delta.refreshed, 1, "escalation created the gap row");
-    assert_eq!(delta.created, 0);
+        // Contradictions never land silently: nothing sinks, the gap row exists
+        // (a re-upsert of the same identity refreshes rather than creates).
+        assert!(sink.accepted.is_empty());
+        let probe = ReflectionGap {
+            kind: ReflectionGapKind::ContradictionLeftStanding,
+            subject,
+            evidence_turn_refs: turns,
+            first_seen: 0,
+            last_seen: 0,
+            escalations: 0,
+            decayed: false,
+        };
+        let delta = upsert_gap_queue(&vault, vec![probe], 22_000)?;
+        assert_eq!(delta.refreshed, 1, "escalation created the gap row");
+        assert_eq!(delta.created, 0);
+    }
     Ok(())
 }
 
@@ -2539,6 +2552,12 @@ fn injected_ner_shadow_reports_mentions_without_landing_claims_or_turn_changes()
     assert_eq!(report.common, vec![conversation]);
     assert!(report.tag_only.is_empty());
     assert_eq!(report.tags.mentions.len(), 1);
+    let no_live = shadow_tag_turn(&vault, turn, &Ner(conversation), &[])?;
+    assert_eq!(no_live.tag_only, vec![conversation]);
+    assert!(no_live.common.is_empty());
+    let different = shadow_tag_turn(&vault, turn, &Ner(conversation), &[turn])?;
+    assert_eq!(different.tag_only, vec![conversation]);
+    assert_eq!(different.live_only, vec![turn]);
     let roundtrip: RetrievalTags =
         serde_json::from_slice(&serde_json::to_vec(&report.tags).expect("encode")).expect("decode");
     assert_eq!(roundtrip, report.tags);

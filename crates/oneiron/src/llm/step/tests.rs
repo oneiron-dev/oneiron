@@ -157,12 +157,14 @@ fn response_fixture(text: &str) -> LlmResponse {
 struct ScriptedBackend {
     calls: AtomicUsize,
     script: Mutex<VecDeque<LlmResult<LlmResponse>>>,
+    requests: Mutex<Vec<LlmRequest>>,
 }
 
 impl ScriptedBackend {
     fn new(script: Vec<LlmResult<LlmResponse>>) -> Self {
         Self {
             calls: AtomicUsize::new(0),
+            requests: Mutex::new(Vec::new()),
             script: Mutex::new(script.into_iter().collect()),
         }
     }
@@ -175,9 +177,10 @@ impl ScriptedBackend {
 impl LlmBackend for ScriptedBackend {
     fn generate<'a>(
         &'a self,
-        _request: LlmRequest,
+        request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
+        self.requests.lock().unwrap().push(request);
         self.calls.fetch_add(1, Ordering::SeqCst);
         let next = self
             .script
@@ -2283,6 +2286,34 @@ fn schema_shim_corrects_validates_and_charges_all_attempts() -> Result<()> {
     assert_eq!(backend.calls(), 2);
     assert_eq!(guard.read().used_units, 300);
     assert_eq!(guard.read().reserved_units, 0);
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let text_json = |message: &LlmMessage| {
+        let [ContentPart::Text { text }] = message.content.as_slice() else {
+            panic!("schema message")
+        };
+        serde_json::from_str::<serde_json::Value>(text).unwrap()
+    };
+    let schema = json!({"type":"object","required":["n"],"properties":{"n":{"type":"integer"}},"additionalProperties":false});
+    assert_eq!(requests[0].envelope.response_format, ResponseFormat::Text);
+    assert_eq!(requests[0].messages[0].role, LlmMessageRole::System);
+    assert_eq!(
+        text_json(&requests[0].messages[0]),
+        json!({"response_format":{"type":"json_schema","schema":schema}})
+    );
+    assert_eq!(
+        requests[1].messages[2],
+        response_fixture("{\"n\":\"4\"}").message
+    );
+    assert_eq!(requests[1].messages[3].role, LlmMessageRole::User);
+    let feedback = text_json(&requests[1].messages[3]);
+    assert_eq!(feedback["required_schema"], schema);
+    assert!(
+        !feedback["schema_validation_errors"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -2464,5 +2495,75 @@ fn corrective_spend_survives_fatal_fallback_and_memo_replay() -> Result<()> {
     assert_eq!(response, replay);
     assert_eq!(backend.calls(), 2);
     assert_eq!(guard.read().used_units, 150);
+    Ok(())
+}
+
+#[test]
+fn custom_fallback_empty_output_is_typed_and_not_memoized() -> Result<()> {
+    use crate::llm::{DeterministicRunner, FallbackError, FallbackRegistry};
+    struct Empty;
+    impl DeterministicRunner for Empty {
+        fn run(
+            &self,
+            _: &LlmRequest,
+            _: Option<&serde_json::Value>,
+            _: &FatalLlmError,
+        ) -> std::result::Result<LlmMessage, String> {
+            Ok(LlmMessage {
+                role: LlmMessageRole::Assistant,
+                content: vec![ContentPart::Text { text: "  ".into() }],
+            })
+        }
+    }
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into()); 2]);
+    let guard = guard_with_limit(10_000);
+    let mut registry = FallbackRegistry::default();
+    registry.register("empty".into(), Box::new(Empty)).unwrap();
+    assert!(matches!(
+        registry.register("empty".into(), Box::new(Empty)),
+        Err(FallbackError::Duplicate(_))
+    ));
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "empty".into(),
+            config: None,
+        },
+    };
+    for _ in 0..2 {
+        assert!(
+            matches!(block_on(call_as_step_with_fallbacks(&ctx, &backend, &guard, request.clone(), &registry)), Err(DurableStepError::Fallback(FallbackError::Empty(name))) if name == "empty")
+        );
+        assert_eq!(guard.read().reserved_units, 0);
+    }
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+#[test]
+fn invalid_and_remote_reference_schemas_fail_before_backend_calls() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![]);
+    let guard = guard_with_limit(10_000);
+    for schema in [
+        json!({"type":"not-a-json-type"}),
+        json!({"$ref":"https://schema.invalid/no-fetch.json"}),
+    ] {
+        let mut request = request_fixture();
+        request.envelope.response_format = ResponseFormat::Json { schema };
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request)),
+            Err(DurableStepError::SchemaValidation { attempts: 0, .. })
+        ));
+        assert_eq!(guard.read().reserved_units, 0);
+    }
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(guard.read().used_units, 0);
     Ok(())
 }
