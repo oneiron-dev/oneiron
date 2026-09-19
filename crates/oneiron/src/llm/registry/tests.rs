@@ -93,6 +93,12 @@ fn configured_scraper_diffs_only_changes_and_only_nominates() -> Result<()> {
             model_bindings: BTreeMap::from([("external-name".into(), model.clone())]),
         }],
     };
+    for field in ["id", "benchmark"] {
+        let mut invalid = config.clone();
+        if field == "id" { invalid.sources[0].id = "a".repeat(129); }
+        else { invalid.sources[0].benchmark = "a".repeat(129); }
+        assert!(invalid.validate().is_err());
+    }
     let snapshot = |score| serde_json::json!({"data":[{"model":"external-name","score":score}]});
     let mut scraper = ScoreScraper::new(
         config,
@@ -134,6 +140,8 @@ fn unchanged_observation_advances_watermark_without_diff_and_blocks_stale_change
     assert_eq!(vault.apply_model_scores(&snapshot(100, 50.0))?.len(), 1);
     assert!(vault.apply_model_scores(&snapshot(160, 50.0))?.is_empty());
     assert!(vault.apply_model_scores(&snapshot(120, 60.0)).is_err());
+    assert!(vault.apply_model_scores(&snapshot(160, 50.0))?.is_empty());
+    assert!(vault.apply_model_scores(&snapshot(160, 60.0)).is_err());
     let current = vault.model_registry_row(&model)?.expect("row");
     assert_eq!(current.scores["bench"]["quality"], 50.0);
     assert_eq!(current.fetched_at["bench"], 160);

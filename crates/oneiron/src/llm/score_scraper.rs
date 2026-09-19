@@ -40,9 +40,11 @@ impl ScoreScraperConfig {
         let mut ids = std::collections::BTreeSet::new();
         for source in &self.sources {
             if source.id.trim().is_empty()
+                || source.id.len() > 128
                 || !ids.insert(&source.id)
                 || !source.url.starts_with("https://")
                 || source.benchmark.trim().is_empty()
+                || source.benchmark.len() > 128
                 || source.model_bindings.is_empty()
             {
                 return Err(invalid("invalid benchmark source"));

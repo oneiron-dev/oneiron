@@ -224,6 +224,11 @@ impl Vault {
             }
             let scores = row.scores.entry(snapshot.source.clone()).or_default();
             let previous = scores.get(&observation.benchmark).copied();
+            if row.fetched_at.get(&snapshot.source) == Some(&snapshot.fetched_at)
+                && previous.is_some_and(|score| score != observation.score)
+            {
+                return Err(invalid("conflicting equal-time benchmark snapshot"));
+            }
             if previous == Some(observation.score) {
                 // Observation recency is independent of score changes. An
                 // identical newer snapshot still fences out older replays,
