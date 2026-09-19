@@ -606,6 +606,15 @@ pub(super) fn apply_ops_with_origin(
         ));
     }
 
+    crate::workspace_roster::reconcile_project_rooms(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &materialized_entity_ids,
+    )?;
+
     // STO-03: derived Habit counters, recomputed from the FINAL child state of
     // this transaction — after every op, so an add and a delete of the same
     // edge net out and the batch order cannot be read off the result. Local
