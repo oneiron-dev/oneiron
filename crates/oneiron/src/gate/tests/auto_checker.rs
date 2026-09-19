@@ -943,6 +943,13 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
         );
         assert_eq!(seen[0].lineage.as_ref(), Some(envelope.lineage()));
         let request = crate::llm::auto_check_llm_request(CHECKER_REF, &seen[0].borrowed(), "");
+        assert_eq!(
+            request.envelope.locality,
+            crate::llm::CallPurpose::AutoCheck
+                .default_policy()
+                .unwrap()
+                .locality
+        );
         let text_parts: Vec<_> = request
             .messages
             .iter()
@@ -1279,6 +1286,7 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
                             model: model.clone(),
                             slot: ModelSlot::Llm,
                             tier: ModelTierRef("test".into()),
+                            route_models: std::collections::BTreeMap::new(),
                         },
                     )
                 })

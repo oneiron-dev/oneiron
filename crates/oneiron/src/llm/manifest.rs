@@ -54,6 +54,9 @@ pub struct ModelBinding {
     pub model: ModelId,
     pub slot: ModelSlot,
     pub tier: ModelTierRef,
+    /// Explicit identities for narrower routes; a model ID has one catalog locality.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub route_models: BTreeMap<ModelLocality, ModelId>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,6 +126,20 @@ pub struct ModelManifest {
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
 }
+fn model_for_route(
+    binding: &ModelBinding,
+    route: ModelLocality,
+    widest: ModelLocality,
+) -> Result<&ModelId> {
+    if route == widest {
+        Ok(&binding.model)
+    } else {
+        binding
+            .route_models
+            .get(&route)
+            .ok_or_else(|| invalid("resident route has no model binding"))
+    }
+}
 fn route_rank(route: ModelLocality) -> u8 {
     match route {
         ModelLocality::OnDevice => 0,
@@ -161,6 +178,17 @@ impl ModelManifest {
         {
             return Err(invalid("empty model tier"));
         }
+        for binding in self.roles.values() {
+            let widest = self.routes[&binding.slot];
+            let mut models = std::collections::BTreeSet::from([&binding.model]);
+            if binding.route_models.iter().any(|(route, model)| {
+                route_rank(*route) >= route_rank(widest) || !models.insert(model)
+            }) {
+                return Err(invalid(
+                    "route model must be distinct and narrower than the slot pin",
+                ));
+            }
+        }
         if self
             .verdict
             .as_ref()
@@ -191,7 +219,7 @@ impl ModelManifest {
         if route_rank(route) > route_rank(widest) {
             return Err(invalid("resident route cannot widen manifest pin"));
         }
-        request.model = binding.model.clone();
+        request.model = model_for_route(binding, route, widest)?.clone();
         request.envelope.locality = route;
         request.envelope.tier.vault_policy = Some(binding.tier.clone());
         Ok(())
@@ -225,6 +253,13 @@ impl Vault {
             read_manifest(&self.store, &txn)?.ok_or_else(|| invalid("manifest not configured"))?;
         if route_rank(route) > route_rank(manifest.routes[&slot]) {
             return Err(invalid("resident route cannot widen manifest pin"));
+        }
+        for binding in manifest
+            .roles
+            .values()
+            .filter(|binding| binding.slot == slot)
+        {
+            model_for_route(binding, route, manifest.routes[&slot])?;
         }
         let mut routes = read_routes(&self.store, &txn)?;
         routes.insert(slot, route);

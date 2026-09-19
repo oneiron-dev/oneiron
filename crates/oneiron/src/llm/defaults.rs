@@ -1,5 +1,5 @@
 //! Central purpose policy. Model bindings and vault overrides remain data.
-use super::{CallPurpose, ModelLocality, ModelTierRef, TierPrecedence};
+use super::{CallEnvelope, CallPurpose, ModelLocality, ModelTierRef, TierPrecedence};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PurposeDefault {
@@ -53,6 +53,17 @@ impl CallPurpose {
         Some(PURPOSE_DEFAULTS[index])
     }
 }
+impl CallEnvelope {
+    /// Apply central purpose defaults during construction, before explicit host or
+    /// manifest overrides. Custom purposes retain their supplied global defaults.
+    pub fn with_purpose_defaults(mut self) -> Self {
+        if let Some(policy) = self.purpose.default_policy() {
+            self.tier.purpose_default = Some(ModelTierRef(policy.tier.into()));
+            self.locality = policy.locality;
+        }
+        self
+    }
+}
 impl TierPrecedence {
     pub fn for_purpose(purpose: &CallPurpose, global_default: ModelTierRef) -> Self {
         Self {
@@ -86,6 +97,16 @@ mod tests {
             assert_eq!(tier.resolved().as_str(), expected.tier);
             tier.vault_policy = Some(ModelTierRef("vault".into()));
             assert_eq!(tier.resolved().as_str(), "vault");
+            let envelope = CallEnvelope {
+                purpose: purpose.clone(),
+                class: super::super::CallClass::BestEffort,
+                tier,
+                response_format: super::super::ResponseFormat::Text,
+                locality: ModelLocality::ThirdParty,
+            }
+            .with_purpose_defaults();
+            assert_eq!(envelope.locality, expected.locality);
+            assert_eq!(envelope.tier.resolved().as_str(), "vault");
         }
     }
 }

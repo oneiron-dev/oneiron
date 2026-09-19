@@ -304,11 +304,10 @@ pub fn auto_check_llm_request(
             response_format: ResponseFormat::Json {
                 schema: auto_check_verdict_schema(),
             },
-            // The host resolves `checker_ref` and knows where its checker
-            // runs; the engine states the conservative default rather than
-            // guessing a locality it cannot verify.
+            // Purpose defaults apply first; explicit host/manifest bindings can override them.
             locality: ModelLocality::ThirdParty,
-        },
+        }
+        .with_purpose_defaults(),
         messages: vec![
             LlmMessage {
                 role: LlmMessageRole::System,

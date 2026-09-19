@@ -12,6 +12,10 @@ fn fixture() -> ModelManifest {
                         model: ModelId::new(format!("test/{role:?}@r1")).unwrap(),
                         slot: ModelSlot::Llm,
                         tier: ModelTierRef("configured".into()),
+                        route_models: BTreeMap::from([(
+                            ModelLocality::OnDevice,
+                            ModelId::new(format!("local/{role:?}@r1")).unwrap(),
+                        )]),
                     },
                 )
             })
@@ -59,7 +63,21 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
             provider_options: BTreeMap::new(),
         };
         vault.bind_model_role(role, &mut request).unwrap();
-        assert_eq!(&request.model, &loaded.binding(role).unwrap().model);
+        assert_eq!(
+            &request.model,
+            &loaded.binding(role).unwrap().route_models[&ModelLocality::OnDevice]
+        );
+        let catalog = crate::llm::LlmCatalogEntry {
+            model: request.model.clone(),
+            display_name: "local fixture".into(),
+            locality: ModelLocality::OnDevice,
+            context_window_tokens: 4096,
+            max_output_tokens: Some(100),
+            cost: None,
+            capabilities: vec![],
+            metadata: BTreeMap::new(),
+        };
+        catalog.admit(&request, false).unwrap();
         assert_eq!(request.envelope.locality, ModelLocality::OnDevice);
         assert_eq!(request.envelope.tier.resolved().as_str(), "configured");
     }
@@ -122,4 +140,59 @@ fn verdict_modes_preserve_legacy_refusals_and_reasons() {
             );
         }
     }
+}
+
+#[test]
+fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let mut manifest = fixture();
+    manifest
+        .roles
+        .get_mut(&ModelRole::Checker)
+        .unwrap()
+        .route_models
+        .clear();
+    vault.set_model_manifest(&manifest).unwrap();
+    assert!(matches!(
+        vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice),
+        Err(Error::InvalidConfig(_))
+    ));
+    let mut request = LlmRequest {
+        model: ModelId::new("host/model@1").unwrap(),
+        envelope: CallEnvelope {
+            purpose: CallPurpose::AutoCheck,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AutoCheck,
+                ModelTierRef("global".into()),
+            ),
+            response_format: ResponseFormat::Text,
+            locality: ModelLocality::OwnServer,
+        },
+        messages: vec![],
+        tools: vec![],
+        params: BTreeMap::new(),
+        provider_options: BTreeMap::new(),
+    };
+    let before = request.clone();
+    let routes = BTreeMap::from([(ModelSlot::Llm, ModelLocality::OnDevice)]);
+    assert!(
+        manifest
+            .bind_request(ModelRole::Checker, &routes, &mut request)
+            .is_err()
+    );
+    assert_eq!(request, before);
+    vault
+        .bind_model_role(ModelRole::Checker, &mut request)
+        .unwrap();
+    assert_eq!(
+        request.model,
+        manifest.binding(ModelRole::Checker).unwrap().model
+    );
+    assert_eq!(request.envelope.locality, ModelLocality::OwnServer);
+    let checker = manifest.roles.get_mut(&ModelRole::Checker).unwrap();
+    checker
+        .route_models
+        .insert(ModelLocality::OnDevice, checker.model.clone());
+    assert!(manifest.validate().is_err());
 }

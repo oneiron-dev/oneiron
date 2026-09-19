@@ -95,7 +95,7 @@ impl ConsolidationExecutor<'_> {
                     schema: super::extracted_people::extraction_response_schema(),
                 },
                 locality: ModelLocality::OwnServer,
-            },
+            }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
@@ -424,7 +424,7 @@ impl ConsolidationExecutor<'_> {
                     schema: serde_json::json!({"type": "object"}),
                 },
                 locality: ModelLocality::OwnServer,
-            },
+            }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
