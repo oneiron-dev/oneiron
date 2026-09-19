@@ -33,3 +33,42 @@ pub(crate) fn validate_claim_write_target_in_txn(
     }
     Ok(())
 }
+
+impl crate::Vault {
+    /// Code-run claim writes cannot create or replace actor-owned keyed revisions.
+    /// The incoming predicate and stored target are checked in the mutation's txn.
+    pub(crate) fn validate_code_run_claim_target_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        predicate: Option<&str>,
+    ) -> Result<()> {
+        let owned_door = || Error::Claim(crate::error::ClaimError::KeyValueWriteRequiresOwnedDoor);
+        if predicate == Some(super::KEY_VALUE_PREDICATE) {
+            return Err(owned_door());
+        }
+        if self.local_hard_delete_marker_exists_in_txn(txn, id)? {
+            return Err(Error::InvalidClaimBody(
+                "code-run cannot reuse an erased claim id",
+            ));
+        }
+        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+            return Ok(());
+        };
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("code-run claim target header"))?;
+        if header.entity_type == ENTITY_TYPE_CLAIM {
+            // Erased shells no longer identify their predicate. Do not remint them.
+            if raw.len() == ENTITY_METADATA_HEADER_LEN {
+                return Err(Error::InvalidClaimBody(
+                    "code-run cannot reuse an erased claim id",
+                ));
+            }
+            let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            if !super::claim_generic_readable(&body) {
+                return Err(owned_door());
+            }
+        }
+        Ok(())
+    }
+}

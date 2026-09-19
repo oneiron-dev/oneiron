@@ -573,12 +573,15 @@ impl CoreContextPackResponse {
         read: &oneiron::claim::ScopedRead<'_>,
         session: &mut oneiron::context_board::SessionReadSet,
     ) -> oneiron::Result<()> {
-        let ids = self
+        let mut ids = self
             .results
             .iter()
             .chain(&self.neighbors)
             .map(|row| oneiron::EntityId::from_hex(&row.id))
             .collect::<oneiron::Result<Vec<_>>>()?;
+        if let Some(base) = &self.l2_base {
+            ids.extend_from_slice(base.evidence_ids());
+        }
         session.observe_rows(read, &ids)
     }
 }

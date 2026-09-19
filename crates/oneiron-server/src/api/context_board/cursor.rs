@@ -157,12 +157,15 @@ pub(crate) async fn advance_memories_cursor(
     let key = memories_cursor_key(vault, scope_id, session_id);
     let mut store = server.memories_cursors.lock().await;
     let mut observed = store.session_reads(scope_id, Some(session_id)).clone();
-    let ids: Vec<_> = pack
+    let mut ids: Vec<_> = pack
         .results
         .iter()
         .chain(&pack.neighbors)
         .map(|entity| entity.id)
         .collect();
+    if let Some(base) = &pack.l2_base {
+        ids.extend_from_slice(base.evidence_ids());
+    }
     observed.observe_rows(read, &ids)?;
     let cursor = store.advance(scope_key, key, session_id, pack, evidence);
     *store.session_reads(scope_id, Some(session_id)) = observed;

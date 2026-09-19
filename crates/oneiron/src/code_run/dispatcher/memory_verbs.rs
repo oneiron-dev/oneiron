@@ -99,6 +99,7 @@ impl HostSelfDispatcher<'_> {
             None => *call.candidate,
         };
         let envelope = self.write_envelope(SelfEffect::MemoryWriteFixture, admission.as_ref())?;
+        let predicate = candidate.predicate().to_owned();
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
                 .batch()
@@ -109,7 +110,9 @@ impl HostSelfDispatcher<'_> {
                     call.occurred,
                     call.learned_at,
                 )
-                .commit()?,
+                .commit_with_target_guard(|txn| {
+                    vault.validate_code_run_claim_target_in_txn(txn, &call.id, Some(&predicate))
+                })?,
             ExecutorStorage::Session(binding) => {
                 binding.session.executor_batch_claim_candidate(
                     &binding.route,

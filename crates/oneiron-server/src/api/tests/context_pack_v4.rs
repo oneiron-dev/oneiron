@@ -757,6 +757,7 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     );
     seed_disclosure_scope(&server, principal, vec![user_claim, persona_claim, turn]);
     let request = json!({
+        "session":{"session_id":"l2-observed"},
         "retrieval": {"query":"l2route", "budget":{"max_field_chars":0,"max_item_tokens":0,"token_budget":0}},
         "companion":{"person_ref":person.to_hex(),"persona_ref":persona.to_hex()}
     });
@@ -782,6 +783,23 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     let (status, second) = route_json(server.clone(), call()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(first["pack"]["l2_base"], second["pack"]["l2_base"]);
+    // A computed prefix shed by the response budget was never served.
+    let mut shed_request = request.clone();
+    shed_request["session"]["session_id"] = json!("l2-shed");
+    shed_request["retrieval"]["budget"]["token_budget"] = json!(1);
+    let (status, shed) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read",
+            &principal.to_hex(),
+            Some(&shed_request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{shed:#}");
+    assert!(shed["pack"].get("l2_base").is_none());
     // Allowlisting never overrides an unstamped/private evidence tier.
     seed_active_claim(&server, user_claim, person, "now private", 1);
     let (status, third) = route_json(server.clone(), call()).await;
@@ -790,4 +808,30 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
         serde_json::from_str(third["pack"]["l2_base"]["body"].as_str().unwrap()).unwrap();
     assert_eq!(rows.as_array().unwrap().len(), 1);
     assert_eq!(rows[0]["id"], persona_claim.to_hex());
+    server.vault.retract_claim(&persona_claim, 3).unwrap();
+    for (session, expected) in [
+        (
+            "l2-observed",
+            json!([
+                "changed[1:]{id,to}:",
+                format!("{}: retracted", persona_claim.to_hex())
+            ]),
+        ),
+        ("l2-shed", json!([])),
+        ("l2-unobserved", json!([])),
+    ] {
+        let (status, board) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-board",
+                "core:read",
+                &principal.to_hex(),
+                Some(&json!({"session":{"session_id":session}})),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{board:#}");
+        assert_eq!(board["changed"], expected, "{session}");
+    }
 }

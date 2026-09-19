@@ -79,7 +79,6 @@ impl AttemptQueue<'_> {
         if worker_moved && record.state == AttemptState::Leased {
             record.state = AttemptState::Queued;
             record.lease_owner = None;
-            record.claimed_at = None;
             record.scheduled_at = None;
             record.backoff_until = None;
             record.updated_at = input.now;

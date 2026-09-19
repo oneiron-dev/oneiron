@@ -5838,7 +5838,7 @@
      "path": "src/claim/write_target.rs",
      "purpose": "Stored-target checks for generic writes of engine-owned claims",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -30331,7 +30331,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/context_pack_v4.rs",

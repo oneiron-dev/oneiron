@@ -2833,3 +2833,126 @@ fn observed_lineage_does_not_touch_the_memory_write_fixture() -> Result<()> {
     assert!(evidence_lineage(&stored_evidence(&vault, claim)?).is_none());
     Ok(())
 }
+
+#[test]
+fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_first_party_actor(&vault);
+    install_self_memory_allow_policy(&vault, actor)?;
+    let owner = seed_person(&vault, 0xB7);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let put = crate::memory::KeyValuePut {
+        namespace: vec!["private".into()],
+        key: "k".into(),
+        request_id: "one".into(),
+        value: serde_json::json!({"n":1}),
+        source: "user_stated".into(),
+    };
+    let address = crate::memory::KeyValueAddress {
+        namespace: put.namespace.clone(),
+        key: put.key.clone(),
+    };
+    let original = memory.key_value_put(&put).unwrap();
+    let id = EntityId::from_hex(&original.item.revision)?;
+    let before = vault.get_raw(&id)?.unwrap();
+    let session = vault.off_record_session_vault().enter(
+        "keyed-write-guard",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    session.flip_on_record()?;
+    for session_bound in [false, true] {
+        let dispatcher = if session_bound {
+            HostSelfDispatcher::for_off_record_session(
+                &session,
+                WriteActor::new(actor, EdgeActorClass::Agent),
+                "keyed-session",
+            )?
+        } else {
+            HostSelfDispatcher::new(
+                &vault,
+                WriteActor::new(actor, EdgeActorClass::Agent),
+                "keyed-canonical",
+            )?
+        };
+        for fixture in [false, true] {
+            for (target, predicate) in [
+                (id, "profile.disguised"),
+                (EntityId::now(), crate::claim::KEY_VALUE_PREDICATE),
+            ] {
+                let candidate = ClaimCandidate::new(
+                    predicate,
+                    ClaimSubject::Entity(owner),
+                    Value::from("forged"),
+                    0.9,
+                );
+                let call = if fixture {
+                    SelfCall::MemoryWriteFixture(SelfMemoryWriteFixtureCall::new(
+                        target,
+                        candidate,
+                        range(5),
+                        5,
+                    ))
+                } else {
+                    SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+                        target,
+                        candidate,
+                        range(5),
+                        5,
+                    ))
+                };
+                assert!(matches!(
+                    dispatcher.dispatch(call),
+                    Err(Error::Claim(ClaimError::KeyValueWriteRequiresOwnedDoor))
+                ));
+                if target != id {
+                    assert!(vault.get_raw(&target)?.is_none());
+                }
+            }
+        }
+        let ordinary = EntityId::now();
+        dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            ordinary,
+            ClaimCandidate::new(
+                "profile.ordinary",
+                ClaimSubject::Entity(owner),
+                Value::from("allowed"),
+                0.9,
+            ),
+            range(6),
+            6,
+        )))?;
+        // Neither endpoint of an unowned code-run supersession may be keyed.
+        for (new, old) in [(ordinary, id), (id, ordinary)] {
+            assert!(matches!(
+                dispatcher.dispatch(SelfCall::MemorySupersedeClaim(
+                    SelfMemorySupersedeClaimCall::new(new, old, 7),
+                )),
+                Err(Error::Claim(ClaimError::KeyValueWriteRequiresOwnedDoor))
+            ));
+        }
+        assert_eq!(vault.get_raw(&id)?.unwrap(), before);
+        assert_eq!(
+            memory.key_value_get(&address).unwrap(),
+            Some(original.item.clone())
+        );
+        let replay = memory.key_value_put(&put).unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.item, original.item);
+    }
+    let replacement = memory
+        .key_value_put(&crate::memory::KeyValuePut {
+            request_id: "two".into(),
+            value: serde_json::json!({"n":2}),
+            ..put
+        })
+        .unwrap();
+    assert_ne!(replacement.item.revision, original.item.revision);
+    assert_eq!(
+        memory.key_value_get(&address).unwrap(),
+        Some(replacement.item)
+    );
+    assert!(memory.key_value_delete(&address).unwrap().existed);
+    assert!(memory.key_value_get(&address).unwrap().is_none());
+    session.close()?;
+    Ok(())
+}
