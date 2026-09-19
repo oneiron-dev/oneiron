@@ -45,7 +45,7 @@
 
 mod admission;
 pub(in crate::calendar) use admission::{
-    admit_connector_event, connector_event_ref, sweep_connector_resource,
+    admit_connector_event, connector_event_ref, delete_connector_resource, sweep_connector_resource,
 };
 mod fetch;
 mod poll;

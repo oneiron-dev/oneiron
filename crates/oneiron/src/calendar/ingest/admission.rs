@@ -124,13 +124,14 @@ impl PollAdmission<'_> {
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
     ) -> Result<(), CalendarError> {
-        self.sweep_resource(feed, None)
+        self.sweep_resource(feed, None, CalendarStatusBasis::ImportedAbsence)
     }
 
     fn sweep_resource(
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
         only_uid: Option<&str>,
+        absence_basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
         let present: std::collections::BTreeSet<_> = feed
             .events
@@ -167,7 +168,7 @@ impl PollAdmission<'_> {
                 )?;
             }
             if all_live_inbound_passports_absent(self.vault, &event_ref)? {
-                self.admit_absence_cancellation(event_ref)?;
+                self.admit_absence_cancellation(event_ref, absence_basis)?;
                 if instance.is_some() {
                     self.retract_exception_mask(event_ref)?;
                 }
@@ -376,16 +377,25 @@ impl PollAdmission<'_> {
 
     /// The multi-source law's conclusion: every live inbound passport
     /// reports absence, so the EVENT reads cancelled with basis
-    /// `imported_absence`. The EVENT row is never deleted and CAL-07's
+    /// `imported_absence` for an omission or `imported_cancel` for an explicit
+    /// provider tombstone. The EVENT row is never deleted and CAL-07's
     /// outcome predicate is never written here. The screen body is empty:
     /// absence carries no inbound content to screen.
-    fn admit_absence_cancellation(&mut self, event_ref: EntityId) -> Result<(), CalendarError> {
+    fn admit_absence_cancellation(
+        &mut self,
+        event_ref: EntityId,
+        basis: CalendarStatusBasis,
+    ) -> Result<(), CalendarError> {
         self.admit_status_if_changed(
             event_ref,
             &CalendarInboundBody::default(),
-            "feed-absence",
+            if basis == CalendarStatusBasis::ImportedCancel {
+                "remote-delete"
+            } else {
+                "feed-absence"
+            },
             CalendarStatus::Cancelled,
-            CalendarStatusBasis::ImportedAbsence,
+            basis,
         )
     }
 
@@ -559,7 +569,26 @@ pub(in crate::calendar) fn sweep_connector_resource(
     uid: &str,
     now: u64,
 ) -> Result<(), CalendarError> {
-    connector_admission(vault, system, source, now).sweep_resource(feed, Some(uid))
+    connector_admission(vault, system, source, now).sweep_resource(
+        feed,
+        Some(uid),
+        CalendarStatusBasis::ImportedAbsence,
+    )
+}
+
+/// An explicit provider tombstone cancels with a stronger basis than an omitted feed item.
+pub(in crate::calendar) fn delete_connector_resource(
+    vault: &Vault,
+    system: &str,
+    source: &str,
+    uid: &str,
+    now: u64,
+) -> Result<(), CalendarError> {
+    connector_admission(vault, system, source, now).sweep_resource(
+        &super::ics::ParsedIcsFeed { events: Vec::new() },
+        Some(uid),
+        CalendarStatusBasis::ImportedCancel,
+    )
 }
 
 /// The CAL-09 screen body for one VEVENT: its description plus any ATTACH

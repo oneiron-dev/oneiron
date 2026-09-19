@@ -225,14 +225,7 @@ pub fn write_calendar_event(
                 let receipt =
                     issue_prepared_upsert(vault, seat, transport, &uid, now, &mut row, &request)?;
                 return finish_remote_applied_write(
-                    vault,
-                    seat,
-                    transport,
-                    event_ref,
-                    own.as_ref(),
-                    &mut row,
-                    receipt,
-                    now,
+                    vault, seat, transport, event_ref, &mut row, receipt, now,
                 );
             }
             CalendarWriteOutboxState::ReconcileRequired => {
@@ -249,14 +242,7 @@ pub fn write_calendar_event(
                             detail: "remote-applied row carries no provider receipt".to_owned(),
                         })?;
                 return finish_remote_applied_write(
-                    vault,
-                    seat,
-                    transport,
-                    event_ref,
-                    own.as_ref(),
-                    &mut row,
-                    receipt,
-                    now,
+                    vault, seat, transport, event_ref, &mut row, receipt, now,
                 );
             }
             CalendarWriteOutboxState::Committed => {
@@ -306,16 +292,7 @@ pub fn write_calendar_event(
         ics,
     };
     let receipt = issue_prepared_upsert(vault, seat, transport, &uid, now, &mut row, &request)?;
-    finish_remote_applied_write(
-        vault,
-        seat,
-        transport,
-        event_ref,
-        own.as_ref(),
-        &mut row,
-        receipt,
-        now,
-    )
+    finish_remote_applied_write(vault, seat, transport, event_ref, &mut row, receipt, now)
 }
 
 fn ensure_outbox_matches(
@@ -407,13 +384,11 @@ fn reconcile_required_error(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn finish_remote_applied_write(
     vault: &Vault,
     seat: &CalendarConnectorSeatState,
     transport: &dyn CalendarRemoteTransport,
     event_ref: EntityId,
-    _own: Option<&CalendarPassportValue>,
     row: &mut CalendarWriteOutboxRow,
     receipt: RemoteWriteReceipt,
     now: u64,
@@ -449,6 +424,7 @@ fn finish_remote_applied_write(
     }
     let parsed = crate::calendar::ics::parse_ics_feed(&rendered)?;
     let members = super::resource::members(vault, event_ref, &row.uid)?;
+    let single_component = parsed.events.len() == 1;
     for (member, parsed) in members.into_iter().zip(parsed.events) {
         // Direction is a routing fact: a seat that also reads this UID is two-way,
         // a seat that only writes it is outbound. Neither is an approval gate.
@@ -465,7 +441,13 @@ fn finish_remote_applied_write(
             system: row.system.clone(),
             uid: row.uid.clone(),
             last_sequence: receipt.sequence,
-            content_hash: parsed.content_hash,
+            // For one component the provider receipt is already its per-EVENT hash.
+            // A multi-component receipt names the whole resource, not one passport.
+            content_hash: if single_component {
+                receipt.content_hash
+            } else {
+                parsed.content_hash
+            },
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,

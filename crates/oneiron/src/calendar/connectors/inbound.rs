@@ -188,7 +188,7 @@ fn apply_remote_deletion(
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
     let mut absent_count = 0;
-    let mut newly_absent=Vec::new();
+    let mut newly_absent = Vec::new();
     let mut after = None;
     loop {
         let ids = vault.entities_by_type_page(
@@ -207,32 +207,45 @@ fn apply_remote_deletion(
                 })
             {
                 absent_count += 1;
-                newly_absent.push((*event, imported_absence(vault,*event)?));
+                newly_absent.push((*event, imported_cancellation(vault, *event)?));
             }
         }
         after = ids.last().copied();
     }
-    crate::calendar::ingest::sweep_connector_resource(
+    crate::calendar::ingest::delete_connector_resource(
         vault,
         &seat.config.system,
         &pull_source_record_id(provider, seat, uid),
-        &crate::calendar::ics::ParsedIcsFeed { events: Vec::new() },
         uid,
         now,
     )?;
     counters.source_absences += absent_count;
-    for (event,was_cancelled) in newly_absent {
-        if !was_cancelled && imported_absence(vault,event)? {counters.status_cancellations+=1;}
+    for (event, was_cancelled) in newly_absent {
+        if !was_cancelled && imported_cancellation(vault, event)? {
+            counters.status_cancellations += 1;
+        }
     }
     Ok(())
 }
 
-fn imported_absence(vault:&Vault,event:EntityId)->Result<bool,CalendarConnectorError> {
-    use crate::calendar::claims::{PREDICATE_CALENDAR_STATUS,decode_status_value,CalendarStatusBasis,CalendarStatus};
+fn imported_cancellation(vault: &Vault, event: EntityId) -> Result<bool, CalendarConnectorError> {
+    use crate::calendar::claims::{
+        CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_STATUS, decode_status_value,
+    };
     for id in vault.claims_for_subject(&event)? {
-        if let Some(body)=vault.get_claim(&id)? && body.lifecycle==crate::ClaimLifecycleStatus::Active && body.predicate==PREDICATE_CALENDAR_STATUS {
-            let status=decode_status_value(&body.value)?;
-            if status.status==CalendarStatus::Cancelled && status.basis==CalendarStatusBasis::ImportedAbsence {return Ok(true);}
+        if let Some(body) = vault.get_claim(&id)?
+            && body.lifecycle == crate::ClaimLifecycleStatus::Active
+            && body.predicate == PREDICATE_CALENDAR_STATUS
+        {
+            let status = decode_status_value(&body.value)?;
+            if status.status == CalendarStatus::Cancelled
+                && matches!(
+                    status.basis,
+                    CalendarStatusBasis::ImportedAbsence | CalendarStatusBasis::ImportedCancel
+                )
+            {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
