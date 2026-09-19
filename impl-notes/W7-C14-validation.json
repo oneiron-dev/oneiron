@@ -1,0 +1,88 @@
+{
+  "lint_and_docs_after_integration": {
+    "clippy": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "clippy",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0
+    },
+    "featureless-clippy": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron",
+        "--all-targets",
+        "--no-default-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0
+    },
+    "server-clippy": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron-server",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0
+    },
+    "rustdoc": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "doc",
+        "--locked",
+        "--workspace",
+        "--all-features",
+        "--no-deps"
+      ],
+      "exit_code": 0
+    }
+  },
+  "source_commit": "bce883bc",
+  "office_tools": {
+    "tests": 14,
+    "passed": 14,
+    "mode": "offline stored-receipt and fake-app tests; not new Office acceptance"
+  }
+}
