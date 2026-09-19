@@ -113,9 +113,10 @@ impl OutboundDispatchPipeline {
                 &request.intent.target,
             )?
         };
-        let policy_risk = if space_posting.as_ref().is_some_and(
-            crate::channel_identity_autonomy::posting_dispatch::FrozenSpacePosting::policy_risk,
-        ) {
+        let policy_risk = if space_posting
+            .as_ref()
+            .is_some_and(crate::channel_identity_autonomy::FrozenSpacePosting::policy_risk)
+        {
             ExternalEffectPolicyRisk::HoldToProposal
         } else {
             outbound_dispatch_policy_risk(request.gate, verb_contract)
