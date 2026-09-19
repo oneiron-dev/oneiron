@@ -88,7 +88,7 @@ fn sample_pack() -> ContextPack {
             id: EntityId::from_bytes_unchecked([3; 16]),
             short_id: "pr05".to_owned(),
             content_hash: 0xb3,
-            entity_type: 4,
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
             score: 0.0,
             fields: Some(HashMap::from([(
                 "name".to_owned(),
@@ -335,7 +335,7 @@ fn token_savings_regression_pack() -> ContextPack {
                 id: EntityId::from_bytes_unchecked([100 + i; 16]),
                 short_id: format!("sm{i:02}"),
                 content_hash: 0xa0 + i,
-                entity_type: 8,
+                entity_type: crate::registry::ENTITY_TYPE_SUMMARY,
                 score: 0.65 - f32::from(i) * 0.03,
                 fields: Some(HashMap::from([
                     (
@@ -707,7 +707,7 @@ fn split_mode_uses_shared_budget_pool() {
             id: EntityId::from_bytes_unchecked([30 + i; 16]),
             short_id: format!("n{i}"),
             content_hash: i,
-            entity_type: 4,
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
             score: 0.0,
             fields: Some(HashMap::from([(
                 "name".to_owned(),
@@ -1456,7 +1456,7 @@ fn unknown_entity_types_share_single_other_group() {
                 id: EntityId::from_bytes_unchecked([20; 16]),
                 short_id: "u20".to_owned(),
                 content_hash: 0x20,
-                entity_type: 20,
+                entity_type: 19,
                 score: 0.8,
                 fields: Some(HashMap::from([(
                     "name".to_owned(),

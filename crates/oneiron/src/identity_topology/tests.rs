@@ -705,9 +705,9 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
 #[test]
 fn type_76_is_a_pinned_engine_authored_maintenance_kind() {
     // Conformance pin for the owner-ruled seat (byte-space v3 canon row).
-    assert_eq!(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, 76);
-    assert!(!crate::registry::is_structural_kind(76));
-    assert!(crate::registry::short_id_prefix(76).is_err());
+    assert_eq!(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, 74);
+    assert!(!crate::registry::is_structural_kind(74));
+    assert!(crate::registry::short_id_prefix(74).is_err());
 
     // D5/MODEL pattern: public puts are rejected typed; only the
     // identity-topology door (allow_maintenance) writes the byte.
@@ -726,7 +726,7 @@ fn type_76_is_a_pinned_engine_authored_maintenance_kind() {
         .expect_err("public put of type 76 must reject");
     assert!(matches!(
         err,
-        Error::Registry(RegistryError::MaintenanceKindNotWritable(76))
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(74))
     ));
     assert_eq!(event_count(&vault), 0);
 }

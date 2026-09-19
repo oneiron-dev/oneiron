@@ -251,6 +251,18 @@ impl Vault {
             .register_structural_kind(type_byte, short_id_prefix, zone, pack)
     }
 
+    /// Allocates and persists the lowest free compiled-pack family slot.
+    /// A full family spills into pack overflow without losing its identity.
+    pub fn allocate_structural_kind(
+        &self,
+        family: crate::registry::TypeByteFamily,
+        short_id_prefix: impl Into<String>,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.store
+            .allocate_structural_kind(family, short_id_prefix, pack)
+    }
+
     /// Returns the dynamic StructuralKind registration for `type_byte`, if
     /// this vault has one. Static registry entries are not mirrored here.
     #[must_use]

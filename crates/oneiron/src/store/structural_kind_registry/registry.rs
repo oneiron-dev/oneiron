@@ -12,8 +12,9 @@ use crate::companion::{
 use crate::error::{Error, RegistryError, Result};
 use crate::overlay_db::OverlayDb;
 use crate::registry::{
-    StructuralKindRegistration, TypeByteZone, entity_type_registry_entry, short_id_prefix,
-    static_short_id_prefix_collision, validate_entity_type as validate_static_entity_type,
+    StructuralKindRegistration, TypeByteFamily, TypeByteZone, allocate_type_byte,
+    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
+    validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type, zone_of,
 };
 use crate::store::Store;
@@ -29,20 +30,11 @@ const STRUCTURAL_KIND_REGISTRY_KEY_LEN: usize = 10;
 const _: () =
     assert!(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len() + 1 == STRUCTURAL_KIND_REGISTRY_KEY_LEN);
 
-/// Current record version. Byte 2 is a [`TypeByteZone`] ordinal.
-///
-/// Advanced for byte-space v3 (ONE-1754) because the meaning of byte 2 changed
-/// underneath a fixed layout: version 1 carried the pre-v3 SIX-BAND ordinal
-/// (Companion 2, Productivity 3, CRM 4), and the v3 zone table reads those same
-/// codes as System, CompiledProduct and EngineExperimental. Two record formats
-/// sharing one version number is how a stale row gets silently reinterpreted
-/// instead of loudly rejected, so the version moves with the table.
-pub(crate) const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 2;
-
-/// The pre-v3 record version. Readable ONLY by the byte-space v3 re-key, which
-/// is the one place a version-1 row legitimately exists, and which never
-/// interprets its byte 2 — the zone is a pure function of the type byte.
-pub(in crate::store) const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3: u8 = 1;
+/// Current record version: v3 appends an explicit optional family code to
+/// the v2 `(type_byte, zone, prefix, pack)` record. A spilled kind retains its
+/// declared family; it is never rediscovered from its byte. The ABI17-to-18
+/// migration upgrades v2 rows. Older v1 records fail closed.
+pub(crate) const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 3;
 
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 
@@ -120,15 +112,72 @@ impl Store {
         zone: TypeByteZone,
         pack: impl Into<String>,
     ) -> Result<StructuralKindRegistration> {
+        self.register_kind_slot(
+            Some(type_byte),
+            short_id_prefix.into(),
+            zone,
+            pack.into(),
+            None,
+        )
+    }
+
+    pub(crate) fn allocate_structural_kind(
+        &self,
+        family: TypeByteFamily,
+        short_id_prefix: impl Into<String>,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.register_kind_slot(
+            None,
+            short_id_prefix.into(),
+            family.allocation().zone,
+            pack.into(),
+            Some(family),
+        )
+    }
+
+    fn register_kind_slot(
+        &self,
+        requested: Option<u8>,
+        short_id_prefix: String,
+        zone: TypeByteZone,
+        pack: String,
+        family: Option<TypeByteFamily>,
+    ) -> Result<StructuralKindRegistration> {
+        secret_scan::scan_metadata_field(&pack)?;
+        // Allocation and persistence share the LMDB writer lock. Two callers
+        // cannot both choose the same lowest-free slot.
+        let mut wtxn = self.env.write_txn()?;
+        let mut registry = self
+            .kind_registry
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let type_byte = if let Some(byte) = requested {
+            byte
+        } else {
+            let mut occupied: Vec<u8> = registry.keys().copied().collect();
+            for row in self
+                .vault_meta
+                .prefix_iter(&wtxn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?
+            {
+                let (key, raw) = row?;
+                occupied.push(decode_structural_kind_registration(&key, &raw)?.type_byte);
+            }
+            allocate_type_byte(family.expect("allocator requires a family"), &occupied).ok_or(
+                Error::Registry(RegistryError::InvalidStructuralKindRegistration(
+                    "family and its zone overflow are full",
+                )),
+            )?
+        };
         let registration = StructuralKindRegistration {
             type_byte,
-            short_id_prefix: short_id_prefix.into(),
+            short_id_prefix,
             zone,
-            pack: pack.into(),
+            pack,
+            family,
         };
         vet_structural_kind_registration_shape(&registration)?;
         vet_structural_kind_registration_zone(&registration)?;
-        secret_scan::scan_metadata_field(&registration.pack)?;
         if entity_type_registry_entry(type_byte).is_some() {
             return Err(Error::Registry(
                 RegistryError::StructuralKindTypeByteCollision(type_byte),
@@ -139,15 +188,7 @@ impl Store {
                 RegistryError::StructuralKindPrefixCollision(registration.short_id_prefix),
             ));
         }
-
         let key = structural_kind_registry_key(type_byte);
-        let encoded = encode_structural_kind_registration(&registration)?;
-        let mut wtxn = self.env.write_txn()?;
-        let mut registry = self
-            .kind_registry
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
         if registry.contains_key(&type_byte) || self.vault_meta.get(&wtxn, &key)?.is_some() {
             return Err(Error::Registry(
                 RegistryError::StructuralKindTypeByteCollision(type_byte),
@@ -166,8 +207,11 @@ impl Store {
                 RegistryError::StructuralKindPrefixCollision(registration.short_id_prefix),
             ));
         }
-
-        self.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        self.vault_meta.put(
+            &mut wtxn,
+            &key,
+            &encode_structural_kind_registration(&registration)?,
+        )?;
         wtxn.commit()?;
         registry.insert(type_byte, registration.clone());
         Ok(registration)
@@ -258,7 +302,7 @@ fn is_post_dynamic_static_collision(registration: &StructuralKindRegistration) -
 fn is_compatible_legacy_companion_register_row(registration: &StructuralKindRegistration) -> bool {
     registration.type_byte == ENTITY_TYPE_COMPANION_REGISTER
         && registration.short_id_prefix == COMPANION_REGISTER_SHORT_ID_PREFIX
-        && registration.zone == TypeByteZone::System
+        && registration.zone == TypeByteZone::CompiledProduct
         && registration.pack == COMPANION_REGISTER_PACK_ID
 }
 
@@ -320,6 +364,12 @@ fn vet_structural_kind_registration_zone_consistency(
     registration: &StructuralKindRegistration,
 ) -> Result<()> {
     let actual_zone = zone_of(registration.type_byte);
+    if let Some(family) = registration.family {
+        let family_zone = family.allocation().zone;
+        if family_zone != actual_zone {
+            return Err(Error::CorruptedIndex("structural kind family zone"));
+        }
+    }
     if actual_zone != registration.zone {
         return Err(Error::Registry(
             RegistryError::StructuralKindZoneViolation {
@@ -389,6 +439,7 @@ pub(super) fn encode_structural_kind_registration(
     encoded.extend_from_slice(&pack_len.to_le_bytes());
     encoded.extend_from_slice(prefix);
     encoded.extend_from_slice(pack);
+    encoded.push(registration.family.map_or(0, TypeByteFamily::code));
     Ok(encoded)
 }
 
@@ -396,31 +447,25 @@ pub(in crate::store) fn decode_structural_kind_registration(
     key: &[u8],
     raw: &[u8],
 ) -> Result<StructuralKindRegistration> {
-    decode_structural_kind_registration_inner(key, raw, false)
+    decode_registration(key, raw, false)
 }
 
-/// Reads a record written by EITHER ABI, for the byte-space v3 re-key alone.
-///
-/// A pre-v3 row's byte 2 is a six-band ordinal off a table that no longer
-/// exists, so it is never interpreted: the predecessor engine enforced
-/// `band == band_of(type_byte)` on every open, which makes the type byte the
-/// authority and the zone a re-derivation. The re-key writes every row back at
-/// the current version before the new ABI is stamped.
+/// Only the ABI-17-to-18 re-key may read v2 records. The pre-v3 v1 format
+/// is unsupported and cannot re-enter through this decoder.
 pub(super) fn decode_structural_kind_registration_for_rekey(
     key: &[u8],
     raw: &[u8],
 ) -> Result<StructuralKindRegistration> {
-    decode_structural_kind_registration_inner(key, raw, true)
+    decode_registration(key, raw, true)
 }
 
-fn decode_structural_kind_registration_inner(
+fn decode_registration(
     key: &[u8],
     raw: &[u8],
-    accept_pre_v3: bool,
+    accept_v17: bool,
 ) -> Result<StructuralKindRegistration> {
     let version_accepted = raw.first().is_some_and(|version| {
-        *version == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION
-            || (accept_pre_v3 && *version == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3)
+        *version == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION || (accept_v17 && *version == 2)
     });
     if key.len() != STRUCTURAL_KIND_REGISTRY_KEY_LEN
         || !key.starts_with(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)
@@ -434,18 +479,19 @@ fn decode_structural_kind_registration_inner(
     if key[STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len()] != type_byte {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
-    let zone = if raw[0] == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION {
-        type_byte_zone_from_code(raw[2]).ok_or(Error::CorruptedIndex("structural kind registry"))?
-    } else {
-        zone_of(type_byte)
-    };
+    let zone = type_byte_zone_from_code(raw[2])
+        .ok_or(Error::CorruptedIndex("structural kind registry"))?;
     let prefix_len = raw[3] as usize;
     let pack_len = u16::from_le_bytes(
         raw[4..6]
             .try_into()
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?,
     ) as usize;
-    let expected_len = STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN + prefix_len + pack_len;
+    let current_record = raw[0] == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION;
+    let expected_len = STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN
+        + prefix_len
+        + pack_len
+        + usize::from(current_record);
     if raw.len() != expected_len {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
@@ -454,7 +500,7 @@ fn decode_structural_kind_registration_inner(
     let short_id_prefix = str::from_utf8(&raw[prefix_start..pack_start])
         .map_err(|_| Error::CorruptedIndex("structural kind registry"))?
         .to_owned();
-    let pack = str::from_utf8(&raw[pack_start..])
+    let pack = str::from_utf8(&raw[pack_start..pack_start + pack_len])
         .map_err(|_| Error::CorruptedIndex("structural kind registry"))?
         .to_owned();
 
@@ -463,6 +509,17 @@ fn decode_structural_kind_registration_inner(
         short_id_prefix,
         zone,
         pack,
+        family: if current_record {
+            match raw[expected_len - 1] {
+                0 => None,
+                code => Some(
+                    TypeByteFamily::from_code(code)
+                        .ok_or(Error::CorruptedIndex("structural kind family"))?,
+                ),
+            }
+        } else {
+            None
+        },
     })
 }
 

@@ -498,7 +498,7 @@ fn selector_codec_round_trips_strict_payload() {
     assert!(decode_sync_selector(&trailing).is_err());
 
     let unsupported_version = Value::Map(vec![
-        (Value::from(KEY_SCHEMA_VERSION), Value::from(2_u64)),
+        (Value::from(KEY_SCHEMA_VERSION), Value::from(3_u64)),
         (
             Value::from(KEY_GRANT_ID),
             Value::from(selector.grant_id.to_hex()),
@@ -1146,7 +1146,9 @@ fn companion_register_api_selector_suppresses_local_only_records() {
         member,
         SyncSelectorWorld::All,
         vec![],
-        vec![SelectorRange::Companion],
+        vec![SelectorRange::Family(
+            crate::registry::TypeByteFamily::Companion,
+        )],
     );
     let filtered =
         filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
@@ -3849,7 +3851,9 @@ fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
             "band widen",
             SyncSelectorWorld::World(world_a),
             vec![facet_a],
-            vec![SelectorRange::Companion],
+            vec![SelectorRange::Family(
+                crate::registry::TypeByteFamily::Companion,
+            )],
         ),
     ] {
         let selector = SyncSelector::new(grant_id, member, world, facets, bands);
@@ -4722,4 +4726,31 @@ fn an_undecodable_coreference_claim_is_withheld_not_passed_through() {
         !ids.contains(&planted),
         "an undecodable coreference-shaped claim leaked a foreign pact id"
     );
+}
+
+#[test]
+fn selector_roundtrips_every_classification_family_and_rejects_retired_schema() {
+    for family in crate::registry::TYPE_BYTE_FAMILIES {
+        let selector = SyncSelector::new(
+            entity_id(0xA0),
+            entity_id(0xA7),
+            SyncSelectorWorld::All,
+            vec![],
+            vec![SelectorRange::Family(family.family)],
+        );
+        let bytes = encode_sync_selector(&selector).unwrap();
+        assert_eq!(decode_sync_selector(&bytes).unwrap(), selector);
+        let Value::Map(mut fields) = rmpv::decode::read_value(&mut Cursor::new(bytes)).unwrap()
+        else {
+            panic!("selector encoding must be a map");
+        };
+        fields
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
+            .unwrap()
+            .1 = Value::from(1);
+        let mut retired = Vec::new();
+        rmpv::encode::write_value(&mut retired, &Value::Map(fields)).unwrap();
+        assert!(decode_sync_selector(&retired).is_err());
+    }
 }

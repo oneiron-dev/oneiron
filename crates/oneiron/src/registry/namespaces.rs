@@ -73,4 +73,6 @@ pub struct StructuralKindRegistration {
     pub short_id_prefix: String,
     pub zone: TypeByteZone,
     pub pack: String,
+    /// Declared family, retained when allocation spills. Older explicit slots have no family.
+    pub family: Option<super::TypeByteFamily>,
 }

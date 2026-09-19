@@ -10,7 +10,7 @@ use crate::overlay_db::OverlayDb;
 #[cfg(test)]
 use crate::store::test_hooks;
 use crate::store::{
-    RawDatabases, Store, TYPE_BYTE_REKEY_V3, VaultWriterLease, rekey_type_bytes_v3_in_txn,
+    RawDatabases, Store, TYPE_BYTE_REKEY_V31, VaultWriterLease, rekey_type_bytes_v31_in_txn,
     seed_default_policy_manifest_in_txn,
 };
 
@@ -26,7 +26,7 @@ use super::manifest_storage_gates::{
 };
 use super::open_version_keys::{
     DefaultPolicySeedMode, MAX_DBS, STORAGE_ABI_VERSION, STORAGE_ABI_VERSION_KEY,
-    STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR, VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE,
+    STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR, VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE,
 };
 use super::vault_root_bind::{preflight_rejected_aliased_root, preflight_vault_root};
 
@@ -281,27 +281,26 @@ impl Store {
         // both survive, and the vault stays openable by the previous engine.
         // The new stamp is written only once the re-key's own count and id-set
         // assertions have passed.
-        if abi_gate == StorageAbiGate::RekeyByteSpaceV3 {
+        if abi_gate == StorageAbiGate::RekeyByteSpaceV31 {
             let edges_out_before = raw.edges_out.len(&wtxn)?;
             let edges_in_before = raw.edges_in.len(&wtxn)?;
-            let counts = rekey_type_bytes_v3_in_txn(&raw, &mut wtxn, TYPE_BYTE_REKEY_V3)?;
+            let counts = rekey_type_bytes_v31_in_txn(&raw, &mut wtxn, TYPE_BYTE_REKEY_V31)?;
             // Edges carry entity ids and edge data, never endpoint type bytes.
             // Asserting the totals is how "we did not touch them" stops being
             // a claim in a comment and becomes a checked fact.
             if raw.edges_out.len(&wtxn)? != edges_out_before
                 || raw.edges_in.len(&wtxn)? != edges_in_before
             {
-                return Err(Error::CorruptedIndex("byte-space v3 edge total changed"));
+                return Err(Error::CorruptedIndex("byte-space v3.1 edge total changed"));
             }
             tracing::info!(
                 entities = counts.entities,
                 type_index = counts.type_index,
                 short_id_counters = counts.short_id_counters,
                 kind_registrations = counts.kind_registrations,
-                kind_registrations_rezoned = counts.kind_registrations_rezoned,
-                from = STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
+                from = STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR,
                 to = storage_abi_version,
-                "byte-space v3 type-byte re-key applied"
+                "byte-space v3.1 type-byte re-key applied"
             );
             vault_meta_view.put(
                 &mut wtxn,

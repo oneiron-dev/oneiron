@@ -21,7 +21,7 @@ use crate::sync::types::WindowKey;
 use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
 
 /// Current selector payload schema version.
-pub const SYNC_SELECTOR_SCHEMA_VERSION: u64 = 1;
+pub const SYNC_SELECTOR_SCHEMA_VERSION: u64 = 2;
 
 const SELECTOR_KEYS: [&str; 6] = [
     "schema_version",
@@ -97,19 +97,7 @@ impl SyncSelector {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let mut normalized_bands = Vec::new();
-        for band in [
-            SelectorRange::Semantic,
-            SelectorRange::Core,
-            SelectorRange::Companion,
-            SelectorRange::Productivity,
-            SelectorRange::Crm,
-            SelectorRange::InducedDynamicMaintenance,
-        ] {
-            if bands.contains(&band) {
-                normalized_bands.push(band);
-            }
-        }
+        let normalized_bands = SelectorRange::normalize(bands);
         Self {
             grant_id,
             member_ref,
@@ -459,26 +447,11 @@ fn decode_band(value: &Value) -> Result<SelectorRange> {
     let band = value
         .as_str()
         .ok_or_else(|| selector_err(SelectorError::BandMustBeString))?;
-    match band {
-        "semantic" => Ok(SelectorRange::Semantic),
-        "core" => Ok(SelectorRange::Core),
-        "companion" => Ok(SelectorRange::Companion),
-        "productivity" => Ok(SelectorRange::Productivity),
-        "crm" => Ok(SelectorRange::Crm),
-        "maintenance" => Ok(SelectorRange::InducedDynamicMaintenance),
-        _ => Err(selector_err(SelectorError::UnknownBand)),
-    }
+    SelectorRange::from_wire_name(band).ok_or_else(|| selector_err(SelectorError::UnknownBand))
 }
 
 pub(super) fn band_to_wire(band: SelectorRange) -> &'static str {
-    match band {
-        SelectorRange::Semantic => "semantic",
-        SelectorRange::Core => "core",
-        SelectorRange::Companion => "companion",
-        SelectorRange::Productivity => "productivity",
-        SelectorRange::Crm => "crm",
-        SelectorRange::InducedDynamicMaintenance => "maintenance",
-    }
+    band.wire_name()
 }
 
 pub(super) fn selector_err(reason: SelectorError) -> Error {

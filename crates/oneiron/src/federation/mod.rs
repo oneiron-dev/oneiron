@@ -12,6 +12,7 @@ mod guest;
 mod pact_scope;
 mod peer_authority;
 mod relationships;
+mod selector_kind;
 mod stale;
 
 pub use self::coreference::{
