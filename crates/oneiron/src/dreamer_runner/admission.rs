@@ -241,7 +241,7 @@ impl DreamerRunnerStore<'_> {
         }
     }
 
-    fn admit_next_kind(
+    pub(super) fn admit_next_kind(
         &self,
         queue_kind: &str,
         input: AdmitDreamerAttempt,
