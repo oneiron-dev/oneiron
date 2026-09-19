@@ -33,6 +33,7 @@ mod extracted_people;
 mod gap;
 mod partition;
 mod provenance;
+mod persistence;
 mod support;
 mod watermark;
 
@@ -44,6 +45,7 @@ pub use executor::*;
 pub use gap::*;
 pub use partition::*;
 pub use provenance::*;
+pub use persistence::close_persistent_conflict;
 pub use support::*;
 pub use watermark::*;
 

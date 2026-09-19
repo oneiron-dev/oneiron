@@ -74,7 +74,8 @@ impl ConsolidationExecutor<'_> {
              Respond with JSON: {\"candidates\": [{\"subject\": \"<32-hex entity id>\", \
              \"predicate\": \"<dotted.predicate>\", \"value\": <json>, \"confidence\": <0..1>, \
              \"evidence_turn_refs\": [\"<32-hex turn id>\"]}]}. Only claims stated by the \
-             user or assistant; never invent evidence refs.";
+             user or assistant; never invent evidence refs. For set-valued claims include \"topic_key\": the question (which food, topic, goal, or promise+recipient), \
+             never the answer. Preserve the same topic_key when an answer changes.";
         LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
@@ -176,12 +177,14 @@ impl ConsolidationExecutor<'_> {
             if let Some(world) = partition.world_ref {
                 candidate = candidate.with_world(world);
             }
+            let mut scope = Vec::new();
             if let Some(facet) = partition.facet_ref {
-                candidate = candidate.with_scope(Value::Map(vec![(
-                    Value::from(TURN_BODY_FACET_REF_KEY),
-                    Value::Binary(facet.as_bytes().to_vec()),
-                )]));
+                scope.push((Value::from(TURN_BODY_FACET_REF_KEY), Value::Binary(facet.as_bytes().to_vec())));
             }
+            if let Some(topic) = item.get("topic_key").filter(|v| !v.is_null()) {
+                scope.push((Value::from("topic_key"),json_to_rmpv(topic)));
+            }
+            if !scope.is_empty() { candidate = candidate.with_scope(Value::Map(scope)); }
             candidates.push(PromotionCandidate {
                 claim_id,
                 candidate,
@@ -286,7 +289,8 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
     ) -> DurableStepResult<PartitionRun> {
-        let conflicts = detect_conflicts(&candidates, &[])?;
+        let prior_heads = super::persistence::prior_heads(ctx.vault, &candidates)?;
+        let conflicts = detect_conflicts(&candidates, &prior_heads)?;
         if conflicts.is_empty() {
             return Ok(PartitionRun::Completed {
                 candidates,
@@ -305,7 +309,7 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|index| &candidates[*index])
                 .collect();
-            let request = self.merge_request(&conflict.identity, &members)?;
+            let request = self.merge_request(&conflict.identity, &members, &prior_heads, &conflict.prior_heads)?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,
@@ -346,14 +350,16 @@ impl ConsolidationExecutor<'_> {
                     merged.push(merged_candidate(
                         conflict,
                         &members,
+                        &prior_heads,
                         value,
                         step_identity.0,
                         ctx.now_ms,
-                    ));
+                    )?);
                 }
                 MergeResolution::Escalate => {
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
+                    merged.push(super::persistence::open_marker(conflict, &members, &prior_heads, step_identity.0, ctx.now_ms)?);
                 }
             }
         }
@@ -378,6 +384,8 @@ impl ConsolidationExecutor<'_> {
         &self,
         identity: &ConflictIdentity,
         members: &[&PromotionCandidate],
+        prior_heads: &[super::conflict::PriorHead],
+        prior_ids: &[EntityId],
     ) -> Result<LlmRequest> {
         let mut lines = String::new();
         for member in members {
@@ -386,6 +394,9 @@ impl ConsolidationExecutor<'_> {
                 "- value: {}\n",
                 serde_json::to_string(&rmpv_to_json(&facts.value)).unwrap_or_default()
             ));
+        }
+        for prior in prior_heads.iter().filter(|p| prior_ids.contains(&p.claim_id)) {
+            lines.push_str(&format!("- prior {}: {}\n", prior.claim_id.to_hex(), serde_json::to_string(&rmpv_to_json(&prior.body.value)).unwrap_or_default()));
         }
         let system = "Conflicting values were extracted for one claim identity. Respond \
              with JSON: {\"resolution\": \"merge\"|\"accumulate\"|\"escalate\", \
@@ -461,10 +472,11 @@ fn decode_merge_resolution(response: &LlmResponse) -> Result<MergeResolution> {
 fn merged_candidate(
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
+    priors: &[super::conflict::PriorHead],
     value: Value,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
-) -> PromotionCandidate {
+) -> Result<PromotionCandidate> {
     let mut evidence: Vec<EntityId> = Vec::new();
     let mut chain: Vec<ConsolidationProvenanceHop> = Vec::new();
     let mut meet = ClaimSource::UserStated;
@@ -485,6 +497,10 @@ fn merged_candidate(
         meet = source_meet(meet, member.evidence_meet);
         confidence = confidence.max(0.5);
     }
+    for prior in priors.iter().filter(|p| conflict.prior_heads.contains(&p.claim_id)) {
+        meet = source_meet(meet, crate::claim::claim_evidence_taint(&prior.body).or(prior.body.source).unwrap_or(ClaimSource::Generated));
+        if crate::claim::claim_evidence_admissible(&prior.body) && !evidence.contains(&prior.claim_id) { evidence.push(prior.claim_id); }
+    }
     let claim_id = deterministic_claim_id(
         attempt_id,
         conflict.identity.subject,
@@ -502,13 +518,8 @@ fn merged_candidate(
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(facet) = conflict.identity.facet {
-        candidate = candidate.with_scope(Value::Map(vec![(
-            Value::from(TURN_BODY_FACET_REF_KEY),
-            Value::Binary(facet.as_bytes().to_vec()),
-        )]));
-    }
-    PromotionCandidate {
+    candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
+    Ok(PromotionCandidate {
         claim_id,
         candidate,
         evidence_turn_refs: evidence,
@@ -520,7 +531,7 @@ fn merged_candidate(
             end: now_ms,
         },
         learned_at: now_ms,
-    }
+    })
 }
 
 fn contradiction_gap(
