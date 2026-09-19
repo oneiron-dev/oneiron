@@ -412,6 +412,10 @@ async fn handle_connection(
                     );
                     break;
                 }
+                if let Err(error) = server.vault().resume_from_slim_on_inbound() {
+                    tracing::warn!(conn_id, %error, "failed to resume vault for inbound frame");
+                    break;
+                }
                 if !matches!(&msg, SyncMessage::Rpc(_) | SyncMessage::Sub(_)) {
                     let _ = server.wire_telemetry.record(
                         &format!("sync:{:02x}", data[0]),
