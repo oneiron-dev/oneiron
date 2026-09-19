@@ -716,6 +716,7 @@ pub(in crate::batch) fn apply_put(
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
+    crate::agent_def::stage_birth_custody_put(store, wtxn, &id, entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;

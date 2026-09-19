@@ -665,9 +665,20 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         receipt_id: &EntityId,
-        input: RedactionReceiptInput,
+        mut input: RedactionReceiptInput,
         sweep_extras: HardEraseSweepExtras,
     ) -> Result<Vec<u8>> {
+        let mut ids = std::collections::BTreeSet::new();
+        for hex in &input.scope.entity_ids {
+            let holder = EntityId::from_hex(hex)?;
+            ids.insert(holder);
+            ids.extend(crate::agent_def::birth_carriers_for_holder_in_txn(
+                &self.store,
+                wtxn,
+                &holder,
+            )?);
+        }
+        input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
         let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
             self.enqueue_hard_erase_sweep_in_txn(
                 wtxn,

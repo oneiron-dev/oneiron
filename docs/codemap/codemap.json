@@ -342,6 +342,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/birth_custody.rs",
+     "purpose": "Physical custody of captured agent source, without authorship or delete grants",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -389,7 +399,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 2
      }
@@ -421,7 +431,7 @@
      "path": "src/agent_def/portable_source.rs",
      "purpose": "Immutable captured agent source",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -14563,13 +14573,14 @@
      "kind": "src",
      "notable": [
       "CommandAudioConfig",
-      "CommandMeetingAudioHost"
+      "CommandMeetingAudioHost",
+      "NativeAudioCapabilities"
      ],
      "path": "src/ingest/meeting_audio/command.rs",
      "purpose": "Optional process adapter for an explicitly configured native meeting-audio host",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -26436,7 +26447,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27663,7 +27674,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1590,
+   "source_files": 1591,
    "test_files": 572
   },
   "oneiron-bench": {

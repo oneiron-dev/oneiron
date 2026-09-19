@@ -414,6 +414,7 @@ impl Vault {
         let mut had_vector = hint_had_vector | entity_had_vector | blob_cleanup.had_vector;
         crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
+        crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
             had_vector |= cleanup.had_vector;
@@ -542,6 +543,9 @@ impl Vault {
         let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
 
         if !decoded.is_hard() {
+            let had_birth_sources =
+                crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_source_holder_in_txn(&self.store, wtxn, id)?;
             let had_body = self
                 .store
                 .entities
@@ -557,7 +561,7 @@ impl Vault {
                 self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
             return Ok(ReplayedTombstoneOutcome::SoftErased {
-                changed: had_body || had_vector,
+                changed: had_body || had_vector || had_birth_sources,
             });
         }
 
@@ -568,6 +572,7 @@ impl Vault {
         // counts as local state to erase, mirroring the local
         // `delete_entity_without_header` semantics.
         if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
+            crate::agent_def::retire_birth_source_holder_in_txn(&self.store, wtxn, id)?;
             // Hard-once-seen is durable LOCAL truth even when nothing local
             // was erased (never-materialized id): the permanent `dt:` marker
             // still gates a future re-put after hostile tombstone-map
@@ -736,7 +741,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        if self.store.entities.get(txn, id.as_bytes())?.is_some()
+        if crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
+            || self.store.entities.get(txn, id.as_bytes())?.is_some()
             || self.store.vectors.get(txn, id.as_bytes())?.is_some()
             || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
             || self.store.text_meta.get(txn, id.as_bytes())?.is_some()

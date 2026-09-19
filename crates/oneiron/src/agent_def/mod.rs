@@ -123,3 +123,10 @@ mod portable_source;
 pub(crate) use portable_source::{
     birth_source_exportable, read_birth_source, validate_birth_source_put,
 };
+
+mod birth_custody;
+pub(crate) use birth_custody::{
+    birth_carriers_for_holder_in_txn, birth_custody_exists_in_txn, remove_birth_custody_in_txn,
+    retire_birth_source_holder_in_txn, stage_birth_custody_put,
+};
+pub(crate) use portable_source::decode_birth_source;

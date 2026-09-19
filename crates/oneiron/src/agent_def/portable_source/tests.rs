@@ -106,6 +106,19 @@ fn captured_fork_source_replays_after_parent_edits_and_stays_untrusted() -> Resu
             .is_err()
     );
     target.batch().delete(&child).commit()?;
+    assert!(target.get_entity_type(&asset)?.is_none());
+    assert!(
+        target
+            .batch()
+            .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, &carrier)
+            .commit()
+            .is_err()
+    );
+    assert!(
+        target
+            .put_entity(&asset, ENTITY_TYPE_ASSET, at, 10, b"unrelated")
+            .is_err()
+    );
     let archive = target.export_whole_vault(crate::context_pack::PackFormat::Json)?;
     let document = target.read_whole_vault_json(archive.bytes())?;
     assert!(

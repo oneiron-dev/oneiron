@@ -393,6 +393,36 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
     }
 
     let entities = doc.get_map("entities");
+    let mut birth_ids = BTreeSet::new();
+    let mut birth_error = None;
+    crate::sync::loro_support::map_for_each_bytes(&entities, |key, bytes| {
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(bytes) else {
+            return;
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+            return;
+        }
+        match crate::agent_def::decode_birth_source(
+            &bytes[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        ) {
+            Ok(Some(source)) => match source.child() {
+                Ok(child) if erased.contains(&child) => match EntityId::from_hex(key) {
+                    Ok(id) => {
+                        birth_ids.insert(id);
+                    }
+                    Err(error) => birth_error = Some(error),
+                },
+                Err(error) => birth_error = Some(error),
+                _ => {}
+            },
+            Err(error) => birth_error = Some(error),
+            _ => {}
+        }
+    });
+    if let Some(error) = birth_error {
+        return Err(error);
+    }
+    let erased = erased.union(&birth_ids).copied().collect::<BTreeSet<_>>();
     let mut doomed_entities: Vec<String> = Vec::new();
     entities.for_each(|key, _| {
         // ANY value shape under an erased id's key is residue (fail

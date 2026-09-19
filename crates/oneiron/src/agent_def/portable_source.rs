@@ -54,6 +54,9 @@ pub(crate) fn encode_birth_source(
     ))
 }
 impl AgentBirthSource {
+    pub(crate) fn child(&self) -> Result<EntityId> {
+        EntityId::from_hex(&self.child_id)
+    }
     fn validate(&self) -> Result<()> {
         let child = EntityId::from_hex(&self.child_id)?;
         let source = EntityId::from_hex(&self.source_id)?;
@@ -119,6 +122,7 @@ pub(crate) fn validate_birth_source_put(
     kind: u8,
     bytes: &[u8],
 ) -> Result<()> {
+    super::birth_custody::check_registered_birth_target(store, txn, id, kind, bytes)?;
     let old = store.entities.get(txn, id.as_bytes())?;
     if let Some(old) = &old {
         let header =
@@ -133,6 +137,7 @@ pub(crate) fn validate_birth_source_put(
     if kind == ENTITY_TYPE_ASSET
         && let Some(source) = decode_birth_source(bytes)?
     {
+        super::birth_custody::check_birth_custody(store, txn, &source.child()?)?;
         if birth_source_id(&EntityId::from_hex(&source.child_id)?)? != *id {
             return Err(invalid("asset identity"));
         }
@@ -240,8 +245,8 @@ pub(crate) fn read_birth_source(
     }
     Ok(Some(source))
 }
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("agent birth source: {reason}"))
+fn invalid(reason: &'static str) -> Error {
+    Error::Artifact(crate::error::ArtifactError::InvalidAgentDefBody(reason))
 }
 
 #[cfg(test)]
