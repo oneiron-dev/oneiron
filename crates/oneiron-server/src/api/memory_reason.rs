@@ -43,7 +43,7 @@ use oneiron::retrieval_depth::{
     SearchProbe, SessionScope,
 };
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
-use oneiron::{Effort, EntityId, ScoredEntity};
+use oneiron::{Effort, EntityId};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
@@ -393,7 +393,7 @@ pub(crate) async fn companion_memory_reason(
             .ok_or_else(|| {
                 ApiError::bad_request("retrieval exceeded tokenBudget", Some("tokenBudget"))
             })?;
-        let evidence = collect_evidence(&server.vault, &scoped_read, retrieved.hits.clone())?;
+        let evidence = collect_evidence(&server.vault, &scoped_read, &retrieved)?;
         let answered = answer_from(&request, &query, remaining, &evidence, admission.as_ref())?;
         let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
         Ok(Json(reason_response(
@@ -503,15 +503,12 @@ fn trace_for(effort: Effort, retrieved: &DepthSearchResult) -> Option<MemoryReas
 fn collect_evidence(
     vault: &oneiron::Vault,
     scoped_read: &ScopedRead<'_>,
-    hits: Vec<ScoredEntity>,
+    retrieved: &DepthSearchResult,
 ) -> Result<Vec<MemoryReasonEvidence>, ApiError> {
-    let mut evidence = Vec::with_capacity(hits.len());
-    for hit in hits {
+    let mut evidence = Vec::with_capacity(retrieved.hits.len());
+    for hit in &retrieved.hits {
         let id = hit.id;
-        let Some(revision) = vault
-            .indexed_revision(&id)
-            .map_err(|_| ApiError::internal_server_error("memory revision lookup failed"))?
-        else {
+        let Some(&revision) = retrieved.revisions.get(&id) else {
             continue;
         };
         let mode = oneiron::memory::ReadMode::Pinned(revision);

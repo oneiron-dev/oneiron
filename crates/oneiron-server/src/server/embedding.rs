@@ -223,11 +223,6 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider<'_> {
         &self,
         input: &oneiron::memory::IndexedRevisionInput,
     ) -> oneiron::Result<Vec<f32>> {
-        if self.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
-            return Err(oneiron::Error::InvalidConfig(
-                "indexed revisions require an on-device or owner-hosted embedder".into(),
-            ));
-        }
         let payload = if self.server.vault().get_entity_type(&input.entity)?
             == Some(oneiron::registry::ENTITY_TYPE_CLAIM)
         {
@@ -271,6 +266,11 @@ impl SyncServer {
             server: self,
             provider: slot.ensure_ready()?,
         };
+        if provider.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
+            return Err(oneiron::Error::InvalidConfig(
+                "indexed revisions require an on-device or owner-hosted embedder".into(),
+            ));
+        }
         self.vault().refresh_indexed_at_idle(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

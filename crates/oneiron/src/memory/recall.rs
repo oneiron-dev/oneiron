@@ -501,15 +501,15 @@ impl Memory<'_> {
                         .boost_salience()
                         .boost_confidence();
                 }
-                let retrieval = pipeline.run_with_telemetry()?;
-                let hits = retrieval.value;
+                let retrieval = pipeline.run_for_pack()?;
+                let hits = retrieval.scores;
                 let total = hits.len() as u64;
                 let mut items = Vec::new();
                 for hit in hits.into_iter().take(limit) {
-                    let mode = self.vault.indexed_revision(&hit.id)?.map_or(
-                        crate::vault::ReadMode::Indexed,
-                        crate::vault::ReadMode::Pinned,
-                    );
+                    let Some(revision) = retrieval.revisions.get(&hit.id) else {
+                        continue;
+                    };
+                    let mode = crate::vault::ReadMode::Pinned(*revision);
                     if let Some(item) = self.memory_item_for(&hit.id, Some(facet_id), mode)? {
                         items.push(item);
                     }

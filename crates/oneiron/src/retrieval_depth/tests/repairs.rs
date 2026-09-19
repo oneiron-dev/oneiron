@@ -423,3 +423,82 @@ fn session_scope_cannot_admit_a_hidden_document_at_any_effort() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn later_channels_cannot_mix_scores_from_different_revisions() {
+    let id = entity(0x71);
+    let old = crate::vault::RevisionRef([1; 16]);
+    let new = crate::vault::RevisionRef([2; 16]);
+    let mut acc = DepthAccumulator::default();
+    acc.merge_revisioned(
+        vec![ScoredEntity { id, score: 0.2 }],
+        std::collections::HashMap::from([(id, old)]),
+    );
+    acc.merge_revisioned(
+        vec![ScoredEntity { id, score: 0.9 }],
+        std::collections::HashMap::from([(id, new)]),
+    );
+    let result = acc.finish(10);
+    assert_eq!(result.hits, vec![ScoredEntity { id, score: 0.2 }]);
+    assert_eq!(result.revisions.get(&id), Some(&old));
+}
+
+#[test]
+fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> TestResult {
+    struct PublishingBackend<'a> {
+        vault: &'a Vault,
+        id: EntityId,
+    }
+    impl DeepSearchBackend for PublishingBackend<'_> {
+        fn decompose(
+            &self,
+            _: &str,
+            _: &[String],
+            _: usize,
+            _: Option<u64>,
+            _: &BudgetLease,
+        ) -> RetrievalResult<BackendSpend<Vec<String>>> {
+            Ok(BackendSpend::free(Vec::new()))
+        }
+        fn rerank(
+            &self,
+            _: &str,
+            candidates: &[RerankCandidate<'_>],
+            _: Option<u64>,
+            _: &BudgetLease,
+        ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
+            let body = rmp_serde::to_vec_named(&serde_json::json!({"content": "replacement yak"}))
+                .unwrap();
+            self.vault
+                .batch()
+                .put(&self.id, ENTITY_TYPE_PERSON, range(1), 1, &body)
+                .text(&self.id, &[("content", "replacement yak")])
+                .commit()?;
+            self.vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+            Ok(BackendSpend::free(vec![1.0; candidates.len()]))
+        }
+    }
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let id = entity(0x72);
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"content": "ranked zebra"})).unwrap();
+    vault
+        .batch()
+        .put(&id, ENTITY_TYPE_PERSON, range(1), 1, &body)
+        .text(&id, &[("content", "ranked zebra")])
+        .commit()?;
+    vault.set_indexed_idle_delay_ms(0)?;
+    let before = vault.indexed_revision(&id)?.unwrap();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).unwrap());
+    let lease = minted_lease();
+    let backend = PublishingBackend { vault: &vault, id };
+    let request = hosted_request("zebra", Effort::High, Some(&lease), Some(&backend));
+    let result = scoped.search_with_effort(&request)?;
+    assert_eq!(hit_ids(&result), vec![id]);
+    assert_ne!(vault.indexed_revision(&id)?, Some(before));
+    assert_eq!(result.revisions.get(&id), Some(&before));
+    assert_eq!(
+        scoped.get_with_mode(&id, crate::vault::ReadMode::Pinned(before))?,
+        Some(body)
+    );
+    Ok(())
+}

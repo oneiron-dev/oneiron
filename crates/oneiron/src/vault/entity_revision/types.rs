@@ -46,6 +46,9 @@ pub struct IndexedRevisionInput {
 }
 
 /// Caller-owned embedding provider. It runs outside the LMDB transaction.
+/// `InvalidConfig`, `DimensionMismatch` and `InvalidVector` reject only this
+/// input. Other errors abort the pass; check provider-wide configuration before
+/// starting a pass rather than returning it as an input refusal.
 pub trait IndexedRevisionEmbedder {
     fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>>;
 }
@@ -55,6 +58,8 @@ pub trait IndexedRevisionEmbedder {
 pub struct IndexedRefreshReport {
     pub refreshed: Vec<(EntityId, RevisionRef)>,
     pub superseded: Vec<EntityId>,
+    /// Unpublished entity/revision inputs and their typed refusal reasons.
+    pub failed: Vec<(EntityId, RevisionRef, crate::error::ErrorKind)>,
 }
 
 /// Citation's four coordinates, plus the original quote for drift display.

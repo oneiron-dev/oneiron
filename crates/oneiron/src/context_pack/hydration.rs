@@ -70,13 +70,7 @@ pub(super) fn hydrate_entity(
         return Ok(None);
     };
     // A history pin cannot restore a claim inadmissible at the current door.
-    if raw != live_raw
-        && live_raw[0] == ENTITY_TYPE_CLAIM
-        && options
-            .claim_bodies
-            .and_then(|cache| cache.get(&id))
-            .is_none()
-    {
+    if raw != live_raw && live_raw[0] == ENTITY_TYPE_CLAIM {
         match crate::claim::decode_claim_body(&live_raw[ENTITY_METADATA_HEADER_LEN..], true) {
             Ok(body) if claim_surfaceable(&body) => {}
             _ => {
@@ -152,13 +146,16 @@ pub(super) fn hydrate_entity(
         id,
         short_id,
         content_hash,
-        source_revision_ref: crate::vault::entity_revision::revision_for_mode_in_txn(
-            &vault.store,
-            rtxn,
-            &id,
-            options.read_mode,
-        )?
-        .map(|revision| revision.0),
+        source_revision_ref: match options.read_mode {
+            crate::vault::ReadMode::Pinned(revision) => Some(revision.0),
+            mode => crate::vault::entity_revision::revision_for_mode_in_txn(
+                &vault.store,
+                rtxn,
+                &id,
+                mode,
+            )?
+            .map(|revision| revision.0),
+        },
         entity_type: header.entity_type,
         score,
         fields,

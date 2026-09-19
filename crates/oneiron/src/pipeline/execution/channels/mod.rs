@@ -303,6 +303,7 @@ impl PipelineBuilder<'_> {
             }
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
+                    revisions: HashMap::new(),
                     diagnostics,
                     scores: Vec::new(),
                     pending_vectors: Vec::new(),
@@ -559,7 +560,14 @@ impl PipelineBuilder<'_> {
             } else {
                 None
             };
+            let mut revisions = HashMap::new();
+            for hit in &scores {
+                if let Some(revision) = self.vault.indexed_revision_in_txn(&rtxn, &hit.id)? {
+                    revisions.insert(hit.id, revision);
+                }
+            }
             Ok(RetrievalTxnOutput {
+                revisions,
                 diagnostics,
                 scores,
                 pending_vectors,

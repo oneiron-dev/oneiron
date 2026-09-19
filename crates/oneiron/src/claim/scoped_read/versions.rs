@@ -3,7 +3,65 @@
 use super::*;
 use crate::vault::ReadMode;
 
+#[derive(Default)]
+pub(crate) struct RevisionedHits {
+    pub(crate) hits: Vec<ScoredEntity>,
+    pub(crate) revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
+}
+
 impl ScopedRead<'_> {
+    pub(crate) fn search_vector_revisioned(
+        &self,
+        query: &[f32],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<RevisionedHits> {
+        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
+        if filter.deny_all {
+            return Ok(RevisionedHits::default());
+        }
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, false, true)?;
+        let results = self
+            .vault
+            .query()
+            .authority_filter(filter.clone())
+            .search_vector(query, fetch_limit)
+            .limit(fetch_limit)
+            .run_for_pack()?;
+        Ok(RevisionedHits {
+            hits: self.filter_search_results(results.scores, limit, &filter, &policy)?,
+            revisions: results.revisions,
+        })
+    }
+
+    pub(crate) fn search_text_revisioned(
+        &self,
+        query: &str,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<RevisionedHits> {
+        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
+        if filter.deny_all {
+            return Ok(RevisionedHits::default());
+        }
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, true, false)?;
+        let results = self
+            .vault
+            .query()
+            .authority_filter(filter.clone())
+            .search_text(query, fetch_limit)
+            .limit(fetch_limit)
+            .run_for_pack()?;
+        Ok(RevisionedHits {
+            hits: self.filter_search_results(results.scores, limit, &filter, &policy)?,
+            revisions: results.revisions,
+        })
+    }
+
     /// Exact historical reads retain both current and historical claim gates.
     pub fn get_with_mode(&self, id: &EntityId, mode: ReadMode) -> Result<Option<Vec<u8>>> {
         Ok(self

@@ -179,21 +179,7 @@ impl<'a> ScopedRead<'a> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
-            return Ok(Vec::new());
-        }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, true, false)?;
-        let results = self
-            .vault
-            .query()
-            .authority_filter(filter.clone())
-            .search_text(query, fetch_limit)
-            .limit(fetch_limit)
-            .run()?;
-        self.filter_search_results(results, limit, &filter, &policy)
+        Ok(self.search_text_revisioned(query, limit, requested)?.hits)
     }
 
     pub fn search_vector(
@@ -202,21 +188,7 @@ impl<'a> ScopedRead<'a> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
-            return Ok(Vec::new());
-        }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, false, true)?;
-        let results = self
-            .vault
-            .query()
-            .authority_filter(filter.clone())
-            .search_vector(query, fetch_limit)
-            .limit(fetch_limit)
-            .run()?;
-        self.filter_search_results(results, limit, &filter, &policy)
+        Ok(self.search_vector_revisioned(query, limit, requested)?.hits)
     }
 
     fn resolve_retrieval_filter(

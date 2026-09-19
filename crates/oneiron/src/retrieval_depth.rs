@@ -159,6 +159,8 @@ pub struct DepthSearchRequest<'a> {
 pub struct DepthSearchResult {
     /// Admitted hits, best first, at most `limit` of them.
     pub hits: Vec<ScoredEntity>,
+    /// Exact indexed frontier captured in each hit's ranking transaction.
+    pub revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
     /// True only when the deadline skipped requested work.
     pub partial: bool,
     /// The text queries this read actually executed, in order.
@@ -425,17 +427,21 @@ fn run_direct_channel(
         SearchProbe::Text { query } => {
             acc.mark(SIGNAL_TEXT);
             acc.attempt(RetrievalSignal::Text);
-            let hits = scoped.search_text(query, request.channel_limit(scoped, true)?, None)?;
-            acc.merge(request.narrow_hits(scoped, hits)?);
+            let hits =
+                scoped.search_text_revisioned(query, request.channel_limit(scoped, true)?, None)?;
+            acc.merge_revisioned(request.narrow_hits(scoped, hits.hits)?, hits.revisions);
             acc.complete(RetrievalSignal::Text);
             acc.record_query(query.clone());
         }
         SearchProbe::Vector { embedding, .. } => {
             acc.mark(SIGNAL_VECTOR);
             acc.attempt(RetrievalSignal::Vector);
-            let hits =
-                scoped.search_vector(embedding, request.channel_limit(scoped, false)?, None)?;
-            acc.merge(request.narrow_hits(scoped, hits)?);
+            let hits = scoped.search_vector_revisioned(
+                embedding,
+                request.channel_limit(scoped, false)?,
+                None,
+            )?;
+            acc.merge_revisioned(request.narrow_hits(scoped, hits.hits)?, hits.revisions);
             acc.complete(RetrievalSignal::Vector);
             // No query recorded: a float vector is not a string a later
             // channel could compare against, and `signals_used` is where a
@@ -468,8 +474,9 @@ fn run_subquery_channels(
         // channel, and must not claim the signal.
         acc.mark(SIGNAL_SUBQUERIES);
         acc.attempt(RetrievalSignal::Text);
-        let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
-        acc.merge(request.narrow_hits(scoped, hits)?);
+        let hits =
+            scoped.search_text_revisioned(&subquery, request.channel_limit(scoped, true)?, None)?;
+        acc.merge_revisioned(request.narrow_hits(scoped, hits.hits)?, hits.revisions);
         acc.complete(RetrievalSignal::Text);
         acc.record_query(subquery);
     }
@@ -512,9 +519,15 @@ fn run_graph_expansion(
         SeedWeighting::Specificity,
         &visibility,
     )?;
+    let mut revisions = std::collections::HashMap::new();
+    for hit in &expanded.scores {
+        if let Some(revision) = vault.indexed_revision_in_txn(&rtxn, &hit.id)? {
+            revisions.insert(hit.id, revision);
+        }
+    }
     drop(rtxn);
     acc.retrieval_diagnostics.ppr_cache = Some(expanded.cache);
-    acc.merge(request.narrow_hits(scoped, expanded.scores)?);
+    acc.merge_revisioned(request.narrow_hits(scoped, expanded.scores)?, revisions);
     acc.complete(RetrievalSignal::Ppr);
     Ok(())
 }
@@ -556,8 +569,12 @@ fn run_deep_rounds(
                 break;
             }
             acc.attempt(RetrievalSignal::Text);
-            let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
-            acc.merge(request.narrow_hits(scoped, hits)?);
+            let hits = scoped.search_text_revisioned(
+                &subquery,
+                request.channel_limit(scoped, true)?,
+                None,
+            )?;
+            acc.merge_revisioned(request.narrow_hits(scoped, hits.hits)?, hits.revisions);
             acc.complete(RetrievalSignal::Text);
             acc.record_query(subquery);
         }

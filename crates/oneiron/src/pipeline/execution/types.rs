@@ -24,6 +24,7 @@ pub(super) struct HydeAttemptOverrides<'a> {
 }
 
 pub(super) struct RetrievalTxnOutput {
+    pub(super) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     pub(super) diagnostics: RetrievalDiagnostics,
     pub(super) scores: Vec<ScoredEntity>,
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,

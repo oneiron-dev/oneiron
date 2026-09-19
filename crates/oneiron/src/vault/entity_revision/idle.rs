@@ -114,12 +114,30 @@ impl Vault {
             let vector = match staged.vector {
                 Some(vector) => Some(vector),
                 None => match embedder {
-                    Some(embedder) => Some(embedder.embed_revision(&input)?),
+                    Some(embedder) => match embedder.embed_revision(&input) {
+                        Ok(vector) => Some(vector),
+                        Err(
+                            error @ (Error::InvalidConfig(_)
+                            | Error::DimensionMismatch { .. }
+                            | Error::InvalidVector { .. }),
+                        ) => {
+                            report.failed.push((
+                                input.entity,
+                                input.source_revision_ref,
+                                error.kind(),
+                            ));
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    },
                     None if self.get_vector(&input.entity)?.is_none() => None,
                     None => {
-                        return Err(Error::InvalidConfig(
-                            "idle index publication requires a staged vector or embedder".into(),
+                        report.failed.push((
+                            input.entity,
+                            input.source_revision_ref,
+                            crate::error::ErrorKind::InvalidConfig,
                         ));
+                        continue;
                     }
                 },
             };
@@ -179,7 +197,7 @@ impl Vault {
                     pending_embedding_token: staged.pending_embedding_token,
                 });
             }
-            apply_ops(
+            if let Err(error) = apply_ops(
                 &self.store,
                 &self.config,
                 &self.analyzer,
@@ -189,7 +207,18 @@ impl Vault {
                     .load(std::sync::atomic::Ordering::Acquire),
                 false,
                 false,
-            )?;
+            ) {
+                if matches!(
+                    error,
+                    Error::DimensionMismatch { .. } | Error::InvalidVector { .. }
+                ) {
+                    report
+                        .failed
+                        .push((input.entity, input.source_revision_ref, error.kind()));
+                    continue;
+                }
+                return Err(error);
+            }
             if wrote_vector && generated_vector {
                 self.store
                     .clear_pending_embedding(&mut txn, &input.entity)?;
@@ -206,10 +235,18 @@ impl Vault {
     /// Exact index revision currently available, including unedited births.
     pub fn indexed_revision(&self, id: &EntityId) -> Result<Option<super::RevisionRef>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = read_entity_revision_in_txn(self, &txn, id, ReadMode::Indexed)? else {
+        self.indexed_revision_in_txn(&txn, id)
+    }
+
+    pub(crate) fn indexed_revision_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<super::RevisionRef>> {
+        let Some(raw) = read_entity_revision_in_txn(self, txn, id, ReadMode::Indexed)? else {
             return Ok(None);
         };
-        Ok(Some(state(&self.store, &txn, id)?.map_or_else(
+        Ok(Some(state(&self.store, txn, id)?.map_or_else(
             || super::storage::reference(id, &raw),
             |value| value.indexed,
         )))

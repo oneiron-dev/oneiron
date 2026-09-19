@@ -34,6 +34,7 @@ impl PipelineBuilder<'_> {
             .is_some_and(|filter| filter.deny_all)
         {
             return Ok(PipelineOutput {
+                revisions: HashMap::new(),
                 // No channel ran: an authority refusal is not a cache failure.
                 retrieval_quality: Default::default(),
                 scores: Vec::new(),
@@ -191,6 +192,7 @@ impl PipelineBuilder<'_> {
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
+                revisions: HashMap::new(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
                 scores: Vec::new(),
                 claim_bodies: HashMap::new(),
@@ -206,6 +208,7 @@ impl PipelineBuilder<'_> {
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
         let mut scores = attempt.scores;
+        let mut revisions = attempt.revisions;
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
@@ -279,6 +282,7 @@ impl PipelineBuilder<'_> {
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 scores = retry.scores;
+                revisions = retry.revisions;
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
                 cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
@@ -407,6 +411,7 @@ impl PipelineBuilder<'_> {
         };
 
         Ok(PipelineOutput {
+            revisions,
             retrieval_quality,
             scores,
             claim_bodies,

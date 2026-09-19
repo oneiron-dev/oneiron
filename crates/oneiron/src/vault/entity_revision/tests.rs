@@ -447,10 +447,16 @@ fn invalid_deferred_vector_is_refused_before_durable_staging() {
     assert!(vault.put_vector(&id, &[f32::NAN, 0.0, 0.0, 0.0]).is_err());
     vault.set_indexed_idle_delay_ms(0).unwrap();
     // Neither refused input may supply a vector to the model-free drain.
-    assert!(matches!(
-        vault.refresh_staged_indexed_at_idle(u64::MAX),
-        Err(crate::Error::InvalidConfig(_))
-    ));
+    let report = vault.refresh_staged_indexed_at_idle(u64::MAX).unwrap();
+    assert!(report.refreshed.is_empty());
+    assert_eq!(
+        report.failed,
+        vec![(
+            id,
+            vault.pin_entity_revision(&id).unwrap(),
+            crate::error::ErrorKind::InvalidConfig
+        )]
+    );
     assert_eq!(
         vault.get_vector(&id).unwrap().unwrap(),
         vec![1.0, 0.0, 0.0, 0.0]
@@ -622,4 +628,66 @@ fn metadata_only_put_keeps_pending_content_and_staged_inputs_together() {
         vault.get_raw_with_mode(&id, ReadMode::Indexed).unwrap(),
         vault.get_raw(&id).unwrap()
     );
+}
+
+#[test]
+fn a_rejected_revision_does_not_starve_later_idle_candidates() {
+    struct SelectiveEmbedder {
+        rejected: EntityId,
+        global_failure: bool,
+    }
+    impl IndexedRevisionEmbedder for SelectiveEmbedder {
+        fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+            if self.global_failure {
+                return Err(crate::Error::CorruptedIndex("provider state"));
+            }
+            if input.entity == self.rejected {
+                return Err(crate::Error::InvalidConfig("input refused".into()));
+            }
+            Ok(vec![0.0, 1.0, 0.0, 0.0])
+        }
+    }
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let a = EntityId::from_bytes([1; 16]).unwrap();
+    let b = EntityId::from_bytes([2; 16]).unwrap();
+    put(&vault, &a, "old first");
+    put(&vault, &b, "old second");
+    let old_a = vault.indexed_revision(&a).unwrap();
+    put(&vault, &a, "poison first");
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let embedder = SelectiveEmbedder {
+        rejected: a,
+        global_failure: false,
+    };
+    for text in ["new second", "newer second"] {
+        put(&vault, &b, text);
+        let next_b = vault.pin_entity_revision(&b).unwrap();
+        let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+        assert_eq!(report.refreshed, vec![(b, next_b)]);
+        assert_eq!(
+            report.failed,
+            vec![(
+                a,
+                vault.pin_entity_revision(&a).unwrap(),
+                crate::error::ErrorKind::InvalidConfig
+            )]
+        );
+        assert_eq!(vault.indexed_revision(&a).unwrap(), old_a);
+        assert_eq!(vault.indexed_revision(&b).unwrap(), Some(next_b));
+        assert_eq!(
+            vault.get_vector(&a).unwrap(),
+            Some(vec![1.0, 0.0, 0.0, 0.0])
+        );
+    }
+    assert!(matches!(
+        vault.refresh_indexed_at_idle(
+            u64::MAX,
+            &SelectiveEmbedder {
+                rejected: a,
+                global_failure: true
+            }
+        ),
+        Err(crate::Error::CorruptedIndex(_))
+    ));
 }

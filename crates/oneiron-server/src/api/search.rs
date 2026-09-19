@@ -189,7 +189,7 @@ pub(crate) async fn search_vector(
 
     let total = results.hits.len();
     let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
-    let response = search_response(&scoped_read, results.hits, view, params.limit)?;
+    let response = search_depth_response(&scoped_read, results, view, params.limit)?;
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
 }
@@ -305,7 +305,7 @@ pub(crate) async fn search_text(
 
     let total = results.hits.len();
     let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
-    let response = search_response(&scoped_read, results.hits, view, params.limit)?;
+    let response = search_depth_response(&scoped_read, results, view, params.limit)?;
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
 }
@@ -384,9 +384,43 @@ pub(crate) fn search_response(
     view: View,
     page_limit: usize,
 ) -> Result<Vec<Value>, ApiError> {
+    search_response_with_revisions(scoped_read, results, None, view, page_limit)
+}
+
+fn search_depth_response(
+    scoped_read: &ScopedRead<'_>,
+    results: DepthSearchResult,
+    view: View,
+    page_limit: usize,
+) -> Result<Vec<Value>, ApiError> {
+    search_response_with_revisions(
+        scoped_read,
+        results.hits,
+        Some(&results.revisions),
+        view,
+        page_limit,
+    )
+}
+
+fn search_response_with_revisions(
+    scoped_read: &ScopedRead<'_>,
+    results: Vec<oneiron::ScoredEntity>,
+    revisions: Option<&std::collections::HashMap<oneiron::EntityId, oneiron::memory::RevisionRef>>,
+    view: View,
+    page_limit: usize,
+) -> Result<Vec<Value>, ApiError> {
     let mut response = Vec::with_capacity(results.len().min(page_limit));
     for result in results {
-        match project_scoped_search_result(scoped_read, result, view) {
+        let mode = match revisions {
+            Some(revisions) => {
+                let Some(revision) = revisions.get(&result.id) else {
+                    continue;
+                };
+                oneiron::memory::ReadMode::Pinned(*revision)
+            }
+            None => oneiron::memory::ReadMode::Indexed,
+        };
+        match project_scoped_search_result(scoped_read, result, view, mode) {
             Ok(Some(value)) if response.len() < page_limit => response.push(value),
             Ok(Some(_)) => continue,
             Ok(None) => continue,
@@ -403,6 +437,7 @@ pub(crate) fn project_scoped_search_result(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     result: oneiron::ScoredEntity,
     view: View,
+    mode: oneiron::memory::ReadMode,
 ) -> oneiron::Result<Option<Value>> {
     let id_hex = result.id.to_hex();
     match view {
@@ -411,8 +446,8 @@ pub(crate) fn project_scoped_search_result(
             "score": result.score,
         }))),
         View::Summary | View::Full => {
-            let Some((entity_type, learned_at, body)) = scoped_read
-                .get_entity_parts_with_mode(&result.id, oneiron::memory::ReadMode::Indexed)?
+            let Some((entity_type, learned_at, body)) =
+                scoped_read.get_entity_parts_with_mode(&result.id, mode)?
             else {
                 return Ok(None);
             };
@@ -582,7 +617,7 @@ pub(crate) async fn search_semantic(
 
     let total = results.hits.len();
     let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
-    let items = search_response(&scoped_read, results.hits, view, params.limit)?;
+    let items = search_depth_response(&scoped_read, results, view, params.limit)?;
     let mut response = serde_json::to_value(PaginatedResponse::new(items, None, meta))
         .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
     if let Value::Object(object) = &mut response {
