@@ -442,6 +442,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
+      "crate-vis": 1,
       "re-export": 3
      }
     },
@@ -8710,7 +8711,7 @@
      "path": "src/context_pack/builder/assembly.rs",
      "purpose": "Executing a configured builder: the retrieval run, hydration, validation, and every run_* terminal",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 8
      }
     },

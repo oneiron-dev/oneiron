@@ -353,3 +353,63 @@ now moves the otherwise unused value. No production code or test assertion
 changes; prior focused behavior evidence remains applicable. Later full-script
 stages and the narrow sync lane were unrun. The successor must complete them;
 no full-gate pass is claimed.
+
+
+## Codex e4aa9af6 follow-up and r7 runtime result
+
+Review `5258168597` completed normally at 22:49:42 UTC. The unused review reminder
+was cancelled. The complete pre-edit refresh at 23:14:19 UTC retained 15 issue
+comments, 70 reviews, 107 inline comments and complete thread pagination. No newer
+finding or changed bot body appeared. The top-level HTTP finding and five inline
+findings are six distinct, valid items; none is skipped. Prior internal/subreview
+findings, Qodo dispositions and all earlier repair evidence remain retained.
+
+- **Top-level P1, HTTP quiescence:** admitted mutating requests now retain an
+  owned guard through extraction and handler completion. Increment precedes the
+  freeze check, closing the check/increment race. The HTTP drain snapshot is
+  taken before lease drain and ledger export, so a late completion cannot make a
+  stale export appear quiescent. A dropped response waiter does not detach a
+  blocking write from its admission guard. The deterministic body-stream test
+  waits for extractor polling, verifies non-quiescence, releases the body, and
+  verifies the committed row and subsequent quiescence. Read-only requests keep
+  their existing policy; upgrades retain their existing sync-session guard.
+- **4055082552, board-owner liveness:** validate the authenticated anchor's owner
+  through the same transaction's Live door before reading retained history.
+  `UnknownOwner` is the typed refusal. Both deletion modes leave sibling owners'
+  boards readable; history is not purged.
+- **4055082554, feedback evidence:** a digest includes an open proposal only when
+  every bundle is a live ASSET with a valid bundle body, matching category and
+  content-derived identity. Dead/replaced evidence omits that proposal, not
+  healthy siblings. Reads do not rewrite or delete queue rows.
+- **4055082555, managed export argv:** the refusal table rejects explicit export
+  booleans, including false, in both CLI forms before credential or storage IO.
+  Training remains supported; unlike export, managed startup actually consumes it.
+- **4055082557, sparse metadata:** carry actual Vector completion from pipeline
+  diagnostics through private builder result types. Both raw-facet and pack
+  recall paths use it. Existing public pack/quality structures and requested-signal
+  telemetry retain their shape. Tests distinguish live, expired and cancelled
+  deadlines with an embedding, including zero-result completed vector searches.
+- **4055082560, healer-case validation:** reuse the existing structural validator
+  at the sole durable case mint door, inside the same transaction as the fenced
+  failure. Invalid/noncanonical skill refs abort both rows before commit; tests
+  retain the leased parent and observe no case row for both healer slot modes.
+
+The r7 full script at local `44e76e9d` passed code-map, formatting, workspace Clippy,
+featureless Clippy, server-production Clippy and strict rustdoc. Nextest run
+`2baaba93-87c4-4f22-b854-84ab95f966e1` stopped after 2241/9466 tests: 2239 passed,
+two final failures, 21 skipped and 7225 unrun. Two additional tests had failing
+attempts before cancellation. Featureless runtime, doctests and narrow sync were
+unrun. All four observed failures are retained:
+
+- Three live-row corruption fixtures bypassed revision capture but retained an
+  incompatible initial revision ledger. Their raw-overwrite helper now removes
+  revision state in the same fixture transaction. Live mode and every original
+  validation assertion remain; production missing-frontier errors are not hidden.
+- The serialized telemetry fixture's 24-token budget no longer admitted a row
+  after revision-qualified citations grew. The budget is 48; all original
+  one-survivor/one-dropped assertions remain to falsify an incorrect calibration.
+
+These six repairs and four fixture corrections are not yet validated. The
+successor runs the ten focused regression cases, then required full lanes. Native
+Python vault proof remains pending the documented Mac semaphore admission issue;
+older build/collection/no-vault/type-check receipts are not a waiver.
