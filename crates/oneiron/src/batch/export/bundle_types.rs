@@ -130,6 +130,8 @@ pub enum ExportImportRefusal {
 pub enum ImportRefusalReason {
     OwningEntityAdapterRequired,
     OwningClaimAdapterRequired,
+    /// Typed expression restore needs a host-authenticated local writer and Auto policy.
+    LocalExpressionWriterRequired,
     RedactedBody,
     RedactedSource,
 }

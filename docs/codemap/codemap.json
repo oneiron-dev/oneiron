@@ -2240,7 +2240,7 @@
      "purpose": "Validating JSON import through ordinary admission doors, never sync replay",
      "surface": {
       "crate-vis": 3,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -2362,6 +2362,24 @@
       "fn": 35,
       "struct": 6
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/expression_import.rs",
+     "purpose": "Dependency scheduling for the owning expression-preference archive adapter",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/export/expression_import_tests.rs",
+     "purpose": "Native writer fixtures for the Imported-only expression archive adapter",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -6079,13 +6097,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/expression_archive.rs",
+     "purpose": "Foreign expression histories restored by their owning source-aware writer",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/expression_preference.rs",
      "purpose": "`Vault` write/read/retract surface for typed expression preferences: source-precedence resolution and…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -6118,7 +6146,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 8
      }
     },
@@ -26558,7 +26586,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 69,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26670,7 +26698,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -27715,8 +27743,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1593,
-   "test_files": 574
+   "source_files": 1595,
+   "test_files": 575
   },
   "oneiron-bench": {
    "files": [

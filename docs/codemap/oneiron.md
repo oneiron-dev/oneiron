@@ -200,7 +200,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/bundle_tests.rs` | test | m | — | — | Source-folder exports and ordinary admission, with no replay/activation bypass |
 | `src/batch/export/bundle_types.rs` | src | s | 6 struct · 6 enum | AgentBundleOmission, BundleOmissionReason, ExportAgentBundle, ExportBundleOmission, ExportFileTree, ExportImportOmission, ExportImportRefusal, ExportSkillBundle +4 | Portable source files and typed bundle facets |
 | `src/batch/export/bundle_validation.rs` | src | m | 2 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
-| `src/batch/export/document_import.rs` | src | m | 2 fn · 3 crate-vis | — | Validating JSON import through ordinary admission doors, never sync replay |
+| `src/batch/export/document_import.rs` | src | m | 3 fn · 3 crate-vis | — | Validating JSON import through ordinary admission doors, never sync replay |
 | `src/batch/export/document_snapshot.rs` | src | s | 1 fn · 2 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | m | — | — | Observable whole-vault export/import contracts |
 | `src/batch/export/document_types.rs` | src | s | 11 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | ExportAdapterDescriptor, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportSourceVault +4 | Versioned six-part whole-vault interchange document |
@@ -209,6 +209,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/export_companion.rs` | src | s | 2 struct · 9 fn · 1 const | CompanionExportLayer, CompanionExportRecord | Companion-layer export filtering |
 | `src/batch/export/export_egress.rs` | src | s | 13 fn | — | Whole-vault manifest egress doors and the Vault export surface |
 | `src/batch/export/export_manifest.rs` | src | m | 6 struct · 35 fn · 2 const · 2 crate-vis | ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest, ExportSerializerManifest | Whole-vault export manifest artifact types and stanza impls |
+| `src/batch/export/expression_import.rs` | src | s | 8 crate-vis | — | Dependency scheduling for the owning expression-preference archive adapter |
+| `src/batch/export/expression_import_tests.rs` | test | m | — | — | Native writer fixtures for the Imported-only expression archive adapter |
 | `src/batch/export/foreign_stage/export_foreign_receipt.rs` | src | m | 3 struct · 3 enum · 3 fn · 4 const · 7 crate-vis | ForeignVaultImportSource, StagedVaultImport, VaultImportConfirmation, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus | Sync-gated import receipt codec, key consts, and status types |
 | `src/batch/export/foreign_stage/export_foreign_stage.rs` | src | m | 2 fn · 4 crate-vis | — | Sync-gated foreign-import staging operations and test hooks |
 | `src/batch/export/foreign_stage/mod.rs` | src | s | 2 re-export | — | Sync-gated foreign-import staging submodule |
@@ -497,10 +499,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/checkout/tests.rs` | test | L | — | — | — |
 | `src/claim/core_types.rs` | src | m | 3 struct · 1 enum · 1 fn · 1 const · 18 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim | The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled… |
 | `src/claim/decay.rs` | src | s | 2 struct · 1 enum · 4 fn · 4 const · 2 crate-vis | AccessFactorPolicy, ClaimAgingClass, ClaimRetrievability | Read-side memory decay: the pure aging-class `access_factor` contract |
-| `src/claim/expression_preference.rs` | src | m | 3 fn · 1 crate-vis | — | `Vault` write/read/retract surface for typed expression preferences: source-precedence resolution and… |
+| `src/claim/expression_archive.rs` | src | s | 7 crate-vis | — | Foreign expression histories restored by their owning source-aware writer |
+| `src/claim/expression_preference.rs` | src | m | 3 fn · 4 crate-vis | — | `Vault` write/read/retract surface for typed expression preferences: source-precedence resolution and… |
 | `src/claim/lexical_query_hint.rs` | src | s | 1 const · 8 crate-vis | — | Codec primitives for `core.lexical.query_hint` side records |
 | `src/claim/lifecycle.rs` | src | L | 5 fn · 8 crate-vis | — | Claim lifecycle transitions: the supersession-chain walk, the write-verb validity guard, `supersede_claim` /… |
-| `src/claim/mod.rs` | src | s | 8 re-export · 3 crate-vis | — | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
+| `src/claim/mod.rs` | src | s | 8 re-export · 4 crate-vis | — | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
 | `src/claim/predicate_grammar.rs` | src | s | 1 enum · 2 fn · 13 const · 5 crate-vis | DreamerIsolationClass | Predicate vocabulary and the D17 grammar gate: namespace constants, the crate-owned well-known predicate… |
 | `src/claim/predicate_validators.rs` | src | m | 3 struct · 5 enum · 2 fn · 23 const · 10 crate-vis | ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind, ExpressionPreferenceOrigin, ExpressionPreferenceSet, ExpressionPreferenceValue, ExpressionPreferenceWriteResult, ExpressionRegister | Structural validators for the predicates this module owns itself, rather than delegating to a domain module… |
 | `src/claim/put.rs` | src | m | 1 fn · 5 crate-vis | — | `Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the… |

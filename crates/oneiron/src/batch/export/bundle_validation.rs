@@ -97,6 +97,8 @@ impl WholeVaultDocument {
                 && crate::registry::validate_public_entity_type(row.entity_type).is_err()
             {
                 Some(ImportRefusalReason::OwningEntityAdapterRequired)
+            } else if super::expression_import::is_expression(row) {
+                Some(ImportRefusalReason::LocalExpressionWriterRequired)
             } else if row.entity_type == ENTITY_TYPE_CLAIM
                 && crate::claim::decode_claim_body(&row.body.to_bytes()?, false).is_err()
                 && !crate::claim::decode_claim_body(&row.body.to_bytes()?, true)

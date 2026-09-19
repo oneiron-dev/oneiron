@@ -17,6 +17,7 @@ use crate::serialize::ExportBody;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::live_entity_row_in_txn;
+use crate::write_envelope::WriteActor;
 
 impl Vault {
     /// Validates a JSON document and its six-part shape without writing anything.
@@ -29,8 +30,10 @@ impl Vault {
     }
 
     /// Reimports a JSON export atomically. IDs, times, ordinary body fields and
-    /// public edges survive. New claims are Imported + Proposed (Rejected stays
-    /// Rejected); lifecycle and scope are retained. Skills return as candidates;
+    /// public edges survive. Ordinary claims become Imported + Proposed (Rejected
+    /// stays Rejected); lifecycle and scope are retained. Expression histories
+    /// require [`Self::import_whole_vault_json_with_actor`] and a local Auto grant.
+    /// Skills return as candidates;
     /// agent definitions are disabled and proposed until locally reviewed.
     ///
     /// Same-ID divergent rows are refused, never overwritten. Maintenance rows,
@@ -41,7 +44,36 @@ impl Vault {
     /// archive-only. They are never restored as local policy or trusted verdicts;
     /// imported file bundles run the native scanner and Candidate admission door.
     pub fn import_whole_vault_json(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_json_as(bytes, None)
+    }
+
+    /// Imports with a current local actor authenticated by the host. Never use
+    /// an actor taken from the archive. The actor must already exist locally.
+    /// Expression preferences require a local Imported-source Auto grant; this
+    /// argument confers no grant and cannot restore foreign author authority.
+    pub fn import_whole_vault_json_with_actor(
+        &self,
+        bytes: &[u8],
+        actor: &WriteActor,
+    ) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_json_as(bytes, Some(actor))
+    }
+
+    fn import_whole_vault_json_as(
+        &self,
+        bytes: &[u8],
+        actor: Option<&WriteActor>,
+    ) -> Result<WholeVaultImportReceipt> {
         let mut document = self.read_whole_vault_json(bytes)?;
+        if actor.is_none()
+            && document
+                .entities()
+                .any(super::expression_import::is_expression)
+        {
+            return Err(invalid(
+                "expression preferences require a host-authenticated local WriteActor",
+            ));
+        }
         let authority = self
             .classify_vault_import_manifest(&document.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
@@ -53,6 +85,9 @@ impl Vault {
             .map(|entry| parse_id(&entry.entity_id))
             .collect::<Result<_>>()?;
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(actor) = actor {
+            super::expression_import::validate_local_actor(self, &wtxn, actor)?;
+        }
         for row in &mut document.evidence_ledger.entities {
             if let ExportBody::Pack(value) = &row.body {
                 let (handle, envelope) = self
@@ -65,6 +100,7 @@ impl Vault {
         let model_imports = super::provenance_import::restore_models(self, &mut wtxn, &document)?;
         let models = &model_imports.map;
         let provenance = super::provenance_import::ProvenanceImport::new(&document, models)?;
+        let mut expressions = super::expression_import::ExpressionImports::new(&document, models)?;
         let skill_bundles: BTreeMap<_, _> = document
             .skills
             .iter()
@@ -74,7 +110,11 @@ impl Vault {
         let mut unchanged_entities = model_imports.unchanged;
         for row in document.entities() {
             let id = parse_id(&row.id)?;
-            if omitted.contains(&id) || models.contains_key(&id) || provenance.ids.contains(&id) {
+            if omitted.contains(&id)
+                || models.contains_key(&id)
+                || provenance.ids.contains(&id)
+                || expressions.ids.contains(&id)
+            {
                 continue;
             }
             if self.store.off_record_sessions.contains_entity(&id)? {
@@ -115,20 +155,22 @@ impl Vault {
             self.store.validate_public_entity_type(row.entity_type)?;
             pending.insert(id, (row, imported_body(row, models)?));
         }
-        let inserted_ids: BTreeSet<_> = pending.keys().copied().collect();
+        let mut inserted_ids: BTreeSet<_> = pending.keys().copied().collect();
         let mut inserted_entities = pending.len() + model_imports.inserted;
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
-        while !pending.is_empty() {
+        while !pending.is_empty() || !expressions.is_empty() {
+            let blocked: BTreeSet<_> = pending
+                .keys()
+                .copied()
+                .chain(expressions.pending_ids())
+                .collect();
+            let expression_ready = expressions.ready(&blocked);
             let ready: Vec<_> = pending
                 .iter()
                 .filter_map(
                     |(id, (row, body))| match dependencies(row.entity_type, body) {
-                        Ok(refs)
-                            if refs
-                                .iter()
-                                .all(|reference| !pending.contains_key(reference)) =>
-                        {
+                        Ok(refs) if refs.iter().all(|reference| !blocked.contains(reference)) => {
                             Some(Ok(*id))
                         }
                         Ok(_) => None,
@@ -136,8 +178,17 @@ impl Vault {
                     },
                 )
                 .collect::<Result<_>>()?;
-            if ready.is_empty() {
+            if ready.is_empty() && expression_ready.is_empty() {
                 return Err(invalid("cyclic import subject or fork dependencies"));
+            }
+            for id in expression_ready {
+                let actor = actor.ok_or_else(|| {
+                    invalid("expression preferences require a host-authenticated local WriteActor")
+                })?;
+                let (inserted, unchanged) = expressions.restore(id, self, &mut wtxn, actor)?;
+                inserted_entities += inserted.len();
+                unchanged_entities += unchanged;
+                inserted_ids.extend(inserted);
             }
             for id in ready {
                 let (row, body) = pending
