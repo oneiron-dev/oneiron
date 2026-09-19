@@ -25,10 +25,10 @@
 //!
 //! # What does NOT ship here
 //!
-//! No collector endpoint, no issue-tracker transport, no cloud routing, no
-//! receiving vault entities, no deduplication or classification, no triage
-//! proposals, no digest review. The bundle bytes are the input contract those
-//! future systems will consume; they are deliberately built and frozen first.
+//! Collector, issue-tracker and cloud transports live in the server host, not
+//! in this module. [`intake`] stores received bundles, deduplicates reports and
+//! exposes review items. Triage prompts and digest policy remain agent-authored;
+//! they are not engine policy. The bundle bytes stay the transport contract.
 //!
 //! The [`FeedbackRedactor`] seam is exposed informationally so a later
 //! entity-recognition redactor can be dropped in behind it. No model, no
