@@ -84,7 +84,7 @@ impl FallbackRegistry {
                     name,
                     input,
                 } => call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object(),
-                ContentPart::ToolResult { call_id, .. } => call_id.trim().is_empty(),
+                ContentPart::ToolResult { .. } => true,
                 ContentPart::Image { media_type, image } => {
                     media_type.trim().is_empty()
                         || match image {

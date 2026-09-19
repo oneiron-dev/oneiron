@@ -79,24 +79,39 @@ pub(super) async fn generate(
         );
     }
     let max_attempts = if native { 1 } else { 3 };
-    let mut spend = SchemaSpend {
-        guard,
-        lease,
-        usage: LlmUsage::zero(),
-        armed: true,
-    };
+    let mut usage = LlmUsage::zero();
     for attempt in 1..=max_attempts {
-        let mut response = match super::execute::generate_with_retry(backend, &wire, lease).await {
-            Ok(response) => response,
-            Err(source) => {
-                spend.armed = false;
-                return Err(DurableStepError::SpentLlm {
-                    source,
-                    usage: Box::new(spend.usage.clone()),
-                });
-            }
+        let correction;
+        let active_lease = if attempt == 1 {
+            lease
+        } else {
+            correction = CorrectionLease {
+                guard,
+                lease: guard
+                    .admit_for_request(&wire)
+                    .map_err(|source| DurableStepError::SpentLlm {
+                        source: source.into(),
+                        usage: Box::new(usage.clone()),
+                    })?
+                    .lease,
+            };
+            &correction.lease
         };
-        add_usage(&mut spend.usage, &response.usage);
+        let mut response =
+            match super::execute::generate_with_retry(backend, &wire, active_lease).await {
+                Ok(response) => response,
+                Err(source) => {
+                    return Err(DurableStepError::SpentLlm {
+                        source,
+                        usage: Box::new(usage.clone()),
+                    });
+                }
+            };
+        // The completed call is paid before another corrective call can reserve.
+        guard
+            .settle_per_call(active_lease, &response.usage)
+            .map_err(super::super::LlmError::from)?;
+        add_usage(&mut usage, &response.usage);
         let text: String = response
             .message
             .content
@@ -114,8 +129,7 @@ pub(super) async fn generate(
             Err(error) => vec![error.to_string()],
         };
         if errors.is_empty() {
-            response.usage = spend.usage.clone();
-            spend.armed = false;
+            response.usage = usage.clone();
             return Ok(response);
         }
         if attempt == max_attempts {
@@ -137,17 +151,16 @@ pub(super) async fn generate(
     unreachable!("bounded attempts return")
 }
 
-struct SchemaSpend<'a> {
+// The outer step owns the first admission. Each later correction owns and
+// releases its own reservation on error or cancellation. Settled leases are
+// already closed, so aborting them on drop changes no accounting.
+struct CorrectionLease<'a> {
     guard: &'a BudgetGuard,
-    lease: &'a BudgetLease,
-    usage: LlmUsage,
-    armed: bool,
+    lease: BudgetLease,
 }
-impl Drop for SchemaSpend<'_> {
+impl Drop for CorrectionLease<'_> {
     fn drop(&mut self) {
-        if self.armed && (self.usage.input.total > 0 || self.usage.output.total > 0) {
-            let _ = self.guard.settle_per_call(self.lease, &self.usage);
-        }
+        let _ = self.guard.abort(&self.lease);
     }
 }
 fn add_usage(total: &mut LlmUsage, usage: &LlmUsage) {
