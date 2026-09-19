@@ -2323,6 +2323,284 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/blob_artifact/esign/artifact_actor.rs",
+     "purpose": "Vault-local machine identity for capability uploads and verified seal output",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignCapability"
+     ],
+     "path": "src/blob_artifact/esign/capability.rs",
+     "purpose": "Session-less, high-entropy capabilities",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SigningAction",
+      "SigningOutcome",
+      "SigningPage"
+     ],
+     "path": "src/blob_artifact/esign/ceremony.rs",
+     "purpose": "One public signing executor: turn, access, viewed, terminal, then action",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/fold.rs",
+     "purpose": "Pure projection of the append-only esign claim family",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/ledger.rs",
+     "purpose": "Claims are the document state machine",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/mod.rs",
+     "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
+     "surface": {
+      "crate-vis": 1,
+      "mod": 1,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AccessStatus",
+      "DeliveryStatus",
+      "DocumentKind",
+      "DocumentStatus",
+      "EsignAuditActor",
+      "EsignDocument",
+      "EsignEvent",
+      "EsignEventRow",
+      "EsignField",
+      "EsignItem",
+      "EsignRecipient",
+      "EsignState",
+      "FieldGeometry",
+      "FieldMeta",
+      "FieldValue",
+      "RecipientRole",
+      "RecipientState",
+      "SignatureRow",
+      "SigningStatus"
+     ],
+     "path": "src/blob_artifact/esign/model.rs",
+     "purpose": "Typed document, recipient, field and event vocabulary for ARCH-0064",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 9,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignOutboundCommand",
+      "EsignOutboundVerb"
+     ],
+     "path": "src/blob_artifact/esign/outbound.rs",
+     "purpose": "SGN-02 uses the ordinary OF-327 gate and durable intent ledger",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SigningAutonomy",
+      "SigningPrincipal"
+     ],
+     "path": "src/blob_artifact/esign/principals.rs",
+     "purpose": "Owner-editable principal set and the legal-reality-gated D6 action dial",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/public_read.rs",
+     "purpose": "Capability-scoped PDF bytes",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/rate.rs",
+     "purpose": "Vault-local ceremony rate accounting; no process-global counters",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PdfFieldRect",
+      "PdfPreparation",
+      "PdfPreparationError",
+      "PreparedEsignPdf",
+      "SignatureRaster"
+     ],
+     "path": "src/blob_artifact/esign/render.rs",
+     "purpose": "Bounded static-PDF preparation shared by signing previews and native seal jobs",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/render/evidence.rs",
+     "purpose": "Audit replay and certificate/complete-trail PDF appendices",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/render/fields.rs",
+     "purpose": "Flattened e-sign field text, marks and signature pixels",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/render/preflight.rs",
+     "purpose": "Classic, single-revision PDF framing checked before lopdf loads any objects",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/render/source.rs",
+     "purpose": "Static page-tree and resource-graph admission and copying",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/blob_artifact/esign/render_tests.rs",
+     "purpose": "Parsed-PDF fixtures exercised through the public preparation byte API",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/reseal.rs",
+     "purpose": "Owner-tier reseal admission and bounded repair sweep",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EsignSealError",
+      "SealedDocument",
+      "SealedItem"
+     ],
+     "path": "src/blob_artifact/esign/seal.rs",
+     "purpose": "Lease-fenced native seal job",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/blob_artifact/esign/seal_tests.rs",
+     "purpose": "The real native PAdES engine, not a simulated successful sealer",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/signature_image.rs",
+     "purpose": "Capability-bound, decoded and re-encoded signature images",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/blob_artifact/esign/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/blob_artifact/lifecycle.rs",
      "purpose": "Blob artifact delete path: version-chain, head, and asset-ref cleanup",
      "surface": {
@@ -2337,6 +2615,7 @@
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
       "crate-vis": 4,
+      "mod": 1,
       "re-export": 4
      }
     },
@@ -5276,8 +5555,25 @@
      "path": "src/channel_identity_provider/mod.rs",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
-      "mod": 1,
+      "mod": 2,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeMailAdapter",
+      "NativeMailHost",
+      "NativeMailRunMode"
+     ],
+     "path": "src/channel_identity_provider/native_mail.rs",
+     "purpose": "Native mail fulfillment adapter",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -9759,9 +10055,7 @@
      "notable": [],
      "path": "src/dreamer_consolidation/tests.rs",
      "purpose": "—",
-     "surface": {
-      "crate-vis": 1
-     }
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -15096,7 +15390,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -15128,6 +15422,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/step/step_only.rs",
+     "purpose": "Transaction-composable C9 waits that suspend one step, never its attempt",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/step/step_only_tests.rs",
+     "purpose": "STEP-ONLY waits reuse C9 while leaving the queue and run-tree runnable",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/step/step_state.rs",
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in vault_meta",
      "surface": {
@@ -15149,7 +15461,7 @@
      "path": "src/llm/step/trap.rs",
      "purpose": "Unified dreamer.trap record lifecycle: open/wait/signal/consume and supersession-chain transitions",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 11,
       "fn": 6
      }
     },
@@ -15160,7 +15472,7 @@
      "path": "src/llm/step/trap_binding.rs",
      "purpose": "Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -15741,7 +16053,7 @@
      "path": "src/memory/tests/mod.rs",
      "purpose": "BRIDGE-01 acceptance tests, engine side",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -22558,6 +22870,45 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "TaskAskAnswer",
+      "TaskAskHandle",
+      "TaskAskReceipt",
+      "TaskAskSpec"
+     ],
+     "path": "src/task_verb/ask.rs",
+     "purpose": "Immediate ask handles, immutable responder sets, and first-answer CAS",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/ask_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskWaitOutcome"
+     ],
+     "path": "src/task_verb/ask_wait.rs",
+     "purpose": "A wait suspends its calling C9 step, never the enclosing attempt or run",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/task_verb/consts.rs",
      "purpose": "Module-level constants shared across the task-verb files",
@@ -22729,7 +23080,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
       "crate-vis": 7,
-      "re-export": 13
+      "re-export": 15
      }
     },
     {
@@ -24161,8 +24512,8 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
-      "fn": 6,
+      "crate-vis": 9,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -25109,7 +25460,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 7,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25193,7 +25544,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25732,7 +26083,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 32,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26138,7 +26489,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 38,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26259,8 +26610,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1502,
-   "test_files": 539
+   "source_files": 1525,
+   "test_files": 544
   },
   "oneiron-bench": {
    "files": [
@@ -29338,6 +29689,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign.rs",
+     "purpose": "Public session-less signing lens",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -29507,6 +29868,16 @@
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/agent_verbs.rs",
+     "purpose": "Generated agent verbs retain facade identity and membership gates",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31523,7 +31894,7 @@
    ],
    "modules": {
     "api": {
-     "files": 126,
+     "files": 128,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -31672,7 +32043,7 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 185,
+   "source_files": 187,
    "test_files": 71
   },
   "oneiron-uniffi": {
