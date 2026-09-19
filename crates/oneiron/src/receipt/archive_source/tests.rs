@@ -248,3 +248,148 @@ fn sweep_scrubs_historical_receipt_copies_without_forged_key_graph_authority() -
     assert!(doc.get_map("edges").get(&edge).is_some());
     Ok(())
 }
+
+#[test]
+fn conflicting_receipt_binding_refuses_at_raw_and_replay_admission_in_both_arrival_orders()
+-> Result<()> {
+    let (_origin_dir, origin) = open();
+    let (actor, holder, id, bytes, reference) = fixture(&origin)?;
+    let raw = origin.get_raw(&holder)?.unwrap();
+    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    let original = super::codec::decode(&bytes)?.unwrap();
+    let mut conflict = original.clone();
+    let mut record = conflict.source.record()?.unwrap();
+    record.outcome = "different foreign declaration".into();
+    conflict.source =
+        ExportReceiptSource::from_record(reference.clone(), Some(&record))?.as_imported_archive();
+    let conflicting_bytes = conflict.bytes()?;
+    let conflicting_id = conflict.id()?;
+    for source_first in [false, true] {
+        for replay in [false, true] {
+            let (_dir, vault) = open();
+            vault.put_entity(
+                &actor,
+                ENTITY_TYPE_PERSON,
+                at(),
+                1,
+                b"archive fixture actor",
+            )?;
+            if !source_first {
+                vault
+                    .batch()
+                    .put_replicated(&holder, ENTITY_TYPE_CLAIM, at(), 1, body)
+                    .commit()?;
+            }
+            vault
+                .batch()
+                .put_replicated(&id, ENTITY_TYPE_ASSET, at(), 1, &bytes)
+                .commit()?;
+            let attempted = if replay {
+                vault
+                    .batch()
+                    .put_replicated(
+                        &conflicting_id,
+                        ENTITY_TYPE_ASSET,
+                        at(),
+                        1,
+                        &conflicting_bytes,
+                    )
+                    .commit()
+            } else {
+                vault
+                    .batch()
+                    .put(
+                        &conflicting_id,
+                        ENTITY_TYPE_ASSET,
+                        at(),
+                        1,
+                        &conflicting_bytes,
+                    )
+                    .commit()
+            };
+            assert!(matches!(
+                attempted,
+                Err(crate::error::Error::InvalidConfig(_))
+            ));
+            assert!(vault.get_raw(&conflicting_id)?.is_none());
+            if source_first {
+                vault
+                    .batch()
+                    .put_replicated(&holder, ENTITY_TYPE_CLAIM, at(), 1, body)
+                    .commit()?;
+            }
+            let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+            let document = vault.read_whole_vault_json(export.bytes())?;
+            let envelope = document
+                .derivation_envelopes
+                .iter()
+                .find(|row| row.id == holder.to_hex())
+                .unwrap();
+            assert_eq!(envelope.receipts, vec![original.source.clone()]);
+            assert_eq!(attempt_pack_receipt(&vault, &reference)?, None);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn uncited_receipt_payload_cannot_hide_on_an_exact_holder_or_veto_its_arrival() -> Result<()> {
+    let (_origin_dir, origin) = open();
+    let (actor, holder, id, bytes, reference) = fixture(&origin)?;
+    let raw = origin.get_raw(&holder)?.unwrap();
+    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    let mut uncited = super::codec::decode(&bytes)?.unwrap();
+    let mut record = uncited.source.record()?.unwrap();
+    record.receipt_id = format!("attempt:{}", EntityId::now().to_hex());
+    uncited.source = ExportReceiptSource::from_record(record.receipt_id.clone(), Some(&record))?
+        .as_imported_archive();
+    let uncited_bytes = uncited.bytes()?;
+    let uncited_id = uncited.id()?;
+    for source_first in [false, true] {
+        let (_dir, vault) = open();
+        vault.put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            at(),
+            1,
+            b"archive fixture actor",
+        )?;
+        if source_first {
+            vault
+                .batch()
+                .put_replicated(&uncited_id, ENTITY_TYPE_ASSET, at(), 1, &uncited_bytes)
+                .commit()?;
+            assert!(vault.get_raw(&uncited_id)?.is_some());
+        }
+        vault
+            .batch()
+            .put_replicated(&holder, ENTITY_TYPE_CLAIM, at(), 1, body)
+            .commit()?;
+        assert!(vault.get_raw(&uncited_id)?.is_none());
+        assert_eq!(vault.get_claim(&holder)?, origin.get_claim(&holder)?);
+        assert!(matches!(
+            vault
+                .batch()
+                .put_replicated(&uncited_id, ENTITY_TYPE_ASSET, at(), 1, &uncited_bytes)
+                .commit(),
+            Err(crate::error::Error::InvalidConfig(_))
+        ));
+        // A malicious pending packet never retires the actual holder or its
+        // valid source slot. The correctly cited source remains admissible.
+        vault
+            .batch()
+            .put_replicated(&id, ENTITY_TYPE_ASSET, at(), 1, &bytes)
+            .commit()?;
+        let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+        let document = vault.read_whole_vault_json(export.bytes())?;
+        let envelope = document
+            .derivation_envelopes
+            .iter()
+            .find(|row| row.id == holder.to_hex())
+            .unwrap();
+        assert_eq!(envelope.receipts.len(), 1);
+        assert_eq!(envelope.receipts[0].receipt_id(), reference);
+        assert_eq!(attempt_pack_receipt(&vault, &reference)?, None);
+    }
+    Ok(())
+}

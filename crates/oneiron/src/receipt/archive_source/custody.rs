@@ -10,6 +10,13 @@ use crate::{
 use std::collections::BTreeSet;
 const OWNED: &[u8] = b"receipt/archive-owned/v1\0";
 const BINDING: &[u8] = b"receipt/archive-binding/v1\0";
+const SLOT: &[u8] = b"receipt/archive-slot/v1\0";
+fn slot_key(source: &ReceiptArchive) -> Result<Vec<u8>> {
+    let mut key = key(SLOT, &source.holder()?);
+    key.extend_from_slice(source.body_sha256.as_bytes());
+    key.extend_from_slice(source.source.receipt_id().as_bytes());
+    Ok(key)
+}
 const RETIRED_HOLDER: &[u8] = b"receipt/archive-holder-retired/v1\0";
 const RETIRED_SOURCE: &[u8] = b"receipt/archive-source-retired/v1\0";
 fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
@@ -57,6 +64,11 @@ pub(crate) fn validate_receipt_archive_put(
     {
         return Err(invalid());
     }
+    if let Some(bound) = store.vault_meta.get(txn, &slot_key(&source)?)?
+        && bound.as_slice() != id.as_bytes().as_slice()
+    {
+        return Err(invalid());
+    }
     if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("receipt source header"))?;
@@ -69,6 +81,8 @@ pub(crate) fn validate_receipt_archive_put(
             .ok_or(Error::CorruptedIndex("receipt source holder"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM
             || !super::codec::is_inert_holder(&raw[ENTITY_METADATA_HEADER_LEN..])
+            || (super::codec::digest(&raw[ENTITY_METADATA_HEADER_LEN..]) == source.body_sha256
+                && !source.matches_body(&raw[ENTITY_METADATA_HEADER_LEN..]))
         {
             return Err(invalid());
         }
@@ -86,15 +100,43 @@ pub(crate) fn stage_receipt_archive_put(
         && let Some(source) = decode(body)?
     {
         let holder = source.holder()?;
+        store
+            .vault_meta
+            .put(txn, &slot_key(&source)?, id.as_bytes())?;
         store.vault_meta.put(txn, &owned_key(&holder, id), &[])?;
         store
             .vault_meta
             .put(txn, &key(BINDING, id), holder.as_bytes())?;
     }
-    if (kind != ENTITY_TYPE_CLAIM || !super::codec::is_inert_holder(body))
-        && !receipt_archives_for_holder(store, txn, id)?.is_empty()
-    {
-        retire_receipt_archives_for_holder(store, txn, id)?;
+    let owned = receipt_archives_for_holder(store, txn, id)?;
+    if !owned.is_empty() {
+        if kind != ENTITY_TYPE_CLAIM || !super::codec::is_inert_holder(body) {
+            retire_receipt_archives_for_holder(store, txn, id)?;
+        } else {
+            // Pending source delivery must not reserve or veto a legitimate
+            // holder. Retire a now-provably-uncited payload, not the claim.
+            let hash = super::codec::digest(body);
+            for source_id in owned {
+                let Some(raw) = store.entities.get(txn, source_id.as_bytes())? else {
+                    continue;
+                };
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("pending receipt source"))?;
+                let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
+                if header.entity_type != ENTITY_TYPE_ASSET
+                    || source.id()? != source_id
+                    || source.holder()? != *id
+                {
+                    return Err(invalid());
+                }
+                if source.body_sha256 == hash && !source.matches_body(body) {
+                    store
+                        .vault_meta
+                        .put(txn, &key(RETIRED_SOURCE, &source_id), &[])?;
+                    erase_source_payload(store, txn, &source_id)?;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -139,7 +181,10 @@ pub(super) fn read_source(
         return Err(invalid());
     }
     let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
-    if source.id()? != *id {
+    if source.id()? != *id
+        || store.vault_meta.get(txn, &slot_key(&source)?)?.as_deref()
+            != Some(id.as_bytes().as_slice())
+    {
         return Err(invalid());
     }
     if retired(store, txn, RETIRED_HOLDER, &source.holder()?)?
@@ -183,23 +228,27 @@ pub(crate) fn retire_receipt_archives_for_holder(
         }
     }
     for id in sources {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-            continue;
-        };
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("receipt source delete"))?;
-        let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
-        if header.entity_type != ENTITY_TYPE_ASSET || source.id()? != id {
-            return Err(invalid());
-        }
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &id)?;
-        crate::ppr::invalidate_ppr_for_delete(store, txn, &id, &neighbors)?;
-        if graph {
-            crate::ppr::increment_graph_version(store, txn)?;
-        }
-        if vector {
-            crate::hnsw::increment_vector_version(store, txn)?;
-        }
+        erase_source_payload(store, txn, &id)?;
+    }
+    Ok(())
+}
+fn erase_source_payload(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(());
+    };
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("receipt source delete"))?;
+    let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
+    if header.entity_type != ENTITY_TYPE_ASSET || source.id()? != *id {
+        return Err(invalid());
+    }
+    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, id)?;
+    crate::ppr::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
+    if graph {
+        crate::ppr::increment_graph_version(store, txn)?;
+    }
+    if vector {
+        crate::hnsw::increment_vector_version(store, txn)?;
     }
     Ok(())
 }

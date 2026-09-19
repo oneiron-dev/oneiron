@@ -28,6 +28,9 @@ impl ReceiptArchive {
             source,
         };
         row.validate()?;
+        if !row.matches_body(body) {
+            return Err(invalid());
+        }
         Ok(row)
     }
     pub(super) fn holder(&self) -> Result<EntityId> {
@@ -70,6 +73,13 @@ impl ReceiptArchive {
             &[&self.bytes()?],
         )
     }
+    pub(super) fn matches_body(&self, body: &[u8]) -> bool {
+        is_inert_holder(body)
+            && digest(body) == self.body_sha256
+            && crate::claim::decode_claim_body(body, true).is_ok_and(|claim| {
+                crate::batch::export::task_receipt_refs(&claim).contains(self.source.receipt_id())
+            })
+    }
     pub(super) fn matches_holder(&self, store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
         let holder = self.holder()?;
         if store.off_record_sessions.contains_entity(&holder)?
@@ -87,7 +97,7 @@ impl ReceiptArchive {
             return Ok(false);
         }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        Ok(is_inert_holder(body) && digest(body) == self.body_sha256)
+        Ok(self.matches_body(body))
     }
 }
 pub(crate) fn is_receipt_archive_source(bytes: &[u8]) -> bool {

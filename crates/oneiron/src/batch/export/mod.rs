@@ -61,7 +61,7 @@ mod bundle_tests;
 mod receipt_sources;
 pub use receipt_sources::{ExportReceiptSource, ReceiptSourceOmission, ReceiptSourceOrigin};
 
-pub(crate) use receipt_sources::receipt_sources_for_body;
+pub(crate) use receipt_sources::{receipt_sources_for_body, task_receipt_refs};
 
 #[cfg(test)]
 mod receipt_source_tests;
