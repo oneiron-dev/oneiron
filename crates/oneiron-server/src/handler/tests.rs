@@ -3557,6 +3557,7 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
         oneiron::sync::SyncClient::new(manager.clone(), oneiron::sync::SyncClientConfig::default())
             .unwrap();
     let id = oneiron::EntityId::now();
+    let facet = oneiron::EntityId::now();
     for vault in [server.vault.as_ref(), client_vault.as_ref()] {
         vault
             .put_entity(
@@ -3566,6 +3567,18 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
                 1,
                 b"ledger",
             )
+            .unwrap();
+        vault
+            .put_entity(
+                &facet,
+                oneiron::registry::ENTITY_TYPE_FACET,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"shared document facet",
+            )
+            .unwrap();
+        vault
+            .put_edge(&id, oneiron::EdgeKind::FacetOf, &facet, 1.0)
             .unwrap();
     }
     let member = oneiron::EntityId::now();
@@ -3581,11 +3594,29 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
-        vec![],
-        vec![],
+        vec![facet],
+        vec![oneiron::federation::SelectorRange::Core],
     );
     let source = server.reassert_manager.documents().open(id).unwrap();
     source.edit_text(0, 0, "shared").unwrap();
+    let empty_selector = oneiron::sync::SyncSelector::new(
+        grant_id,
+        member,
+        oneiron::sync::SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    assert!(
+        server
+            .reassert_manager
+            .export_document(
+                id,
+                test_selector_scope(),
+                &empty_selector,
+                &VersionVector::default().encode(),
+            )
+            .is_err()
+    );
     manager.documents().subscribe_entity(id, &selector).unwrap();
     let requests = manager.documents().request_frames().unwrap();
     let batch = encode_document_batch(&requests).into_result().unwrap();
