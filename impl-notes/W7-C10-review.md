@@ -259,3 +259,21 @@ compiled the public consumer through `check:retrieval-types`; the MacBook Python
 3.12 review environment passed the runtime-evaluated TypedDict contract (1/1).
 Source hashes and raw command output are in `latest-nine-type-checks/`. This is
 not a native Rust or full Python vault-suite pass.
+
+
+## Guarded validation at 6adcf847
+
+Focused run `94679160-57eb-46e7-bcdc-5d9ee906f12e` compiled core/server and ran
+22 tests: 21 passed, one failed (rc100). All nine latest-review repairs have
+passing focused evidence, including the separate client type checks. The one
+failure was the earlier WebSocket-resume regression: its ordinary socket actor
+had no first-party outbound policy ceiling, so dispatch was correctly held before
+the sink ran. The test now uses the same separately seeded outbound sender and
+owner-grant setup as the managed outbound-shed fixture. It retains the original
+human socket principal and does not weaken production gate behavior.
+
+Formatting, code-map generation, ratchet, root-surface pin and diff check passed.
+The full script and narrow sync suite remain unrun because the focused stage
+failed. The complete PR refresh before this fixture repair found no new completed
+Codex finding at 6adcf847; the automatic review was still running. The public type
+finding 4054244660 is resolved with unchanged-byte TypeScript/Python proof.

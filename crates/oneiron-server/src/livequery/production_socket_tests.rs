@@ -420,7 +420,18 @@ async fn established_socket_resumes_slim_on_work_but_not_keepalive() {
     let f = fixture().await;
     let socket = connect(&f, "human").await;
     let vault = f.server.vault().clone();
-    let actor_id = oneiron::EntityId::from_hex(ACTOR).unwrap();
+    // The outbound wait needs the seeded first-party ceiling as well as the
+    // owner grant. The socket keeps its separate ordinary human principal.
+    let actor_id = oneiron::EntityId::from_bytes([0xE1; 16]).unwrap();
+    vault
+        .put_entity(
+            &actor_id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"socket test sender",
+        )
+        .unwrap();
     vault
         .mint_standing_outbound_grant(
             &oneiron::EntityId::from_bytes([0xBC; 16]).unwrap(),
