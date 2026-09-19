@@ -31092,6 +31092,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/server/windows/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skills_pack.rs",
@@ -31494,7 +31502,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -31525,7 +31533,7 @@
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 186,
-   "test_files": 71
+   "test_files": 72
   },
   "oneiron-uniffi": {
    "files": [

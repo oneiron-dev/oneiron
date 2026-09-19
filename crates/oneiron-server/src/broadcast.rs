@@ -41,7 +41,10 @@ impl BroadcastSubscriber {
     pub(crate) async fn recv(&mut self) -> Result<Option<Vec<u8>>, BroadcastError> {
         loop {
             match self.rx.recv().await {
-                Ok((sender_conn_id, data)) => {
+                Ok(BroadcastPayload::Resync { missed }) => {
+                    return Err(BroadcastError::Lagged(missed));
+                }
+                Ok(BroadcastPayload::Frame(sender_conn_id, data)) => {
                     // Reset lag counter on successful receive
                     self.lag_count = 0;
 
@@ -115,7 +118,10 @@ impl ReactiveChangeSubscriber {
     pub(crate) async fn recv(&mut self) -> Option<ReactiveChange> {
         loop {
             match self.rx.recv().await {
-                Ok((_, data)) => {
+                Ok(BroadcastPayload::Resync { missed }) => {
+                    return Some(ReactiveChange::InvalidateAll { missed });
+                }
+                Ok(BroadcastPayload::Frame(_, data)) => {
                     if let Some(change) = persistent_change(&data) {
                         return Some(change);
                     }
@@ -185,7 +191,7 @@ pub(crate) fn broadcast(
     conn_id: u32,
     data: Vec<u8>,
 ) -> Result<(), broadcast::error::SendError<BroadcastPayload>> {
-    tx.send((conn_id, data))?;
+    tx.send(BroadcastPayload::Frame(conn_id, data))?;
     Ok(())
 }
 

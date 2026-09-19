@@ -129,9 +129,11 @@ pub(super) fn spawn_local_change_producer(
         loop {
             match documents.recv().await {
                 Ok(frame) => {
-                    let _ = document_tx.send((0, frame));
+                    let _ = document_tx.send(BroadcastPayload::Frame(0, frame));
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => break,
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    let _ = document_tx.send(BroadcastPayload::Resync { missed });
+                }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
@@ -164,3 +166,6 @@ pub(super) fn spawn_local_change_producer(
         }
     });
 }
+
+#[cfg(test)]
+mod tests;

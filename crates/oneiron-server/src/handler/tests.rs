@@ -174,7 +174,9 @@ fn drain_broadcasts(
 ) -> Vec<(u32, Vec<u8>)> {
     let mut frames = Vec::new();
     while let Ok(frame) = rx.try_recv() {
-        frames.push(frame);
+        if let crate::server::BroadcastPayload::Frame(sender, data) = frame {
+            frames.push((sender, data));
+        }
     }
     frames
 }

@@ -238,7 +238,7 @@ async fn handle_connection(
                             for frame in frames {
                                 // Recipient/subscription routing is stripped only by the
                                 // matching socket. Never fan out a bare private app frame.
-                                let _ = server.broadcast_tx.send((0, frame));
+                                let _ = crate::broadcast::broadcast(&server.broadcast_tx, 0, frame);
                             }
                         }
                         Err(_) => break,
@@ -297,6 +297,12 @@ async fn handle_connection(
                     }
                     Ok(None) => break,
                     Err(crate::broadcast::BroadcastError::Lagged(n)) => {
+                        // Reconnect replays persisted document subscriptions and VVs.
+                        // App replay alone cannot repair a missed text-document notice.
+                        if !conn_state.documents.is_empty() {
+                            transport.close().await;
+                            break;
+                        }
                         app_connection.replay_after_lag();
                         tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
                     }
