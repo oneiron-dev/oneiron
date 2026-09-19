@@ -57,14 +57,15 @@ async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
 
     let (pack_status, pack_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "contextneedle",
                 "limit": 5,
                 "view": "full"
-            }),
+            })),
         ),
     )
     .await;

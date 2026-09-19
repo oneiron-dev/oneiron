@@ -254,14 +254,15 @@ async fn context_pack_route_projects_json_response_controls() {
 
     let (summary_status, summary_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "summary" }
-            }),
+            })),
         ),
     )
     .await;
@@ -278,15 +279,16 @@ async fn context_pack_route_projects_json_response_controls() {
 
     let (budget_status, budget_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
                 "budget": { "max_item_tokens": 48 }
-            }),
+            })),
         ),
     )
     .await;
@@ -308,15 +310,16 @@ async fn context_pack_route_projects_json_response_controls() {
 
     let (token_budget_status, token_budget_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
                 "budget": { "tokenBudget": 16 }
-            }),
+            })),
         ),
     )
     .await;
@@ -346,15 +349,16 @@ async fn context_pack_route_projects_json_response_controls() {
 
     let (dropped_status, dropped_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
                 "budget": { "max_item_tokens": 1 }
-            }),
+            })),
         ),
     )
     .await;

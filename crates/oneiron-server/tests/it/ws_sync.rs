@@ -1148,8 +1148,7 @@ async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
             &body,
         )
         .unwrap();
-    let (addr, _server, handle) =
-        spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let response = http_get_bytes(
         addr,
@@ -1193,8 +1192,7 @@ async fn http_entity_default_returns_standard_raw_body() {
             &body,
         )
         .unwrap();
-    let (addr, _server, handle) =
-        spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let response =
         http_get_bytes(addr, &format!("/api/entity/{}", id.to_hex()), Some(SECRET)).await;
@@ -1370,8 +1368,12 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
     vault.put_vector(&id, &[1.0_f32, 0.0, 0.0, 0.0]).unwrap();
     let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let summary_response =
-        http_get_bytes(addr, "/api/search/vector?query=1,0,0,0&limit=1", Some(SECRET)).await;
+    let summary_response = http_get_bytes(
+        addr,
+        "/api/search/vector?query=1,0,0,0&limit=1",
+        Some(SECRET),
+    )
+    .await;
     assert_http_status_bytes(&summary_response, 200);
     let summary = http_json(&summary_response);
     let summary_hit = summary["items"].as_array().unwrap().first().unwrap();
@@ -1384,7 +1386,7 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
     let standard_response = http_get_bytes(
         addr,
         "/api/search/vector?query=1,0,0,0&limit=1&view=standard",
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status_bytes(&standard_response, 200);
@@ -1398,7 +1400,7 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
     let full_response = http_get_bytes(
         addr,
         "/api/search/vector?query=1,0,0,0&limit=1&view=full",
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status_bytes(&full_response, 200);
@@ -1442,8 +1444,7 @@ async fn http_edges_default_summary_and_standard_preserves_current_fields() {
     vault
         .put_edge(&source, EdgeKind::BelongsTo, &target, 0.5)
         .unwrap();
-    let (addr, _server, handle) =
-        spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let summary_response = http_get_bytes(
         addr,
@@ -1525,8 +1526,7 @@ async fn http_search_text_estimate_counts_before_page_truncation() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     seed_text_search_matches(&vault);
-    let (addr, _server, handle) =
-        spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let response = http_get(
         addr,
@@ -1603,8 +1603,7 @@ async fn http_search_vector_estimate_counts_before_page_truncation() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     seed_vector_search_matches(&vault);
-    let (addr, _server, handle) =
-        spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let response = http_get(
         addr,

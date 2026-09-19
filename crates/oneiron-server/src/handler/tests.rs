@@ -126,6 +126,39 @@ fn insert_entity(doc: &LoroDoc, id: oneiron::EntityId, entity_type: u8, body: &[
         .unwrap();
 }
 
+fn selector_claim_body(person: oneiron::EntityId, predicate: &str) -> Vec<u8> {
+    let claim = oneiron::claim::ClaimBody::new(
+        predicate,
+        oneiron::claim::ClaimSubject::Entity(person),
+        Value::from("value"),
+        0.8,
+        oneiron::claim::ClaimApprovalStatus::Proposed,
+        oneiron::claim::ClaimLifecycleStatus::Active,
+    );
+    let body = Value::Map(vec![
+        (Value::from("pred"), Value::from(claim.predicate.as_str())),
+        (Value::from("val"), claim.value),
+        (Value::from("conf"), Value::F32(claim.confidence)),
+        (
+            Value::from("subj"),
+            Value::Binary(person.as_bytes().to_vec()),
+        ),
+        (Value::from("appr"), Value::from(claim.approval.as_str())),
+        (Value::from("life"), Value::from(claim.lifecycle.as_str())),
+        (
+            "worldId".into(),
+            oneiron::claim::base_world_id().to_hex().into(),
+        ),
+        ("scopeFacetId".into(), claim.scope_facet.to_hex().into()),
+        ("scopeRelationshipId".into(), "all".into()),
+        ("scopeProjectId".into(), claim.scope_project.to_hex().into()),
+        ("scopeVersion".into(), 2_u64.into()),
+    ]);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &body).unwrap();
+    encoded
+}
+
 fn edge_map_key(src: oneiron::EntityId, kind: oneiron::EdgeKind, tgt: oneiron::EntityId) -> String {
     format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
 }
@@ -701,41 +734,18 @@ async fn selector_vv_request_sends_filtered_update_only() {
         oneiron::registry::ENTITY_TYPE_FACET,
         b"facet-b",
     );
-    let claim_body = |predicate: &str| {
-        let claim = oneiron::claim::ClaimBody::new(
-            predicate,
-            oneiron::claim::ClaimSubject::Entity(person),
-            Value::from("value"),
-            0.8,
-            oneiron::claim::ClaimApprovalStatus::Proposed,
-            oneiron::claim::ClaimLifecycleStatus::Active,
-        );
-        let body = Value::Map(vec![
-            (Value::from("pred"), Value::from(claim.predicate.as_str())),
-            (Value::from("val"), claim.value),
-            (Value::from("conf"), Value::F32(claim.confidence)),
-            (
-                Value::from("subj"),
-                Value::Binary(person.as_bytes().to_vec()),
-            ),
-            (Value::from("appr"), Value::from(claim.approval.as_str())),
-            (Value::from("life"), Value::from(claim.lifecycle.as_str())),
-        ]);
-        let mut encoded = Vec::new();
-        rmpv::encode::write_value(&mut encoded, &body).unwrap();
-        encoded
-    };
+
     insert_entity(
         &server_doc,
         claim_allowed,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        &claim_body("selector.test"),
+        &selector_claim_body(person, "selector.test"),
     );
     insert_entity(
         &server_doc,
         claim_denied,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        &claim_body("selector.denied"),
+        &selector_claim_body(person, "selector.denied"),
     );
     insert_entity(
         &server_doc,
@@ -768,13 +778,38 @@ async fn selector_vv_request_sends_filtered_update_only() {
         person,
     );
     server_doc.commit();
+    for (id, kind, body) in [
+        (
+            facet_allowed,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"facet-a"[..],
+        ),
+        (
+            facet_denied,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"facet-b"[..],
+        ),
+        (
+            person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            &b"person"[..],
+        ),
+    ] {
+        server
+            .vault
+            .put_entity(&id, kind, oneiron::TimeRange { start: 1, end: 1 }, 1, body)
+            .unwrap();
+    }
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![
+            oneiron::sync::SelectorRange::Semantic,
+            oneiron::sync::SelectorRange::Core,
+        ],
     );
     let client_doc = client_window_doc();
     let payload =
@@ -1194,7 +1229,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         &server_doc,
         claim_allowed,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        b"claim",
+        &selector_claim_body(member, "selector.test"),
     );
     insert_edge(
         &server_doc,
@@ -1203,13 +1238,26 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         facet_allowed,
     );
     server_doc.commit();
+    server
+        .vault
+        .put_entity(
+            &facet_allowed,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![
+            oneiron::sync::SelectorRange::Semantic,
+            oneiron::sync::SelectorRange::Core,
+        ],
     );
     let client_doc = client_window_doc();
     let empty_payload =
