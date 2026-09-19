@@ -154,3 +154,23 @@ impl Vault {
         .map(Some)
     }
 }
+
+/// All local, replay and overlay puts consult the same installed registry.
+/// Syntax alone is not evidence that a plugin kind exists in this vault.
+pub(crate) fn validate_registered_kind(
+    store:&impl crate::store::ManifestDbs, txn:&heed::RoTxn<'_>, bytes:&[u8],
+)->Result<()> {
+    let body=super::decode_note_body_using(bytes,NoteKind::wire)?;
+    let kind=body.kind.as_str();
+    if NoteKind::parse(kind).is_some() { return Ok(()); }
+    let Some(raw)=store.vault_meta().get(txn,&key(kind))? else {
+        return Err(RecordError::InvalidNoteBody("unknown NOTE kind").into());
+    };
+    let descriptor:NoteKindDescriptor=rmp_serde::from_slice(&raw)
+        .map_err(|_|Error::CorruptedIndex("NOTE kind descriptor"))?;
+    if descriptor.kind!=kind || !valid_name(&descriptor.pack)
+        || !kind.starts_with(&format!("{}/",descriptor.pack)) {
+        return Err(Error::CorruptedIndex("NOTE kind binding"));
+    }
+    Ok(())
+}

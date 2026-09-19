@@ -16,6 +16,7 @@ const KEY_DOCUMENT_HEAD: &str = NOTE_BODY_KEYS[3];
 
 pub(crate) mod documents;
 mod kinds;
+pub(crate) use kinds::validate_registered_kind;
 mod proposals;
 mod verbs;
 pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};

@@ -399,7 +399,12 @@ fn agent_facade_and_pack_project_live_document_text() {
             )
             .unwrap();
         assert_eq!(
-            memory.get_entity(&receipt.id_hex).unwrap().unwrap().body.unwrap()["markdown"],
+            memory
+                .get_entity(&receipt.id_hex)
+                .unwrap()
+                .unwrap()
+                .body
+                .unwrap()["markdown"],
             "olivine birth copper"
         );
         assert!(
@@ -423,4 +428,19 @@ fn agent_facade_and_pack_project_live_document_text() {
                     && row.fields.as_ref().unwrap()["markdown"] == "olivine birth copper")
         );
     }
+}
+
+#[test]
+fn unknown_plugin_kind_is_refused_at_raw_local_and_replay_doors() {
+    let (_dir,vault,actor)=fixture();
+    let body=encode_note_body(&NoteBody {
+        kind:NoteKind::wire("example.notes/uninstalled").unwrap(),
+        author_ref:actor.entity_ref(),markdown:"birth".into(),document_head:None,
+    }).unwrap();
+    let id=EntityId::now();
+    let time=TimeRange{start:1,end:1};
+    assert!(matches!(vault.put_entity(&id,crate::registry::ENTITY_TYPE_NOTE,time,1,&body),Err(Error::Record(crate::error::RecordError::InvalidNoteBody(_)))));
+    assert!(vault.get(&id).unwrap().is_none());
+    assert!(matches!(vault.batch().put_replicated(&id,crate::registry::ENTITY_TYPE_NOTE,time,1,&body).commit(),Err(Error::Record(crate::error::RecordError::InvalidNoteBody(_)))));
+    assert!(vault.get(&id).unwrap().is_none());
 }

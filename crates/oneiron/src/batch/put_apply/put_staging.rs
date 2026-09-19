@@ -42,6 +42,9 @@ pub(in crate::batch) fn stage_entity_body_row(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
+        crate::note::validate_registered_kind(store,wtxn,data)?;
+    }
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(entity_type);
     payload.extend_from_slice(&occurred.start.to_be_bytes());
