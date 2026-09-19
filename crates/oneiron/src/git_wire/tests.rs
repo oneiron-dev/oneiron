@@ -511,7 +511,8 @@ fn git_wire_durable_rows_carry_no_payload_secret_or_path() {
 #[test]
 fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
     let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
+    let enclosing = init_repo();
+    let repo = init_repo_at(tempfile::tempdir_in(enclosing.path()).expect("nested repository"));
     let wire = new_wire(&vault);
     let bound = open(&wire, &repo);
 
