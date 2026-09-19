@@ -673,6 +673,9 @@ pub(in crate::batch) fn apply_put(
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if entity_type == ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
+        if body_changed {
+            crate::task_verb::note_task_write(store, wtxn, id, data)?;
+        }
     }
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(

@@ -89,6 +89,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::task_verb::index_owner_fact(store, wtxn, id, None)?;
+    crate::task_verb::forget_task_mirror(store, wtxn, *id)?;
+    crate::task_verb::forget_symbols(store, wtxn, *id)?;
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;

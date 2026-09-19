@@ -296,6 +296,14 @@ impl<'a> AttemptQueue<'a> {
             } else if record_ready_at > now || record.kind != kind {
                 continue;
             }
+            if !crate::task_verb::task_dispatch_ready(
+                self.store,
+                &*wtxn,
+                record.task_ref.as_deref(),
+                now,
+            )? {
+                continue;
+            }
             scan.candidate = Some(ClaimKindCandidate {
                 ready_key: key.to_vec(),
                 id,
@@ -364,6 +372,14 @@ impl<'a> AttemptQueue<'a> {
             } else if record_ready_at > now || record.kind != kind {
                 continue;
             }
+            if !crate::task_verb::task_dispatch_ready(
+                self.store,
+                &rtxn,
+                record.task_ref.as_deref(),
+                now,
+            )? {
+                continue;
+            }
             scan.candidate = Some(ClaimKindCandidate {
                 ready_key: key.to_vec(),
                 id,
@@ -407,11 +423,23 @@ impl<'a> AttemptQueue<'a> {
             if !record.state.is_ready_indexed()
                 || ready_at(&record) > input.now
                 || record.kind != kind
+                || !crate::task_verb::task_dispatch_ready(
+                    self.store,
+                    &wtxn,
+                    record.task_ref.as_deref(),
+                    input.now,
+                )?
             {
                 self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
                 wtxn.commit()?;
                 return Ok(ClaimKindWriteAttempt::Retry);
             }
+            crate::task_verb::acquire_task_symbols(
+                self.store,
+                &mut wtxn,
+                record.task_ref.as_deref(),
+                input.now,
+            )?;
             lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
             claimed = Some((candidate.ready_key.clone(), id, record));
         }
@@ -514,6 +542,14 @@ impl<'a> AttemptQueue<'a> {
                 }
                 continue;
             }
+            if !crate::task_verb::task_dispatch_ready(
+                self.store,
+                &*wtxn,
+                record.task_ref.as_deref(),
+                input.now,
+            )? {
+                continue;
+            }
             lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
             claimed = Some((key.to_vec(), id, record));
             break;
@@ -531,6 +567,12 @@ impl<'a> AttemptQueue<'a> {
             return Ok(ClaimOutcome::Empty);
         };
 
+        crate::task_verb::acquire_task_symbols(
+            self.store,
+            wtxn,
+            record.task_ref.as_deref(),
+            input.now,
+        )?;
         self.store.attempt_ready.delete(wtxn, &ready_key)?;
         let encoded = encode_record(&record)?;
         self.store

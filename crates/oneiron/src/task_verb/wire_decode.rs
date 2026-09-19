@@ -128,7 +128,15 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
         .ok_or(Error::Record(RecordError::InvalidTaskBody(
             "tasks.create.body",
         )))?;
+    let mirror_fields = task_body_optional(&entries, "mirror_fields")?
+        .map(|value| {
+            let bytes = super::wire_encode::canonical_bytes(value);
+            rmp_serde::from_slice(&bytes)
+                .map_err(|_| Error::Record(RecordError::InvalidTaskBody("task mirror fields")))
+        })
+        .transpose()?;
     Ok(TaskVerbBody {
+        mirror_fields,
         role: byte("role")?,
         schema_version: byte("schema_version")?,
         subkind: string("subkind")?,
@@ -589,7 +597,7 @@ pub(super) fn task_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> 
     Ok(value)
 }
 
-fn task_body_has_typed_subkind(body: &[u8]) -> Result<bool> {
+pub(super) fn task_body_has_typed_subkind(body: &[u8]) -> Result<bool> {
     let mut cursor = body;
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.body")))?;
