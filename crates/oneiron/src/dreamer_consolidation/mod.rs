@@ -85,3 +85,5 @@ use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
 use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
+
+mod value_projection;
