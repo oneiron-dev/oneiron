@@ -19,11 +19,27 @@ pub(super) fn is_provenance(row: &ExportEntity) -> bool {
             .and_then(|bytes| decode_claim_body(&bytes, true).ok())
             .is_some_and(|body| body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE)
 }
+pub(super) struct ModelImports {
+    pub(super) map: BTreeMap<EntityId, EntityId>,
+    pub(super) inserted: usize,
+    pub(super) unchanged: usize,
+}
 pub(super) fn restore_models(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &WholeVaultDocument,
-) -> Result<BTreeMap<EntityId, EntityId>> {
+) -> Result<ModelImports> {
+    let mut known = BTreeSet::new();
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_MODEL])?
+    {
+        let (key, _) = row?;
+        known.insert(crate::vault::entity_id_from_type_index_key(&key)?);
+    }
+    let mut inserted = 0;
+    let mut unchanged = 0;
     let mut map = BTreeMap::new();
     for row in doc
         .entities()
@@ -32,9 +48,18 @@ pub(super) fn restore_models(
         let bytes = row.body.to_bytes()?;
         let (name, version) = crate::provenance::decode_model_entity_body(&bytes)?;
         let local = vault.ensure_model_substrate_in_txn(txn, &name, &version, row.learned_at)?;
+        if known.insert(local) {
+            inserted += 1;
+        } else {
+            unchanged += 1;
+        }
         map.insert(parse_id(&row.id)?, local);
     }
-    Ok(map)
+    Ok(ModelImports {
+        map,
+        inserted,
+        unchanged,
+    })
 }
 pub(super) fn mapped_edge(
     edge: &ExportEdge,

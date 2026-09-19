@@ -184,6 +184,8 @@ pub struct WholeVaultImportReceipt {
     pub unchanged_entities: usize,
     /// Archived rows intentionally not restored as local authority or verdicts.
     pub omitted_entities: usize,
+    /// Domain-owned identities (currently MODEL name/version) rebound locally.
+    pub remapped_entities: std::collections::BTreeMap<String, String>,
 }
 
 impl WholeVaultDocument {

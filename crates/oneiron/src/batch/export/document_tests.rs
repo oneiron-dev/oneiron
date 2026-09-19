@@ -469,7 +469,11 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
         crate::gate::default_policy_manifest_id()?,
         &encode(&policy),
     )?;
-    target.import_whole_vault_json(export.bytes())?;
+    let restored = target.import_whole_vault_json(export.bytes())?;
+    assert_eq!(
+        restored.remapped_entities.get(&substrate.to_hex()),
+        Some(&local_substrate.to_hex())
+    );
     let prior = target.get_claim(&first)?.unwrap();
     let head = target.get_claim(&second)?.unwrap();
     assert_eq!(prior.source, Some(ClaimSource::Imported));
@@ -481,5 +485,25 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
     );
     let replay = target.import_whole_vault_json(export.bytes())?;
     assert_eq!(replay.inserted_entities, 0);
+    Ok(())
+}
+
+#[test]
+fn whole_vault_model_restore_reports_local_creation_and_repeat_mapping() -> Result<()> {
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    let original = source.ensure_model_substrate("archive fixture model", "v2", 6)?;
+    let bytes = source.export_whole_vault(PackFormat::Json)?;
+    let first = target.import_whole_vault_json(bytes.bytes())?;
+    assert_eq!(first.inserted_entities, 1);
+    let local = target.ensure_model_substrate("archive fixture model", "v2", 7)?;
+    assert_eq!(
+        first.remapped_entities.get(&original.to_hex()),
+        Some(&local.to_hex())
+    );
+    let second = target.import_whole_vault_json(bytes.bytes())?;
+    assert_eq!(second.inserted_entities, 0);
+    assert_eq!(second.unchanged_entities, 1);
+    assert_eq!(second.remapped_entities, first.remapped_entities);
     Ok(())
 }

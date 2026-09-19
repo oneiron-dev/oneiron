@@ -62,15 +62,16 @@ impl Vault {
                 row.body = ExportBody::from_bytes(&envelope.to_bytes()?, handle);
             }
         }
-        let models = super::provenance_import::restore_models(self, &mut wtxn, &document)?;
-        let provenance = super::provenance_import::ProvenanceImport::new(&document, &models)?;
+        let model_imports = super::provenance_import::restore_models(self, &mut wtxn, &document)?;
+        let models = &model_imports.map;
+        let provenance = super::provenance_import::ProvenanceImport::new(&document, models)?;
         let skill_bundles: BTreeMap<_, _> = document
             .skills
             .iter()
             .map(|bundle| (bundle.entity.id.as_str(), bundle))
             .collect();
         let mut pending = BTreeMap::new();
-        let mut unchanged_entities = 0;
+        let mut unchanged_entities = model_imports.unchanged;
         for row in document.entities() {
             let id = parse_id(&row.id)?;
             if omitted.contains(&id) || models.contains_key(&id) || provenance.ids.contains(&id) {
@@ -115,7 +116,7 @@ impl Vault {
             pending.insert(id, (row, imported_body(row)?));
         }
         let inserted_ids: BTreeSet<_> = pending.keys().copied().collect();
-        let mut inserted_entities = pending.len();
+        let mut inserted_entities = pending.len() + model_imports.inserted;
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         while !pending.is_empty() {
@@ -205,7 +206,7 @@ impl Vault {
             .evidence_ledger
             .edges
             .iter()
-            .map(|edge| super::provenance_import::mapped_edge(edge, &models))
+            .map(|edge| super::provenance_import::mapped_edge(edge, models))
             .collect::<Result<Vec<_>>>()?;
         for edge in &edges {
             let source = parse_id(&edge.source)?;
@@ -246,6 +247,11 @@ impl Vault {
             inserted_entities,
             unchanged_entities,
             omitted_entities: omitted.len(),
+            remapped_entities: models
+                .iter()
+                .filter(|(a, b)| a != b)
+                .map(|(a, b)| (a.to_hex(), b.to_hex()))
+                .collect(),
         })
     }
 }
