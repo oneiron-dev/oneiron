@@ -21,8 +21,10 @@ It was copied from the already-resolved Cargo git checkout, not from a new versi
    The library, its test plugins, package metadata, and all dependency
    requirements remain unchanged.
 
-The engine workspace redirects only this git dependency to the snapshot.
-It does not upgrade Sudachi or alter dependency versions. The Android target
+The engine declares a direct path dependency on this audited snapshot. This
+keeps generated compile-test workspaces and consumers on the same source without
+an ambient Git cache or an outer workspace patch. It does not upgrade Sudachi or
+alter dependency versions. The Android target
 build and Kotlin vault open/put/get/reopen instrumentation validate the embedded
 engine path. Host analyzer tests retain their existing coverage.
 

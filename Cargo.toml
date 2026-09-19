@@ -108,8 +108,3 @@ too_many_lines = "deny"
 [patch.crates-io]
 heed = { path = "crates/heed/vendor/heed-0.20.5" }
 paste = { path = "crates/paste/vendor/paste-1.0.15" }
-
-# OF-012: retain Sudachi 0.6.11 and add its missing Android ELF plugin name.
-# Upstream source and the two local deltas are pinned in vendor/SUDACHI.md.
-[patch."https://github.com/WorksApplications/sudachi.rs"]
-sudachi = { path = "crates/oneiron/vendor/sudachi-0.6.11/sudachi" }
