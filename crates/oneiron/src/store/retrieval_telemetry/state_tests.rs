@@ -247,13 +247,15 @@ fn invalid_caller_state_does_not_disable_later_pipeline_telemetry() -> crate::Re
         vault.store.record_retrieval_run(&invalid),
         Err(crate::Error::InvalidConfig(_))
     ));
-    let bad_run = vault
-        .query()
-        .search_text("absent", 10)
-        .retrieval_state(invalid.state)
-        .capture_retrieval_trace(true)
-        .run_with_telemetry()?;
-    assert!(bad_run.run_id.is_none());
+    assert!(matches!(
+        vault
+            .query()
+            .search_text("absent", 10)
+            .retrieval_state(invalid.state)
+            .capture_retrieval_trace(true)
+            .run_with_telemetry(),
+        Err(crate::Error::InvalidConfig(_))
+    ));
     let good_run = vault
         .query()
         .search_text("absent", 10)
