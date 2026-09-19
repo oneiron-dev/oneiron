@@ -21,7 +21,7 @@ use super::brief::{
 };
 use super::dials::{invalid, validate_text};
 use super::gate::SkillEditCycle;
-use super::selection::optimize_candidates;
+use super::selection::{affirm_candidates, optimize_candidates};
 use super::tier::{SkillTierVerdict, tier_verdict_in_txn};
 
 /// The [`PROVENANCE_BIRTH_KEY`] value stamped on a drafted proposal.
@@ -82,6 +82,8 @@ pub struct SkillOptimizeOutcome {
     /// Why this attempt did what it did, in the words of whoever decided:
     /// the selector's, or the author's own.
     pub rationale: String,
+    /// DEV-only win receipts supporting an explicit keep/no-op.
+    pub affirmed_receipts: Vec<String>,
 }
 
 /// Runs ONE `skill_optimize` attempt.
@@ -114,11 +116,7 @@ pub fn run_skill_optimize(
     learned_at: u64,
 ) -> Result<SkillOptimizeOutcome> {
     let Some(candidate) = optimize_candidates(vault)?.into_iter().next() else {
-        return Ok(SkillOptimizeOutcome {
-            skill: None,
-            proposal: None,
-            rationale: "no active skill is both optimizable and losing".to_owned(),
-        });
+        return affirm_healthy_skill(vault);
     };
     let brief = optimize_brief(vault, &candidate)?;
     let (desc, rationale) = match author.draft(&brief)? {
@@ -132,6 +130,7 @@ pub fn run_skill_optimize(
                 skill: Some(candidate.skill),
                 proposal: None,
                 rationale,
+                affirmed_receipts: Vec::new(),
             });
         }
         SkillEditDraft::Edit { desc, rationale } => (desc, rationale),
@@ -200,6 +199,34 @@ pub fn run_skill_optimize(
         skill: Some(candidate.skill),
         proposal: Some(proposal_id),
         rationale,
+        affirmed_receipts: Vec::new(),
+    })
+}
+
+/// Healthy skills do not buy an LLM call or a revision. They still produce a
+/// named no-op with the receipts that support keeping the current instructions.
+fn affirm_healthy_skill(vault: &Vault) -> Result<SkillOptimizeOutcome> {
+    let Some(candidate) = affirm_candidates(vault)?.into_iter().next() else {
+        return Ok(SkillOptimizeOutcome {
+            skill: None,
+            proposal: None,
+            rationale: "skill_optimize.no_eligible_evidence".into(),
+            affirmed_receipts: Vec::new(),
+        });
+    };
+    let brief = optimize_brief(vault, &candidate)?;
+    let txn = vault.store.env.read_txn()?;
+    let affirmed_receipts =
+        crate::skill_reliability::attributed_outcome_results(vault, &txn, &candidate.skill)?
+            .into_iter()
+            .filter(|(receipt, win)| *win && brief.cited_receipts.contains(receipt))
+            .map(|(receipt, _)| receipt)
+            .collect();
+    Ok(SkillOptimizeOutcome {
+        skill: Some(candidate.skill),
+        proposal: None,
+        rationale: "skill_optimize.keep_healthy".into(),
+        affirmed_receipts,
     })
 }
 

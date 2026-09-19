@@ -686,8 +686,19 @@ fn a_healthy_skill_never_reaches_the_authoring_tier() -> Result<()> {
     assert!(posterior.mean() > skill_reliability_prior(&vault, &skill)?.mean());
 
     assert!(optimize_candidates(&vault)?.is_empty());
+    while dev_receipts(&vault, &skill)?.is_empty() {
+        attribute_wins(&vault, &skill, "oneiron.skill.healthy", 5);
+    }
     let outcome = run(&vault, &UnreachableAuthor)?;
-    assert_eq!(outcome.skill, None);
+    assert_eq!(outcome.skill, Some(skill));
+    assert!(!outcome.rationale.is_empty());
+    assert!(!outcome.affirmed_receipts.is_empty());
+    assert!(
+        outcome
+            .affirmed_receipts
+            .iter()
+            .all(|receipt| !receipt_is_held_out(&skill, receipt))
+    );
     assert_eq!(outcome.proposal, None);
     Ok(())
 }
