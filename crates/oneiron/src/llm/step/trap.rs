@@ -55,6 +55,17 @@ pub fn open_trap(
     step_hash: [u8; 32],
     note: &str,
 ) -> Result<TrapRef> {
+    vault.with_write_txn(|wtxn| open_trap_in_txn(vault, wtxn, ctx, kind, step_hash, note))
+}
+
+pub(super) fn open_trap_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ctx: &DurableStepContext<'_>,
+    kind: DreamerTrapKind,
+    step_hash: [u8; 32],
+    note: &str,
+) -> Result<TrapRef> {
     let claim_id = EntityId::now();
     let value = encode_trap_claim_value(&EncodedTrapClaim {
         kind,
@@ -75,22 +86,20 @@ pub fn open_trap(
         start: ctx.now_ms,
         end: ctx.now_ms,
     };
-    vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
-            .apply(wtxn)?;
-        trap_binding_put_in_txn(
-            vault,
-            wtxn,
-            &claim_id,
-            &TrapBindingRow {
-                attempt_id: ctx.attempt_id,
-                step_hash,
-                park_owner: trap_park_owner(&claim_id),
-            },
-        )
-    })?;
+    vault
+        .batch_in()
+        .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
+        .apply(wtxn)?;
+    trap_binding_put_in_txn(
+        vault,
+        wtxn,
+        &claim_id,
+        &TrapBindingRow {
+            attempt_id: ctx.attempt_id,
+            step_hash,
+            park_owner: trap_park_owner(&claim_id),
+        },
+    )?;
     Ok(TrapRef {
         trap_claim_id: claim_id,
         kind,
@@ -275,6 +284,7 @@ pub(super) fn encode_trap_claim_value(claim: &EncodedTrapClaim) -> Value {
 }
 
 pub(super) struct DecodedTrapClaim {
+    pub(super) at: u64,
     pub(crate) kind: DreamerTrapKind,
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
@@ -354,9 +364,10 @@ pub(super) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim>
         ));
     }
 
-    at.ok_or(invalid_trap("missing dreamer trap value at"))?;
+    let at = at.ok_or(invalid_trap("missing dreamer trap value at"))?;
 
     Ok(DecodedTrapClaim {
+        at,
         kind: trap_kind.ok_or(invalid_trap("missing dreamer trap value trap_kind"))?,
         attempt_id: attempt_id.ok_or(invalid_trap("missing dreamer trap value job_id"))?,
         step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap value step_hash"))?,

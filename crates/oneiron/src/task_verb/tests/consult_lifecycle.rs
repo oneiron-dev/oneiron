@@ -158,7 +158,7 @@ fn invalid_consult_shapes_reject_before_any_write() {
             ))
             .with_assignee(TaskAssignee::Peer { actor_ref: peer })
             .with_ttl(TaskTtl::at(CONSULT_DEADLINE)),
-        // Consult kind on the human-only follow-up lane.
+        // The human consult lane is valid, but this peer has no human route.
         TaskCreateSpec::new(Value::Nil, None, None, Some(CONSULT_NOW))
             .with_kind(TaskKind::Consult)
             .with_consult(ConsultPayload::question(
@@ -198,8 +198,9 @@ fn invalid_consult_shapes_reject_before_any_write() {
             .filter(|code| *code == crate::memory::MEMORY_CODE_BAD_REQUEST
                 || *code == crate::memory::MEMORY_CODE_NOT_FOUND)
             .count(),
-        6
+        5
     );
+    assert_eq!(outcomes[5], crate::memory::MEMORY_CODE_INVALID_STATE);
     assert_eq!(task_entity_census(&vault), 0);
     assert_eq!(AttemptQueue::new(&vault).list().expect("attempts").len(), 0);
 }

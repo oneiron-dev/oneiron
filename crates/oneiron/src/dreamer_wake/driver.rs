@@ -212,6 +212,7 @@ impl<'a> DreamerWakeDriver<'a> {
         // no queue row to be admitted from. It rides the wake pass itself —
         // ordinary Dreamer maintenance over the synced TASK fact, before any
         // attempt is admitted and outside the budget/lease loop entirely.
+        crate::llm::resume_peer_result_steps(self.vault, input.now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, input.now)?;
 
         let mut report = WakePassReport {

@@ -65,7 +65,7 @@ pub(super) const DREAMER_PRIVATE_STEP_INDEX_CLAIM_PREFIX: &[u8] = b"dreamer:step
 
 pub(super) const DREAMER_PRIVATE_TRAP_BINDING_PREFIX: &[u8] = b"dreamer:trap_binding:v1:"; // + trap anchor claim id (16)
 
-pub(super) const DREAMER_PRIVATE_PEER_WAIT_PREFIX: &[u8] = b"dreamer:peer_wait:v1:"; // + task ref (16)
+pub(super) const DREAMER_PRIVATE_PEER_WAIT_PREFIX: &[u8] = b"dreamer:peer_wait:v1:"; // + task ref (16) + trap ref (16)
 
 pub(super) const DREAMER_PRIVATE_PEER_WAIT_TRAP_PREFIX: &[u8] = b"dreamer:peer_wait_trap:v1:"; // + trap anchor claim id (16) -> task ref (16)
 

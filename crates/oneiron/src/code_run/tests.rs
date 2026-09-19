@@ -2833,3 +2833,49 @@ fn observed_lineage_does_not_touch_the_memory_write_fixture() -> Result<()> {
     assert!(evidence_lineage(&stored_evidence(&vault, claim)?).is_none());
     Ok(())
 }
+
+#[test]
+fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
+    let group = EntityId::now();
+    let task = EntityId::now();
+    let actor = EntityId::now();
+    let result = EntityId::now();
+    let outcomes = vec![
+        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
+            attempt_ref: crate::attempt_queue::AttemptId::now(),
+        }),
+        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
+            proposal_ref: "proposal:bounded".to_owned(),
+        }),
+        SelfDispatchOutcome::TaskAsk(crate::task_verb::TaskAskReceipt {
+            handle: crate::task_verb::TaskAskHandle { group_ref: group },
+            task_refs: vec![task],
+            hold: Some(crate::task_verb::TaskAskHoldReason::NoLiveRoute),
+            idempotent_replay: false,
+        }),
+        SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Pending {
+            hold: Some(crate::task_verb::TaskAskHoldReason::NoLiveRoute),
+        }),
+        SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Answered(
+            crate::task_verb::TaskAskAnswer {
+                task_ref: task,
+                actor_ref: actor,
+                result_ref: result,
+            },
+        )),
+        SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Exhausted),
+    ];
+    for outcome in outcomes {
+        assert_eq!(
+            decode_self_dispatch_outcome(&self_dispatch_outcome_value(&outcome)).unwrap(),
+            outcome
+        );
+    }
+    for effect in [
+        SelfEffect::AgentsSpawn,
+        SelfEffect::TasksAsk,
+        SelfEffect::TasksWait,
+    ] {
+        assert_eq!(self_effect_from_str(effect.as_str()).unwrap(), effect);
+    }
+}

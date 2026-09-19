@@ -10,7 +10,7 @@ use crate::error::Error;
 use crate::gate::PolicyApprovalCeiling;
 use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
-use crate::memory::{Memory, MemoryResult, facade_provenance, verify_actor_binding};
+use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
@@ -233,7 +233,30 @@ impl Memory<'_> {
         provenance: &Value,
         now: u64,
     ) -> MemoryResult<EntityId> {
-        let task_ref = EntityId::now();
+        self.mint_task_at_in_txn(
+            wtxn,
+            (EntityId::now(), owner_ref),
+            validated,
+            label,
+            provenance,
+            now,
+        )
+    }
+
+    /// Engine-selected id for an idempotent ask member. Never a public raw door.
+    pub(super) fn mint_task_at_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        identity: (EntityId, EntityId),
+        validated: &ValidatedTaskCreate,
+        label: Option<String>,
+        provenance: &Value,
+        now: u64,
+    ) -> MemoryResult<EntityId> {
+        let (task_ref, owner_ref) = identity;
+        if self.vault().get_raw_in(&*wtxn, &task_ref)?.is_some() {
+            return Err(MemoryError::bad_request("task mint id is already occupied"));
+        }
         let body = encode_task_verb_body(TaskVerbBody {
             role: TaskRole::Task.role_byte(),
             schema_version: TASK_VERB_BODY_SCHEMA_VERSION,

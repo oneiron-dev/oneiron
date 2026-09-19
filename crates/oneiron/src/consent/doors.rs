@@ -372,10 +372,18 @@ impl Vault {
     /// Reads one standing consent-grant row.
     pub fn consent_grant(&self, grant_ref: &str) -> Result<Option<ConsentGrantRow>> {
         let rtxn = self.store.env.read_txn()?;
+        self.consent_grant_in_txn(&rtxn, grant_ref)
+    }
+
+    pub(crate) fn consent_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: &str,
+    ) -> Result<Option<ConsentGrantRow>> {
         let Some(raw) = self
             .store
             .vault_meta
-            .get(&rtxn, &consent_grant_key(grant_ref))?
+            .get(txn, &consent_grant_key(grant_ref))?
         else {
             return Ok(None);
         };

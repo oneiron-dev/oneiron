@@ -30,10 +30,26 @@ pub struct ContextWidenProposal {
     pub consent: ConsentProposal,
 }
 
+/// Preserve the caller's target kind. A wrapper is never an AGENT_DEF actor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", deny_unknown_fields)]
+pub(super) enum WidenTarget {
+    Agent(String),
+    Workflow(String),
+}
+
+/// Approval replay returns the original typed landing, not a guessed agent row.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "attempt", deny_unknown_fields)]
+pub(super) enum WidenLanding {
+    Agent(AttemptId),
+    Workflow(AttemptId),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WidenIntent {
-    pub target: String,
+    pub target: WidenTarget,
     pub parent: AttemptId,
     pub dedupe_key: Option<String>,
     pub run_id: Option<String>,
@@ -44,10 +60,12 @@ pub(super) struct WidenIntent {
 
 impl WidenIntent {
     pub(super) fn new(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Result<Self> {
-        // Workflow targets must resolve to their actual dispatch leaf here.
-        let target = input.target.agent_definition_ref()?;
+        let target = match &input.target {
+            AgentDispatchTarget::Custom(id) => WidenTarget::Agent(id.to_hex()),
+            AgentDispatchTarget::Workflow(id) => WidenTarget::Workflow(id.to_hex()),
+        };
         Ok(Self {
-            target: target.to_hex(),
+            target,
             parent: input
                 .parent_attempt
                 .ok_or_else(|| invalid("widen requires a parent"))?,
@@ -66,7 +84,12 @@ impl WidenIntent {
     ) -> Result<(DispatchAgent, AgentSpawnContext)> {
         Ok((
             DispatchAgent {
-                target: AgentDispatchTarget::Custom(EntityId::from_hex(&self.target)?),
+                target: match &self.target {
+                    WidenTarget::Agent(id) => AgentDispatchTarget::Custom(EntityId::from_hex(id)?),
+                    WidenTarget::Workflow(id) => {
+                        AgentDispatchTarget::Workflow(EntityId::from_hex(id)?)
+                    }
+                },
                 parent_attempt: Some(self.parent),
                 dedupe_key: Some(
                     self.dedupe_key
@@ -152,7 +175,7 @@ impl WidenRequest {
 pub(super) struct WidenRecord {
     pub version: u8,
     pub request: WidenRequest,
-    pub landed: Option<AttemptId>,
+    pub landed: Option<WidenLanding>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

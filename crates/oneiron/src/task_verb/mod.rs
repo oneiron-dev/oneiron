@@ -4,6 +4,9 @@
 //! sibling file owns one concern; the `crate::task_verb::*` surface below
 //! reproduces the pre-split flat-module surface verbatim.
 
+mod ask_facade;
+mod ask_record;
+mod ask_types;
 mod consts;
 mod consult_fanout_facade;
 mod consult_ladder_facade;
@@ -59,3 +62,8 @@ pub(crate) use create_validation::{
     settled_task_result_binding, task_human_assignee, task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;
+
+pub use ask_types::{
+    AskAuthorityScope, TaskAskAnswer, TaskAskHandle, TaskAskHoldReason, TaskAskReceipt,
+    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWait,
+};

@@ -156,7 +156,7 @@ mod cb_a {
     /// and, separately, the registered system-default base logical id.
     fn arm_zero_config_spawn() -> DefaultPresetSpawn {
         use oneiron::agent_dispatch::{
-            AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
+            AgentDispatchOutcome, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
         };
         use oneiron::dreamer_runner::{
             DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload,

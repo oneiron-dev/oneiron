@@ -25,6 +25,7 @@ mod codec;
 mod context;
 mod dispatch;
 mod kill;
+mod resident;
 mod types;
 mod widen;
 mod widen_record;
@@ -90,3 +91,8 @@ use crate::error::{Error, Result};
 use crate::failure_ladder::HealerCase;
 #[cfg(test)]
 use rmpv::Value;
+
+pub use resident::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
+
+#[cfg(test)]
+mod resident_tests;

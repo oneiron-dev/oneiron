@@ -375,3 +375,349 @@ fn approval_does_not_skip_an_excluding_ancestor() -> Result<()> {
     );
     Ok(())
 }
+
+struct WorkflowWidenFixture {
+    dir: tempfile::TempDir,
+    vault: Vault,
+    owner: AuthenticatedOwner,
+    parent: AgentDispatchStatus,
+    board_row: EntityId,
+    first: EntityId,
+    second: EntityId,
+    workflow_id: EntityId,
+}
+
+fn workflow_widen_fixture() -> Result<WorkflowWidenFixture> {
+    let (dir, vault) = open_board_vault();
+    let owner = owner(&vault, test_id(0xA0))?;
+    let board_row = put_row(&vault, 0xB3, "workflow.board", AgentCeiling::Auto)?;
+    let parent_row = put_row(&vault, 0xB4, "workflow.parent", AgentCeiling::Proposed)?;
+    let first = put_row(&vault, 0xB5, "workflow.first", AgentCeiling::Auto)?;
+    let second = put_row(&vault, 0xB6, "workflow.second", AgentCeiling::Auto)?;
+    chat_turn(&vault)?;
+    let board = board(&vault, owner.actor(), board_row);
+    let parent = dispatched(AgentDispatcher::new(&vault).dispatch_with_context(
+        input(parent_row, board, "workflow-parent"),
+        AgentSpawnContext::default().with_context_spec(ContextSpec::excluded()),
+    )?);
+    let workflow_id = test_id(0xC0);
+    vault.save_workflow(
+        &workflow_id,
+        &crate::agent_def::workflow::WorkflowDefinition::new("widened", vec![first, second])?,
+        2,
+    )?;
+    Ok(WorkflowWidenFixture {
+        dir,
+        vault,
+        owner,
+        parent,
+        board_row,
+        first,
+        second,
+        workflow_id,
+    })
+}
+
+fn workflow_widen_input(case: &WorkflowWidenFixture) -> DispatchAgent {
+    DispatchAgent {
+        target: AgentDispatchTarget::Workflow(case.workflow_id),
+        ..input(case.first, case.parent.attempt.id, "workflow-widen")
+    }
+}
+
+fn landed_workflow(outcome: AgentDispatchOutcome) -> WorkflowDispatchStatus {
+    match outcome {
+        AgentDispatchOutcome::WorkflowDispatched(status)
+        | AgentDispatchOutcome::WorkflowExisting(status) => *status,
+        other => panic!("workflow expected, got {other:?}"),
+    }
+}
+
+#[test]
+fn workflow_widen_parks_whole_composition_and_replays_one_wrapper_after_reopen() -> Result<()> {
+    let case = workflow_widen_fixture()?;
+    let mut dispatch = workflow_widen_input(&case);
+    // No caller dedupe key: the exact proposal must still name just one wrapper.
+    dispatch.dedupe_key = None;
+    let dispatcher = AgentDispatcher::new(&case.vault);
+    let before = AttemptQueue::new(&case.vault).list()?;
+    let proposal = proposed(dispatcher.dispatch_with_context(dispatch.clone(), request())?);
+    assert_eq!(AttemptQueue::new(&case.vault).list()?, before);
+    assert_eq!(
+        proposed(dispatcher.dispatch_with_context(dispatch.clone(), request())?),
+        proposal
+    );
+    assert!(
+        dispatcher
+            .resolve_attempt_context(case.parent.attempt.id)?
+            .chat_sections
+            .is_empty()
+    );
+    let outsider = owner(&case.vault, test_id(0xD1))?;
+    assert_eq!(
+        dispatcher
+            .approve_context_widen(&outsider, &proposal, 4)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAgentDispatchInput
+    );
+    let mut edited = (*proposal).clone();
+    edited.requested_context.chat = ChatProjection::Recent { last_n: 2 };
+    assert_eq!(
+        dispatcher
+            .approve_context_widen(&case.owner, &edited, 4)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&case.vault).list()?, before);
+    let status = landed_workflow(dispatcher.approve_context_widen(&case.owner, &proposal, 5)?);
+    assert_eq!(status.definition.steps, vec![case.first, case.second]);
+    assert_eq!(status.attempt.state, AttemptState::Paused);
+    assert_eq!(
+        AttemptQueue::new(&case.vault).list()?.len(),
+        before.len() + 2
+    );
+    assert_eq!(
+        decode_dreamer_attempt_payload(&status.attempt.payload)?.parent_attempt,
+        Some(case.parent.attempt.id)
+    );
+    assert!(
+        dispatcher
+            .dispatch(input(case.first, status.attempt.id, "wrapper-cannot-spawn"))
+            .is_err()
+    );
+    let root = status.attempt.id;
+    assert_eq!(
+        case.vault
+            .approve_once(&case.owner, proposal.consent.effect_digest)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConsentApproveOnceSpent
+    );
+    let parent_id = case.parent.attempt.id;
+    let child_depth = case.parent.input.depth_remaining.unwrap() - 1;
+    let first = case.first;
+    let second = case.second;
+    let WorkflowWidenFixture {
+        dir, vault, owner, ..
+    } = case;
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let AgentDispatchOutcome::WorkflowExisting(replayed) =
+        dispatcher.approve_context_widen(&owner, &proposal, 6)?
+    else {
+        panic!("typed approval replay")
+    };
+    assert_eq!(replayed.attempt.id, root);
+    let AgentDispatchOutcome::WorkflowExisting(replayed) =
+        dispatcher.dispatch_with_context(dispatch, request())?
+    else {
+        panic!("typed dispatch replay")
+    };
+    assert_eq!(replayed.attempt.id, root);
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before.len() + 2);
+    let expected_chat = vec![format!("tn_{}", test_id(0xA7).to_hex())];
+    assert_eq!(
+        dispatcher.resolve_attempt_context(parent_id)?.chat_sections,
+        expected_chat
+    );
+    let mut executed = Vec::new();
+    for (ordinal, requested) in [first, second].into_iter().enumerate() {
+        let progress = dispatcher.run_workflow_step(
+            root,
+            "widen-host",
+            10 + ordinal as u64,
+            |status, context| {
+                assert_eq!(context.chat_sections, expected_chat);
+                assert_eq!(status.input.depth_remaining, Some(child_depth));
+                assert_eq!(status.input.definition.ceiling, AgentCeiling::Proposed);
+                assert_eq!(status.input.definition.forked_from, Some(requested));
+                executed.push(status.input.target.agent_definition_ref()?);
+                crate::attempt_queue::AttemptResultRef::new(format!("artifact:widen-{ordinal}"))
+            },
+        )?;
+        if ordinal == 0 {
+            assert!(matches!(progress, WorkflowProgress::Advanced(_)));
+        } else {
+            assert_eq!(progress, WorkflowProgress::Completed);
+        }
+    }
+    assert_eq!(
+        dispatcher.run_workflow_step(root, "widen-host", 20, |_, _| panic!("replay executed"))?,
+        WorkflowProgress::Completed
+    );
+    let report = dispatcher.workflow_status(root)?;
+    assert_eq!(
+        report
+            .results
+            .iter()
+            .map(|r| (
+                r.ordinal,
+                r.requested_agent.clone(),
+                r.dispatched_agent.clone(),
+                r.result_ref.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, first.to_hex(), executed[0].to_hex(), "artifact:widen-0"),
+            (1, second.to_hex(), executed[1].to_hex(), "artifact:widen-1"),
+        ]
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before.len() + 3);
+    Ok(())
+}
+
+#[test]
+fn workflow_widen_rejects_stale_composition_leaf_and_revoked_authority_without_spending()
+-> Result<()> {
+    for change in [
+        "workflow",
+        "later-composition",
+        "later-revoked",
+        "parent-revoked",
+        "board-revoked",
+    ] {
+        let case = workflow_widen_fixture()?;
+        let dispatcher = AgentDispatcher::new(&case.vault);
+        let proposal =
+            proposed(dispatcher.dispatch_with_context(workflow_widen_input(&case), request())?);
+        let before = AttemptQueue::new(&case.vault).list()?;
+        if change == "workflow" {
+            let mut edited = case.vault.get_workflow(&case.workflow_id)?.unwrap();
+            edited.steps.reverse();
+            edited.revision += 1;
+            case.vault
+                .update_workflow(&case.workflow_id, 1, &edited, 4)?;
+        } else {
+            let row = match change {
+                "parent-revoked" => case.parent.input.target.agent_definition_ref()?,
+                "board-revoked" => case.board_row,
+                _ => case.second,
+            };
+            let mut edited = case.vault.get_agent_definition(&row)?.unwrap();
+            if change == "later-composition" {
+                edited.version = "changed-after-proposal".into();
+            } else {
+                edited.version = "revoked-after-proposal".into();
+                edited.enabled = false;
+            }
+            case.vault.update_agent_definition(&row, &edited, t(4), 4)?;
+        }
+        let error = dispatcher
+            .approve_context_widen(&case.owner, &proposal, 5)
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            if change.ends_with("revoked") {
+                ErrorKind::AgentDefinitionDisabled
+            } else {
+                ErrorKind::InvalidAgentDispatchInput
+            }
+        );
+        assert_eq!(AttemptQueue::new(&case.vault).list()?, before);
+        // Observable consent door: failed approval left no receipt or spent marker.
+        case.vault
+            .approve_once(&case.owner, proposal.consent.effect_digest)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn workflow_widen_late_prepare_failure_rolls_back_consent_forks_slice_and_queue() -> Result<()> {
+    let case = workflow_widen_fixture()?;
+    let dispatcher = AgentDispatcher::new(&case.vault);
+    let proposal =
+        proposed(dispatcher.dispatch_with_context(workflow_widen_input(&case), request())?);
+    let fork = |id| -> Result<EntityId> {
+        super::super::attenuation::attenuated_fork_id(
+            id,
+            &super::super::attenuation::source_content_fingerprint(
+                &case.vault.get_agent_definition(&id)?.unwrap(),
+            )?,
+            case.parent.attempt.id,
+            None,
+        )
+    };
+    let first_fork = fork(case.first)?;
+    let later_fork = fork(case.second)?;
+    // The later fork fails only after approval has minted/spent and preparation
+    // has written the earlier fork in the same (ultimately aborted) transaction.
+    let foreign = case.vault.get_agent_definition(&case.board_row)?.unwrap();
+    case.vault
+        .put_agent_definition(&later_fork, &foreign, t(4), 4)?;
+    let before = AttemptQueue::new(&case.vault).list()?;
+    assert_eq!(
+        dispatcher
+            .approve_context_widen(&case.owner, &proposal, 5)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&case.vault).list()?, before);
+    assert!(case.vault.get_raw(&first_fork)?.is_none());
+    assert!(
+        dispatcher
+            .resolve_attempt_context(case.parent.attempt.id)?
+            .chat_sections
+            .is_empty()
+    );
+    assert_eq!(
+        proposed(dispatcher.dispatch_with_context(workflow_widen_input(&case), request())?),
+        proposal
+    );
+    case.vault
+        .approve_once(&case.owner, proposal.consent.effect_digest)?;
+    Ok(())
+}
+
+#[test]
+fn workflow_widen_revalidates_settled_siblings_and_keeps_structural_refusals() -> Result<()> {
+    let case = workflow_widen_fixture()?;
+    let dispatcher = AgentDispatcher::new(&case.vault);
+    let parent_row = case.parent.input.target.agent_definition_ref()?;
+    let (sibling, _) = sibling_task(
+        &case.vault,
+        parent_row,
+        0xD4,
+        Some(TaskTerminalDisposition::Completed),
+    );
+    let spawn = request().with_context_from(vec![sibling]);
+    let proposal = proposed(dispatcher.dispatch_with_context(workflow_widen_input(&case), spawn)?);
+    case.vault.batch().delete(&sibling).commit()?;
+    let before = AttemptQueue::new(&case.vault).list()?;
+    assert_eq!(
+        dispatcher
+            .approve_context_widen(&case.owner, &proposal, 5)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&case.vault).list()?, before);
+    assert!(
+        dispatcher
+            .resolve_attempt_context(case.parent.attempt.id)?
+            .chat_sections
+            .is_empty()
+    );
+    case.vault
+        .approve_once(&case.owner, proposal.consent.effect_digest)?;
+    let exhausted = dispatched(dispatcher.dispatch_with_context(
+        input(case.first, case.parent.attempt.id, "workflow-exhausted"),
+        AgentSpawnContext::default().with_depth_remaining(0),
+    )?);
+    let before = AttemptQueue::new(&case.vault).list()?;
+    let mut dispatch = workflow_widen_input(&case);
+    dispatch.parent_attempt = Some(exhausted.attempt.id);
+    dispatch.dedupe_key = Some("workflow-zero".into());
+    assert_eq!(
+        dispatcher
+            .dispatch_with_context(dispatch, request())
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&case.vault).list()?, before);
+    Ok(())
+}

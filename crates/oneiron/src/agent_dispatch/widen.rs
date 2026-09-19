@@ -16,13 +16,54 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use super::attenuation::source_content_fingerprint;
 use super::codec::record_dispatch_input;
 use super::widen_record::{
-    SliceOverride, WidenIntent, WidenRecord, WidenRequest, decode, invalid, json, proposal_key,
-    slice_key, widened_parent,
+    SliceOverride, WidenIntent, WidenLanding, WidenRecord, WidenRequest, WidenTarget, decode,
+    invalid, json, proposal_key, slice_key, widened_parent,
 };
 use super::{
-    AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatcher,
-    AgentSpawnContext, DispatchAgent,
+    AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget,
+    AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
+
+/// An ephemeral proof, constructed only after the authenticated board's live
+/// slice has bounded this exact parent. This is never stored or caller-created.
+/// It lets initial workflow admission validate against the about-to-land slice
+/// without either opening a blind read snapshot or skipping narrowing.
+pub(super) struct PreparedParentContext {
+    parent: AttemptId,
+    spec: ContextSpec,
+    projection: ResolvedContextProjection,
+}
+
+impl PreparedParentContext {
+    pub(super) fn resolve_child(
+        &self,
+        dispatcher: &AgentDispatcher<'_>,
+        input: &DispatchAgent,
+        spawn: &AgentSpawnContext,
+        world_scope: crate::pipeline::WorldScope,
+    ) -> Result<()> {
+        if input.parent_attempt != Some(self.parent) {
+            return Err(invalid("prepared context belongs to a different parent"));
+        }
+        let spec = spawn.context_spec.clone().unwrap_or_default();
+        validate_spec_narrows(&self.spec, &spec)?;
+        dispatcher.require_sibling_result_lineage(
+            input.parent_attempt,
+            input.run_id.as_deref(),
+            &spawn.context_from,
+        )?;
+        resolve_context_spec(
+            dispatcher.vault,
+            ContextResolutionRequest {
+                spec,
+                parent: Some(self.projection.clone()),
+                context_from: spawn.context_from.clone(),
+                world_scope: Some(world_scope),
+            },
+        )?;
+        Ok(())
+    }
+}
 
 impl AgentDispatcher<'_> {
     /// Re-resolves an attempt's live recursive slice, including approved widening.
@@ -62,6 +103,7 @@ impl AgentDispatcher<'_> {
             return Ok(None);
         };
         let intent = WidenIntent::new(input, spawn)?;
+        let mut wtxn = self.vault.store.env.write_txn()?;
         validate_context_spec(&intent.spec)?;
         self.require_sibling_result_lineage(
             Some(parent_id),
@@ -83,7 +125,6 @@ impl AgentDispatcher<'_> {
         };
         let parent_spec = self.effective_context_spec(parent_id, &parent)?;
         let projection = self.resolve_attempt_context(parent_id)?;
-        let mut wtxn = self.vault.store.env.write_txn()?;
         let key = intent.key()?;
         if let Some(bytes) = self.vault.store.vault_meta.get(&wtxn, &key)? {
             let record: WidenRecord = decode(&bytes)?;
@@ -92,20 +133,21 @@ impl AgentDispatcher<'_> {
                     "existing widen dedupe key names a different dispatch",
                 ));
             }
-            return self.widen_outcome(&record).map(Some);
+            return self.widen_outcome(&wtxn, &record).map(Some);
         }
+        // All target leaves must be dispatchable even when only context widens.
+        let target_fingerprint = self.widen_target_fingerprint(&wtxn, &input.target)?;
         if validate_spec_narrows(&parent_spec, &intent.spec).is_ok()
             && validate_context_narrows(&projection, &intent.spec).is_ok()
         {
             return Ok(None);
         }
         // A request, not a grant: this transaction contains NO queue or slice write.
-        let target = self.dispatchable_definition(&input.target)?;
         let record = WidenRecord {
             version: 1,
             request: WidenRequest {
                 intent,
-                target_fingerprint: source_content_fingerprint(&target)?.to_hex().to_string(),
+                target_fingerprint,
                 board: self.recorded_parent(parent_id)?,
                 parent_spec: parent_spec.clone(),
                 widened_spec: widened_parent(
@@ -180,7 +222,7 @@ impl AgentDispatcher<'_> {
             return Err(invalid("widen board is not the immediate board above"));
         }
         if record.landed.is_some() {
-            return self.widen_outcome(&record);
+            return self.widen_outcome(&wtxn, &record);
         }
         let (input, spawn) = record.request.intent.dispatch(&proposal.proposal_id, now)?;
         self.child_depth_remaining(record.request.intent.parent)?;
@@ -189,9 +231,7 @@ impl AgentDispatcher<'_> {
             input.run_id.as_deref(),
             &spawn.context_from,
         )?;
-        let target = self.dispatchable_definition(&input.target)?;
-        if source_content_fingerprint(&target)?.to_hex().as_str()
-            != record.request.target_fingerprint
+        if self.widen_target_fingerprint(&wtxn, &input.target)? != record.request.target_fingerprint
         {
             return Err(invalid("widen target changed since the proposal"));
         }
@@ -224,16 +264,16 @@ impl AgentDispatcher<'_> {
                 ),
             },
         )?;
-        validate_spec_narrows(&record.request.widened_spec, &record.request.intent.spec)?;
-        resolve_context_spec(
-            self.vault,
-            ContextResolutionRequest {
-                spec: record.request.intent.spec.clone(),
-                parent: Some(widened),
-                context_from: spawn.context_from.clone(),
-                world_scope: Some(target.scope.to_world_scope()),
-            },
-        )?;
+        let prepared_parent = PreparedParentContext {
+            parent: record.request.intent.parent,
+            spec: record.request.widened_spec.clone(),
+            projection: widened,
+        };
+        // Workflow admission checks every leaf through the same proof below.
+        if let AgentDispatchTarget::Custom(_) = &input.target {
+            let target = self.dispatchable_definition_in_txn(&wtxn, &input.target)?;
+            prepared_parent.resolve_child(self, &input, &spawn, target.scope.to_world_scope())?;
+        }
         // Only the existing authenticated-owner door mints approval. Spending
         // and landing are atomic, so a failed enqueue spends no owner act.
         self.vault
@@ -245,16 +285,24 @@ impl AgentDispatcher<'_> {
         )?
         .ok_or_else(|| invalid("board consent did not authorize this exact widening"))?;
         spend_approve_once_in_txn(&self.vault.store, &mut wtxn, &authorization)?;
-        let outcome = self.dispatch_in_txn(&mut wtxn, None, input, spawn)?;
-        let status = match &outcome {
-            AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status) => {
-                status
+        let outcome = match &input.target {
+            AgentDispatchTarget::Custom(_) => {
+                self.dispatch_in_txn(&mut wtxn, None, input, spawn)?
             }
-            _ => {
-                return Err(invalid("widen landing unexpectedly proposed again"));
+            AgentDispatchTarget::Workflow(_) => {
+                self.dispatch_workflow_in_txn(&mut wtxn, input, spawn, Some(&prepared_parent))?
             }
         };
-        record.landed = Some(status.attempt.id);
+        record.landed = Some(match &outcome {
+            AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status) => {
+                WidenLanding::Agent(status.attempt.id)
+            }
+            AgentDispatchOutcome::WorkflowDispatched(status)
+            | AgentDispatchOutcome::WorkflowExisting(status) => {
+                WidenLanding::Workflow(status.attempt.id)
+            }
+            _ => return Err(invalid("widen landing unexpectedly proposed again")),
+        });
         self.vault.store.vault_meta.put(
             &mut wtxn,
             &slice_key(record.request.intent.parent),
@@ -305,14 +353,18 @@ impl AgentDispatcher<'_> {
         Ok((key.to_vec(), record))
     }
 
-    fn widen_outcome(&self, record: &WidenRecord) -> Result<AgentDispatchOutcome> {
-        match record.landed {
-            None => Ok(AgentDispatchOutcome::ProposedWiden(Box::new(
+    fn widen_outcome(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        record: &WidenRecord,
+    ) -> Result<AgentDispatchOutcome> {
+        match (&record.request.intent.target, record.landed) {
+            (_, None) => Ok(AgentDispatchOutcome::ProposedWiden(Box::new(
                 record.request.proposal()?,
             ))),
-            Some(id) => {
+            (WidenTarget::Agent(_), Some(WidenLanding::Agent(id))) => {
                 let attempt = AttemptQueue::new(self.vault)
-                    .get(id)?
+                    .get_in_txn(txn, id)?
                     .ok_or_else(|| invalid("approved widen dispatch is missing"))?;
                 let input = record_dispatch_input(&attempt)
                     .ok_or_else(|| invalid("approved widen dispatch is malformed"))?;
@@ -320,6 +372,52 @@ impl AgentDispatcher<'_> {
                     attempt,
                     input,
                 }))
+            }
+            (WidenTarget::Workflow(target), Some(WidenLanding::Workflow(id))) => {
+                let attempt = AttemptQueue::new(self.vault)
+                    .get_in_txn(txn, id)?
+                    .ok_or_else(|| invalid("approved workflow dispatch is missing"))?;
+                let workflow = self.read_workflow(txn, &attempt)?;
+                if &workflow.intent.workflow_ref != target
+                    || workflow.intent.parent != Some(record.request.intent.parent)
+                {
+                    return Err(invalid("approved workflow differs from widen intent"));
+                }
+                Ok(AgentDispatchOutcome::WorkflowExisting(Box::new(
+                    self.workflow_status_from(attempt, &workflow)?,
+                )))
+            }
+            _ => Err(invalid("widen landing has a different target kind")),
+        }
+    }
+
+    /// Bind a proposal to the complete saved composition and EVERY leaf revision,
+    /// in order. Canonical bytes include live enabled/approval/ceiling/scope state.
+    /// Nothing is enqueued or forked while computing this digest.
+    fn widen_target_fingerprint(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: &AgentDispatchTarget,
+    ) -> Result<String> {
+        match target {
+            AgentDispatchTarget::Custom(_) => Ok(source_content_fingerprint(
+                &self.dispatchable_definition_in_txn(txn, target)?,
+            )?
+            .to_hex()
+            .to_string()),
+            AgentDispatchTarget::Workflow(id) => {
+                let definition = self.workflow_definition_in_txn(txn, *id)?;
+                let mut leaves = Vec::with_capacity(definition.steps.len());
+                for id in &definition.steps {
+                    let leaf = self
+                        .dispatchable_definition_in_txn(txn, &AgentDispatchTarget::Custom(*id))?;
+                    leaves.push(source_content_fingerprint(&leaf)?.to_hex().to_string());
+                }
+                let bytes = json(&(
+                    crate::agent_def::workflow::encode_workflow(&definition)?,
+                    leaves,
+                ))?;
+                Ok(blake3::hash(&bytes).to_hex().to_string())
             }
         }
     }

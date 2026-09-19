@@ -3,32 +3,38 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
 /// Exact agent-visible TASKS verb family in protocol sort order.
-pub const TASKS_VERBS: [&str; 5] = [
+pub const TASKS_VERBS: [&str; 7] = [
     "tasks.ack",
+    "tasks.ask",
     "tasks.cancel",
     "tasks.check",
     "tasks.create",
     "tasks.expand",
+    "tasks.wait",
 ];
 
-/// The five typed verbs available over the TASKS section.
+/// The seven typed verbs available over the TASKS section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TasksVerb {
     Ack,
+    Ask,
     Cancel,
     Check,
     Create,
     Expand,
+    Wait,
 }
 
 impl TasksVerb {
     /// All typed TASKS verbs in protocol sort order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Ack,
+        Self::Ask,
         Self::Cancel,
         Self::Check,
         Self::Create,
         Self::Expand,
+        Self::Wait,
     ];
 
     /// Stable protocol identifier for this typed verb.
@@ -36,10 +42,12 @@ impl TasksVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ack => "tasks.ack",
+            Self::Ask => "tasks.ask",
             Self::Cancel => "tasks.cancel",
             Self::Check => "tasks.check",
             Self::Create => "tasks.create",
             Self::Expand => "tasks.expand",
+            Self::Wait => "tasks.wait",
         }
     }
 }

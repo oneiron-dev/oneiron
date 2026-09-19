@@ -20,7 +20,7 @@ pub use step::{
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
     DurableStepContext, DurableStepError, DurableStepResult, PeerResultWaitBinding, StepOutcome,
-    StepProgression, TrapRef, call_as_step, consume_trap_signal, open_trap,
+    StepProgression, TrapRef, call_as_step, consume_trap_signal, open_trap, park_peer_result_step,
     reconcile_peer_result_signals, register_peer_result_wait, register_wait,
     send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
 };
@@ -99,3 +99,5 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 #[cfg(test)]
 use std::time::Duration;
+
+pub(crate) use step::resume_peer_result_steps;
