@@ -204,6 +204,18 @@ pub struct InitArgs {
     pub embedder: Option<crate::config::EmbedderProvider>,
     #[arg(long)]
     pub embedder_endpoint: Option<String>,
+    /// Endpoint locality. Non-loopback URLs default to third-party.
+    #[arg(long)]
+    pub embedder_locality: Option<crate::config::EmbedderLocality>,
+    /// On-device endpoint serving the same model for remote fallback and queries.
+    #[arg(long)]
+    pub embedder_fallback_endpoint: Option<String>,
+    /// Explicitly authorize all embeddable entities to use the remote endpoint.
+    #[arg(long)]
+    pub embedder_egress_allow_all: bool,
+    /// Authorize only these entity IDs; all other rows stay on device.
+    #[arg(long, value_delimiter = ',')]
+    pub embedder_egress_allow: Vec<String>,
     /// Model key served by an OpenAI-compatible embedding endpoint.
     #[arg(long)]
     pub embedder_model_key: Option<String>,

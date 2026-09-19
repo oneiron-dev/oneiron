@@ -1410,6 +1410,13 @@ Use `oneiron-server init <vault-path> --config <config-path> --embedder local`.
 For an existing OpenAI-compatible server, add `--embedder endpoint --embedder-endpoint <url>`
 and its `--embedder-model-key <served-key>`. A non-default model also needs
 `--embedder-model-id <model_id@revision> --dimensions <dimensions>`.
+For a network endpoint, also supply `--embedder-fallback-endpoint <loopback-url>`
+serving the same model for on-device fallback and query embedding. Init defaults network URLs
+to `third-party`; use `--embedder-locality owner-server` only for owner-controlled infrastructure.
+Ask for egress authorization: pass `--embedder-egress-allow <entity-id,...>` for selected rows,
+or `--embedder-egress-allow-all` only after the user explicitly authorizes all embeddable rows.
+Interactive init asks for the fallback and consent. A missing consent refuses before vault creation.
+Locality, HTTPS, and per-entity egress checks still apply; this does not install an endpoint server.
 Keys come from an environment variable named by `--embedder-api-key-env NAME`.
 Never put key values in argv, chat, or TOML. `--embedder none` keeps lexical-only operation.
 Run `oneiron-server serve --config <config-path>` with the file init reports.

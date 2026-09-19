@@ -1,6 +1,8 @@
 //! First-run embedder choice, using the same config and provider as serve.
 use crate::cli::InitArgs;
-use crate::config::{EmbedderConfig, EmbedderProvider, EnvConfig, ServeArgs, ServeConfig};
+use crate::config::{
+    EmbedderConfig, EmbedderLocality, EmbedderProvider, EnvConfig, ServeArgs, ServeConfig,
+};
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -24,6 +26,12 @@ pub fn init(mut args: InitArgs) -> anyhow::Result<()> {
         input.read_line(&mut line)?;
         args.embedder_endpoint = Some(line.trim().to_owned());
     }
+    if choice == EmbedderProvider::Endpoint
+        && endpoint_locality(&args)? != EmbedderLocality::OnDevice
+        && input.is_terminal()
+    {
+        ask_remote_options(&mut args, &mut input, &mut output)?;
+    }
     let path = args
         .config
         .clone()
@@ -40,7 +48,15 @@ pub fn init(mut args: InitArgs) -> anyhow::Result<()> {
             }
             Some(embedder) => {
                 crate::embedder::build_slot(Some(embedder))?;
-                "on-device endpoint".to_owned()
+                crate::embedder::build_remote_rung(embedder)?;
+                if let Some(remote) = &embedder.remote {
+                    format!(
+                        "{} endpoint with on-device fallback and queries",
+                        remote.locality.as_str()
+                    )
+                } else {
+                    "on-device endpoint".to_owned()
+                }
             }
             None => "none".to_owned(),
         };
@@ -125,6 +141,62 @@ fn recommended_local() -> bool {
     }
 }
 
+fn endpoint_locality(args: &InitArgs) -> anyhow::Result<EmbedderLocality> {
+    if let Some(locality) = args.embedder_locality {
+        return Ok(locality);
+    }
+    let endpoint = args
+        .embedder_endpoint
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--embedder endpoint requires --embedder-endpoint URL"))?;
+    let url = reqwest::Url::parse(endpoint)?;
+    let loopback = url.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    Ok(if loopback {
+        EmbedderLocality::OnDevice
+    } else {
+        EmbedderLocality::ThirdParty
+    })
+}
+
+fn ask_remote_options(
+    args: &mut InitArgs,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> anyhow::Result<()> {
+    if args.embedder_fallback_endpoint.is_none() {
+        write!(
+            output,
+            "On-device fallback URL (must serve the same embedding model; also used for queries): "
+        )?;
+        output.flush()?;
+        let mut line = String::new();
+        input.read_line(&mut line)?;
+        args.embedder_fallback_endpoint = Some(line.trim().to_owned());
+    }
+    if !args.embedder_egress_allow_all && args.embedder_egress_allow.is_empty() {
+        write!(
+            output,
+            "Authorize this network endpoint to receive all embeddable entities? [y/N]: "
+        )?;
+        output.flush()?;
+        let mut line = String::new();
+        input.read_line(&mut line)?;
+        if !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            anyhow::bail!(
+                "remote egress was not authorized; choose local/none or pass explicit entity IDs"
+            );
+        }
+        args.embedder_egress_allow_all = true;
+    }
+    Ok(())
+}
+
 fn config_text(args: &InitArgs, choice: EmbedderProvider, path: &Path) -> anyhow::Result<String> {
     let mut table: toml::Table = match std::fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text)?,
@@ -132,7 +204,12 @@ fn config_text(args: &InitArgs, choice: EmbedderProvider, path: &Path) -> anyhow
         Err(error) => return Err(error.into()),
     };
     if choice != EmbedderProvider::Endpoint
-        && (args.embedder_endpoint.is_some() || args.embedder_api_key_env.is_some())
+        && (args.embedder_endpoint.is_some()
+            || args.embedder_api_key_env.is_some()
+            || args.embedder_locality.is_some()
+            || args.embedder_fallback_endpoint.is_some()
+            || args.embedder_egress_allow_all
+            || !args.embedder_egress_allow.is_empty())
     {
         anyhow::bail!("endpoint options require --embedder endpoint");
     }
@@ -169,16 +246,54 @@ fn config_text(args: &InitArgs, choice: EmbedderProvider, path: &Path) -> anyhow
             .ok_or_else(|| {
                 anyhow::anyhow!("--embedder endpoint requires --embedder-endpoint URL")
             })?;
-        embedder.insert("endpoint".into(), endpoint.clone().into());
-        embedder.insert(
-            "model_key".into(),
-            args.embedder_model_key
-                .clone()
-                .unwrap_or(defaults.local.repo)
-                .into(),
-        );
-        if let Some(name) = &args.embedder_api_key_env {
-            embedder.insert("api_key_env".into(), name.clone().into());
+        let locality = endpoint_locality(args)?;
+        let model_key = args
+            .embedder_model_key
+            .clone()
+            .unwrap_or(defaults.local.repo);
+        if locality == EmbedderLocality::OnDevice {
+            if args.embedder_fallback_endpoint.is_some()
+                || args.embedder_egress_allow_all
+                || !args.embedder_egress_allow.is_empty()
+            {
+                anyhow::bail!("fallback and egress options require a remote endpoint locality");
+            }
+            embedder.insert("endpoint".into(), endpoint.clone().into());
+            embedder.insert("model_key".into(), model_key.into());
+            if let Some(name) = &args.embedder_api_key_env {
+                embedder.insert("api_key_env".into(), name.clone().into());
+            }
+        } else {
+            let fallback = args.embedder_fallback_endpoint.as_ref().filter(|url| !url.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("network endpoints require --embedder-fallback-endpoint with the same model on device"))?;
+            if !args.embedder_egress_allow_all && args.embedder_egress_allow.is_empty() {
+                anyhow::bail!(
+                    "network endpoints require explicit --embedder-egress-allow IDs or --embedder-egress-allow-all authorization"
+                );
+            }
+            embedder.insert("endpoint".into(), fallback.clone().into());
+            embedder.insert("model_key".into(), model_key.clone().into());
+            let mut remote = toml::Table::new();
+            remote.insert("endpoint".into(), endpoint.clone().into());
+            remote.insert("model_key".into(), model_key.into());
+            remote.insert("locality".into(), locality.as_str().into());
+            if let Some(name) = &args.embedder_api_key_env {
+                remote.insert("api_key_env".into(), name.clone().into());
+            }
+            let mut egress = toml::Table::new();
+            egress.insert("allow_all".into(), args.embedder_egress_allow_all.into());
+            egress.insert(
+                "allow".into(),
+                toml::Value::Array(
+                    args.embedder_egress_allow
+                        .iter()
+                        .cloned()
+                        .map(toml::Value::from)
+                        .collect(),
+                ),
+            );
+            remote.insert("egress".into(), egress.into());
+            embedder.insert("remote".into(), remote.into());
         }
     }
     let vault_path = std::path::absolute(&args.path)?;
@@ -281,5 +396,54 @@ provider = "local"
         let config = read_config(&path).unwrap();
         assert_eq!(config.port, 12345);
         assert!(!config.embedder.unwrap().is_active());
+    }
+    #[test]
+    fn network_init_requires_explicit_egress_and_a_local_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        let mut args = InitArgs {
+            path: dir.path().join("vault"),
+            embedder_endpoint: Some("https://embed.example/v1".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            endpoint_locality(&args).unwrap(),
+            EmbedderLocality::ThirdParty
+        );
+        assert!(config_text(&args, EmbedderProvider::Endpoint, &path).is_err());
+        args.embedder_fallback_endpoint = Some("http://127.0.0.1:8080/v1".into());
+        assert!(config_text(&args, EmbedderProvider::Endpoint, &path).is_err());
+        args.embedder_egress_allow = vec![oneiron::EntityId::now().to_hex()];
+        let text = config_text(&args, EmbedderProvider::Endpoint, &path).unwrap();
+        let staged = stage_config(&path, &text).unwrap();
+        let config = read_config(&staged).unwrap().embedder.unwrap();
+        let remote = config.remote.as_ref().unwrap();
+        assert_eq!(remote.locality, EmbedderLocality::ThirdParty);
+        assert_eq!(remote.endpoint, "https://embed.example/v1");
+        assert_eq!(
+            remote.egress.as_ref().unwrap().allow,
+            args.embedder_egress_allow
+        );
+        assert!(!remote.egress.as_ref().unwrap().allow_all);
+        assert_eq!(config.endpoint.locality, EmbedderLocality::OnDevice);
+        crate::embedder::build_remote_rung(&config).unwrap();
+        assert!(!path.exists());
+        assert!(!args.path.exists());
+    }
+
+    #[test]
+    fn interactive_remote_authorization_defaults_to_refusal() {
+        let mut args = InitArgs::default();
+        assert!(
+            ask_remote_options(
+                &mut args,
+                &mut "http://127.0.0.1:8080/v1\n\n".as_bytes(),
+                &mut Vec::new()
+            )
+            .is_err()
+        );
+        assert!(!args.embedder_egress_allow_all);
+        ask_remote_options(&mut args, &mut "yes\n".as_bytes(), &mut Vec::new()).unwrap();
+        assert!(args.embedder_egress_allow_all);
     }
 }
