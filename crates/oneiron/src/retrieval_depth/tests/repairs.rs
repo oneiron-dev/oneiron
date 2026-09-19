@@ -502,3 +502,78 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
     );
     Ok(())
 }
+
+#[test]
+fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResult {
+    use crate::vault::ReadMode;
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (id, subject, world_a, world_b) = (entity(0xA1), entity(0xA2), entity(0xA3), entity(0xA4));
+    let mut body = ClaimBody::new(
+        "core.fact",
+        ClaimSubject::Entity(subject),
+        Value::from("world A content"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world_a);
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            range(1),
+            1,
+            &encode_claim_body(&body)?,
+        )
+        .text(&id, &[("body", "scopefrontier original")])
+        .commit()?;
+    let old_pin = vault.indexed_revision(&id)?.expect("indexed birth");
+    body.world = Some(world_b);
+    body.value = Value::from("world B content");
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            range(2),
+            2,
+            &encode_claim_body(&body)?,
+        )
+        .text(&id, &[("body", "scopefrontier edited")])
+        .commit()?;
+    let new_pin = vault.pin_entity_revision(&id)?;
+    assert_ne!(old_pin, new_pin);
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let search = |world| {
+        let scope = SessionScope {
+            world_ref: Some(world),
+            ..Default::default()
+        };
+        scoped.search_with_effort(&DepthSearchRequest {
+            session_scope: Some(&scope),
+            ..text_request("scopefrontier", Effort::Light)
+        })
+    };
+    assert!(search(world_b)?.hits.is_empty());
+    let old_result = search(world_a)?;
+    assert_eq!(hit_ids(&old_result), vec![id]);
+    assert_eq!(old_result.revisions[&id], old_pin);
+    let pinned_body = scoped
+        .get_with_mode(&id, ReadMode::Pinned(old_pin))?
+        .expect("selected body");
+    assert_eq!(
+        crate::claim::decode_claim_body(&pinned_body, true)?.world,
+        Some(world_a)
+    );
+    vault.set_indexed_idle_delay_ms(0)?;
+    assert_eq!(
+        vault.refresh_staged_indexed_at_idle(u64::MAX)?.refreshed,
+        vec![(id, new_pin)]
+    );
+    assert!(search(world_a)?.hits.is_empty());
+    let current_result = search(world_b)?;
+    assert_eq!(hit_ids(&current_result), vec![id]);
+    assert_eq!(current_result.revisions[&id], new_pin);
+    Ok(())
+}
