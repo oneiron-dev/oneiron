@@ -4253,3 +4253,64 @@ fn retrieval_quality_old_empty_context_defaults_to_passthrough() {
         ConfidenceAdjustment::PASSTHROUGH
     );
 }
+
+#[test]
+fn pack_vectors_follow_the_selected_indexed_frontier() -> Result<()> {
+    use crate::vault::ReadMode;
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let old_vector = vec![1.0, 0.0, 0.0, 0.0];
+    let new_vector = vec![0.0, 1.0, 0.0, 0.0];
+    put_claim_text_entity(&vault, &id, "vectorfrontier", "test.vector", "old")?;
+    vault.put_vector(&id, &old_vector)?;
+    let old_pin = vault.pin_entity_revision(&id)?;
+    let read = |mode| {
+        vault
+            .context_pack()
+            .search_text("vectorfrontier", 10)
+            .read_mode(mode)
+            .include_vectors(true)
+            .run()
+    };
+    let original = read(ReadMode::Pinned(old_pin))?;
+    assert_eq!(original.results.len(), 1);
+    assert_eq!(original.results[0].vector.as_ref(), Some(&old_vector));
+
+    put_claim_text_entity(&vault, &id, "vectorfrontier", "test.vector", "new")?;
+    vault.put_vector(&id, &new_vector)?;
+    let new_pin = vault.pin_entity_revision(&id)?;
+    assert_ne!(old_pin, new_pin);
+    // Caller-staged input has not replaced the indexed vector yet. Historical
+    // content can still use that row; live/new-pinned content cannot.
+    assert_eq!(
+        read(ReadMode::Pinned(old_pin))?.results[0].vector.as_ref(),
+        Some(&old_vector)
+    );
+    assert!(read(ReadMode::Pinned(new_pin))?.results[0].vector.is_none());
+    assert!(read(ReadMode::Live)?.results[0].vector.is_none());
+    vault.set_indexed_idle_delay_ms(0)?;
+    assert_eq!(
+        vault.refresh_staged_indexed_at_idle(u64::MAX)?.refreshed,
+        vec![(id, new_pin)]
+    );
+    let historical = read(ReadMode::Pinned(old_pin))?;
+    assert_eq!(historical.results.len(), 1);
+    assert_eq!(historical.results[0].source_revision_ref, Some(old_pin.0));
+    assert_eq!(
+        historical.results[0].fields.as_ref().unwrap().get("val"),
+        Some(&serde_json::json!("old"))
+    );
+    assert!(historical.results[0].vector.is_none());
+    let current = read(ReadMode::Pinned(new_pin))?;
+    assert_eq!(current.results[0].source_revision_ref, Some(new_pin.0));
+    assert_eq!(current.results[0].vector.as_ref(), Some(&new_vector));
+    assert_eq!(
+        read(ReadMode::Indexed)?.results[0].vector.as_ref(),
+        Some(&new_vector)
+    );
+    assert_eq!(
+        read(ReadMode::Live)?.results[0].vector.as_ref(),
+        Some(&new_vector)
+    );
+    Ok(())
+}

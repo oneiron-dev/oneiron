@@ -136,7 +136,20 @@ pub(super) fn hydrate_entity(
         None
     };
 
-    let vector = if options.include_vectors {
+    let source_revision = match options.read_mode {
+        crate::vault::ReadMode::Pinned(revision) => Some(revision),
+        mode => {
+            crate::vault::entity_revision::revision_for_mode_in_txn(&vault.store, rtxn, &id, mode)?
+        }
+    };
+    // The single vector row belongs to the indexed frontier, not necessarily
+    // the live body or a historical pin. No revision state means an unversioned
+    // current row; explicit pins always carry a source revision here.
+    let vector = if options.include_vectors
+        && match source_revision {
+            Some(revision) => vault.indexed_revision_in_txn(rtxn, &id)? == Some(revision),
+            None => true,
+        } {
         read_vector(vault, rtxn, &id)?
     } else {
         None
@@ -146,16 +159,7 @@ pub(super) fn hydrate_entity(
         id,
         short_id,
         content_hash,
-        source_revision_ref: match options.read_mode {
-            crate::vault::ReadMode::Pinned(revision) => Some(revision.0),
-            mode => crate::vault::entity_revision::revision_for_mode_in_txn(
-                &vault.store,
-                rtxn,
-                &id,
-                mode,
-            )?
-            .map(|revision| revision.0),
-        },
+        source_revision_ref: source_revision.map(|revision| revision.0),
         entity_type: header.entity_type,
         score,
         fields,
