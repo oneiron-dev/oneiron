@@ -82,6 +82,7 @@ pub enum StreamFinality {
 pub enum StreamFinalityReason {
     ExplicitFinalize,
     IdleTimeout30s,
+    IdleTimeout { timeout_ms: u64 },
     ProcessCrashRecovery,
     UserInterrupted,
     AgentAborted,

@@ -307,10 +307,21 @@ fn message_stream_policy_precedence_bounds_and_actor_ownership() {
         outsider.append_to_stream(explicit, "forged"),
         Err(MessageStreamError::WrongActor)
     ));
-    assert_eq!(
-        vault.pump_message_streams_at(10).unwrap().finalized.len(),
-        3
-    );
+    let expired = vault.pump_message_streams_at(10).unwrap();
+    assert_eq!(expired.finalized.len(), 3);
+    for receipt in &expired.finalized {
+        assert_eq!(
+            receipt.finality_reason,
+            StreamFinalityReason::IdleTimeout { timeout_ms: 10 }
+        );
+        assert_eq!(
+            vault
+                .message_stream_receipt(&receipt.message_id)
+                .unwrap()
+                .as_ref(),
+            Some(receipt)
+        );
+    }
     assert!(matches!(
         memory.append_to_stream(explicit, "stale"),
         Err(MessageStreamError::StreamNotFound)
@@ -555,4 +566,33 @@ fn message_stream_concurrent_begin_has_one_winner_and_idle_never_loses_accepted_
         assert_eq!(report.finalized.len(), 1);
         assert_eq!(content(&vault, handle.message_id()), "");
     }
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn message_stream_continuation_window_counts_only_new_unicode_scalars() {
+    let (_dir, vault, actor) = fixture();
+    let memory = vault.memory(actor, EdgeActorClass::Human);
+    let turn = input();
+    let first = memory
+        .begin_message_stream(&turn, Some(MessageWriteMode::Atomic))
+        .unwrap();
+    memory.append_to_stream(first, "committed base").unwrap();
+    memory.finalize_stream(first).unwrap();
+    let mut frames = vault.message_streams.presence.subscribe_frames();
+    let continuation = memory
+        .begin_message_stream(&turn, Some(streamed(StreamCadence::PerWindow { chars: 3 })))
+        .unwrap();
+    memory.append_to_stream(continuation, "é界").unwrap();
+    assert!(frames.try_recv().is_err());
+    memory.append_to_stream(continuation, "🙂").unwrap();
+    assert_eq!(
+        frame_text(&frames.try_recv().unwrap()).as_deref(),
+        Some("committed baseé界🙂")
+    );
+    memory.finalize_stream(continuation).unwrap();
+    assert_eq!(
+        content(&vault, continuation.message_id()),
+        "committed baseé界🙂"
+    );
 }

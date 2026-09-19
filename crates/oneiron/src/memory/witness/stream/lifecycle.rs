@@ -92,7 +92,13 @@ impl Vault {
                 self,
                 &state,
                 StreamFinality::Partial,
-                StreamFinalityReason::IdleTimeout30s,
+                if state.seed.idle_timeout_ms == DEFAULT_MESSAGE_STREAM_IDLE_MS {
+                    StreamFinalityReason::IdleTimeout30s
+                } else {
+                    StreamFinalityReason::IdleTimeout {
+                        timeout_ms: state.seed.idle_timeout_ms,
+                    }
+                },
                 false,
             ) {
                 Ok(receipt) => {

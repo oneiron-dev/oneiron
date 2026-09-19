@@ -122,6 +122,7 @@ impl Memory<'_> {
                         return Err(MessageStreamError::StreamAlreadyActive(id));
                     }
                     state.base = committed_text(self.vault, txn, &state.seed)?.unwrap_or_default();
+                    state.emitted_chars = state.base.chars().count();
                     state.seed.continuation =
                         self.vault.store.entities.get(txn, id.as_bytes())?.is_some();
                     if state.seed.continuation && !state.pending.is_empty() {
