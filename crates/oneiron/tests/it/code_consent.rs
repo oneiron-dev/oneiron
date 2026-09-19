@@ -959,7 +959,10 @@ fn free_lane_reuse_refuses_soft_deleted_record() {
 fn free_lane_reuse_refuses_divergent_occupant() {
     let record = free_lane_record_id_for("free-divergent-run");
     for (entity_type, body) in [
-        (4_u8, b"a person, not an admission record".as_slice()),
+        (
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            b"a person, not an admission record".as_slice(),
+        ),
         (
             ENTITY_TYPE_ASSET,
             b"an asset with the wrong body".as_slice(),
