@@ -1788,7 +1788,10 @@ mod peer_fixture {
                 self.claim(candidate.claim_id).approval,
                 ClaimApprovalStatus::Proposed
             );
-            let pending = self.vault.pending_gate_consents(1_000).unwrap();
+            let pending = self
+                .vault
+                .pending_gate_consents(1_000)
+                .expect("read correction and annotation consents");
             assert!(
                 pending
                     .iter()
@@ -1799,27 +1802,37 @@ mod peer_fixture {
                     .iter()
                     .filter(|row| row.claim_id != *candidate.claim_id.as_bytes())
                     .all(|row| self
-                        .claim(EntityId::from_bytes(row.claim_id).unwrap())
+                        .claim(EntityId::from_bytes(row.claim_id).expect("stored pending claim id"))
                         .predicate
                         == "core.conflict.open")
             );
             let proposed = self
                 .vault
                 .get(&candidate.claim_id)
-                .unwrap()
+                .expect("read proposed correction")
                 .expect("proposal bytes");
             self.vault
                 .approve_inbox_member_with_edit_at(&candidate.claim_id, &proposed, PEER_NOW + 1)
                 .expect("owner confirms attributed correction");
-            let pending = self.vault.pending_gate_consents(1_000).unwrap();
+            let pending = self
+                .vault
+                .pending_gate_consents(1_000)
+                .expect("read correction and annotation consents");
             assert!(
                 !pending
                     .iter()
                     .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
             );
-            assert!(pending.iter().all(|row| matches!(
-                self.claim(EntityId::from_bytes(row.claim_id).unwrap()).predicate.as_str(),
-                "core.conflict.open" | "core.supersession.provenance")));
+            assert!(pending.iter().all(|row| {
+                matches!(
+                    self.claim(
+                        EntityId::from_bytes(row.claim_id).expect("stored pending claim id")
+                    )
+                    .predicate
+                    .as_str(),
+                    "core.conflict.open" | "core.supersession.provenance"
+                )
+            }));
             assert_eq!(
                 self.claim(candidate.claim_id).approval,
                 ClaimApprovalStatus::Approved
