@@ -464,7 +464,9 @@ fn accept_member_with_amendment_in_txn(
         let mut redemption = pending.clone();
         redemption.diff_handle = diff_handle;
         redemption.read_frontier_hash = read_frontier_hash;
-        vault.store.put_pending_gate_consent_in_txn(wtxn, &redemption)?;
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &redemption)?;
     }
     if amended_approval || reviewed.approval != ClaimApprovalStatus::Approved {
         apply_ops(

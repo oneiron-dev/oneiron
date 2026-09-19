@@ -364,7 +364,10 @@ impl StoredMintMark {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredMinedEvidence {
     pub(super) v: u8,
-    #[serde(serialize_with = "super::stored_fields::serialize_opt_entity", deserialize_with = "super::stored_fields::deserialize_opt_entity")]
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_opt_entity",
+        deserialize_with = "super::stored_fields::deserialize_opt_entity"
+    )]
     pub(super) principal: Option<EntityId>,
     pub(super) target: CompilationTarget,
     pub(super) scope: String,
@@ -396,7 +399,10 @@ impl StoredMinedEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredSkillEdit {
     #[serde(default)]
-    #[serde(serialize_with = "super::stored_fields::serialize_opt_entity", deserialize_with = "super::stored_fields::deserialize_opt_entity")]
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_opt_entity",
+        deserialize_with = "super::stored_fields::deserialize_opt_entity"
+    )]
     pub(super) principal: Option<EntityId>,
     pub(super) v: u8,
     pub(super) skill: String,

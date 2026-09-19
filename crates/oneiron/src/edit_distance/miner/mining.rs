@@ -232,13 +232,18 @@ fn clusters_from(
 ) -> Result<Vec<SubstitutionCluster>> {
     let artifacts = artifact_index(vault)?;
     let decisions = super::feedback::principal_decisions(vault)?;
-    let decision_by_receipt = decisions.iter().map(|row| (row.receipt.as_str(), row)).collect::<BTreeMap<_, _>>();
+    let decision_by_receipt = decisions
+        .iter()
+        .map(|row| (row.receipt.as_str(), row))
+        .collect::<BTreeMap<_, _>>();
     let mut buckets: BTreeMap<ClusterKey, Bucket> = BTreeMap::new();
     for judgment in judgments {
         let Some(source) = amendment_source(vault, judgment, &artifacts)? else {
             continue;
         };
-        let binding = decision_by_receipt.get(judgment.receipt_id.as_str()).copied();
+        let binding = decision_by_receipt
+            .get(judgment.receipt_id.as_str())
+            .copied();
         let binding = binding.filter(|row| {
             row.outcome == "approved_amended"
                 && row.actor == source.actor

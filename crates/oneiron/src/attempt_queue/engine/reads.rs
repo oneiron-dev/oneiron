@@ -120,7 +120,11 @@ impl AttemptQueue<'_> {
     }
 
     /// Reads a queue row in the caller's snapshot without nesting an LMDB reader.
-    pub(crate) fn get_in_txn(&self, txn: &heed::RoTxn<'_>, id: AttemptId) -> Result<Option<AttemptRecord>> {
+    pub(crate) fn get_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<AttemptRecord>> {
         let Some(raw) = self.store.attempt_records.get(txn, id.as_bytes())? else {
             return Ok(None);
         };

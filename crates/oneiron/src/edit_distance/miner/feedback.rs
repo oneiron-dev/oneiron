@@ -19,18 +19,33 @@ const LABEL: &str = "principal-bound inbox decision";
 pub(super) struct PrincipalDecision {
     v: u8,
     pub(super) receipt: String,
-    #[serde(serialize_with = "super::stored_fields::serialize_opt_entity", deserialize_with = "super::stored_fields::deserialize_opt_entity")]
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_opt_entity",
+        deserialize_with = "super::stored_fields::deserialize_opt_entity"
+    )]
     pub(super) claim: Option<EntityId>,
-    #[serde(serialize_with = "super::stored_fields::serialize_entity", deserialize_with = "super::stored_fields::deserialize_entity")]
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_entity",
+        deserialize_with = "super::stored_fields::deserialize_entity"
+    )]
     pub(super) principal: EntityId,
-    #[serde(serialize_with = "super::stored_fields::serialize_entity", deserialize_with = "super::stored_fields::deserialize_entity")]
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_entity",
+        deserialize_with = "super::stored_fields::deserialize_entity"
+    )]
     pub(super) actor: EntityId,
-    #[serde(serialize_with = "super::stored_fields::serialize_opt_entity", deserialize_with = "super::stored_fields::deserialize_opt_entity")]
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_opt_entity",
+        deserialize_with = "super::stored_fields::deserialize_opt_entity"
+    )]
     pub(super) skill: Option<EntityId>,
     pub(super) target: CompilationTarget,
     pub(super) outcome: String,
     pub(super) predicate: String,
-    #[serde(serialize_with = "super::stored_fields::serialize_opt_value", deserialize_with = "super::stored_fields::deserialize_opt_value")]
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_opt_value",
+        deserialize_with = "super::stored_fields::deserialize_opt_value"
+    )]
     pub(super) reviewed_value: Option<Value>,
     /// Canonical reviewed claim identity, not caller-supplied text evidence.
     pub(super) fingerprint: String,
