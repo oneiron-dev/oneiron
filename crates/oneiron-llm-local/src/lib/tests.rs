@@ -294,3 +294,69 @@ fn poll_stream_once(stream: &mut LlmStream<'_>) -> Option<LlmResult<LlmStreamEve
         Poll::Pending => panic!("fixture stream should not pend"),
     }
 }
+
+#[test]
+fn registry_backed_runtime_requires_binding_and_intersects_capabilities() {
+    use oneiron::llm::{
+        LlmCatalogCost,
+        registry::{ModelRegistryRow, ModelWireFormat},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+    let runtime = FixtureRuntime::new(
+        metadata_with(BTreeMap::new()),
+        vec![LocalOutputPart::text("registered")],
+    );
+    assert!(matches!(
+        LocalLlmBackend::from_registry(runtime.clone(), &vault),
+        Err(oneiron::Error::InvalidConfig(_))
+    ));
+    let mut catalog = runtime.metadata.catalog_entry();
+    catalog.context_window_tokens = 16_384;
+    catalog.capabilities.push(LlmCapability::ToolCalling);
+    catalog.cost = Some(LlmCatalogCost {
+        input_per_million: "1".into(),
+        output_per_million: "2".into(),
+        cache_read_per_million: None,
+        cache_write_per_million: None,
+    });
+    let mut row = ModelRegistryRow {
+        version: 1,
+        wire: ModelWireFormat::Local,
+        catalog,
+        scores: BTreeMap::new(),
+        fetched_at: BTreeMap::new(),
+    };
+    vault.put_model_registry_row(&row).unwrap();
+    let backend = LocalLlmBackend::from_registry(runtime.clone(), &vault).unwrap();
+    let entry = backend.descriptor();
+    assert_eq!(entry.context_window_tokens, 8192);
+    assert_eq!(entry.cost, row.catalog.cost);
+    assert!(entry.supports(&LlmCapability::Streaming));
+    assert!(!entry.supports(&LlmCapability::ToolCalling));
+    let guard = oneiron::BudgetGuard::with_reserve_units(
+        "local",
+        100,
+        10,
+        oneiron::BudgetExhaustionPolicy::Suspend,
+    );
+    let lease = guard.admit_for_request(&sample_request()).unwrap().lease;
+    let events = collect_events(backend.stream(sample_request(), &lease).unwrap());
+    let LlmStreamEvent::Done { message, usage, .. } = events.last().unwrap() else {
+        panic!("missing terminal")
+    };
+    assert_eq!(
+        message.content,
+        vec![ContentPart::Text {
+            text: "registered".into()
+        }]
+    );
+    guard.settle_per_call(&lease, usage).unwrap();
+    assert_eq!(guard.read().reserved_units, 0);
+    row.wire = ModelWireFormat::OpenaiCompat;
+    vault.put_model_registry_row(&row).unwrap();
+    assert!(matches!(
+        LocalLlmBackend::from_registry(runtime, &vault),
+        Err(oneiron::Error::InvalidConfig(_))
+    ));
+}
