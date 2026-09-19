@@ -474,8 +474,22 @@ fn sk02_update_widening_capability_surface_requires_reconsent() -> Result<()> {
 #[test]
 fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let skill_entity = EntityId::now();
-    put_active_native_skill(&vault, &skill_entity, "oracle.skill.verdicts")?;
+    // This law crosses hub aliases, so its carrier is an actual imported
+    // Candidate. A native owner's record is not a valid hub publisher payload.
+    let first_ref = HubRef::new(
+        EntityId::now(),
+        "skills/oracle-verdicts-origin",
+        HubPin::None,
+    )?;
+    let package = native_package(
+        imported_candidate("oracle.skill.verdicts", fixture_tree_hash()),
+        vec![HubFile::new(
+            "SKILL.md",
+            b"# oracle fixture skill\n".to_vec(),
+        )],
+        SkillCapabilitySurface::default(),
+    );
+    let skill_entity = vault.import_skill_from_hub(&first_ref, &package, t(10), 11)?;
 
     let content_hash = fixture_tree_hash();
     let receipts = [
