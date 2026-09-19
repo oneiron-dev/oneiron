@@ -19,7 +19,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(io::Error::new(io::ErrorKind::AlreadyExists, "output already exists").into());
     }
     let report = FormualizerEngine::new().recalculate_xlsx(&fs::read(input)?)?;
-    let mut file = OpenOptions::new().write(true).create_new(true).open(output)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
     file.write_all(&report.bytes)?;
     file.sync_all()?;
     serde_json::to_writer(
