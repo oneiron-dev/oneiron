@@ -304,6 +304,47 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn forwarded_headers_cannot_replace_the_signing_transport_peer() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server =
+            Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
+        let app = routes().with_state(server);
+        for path in ["/sign/action", "/sign/pdf", "/sign/preview"] {
+            let body = if path == "/sign/action" {
+                serde_json::json!({"token":"11".repeat(32), "action":{"action":"load"}})
+            } else {
+                serde_json::json!({"token":"11".repeat(32), "item":0})
+            };
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header("x-forwarded-for", "192.0.2.7")
+                        .header("forwarded", "for=192.0.2.7")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap())
+                    .unwrap();
+            assert_eq!(
+                body,
+                serde_json::json!({"error":{"code":"signing_transport_unavailable"}})
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn geometry_upload_accepts_the_full_renderer_input_budget() {
         let dir = tempfile::tempdir().unwrap();
         let vault =

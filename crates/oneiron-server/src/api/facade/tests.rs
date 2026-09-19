@@ -224,3 +224,132 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         assert!(body["count"].as_u64().unwrap() > 0);
     }
 }
+
+#[tokio::test]
+async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
+    async fn post(app: axum::Router, token: &str, verb: &str, input: Value) -> (StatusCode, Value) {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/core/facade/{verb}"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&input).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+    const SECRET: &str = "room-http-acceptance";
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let addressed = EntityId::now();
+    let other = EntityId::now();
+    for actor in [addressed, other] {
+        vault
+            .put_entity(
+                &actor,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"companion",
+            )
+            .unwrap();
+    }
+    let project = EntityId::now();
+    let mut spec = oneiron::workspace_roster::ProjectRecord::new(
+        project,
+        Some(vault.root_project().unwrap()),
+        vault.root_project().unwrap(),
+        owner,
+    );
+    spec.roster.extend([addressed.to_hex(), other.to_hex()]);
+    vault.put_project(project, &spec, 1).unwrap();
+    let room = EntityId::from_hex(&spec.home_room).unwrap();
+    vault
+        .bind_room_handle(room, "@addressed", addressed)
+        .unwrap();
+    let token = |actor: EntityId, class: &str| {
+        crate::auth::mint_core_token_v2(
+            SECRET,
+            &format!(
+                "scope=core:read,core:write;principal_ref={};actor_class={class}",
+                actor.to_hex()
+            ),
+        )
+    };
+    let owner_token = token(owner, "human");
+    let addressed_token = token(addressed, "agent");
+    let other_token = token(other, "agent");
+    let app = crate::build_app(Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            crate::config::SyncServerConfig {
+                auth_secret: Some(SECRET.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    ));
+    let (status, rooms) = post(app.clone(), &addressed_token, "rooms.list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{rooms}");
+    assert_eq!(rooms.as_array().unwrap().len(), 1);
+    let turn = EntityId::now().to_hex();
+    let incoming = json!({"conversation_ref":room.to_hex(),"turn_ref":turn,"occurred_at":2,
+        "messages":[{"author":"user","message_type":"text","content":"@addressed respond",
+        "metadata":{"room_mentions":["@addressed"]},"order":0}]});
+    let (status, receipt) = post(app.clone(), &owner_token, "rooms.speak", incoming).await;
+    assert_eq!(status, StatusCode::OK, "{receipt}");
+    assert!(
+        receipt["receipt_ref"]
+            .as_str()
+            .unwrap()
+            .starts_with("witness:")
+    );
+    let reply = json!({"conversation_ref":room.to_hex(),"turn_ref":EntityId::now().to_hex(),"occurred_at":3,
+        "messages":[{"author":"companion","message_type":"text","content":"Answer",
+        "metadata":{"room_reply_to":turn},"order":0}]});
+    let (status, _) = post(app.clone(), &addressed_token, "rooms.speak", reply.clone()).await;
+    assert_ne!(status, StatusCode::OK);
+    let claim = json!({"room_ref":room.to_hex(),"turn_ref":turn});
+    let (status, outcome) = post(app.clone(), &other_token, "rooms.claim", claim.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{outcome}");
+    assert_eq!(outcome, json!("NotAddressed"));
+    let (status, claimed) = post(app.clone(), &addressed_token, "rooms.claim", claim.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{claimed}");
+    assert_eq!(claimed["Claimed"]["actor"], addressed.to_hex());
+    assert!(
+        claimed["Claimed"]["receipt_ref"]
+            .as_str()
+            .unwrap()
+            .starts_with("rooms.claim:")
+    );
+    assert_eq!(
+        post(app.clone(), &addressed_token, "rooms.claim", claim)
+            .await
+            .1,
+        claimed
+    );
+    let (status, _) = post(app.clone(), &other_token, "rooms.speak", reply.clone()).await;
+    assert_ne!(status, StatusCode::OK);
+    let (status, spoken) = post(app.clone(), &addressed_token, "rooms.speak", reply).await;
+    assert_eq!(status, StatusCode::OK, "{spoken}");
+    let (status, messages) = post(
+        app,
+        &owner_token,
+        "rooms.messages",
+        json!({"room_ref":room.to_hex()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{messages}");
+    let messages = messages.as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["addressed_agents"], json!([addressed.to_hex()]));
+    assert_eq!(messages[1]["actor"], addressed.to_hex());
+}
