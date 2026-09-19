@@ -34,7 +34,9 @@ pub(crate) fn check_hub_skill_put(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     record: &SkillRecord,
+    replaces_source: bool,
 ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    super::package_codec::check_source_binding_update(store, txn, id, record, replaces_source)?;
     let key = origin_key(id);
     let marked = store.vault_meta.get(txn, &key)?;
     let current_origin = origin(record);

@@ -167,6 +167,33 @@ fn validate_native_source(package: &HubPackage) -> Result<()> {
     Ok(())
 }
 
+/// A metadata-only write must not strand an existing source package. The typed
+/// hub-sync transaction replaces both halves; generic and replay writes do not.
+pub(super) fn check_source_binding_update(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    record: &crate::skill::SkillRecord,
+    replaces_source: bool,
+) -> Result<()> {
+    if replaces_source {
+        return Ok(());
+    }
+    if let Some(raw) = store.vault_meta.get(txn, &package_key(id))? {
+        let source = decode_hub_package(&raw)?;
+        if record.content_hash != Some(source.content_hash()?)
+            || record.skill_id != source.record.skill_id
+            || record.version != source.record.version
+            || record.desc != source.record.desc
+        {
+            return Err(invalid(
+                "source-backed skill revision requires an owning source transaction",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn package_key(entity: &EntityId) -> Vec<u8> {
     let mut key = b"skill_hub/package/v1\0".to_vec();
     key.extend_from_slice(entity.as_bytes());

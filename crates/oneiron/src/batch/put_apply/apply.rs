@@ -313,7 +313,8 @@ pub(in crate::batch) fn apply_put(
         crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::skill::decode_skill_record(data)?;
-        hub_origin_marker = crate::skill_hub::check_hub_skill_put(store, &*wtxn, &id, &decoded)?;
+        hub_origin_marker =
+            crate::skill_hub::check_hub_skill_put(store, &*wtxn, &id, &decoded, hub_sync_imported)?;
         new_skill_record = Some(decoded);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
         let decoded = crate::agent_def::decode_agent_definition(data)?;

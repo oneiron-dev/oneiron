@@ -256,6 +256,30 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
         vault.put_skill_record_in_txn(txn, &parent, &record, at(1), 1)?;
         vault.persist_hub_package_in_txn(txn, &parent, &source)
     })?;
+    let mut metadata_only = record.clone();
+    metadata_only.version = "2".into();
+    metadata_only.desc = "Different instructions without different files".into();
+    let body = crate::skill::encode_skill_record(&metadata_only)?;
+    for door in 0..3 {
+        let result = match door {
+            0 => vault.update_skill_record(&parent, &metadata_only, at(2), 2),
+            1 => vault
+                .batch()
+                .put(&parent, crate::registry::ENTITY_TYPE_SKILL, at(2), 2, &body)
+                .commit(),
+            _ => vault
+                .batch()
+                .put_replicated(&parent, crate::registry::ENTITY_TYPE_SKILL, at(2), 2, &body)
+                .commit(),
+        };
+        assert_eq!(
+            result
+                .expect_err("source and native metadata stay bound")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert_eq!(vault.get_skill_record(&parent)?, Some(record.clone()));
+    }
     let before = stored(&vault, parent)?;
     let fork_id = EntityId::now();
     let fork = vault.fork_skill_record(&parent, &fork_id, "personal-report", at(3), 3)?;
