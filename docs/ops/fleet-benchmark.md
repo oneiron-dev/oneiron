@@ -32,8 +32,12 @@ bytes. Setup and post-write content verification are not in the phase timings.
 
 The 100 cold/resume PPR pairs produced identical IDs and score bits. However,
 resume achieved only **0.9783x** fresh throughput (0.5480x including preparation).
-That is **not** a demonstrated speedup and does not yet qualify this receipt as
-an approved CI floor. The lower resume p99 does not erase the mean slowdown.
+That is **not** a demonstrated speedup. The lower resume p99 does not erase the
+mean slowdown. It remains valid measured baseline data: the committed
+[floor](evidence/W7-C10/fleet-macbook-floor.json) permits at most 15% throughput
+loss and 20% p99 increase from each phase. The converter checks the recorded
+ratio and samples; it does not confuse a valid baseline with a proven speedup.
+The separate hot-path optimization acceptance is still open.
 
 Source receipts: [fleet](evidence/W7-C10/fleet-macbook-before.json),
 [process](evidence/W7-C10/fleet-macbook-before-process.json). The binary BLAKE3 is
@@ -249,3 +253,24 @@ assigned worktree's `target/fleet-*` directories, which the source-sync wrapper
 excludes. This prevents live LMDB files or pending receipts from being copied or
 deleted during source sync. Compile activity during a measurement must still be
 reported as host load, not silently treated as an isolated performance sample.
+
+## Measured residual scaling before cache-insert optimization
+
+The same optimized MacBook binary measured 100 bit-exact cold/resume pairs at
+each size. Full and resumed results matched within each graph; graph sizes need
+not produce the same score digest. The run retained real persistent-cache IO and
+both durable query commits. It did not replace them with CPU-only timings.
+
+| Nodes | Pairs | Full mean ms | Resume mean ms | Resume p99 ms |
+|---|---:|---:|---:|---:|
+| 1,024 | 100 | 140.045 | 139.369 | 419.134 |
+| 4,096 | 100 | 126.070 | 119.899 | 258.909 |
+| 16,384 | 100 | 175.348 | 185.796 | 374.936 |
+
+The graph grew 16x while measured residual-miss cost grew **1.3331x**. That is
+observed sub-linear growth for this workload, not a universal complexity proof.
+The 16,384-node resumed arm was still slower than fresh (0.9438x throughput), so
+this scaling result alone is not evidence of an overall speedup. Shared-host IO
+variation is visible between runs and remains part of the evidence.
+Raw [scaling receipt](evidence/W7-C10/ppr-scaling-macbook-before.json) and
+[terminal outcome](evidence/W7-C10/ppr-scaling-macbook-before-process.json).
