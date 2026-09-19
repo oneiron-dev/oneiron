@@ -674,9 +674,7 @@ pub(in crate::batch) fn apply_put(
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
-    if let Some(key) = custody_name_index {
-        store.vault_meta.put(wtxn, &key, id.as_bytes())?;
-    }
+    crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
             store,

@@ -75,3 +75,16 @@ pub(crate) fn validate_replicated_custody_put(
     }
     Ok(())
 }
+
+/// Stage the already-validated name plan with its entity body.
+pub(crate) fn stage_replicated_name_index(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    key: Option<Vec<u8>>,
+) -> Result<()> {
+    if let Some(key) = key {
+        store.vault_meta.put(txn, &key, id.as_bytes())?;
+    }
+    Ok(())
+}

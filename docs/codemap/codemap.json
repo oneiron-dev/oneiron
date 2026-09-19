@@ -19403,7 +19403,7 @@
      "path": "src/secret_custody/replication.rs",
      "purpose": "Name-index planning for admitted same-vault custody replay",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
