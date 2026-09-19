@@ -330,15 +330,16 @@ fn read_admitted_share_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<(Share, ShareAdmission)>> {
-    let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
-        return Ok(None);
+    let raw = match store.port_entity_record(txn, id) {
+        Ok(Some(raw)) => raw,
+        // A malformed share proves no grant. Storage failures still propagate.
+        Ok(None) | Err(Error::CorruptedIndex("entity header")) => return Ok(None),
+        Err(error) => return Err(error),
     };
-    if EntityMetadataHeader::parse(&raw)
-        .is_none_or(|header| header.entity_type != ENTITY_TYPE_ACCESS_GRANT)
-    {
+    if raw.entity_type != ENTITY_TYPE_ACCESS_GRANT {
         return Ok(None);
     }
-    let Ok(grant) = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]) else {
+    let Ok(grant) = decode_access_grant_body(&raw.body) else {
         return Ok(None);
     };
     let Some(share) = Share::from_grant(&grant) else {
@@ -394,8 +395,12 @@ fn share_viewer_actor_in_txn(
     txn: &heed::RoTxn<'_>,
     viewer: &EntityId,
 ) -> Result<Option<ScopedReadActorKey>> {
-    let Some(raw) = vault.store.port_entity_record(txn, &viewer)? else {
-        return Ok(None);
+    let raw = match vault.store.port_entity_record(txn, viewer) {
+        Ok(Some(raw)) => raw,
+        // Invalid identity envelopes cannot supply a read actor. Do not hide
+        // storage failures or unverifiable authority bindings in the fold below.
+        Ok(None) | Err(Error::CorruptedIndex("entity header")) => return Ok(None),
+        Err(error) => return Err(error),
     };
 
     let classes = [

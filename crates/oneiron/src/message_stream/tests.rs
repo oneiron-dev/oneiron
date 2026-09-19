@@ -3,8 +3,11 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessMessage};
 fn fixture() -> (tempfile::TempDir, Vault, WriteActor) {
+    fixture_with_config(crate::VaultConfig::device())
+}
+fn fixture_with_config(config: crate::VaultConfig) -> (tempfile::TempDir, Vault, WriteActor) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
     let actor = WriteActor::new(
         vault.ensure_embedded_owner_actor().unwrap(),
         EdgeActorClass::Human,
@@ -46,7 +49,11 @@ fn text(vault: &Vault, id: EntityId) -> String {
 }
 #[test]
 fn duplicate_begin_refuses_and_finalize_writes_full_text_with_one_receipt() {
-    let (_dir, vault, actor) = fixture();
+    let clock = crate::ports::ManualClock::new(50);
+    let (_dir, vault, actor) = fixture_with_config(crate::VaultConfig {
+        store_clock: clock.bundle(),
+        ..crate::VaultConfig::device()
+    });
     let id = EntityId::now();
     let turn = template();
     let handle = vault
@@ -66,7 +73,9 @@ fn duplicate_begin_refuses_and_finalize_writes_full_text_with_one_receipt() {
         "first second"
     );
     assert!(vault.get(&id).unwrap().is_none());
+    clock.set(77);
     let receipt = vault.finalize_stream(&handle).unwrap();
+    assert_eq!(receipt.recorded_at(), 77);
     assert_eq!(receipt.finality(), MessageFinality::Final);
     assert_eq!(text(&vault, id), "first second");
     assert_eq!(vault.message_finality_receipt(id).unwrap(), Some(receipt));

@@ -1229,9 +1229,9 @@ fn run_root_ignores_non_dreamer_attempts_sharing_the_run_id() -> Result<()> {
 
 #[test]
 fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<()> {
-    let clock = std::sync::Arc::new(crate::ports::ManualClock::new(10));
+    let clock = crate::ports::ManualClock::new(10);
     let (_tmp, vault) = crate::test_util::open_test_vault_with(VaultConfig {
-        store_clock: crate::ports::StoreClock::new(clock.clone()),
+        store_clock: clock.bundle(),
         ..VaultConfig::default()
     });
     let run_id = "run-multiple-roots";

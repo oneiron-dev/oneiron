@@ -1618,9 +1618,9 @@ fn run_all_operations() -> Result<()> {
 #[test]
 fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
-    let clock = std::sync::Arc::new(crate::ports::ManualClock::new(1));
+    let clock = crate::ports::ManualClock::new(1);
     let vault = Vault::open(temp_dir.path(), VaultConfig {
-        store_clock: crate::ports::StoreClock::new(clock.clone()),
+        store_clock: clock.bundle(),
         ..test_config()
     })?;
     let queue = AttemptQueue::new(&vault);
@@ -1680,9 +1680,9 @@ fn attempt_queue_maintenance_warns_a_live_lease_before_cleanup_takes_it() -> Res
     const LEASE_TIMEOUT_SECS: u64 = 1_000;
 
     let temp_dir = tempfile::tempdir()?;
-    let clock = std::sync::Arc::new(crate::ports::ManualClock::new(1));
+    let clock = crate::ports::ManualClock::new(1);
     let vault = Vault::open(temp_dir.path(), VaultConfig {
-        store_clock: crate::ports::StoreClock::new(clock.clone()),
+        store_clock: clock.bundle(),
         ..test_config()
     })?;
     let queue = AttemptQueue::new(&vault);

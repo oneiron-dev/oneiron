@@ -108,6 +108,9 @@ impl MessageFinalityReceipt {
     pub fn finality_reason(&self) -> Option<&str> {
         self.finality_reason.as_deref()
     }
+    pub fn recorded_at(&self) -> u64 {
+        self.recorded_at
+    }
     pub fn text_blake3(&self) -> &str {
         &self.text_blake3
     }

@@ -38,9 +38,13 @@ pub(crate) fn resolve_policy_manifest(
             }
             Err(error) => return Err(error),
         };
-        let Some(raw) = store.port_entity_record(txn, &id)? else {
-            resolution.diagnostics.malformed_manifest_seen = true;
-            continue;
+        let raw = match store.port_entity_record(txn, &id) {
+            Ok(Some(row)) => row,
+            Ok(None) | Err(Error::CorruptedIndex("entity header")) => {
+                resolution.diagnostics.malformed_manifest_seen = true;
+                continue;
+            }
+            Err(error) => return Err(error),
         };
 
         if raw.entity_type != ENTITY_TYPE_POLICY_MANIFEST {

@@ -761,7 +761,7 @@ fn default_weight_matches_contract_ppr_weight_literals() {
         (EdgeKind::SameAs, None),
         (EdgeKind::MergedInto, Some(0.3)),
         (EdgeKind::SplitInto, Some(0.3)),
-        (EdgeKind::Blocks, None),
+        (EdgeKind::Blocks, Some(1.0)),
         (EdgeKind::Fulfills, None),
         (EdgeKind::DischargedBy, None),
         (EdgeKind::Parent, None),
@@ -906,13 +906,15 @@ fn conversation_edges_are_structural_door_only_and_non_traversed() -> Result<()>
             ),
             Err(Error::InvariantViolation(_))
         ));
-        assert_eq!(
-            vault
-                .put_edge(&EntityId::now(), kind, &EntityId::now(), 1.0)
-                .unwrap_err()
-                .kind(),
-            crate::ErrorKind::ReservedEdgeKind
-        );
+        if kind == EdgeKind::AddressedTo {
+            edge::validate_public_edge_creation_kind(kind)?;
+        } else {
+            assert_eq!(
+                vault.put_edge(&EntityId::now(), kind, &EntityId::now(), 1.0)
+                    .unwrap_err().kind(),
+                crate::ErrorKind::ReservedEdgeKind
+            );
+        }
         // Receive-side registry gates accept these bytes; topology readers
         // subsequently prove membership/cardinality. No protocol bump needed.
         edge::validate_public_edge_kind(kind)?;

@@ -86,7 +86,7 @@ impl Vault {
         }
         turn.messages[0].id = Some(message.to_hex());
         if turn.turn_ref.is_none() {
-            turn.turn_ref = Some(EntityId::now().to_hex());
+            turn.turn_ref = Some(self.new_entity_id()?.to_hex());
         }
         let policy = self.message_stream_policy()?;
         let mode = mode
@@ -127,7 +127,7 @@ impl Vault {
             })?;
         let handle = MessageStreamHandle {
             message,
-            token: EntityId::now(),
+            token: self.new_entity_id()?,
             mode,
         };
         streams.insert(
@@ -212,14 +212,14 @@ impl Vault {
         finality_reason: Option<String>,
     ) -> MessageStreamResult<MessageFinalityReceipt> {
         let state = state(streams, handle)?;
-        let receipt = MessageFinalityReceipt {
+        let mut receipt = MessageFinalityReceipt {
             receipt_id: handle.token.to_hex(),
             message_id: handle.message.to_hex(),
             actor_id: state.actor.entity_ref().to_hex(),
             finality,
             reason,
             finality_reason,
-            recorded_at: crate::unix_seconds_now(),
+            recorded_at: 0,
             text_blake3: blake3::hash(state.turn.messages[0].content.as_bytes())
                 .to_hex()
                 .to_string(),
@@ -227,7 +227,7 @@ impl Vault {
         // The witness transaction writes both the complete row and this receipt.
         // On refusal the buffer remains intact, so the obligation can be retried.
         self.memory(state.actor.entity_ref(), state.actor.actor_class())
-            .witness_stream_finality(&state.turn, &receipt)?;
+            .witness_stream_finality(&state.turn, &mut receipt)?;
         streams.remove(&handle.message);
         Ok(receipt)
     }

@@ -6,7 +6,7 @@ fn key(message: EntityId) -> Vec<u8> {
 pub(crate) fn write_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    receipt: &MessageFinalityReceipt,
+    receipt: &mut MessageFinalityReceipt,
     turn: &WitnessTurn,
     actor: EntityId,
 ) -> Result<()> {
@@ -26,6 +26,7 @@ pub(crate) fn write_in_txn(
     if vault.get_entity_type_in_txn(txn, &message)? != Some(crate::registry::ENTITY_TYPE_MESSAGE) {
         return Err(Error::EntityNotFound);
     }
+    receipt.recorded_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     let bytes = rmp_serde::to_vec_named(receipt)
         .map_err(|_| Error::InvariantViolation("stream receipt encode"))?;
     if let Some(old) = vault.store.vault_meta.get(txn, &key(message))?

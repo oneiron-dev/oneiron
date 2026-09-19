@@ -129,7 +129,7 @@ pub enum EdgeKind {
     Parent = 27,
     /// Sub-session was spawned by the target TURN (door-only).
     SpawnedBy = 28,
-    /// Record is addressed to the target PERSON (door-only).
+    /// Record is addressed to the target PERSON.
     AddressedTo = 29,
     /// Reply/quote pointer, independent of the Parent edge (door-only).
     RepliesTo = 30,
@@ -623,9 +623,6 @@ pub(crate) fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error
         )),
         EdgeKind::SpawnedBy => Err(crate::error::Error::Registry(
             crate::error::RegistryError::ReservedEdgeKind("spawned_by"),
-        )),
-        EdgeKind::AddressedTo => Err(crate::error::Error::Registry(
-            crate::error::RegistryError::ReservedEdgeKind("addressed_to"),
         )),
         EdgeKind::RepliesTo => Err(crate::error::Error::Registry(
             crate::error::RegistryError::ReservedEdgeKind("replies_to"),

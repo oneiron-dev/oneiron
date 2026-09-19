@@ -451,8 +451,13 @@ fn enumerate_admissible_turns(
         let time = entry?;
         let learned_at = time.timestamp;
         let turn_id = time.id;
-        let Some(raw) = vault.store.port_entity_record(txn, &turn_id)? else {
-            continue;
+        let raw = match vault.store.port_entity_record(txn, &turn_id) {
+            Ok(Some(raw)) => raw,
+            // An unreadable TURN is not an admissible member. The close fence
+            // compares these IDs with the plan and defers the entire round;
+            // explicit enqueue still rejects corrupt planned rows.
+            Ok(None) | Err(Error::CorruptedIndex("entity header")) => continue,
+            Err(error) => return Err(error),
         };
 
         if raw.entity_type != ENTITY_TYPE_TURN {

@@ -91,7 +91,7 @@ impl Memory<'_> {
     pub(crate) fn witness_stream_finality(
         &self,
         turn: &WitnessTurn,
-        receipt: &crate::message_stream::MessageFinalityReceipt,
+        receipt: &mut crate::message_stream::MessageFinalityReceipt,
     ) -> MemoryResult<WitnessReceipt> {
         self.witness_program(turn, None, || {}, Some(receipt))
     }
@@ -101,7 +101,7 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
-        stream_receipt: Option<&crate::message_stream::MessageFinalityReceipt>,
+        stream_receipt: Option<&mut crate::message_stream::MessageFinalityReceipt>,
     ) -> MemoryResult<WitnessReceipt> {
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
