@@ -279,6 +279,7 @@ pub(crate) fn storage_manages_text(
     Ok(state(store, txn, id)?.is_some() || !text_fields(body).is_empty())
 }
 
+#[cfg(feature = "sync")]
 pub(crate) fn entity_has_pending_revision(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,

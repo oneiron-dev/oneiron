@@ -11,11 +11,12 @@ pub(crate) use phonetic::defer_phonetic;
 mod storage;
 mod types;
 
+#[cfg(feature = "sync")]
+pub(crate) use storage::entity_has_pending_revision;
 pub(crate) use storage::{
-    capture_entity_revision, ensure_document, entity_has_pending_revision,
-    entity_owns_revision_in_txn, read_entity_revision_from_store_in_txn,
-    read_entity_revision_in_txn, remove_entity_revisions, revision_for_mode_in_txn,
-    storage_manages_text,
+    capture_entity_revision, ensure_document, entity_owns_revision_in_txn,
+    read_entity_revision_from_store_in_txn, read_entity_revision_in_txn, remove_entity_revisions,
+    revision_for_mode_in_txn, storage_manages_text,
 };
 pub use types::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
