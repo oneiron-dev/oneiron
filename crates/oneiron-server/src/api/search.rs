@@ -412,7 +412,7 @@ pub(crate) fn project_scoped_search_result(
         }))),
         View::Summary | View::Full => {
             let Some((entity_type, learned_at, body)) = scoped_read
-                .get_entity_parts_with_mode(&result.id, oneiron::vault::ReadMode::Indexed)?
+                .get_entity_parts_with_mode(&result.id, oneiron::memory::ReadMode::Indexed)?
             else {
                 return Ok(None);
             };
