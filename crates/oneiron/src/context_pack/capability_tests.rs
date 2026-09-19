@@ -127,20 +127,25 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
             .iter()
             .any(|hit| hit.id == crate::test_util::entity(9))
     );
-    // With no channel widening, kind relevance is applied after fusion.
-    // Include all fixture postings (including skill lexical hints), so this
-    // observes category accounting rather than scoped-widening truncation.
-    let filtered = vault
+    // A capability-only pack remains nonempty without overwriting memory
+    // accounting. The stored run and the returned pack must agree on the
+    // pre-filter memory population, independently of the five discoveries.
+    let filtered_run = vault
         .context_pack()
-        .search_text("channel", 128)
+        .search_text("channel", 20)
         .filter_types(&[ENTITY_TYPE_SKILL])
-        .run()?;
+        .run_with_telemetry()?;
+    let recorded = vault
+        .retrieval_run(filtered_run.run_id.expect("recorded run"))?
+        .expect("retrieval record");
+    assert_eq!(recorded.total_in_scope, 1);
+    let filtered = filtered_run.value;
     assert!(filtered.results.is_empty());
     assert_eq!(filtered.stats.candidates_considered, 1);
     assert_eq!(filtered.capabilities.len(), 5);
-    assert_eq!(
-        filtered.empty.as_ref().map(|empty| empty.reason),
-        Some(super::EmptyReason::FilterMatchedNone)
+    assert!(
+        filtered.empty.is_none(),
+        "discoveries keep the pack nonempty"
     );
     // Reverse pressure: more high-ranked memory rows still cannot remove discovery.
     for seed in 100..130 {

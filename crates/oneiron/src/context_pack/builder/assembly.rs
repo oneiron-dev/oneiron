@@ -410,11 +410,14 @@ impl<'a> ContextPackBuilder<'a> {
                 results.retain(|entity| ids.binary_search(&entity.id).is_err());
                 neighbors.retain(|entity| ids.binary_search(&entity.id).is_err());
             }
-            let pack_is_empty = results.is_empty()
-                && neighbors.is_empty()
-                && l2_base.is_none()
-                && capabilities.is_empty();
-            let candidates_considered = if pack_is_empty {
+            let memory_is_empty = results.is_empty() && neighbors.is_empty() && l2_base.is_none();
+            let pack_is_empty = memory_is_empty && capabilities.is_empty();
+            // Discoveries keep the whole pack nonempty, but never decide the
+            // memory channel's accounting. Non-owner disclosure still reports
+            // only admitted candidates, not pre-clamp population information.
+            let candidates_considered = if memory_is_empty
+                && clamp.is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone)
+            {
                 total_in_scope
             } else {
                 surfaced_candidate_count
