@@ -305,11 +305,11 @@ fn dropping_stalled_stream_closes_the_connection() {
         socket.flush().unwrap();
         started.send(()).unwrap();
         let mut byte = [0];
-        assert_eq!(
-            socket.read(&mut byte).unwrap(),
-            0,
-            "cancel must close peer socket"
-        );
+        match socket.read(&mut byte) {
+            Ok(0) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {},
+            outcome => panic!("cancel must close peer socket, got {outcome:?}"),
+        }
     });
     let guard = BudgetGuard::with_reserve_units("cancel", 100, 10, BudgetExhaustionPolicy::Suspend);
     let lease = guard.admit_for_request(&request()).unwrap().lease;
