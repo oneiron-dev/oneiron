@@ -1,6 +1,6 @@
 //! New births retain exact source and cannot acquire archive authority from a format tag.
 use super::{HubFile, HubPackage, SkillPackageFormat, decode_hub_package, encode_hub_package};
-use crate::batch::export::{ExportSkillBundle, WholeVaultDocument};
+use crate::batch::export::{ExportSkillBundle, ImportOmissionReason, WholeVaultDocument};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::context_pack::PackFormat;
 use crate::entity_id::EntityId;
@@ -289,15 +289,27 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
 
     let export = vault.export_whole_vault(PackFormat::Json)?;
     let document = vault.read_whole_vault_json(export.bytes())?;
-    assert!(document.manifest.import_refusals.is_empty());
+    assert_eq!(document.manifest.import_refusals, Vec::new());
     assert!(document.manifest.bundle_omissions.is_empty());
+    let policies: Vec<_> = document
+        .manifest
+        .import_omissions
+        .iter()
+        .filter(|omission| omission.reason == ImportOmissionReason::PolicyAuthorityNotRestored)
+        .map(|omission| EntityId::from_hex(&omission.entity_id))
+        .collect::<Result<_>>()?;
+    assert_eq!(policies.len(), 1);
     let (_target_dir, target) = open();
+    let local_policy = target
+        .get(&policies[0])?
+        .expect("target has its own default policy");
     assert_eq!(
         target
             .import_whole_vault_json(export.bytes())?
             .inserted_entities,
         2
     );
+    assert_eq!(target.get(&policies[0])?, Some(local_policy));
     for id in [parent, fork_id] {
         let imported = target.get_skill_record(&id)?.expect("imported skill");
         assert_eq!(imported.source, ClaimSource::Imported);

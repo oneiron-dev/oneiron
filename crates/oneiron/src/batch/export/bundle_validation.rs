@@ -1,7 +1,10 @@
 //! Validate source identities, facet/body agreement and explicit archive-only omissions.
 use super::*;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SKILL_HUB};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
+    ENTITY_TYPE_SKILL_HUB,
+};
 use crate::serialize::ExportBody;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -190,6 +193,7 @@ fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionReason> {
     match row.entity_type {
         ENTITY_TYPE_SKILL_CONTENT_ANCHOR => Some(ImportOmissionReason::SkillAnchorRecomputed),
         ENTITY_TYPE_SKILL_HUB => Some(ImportOmissionReason::HubConfigurationNotRestored),
+        ENTITY_TYPE_POLICY_MANIFEST => Some(ImportOmissionReason::PolicyAuthorityNotRestored),
         ENTITY_TYPE_CLAIM => {
             // Decode a reserved claim only for classification; NEVER store it.
             let predicate = match &row.body {

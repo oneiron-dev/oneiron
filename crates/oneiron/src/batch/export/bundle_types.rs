@@ -85,6 +85,8 @@ pub enum ImportOmissionReason {
     SkillAnchorRecomputed,
     /// A hub's endpoint/trust/sync policy needs separate local configuration.
     HubConfigurationNotRestored,
+    /// Policy bodies remain archive data; only a local authority can install policy.
+    PolicyAuthorityNotRestored,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.
