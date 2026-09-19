@@ -347,8 +347,9 @@ impl Vault {
         query: ReceiptQuery,
         end: u64,
     ) -> Result<Vec<EntityId>> {
+        let capacity = query.limit;
         let receipts = self.receipts(query)?;
-        self.project_receipt_tripwires(scope, &receipts, end)
+        self.project_receipt_tripwires_with_capacity(scope, &receipts, end, Some(capacity))
     }
     /// Projects a bounded scoped receipt slice; also used by receipt adapters.
     pub fn project_receipt_tripwires(
@@ -357,9 +358,25 @@ impl Vault {
         receipts: &[ReceiptRecord],
         end: u64,
     ) -> Result<Vec<EntityId>> {
+        self.project_receipt_tripwires_with_capacity(scope, receipts, end, None)
+    }
+    fn project_receipt_tripwires_with_capacity(
+        &self,
+        scope: &str,
+        receipts: &[ReceiptRecord],
+        end: u64,
+        capacity: Option<usize>,
+    ) -> Result<Vec<EntityId>> {
         let Some(bounds) = self.tripwire_bounds()? else {
             return Ok(vec![]);
         };
+        if capacity
+            .is_some_and(|limit| limit < bounds.consent_depth.max(bounds.actor_writes) as usize)
+        {
+            return Err(crate::Error::InvalidConfig(
+                "receipt query cannot reach the configured tripwire bounds".into(),
+            ));
+        }
         if receipts.len() > MAX_EVENTS_PER_RUN {
             return Err(crate::Error::InvalidConfig(
                 "tripwire receipt window exceeds observation capacity".into(),

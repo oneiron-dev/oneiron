@@ -485,3 +485,34 @@ fn signed_detector_run_fits_a_bounded_vault_without_per_event_receipt_copies() {
     assert!(v.is_signed_tripwire(&ids[0]).unwrap());
     assert!(v.is_signed_tripwire(ids.last().unwrap()).unwrap());
 }
+
+#[test]
+fn undersized_receipt_query_is_not_reported_as_a_healthy_window() {
+    let (_dir, v) = vault();
+    assert!(matches!(
+        v.run_receipt_tripwires("query", ReceiptQuery::default(), 100),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    assert!(
+        v.run_receipt_tripwires("query", ReceiptQuery::new(MAX_EVENTS_PER_RUN), 100)
+            .unwrap()
+            .is_empty()
+    );
+    set_bounds(
+        &v,
+        TripwireBounds {
+            window_secs: 60,
+            consent_depth: 2,
+            actor_writes: 3,
+        },
+    );
+    assert!(matches!(
+        v.run_receipt_tripwires("query", ReceiptQuery::new(2), 100),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    assert!(
+        v.run_receipt_tripwires("query", ReceiptQuery::new(3), 100)
+            .unwrap()
+            .is_empty()
+    );
+}
