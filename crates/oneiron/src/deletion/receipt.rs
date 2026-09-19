@@ -672,6 +672,11 @@ impl Vault {
         for hex in &input.scope.entity_ids {
             let holder = EntityId::from_hex(hex)?;
             ids.insert(holder);
+            ids.extend(crate::skill_hub::source_carriers_for_holder_in_txn(
+                &self.store,
+                wtxn,
+                &holder,
+            )?);
             ids.extend(crate::agent_def::birth_carriers_for_holder_in_txn(
                 &self.store,
                 wtxn,

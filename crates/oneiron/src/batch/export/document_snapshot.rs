@@ -62,6 +62,12 @@ impl Vault {
                 continue;
             }
             if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
+                && crate::skill_hub::decode_source_carrier(&raw[ENTITY_METADATA_HEADER_LEN..])?
+                    .is_some()
+            {
+                continue;
+            }
+            if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
                 && !crate::agent_def::birth_source_exportable(
                     &self.store,
                     &rtxn,

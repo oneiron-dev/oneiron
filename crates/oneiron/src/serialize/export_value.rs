@@ -63,8 +63,8 @@ impl ExportBody {
         }
         if entity_type == crate::registry::ENTITY_TYPE_ASSET {
             match crate::skill_hub::decode_source_carrier(bytes) {
-                Ok(Some(package)) => {
-                    return super::ExportHubSource::from_package(&package)
+                Ok(Some((holder, package))) => {
+                    return super::ExportHubSource::from_package(&holder, &package)
                         .map(|source| Self::HubSource(Box::new(source)))
                         .unwrap_or(Self::Nulled);
                 }

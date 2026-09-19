@@ -1,8 +1,7 @@
 //! Replicated source custody: ordinary ASSET carriers replay in any order,
 //! export recovers the exact package, drift fails closed.
-use super::package_codec::encode_hub_package;
-use super::source_carrier::source_carrier_id;
-use super::{HubFile, SkillPackageFormat, decode_hub_package};
+use super::source_carrier::{decode_source_carrier, encode_source_carrier, source_carrier_id};
+use super::{HubFile, SkillPackageFormat};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, Result};
@@ -71,10 +70,10 @@ fn persisted() -> (tempfile::TempDir, Vault, EntityId, SkillRecord, Vec<u8>) {
         .expect("persist with carrier");
     let canonical =
         super::source_carrier::canonical_source_package(&package).expect("canonical custody");
-    let encoded = encode_hub_package(&canonical).expect("carrier bytes");
+    let encoded = encode_source_carrier(&id, &canonical).expect("carrier bytes");
     assert_eq!(
-        decode_hub_package(&encoded).expect("carrier decodes"),
-        canonical
+        decode_source_carrier(&encoded).expect("carrier decodes"),
+        Some((id, canonical))
     );
     (dir, vault, id, record, encoded)
 }
@@ -86,7 +85,7 @@ fn replayed_skill_body(record: &SkillRecord) -> Vec<u8> {
 #[test]
 fn replicated_asset_and_skill_replay_recovers_exact_source_in_both_orders() -> Result<()> {
     let (_dir, _vault, id, record, carrier_bytes) = persisted();
-    let carrier = source_carrier_id(&record.content_hash.expect("hash")).expect("carrier id");
+    let carrier = source_carrier_id(&id, &record.content_hash.expect("hash")).expect("carrier id");
     let skill_bytes = replayed_skill_body(&record);
     for carrier_first in [true, false] {
         let (_target_dir, target) = open();
@@ -121,7 +120,7 @@ fn replicated_asset_and_skill_replay_recovers_exact_source_in_both_orders() -> R
         assert_eq!(package.export_files()?, files());
         assert_eq!(
             target
-                .hub_package_from_carrier_in_txn(&txn, &record)?
+                .hub_package_from_carrier_in_txn(&txn, &id, &record)?
                 .expect("direct carrier recovery"),
             package
         );
@@ -132,7 +131,7 @@ fn replicated_asset_and_skill_replay_recovers_exact_source_in_both_orders() -> R
 #[test]
 fn replicated_source_drift_and_carrier_overwrite_fail_closed() -> Result<()> {
     let (_dir, _vault, id, record, carrier_bytes) = persisted();
-    let carrier = source_carrier_id(&record.content_hash.expect("hash")).expect("carrier id");
+    let carrier = source_carrier_id(&id, &record.content_hash.expect("hash")).expect("carrier id");
     // Same hash, forged description: the carrier must not present as this skill.
     let mut forged = record.clone();
     forged.desc = "Forged instructions".into();
@@ -203,7 +202,7 @@ fn carrier_is_credential_nulled_on_export_and_clean_source_roundtrips() -> Resul
         files()
     );
     drop(txn);
-    let mut package = decode_hub_package(&bytes)?;
+    let (_, mut package) = decode_source_carrier(&bytes)?.unwrap();
     package.files.push(HubFile::new(
         "private.env",
         b"api_key=not-pattern-recognizable\n".to_vec(),
@@ -211,7 +210,7 @@ fn carrier_is_credential_nulled_on_export_and_clean_source_roundtrips() -> Resul
     package.record.content_hash = Some(package.content_hash()?);
     // Residual storage fixture bypasses ingress: the serializer must still null it.
     package.format = SkillPackageFormat::Folder;
-    let unsafe_bytes = encode_hub_package(&package)?;
+    let unsafe_bytes = encode_source_carrier(&id, &package)?;
     let redacted = crate::serialize::ExportBody::from_bytes(&unsafe_bytes, ENTITY_TYPE_ASSET);
     let serialized = serde_json::to_string(&redacted).unwrap();
     assert!(!serialized.contains("not-pattern-recognizable"));

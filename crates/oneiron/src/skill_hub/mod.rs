@@ -125,6 +125,17 @@ mod source_birth_tests;
 pub mod pack_catalog;
 
 mod source_carrier;
+mod source_custody;
+pub(crate) use source_carrier::encode_source_carrier;
 pub(crate) use source_carrier::{decode_source_carrier, validate_hub_source_carrier_put};
+#[cfg(feature = "sync")]
+pub(crate) use source_carrier::{source_carrier_holder, source_carrier_matches_id};
+pub(crate) use source_custody::{
+    retire_source_holder_in_txn, source_carriers_for_holder_in_txn, source_custody_exists_in_txn,
+    stage_source_custody_put,
+};
 #[cfg(test)]
 mod source_replication_tests;
+
+#[cfg(test)]
+mod source_custody_tests;

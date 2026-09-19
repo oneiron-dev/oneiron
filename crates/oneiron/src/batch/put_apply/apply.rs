@@ -691,6 +691,15 @@ pub(in crate::batch) fn apply_put(
     if let Some((key, value)) = hub_origin_marker {
         store.vault_meta.put(wtxn, &key, &value)?;
     }
+    crate::skill_hub::stage_source_custody_put(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        previous_skill_record.as_ref(),
+        new_skill_record.as_ref(),
+    )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if let Some(record) = new_skill_record.as_ref() {
         maintain_skill_indices(store, wtxn, &id, previous_skill_record.as_ref(), record)?;

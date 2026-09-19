@@ -393,8 +393,8 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
     }
 
     let entities = doc.get_map("entities");
-    let mut birth_ids = BTreeSet::new();
-    let mut birth_error = None;
+    let mut source_ids = BTreeSet::new();
+    let mut doomed_entities = BTreeSet::new();
     crate::sync::loro_support::map_for_each_bytes(&entities, |key, bytes| {
         let Some(header) = crate::batch::EntityMetadataHeader::parse(bytes) else {
             return;
@@ -402,33 +402,30 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
         if header.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             return;
         }
-        match crate::agent_def::decode_birth_source(
-            &bytes[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-        ) {
-            Ok(Some(source)) => match source.child() {
-                Ok(child) if erased.contains(&child) => match EntityId::from_hex(key) {
-                    Ok(id) => {
-                        birth_ids.insert(id);
-                    }
-                    Err(error) => birth_error = Some(error),
-                },
-                Err(error) => birth_error = Some(error),
-                _ => {}
-            },
-            Err(error) => birth_error = Some(error),
-            _ => {}
+        let body = &bytes[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        let skill_holder = crate::skill_hub::source_carrier_holder(body);
+        let agent_holder = crate::agent_def::birth_source_holder(body);
+        let holder = skill_holder.or(agent_holder);
+        if holder.is_some_and(|holder| erased.contains(&holder)) {
+            // Drop a malformed historical source at any key, but never let its
+            // forged identity widen erasure to unrelated edges at that key.
+            doomed_entities.insert(key.to_owned());
+            if let Ok(id) = EntityId::from_hex(key)
+                && (crate::skill_hub::source_carrier_matches_id(body, &id)
+                    || agent_holder.is_some_and(|child| {
+                        crate::agent_def::birth_source_matches_id(&child, &id)
+                    }))
+            {
+                source_ids.insert(id);
+            }
         }
     });
-    if let Some(error) = birth_error {
-        return Err(error);
-    }
-    let erased = erased.union(&birth_ids).copied().collect::<BTreeSet<_>>();
-    let mut doomed_entities: Vec<String> = Vec::new();
+    let erased = erased.union(&source_ids).copied().collect::<BTreeSet<_>>();
     entities.for_each(|key, _| {
         // ANY value shape under an erased id's key is residue (fail
         // closed) — including non-binary values a crafted update planted.
         if EntityId::from_hex(key).is_ok_and(|id| erased.contains(&id)) {
-            doomed_entities.push(key.to_owned());
+            doomed_entities.insert(key.to_owned());
         }
     });
 

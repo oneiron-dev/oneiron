@@ -14,12 +14,12 @@ pub(super) fn invalid(message: &'static str) -> Error {
 }
 const MAGIC: &[u8] = b"oneiron.hub-package.v1\0";
 
-/// Envelope pre-check for the immutable carrier guard. A `false` answer means
-/// the body is an ordinary asset, never a source candidate, so it must map to
-/// `None` at the guard instead of a decode error.
+/// Transport packages do not claim a storage holder. The ASSET guard uses
+/// this discriminator to refuse the removed, unshipped holderless shape.
 pub(super) fn is_hub_package_envelope(bytes: &[u8]) -> bool {
     bytes.starts_with(MAGIC)
 }
+
 const MAX_ENCODED: usize = MAX_HUB_PACKAGE_TOTAL_BYTES + 8 * 1024 * 1024;
 const MAX_RECORD: usize = 1024 * 1024;
 
@@ -181,8 +181,9 @@ fn validate_native_source(package: &HubPackage) -> Result<()> {
     Ok(())
 }
 
-/// A metadata-only write must not strand an existing source package. The typed
-/// hub-sync transaction replaces both halves; generic and replay writes do not.
+/// A same-tree metadata edit cannot claim different source identity. A real
+/// hash change is allowed; the shared put stage physically retires its old
+/// source and sidecar. The new carrier may precede or follow that update.
 pub(super) fn check_source_binding_update(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -195,10 +196,10 @@ pub(super) fn check_source_binding_update(
     }
     if let Some(raw) = store.vault_meta.get(txn, &package_key(id))? {
         let source = decode_hub_package(&raw)?;
-        if record.content_hash != Some(source.content_hash()?)
-            || record.skill_id != source.record.skill_id
-            || record.version != source.record.version
-            || record.desc != source.record.desc
+        if record.content_hash == Some(source.content_hash()?)
+            && (record.skill_id != source.record.skill_id
+                || record.version != source.record.version
+                || record.desc != source.record.desc)
         {
             return Err(invalid(
                 "source-backed skill revision requires an owning source transaction",
@@ -240,7 +241,7 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("skill row header"))?;
-        let carrier = super::source_carrier::source_carrier_id(&hash)?;
+        let carrier = super::source_carrier::source_carrier_id(entity, &hash)?;
         self.batch_in()
             .put(
                 &carrier,
@@ -250,7 +251,7 @@ impl Vault {
                     end: header.occurred_end,
                 },
                 header.learned_at,
-                &encode_hub_package(&super::source_carrier::canonical_source_package(package)?)?,
+                &super::source_carrier::encode_source_carrier(entity, package)?,
             )
             .apply(txn)?;
         self.store
@@ -265,18 +266,20 @@ impl Vault {
     pub(crate) fn hub_package_from_carrier_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
         record: &crate::skill::SkillRecord,
     ) -> Result<Option<HubPackage>> {
         let Some(hash) = record.content_hash else {
             return Ok(None);
         };
-        let carrier = super::source_carrier::source_carrier_id(&hash)?;
-        let Some(package) =
+        let carrier = super::source_carrier::source_carrier_id(entity, &hash)?;
+        let Some((holder, package)) =
             super::source_carrier::read_source_carrier_in_txn(&self.store, txn, &carrier)?
         else {
             return Ok(None);
         };
-        if package.content_hash()? != hash
+        if holder != *entity
+            || package.content_hash()? != hash
             || package.record.skill_id != record.skill_id
             || package.record.version != record.version
             || package.record.desc != record.desc
@@ -294,8 +297,14 @@ impl Vault {
     ) -> Result<Option<HubPackage>> {
         let package = match self.store.vault_meta.get(txn, &package_key(entity))? {
             Some(raw) => decode_hub_package(&raw)?,
-            None => return self.hub_package_from_carrier_in_txn(txn, record),
+            None => return self.hub_package_from_carrier_in_txn(txn, entity, record),
         };
+        super::source_custody::check_source_custody(
+            &self.store,
+            txn,
+            entity,
+            &package.content_hash()?,
+        )?;
         if record.content_hash != Some(package.content_hash()?)
             || record.skill_id != package.record.skill_id
             || record.version != package.record.version
@@ -339,19 +348,19 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         entity: &EntityId,
     ) -> Result<Option<HubPackage>> {
-        if let Some(raw) = self.store.vault_meta.get(txn, &package_key(entity))? {
-            return decode_hub_package(&raw).map(Some);
+        if self.store.off_record_sessions.contains_entity(entity)? {
+            return Ok(None);
         }
-        let Some(raw) = self.store.entities.get(txn, entity.as_bytes())? else {
+        let crate::vault::LiveEntityRow::Live { entity_type, body } =
+            crate::vault::live_entity_row_in_txn(&self.store, txn, entity)?
+        else {
             return Ok(None);
         };
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("skill row header"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {
+        if entity_type != crate::registry::ENTITY_TYPE_SKILL {
             return Ok(None);
         }
-        let record = decode_skill_record(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
-        self.hub_package_from_carrier_in_txn(txn, &record)
+        let record = decode_skill_record(&body)?;
+        self.runtime_skill_package_in_txn(txn, entity, &record)
     }
     pub(super) fn stored_hub_package_in_txn(
         &self,
@@ -363,12 +372,38 @@ impl Vault {
     }
 }
 
-/// Payload erasure; authority origin markers and non-payload receipts deliberately survive.
+/// Payload erasure shared by physical purge and shell-preserving SoftErase.
 pub(crate) fn remove_hub_package_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    super::source_custody::remove_source_custody_in_txn(store, txn, id)
+}
+
+pub(super) fn remove_package_sidecar_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
     store.vault_meta.delete(txn, &package_key(id))?;
+    Ok(())
+}
+
+pub(super) fn remove_matching_package_sidecar_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    hash: &crate::skill::SkillContentHash,
+) -> Result<()> {
+    if let Some(bytes) = store.vault_meta.get(txn, &package_key(id))?
+        && decode_hub_package(&bytes)
+            .map_err(|_| Error::CorruptedIndex("stored source sidecar"))?
+            .content_hash()
+            .map_err(|_| Error::CorruptedIndex("stored source sidecar hash"))?
+            == *hash
+    {
+        remove_package_sidecar_in_txn(store, txn, id)?;
+    }
     Ok(())
 }

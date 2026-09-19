@@ -251,3 +251,28 @@ fn invalid(reason: &'static str) -> Error {
 
 #[cfg(test)]
 mod tests;
+
+/// Deletion-only holder lookup. It grants no source admission or lineage proof.
+/// The fixed canonical prefix also covers a truncated historical payload.
+#[cfg(feature = "sync")]
+pub(crate) fn birth_source_holder(bytes: &[u8]) -> Option<EntityId> {
+    const PREFIX: &[u8] = b"{\"format\":\"oneiron.agent-birth-source.v1\",\"child_id\":\"";
+    if let Some(rest) = bytes.strip_prefix(PREFIX)
+        && rest.get(32) == Some(&b'"')
+    {
+        return EntityId::from_hex(std::str::from_utf8(rest.get(..32)?).ok()?).ok();
+    }
+    #[derive(Deserialize)]
+    struct Holder {
+        format: String,
+        child_id: String,
+    }
+    let holder: Holder = serde_json::from_slice(bytes).ok()?;
+    (holder.format == FORMAT)
+        .then(|| EntityId::from_hex(&holder.child_id).ok())
+        .flatten()
+}
+#[cfg(feature = "sync")]
+pub(crate) fn birth_source_matches_id(child: &EntityId, id: &EntityId) -> bool {
+    birth_source_id(child).is_ok_and(|expected| expected == *id)
+}

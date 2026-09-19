@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportHubSource {
+    holder: String,
     record: ExportBody,
     format: SkillPackageFormat,
     source_tree: ExportFileTree,
@@ -17,7 +18,10 @@ pub struct ExportHubSource {
     allowed_tools: BTreeSet<String>,
 }
 impl ExportHubSource {
-    pub(crate) fn from_package(package: &HubPackage) -> Result<Self> {
+    pub(crate) fn from_package(
+        holder: &crate::entity_id::EntityId,
+        package: &HubPackage,
+    ) -> Result<Self> {
         for set in [
             &package.capabilities.bins,
             &package.capabilities.env,
@@ -35,6 +39,7 @@ impl ExportHubSource {
             }
         }
         Ok(Self {
+            holder: holder.to_hex(),
             record: ExportBody::from_bytes(
                 &crate::skill::encode_skill_record(&package.record)?,
                 crate::registry::ENTITY_TYPE_SKILL,
@@ -72,9 +77,17 @@ impl ExportHubSource {
             },
         );
         package.format = self.format;
-        crate::skill_hub::encode_hub_package(&package)
+        crate::skill_hub::encode_source_carrier(
+            &crate::entity_id::EntityId::from_hex(&self.holder)?,
+            &package,
+        )
     }
     pub(crate) fn validate(&self) -> Result<()> {
+        let holder = crate::entity_id::EntityId::from_hex(&self.holder)?;
+        if holder.to_hex() != self.holder {
+            return Err(invalid("noncanonical source holder"));
+        }
+
         if matches!(self.record, ExportBody::Pack(_) | ExportBody::HubSource(_)) {
             return Err(invalid("recursive source carrier"));
         }
@@ -92,8 +105,9 @@ impl ExportHubSource {
             }
         }
         if !self.redacted() {
-            let package = crate::skill_hub::decode_hub_package(&self.to_bytes()?)?;
-            if Self::from_package(&package)? != *self {
+            let (holder, package) = crate::skill_hub::decode_source_carrier(&self.to_bytes()?)?
+                .ok_or_else(|| invalid("missing source envelope"))?;
+            if Self::from_package(&holder, &package)? != *self {
                 return Err(invalid("noncanonical source carrier"));
             }
         }

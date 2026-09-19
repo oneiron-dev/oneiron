@@ -1,58 +1,69 @@
-//! Content-addressed HubPackage custody over ordinary replicated ASSET rows.
-//!
-//! The local `vault_meta` sidecar stays the primary projection. Every persist
-//! also writes the same exact bytes to a content-derived ASSET carrier in the
-//! same transaction, so sync carries source with the skill instead of
-//! stranding it. Lookup falls back to the carrier only when the sidecar is
-//! absent, and only on exact identity plus record-metadata match.
-//!
-//! A carrier is inert Candidate data: no signature, no authority, no Active
-//! reach. The admission and activation guards never read it.
+//! Holder-bound exact source custody over ordinary replicated ASSET rows.
+//! The holder and content hash are immutable identity, never install authority.
 use sha2::{Digest, Sha256};
 
 use super::HubPackage;
-use super::package_codec::{decode_hub_package, invalid, is_hub_package_envelope};
+use super::package_codec::{decode_hub_package, encode_hub_package, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::skill::SkillContentHash;
 
-/// Domain tag for the carrier derivation. It binds the truncated digest to
-/// hub source custody so a pack-source id can never alias a carrier id.
-const SOURCE_CARRIER_DOMAIN: &[u8] = b"oneiron.hub-source.asset.v1\0";
+const MAGIC: &[u8] = b"oneiron.hub-source.v1\0";
+const DOMAIN: &[u8] = b"oneiron.hub-source.asset.v1\0";
 
-/// Derives the carrier id from the package tree hash. Same content is one
-/// carrier whichever road it arrives on; the id claims nothing about authors.
-pub(crate) fn source_carrier_id(hash: &SkillContentHash) -> Result<EntityId> {
+pub(super) fn source_carrier_id(holder: &EntityId, hash: &SkillContentHash) -> Result<EntityId> {
     let digest = Sha256::new()
-        .chain_update(SOURCE_CARRIER_DOMAIN)
+        .chain_update(DOMAIN)
+        .chain_update(holder.as_bytes())
         .chain_update(hash.as_bytes())
         .finalize();
-    let bytes: [u8; 16] = digest[..16]
-        .try_into()
-        .map_err(|_| invalid("source carrier ID width"))?;
-    EntityId::from_bytes(bytes)
+    EntityId::from_bytes(
+        digest[..16]
+            .try_into()
+            .map_err(|_| invalid("source ID width"))?,
+    )
 }
 
-/// Decodes only hub-package envelopes. Any other ASSET body is an ordinary
-/// asset, never a source candidate, so it maps to `None` instead of an error.
-pub(crate) fn decode_source_carrier(bytes: &[u8]) -> Result<Option<HubPackage>> {
-    if !is_hub_package_envelope(bytes) {
+pub(crate) fn encode_source_carrier(holder: &EntityId, package: &HubPackage) -> Result<Vec<u8>> {
+    let mut out = MAGIC.to_vec();
+    out.extend_from_slice(holder.as_bytes());
+    out.extend_from_slice(&encode_hub_package(&canonical_source_package(package)?)?);
+    Ok(out)
+}
+
+/// Historical erase closure needs only the fixed holder reference. It must
+/// scrub a matching source even if a peer corrupted the package payload; this
+/// accessor grants no admission and is never used to materialize source bytes.
+#[cfg(feature = "sync")]
+pub(crate) fn source_carrier_holder(bytes: &[u8]) -> Option<EntityId> {
+    let rest = bytes.strip_prefix(MAGIC)?;
+    EntityId::from_bytes(rest.get(..16)?.try_into().ok()?).ok()
+}
+
+/// The holder is read from the envelope, not guessed from a content-index winner.
+/// Unrelated ASSETs return None; malformed source envelopes fail closed.
+pub(crate) fn decode_source_carrier(bytes: &[u8]) -> Result<Option<(EntityId, HubPackage)>> {
+    if super::package_codec::is_hub_package_envelope(bytes) {
+        return Err(invalid("holderless packages are not source carriers"));
+    }
+    let Some(rest) = bytes.strip_prefix(MAGIC) else {
         return Ok(None);
+    };
+    let holder = EntityId::from_bytes(
+        rest.get(..16)
+            .ok_or_else(|| invalid("truncated source holder"))?
+            .try_into()
+            .map_err(|_| invalid("source holder width"))?,
+    )?;
+    let package = decode_hub_package(&rest[16..])?;
+    if encode_source_carrier(&holder, &package)? != bytes {
+        return Err(invalid("noncanonical source carrier"));
     }
-    let package = decode_hub_package(bytes)?;
-    if package != canonical_source_package(&package)? {
-        return Err(invalid(
-            "source carrier contains noncanonical authority metadata",
-        ));
-    }
-    Ok(Some(package))
+    Ok(Some((holder, package)))
 }
 
-/// Raw and replay immutability for carriers, mirroring the pack-source guard.
-/// All puts, including replay, check content and source identity. No local
-/// installation is reconstructed from a peer's source-bearing blob.
 pub(crate) fn validate_hub_source_carrier_put(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -60,6 +71,7 @@ pub(crate) fn validate_hub_source_carrier_put(
     entity_type: u8,
     bytes: &[u8],
 ) -> Result<()> {
+    super::source_custody::validate_registered_source_target(store, txn, id, entity_type, bytes)?;
     let previous = store.entities.get(txn, id.as_bytes())?;
     if let Some(raw) = &previous {
         let header = EntityMetadataHeader::parse(raw)
@@ -74,11 +86,16 @@ pub(crate) fn validate_hub_source_carrier_put(
         }
     }
     if entity_type == ENTITY_TYPE_ASSET
-        && let Some(package) = decode_source_carrier(bytes)?
+        && let Some((holder, package)) = decode_source_carrier(bytes)?
     {
-        if source_carrier_id(&package.content_hash()?)? != *id {
-            return Err(invalid("source carrier ID disagrees with content hash"));
+        let hash = package.content_hash()?;
+        if source_carrier_id(&holder, &hash)? != *id || holder == *id {
+            return Err(invalid(
+                "source carrier ID disagrees with holder and content",
+            ));
         }
+        super::source_custody::check_source_target(store, txn, id)?;
+        super::source_custody::check_source_custody(store, txn, &holder, &hash)?;
         if let Some(raw) = previous
             && raw[ENTITY_METADATA_HEADER_LEN..] != *bytes
         {
@@ -88,14 +105,11 @@ pub(crate) fn validate_hub_source_carrier_put(
     Ok(())
 }
 
-/// Reads a live carrier and re-verifies its id against the recomputed tree
-/// hash. Deleted shells, off-record rows, foreign types, and ordinary
-/// non-envelope assets all read as absent; only identity drift is an error.
-pub(crate) fn read_source_carrier_in_txn(
+pub(super) fn read_source_carrier_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     carrier: &EntityId,
-) -> Result<Option<HubPackage>> {
+) -> Result<Option<(EntityId, HubPackage)>> {
     if store.off_record_sessions.contains_entity(carrier)? {
         return Ok(None);
     }
@@ -107,17 +121,16 @@ pub(crate) fn read_source_carrier_in_txn(
     if entity_type != ENTITY_TYPE_ASSET {
         return Ok(None);
     }
-    let Some(package) = decode_source_carrier(&body)? else {
+    let Some((holder, package)) = decode_source_carrier(&body)? else {
         return Ok(None);
     };
-    if source_carrier_id(&package.content_hash()?)? != *carrier {
+    if source_carrier_id(&holder, &package.content_hash()?)? != *carrier {
         return Err(invalid("stored source carrier identity drift"));
     }
-    Ok(Some(package))
+    super::source_custody::check_source_custody(store, txn, &holder, &package.content_hash()?)?;
+    Ok(Some((holder, package)))
 }
 
-/// Strip mutable approvals, scores, provenance and publisher state from byte
-/// custody. The carrier cannot become an alternate authority-bearing SKILL row.
 pub(super) fn canonical_source_package(package: &HubPackage) -> Result<HubPackage> {
     let record = crate::skill::SkillRecord::new(
         &package.record.skill_id,
@@ -137,4 +150,17 @@ pub(super) fn canonical_source_package(package: &HubPackage) -> Result<HubPackag
         HubPackage::new(record, package.files.clone(), package.capabilities.clone());
     canonical.format = package.format;
     Ok(canonical)
+}
+
+/// Only a valid envelope at its derived ID can extend deletion's graph scope.
+/// Malformed historical payloads are still scrubbed, but grant no other erasure.
+#[cfg(feature = "sync")]
+pub(crate) fn source_carrier_matches_id(bytes: &[u8], id: &EntityId) -> bool {
+    let Ok(Some((holder, package))) = decode_source_carrier(bytes) else {
+        return false;
+    };
+    package
+        .content_hash()
+        .and_then(|hash| source_carrier_id(&holder, &hash))
+        .is_ok_and(|expected| expected == *id)
 }

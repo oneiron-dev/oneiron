@@ -431,7 +431,7 @@
      "path": "src/agent_def/portable_source.rs",
      "purpose": "Immutable captured agent source",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -21803,7 +21803,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 15
      }
@@ -21974,7 +21974,7 @@
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 2
      }
     },
@@ -22061,10 +22061,28 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/source_carrier.rs",
-     "purpose": "Content-addressed HubPackage custody over ordinary replicated ASSET rows",
+     "purpose": "Holder-bound exact source custody over ordinary replicated ASSET rows",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/source_custody.rs",
+     "purpose": "Source-only retirement and payload cleanup, shared by local/raw/replay/erase",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/source_custody_tests.rs",
+     "purpose": "Source payload lifetime and egress laws, not reader-only concealment",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -27469,7 +27487,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 41,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27674,8 +27692,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1591,
-   "test_files": 572
+   "source_files": 1592,
+   "test_files": 573
   },
   "oneiron-bench": {
    "files": [
