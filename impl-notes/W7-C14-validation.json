@@ -84,5 +84,73 @@
     "tests": 14,
     "passed": 14,
     "mode": "offline stored-receipt and fake-app tests; not new Office acceptance"
+  },
+  "runtime_after_lint_repairs": {
+    "conformance-tests": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "test",
+        "--locked",
+        "-p",
+        "oneiron",
+        "--test",
+        "it",
+        "--",
+        "byte_space_v3_conformance::",
+        "saved_query_oracle::saved_query_registers_dynamically_in_crm_band_without_static_byte",
+        "--test-threads=2"
+      ],
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 478 filtered out; finished in 0.75s"
+      ]
+    },
+    "organ-tests": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "test",
+        "--locked",
+        "-p",
+        "oneiron-docedit"
+      ],
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "formula-session": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "test",
+        "--locked",
+        "-p",
+        "oneiron-xlsx-formula",
+        "--test",
+        "session"
+      ],
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s"
+      ]
+    }
   }
 }
