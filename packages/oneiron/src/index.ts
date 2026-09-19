@@ -14,7 +14,16 @@
 
 import { OneironError, translateNativeError } from "./error.js"
 import { NativeClient } from "./native.js"
+import { itemFromWire, keyedJson } from "./key-value.js"
+import type { WireItem } from "./key-value.js"
 import type {
+  KeyValueAddress,
+  KeyValuePut,
+  KeyValueItem,
+  KeyValuePutReceipt,
+  KeyValueDeleteReceipt,
+  KeyValueSearch,
+  KeyValueNamespaces,
   ClaimInput,
   CommitReceipt,
   FacadeReceipt,
@@ -116,6 +125,46 @@ export class Oneiron {
   /** Governance receipts, newest first. */
   receipts(limit = 100): FacadeReceipt[] {
     return this.#call(() => this.#client.receipts(limit))
+  }
+
+  /** Exact actor-owned worldless key lookup, never recall. */
+  keyValueGet(request: KeyValueAddress): KeyValueItem | null {
+    return this.#call(() => {
+      const item = JSON.parse(this.#client.keyValueGet(keyedJson(request))) as WireItem | null
+      return item === null ? null : itemFromWire(item)
+    })
+  }
+  /** Synchronous gated write. Review-required writes fail without changing the key. */
+  keyValuePut(request: KeyValuePut): KeyValuePutReceipt {
+    return this.#call(() => {
+      const { requestId, ...rest } = request
+      const result = JSON.parse(this.#client.keyValuePut(keyedJson({ ...rest, request_id: requestId }))) as
+        { item: WireItem; replayed: boolean; receipt_ref: string }
+      return { item: itemFromWire(result.item), replayed: result.replayed, receiptRef: result.receipt_ref }
+    })
+  }
+  /** Retracts only the caller's current key; preserves claim history. */
+  keyValueDelete(request: KeyValueAddress): KeyValueDeleteReceipt {
+    return this.#call(() => {
+      const result = JSON.parse(this.#client.keyValueDelete(keyedJson(request))) as
+        { existed: boolean; receipt_refs: string[] }
+      return { existed: result.existed, receiptRefs: result.receipt_refs }
+    })
+  }
+  /** Exact prefix search, ordered lexically and paginated after filtering. */
+  keyValueSearch(request: KeyValueSearch): KeyValueItem[] {
+    return this.#call(() => {
+      const { namespacePrefix = [], ...rest } = request
+      const result = JSON.parse(this.#client.keyValueSearch(keyedJson({ ...rest, namespace_prefix: namespacePrefix }))) as WireItem[]
+      return result.map(itemFromWire)
+    })
+  }
+  /** Exact segment namespace enumeration. Empty namespaces are not retained. */
+  keyValueNamespaces(request: KeyValueNamespaces): string[][] {
+    return this.#call(() => {
+      const { maxDepth, ...rest } = request
+      return JSON.parse(this.#client.keyValueNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]
+    })
   }
 
   /** The one place a native throw becomes an `OneironError`. */

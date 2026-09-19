@@ -487,6 +487,36 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "MCP booking operations"
 - safety: One tool, four ops — `availability`, `book`, `reschedule`, `cancel`. Requires a connector credential whose actor matches the request and a live scoped-MCP grant naming this server, this tool, and this operation. The grant authorizes the tool call and nothing more; caps, revalidation, and dispatch gates still apply.
 
+#### facade-key-value-get - `POST /v1/core/facade/key_value_get`
+
+- when-to-use: Read exact actor-owned worldless long-term keys or namespaces.
+- trigger phrases: "key value get", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:read`. No actor selector, world wildcard, or owner erasure authority.
+
+#### facade-key-value-put - `POST /v1/core/facade/key_value_put`
+
+- when-to-use: Mutate exact actor-owned worldless long-term keys through the claim gate.
+- trigger phrases: "key value put", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:write`. No actor selector, world wildcard, or owner erasure authority.
+
+#### facade-key-value-delete - `POST /v1/core/facade/key_value_delete`
+
+- when-to-use: Mutate exact actor-owned worldless long-term keys through the claim gate.
+- trigger phrases: "key value delete", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:write`. No actor selector, world wildcard, or owner erasure authority.
+
+#### facade-key-value-search - `POST /v1/core/facade/key_value_search`
+
+- when-to-use: Read exact actor-owned worldless long-term keys or namespaces.
+- trigger phrases: "key value search", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:read`. No actor selector, world wildcard, or owner erasure authority.
+
+#### facade-key-value-namespaces - `POST /v1/core/facade/key_value_namespaces`
+
+- when-to-use: Read exact actor-owned worldless long-term keys or namespaces.
+- trigger phrases: "key value namespaces", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:read`. No actor selector, world wildcard, or owner erasure authority.
+
 ## Tier-2: Endpoint Details
 
 Fetch Tier-2 only after a Tier-1 block matches the task. This tier expands parameters, defaults, and representative responses by endpoint name without repeating route literals.
@@ -1119,9 +1149,65 @@ Disclosure: availability answers carry ranked public slots and nothing else. Cal
 descriptions, attendees, busy sources, and free/busy internals are not representable in any booking
 response.
 
+### Keyed memory facade
+
+The five `facade-key-value-*` endpoints use the same engine DTOs as the SDK.
+Every request requires a credential with both `principal_ref` and `actor_class`.
+Read endpoints require `core:read`; put and delete require `core:write`.
+All are bound to that exact actor/class and WORLDLESS claims. Requests deny
+unknown fields; omitted scope never means all worlds.
+
+| Endpoint name | Body | Response |
+|---|---|---|
+| facade-key-value-get | `KeyValueAddress` | `KeyValueItem` or `null` |
+| facade-key-value-put | `KeyValuePut` | `{item, replayed, receipt_ref}` |
+| facade-key-value-delete | `KeyValueAddress` | `{existed, receipt_refs}` |
+| facade-key-value-search | `KeyValueSearch` | array of `KeyValueItem` |
+| facade-key-value-namespaces | `KeyValueNamespaces` | array of namespace string arrays |
+
+Puts use canonical gated claim candidates and same-transaction supersession.
+Default source is `generated`. Review-required puts fail and roll back instead
+of returning a proposed claim as a successful write. A request ID binds one
+actor/class/address/source/value revision; reuse is an identical retry only
+while that revision remains current. Reuse after supersession or deletion is
+`INVALID_STATE`, not resurrection. Delete is claim retraction, not physical
+or owner-authorized erasure. An absent key returns `existed: false`.
+
+Search applies exact namespace segment prefixes and exact top-level value
+field equality. Operators and semantic queries are unsupported. Results sort
+lexically by namespace then key; offset applies after filtering. Namespace
+listing applies exact prefix/suffix, optional depth truncation, deduplication,
+then lexical pagination. Each page is one snapshot, not a cross-page snapshot.
+
 ## Tier-3: Schemas And Error Catalog
 
 Fetch Tier-3 only when writing validation code, generating clients, or recovering from a specific error. This tier contains reusable schemas and the structured error catalog.
+
+### Keyed memory schemas
+
+These objects use snake_case JSON keys and reject unknown fields. Namespace
+segments are nonempty strings, at most 32 segments and 4096 UTF-8 bytes total;
+NUL and the wildcard segment `"*"` are rejected. Keys are nonempty strings up
+to 4096 UTF-8 bytes with no NUL. Empty prefixes/suffixes select all namespaces
+of the bound actor/class, not other actors or worlds.
+
+- `KeyValueAddress`: required `namespace: string[]`, `key: string`.
+- `KeyValuePut`: address fields plus required `value: object`,
+  `request_id: string` (1–128 bytes, no NUL); optional `source: string`, default
+  `generated`, from the canonical claim-source vocabulary. Payload cap: 64 KiB.
+- `KeyValueItem`: address fields plus `value: object`, `created_at: integer`,
+  `updated_at: integer` (Unix seconds), `revision: string` (canonical claim ID).
+- `KeyValueSearch`: optional `namespace_prefix: string[]` (default `[]`),
+  `filter: object|null` (exact field equality), `limit: integer` (default 100,
+  1–1000), `offset: integer` (default 0, 0–1000000).
+- `KeyValueNamespaces`: optional `prefix: string[]`, `suffix: string[]`
+  (both default `[]`), `max_depth: integer|null` (1–32), and the same limit/offset.
+
+The facade's existing `{error:{code,message,requestId,suggestions}}` envelope
+carries failures verbatim. `BAD_REQUEST` rejects invalid selectors/payloads;
+`FORBIDDEN` includes the real claim-gate refusal; `INVALID_STATE` rejects stale
+request replay or conflicting current heads. No new error-code vocabulary or
+storage type byte is added.
 
 ### Common Schemas
 

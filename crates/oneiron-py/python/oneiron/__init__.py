@@ -205,3 +205,23 @@ class Oneiron:
     def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
         """Governance receipts, newest first."""
         return json.loads(_translate(lambda: self._client.receipts(limit)))
+
+    def key_value_get(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_get(json.dumps(request, allow_nan=False))))
+
+    def key_value_put(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_put(json.dumps(request, allow_nan=False))))
+
+    def key_value_delete(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_delete(json.dumps(request, allow_nan=False))))
+
+    def key_value_search(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_search(json.dumps(request, allow_nan=False))))
+
+    def key_value_namespaces(self, request: dict[str, Any]) -> list[list[str]]:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_namespaces(json.dumps(request, allow_nan=False))))

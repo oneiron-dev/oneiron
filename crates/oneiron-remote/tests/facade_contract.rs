@@ -11,7 +11,17 @@ use oneiron_remote::{FACADE_VERB_CATALOG, OneironClient, OpenOptions, unix_secon
 
 /// The declared catalog, spelled once here so a silent reorder or addition in
 /// the crate fails a test rather than a downstream census.
-const EXPECTED_CATALOG: [&str; 4] = ["witness", "claim_upsert", "recall", "receipts"];
+const EXPECTED_CATALOG: [&str; 9] = [
+    "witness",
+    "claim_upsert",
+    "recall",
+    "receipts",
+    "key_value_get",
+    "key_value_put",
+    "key_value_delete",
+    "key_value_search",
+    "key_value_namespaces",
+];
 
 /// §Test/Shared #1 — `facade_contract_catalog_is_exact`.
 #[test]

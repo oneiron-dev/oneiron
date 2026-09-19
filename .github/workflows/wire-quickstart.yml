@@ -12,6 +12,7 @@ on:
     paths:
       - "packages/oneiron/**"
       - "packages/oneiron-ai-sdk/**"
+      - "packages/oneiron-langgraph/**"
       - "docs/agent-sdk/**"
       - "llms.txt"
       - "crates/oneiron-py/**"
@@ -21,6 +22,7 @@ on:
       - "crates/oneiron/**"
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
+      - "scripts/tests/test_wire_key_value.py"
       - "scripts/tests/test_wire_workflow.py"
       - "scripts/code-sandbox/**"
       - "scripts/tests/test_sandbox_wit.*"
@@ -33,6 +35,7 @@ on:
     paths:
       - "packages/oneiron/**"
       - "packages/oneiron-ai-sdk/**"
+      - "packages/oneiron-langgraph/**"
       - "docs/agent-sdk/**"
       - "llms.txt"
       - "crates/oneiron-py/**"
@@ -42,6 +45,7 @@ on:
       - "crates/oneiron/**"
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
+      - "scripts/tests/test_wire_key_value.py"
       - "scripts/tests/test_wire_workflow.py"
       - "scripts/code-sandbox/**"
       - "scripts/tests/test_sandbox_wit.*"
@@ -212,6 +216,7 @@ jobs:
         run: |
           "$WIRE_PYTHON_ENV/bin/python" -m pip install --disable-pip-version-check pytest==8.4.2
           cp packages/oneiron/scripts/wire-parity.mjs "$WIRE_NODE_PROJECT/"
+          cp packages/oneiron/scripts/wire-key-value-parity.mjs "$WIRE_NODE_PROJECT/"
 
       - name: Structural assertions on both measured quickstart outputs
         run: >-
@@ -225,6 +230,7 @@ jobs:
             "$WIRE_PYTHON_ENV/bin/python" -m pytest -q
             scripts/tests/test_wire_quickstart.py::test_remote_sdk_parity
             scripts/tests/test_wire_quickstart.py::test_installed_remote_quickstarts
+            scripts/tests/test_wire_key_value.py::test_remote_key_value_parity
         run: bash scripts/wire-test-server.sh
 
       # Remote tests above are explicit node IDs, not filters that can select
@@ -235,6 +241,11 @@ jobs:
 
       - name: Python package tests
         run: '"$WIRE_PYTHON_ENV/bin/python" -m pytest crates/oneiron-py/tests -q'
+
+      - name: LangGraph BaseStore adapter against real abstract API
+        run: |
+          "$WIRE_PYTHON_ENV/bin/python" -m pip install --disable-pip-version-check "./packages/oneiron-langgraph[test]"
+          "$WIRE_PYTHON_ENV/bin/python" -m pytest packages/oneiron-langgraph/tests -q
 
       - name: npm pack dry run
         working-directory: packages/oneiron

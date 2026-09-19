@@ -2,7 +2,8 @@
 
 Memory Wire is the Oneiron developer profile. Start with `witness`, `recall`, and
 `receipts`. The same package also ships `claim_upsert` (`claimUpsert` in JS),
-the fourth verb in the engine’s authoritative `FACADE_VERB_CATALOG`.
+the fourth quickstart verb. The same authoritative `FACADE_VERB_CATALOG` also
+ships five exact keyed-memory verbs for actor-bound long-term stores.
 There is no separate lite SDK and no alternate mutation path.
 
 ```sh
@@ -262,3 +263,90 @@ and the packaging dry-run assert it.
 ## License
 
 Apache-2.0
+
+## Exact keyed long-term memory
+
+`key_value_get`, `key_value_put`, `key_value_delete`, `key_value_search`, and
+`key_value_namespaces` are the same engine facade in embedded and remote mode.
+JS spells these `keyValueGet`, `keyValuePut`, `keyValueDelete`, `keyValueSearch`,
+and `keyValueNamespaces`. They do not emulate exact keys from ranked recall.
+
+```python
+from uuid import uuid4
+from oneiron import Oneiron
+
+memory = Oneiron.open()
+address = {"namespace": ["preferences"], "key": "color"}
+# This example records a preference explicitly stated by its user.
+request = {**address, "value": {"name": "blue"},
+           "request_id": uuid4().hex, "source": "user_stated"}
+receipt = memory.key_value_put(request)
+assert memory.key_value_get(address) == receipt["item"]
+assert memory.key_value_put(request)["replayed"]
+print(memory.key_value_search({"namespace_prefix": ["preferences"]}))
+print(memory.key_value_namespaces({"prefix": ["preferences"]}))
+memory.key_value_delete(address)
+assert memory.key_value_get(address) is None
+```
+
+```js
+import { randomUUID } from "node:crypto"
+import { Oneiron } from "oneiron"
+
+const memory = Oneiron.open()
+const address = { namespace: ["preferences"], key: "color" }
+const receipt = memory.keyValuePut({ ...address, value: { name: "blue" },
+  requestId: randomUUID(), source: "user_stated" })
+console.log(memory.keyValueGet(address), receipt.receiptRef)
+console.log(memory.keyValueSearch({ namespacePrefix: ["preferences"], limit: 10, offset: 0 }))
+console.log(memory.keyValueNamespaces({ prefix: ["preferences"], maxDepth: 1 }))
+memory.keyValueDelete(address)
+```
+
+The key space is actor-id **and actor-class** bound, and explicitly worldless.
+No input chooses another actor, world, owner, entity ID, or erasure reason.
+Namespaces compare complete literal string segments. Search accepts exact
+field-equality filters, not operators or semantic queries. Results have lexical
+namespace/key order. Namespace rows are deduplicated after optional depth
+truncation. `limit` is 1–1000 and `offset` is 0–1000000. Pages are individual live
+snapshots; concurrent mutations can shift subsequent offsets.
+
+Keyed bodies never appear in generic recall, context packs, scoped hydration,
+entity/claim views, or history projections, even for the owner. The exact keyed
+API is the only app-tier reader. Privileged raw Vault/batch systems APIs remain
+outside this actor isolation boundary.
+
+Equality preserves the engine's JSON number representation: integer `2` differs
+from floating `2.0`. Integers are not normalized through lossy `f64`. Each SDK
+is limited by its host JSON encoder; JavaScript represents `2.0` as `2` and
+cannot exactly represent all large integers. JS optional request fields may be
+explicitly `undefined` and use the engine defaults. `undefined` inside stored
+JSON values or filter data is rejected, not silently dropped or changed to null.
+
+A put's omitted source is `generated`. The real claim gate must permit it.
+Review-required writes fail and roll back without replacing the current value;
+a proposed claim is never mislabeled as a completed key write. Successful puts
+return `item`, `replayed`, and `receipt_ref` (`receiptRef` in JS). Preserve
+`request_id` only for an identical retry while that revision remains current.
+A stale retry returns `INVALID_STATE`, including after deletion.
+
+Replacement also preserves source trust. Generated output cannot supersede a
+user-stated head, even for the same actor and key or under a generated auto
+permit. That refusal returns `INVALID_STATE` without changing the current value,
+history, or receipts. Keep the true source and use a separate key for generated
+output. Only a genuine new user statement may be submitted as `user_stated`.
+Never relabel model output or delete then put to bypass the protection.
+
+Erased shells and malformed rows are not live heads. Reads skip them and never
+fall back to superseded values. Unrelated keys remain usable. Replaying a
+request against an erased/malformed revision refuses instead of restoring it.
+
+Delete retracts the caller's current claim and returns `existed` plus receipt
+refs. It is idempotent while absent and retains history. It is not an owner
+`safe_delete` or compliance erase. Conflicting synced heads fail closed with
+`INVALID_STATE` rather than inventing a local winner.
+
+[The LangGraph satellite](../oneiron-langgraph/README.md) adapts these doors to
+the real `BaseStore.batch/abatch` interface and includes a runnable graph.
+It is long-term memory, not a checkpoint saver. TTL and vector search are not
+supported. External application cutovers remain held.

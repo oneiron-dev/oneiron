@@ -152,4 +152,93 @@ impl NativeClient {
             .map(|record| gate_receipt_from_engine(record).map_err(boundary_error))
             .collect()
     }
+    /// JSON DTO seam for exact actor-owned keyed memory.
+    #[napi]
+    pub fn key_value_get(&self, request_json: String) -> napi::Result<String> {
+        let request: oneiron::memory::KeyValueAddress = serde_json::from_str(&request_json)
+            .map_err(|error| {
+                facade_error(oneiron::memory::MemoryError {
+                    code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                    message: format!("invalid keyed request: {error}"),
+                    suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                    successor_short_id: None,
+                    gate_denial: None,
+                })
+            })?;
+        let response = self.inner.key_value_get(&request).map_err(facade_error)?;
+        serde_json::to_string(&response).map_err(|error| boundary_error(error.to_string()))
+    }
+    /// JSON DTO seam for exact actor-owned keyed memory.
+    #[napi]
+    pub fn key_value_put(&self, request_json: String) -> napi::Result<String> {
+        let request: oneiron::memory::KeyValuePut =
+            serde_json::from_str(&request_json).map_err(|error| {
+                facade_error(oneiron::memory::MemoryError {
+                    code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                    message: format!("invalid keyed request: {error}"),
+                    suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                    successor_short_id: None,
+                    gate_denial: None,
+                })
+            })?;
+        let response = self.inner.key_value_put(&request).map_err(facade_error)?;
+        serde_json::to_string(&response).map_err(|error| boundary_error(error.to_string()))
+    }
+    /// JSON DTO seam for exact actor-owned keyed memory.
+    #[napi]
+    pub fn key_value_delete(&self, request_json: String) -> napi::Result<String> {
+        let request: oneiron::memory::KeyValueAddress = serde_json::from_str(&request_json)
+            .map_err(|error| {
+                facade_error(oneiron::memory::MemoryError {
+                    code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                    message: format!("invalid keyed request: {error}"),
+                    suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                    successor_short_id: None,
+                    gate_denial: None,
+                })
+            })?;
+        let response = self
+            .inner
+            .key_value_delete(&request)
+            .map_err(facade_error)?;
+        serde_json::to_string(&response).map_err(|error| boundary_error(error.to_string()))
+    }
+    /// JSON DTO seam for exact actor-owned keyed memory.
+    #[napi]
+    pub fn key_value_search(&self, request_json: String) -> napi::Result<String> {
+        let request: oneiron::memory::KeyValueSearch = serde_json::from_str(&request_json)
+            .map_err(|error| {
+                facade_error(oneiron::memory::MemoryError {
+                    code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                    message: format!("invalid keyed request: {error}"),
+                    suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                    successor_short_id: None,
+                    gate_denial: None,
+                })
+            })?;
+        let response = self
+            .inner
+            .key_value_search(&request)
+            .map_err(facade_error)?;
+        serde_json::to_string(&response).map_err(|error| boundary_error(error.to_string()))
+    }
+    /// JSON DTO seam for exact actor-owned keyed memory.
+    #[napi]
+    pub fn key_value_namespaces(&self, request_json: String) -> napi::Result<String> {
+        let request: oneiron::memory::KeyValueNamespaces = serde_json::from_str(&request_json)
+            .map_err(|error| {
+                facade_error(oneiron::memory::MemoryError {
+                    code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                    message: format!("invalid keyed request: {error}"),
+                    suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                    successor_short_id: None,
+                    gate_denial: None,
+                })
+            })?;
+        let response = self
+            .inner
+            .key_value_namespaces(&request)
+            .map_err(facade_error)?;
+        serde_json::to_string(&response).map_err(|error| boundary_error(error.to_string()))
+    }
 }

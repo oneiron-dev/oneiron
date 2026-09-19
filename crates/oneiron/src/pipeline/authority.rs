@@ -10,6 +10,7 @@ use super::types::{ClaimStatusGateCache, EntityMetadataCache, ScoredEntity};
 
 pub(crate) fn claim_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
     !filter.deny_all
+        && crate::claim::claim_generic_readable(body)
         && matches!(
             body.approval,
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved

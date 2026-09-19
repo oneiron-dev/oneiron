@@ -26,7 +26,17 @@ impl BatchBuilder<'_> {
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
     pub fn commit(self) -> Result<()> {
-        self.commit_inner(None, |_| Ok(()))
+        self.commit_inner(None, |_| Ok(()), |_| Ok(()))
+    }
+
+    /// Runs an app-door target guard in the same writer snapshot as admission.
+    /// The guard runs before policy preflight and mutates nothing. Ordinary
+    /// commit semantics, including retained denial receipts, stay unchanged.
+    pub(crate) fn commit_with_target_guard(
+        self,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner(None, guard, |_| Ok(()))
     }
 
     /// Promotion's checker-aware terminal owns the transaction so a preflight
@@ -42,12 +52,13 @@ impl BatchBuilder<'_> {
         checker: &BoundedAutoChecker,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(Some(checker), after_apply)
+        self.commit_inner(Some(checker), |_| Ok(()), after_apply)
     }
 
     fn commit_inner(
         self,
         checker: Option<&BoundedAutoChecker>,
+        target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         if let Some(err) = self.validation_error {
@@ -62,6 +73,7 @@ impl BatchBuilder<'_> {
                 .load(std::sync::atomic::Ordering::Acquire)
         };
         let mut wtxn = self.vault.store.env.write_txn()?;
+        target_guard(&wtxn)?;
         let mut staged_gate_decisions = Vec::new();
         let mut preflight_gate_decision_ids = HashMap::new();
         if let Err(err) = preflight_gate_decisions_in_txn(

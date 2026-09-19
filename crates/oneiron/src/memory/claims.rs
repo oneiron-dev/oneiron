@@ -465,6 +465,18 @@ impl Memory<'_> {
         // Every generic claim-write door routes through here (`commit`,
         // `claim_upsert`, `seed_claims` via `commit_all`), so one guard covers
         // all three.
+        // Keyed facts bind subject, envelope actor/class, worldless scope,
+        // exact address, and replay identity together. A generic upsert's
+        // subject+scope match must not supersede another actor's keyed fact.
+        if input.predicate == super::key_value::PREDICATE {
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "keyed memory is written through key_value_put",
+                &[
+                    "Use the actor-bound keyed-memory door; generic claims cannot replace keyed facts.",
+                ],
+            ));
+        }
         if crate::claim::is_expression_preference_predicate(&input.predicate) {
             return Err(MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
@@ -556,6 +568,19 @@ impl Memory<'_> {
                     *publication_refusal.borrow_mut() = Some(error);
                     return Err(Error::InvalidClaimBody(
                         "booking publication owner authority refused",
+                    ));
+                }
+                if let Some(raw) = self.vault.get_raw_in(wtxn, &id)?
+                    && crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                    })
+                    && self
+                        .vault
+                        .get_claim_in_txn(wtxn, &id)?
+                        .is_some_and(|existing| existing.predicate == super::key_value::PREDICATE)
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "keyed claim revisions cannot be overwritten through generic claims",
                     ));
                 }
                 if self

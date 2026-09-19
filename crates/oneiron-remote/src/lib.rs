@@ -15,8 +15,8 @@
 //! [`FACADE_VERB_CATALOG`] is the ordered, authoritative list of verbs this
 //! SDK ships, and it is the same list the server's `/v1/core/facade` nest
 //! routes and the same list both language export censuses assert against. It
-//! holds the four calls of the canonical quickstart — `witness`,
-//! `claim_upsert`, `recall`, `receipts` — matching the projection L1 landed.
+//! holds the four quickstart calls and five exact actor-owned keyed-memory
+//! calls. Every catalog row is implemented on both backends and bindings.
 //!
 //! The remaining §HEAD-CONTRACT verbs are ABSENT rather than stubbed, for the
 //! reason `oneiron-server`'s `api/facade.rs` header already gives: a `501` stub
@@ -48,6 +48,10 @@ use oneiron::memory::{
     ClaimInput, CommitReceipt, Effort, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
     WitnessReceipt, WitnessTurn,
 };
+use oneiron::memory::{
+    KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
+    KeyValuePutReceipt, KeyValueSearch,
+};
 use serde::Serialize;
 
 pub use crate::caps::{
@@ -75,7 +79,17 @@ pub const DEFAULT_RECEIPTS_LIMIT: usize = 100;
 /// exact slice, so a verb cannot appear in one surface and be forgotten in
 /// another. Every entry is also the wire path segment, which is why the
 /// spelling is the engine's snake_case verb name and not the JavaScript one.
-pub const FACADE_VERB_CATALOG: [&str; 4] = ["witness", "claim_upsert", "recall", "receipts"];
+pub const FACADE_VERB_CATALOG: [&str; 9] = [
+    "witness",
+    "claim_upsert",
+    "recall",
+    "receipts",
+    "key_value_get",
+    "key_value_put",
+    "key_value_delete",
+    "key_value_search",
+    "key_value_namespaces",
+];
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///
@@ -356,6 +370,58 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(embedded) => embedded.memory().receipts(limit),
             Backend::Remote(remote) => remote.call("receipts", &ReceiptsRequest { limit }),
+        }
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_get(
+        &self,
+        request: &KeyValueAddress,
+    ) -> Result<Option<KeyValueItem>, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        match &self.backend {
+            Backend::Embedded(embedded) => embedded.memory().key_value_get(request),
+            Backend::Remote(remote) => remote.call("key_value_get", request),
+        }
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_put(&self, request: &KeyValuePut) -> Result<KeyValuePutReceipt, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        match &self.backend {
+            Backend::Embedded(embedded) => embedded.memory().key_value_put(request),
+            Backend::Remote(remote) => remote.call("key_value_put", request),
+        }
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_delete(
+        &self,
+        request: &KeyValueAddress,
+    ) -> Result<KeyValueDeleteReceipt, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        match &self.backend {
+            Backend::Embedded(embedded) => embedded.memory().key_value_delete(request),
+            Backend::Remote(remote) => remote.call("key_value_delete", request),
+        }
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_search(
+        &self,
+        request: &KeyValueSearch,
+    ) -> Result<Vec<KeyValueItem>, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        match &self.backend {
+            Backend::Embedded(embedded) => embedded.memory().key_value_search(request),
+            Backend::Remote(remote) => remote.call("key_value_search", request),
+        }
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_namespaces(
+        &self,
+        request: &KeyValueNamespaces,
+    ) -> Result<Vec<Vec<String>>, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        match &self.backend {
+            Backend::Embedded(embedded) => embedded.memory().key_value_namespaces(request),
+            Backend::Remote(remote) => remote.call("key_value_namespaces", request),
         }
     }
 }

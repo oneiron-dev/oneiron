@@ -34,6 +34,7 @@ mod claims;
 mod dreamer;
 mod error;
 mod expression_preference;
+mod key_value;
 mod outbound;
 mod reads;
 mod recall;
@@ -64,6 +65,10 @@ pub use error::{
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
+};
+pub use key_value::{
+    KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
+    KeyValuePutReceipt, KeyValueSearch,
 };
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,

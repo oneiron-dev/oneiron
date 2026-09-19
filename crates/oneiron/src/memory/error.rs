@@ -200,6 +200,13 @@ impl From<Error> for MemoryError {
             };
         }
         match err.kind() {
+            ErrorKind::KeyValueWriteRequiresOwnedDoor => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Use the actor-bound key_value API for keyed facts; generic claims and imports cannot overwrite keyed revisions.",
+                ],
+            ),
             ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => Self::new(
                 MEMORY_CODE_NOT_FOUND,
                 message,

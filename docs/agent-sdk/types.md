@@ -179,6 +179,38 @@ export type FacadeReceipt = {
   contentKind: string
   claimRef?: string
 }
+
+/** Exact namespace/key address in the bound actor/class's WORLDLESS store. */
+export interface KeyValueAddress { namespace: string[]; key: string }
+export interface KeyValuePut extends KeyValueAddress {
+  value: Record<string, unknown>
+  /** Reuse only for an identical retry. */
+  requestId: string
+  /** Omitted means generated. The gate still decides admission. */
+  source?: string
+}
+export interface KeyValueItem extends KeyValueAddress {
+  value: Record<string, unknown>
+  createdAt: number
+  updatedAt: number
+  revision: string
+}
+export interface KeyValuePutReceipt { item: KeyValueItem; replayed: boolean; receiptRef: string }
+export interface KeyValueDeleteReceipt { existed: boolean; receiptRefs: string[] }
+export interface KeyValueSearch {
+  namespacePrefix?: string[]
+  /** Exact top-level field equality; operators are refused. */
+  filter?: Record<string, unknown> | null
+  limit?: number
+  offset?: number
+}
+export interface KeyValueNamespaces {
+  prefix?: string[]
+  suffix?: string[]
+  maxDepth?: number | null
+  limit?: number
+  offset?: number
+}
 ```
 
 ## Python
@@ -295,6 +327,44 @@ class FacadeReceipt(TypedDict):
     content_kind: str
     claim_ref: str | None
 
+
+class KeyValueAddress(TypedDict):
+    namespace: list[str]
+    key: str
+
+class KeyValuePut(KeyValueAddress):
+    value: dict[str, Any]
+    request_id: str
+    source: NotRequired[str]
+
+class KeyValueItem(KeyValueAddress):
+    value: dict[str, Any]
+    created_at: int
+    updated_at: int
+    revision: str
+
+class KeyValuePutReceipt(TypedDict):
+    item: KeyValueItem
+    replayed: bool
+    receipt_ref: str
+
+class KeyValueDeleteReceipt(TypedDict):
+    existed: bool
+    receipt_refs: list[str]
+
+class KeyValueSearch(TypedDict):
+    namespace_prefix: NotRequired[list[str]]
+    filter: NotRequired[dict[str, Any] | None]
+    limit: NotRequired[int]
+    offset: NotRequired[int]
+
+class KeyValueNamespaces(TypedDict):
+    prefix: NotRequired[list[str]]
+    suffix: NotRequired[list[str]]
+    max_depth: NotRequired[int | None]
+    limit: NotRequired[int]
+    offset: NotRequired[int]
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -324,4 +394,9 @@ class Oneiron:
         format: PackFormat | None = None,
     ) -> MemoryPack: ...
     def receipts(self, limit: int = 100) -> list[FacadeReceipt]: ...
+    def key_value_get(self, request: KeyValueAddress) -> KeyValueItem | None: ...
+    def key_value_put(self, request: KeyValuePut) -> KeyValuePutReceipt: ...
+    def key_value_delete(self, request: KeyValueAddress) -> KeyValueDeleteReceipt: ...
+    def key_value_search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
+    def key_value_namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
 ```

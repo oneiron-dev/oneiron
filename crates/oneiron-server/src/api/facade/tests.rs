@@ -111,3 +111,103 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
         before
     );
 }
+
+#[tokio::test]
+async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
+    const SECRET: &str = "keyed-facade-test-secret";
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            Arc::clone(&vault),
+            crate::config::SyncServerConfig {
+                auth_secret: Some(SECRET.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let app = crate::build_app(server);
+    let full = crate::auth::mint_core_token_v2(
+        SECRET,
+        &format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            actor.to_hex()
+        ),
+    );
+    let readonly = crate::auth::mint_core_token_v2(
+        SECRET,
+        &format!(
+            "scope=core:read;principal_ref={};actor_class=human",
+            actor.to_hex()
+        ),
+    );
+    let unbound = crate::auth::mint_core_token_v2(SECRET, "scope=core:read,core:write");
+    let address = json!({"namespace":["prefs"],"key":"theme"});
+    let put = json!({"namespace":["prefs"],"key":"theme","value":{"name":"dark"},"request_id":"http-one","source":"user_stated"});
+    let cases = [
+        (
+            "key_value_put",
+            put.clone(),
+            &readonly,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "key_value_get",
+            address.clone(),
+            &unbound,
+            StatusCode::FORBIDDEN,
+        ),
+        ("key_value_put", put, &full, StatusCode::OK),
+        ("key_value_get", address.clone(), &full, StatusCode::OK),
+        (
+            "key_value_search",
+            json!({"namespace_prefix":["prefs"],"limit":1}),
+            &full,
+            StatusCode::OK,
+        ),
+        (
+            "key_value_namespaces",
+            json!({"prefix":["prefs"]}),
+            &full,
+            StatusCode::OK,
+        ),
+        (
+            "key_value_delete",
+            address.clone(),
+            &readonly,
+            StatusCode::FORBIDDEN,
+        ),
+        ("key_value_delete", address.clone(), &full, StatusCode::OK),
+        ("key_value_get", address, &full, StatusCode::OK),
+    ];
+    let mut bodies = Vec::new();
+    for (verb, payload, token, status) in cases {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/core/facade/{verb}"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{verb}");
+        bodies.push(
+            serde_json::from_slice::<Value>(&to_bytes(response.into_body(), 65536).await.unwrap())
+                .unwrap(),
+        );
+    }
+    assert_eq!(bodies[2]["item"]["value"], json!({"name":"dark"}));
+    assert_eq!(bodies[3]["value"], bodies[2]["item"]["value"]);
+    assert_eq!(bodies[4].as_array().unwrap().len(), 1);
+    assert_eq!(bodies[5], json!([["prefs"]]));
+    assert_eq!(bodies[7]["existed"], true);
+    assert_eq!(bodies[8], Value::Null);
+}

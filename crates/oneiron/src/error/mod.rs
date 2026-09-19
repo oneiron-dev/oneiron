@@ -272,6 +272,7 @@ pub enum ErrorKind {
     VaultCleanupProposalNotFound,
     VaultCleanupWakeTriggerRejected,
     VaultRead,
+    KeyValueWriteRequiresOwnedDoor,
 }
 
 /// Crate error type.
