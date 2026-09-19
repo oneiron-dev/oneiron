@@ -14,6 +14,19 @@ pub fn read_tree_files(
     repo: &GitWireRepo,
     tree: &GitOid,
 ) -> Result<BTreeMap<String, OriginTreeFile>> {
+    read_tree_files_bounded(git, repo, tree, 100_000)
+}
+
+fn read_tree_files_bounded(
+    git: &GitWire<'_>,
+    repo: &GitWireRepo,
+    tree: &GitOid,
+    max_trees: usize,
+) -> Result<BTreeMap<String, OriginTreeFile>> {
+    let mut trees = 1_usize;
+    if trees > max_trees {
+        return Err(Error::IndexOverflow("origin trees"));
+    }
     let mut files = BTreeMap::new();
     let mut pending = vec![(String::new(), tree.clone(), 0_usize)];
     let mut bytes = 0_usize;
@@ -34,10 +47,13 @@ pub fn read_tree_files(
                 format!("{prefix}/{name}")
             };
             if entry.mode == 0o040000 {
-                pending.push((path, entry.oid, depth + 1));
-                if pending.len() > 100_000 {
+                trees = trees
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow("origin trees"))?;
+                if trees > max_trees {
                     return Err(Error::IndexOverflow("origin trees"));
                 }
+                pending.push((path, entry.oid, depth + 1));
             } else if matches!(entry.mode, 0o100644 | 0o100755 | 0o120000 | 0o160000) {
                 let content = if entry.mode == 0o160000 {
                     entry.oid.as_str().as_bytes().to_vec()
@@ -72,3 +88,6 @@ pub fn read_tree_files(
     }
     Ok(files)
 }
+
+#[cfg(test)]
+mod tests;

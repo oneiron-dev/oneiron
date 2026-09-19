@@ -172,11 +172,12 @@ impl<'a> CodeViewSet<'a> {
                 "view action root mismatch",
             ));
         }
+        let action = view_build_action(action, &receipt)?;
         let path = self.view_path(id)?;
         // Tools are trusted host code, not sandboxed guests. Still reject
         // accidental input mutation BEFORE a miss can enter the shared cache.
         verify_view_inputs(&path, &receipt)?;
-        let leg = cache.run_leg(class, action, |vault| {
+        let leg = cache.run_leg(class, &action, |vault| {
             let result = execute(&path, vault)?;
             verify_view_inputs(&path, &receipt)?;
             Ok(result)
@@ -241,6 +242,29 @@ impl<'a> CodeViewSet<'a> {
         Ok(leg)
     }
 }
+fn view_build_action(action: &BuildAction, receipt: &ViewReceipt) -> BuildCacheResult<BuildAction> {
+    use crate::build_cache::ExtraInputDigest;
+    let encoded = rmp_serde::to_vec(&receipt.files)
+        .map_err(|_| Error::CorruptedIndex("view input identity encode"))?;
+    let mut identity = blake3::Hasher::new_derive_key("oneiron.code_view.inputs.v1");
+    identity.update(&encoded);
+    let mut inputs = action.input_root.clone();
+    // Keep custom REAPI roots and every original command/platform/input fact
+    // bound, rather than letting a caller-supplied CAS root bypass selection.
+    inputs
+        .extra_inputs
+        .push(ExtraInputDigest::new(*action.action_key()?.as_bytes()));
+    inputs
+        .extra_inputs
+        .push(ExtraInputDigest::new(*identity.finalize().as_bytes()));
+    BuildAction::new(
+        action.command.clone(),
+        inputs,
+        action.platform.clone(),
+        action.declared_outputs().to_vec(),
+    )
+}
+
 fn verify_view_inputs(root: &Path, receipt: &ViewReceipt) -> Result<()> {
     if !std::fs::symlink_metadata(root)?.is_dir() {
         return Err(Error::CorruptedIndex("view root was replaced"));

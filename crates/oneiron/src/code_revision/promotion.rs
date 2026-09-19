@@ -84,6 +84,20 @@ impl Vault {
         revision_id: EntityId,
         proposal_ids: &[EntityId],
     ) -> Result<()> {
+        self.check_code_revision_reviews(revision_id, proposal_ids, true)
+    }
+
+    pub(crate) fn require_code_revision_promotion(&self, revision_id: EntityId) -> Result<()> {
+        let reviews = self.code_revision_promotions(revision_id)?;
+        self.check_code_revision_reviews(revision_id, &reviews, false)
+    }
+
+    fn check_code_revision_reviews(
+        &self,
+        revision_id: EntityId,
+        proposal_ids: &[EntityId],
+        persist: bool,
+    ) -> Result<()> {
         if proposal_ids.is_empty() {
             return Err(Error::InvalidClaimBody("promotion needs reviews"));
         }
@@ -122,7 +136,7 @@ impl Vault {
             &revision.session_id,
         )?
         .ok_or(Error::EntityNotFound)?;
-        if head.revision_id != revision_id {
+        if persist && head.revision_id != revision_id {
             return Err(Error::ConcurrentWrite(
                 "only current code head can be promoted",
             ));
@@ -192,10 +206,16 @@ impl Vault {
             if old.as_ref() != encoded {
                 return Err(Error::ConcurrentWrite("revision promotion is immutable"));
             }
-        } else {
+        } else if persist {
             self.store.vault_meta.put(&mut txn, &key, &encoded)?;
+        } else {
+            return Err(Error::InvalidClaimBody(
+                "revision promotion receipt missing",
+            ));
         }
-        txn.commit()?;
+        if persist {
+            txn.commit()?;
+        }
         Ok(())
     }
     pub fn code_revision_promotions(&self, revision: EntityId) -> Result<Vec<EntityId>> {

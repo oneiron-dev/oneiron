@@ -74,6 +74,9 @@ impl Vault {
                 "engine export revision is not finalized",
             ));
         }
+        // Session membership authenticates history, not independent approval.
+        // Recheck the immutable promotion receipt before creating any Git object.
+        self.require_code_revision_promotion(request.revision_id)?;
         let metadata = revision
             .commit_metadata
             .as_ref()

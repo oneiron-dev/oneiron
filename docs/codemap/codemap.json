@@ -6152,6 +6152,7 @@
      "path": "src/code_revision/promotion.rs",
      "purpose": "Session provenance claims and promotion guarded by verified revision history",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 1
      }
@@ -7129,7 +7130,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CodeViewSet",
@@ -7146,7 +7147,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/code_view/tests.rs",
@@ -9310,7 +9311,9 @@
      "notable": [],
      "path": "src/contract_oracle/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "fn": 1
+     }
     },
     {
      "bucket": "s",
@@ -17054,6 +17057,14 @@
       "fn": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/tree/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -25744,7 +25755,7 @@
     "code_view": {
      "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
@@ -26267,7 +26278,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26753,7 +26764,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1535,
-   "test_files": 542
+   "test_files": 543
   },
   "oneiron-bench": {
    "files": [

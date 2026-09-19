@@ -254,14 +254,78 @@ fn independent_views_share_blobs_server_and_build_results() {
             Error::CorruptedIndex(_)
         ))
     ));
-    assert!(
-        cache
-            .get(&mutating_action.action_key().unwrap())
-            .unwrap()
-            .is_none()
-    );
+    let d = set.materialize(&mount, actor, &policy).unwrap();
+    assert!(matches!(
+        set.build(
+            d.view_id,
+            &cache,
+            CheckoutTaskClass::Build,
+            &mutating_action,
+            |_, _| panic!("failed build reservation must not run again")
+        ),
+        Err(crate::build_cache::BuildCacheError::ActionInFlight { .. })
+    ));
+
     assert_eq!(
         std::fs::read(set.view_path(b.view_id).unwrap().join("src/main.rs")).unwrap(),
         std::fs::read(repo.join("src/main.rs")).unwrap()
     );
+    let clean = set.materialize(&mount, actor, &policy).unwrap();
+    let narrow_policy = VisibleFilePolicy {
+        version: 1,
+        include_prefixes: vec![],
+        exclude_prefixes: vec![],
+    };
+    let narrow = set.materialize(&mount, actor, &narrow_policy).unwrap();
+    let same_narrow = set.materialize(&mount, actor, &narrow_policy).unwrap();
+    let explicit = action
+        .clone()
+        .with_reapi_input_root(crate::build_cache::ReapiDigest::of(b"explicit CAS root"));
+    let result = |producer: EntityId| ActionResult {
+        exit_code: 0,
+        outputs: BTreeMap::new(),
+        stdout_ref: None,
+        stderr_ref: None,
+        produced_at: 3,
+        producer_ref: producer.to_hex(),
+    };
+    let broad = set
+        .build(
+            clean.view_id,
+            &cache,
+            CheckoutTaskClass::Build,
+            &explicit,
+            |path, _| {
+                assert!(path.join("src/main.rs").exists());
+                Ok(result(clean.view_id))
+            },
+        )
+        .unwrap();
+    let limited = set
+        .build(
+            narrow.view_id,
+            &cache,
+            CheckoutTaskClass::Build,
+            &explicit,
+            |path, _| {
+                assert!(!path.join("src/main.rs").exists());
+                Ok(result(narrow.view_id))
+            },
+        )
+        .unwrap();
+    assert!(!broad.receipt.cache_hit);
+    assert!(!limited.receipt.cache_hit);
+    assert_ne!(broad.receipt.action_key, limited.receipt.action_key);
+    let identical = set
+        .build(
+            same_narrow.view_id,
+            &cache,
+            CheckoutTaskClass::Build,
+            &explicit,
+            |_, _| panic!("identical file selections must reuse the cache"),
+        )
+        .unwrap();
+    assert!(identical.receipt.cache_hit);
+    assert_eq!(identical.receipt.action_key, limited.receipt.action_key);
+    assert_eq!(identical.receipt.producer_ref, narrow.view_id.to_hex());
 }

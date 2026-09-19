@@ -179,3 +179,62 @@ fn schema_type_and_command_bytes_drift_with_precise_persisted_diff() {
             .passes()
     );
 }
+
+#[test]
+fn exported_macros_are_root_api_even_from_private_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(vault_dir.path(), VaultConfig::default()).unwrap();
+    std::fs::write(
+        dir.path().join("lib.rs"),
+        r#"
+        #[macro_export] macro_rules! root_macro { () => {} }
+        mod hidden {
+            #[macro_export(local_inner_macros)] macro_rules! nested_macro { () => {} }
+            #[doc = "macro_export"] macro_rules! private_macro { () => {} }
+            pub fn hidden_function() {}
+        }
+        mod external;
+    "#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("external.rs"),
+        "#[macro_export] macro_rules! external_macro { () => {} }",
+    )
+    .unwrap();
+    let spec = ContractSpec {
+        rust_crates: BTreeMap::from([("fixture".into(), "lib.rs".into())]),
+        ..ContractSpec::default()
+    };
+    let before = ContractOracle::capture(&spec, dir.path(), BTreeMap::new()).unwrap();
+    assert_eq!(
+        before.public_names,
+        BTreeSet::from([
+            "fixture::root_macro".into(),
+            "fixture::nested_macro".into(),
+            "fixture::external_macro".into(),
+        ])
+    );
+    let oracle = ContractOracle::new(&vault);
+    let baseline = oracle.record_baseline(spec.clone(), before).unwrap();
+    std::fs::write(
+        dir.path().join("external.rs"),
+        "#[macro_export] macro_rules! renamed_macro { () => {} }",
+    )
+    .unwrap();
+    let after = ContractOracle::capture(&spec, dir.path(), BTreeMap::new()).unwrap();
+    let verdict = oracle
+        .compare_and_record(&baseline.id, "macro-renamed", &after, true)
+        .unwrap();
+    assert!(!verdict.passes());
+    assert!(verdict.diffs.contains(&ContractDiff::RemovedPublicName {
+        name: "fixture::external_macro".into()
+    }));
+    std::fs::write(
+        dir.path().join("external.rs"),
+        "#[cfg_attr(feature = \"export\", macro_export)] macro_rules! conditional { () => {} }",
+    )
+    .unwrap();
+    assert!(rust_public_names(dir.path(), "fixture", "lib.rs").is_err());
+}

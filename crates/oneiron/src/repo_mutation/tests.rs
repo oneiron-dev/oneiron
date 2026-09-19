@@ -1865,12 +1865,9 @@ fn repository_conflict_creates_one_task_and_stock_git_clones_servable_sides() {
 #[test]
 fn engine_commit_export_stock_clone_fetch_and_hash_keyed_change_index() {
     use crate::code_artifact::CodeArtifactBody;
-    use crate::code_document::CodeFileEdit;
     use crate::code_revision::CodeRevision;
-    use crate::edge::EdgeActorClass;
     use crate::git_wire::{GitRefName, GitWire};
     use crate::origin::export::EngineCommitExport;
-    use crate::write_envelope::WriteActor;
     let (_dir, vault) = open_test_vault();
     let repo = init_repo();
     let actor = EntityId::now();
@@ -1893,9 +1890,6 @@ fn engine_commit_export_stock_clone_fetch_and_hash_keyed_change_index() {
             b"session",
         )
         .unwrap();
-    let mut doc = vault
-        .open_code_document("repo", "src/main.rs", "", session)
-        .unwrap();
     let git = GitWire::new(&vault).unwrap();
     let handle = git.open_repo(repo_ref(&repo), repo.path()).unwrap();
     let mut parent = None;
@@ -1905,14 +1899,49 @@ fn engine_commit_export_stock_clone_fetch_and_hash_keyed_change_index() {
         .into_iter()
         .enumerate()
     {
-        let edit = CodeFileEdit::between("src/main.rs", &doc.text(), content);
-        let edit = vault
-            .apply_code_file_edit(
-                &mut doc,
-                &edit,
-                WriteActor::new(actor, EdgeActorClass::Human),
+        let provenance = put_repo_provenance_claim(&vault);
+        let proposal = vault
+            .propose_repo_mutation(
+                RepoMutationRequest::new(
+                    repo_ref(&repo),
+                    RepoMutationOperation::CommitFile {
+                        path: "src/main.rs".into(),
+                        content: content.as_bytes().to_vec(),
+                        message: format!("reviewed {index}"),
+                    },
+                )
+                .with_actor_id(actor)
+                .with_session_id(session)
+                .with_provenance_claim_id(provenance),
+                crate::critic::LensCatalog {
+                    schema_version: 1,
+                    lenses: vec![
+                        crate::critic::CriticLens::new(
+                            "correctness",
+                            "host supplied review contract",
+                            "critique.v1",
+                            true,
+                            "code_review",
+                        )
+                        .unwrap(),
+                    ],
+                },
             )
             .unwrap();
+        vote_proposal(
+            &vault,
+            &proposal,
+            crate::critic::CritiqueVerdict::Accept,
+            true,
+        );
+        vote_proposal(
+            &vault,
+            &proposal,
+            crate::critic::CritiqueVerdict::Accept,
+            true,
+        );
+        vault.apply_repo_proposal(proposal.id).unwrap();
+        let edit = vault.code_file_edit_receipt(proposal.id).unwrap().unwrap();
         let id = EntityId::now();
         let now = 10 + index as u64;
         vault
@@ -1930,7 +1959,7 @@ fn engine_commit_export_stock_clone_fetch_and_hash_keyed_change_index() {
             Some(parent) => CodeRevision::commit_child(id, session, parent, now),
             None => CodeRevision::commit(id, session, now),
         }
-        .with_provenance_claim_id(put_repo_provenance_claim(&vault))
+        .with_provenance_claim_id(provenance)
         .with_commit_metadata(crate::code_revision::CodeCommitMetadata::new(
             actor,
             format!("engine {index}"),
@@ -1942,6 +1971,13 @@ fn engine_commit_export_stock_clone_fetch_and_hash_keyed_change_index() {
             ref_name: GitRefName::parse_full("refs/heads/export").unwrap(),
             expected_old_oid: old_oid.clone(),
         };
+        assert!(matches!(
+            vault.export_engine_commit(&git, &handle, &request, None),
+            Err(Error::InvalidClaimBody(_))
+        ));
+        assert!(vault.exported_engine_commit(&handle, id).unwrap().is_none());
+        assert_eq!(git.read_ref(&handle, &request.ref_name).unwrap(), old_oid);
+        vault.promote_code_revision(id, proposal.id).unwrap();
         let receipt = vault
             .export_engine_commit(&git, &handle, &request, None)
             .unwrap();
@@ -1977,6 +2013,20 @@ fn engine_commit_export_stock_clone_fetch_and_hash_keyed_change_index() {
             stock_git(&checkout.path().join("clone"), &["show", &object]),
             content.as_bytes()
         );
+        if let Some(previous) = parent {
+            vault
+                .export_engine_commit(
+                    &git,
+                    &handle,
+                    &EngineCommitExport {
+                        revision_id: previous,
+                        ref_name: GitRefName::parse_full("refs/heads/historical").unwrap(),
+                        expected_old_oid: None,
+                    },
+                    None,
+                )
+                .unwrap();
+        }
         old_oid = Some(receipt.record.new_oid);
         parent = Some(id);
     }

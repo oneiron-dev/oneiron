@@ -103,8 +103,40 @@ fn units(path: &str, source: &str) -> Result<Units> {
     if tree.root_node().has_error() {
         return Err(invalid());
     }
-    collect(tree.root_node(), source, "", &mut units)?;
+    let mut implementations = BTreeMap::new();
+    collect(
+        tree.root_node(),
+        source,
+        "",
+        &mut units,
+        &mut implementations,
+    )?;
+    for (key, mut blocks) in implementations {
+        // Block order is not an identity. Keep all headers/attributes, with
+        // method bodies removed from comparison and retained in child units.
+        blocks.sort_by(|a, b| a.own.cmp(&b.own).then_with(|| a.text.cmp(&b.text)));
+        let own = blocks
+            .iter()
+            .map(|b| b.own.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = blocks
+            .iter()
+            .map(|b| b.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let start = blocks.iter().map(|b| b.start).min().ok_or_else(invalid)?;
+        let end = blocks.iter().map(|b| b.end).max().ok_or_else(invalid)?;
+        insert(&mut units, key, &text, &own, start, end)?;
+    }
     Ok(units)
+}
+
+struct ImplBlock {
+    own: String,
+    text: String,
+    start: u32,
+    end: u32,
 }
 
 fn invalid() -> Error {
@@ -163,6 +195,7 @@ fn collect(
     source: &str,
     scope: &str,
     units: &mut Units,
+    implementations: &mut BTreeMap<String, Vec<ImplBlock>>,
 ) -> Result<String> {
     if matches!(
         node.kind(),
@@ -199,7 +232,13 @@ fn collect(
         if node.kind() != "source_file" || !gap.trim().is_empty() {
             own.push_str(gap);
         }
-        own.push_str(&collect(child, source, child_scope, units)?);
+        own.push_str(&collect(
+            child,
+            source,
+            child_scope,
+            units,
+            implementations,
+        )?);
         end = child.end_byte();
     }
     let tail = &source[end..node.end_byte()];
@@ -210,14 +249,23 @@ fn collect(
         let start = super::rust_source::rust_doc_context_start_byte(node, source);
         let comparison = format!("{}{}", &source[start..node.start_byte()], own);
         let start_line = source[..start].bytes().filter(|b| *b == b'\n').count() as u32 + 1;
-        insert(
-            units,
-            key,
-            &source[start..node.end_byte()],
-            &comparison,
-            start_line,
-            node.end_position().row as u32 + 1,
-        )?;
+        if node.kind() == "impl_item" {
+            implementations.entry(key).or_default().push(ImplBlock {
+                own: comparison,
+                text: source[start..node.end_byte()].to_owned(),
+                start: start_line,
+                end: node.end_position().row as u32 + 1,
+            });
+        } else {
+            insert(
+                units,
+                key,
+                &source[start..node.end_byte()],
+                &comparison,
+                start_line,
+                node.end_position().row as u32 + 1,
+            )?;
+        }
         Ok(format!("<{name}>"))
     } else {
         if node.kind() == "source_file" && !own.trim().is_empty() {
@@ -301,5 +349,23 @@ mod tests {
         .unwrap();
         assert_eq!(diff.len(), 1);
         assert_eq!(diff[0].symbol, "impl_item:A::function_item:f");
+    }
+    #[test]
+    fn repeated_inherent_impls_keep_method_identity_and_ignore_block_order() {
+        let before = "struct Foo;\nimpl Foo { fn a() { one(); } }\nimpl Foo { fn b() {} }\n";
+        let after = "struct Foo;\nimpl Foo { fn a() { two(); } }\nimpl Foo { fn b() {} }\n";
+        let changes = semantic_code_diff("lib.rs", before, after).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].symbol, "impl_item:Foo::function_item:a");
+        assert_eq!(
+            code_text_diff("lib.rs", before, after).unwrap(),
+            render_code_semantic_diff(&changes)
+        );
+        let reordered = "struct Foo;\nimpl Foo { fn b() {} }\nimpl Foo { fn a() { one(); } }\n";
+        assert!(
+            semantic_code_diff("lib.rs", before, reordered)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

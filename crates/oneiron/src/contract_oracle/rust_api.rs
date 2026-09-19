@@ -25,23 +25,32 @@ pub fn rust_public_names(
     let directory = directory.to_string_lossy();
     let mut scan = Scan {
         root,
+        crate_name,
         parser,
         names: &mut names,
         files: BTreeSet::new(),
     };
-    scan.file(root_file, &directory, crate_name, 0)?;
+    scan.file(root_file, &directory, crate_name, 0, true)?;
     Ok(names)
 }
 
 struct Scan<'a> {
     root: &'a Path,
+    crate_name: &'a str,
     parser: Parser,
     names: &'a mut BTreeSet<String>,
     files: BTreeSet<String>,
 }
 
 impl Scan<'_> {
-    fn file(&mut self, file: &str, directory: &str, prefix: &str, depth: usize) -> Result<()> {
+    fn file(
+        &mut self,
+        file: &str,
+        directory: &str,
+        prefix: &str,
+        depth: usize,
+        reachable: bool,
+    ) -> Result<()> {
         if depth > 64 || self.files.len() >= 4096 || !self.files.insert(file.to_owned()) {
             return Err(invalid("Rust module traversal is recursive or too large"));
         }
@@ -59,7 +68,14 @@ impl Scan<'_> {
         if tree.root_node().has_error() {
             return Err(invalid("Rust source contains parse errors"));
         }
-        self.items(tree.root_node(), source, directory, prefix, depth)
+        self.items(
+            tree.root_node(),
+            source,
+            directory,
+            prefix,
+            depth,
+            reachable,
+        )
     }
 
     fn items(
@@ -69,6 +85,7 @@ impl Scan<'_> {
         directory: &str,
         prefix: &str,
         depth: usize,
+        reachable: bool,
     ) -> Result<()> {
         let mut cursor = parent.walk();
         let children: Vec<_> = parent.named_children(&mut cursor).collect();
@@ -79,7 +96,17 @@ impl Scan<'_> {
             if node.kind() == "attribute_item" && text(*node, source).contains("path") {
                 return Err(invalid("custom module paths require compiler API metadata"));
             }
-            if !public(*node, source) {
+            if node.kind() == "macro_definition" && exported_macro(*node, source)? {
+                let name = node
+                    .child_by_field_name("name")
+                    .ok_or_else(|| invalid("exported macro name missing"))?;
+                self.names
+                    .insert(format!("{}::{}", self.crate_name, text(name, source)));
+                continue;
+            }
+            let visible = reachable && public(*node, source);
+            // A private module may contain a macro_export at the crate root.
+            if !visible && node.kind() != "mod_item" {
                 continue;
             }
             if node.kind() == "use_declaration" {
@@ -98,12 +125,14 @@ impl Scan<'_> {
             };
             let name = text(name_node, source);
             let full = format!("{prefix}::{name}");
-            self.names.insert(full.clone());
+            if visible {
+                self.names.insert(full.clone());
+            }
             match node.kind() {
                 "mod_item" => {
                     let child_directory = join(directory, name);
                     if let Some(body) = node.child_by_field_name("body") {
-                        self.items(body, source, &child_directory, &full, depth + 1)?;
+                        self.items(body, source, &child_directory, &full, depth + 1, visible)?;
                     } else {
                         let flat = format!("{child_directory}.rs");
                         let nested = format!("{child_directory}/mod.rs");
@@ -118,7 +147,7 @@ impl Scan<'_> {
                                 ));
                             }
                         };
-                        self.file(&file, &child_directory, &full, depth + 1)?;
+                        self.file(&file, &child_directory, &full, depth + 1, visible)?;
                     }
                 }
                 "struct_item" | "union_item" | "enum_item" | "trait_item" => {
@@ -171,6 +200,31 @@ fn join(directory: &str, name: &str) -> String {
 }
 fn text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
     &source[node.byte_range()]
+}
+fn exported_macro(node: Node<'_>, source: &str) -> Result<bool> {
+    let mut previous = node.prev_named_sibling();
+    while let Some(attribute) = previous {
+        match attribute.kind() {
+            "line_comment" | "block_comment" => {}
+            "attribute_item" => {
+                let attribute = attribute
+                    .named_child(0)
+                    .ok_or_else(|| invalid("macro attribute missing"))?;
+                let name = attribute.named_child(0).map(|n| text(n, source));
+                if name == Some("macro_export") {
+                    return Ok(true);
+                }
+                if name == Some("cfg_attr") && text(attribute, source).contains("macro_export") {
+                    return Err(invalid(
+                        "conditional macro exports require compiler API metadata",
+                    ));
+                }
+            }
+            _ => break,
+        }
+        previous = attribute.prev_named_sibling();
+    }
+    Ok(false)
 }
 fn public(node: Node<'_>, source: &str) -> bool {
     let mut cursor = node.walk();
