@@ -1,0 +1,20 @@
+{
+  "head": "c1736fef2a6d9d30fa6e2636a7c7d6944814772a",
+  "branch": "w7/W7-C14",
+  "checked_at": "2026-09-19T13:41:28.671353+00:00",
+  "external_pr_status": "no PR for branch",
+  "external_pr_command": "gh pr view w7/W7-C14 --json number,headRefOid,url",
+  "external_pr_exit_code": 1,
+  "raw_error": "no pull requests found for branch \"w7/W7-C14\"\n",
+  "internal_sources": {
+    ".w7/surface-acceptance-audit.md": "5501777195503c187a1c55651cede2fca3daad105dc731e48f9c551d4ceca3a8",
+    ".w7/document-acceptance-audit.md": "92a8eb3ab8ac51a40b87c5a085d8acc9c748b9739ed1f3e3c6f008b8b7509213"
+  },
+  "disposition": "impl-notes/W7-C14-review.md",
+  "changed": "Existing direction fitness test added to offline CI",
+  "validation": {
+    "command": "python3 -m unittest discover -s scripts/tests -p test_docedit_direction.py -v",
+    "exit_code": 0
+  },
+  "github_explanation": "No applicable PR exists yet; post disposition and exact validation when one exists."
+}

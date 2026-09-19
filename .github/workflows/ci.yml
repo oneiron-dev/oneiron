@@ -219,6 +219,7 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_office*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_excel*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_real_workbook*.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_docedit_direction.py' -v
 
       # Keep dependency artifacts when workspace cleanup is enough to meet
       # the unchanged cap. Runs after a failure too; never changes the verdict.

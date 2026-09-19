@@ -421,5 +421,10 @@
     "receipt_tests": 3,
     "test_exit_code": 0,
     "fresh_excel_accuracy": "pending"
+  },
+  "docedit_direction_ci": {
+    "command": "python3 -m unittest discover -s scripts/tests -p test_docedit_direction.py -v",
+    "tests": 1,
+    "exit_code": 0
   }
 }
