@@ -1,13 +1,15 @@
 /// <reference types="vite/client" />
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
+import { HeadContent, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
+import type { AppRouterContext } from '~/runtime/app-runtime'
 import * as React from 'react'
 import { DefaultCatchBoundary } from '~/components/DefaultCatchBoundary'
 import { NotFound } from '~/components/NotFound'
 import appCss from '~/styles/app.css?url'
 import safelightCss from '~/styles/safelight.css?url'
+import desktopChromeCss from '~/styles/desktop-chrome.css?url'
 import { seo } from '~/utils/seo'
 
-export const Route = createRootRoute({
+export const Route = createRootRouteWithContext<AppRouterContext>()({
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
@@ -24,6 +26,7 @@ export const Route = createRootRoute({
     links: [
       { rel: 'stylesheet', href: appCss },
       { rel: 'stylesheet', href: safelightCss },
+      { rel: 'stylesheet', href: desktopChromeCss },
       {
         rel: 'preload',
         href: '/fonts/ServerMono-Regular.woff2',
@@ -58,6 +61,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="app">
+        <div className="desktop-drag-region" data-tauri-drag-region="" aria-hidden="true" />
         {children}
         <Scripts />
       </body>
