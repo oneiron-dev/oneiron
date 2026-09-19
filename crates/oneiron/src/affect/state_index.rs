@@ -136,7 +136,7 @@ impl Vault {
                 turns
                     .iter()
                     .chain([&evidence.goal_velocity, &evidence.engagement])
-                    .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                    .map(|id| Value::from(id.to_hex()))
                     .collect(),
             );
             let mut previous = Vec::new();

@@ -64,6 +64,25 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
         vec!["value", "affect", "goal_velocity", "engagement"]
     );
     assert_eq!(vault.state_index(&EntityId::now())?, StateIndex::default());
+    // Reference strings survive credential nulling without a generic binary exemption.
+    let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let target_dir = tempfile::tempdir()?;
+    let target = Vault::open(target_dir.path(), VaultConfig::default())?;
+    target.import_whole_vault_json(export.bytes())?;
+    let restored = target.get_claim(&id)?.unwrap();
+    assert_eq!(
+        restored.evidence,
+        Some(Value::Array(
+            vec![turn, evidence.goal_velocity, evidence.engagement]
+                .into_iter()
+                .map(|id| Value::from(id.to_hex()))
+                .collect()
+        ))
+    );
+    assert_eq!(restored.source, Some(ClaimSource::Imported));
+    assert_eq!(restored.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(target.state_index(&subject)?, StateIndex::default());
+
     let changed = StateIndexEvidence {
         vad_turns: evidence.vad_turns.clone(),
         goal_velocity: signal(GOAL_VELOCITY, 0.4)?,
