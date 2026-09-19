@@ -178,6 +178,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/app_tier_tests.rs` | test | s | — | — | — |
 | `src/handler/conn_state.rs` | src | s | 8 crate-vis | — | Per-connection budgets, quotas, rate limit, and sync-mode binding |
 | `src/handler/connection.rs` | src | m | 3 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
+| `src/handler/documents.rs` | src | s | 2 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 4 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
 | `src/handler/hello.rs` | src | s | 3 crate-vis | — | First-frame protocol-version negotiation gate |
 | `src/handler/mod.rs` | src | s | 1 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
@@ -248,6 +249,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/tests.rs` | test | L | — | — | — |
 | `src/server/windows.rs` | src | s | 7 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
+| `src/server/windows/tests.rs` | test | s | — | — | — |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
 | `src/usage/allowance.rs` | src | s | 7 struct · 1 enum · 7 crate-vis | ConsumerAllowanceState, ConsumerAllowanceWarning, ConsumerAllowanceWarningLevel, ConsumerTopUp, ConsumerTopUpRequest, ConsumerTopUpState, ConsumerUsageDetails, ConsumerUsageState | Consumer allowance states, warning levels, and top-up request types |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 8 crate-vis | UsageError | Msgpack codec for ledger records and usage error mapping |
