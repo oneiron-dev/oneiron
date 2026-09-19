@@ -95,7 +95,7 @@ impl EmotionSimilarityReranker {
             vad.validate()?;
         }
         let id = identity(
-            b"emotion-similarity:v1",
+            b"emotion-similarity:v2",
             &affect,
             &[query.valence, query.arousal, query.dominance],
         );
@@ -110,13 +110,12 @@ impl Reranker for EmotionSimilarityReranker {
         Ok(candidates
             .iter()
             .map(|c| {
-                self.affect.get(&c.id).map_or(0.0, |v| {
-                    // Normalize valence's double-width axis before squared distance.
-                    let dv = (v.valence - self.query.valence) / 2.0;
-                    let da = v.arousal - self.query.arousal;
-                    let dd = v.dominance - self.query.dominance;
-                    (1.0 - (dv * dv + da * da + dd * dd) / 3.0).clamp(0.0, 1.0)
-                })
+                let v = self.affect.get(&c.id).copied().unwrap_or(Vad::NEUTRAL);
+                // Normalize valence's double-width axis before squared distance.
+                let dv = (v.valence - self.query.valence) / 2.0;
+                let da = v.arousal - self.query.arousal;
+                let dd = v.dominance - self.query.dominance;
+                (1.0 - (dv * dv + da * da + dd * dd) / 3.0).clamp(0.0, 1.0)
             })
             .collect())
     }
@@ -171,7 +170,7 @@ mod tests {
         let emotion = EmotionSimilarityReranker::new(query, affect.clone())?;
         let scores = emotion.rerank("", &candidates)?;
         assert!(scores[0] > scores[1]);
-        assert_eq!(scores[3], 0.0);
+        assert_eq!(scores[3], scores[1], "missing VAD is neutral");
         let floor = ArousalFloor::new(0.5)?;
         let arousal = ArousalReranker::new(affect, floor)?;
         let scores = arousal.rerank("", &candidates)?;
