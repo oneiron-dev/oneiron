@@ -308,3 +308,23 @@ vector/token/publication assertions remain. This is a fixture-clock repair,
 not an assertion inversion. Featureless runtime, doctests and narrow sync did
 not run after that failure. These seven repairs and the clock fix await the
 successor guarded run; no full-gate pass is claimed.
+
+
+## Guarded focused validation at 92b2a3d4
+
+Run `6254d64e-a238-4bfa-9fa7-7717b7e0056c` compiled core/server and ran
+84 tests: **83 passed, one failed**, 8719 skipped. Six of the seven latest
+review repairs have passing regressions, as do all selected healer/dispatch
+composition tests and the previous idle-clock fixture repair. The sole failure
+was the world-scope fixture calling `entity(0xA1..0xA4)`, which the test helper
+correctly rejects as reserved production-agent IDs. It now uses non-pinned
+`0xB1..0xB4` seeds. No behavior assertion was changed. The world-scope behavior
+still needs its actual runtime pass; the full script and narrow sync did not run
+after this focused failure.
+
+Formatting, regenerated code map, ratchet, root surface and diff check passed
+before the nine small repair commits. The complete PR939 refresh before the
+fixture fix still has 15 issue comments, 62 reviews and 95 inline comments,
+with complete thread pagination and the same seven unresolved findings. No new
+review finding appeared. Raw results, command logs, run ID and review receipts
+are retained in `review-recovery/review-repairs-r5/` and its adjacent PR snapshot.

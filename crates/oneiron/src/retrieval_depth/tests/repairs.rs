@@ -507,7 +507,7 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
 fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResult {
     use crate::vault::ReadMode;
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
-    let (id, subject, world_a, world_b) = (entity(0xA1), entity(0xA2), entity(0xA3), entity(0xA4));
+    let (id, subject, world_a, world_b) = (entity(0xB1), entity(0xB2), entity(0xB3), entity(0xB4));
     let mut body = ClaimBody::new(
         "core.fact",
         ClaimSubject::Entity(subject),
