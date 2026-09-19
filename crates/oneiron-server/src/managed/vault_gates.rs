@@ -3,6 +3,7 @@
 use std::os::fd::{FromRawFd, RawFd};
 use std::path::Path;
 
+use oneiron::federation::derivation::DerivationOwner;
 use oneiron_vault_contract::{Credentials, DEK_LEN, read_credentials};
 use subtle::ConstantTimeEq;
 
@@ -144,6 +145,7 @@ pub fn open_managed_vault(
     vault_config: oneiron::VaultConfig,
     vault_name: &str,
     credentials: &Credentials,
+    owner: DerivationOwner,
 ) -> Result<oneiron::Vault, ManagedError> {
     open_probed_vault(
         data_dir,
@@ -151,6 +153,7 @@ pub fn open_managed_vault(
         vault_name,
         credentials,
         super::isolation::probe(data_dir, vault_name),
+        owner,
     )
 }
 
@@ -160,11 +163,19 @@ fn open_probed_vault(
     vault_name: &str,
     credentials: &Credentials,
     evidence: super::isolation::IsolationEvidence,
+    owner: DerivationOwner,
 ) -> Result<oneiron::Vault, ManagedError> {
     let isolated = evidence.admits();
     let vault = oneiron::Vault::open_owned(data_dir, vault_config)
         .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
     check_gates_with_isolation(&vault, vault_name, credentials, isolated)?;
+    // Bind before any managed caller can enqueue or serve derived content.
+    vault
+        .bind_derivation_owner(owner)
+        .map_err(|error| ManagedError::DerivationOwnerRejected {
+            vault: vault_name.to_owned(),
+            reason: error.to_string(),
+        })?;
     Ok(vault)
 }
 
@@ -224,9 +235,14 @@ mod isolation_gate_tests {
                 "real-vault",
                 &credentials,
                 evidence,
+                DerivationOwner([9; 32]),
             );
             if fscrypt && dedicated_uid {
                 let vault = result.unwrap();
+                assert_eq!(
+                    vault.derivation_scope().unwrap().owner(),
+                    DerivationOwner([9; 32])
+                );
                 let scope = managed_lease_scope(&vault).unwrap();
                 assert_ne!(scope, 0);
                 assert!(vault.sync_state_get(DEK_MAC_KEY).unwrap().is_some());
@@ -237,9 +253,26 @@ mod isolation_gate_tests {
                     "real-vault",
                     &credentials,
                     evidence,
+                    DerivationOwner([9; 32]),
                 )
                 .unwrap();
                 assert_eq!(managed_lease_scope(&reopened).unwrap(), scope);
+                assert_eq!(
+                    reopened.derivation_scope().unwrap().owner(),
+                    DerivationOwner([9; 32])
+                );
+                drop(reopened);
+                assert!(matches!(
+                    open_probed_vault(
+                        &path,
+                        oneiron::VaultConfig::device(),
+                        "real-vault",
+                        &credentials,
+                        evidence,
+                        DerivationOwner([10; 32]),
+                    ),
+                    Err(ManagedError::DerivationOwnerRejected { .. })
+                ));
             } else {
                 assert!(matches!(
                     result,

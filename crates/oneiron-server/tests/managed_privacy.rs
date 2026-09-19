@@ -24,6 +24,8 @@ fn managed_argv(root: &Path) -> Vec<String> {
         CONTRACT_VERSION.to_string(),
         "--vault-name".to_owned(),
         "privacy-canary".to_owned(),
+        "--derivation-owner".to_owned(),
+        "09".repeat(32),
         "--data-dir".to_owned(),
         path("data"),
         "--http-socket".to_owned(),

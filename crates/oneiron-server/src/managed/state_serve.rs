@@ -432,6 +432,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         config.vault_config(),
         &managed.vault_name,
         &credentials,
+        managed.derivation_owner,
     )?);
 
     let mut server_config = config.sync_server_config();

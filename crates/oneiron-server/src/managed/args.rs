@@ -4,6 +4,7 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use oneiron::federation::derivation::DerivationOwner;
 use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
 
 use crate::config::{ServeArgs, ServeConfig};
@@ -37,6 +38,12 @@ pub enum ManagedError {
 
     #[error("--vault-name {name:?} is not a DNS label")]
     InvalidVaultName { name: String },
+
+    #[error("--derivation-owner must be a 32-byte account or organization id in hexadecimal")]
+    InvalidDerivationOwner,
+
+    #[error("managed vault {vault:?} rejected its derivation owner: {reason}")]
+    DerivationOwnerRejected { vault: String, reason: String },
 
     #[error("--{flag} must be a non-negative file descriptor, got {value}")]
     InvalidFd { flag: &'static str, value: i32 },
@@ -99,6 +106,7 @@ pub enum ManagedError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedArgs {
     pub vault_name: String,
+    pub derivation_owner: DerivationOwner,
     pub data_dir: PathBuf,
     pub http_socket: PathBuf,
     pub ctl_socket: PathBuf,
@@ -133,8 +141,16 @@ impl ManagedArgs {
             return Err(ManagedError::InvalidVaultName { name: vault_name });
         }
 
+        let mut owner = [0; 32];
+        hex::decode_to_slice(
+            require(args.derivation_owner.as_deref(), "derivation-owner")?,
+            &mut owner,
+        )
+        .map_err(|_| ManagedError::InvalidDerivationOwner)?;
+
         let managed = Self {
             vault_name,
+            derivation_owner: DerivationOwner(owner),
             // `--vault-path` stays the alias for the same directory.
             data_dir: require(
                 args.data_dir.clone().or_else(|| args.vault_path.clone()),
@@ -299,6 +315,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "vault-name",
         |args| args.vault_name.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "derivation-owner",
+        |args| args.derivation_owner.is_some(),
         ArgvUse::Read,
     ),
     ("data-dir", |args| args.data_dir.is_some(), ArgvUse::Read),
