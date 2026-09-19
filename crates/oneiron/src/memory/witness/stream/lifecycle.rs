@@ -166,10 +166,10 @@ fn commit_terminal(
     // Recognize our immutable generation receipt before attempting another write.
     {
         let txn = vault.store.env.read_txn()?;
-        if let Some(done) = storage::receipt(vault, &txn, seed.message_id)? {
-            if done.generation == seed.generation {
-                return Ok(done);
-            }
+        if let Some(done) = storage::receipt(vault, &txn, seed.message_id)?
+            && done.generation == seed.generation
+        {
+            return Ok(done);
         }
     }
     let mut receipt = MessageStreamReceipt {
@@ -242,10 +242,10 @@ fn commit_terminal(
     };
     if let Err(error) = written {
         let txn = vault.store.env.read_txn()?;
-        if let Some(done) = storage::receipt(vault, &txn, seed.message_id)? {
-            if done.generation == seed.generation {
-                return Ok(done);
-            }
+        if let Some(done) = storage::receipt(vault, &txn, seed.message_id)?
+            && done.generation == seed.generation
+        {
+            return Ok(done);
         }
         return Err(error);
     }

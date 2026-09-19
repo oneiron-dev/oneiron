@@ -72,13 +72,16 @@ impl StreamPresence {
             return;
         };
         // Poison cannot make a committed durable transition report failure.
-        let _emission = self.emission.lock().unwrap_or_else(|e| e.into_inner());
+        let _emission = self
+            .emission
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let key = format!("msg:{}", seed.message_id.to_hex());
         self.store.delete(&key);
-        if visibility == StreamSyncVisibility::AllDevices {
-            if let Ok(frame) = transport::encode_ephemeral(&self.store.encode(&key)).into_result() {
-                let _ = self.sender.send(frame);
-            }
+        if visibility == StreamSyncVisibility::AllDevices
+            && let Ok(frame) = transport::encode_ephemeral(&self.store.encode(&key)).into_result()
+        {
+            let _ = self.sender.send(frame);
         }
         self.store.remove_outdated();
     }

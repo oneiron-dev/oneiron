@@ -182,7 +182,7 @@ pub(super) fn owner_in_txn(
         .entities
         .get(txn, owner.actor().as_bytes())?
         .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw));
-    if !header.is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_PERSON) {
+    if header.is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON) {
         return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
             "owner is not a live human",
         )));

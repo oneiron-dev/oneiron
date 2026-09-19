@@ -2116,6 +2116,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/put_apply/owned_body.rs",
+     "purpose": "Refuse generic body writes that bypass a storage-owned document or conversation ledger",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/put_apply/put_entity_update.rs",
      "purpose": "SKILL body validators shared by the put and update arms",
      "surface": {
@@ -25367,7 +25377,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26538,7 +26548,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1520,
+   "source_files": 1521,
    "test_files": 539
   },
   "oneiron-bench": {

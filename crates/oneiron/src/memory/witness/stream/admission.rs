@@ -341,7 +341,7 @@ pub(super) fn committed_text(
     if seed.author == crate::memory::WitnessAuthor::System {
         // System rows intentionally have no AuthoredBy edge. Only a stream's
         // durable actor-bound receipt proves which system writer may continue.
-        if !storage::receipt(vault, txn, seed.message_id)?.is_some_and(|r| r.actor == seed.actor) {
+        if storage::receipt(vault, txn, seed.message_id)?.is_none_or(|r| r.actor != seed.actor) {
             return Err(MessageStreamError::WrongActor);
         }
     }
