@@ -279,7 +279,7 @@ fn every_capability_axis_and_offline_caveat_excludes_owner_grade() {
                 .filter(|scope| !matches!(scope, CoreScope::OrgAdmin(_)))
                 .map(|scope| scope.as_str().to_owned())
                 .collect(),
-        )
+        );
     });
     assert!(!fixture.auth(&slip).unwrap().is_owner_grade());
     for record_bound in [true, false] {

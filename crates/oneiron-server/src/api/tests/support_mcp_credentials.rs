@@ -76,8 +76,7 @@ pub(super) fn mcp_registered_credential(server: &SyncServer, label: &str) -> Str
         .vault()
         .sync_state_get(&cache_key(label))
         .unwrap()
-        .map(|bytes| String::from_utf8(bytes).unwrap())
-        .unwrap_or_else(|| label.to_owned())
+        .map_or_else(|| label.to_owned(), |bytes| String::from_utf8(bytes).unwrap())
 }
 
 pub(super) fn bind_mcp_request(server: &SyncServer, request: Request<Body>) -> Request<Body> {

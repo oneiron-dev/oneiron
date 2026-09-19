@@ -3,7 +3,10 @@ use super::*;
 
 #[tokio::test]
 async fn org_admin_routes_render_only_setup_powers_and_refuse_excluded_operations() {
-    use oneiron::federation::{OrgAdminPolicy, OrgAdminPower};
+    use ed25519_dalek::{Signer, SigningKey};
+    use oneiron::authority::{HostSlipIssuer, PairingPrincipal, pairing_binding_transcript};
+    use oneiron::federation::{OrgAdminPolicy, OrgAdminPower, Scope, ScopeAxis};
+
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("org-root".into()),
         ..Default::default()
@@ -17,9 +20,6 @@ async fn org_admin_routes_render_only_setup_powers_and_refuse_excluded_operation
     )
     .unwrap();
     server.vault().configure_org_admin(&policy).unwrap();
-    use ed25519_dalek::{Signer, SigningKey};
-    use oneiron::authority::{HostSlipIssuer, PairingPrincipal, pairing_binding_transcript};
-    use oneiron::federation::{Scope, ScopeAxis};
     server
         .vault()
         .put_entity(

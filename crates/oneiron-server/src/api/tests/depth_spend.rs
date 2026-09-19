@@ -208,11 +208,7 @@ async fn deep_api_aborted_lease_fails_closed_for_success_and_search_error() {
             FailurePoint::AbortedMalformedRerank,
         ] {
             let (_dir, server, backend) = failing_server(point);
-            let (status, response) = if reason {
-                route_json_auth(server, deep_request(reason)).await
-            } else {
-                route_json_auth(server, deep_request(reason)).await
-            };
+            let (status, response) = route_json_auth(server, deep_request(reason)).await;
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{response}");
             let error = if reason {
                 &response["error"]

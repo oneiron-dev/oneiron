@@ -741,14 +741,6 @@ async fn ra_drain_tick_clears_only_fully_reasserted_windows() {
         .await;
 }
 
-/// ONE-1140 RULING A (OD-8 amended, pubkey-bound; delete-safety adjacent,
-/// cap-exempt): `register_lease` refuses a FRESH active lease for a
-/// pubkey that ANY `ls:` row has revoked. A revoked pubkey is terminal
-/// across ALL client_ids, so a device rotating client_id while reusing
-/// its key cannot recover (recovery requires a fresh KEYPAIR). The
-/// None-arm guard writes NO row and grants nothing. A wrong impl that
-/// grants any absent client_id would write `ls:{vault}:{B}` active and FAIL here.
-
 /// Historical withdrawal still commits or rolls back its durable root and mirror together.
 #[tokio::test]
 async fn historical_lease_revoke_root_and_mirror_roll_back_together_on_failure() {

@@ -32,8 +32,8 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
         .copied()
         .unwrap_or("host")
         .to_owned();
-    let actor_class = fields.get("actor_class").map(|value| value.to_string());
-    let org_ref = fields.get("org_ref").map(|value| value.to_string());
+    let actor_class = fields.get("actor_class").map(ToString::to_string);
+    let org_ref = fields.get("org_ref").map(ToString::to_string);
     let mut scope = Scope::top();
     if let Some(scopes) = fields.get("scope") {
         scope.verbs = ScopeAxis::Some(
