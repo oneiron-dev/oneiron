@@ -489,12 +489,10 @@ pub(super) fn entity_selector_decision(
     if !coreference_claim_passes(header.entity_type, blob, coreference) {
         return None;
     }
-    // Interim ONE-1865 guard (SECRET-01, ONE-1919): no SECRET_CUSTODY record
-    // replicates at all until ONE-1865's per-credential portable dial replaces
-    // this blanket exclusion with `portable ∧ !device_only` respect. Without
-    // this the class contract ("device-bound never leaves the device",
-    // "cross-vault never replicated") would be false from merge until 1865.
-    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+    // The same per-credential locality dial governs every sync door.
+    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+        && !crate::secret_custody::custody_sync_allowed(&blob[ENTITY_METADATA_HEADER_LEN..])
+    {
         return None;
     }
     if header.entity_type == crate::registry::ENTITY_TYPE_FACET

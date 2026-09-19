@@ -264,6 +264,29 @@ pub(super) fn filter_window_doc(
     let facet_scope =
         facet_scope_by_source(vault, &rtxn, &source_entities, &source_edges, selector)?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
+    let mut custody_ids = BTreeSet::new();
+    map_for_each_value_bytes(&source_entities, |key, blob| {
+        if blob
+            .and_then(EntityMetadataHeader::parse)
+            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+            && let Ok(id) = EntityId::from_hex(key)
+        {
+            custody_ids.insert(id);
+        }
+    });
+    let mut custody_withheld = BTreeSet::new();
+    for id in custody_ids {
+        if vault.get_raw_in(&rtxn, &id)?.is_some_and(|raw| {
+            EntityMetadataHeader::parse(&raw).is_some_and(|h| {
+                h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                    && !crate::secret_custody::custody_sync_allowed(
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                    )
+            })
+        }) {
+            custody_withheld.insert(id);
+        }
+    }
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -276,6 +299,9 @@ pub(super) fn filter_window_doc(
             return;
         };
         if id.to_hex() != raw_key {
+            return;
+        }
+        if custody_withheld.contains(&id) {
             return;
         }
         // Tombstoned rows still evaluate scope: their live bytes must not

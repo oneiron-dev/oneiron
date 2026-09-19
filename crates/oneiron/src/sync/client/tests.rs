@@ -259,14 +259,10 @@ fn sync_client_generate_initial_sync() {
     // `[hello][root VV][window VVs]`.
     assert_eq!(messages.len(), 4);
 
-    // Frame 0: protocol hello. The in-tree sync client uses the
-    // full-window VV_REQUEST flow; selector-capable callers use the
-    // current selector protocol.
+    // Frame 0: v9 protocol hello supports both own-device windows and
+    // grant-backed entity documents on the same connection.
     // It MUST be the first frame.
-    assert_eq!(
-        messages[0],
-        transport::encode_legacy_full_window_protocol_hello()
-    );
+    assert_eq!(messages[0], transport::encode_protocol_hello());
 
     // Frame 1: root VV — Loro binary encoding, decodable, NOT JSON.
     assert_eq!(messages[1][0], TAG_VERSION_VECTOR);

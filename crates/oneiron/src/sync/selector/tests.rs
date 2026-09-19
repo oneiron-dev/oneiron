@@ -5183,3 +5183,170 @@ fn an_undecodable_coreference_claim_is_withheld_not_passed_through() {
         "an undecodable coreference-shaped claim leaked a foreign pact id"
     );
 }
+
+#[test]
+fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
+    use crate::sync::client::ImportTier;
+    let key = WindowKey::new("2026-03");
+    let (_own_dir, own, _, mut own_client) = test_client_with_grant(entity_id(0xB1), key.as_str());
+    let (_fed_dir, fed, _, mut fed_client) = test_client_with_grant(entity_id(0xB2), key.as_str());
+    let id = entity_id(0xB3);
+    let remote = create_window_doc("remote", &key);
+    insert_blob(&remote, id, &edge_provenance_claim_blob());
+    remote.commit();
+    let bytes = remote.export(ExportMode::all_updates()).unwrap();
+    own_client
+        .import_window_update(key.as_str(), &bytes, ImportTier::OwnDevice)
+        .unwrap();
+    let own_body = own.get_claim(&id).unwrap().unwrap();
+    assert_eq!(own_body.confidence, 0.75);
+    assert_eq!(
+        crate::provenance::decode_edge_provenance_body(&own_body.value)
+            .unwrap()
+            .confidence,
+        0.75
+    );
+    assert_eq!(own_body.source, Some(ClaimSource::ToolOutput));
+    assert!(matches!(
+        fed_client.import_window_update(
+            key.as_str(),
+            &bytes,
+            ImportTier::Federated(FederationAdmissionRole::Member)
+        ),
+        Err(crate::sync::TransportError::AdmissionDenied(_))
+    ));
+    assert!(fed.get_claim(&id).unwrap().is_none());
+    put_imported_source_trust(&fed);
+    fed_client
+        .import_window_update(
+            key.as_str(),
+            &bytes,
+            ImportTier::Federated(FederationAdmissionRole::Member),
+        )
+        .unwrap();
+    assert!(
+        quarantined_records(&fed).unwrap().is_empty(),
+        "admitted claim must materialize: {:?}",
+        quarantined_records(&fed).unwrap()
+    );
+    let body = fed.get_claim(&id).unwrap().unwrap();
+    assert_eq!(body.confidence, 0.375);
+    assert_eq!(
+        crate::provenance::decode_edge_provenance_body(&body.value)
+            .unwrap()
+            .confidence,
+        0.375
+    );
+    assert_eq!(body.source, Some(ClaimSource::Imported));
+    let Some(Value::Map(scope)) = body.scope else {
+        panic!("missing audit scope")
+    };
+    assert!(scope.iter().any(
+        |(key, value)| key.as_str() == Some("federated_original_confidence")
+            && value.as_f64() == Some(0.75)
+    ));
+    fed_client
+        .import_window_update(
+            key.as_str(),
+            &bytes,
+            ImportTier::Federated(FederationAdmissionRole::Member),
+        )
+        .unwrap();
+    assert_eq!(fed.get_claim(&id).unwrap().unwrap().confidence, 0.375);
+    // Direct replicated puts take the identical tier fork, inside their write transaction.
+    for (tag, tier, confidence) in [
+        (0xB4, ImportTier::OwnDevice, 0.75),
+        (
+            0xB5,
+            ImportTier::Federated(FederationAdmissionRole::Guest),
+            0.375,
+        ),
+    ] {
+        let id = entity_id(tag);
+        let blob = edge_provenance_claim_blob();
+        crate::sync::replay::replay_entity(
+            &fed,
+            crate::sync::replay::ReplicatedEntity {
+                id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: crate::TimeRange { start: 1, end: 1 },
+                learned_at: 1,
+                body: &blob[ENTITY_METADATA_HEADER_LEN..],
+            },
+            tier,
+        )
+        .unwrap();
+        let body = fed.get_claim(&id).unwrap().unwrap();
+        assert_eq!(body.confidence, confidence);
+        assert_eq!(
+            crate::provenance::decode_edge_provenance_body(&body.value)
+                .unwrap()
+                .confidence,
+            confidence
+        );
+    }
+}
+
+#[test]
+fn selector_custody_locality_uses_the_export_read_snapshot() {
+    use crate::secret_custody::{
+        CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
+        SecretCustodyStatus,
+    };
+
+    let member = entity_id(0xB6);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let key = WindowKey::new("2026-03");
+    let doc = create_window_doc("custody-selector", &key);
+    let facet = entity_id(0xB7);
+    let seed = entity_id(0xB8);
+    insert_entity(&doc, facet, ENTITY_TYPE_FACET, b"custody facet");
+    insert_blob(&doc, seed, &claim_blob(None));
+    insert_edge(&doc, seed, EdgeKind::FacetOf, facet);
+    seed_doc_stamps(&vault, &doc);
+    let mut secrets = Vec::new();
+    for device_only in [false, true] {
+        let id = vault
+            .register_secret(SecretCustodyRecord {
+                schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+                name: format!("selector-custody-{device_only}"),
+                class: CustodyClass::CustodyPortable,
+                device_only,
+                value_bytes: b"selector-custody-canary".to_vec(),
+                status: SecretCustodyStatus::Active,
+                registered_at: 1,
+                rotated_at: None,
+                rotation_generation: 0,
+                bindings: Vec::new(),
+                manifest_ref: "secrets.toml".into(),
+                declared_paths: Vec::new(),
+                policy_floor_snapshot: SecretCustodyFloor::default(),
+            })
+            .unwrap();
+        let raw = vault.get_raw_unsealed(&id).unwrap().unwrap();
+        insert_blob(&doc, id, &raw);
+        insert_edge(&doc, seed, EdgeKind::Supports, id);
+        secrets.push((id, device_only));
+    }
+    doc.commit();
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![
+            SelectorRange::Semantic,
+            SelectorRange::Core,
+            SelectorRange::Companion,
+        ],
+    );
+    let update = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+    assert!(ids.contains(&seed));
+    for (id, device_only) in secrets {
+        assert_eq!(ids.contains(&id), !device_only);
+    }
+}
