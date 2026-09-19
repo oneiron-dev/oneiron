@@ -55,3 +55,6 @@ use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::write_envelope::WriteActor;
 #[cfg(test)]
 use rmpv::Value;
+
+mod space_posting;
+pub use space_posting::{SpacePostingMode, GroupPostingPreset, SpacePostingReceipt, SpacePostingPlan};
