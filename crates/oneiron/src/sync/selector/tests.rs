@@ -4728,9 +4728,9 @@ fn an_undecodable_coreference_claim_is_withheld_not_passed_through() {
 fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
     use crate::sync::client::ImportTier;
     let key = WindowKey::new("2026-03");
-    let (_own_dir, own, _, mut own_client) = test_client_with_grant(entity_id(0xA1), key.as_str());
-    let (_fed_dir, fed, _, mut fed_client) = test_client_with_grant(entity_id(0xA2), key.as_str());
-    let id = entity_id(0xA3);
+    let (_own_dir, own, _, mut own_client) = test_client_with_grant(entity_id(0xB1), key.as_str());
+    let (_fed_dir, fed, _, mut fed_client) = test_client_with_grant(entity_id(0xB2), key.as_str());
+    let id = entity_id(0xB3);
     let remote = create_window_doc("remote", &key);
     insert_blob(&remote, id, &edge_provenance_claim_blob());
     remote.commit();

@@ -21,7 +21,7 @@ fn protocol_hello_wire_literals() {
         LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 6,
         "legacy full-window version is pinned to 6"
     );
-    assert_eq!(encode_protocol_hello(), vec![3u8, 8u8]);
+    assert_eq!(encode_protocol_hello(), vec![3u8, 9u8]);
     assert_eq!(encode_legacy_full_window_protocol_hello(), vec![3u8, 6u8]);
 }
 
