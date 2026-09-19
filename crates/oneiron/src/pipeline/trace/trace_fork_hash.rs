@@ -39,6 +39,12 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
     fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v1");
+    // Partial execution is not the same replay as a fully completed ladder.
+    hasher.update([u8::from(
+        builder
+            .deadline
+            .is_some_and(crate::retrieval_depth::RetrievalDeadline::was_cut_short),
+    )]);
 
     fork_hash_vector_query(
         &mut hasher,

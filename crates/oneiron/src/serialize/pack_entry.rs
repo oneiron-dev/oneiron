@@ -161,12 +161,17 @@ fn apply_projected_json_rows(
 pub(super) fn serialize_prepared_pack(
     pack: &ContextPack,
     config: &SerializeConfig,
-    prepared: PreparedPack,
+    mut prepared: PreparedPack,
 ) -> Vec<u8> {
+    let mut handles = super::handles::Handles::new(pack, &mut prepared);
+    if !matches!(config.format, PackFormat::Json | PackFormat::Toon) {
+        handles.rows(&mut prepared.results, config.format != PackFormat::Yaml);
+        handles.rows(&mut prepared.neighbors, config.format != PackFormat::Yaml);
+    }
     match config.format {
-        PackFormat::Json => serialize_json(pack, config, prepared),
+        PackFormat::Json => serialize_json(pack, config, prepared, &mut handles),
         PackFormat::Yaml => serialize_yaml(config, prepared).into_bytes(),
-        PackFormat::Toon => serialize_toon(config, prepared).into_bytes(),
+        PackFormat::Toon => serialize_toon(config, prepared, &mut handles).into_bytes(),
         PackFormat::Markdown => serialize_markdown(config, prepared).into_bytes(),
         PackFormat::Plaintext => serialize_plaintext(config, prepared).into_bytes(),
     }
@@ -232,7 +237,12 @@ pub fn compressed_code_run_output_preview(raw: &[u8], max_chars: usize) -> (Stri
     (preview, truncated)
 }
 
-fn serialize_json(pack: &ContextPack, config: &SerializeConfig, prepared: PreparedPack) -> Vec<u8> {
+fn serialize_json(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    prepared: PreparedPack,
+    handles: &mut super::handles::Handles,
+) -> Vec<u8> {
     let stats = prepared.stats.clone();
     let mut root = Map::new();
 
@@ -266,16 +276,22 @@ fn serialize_json(pack: &ContextPack, config: &SerializeConfig, prepared: Prepar
         root.insert("empty".to_owned(), value);
     }
 
-    serde_json::to_vec(&Value::Object(root)).unwrap_or_else(|_| b"{}".to_vec())
+    let mut value = Value::Object(root);
+    handles.value(&mut value);
+    serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec())
 }
 
-fn serialize_toon(config: &SerializeConfig, prepared: PreparedPack) -> String {
+fn serialize_toon(
+    config: &SerializeConfig,
+    prepared: PreparedPack,
+    handles: &mut super::handles::Handles,
+) -> String {
     let mut out = String::new();
     if prepared.merged {
-        out.push_str(&encode_toon_section(&prepared.results));
+        out.push_str(&encode_toon_section(&prepared.results, handles));
     } else {
-        let results = encode_toon_section(&prepared.results);
-        let neighbors = encode_toon_section(&prepared.neighbors);
+        let results = encode_toon_section(&prepared.results, handles);
+        let neighbors = encode_toon_section(&prepared.neighbors, handles);
 
         if !results.is_empty() {
             out.push_str(&results);

@@ -179,7 +179,7 @@ fn legacy_dep_key(
 
 /// Cache identity hashes `sorted seeds ‖ depth ‖ teleport_alpha ‖ ppr_vad_alpha ‖
 /// FORMULA_VERSION ‖ weighting byte` with the LITERAL pinned values:
-/// version 5 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
+/// version 6 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
 /// here, NOT read from the constants, so a wrong bump fails). The two
 /// weighting modes must never collide — `search_ppr` rows are not
 /// servable to `expand_ppr` and vice versa.
@@ -198,7 +198,7 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     bytes.extend_from_slice(&depth.to_le_bytes());
     bytes.extend_from_slice(&alpha.to_le_bytes());
     bytes.extend_from_slice(&0.0_f32.to_le_bytes());
-    bytes.extend_from_slice(&5_u32.to_le_bytes());
+    bytes.extend_from_slice(&6_u32.to_le_bytes());
 
     let mut uniform_bytes = bytes.clone();
     uniform_bytes.push(0_u8);
@@ -209,8 +209,8 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     let expected_specificity = xxh3_128(&specificity_bytes).to_le_bytes();
 
     assert_eq!(
-        PPR_FORMULA_VERSION, 5,
-        "ONE-215 VAD propagation must pin version 5"
+        PPR_FORMULA_VERSION, 6,
+        "residual Forward-Push propagation must pin version 6"
     );
     assert_eq!(
         hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Uniform),
@@ -740,6 +740,8 @@ fn ppr_query_rejects_state_cache_hit_with_mismatched_completed_depth() -> Result
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let seed = entity(18);
     let state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
         completed_depth: 1,
         scores: sentinel_scores(),
         frontier: Vec::new(),
@@ -1553,6 +1555,8 @@ fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()
     wtxn.commit()?;
 
     let state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
         completed_depth: 3,
         scores: vec![ScoredEntity { id: b, score: 1.0 }],
         frontier: Vec::new(),
@@ -1584,6 +1588,8 @@ fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
     let seed_hash = hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform);
     let graph_version = graph_version(&vault)?;
     let first_state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
         completed_depth: 3,
         scores: vec![ScoredEntity {
             id: stale_dep,
@@ -1593,6 +1599,8 @@ fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
         dependencies: vec![seed, stale_dep],
     };
     let second_state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
         completed_depth: 3,
         scores: vec![ScoredEntity {
             id: seed,
@@ -4544,3 +4552,76 @@ fn retrieval_quality_cached_empty_ppr_yields_full_no_data_context() -> Result<()
 }
 
 mod quality_integration;
+
+#[test]
+fn residual_cache_resume_matches_fresh_bits_on_branching_graph() -> Result<()> {
+    let temp = tempdir()?;
+    let vault = Vault::open(temp.path(), embedding_test_config())?;
+    let seeds = [entity(101), entity(102)];
+    for index in 101..110 {
+        vault.put_edge(&entity(index), EdgeKind::Mentions, &entity(index + 1), 0.7)?;
+        vault.put_edge(&entity(index), EdgeKind::Supports, &entity(index + 2), 0.3)?;
+    }
+    let _ = ppr_query(&vault.store, &vault.config, &seeds, 2, 0.15)?;
+    for depth in [4, 6, 10] {
+        let resumed = ppr_query(&vault.store, &vault.config, &seeds, depth, 0.15)?;
+        let txn = vault.store.env.read_txn()?;
+        let fresh = ppr_compute(&vault.store, &txn, &seeds, depth, 0.15)?;
+        assert_eq!(resumed, fresh);
+    }
+    Ok(())
+}
+
+#[test]
+fn residual_survives_codec_and_only_pushes_above_stored_threshold() -> Result<()> {
+    let temp = tempdir()?;
+    let vault = Vault::open(temp.path(), embedding_test_config())?;
+    let a = entity(121);
+    let b = entity(122);
+    vault.put_edge(&a, EdgeKind::Mentions, &b, 1.0)?;
+    let txn = vault.store.env.read_txn()?;
+    let initial = PprCacheState {
+        completed_depth: 0,
+        scores: vec![ScoredEntity { id: a, score: 0.1 }],
+        frontier: Vec::new(),
+        dependencies: vec![a],
+        residual: vec![super::walk::PprFrontierEntry {
+            id: a,
+            structural_hops: 0,
+            score: 0.1,
+        }],
+        push_threshold: 0.2,
+    };
+    let bytes = encode_cache_value_with_state(1, 1, 0, &initial)?;
+    let roundtrip = decode_cache_state(&bytes[CACHE_HEADER_LEN..])?;
+    let result = super::walk::ppr_resume_state_weighted(
+        &vault.store,
+        &txn,
+        &[a],
+        SeedWeighting::Uniform,
+        2,
+        PprAlphas::default_vad(0.15),
+        roundtrip,
+    )?;
+    assert_eq!(result.scores, vec![ScoredEntity { id: a, score: 0.1 }]);
+    let bytes = encode_cache_value_with_state(1, 1, 0, &result)?;
+    let mut lowered = decode_cache_state(&bytes[CACHE_HEADER_LEN..])?;
+    lowered.push_threshold = 0.01;
+    let pushed = super::walk::ppr_resume_state_weighted(
+        &vault.store,
+        &txn,
+        &[a],
+        SeedWeighting::Uniform,
+        3,
+        PprAlphas::default_vad(0.15),
+        lowered,
+    )?;
+    assert!(score_for(&pushed.scores, b) > 0.0);
+    let mut corrupt = bytes[CACHE_HEADER_LEN..].to_vec();
+    corrupt[25..29].copy_from_slice(&f32::NAN.to_le_bytes());
+    assert!(matches!(
+        decode_cache_state(&corrupt),
+        Err(Error::CorruptedIndex(_))
+    ));
+    Ok(())
+}

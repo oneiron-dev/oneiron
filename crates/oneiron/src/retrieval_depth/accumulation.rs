@@ -14,6 +14,7 @@ pub(super) struct DepthAccumulator {
     candidates_scanned: u64,
     pub(super) tokens_used: u64,
     backend_used: bool,
+    pub(super) partial: bool,
     pub(super) retrieval_diagnostics: RetrievalDiagnostics,
 }
 
@@ -124,13 +125,21 @@ impl DepthAccumulator {
     /// Reorders the ranking by backend score, highest first, keeping the
     /// engine's own order among ties. Engine scores are untouched.
     pub(super) fn reorder_by(&mut self, backend_scores: &[f32]) {
-        let mut ranked: Vec<(usize, EntityId)> = self.order.iter().copied().enumerate().collect();
+        let mut ranked: Vec<(usize, EntityId)> = self.order[..backend_scores.len()]
+            .iter()
+            .copied()
+            .enumerate()
+            .collect();
         ranked.sort_by(|left, right| {
             backend_scores[right.0]
                 .total_cmp(&backend_scores[left.0])
                 .then_with(|| left.0.cmp(&right.0))
         });
-        self.order = ranked.into_iter().map(|(_, id)| id).collect();
+        // Keep entity-bound engine scores: this lane has no pre-decay ladder.
+        // Moving a neighbor's already-decayed score would resurrect expired claims.
+        for (position, (_, id)) in ranked.into_iter().enumerate() {
+            self.order[position] = id;
+        }
     }
 
     pub(super) fn finish(self, limit: usize) -> DepthSearchResult {
@@ -146,6 +155,7 @@ impl DepthAccumulator {
         let retrieval_quality = classify_retrieval_quality(&self.retrieval_diagnostics);
         DepthSearchResult {
             hits,
+            partial: self.partial,
             queries_run: self.queries_run,
             signals_used: self.signals,
             candidates_scanned: self.candidates_scanned,

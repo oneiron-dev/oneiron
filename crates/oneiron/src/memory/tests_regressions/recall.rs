@@ -153,7 +153,7 @@ fn recall_returns_versioned_pack_with_provenance() {
         })
         .expect("witness");
 
-    for effort in [Effort::Minimal, Effort::Standard] {
+    for effort in [Effort::Light, Effort::Medium] {
         let pack = facade
             .recall("aurora", effort, &RecallScope::default(), 10, None, None)
             .expect("recall");
@@ -173,7 +173,7 @@ fn recall_returns_versioned_pack_with_provenance() {
     let pack = facade
         .recall(
             "aurora",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -233,7 +233,7 @@ fn recall_scope_honesty_lists_excluded_worlds() {
     let pack = facade
         .recall(
             "atlantis",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope {
                 world_ref: Some(world_one.to_hex()),
                 facet: None,
@@ -260,7 +260,7 @@ fn recall_scope_honesty_lists_excluded_worlds() {
     let floor = facade
         .recall(
             "atlantis",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -279,7 +279,7 @@ fn recall_deep_requires_lease_and_marks_pending() {
     let err = facade
         .recall(
             "anything",
-            Effort::Deep,
+            Effort::High,
             &RecallScope::default(),
             5,
             None,
@@ -289,17 +289,17 @@ fn recall_deep_requires_lease_and_marks_pending() {
     assert_eq!(err.code, MEMORY_CODE_LEASE_REQUIRED);
 
     let lease = crate::llm::BudgetLease::for_test("recall-spike");
-    let pack = facade
+    let error = facade
         .recall(
             "anything",
-            Effort::Deep,
+            Effort::High,
             &RecallScope::default(),
             5,
             None,
             Some(&lease),
         )
-        .expect("leased deep executes as standard");
-    assert_eq!(pack.retrieval_meta.deep_pending, Some(true));
+        .expect_err("paid tier without a prepared scorer must not execute a lower tier");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn recall_and_query_verbs_respect_limits() {
         facade
             .recall(
                 "pelican",
-                Effort::Minimal,
+                Effort::Light,
                 &RecallScope::default(),
                 2,
                 None,
@@ -423,7 +423,7 @@ fn recall_confidence_is_absolute_across_candidate_sets() {
     let first = facade
         .recall(
             "quokka",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -448,7 +448,7 @@ fn recall_confidence_is_absolute_across_candidate_sets() {
     let second = facade
         .recall(
             "quokka",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -490,7 +490,7 @@ fn recall_short_ids_hydrate_and_formats_render() {
     let pack = facade
         .recall(
             "ceramic",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             Some("md"),
@@ -518,7 +518,7 @@ fn recall_short_ids_hydrate_and_formats_render() {
     let err = facade
         .recall(
             "ceramic",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             Some("docx"),
@@ -569,7 +569,7 @@ fn recall_scope_honesty_stays_bounded_on_a_large_claim_index() {
     let pack = facade
         .recall(
             "anything",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope {
                 world_ref: Some(world.to_hex()),
                 facet: None,

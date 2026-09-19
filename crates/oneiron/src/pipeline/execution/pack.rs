@@ -53,6 +53,9 @@ impl PipelineBuilder<'_> {
         if self.ppr_expand.is_some() && self.vault.config.ppr_community.beta != 0.0 {
             crate::config::validate_ppr_community(&self.vault.config.ppr_community)?;
         }
+        if let Some(state) = &self.retrieval_state {
+            state.validate()?;
+        }
         let started = Instant::now();
         let started_at = crate::unix_seconds_now();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
@@ -115,6 +118,7 @@ impl PipelineBuilder<'_> {
 
         let hyde_expansion = match self.hyde.as_ref() {
             None => None,
+            Some(_) if self.deadline_reached() => None,
             Some((expander, grounding, options)) => {
                 if options.channel_limit == 0 {
                     return Err(Error::InvalidConfig(
@@ -230,6 +234,7 @@ impl PipelineBuilder<'_> {
         // Host assessment runs only after each read transaction has closed.
         if let (Some((expander, _, options)), Some(expansion)) =
             (self.hyde.as_ref(), hyde_expansion.as_ref())
+            && !self.deadline_reached()
         {
             let request = |scores: &[ScoredEntity], claims: &HashMap<EntityId, ClaimBody>| {
                 CompletionRequest {
@@ -247,7 +252,10 @@ impl PipelineBuilder<'_> {
             };
             let verdict = expander.assess_evidence(&request(&scores, &claim_bodies))?;
             let mut second_insufficient = false;
-            if matches!(verdict, EvidenceVerdict::Insufficient { .. }) && options.retry_once {
+            if matches!(verdict, EvidenceVerdict::Insufficient { .. })
+                && options.retry_once
+                && !self.deadline_reached()
+            {
                 // Replace every retrieval artifact with the widened fresh transaction.
                 let subqueries = normalized_subqueries(&expansion.subqueries);
                 let retry = self.run_retrieval_txn_attempt(
@@ -342,6 +350,7 @@ impl PipelineBuilder<'_> {
             claims_suppressed,
             empty_reason.map(|reason| format!("{reason:?}")),
         )
+        .with_context(self.retrieval_state.clone(), self.retrieval_turn)
         .with_trace(retrieval_trace)
         .with_quality(&retrieval_quality);
         // ONE-1728 K10: a retrieval issued inside a room registers through the

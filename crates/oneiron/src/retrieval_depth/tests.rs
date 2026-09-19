@@ -65,6 +65,7 @@ fn text_request(query: &str, effort: Effort) -> DepthSearchRequest<'static> {
         session_scope: None,
         lease: None,
         backend: None,
+        deadline: None,
         token_budget: None,
     }
 }
@@ -84,6 +85,7 @@ fn hosted_request<'a>(
         session_scope: None,
         lease,
         backend,
+        deadline: None,
         token_budget: None,
     }
 }
@@ -281,7 +283,7 @@ fn minimal_runs_one_direct_channel_and_touches_no_host() -> TestResult {
     let forbidden = ForbiddenBackend;
     let request = hosted_request(
         "launch",
-        Effort::Minimal,
+        Effort::Light,
         None,
         Some(&forbidden as &dyn DeepSearchBackend),
     );
@@ -312,7 +314,7 @@ fn minimal_returns_exactly_the_actor_keyed_direct_door() -> TestResult {
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
 
     let direct = scoped.search_text("launch", 10, None)?;
-    let dialed = scoped.search_with_effort(&text_request("launch", Effort::Minimal))?;
+    let dialed = scoped.search_with_effort(&text_request("launch", Effort::Light))?;
     assert_eq!(
         hit_ids(&dialed),
         ids_of(&direct),
@@ -331,7 +333,7 @@ fn standard_expands_one_hop_and_fans_out_deterministically() -> TestResult {
     let forbidden = ForbiddenBackend;
     let request = hosted_request(
         "what did we decide about the launch date",
-        Effort::Standard,
+        Effort::Medium,
         None,
         Some(&forbidden as &dyn DeepSearchBackend),
     );
@@ -373,8 +375,8 @@ fn standard_is_reproducible_across_calls() -> TestResult {
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
     let query = "what did we decide about the launch date";
 
-    let first = scoped.search_with_effort(&text_request(query, Effort::Standard))?;
-    let second = scoped.search_with_effort(&text_request(query, Effort::Standard))?;
+    let first = scoped.search_with_effort(&text_request(query, Effort::Medium))?;
+    let second = scoped.search_with_effort(&text_request(query, Effort::Medium))?;
     assert_eq!(ids_of(&first.hits), ids_of(&second.hits));
     for (first_hit, second_hit) in first.hits.iter().zip(&second.hits) {
         assert_eq!(first_hit.score, second_hit.score);
@@ -416,12 +418,12 @@ fn deep_truncates_and_dedups_an_over_eager_backend() -> TestResult {
 
     let request = hosted_request(
         "launch",
-        Effort::Deep,
+        Effort::Max,
         Some(&lease),
         Some(&backend as &dyn DeepSearchBackend),
     );
     let result = scoped.search_with_effort(&request)?;
-    let standard = scoped.search_with_effort(&text_request("launch", Effort::Standard))?;
+    let standard = scoped.search_with_effort(&text_request("launch", Effort::Medium))?;
 
     let calls = backend.calls();
     assert_eq!(
@@ -487,7 +489,7 @@ fn deep_reports_the_summed_backend_spend_not_a_budget() -> TestResult {
 
     let request = hosted_request(
         "launch",
-        Effort::Deep,
+        Effort::Max,
         Some(&lease),
         Some(&backend as &dyn DeepSearchBackend),
     );
@@ -509,7 +511,13 @@ fn deep_rerank_reorders_without_rewriting_engine_scores() -> TestResult {
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
     let lease = minted_lease();
 
-    let baseline = scoped.search_with_effort(&text_request("launch", Effort::Standard))?;
+    let neutral = ScriptedBackend::new(Vec::new());
+    let baseline = scoped.search_with_effort(&hosted_request(
+        "launch",
+        Effort::Max,
+        Some(&lease),
+        Some(&neutral),
+    ))?;
     let candidate_count = baseline.hits.len();
     assert!(candidate_count >= 2, "need a ranking to reorder");
 
@@ -518,7 +526,7 @@ fn deep_rerank_reorders_without_rewriting_engine_scores() -> TestResult {
         .with_rerank_scores((0..candidate_count).map(|index| index as f32).collect());
     let request = hosted_request(
         "launch",
-        Effort::Deep,
+        Effort::Max,
         Some(&lease),
         Some(&backend as &dyn DeepSearchBackend),
     );
@@ -551,7 +559,7 @@ fn deep_refuses_a_rerank_that_does_not_score_every_candidate() {
 
     let request = hosted_request(
         "launch",
-        Effort::Deep,
+        Effort::Max,
         Some(&lease),
         Some(&backend as &dyn DeepSearchBackend),
     );
@@ -574,7 +582,7 @@ fn deep_without_a_lease_is_the_existing_lease_required_refusal() {
 
     let request = hosted_request(
         "launch",
-        Effort::Deep,
+        Effort::Max,
         None,
         Some(&backend as &dyn DeepSearchBackend),
     );
@@ -595,7 +603,7 @@ fn deep_without_a_backend_refuses_rather_than_degrading() {
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
     let lease = minted_lease();
 
-    let request = hosted_request("launch", Effort::Deep, Some(&lease), None);
+    let request = hosted_request("launch", Effort::Max, Some(&lease), None);
     let error = scoped
         .search_with_effort(&request)
         .expect_err("deep is host-injected only");
@@ -615,11 +623,12 @@ fn deep_vector_without_query_text_refuses() {
             embedding: embedding.clone(),
             query_text: None,
         },
-        effort: Effort::Deep,
+        effort: Effort::Max,
         limit: 10,
         session_scope: None,
         lease: Some(&lease),
         backend: Some(&backend),
+        deadline: None,
         token_budget: None,
     };
     let error = scoped
@@ -629,7 +638,7 @@ fn deep_vector_without_query_text_refuses() {
     assert_eq!(backend.calls().decompose, 0, "refused before any host call");
 
     // The same probe stays open at the tiers that never read the text.
-    for effort in [Effort::Minimal, Effort::Standard] {
+    for effort in [Effort::Light, Effort::Medium] {
         let request = DepthSearchRequest {
             probe: SearchProbe::Vector {
                 embedding: embedding.clone(),
@@ -640,6 +649,7 @@ fn deep_vector_without_query_text_refuses() {
             session_scope: None,
             lease: None,
             backend: None,
+            deadline: None,
             token_budget: None,
         };
         scoped
@@ -653,7 +663,13 @@ fn every_effort_refuses_a_zero_limit() {
     let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
 
-    for effort in [Effort::Minimal, Effort::Standard, Effort::Deep] {
+    for effort in [
+        Effort::Light,
+        Effort::Medium,
+        Effort::High,
+        Effort::Xhigh,
+        Effort::Max,
+    ] {
         let mut request = text_request("launch", effort);
         request.limit = 0;
         let error = scoped
@@ -712,7 +728,13 @@ fn no_effort_widens_what_the_actor_keyed_door_admits() -> TestResult {
     // A host that keeps asking for exactly the withheld claim's own text.
     let backend = ScriptedBackend::new(vec![vec![text.to_owned()], vec!["ledger".to_owned()]]);
 
-    for effort in [Effort::Minimal, Effort::Standard, Effort::Deep] {
+    for effort in [
+        Effort::Light,
+        Effort::Medium,
+        Effort::High,
+        Effort::Xhigh,
+        Effort::Max,
+    ] {
         let request = hosted_request(
             text,
             effort,
@@ -736,12 +758,12 @@ fn no_effort_widens_what_the_actor_keyed_door_admits() -> TestResult {
 fn session_scope_only_ever_narrows() -> TestResult {
     let (_dir, vault, anchor, _sibling, _neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
-    let wide = scoped.search_with_effort(&text_request("launch", Effort::Standard))?;
+    let wide = scoped.search_with_effort(&text_request("launch", Effort::Medium))?;
     assert!(wide.hits.len() >= 2, "need something to narrow");
 
     // The empty scope is a no-op: never a widening, and never a wipe.
     let empty = SessionScope::default();
-    let mut request = text_request("launch", Effort::Standard);
+    let mut request = text_request("launch", Effort::Medium);
     request.session_scope = Some(&empty);
     let unchanged = scoped.search_with_effort(&request)?;
     assert_eq!(ids_of(&unchanged.hits), ids_of(&wide.hits));
@@ -750,7 +772,7 @@ fn session_scope_only_ever_narrows() -> TestResult {
         document_short_ids: vec![short_ref_or_hex(&vault, &anchor)?],
         ..SessionScope::default()
     };
-    let mut request = text_request("launch", Effort::Standard);
+    let mut request = text_request("launch", Effort::Medium);
     request.session_scope = Some(&scope);
     let narrowed = scoped.search_with_effort(&request)?;
     assert_eq!(ids_of(&narrowed.hits), vec![anchor]);
@@ -772,7 +794,7 @@ fn session_scope_only_ever_narrows() -> TestResult {
         document_short_ids: vec!["no-such-short-id".to_owned()],
         ..SessionScope::default()
     };
-    let mut request = text_request("launch", Effort::Standard);
+    let mut request = text_request("launch", Effort::Medium);
     request.session_scope = Some(&absent);
     assert!(scoped.search_with_effort(&request)?.hits.is_empty());
 
@@ -780,10 +802,105 @@ fn session_scope_only_ever_narrows() -> TestResult {
         world_ref: Some(entity(0x51)),
         ..SessionScope::default()
     };
-    let mut request = text_request("launch", Effort::Standard);
+    let mut request = text_request("launch", Effort::Medium);
     request.session_scope = Some(&unknown_world);
     assert!(scoped.search_with_effort(&request)?.hits.is_empty());
     Ok(())
 }
 
 mod quality;
+
+#[test]
+fn five_efforts_reject_retired_spellings() {
+    for effort in [
+        Effort::Light,
+        Effort::Medium,
+        Effort::High,
+        Effort::Xhigh,
+        Effort::Max,
+    ] {
+        assert_eq!(Effort::parse(effort.as_str()), Some(effort));
+        assert_eq!(
+            serde_json::from_str::<Effort>(&serde_json::to_string(&effort).unwrap()).unwrap(),
+            effort
+        );
+    }
+    for old in [
+        "minimal", "standard", "deep", "low", "med", "HIGH", " high ",
+    ] {
+        assert_eq!(Effort::parse(old), None);
+        assert!(serde_json::from_str::<Effort>(&format!("\"{old}\"")).is_err());
+    }
+}
+
+#[test]
+fn expired_deadline_returns_honest_empty_partial_without_backend() -> TestResult {
+    let (_dir, vault, _, _, _) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("fixture actor"));
+    let deadline = RetrievalDeadline::at(std::time::Instant::now());
+    let mut request = text_request("launch", Effort::Medium);
+    request.deadline = Some(&deadline);
+    let result = scoped.search_with_effort(&request)?;
+    assert!(result.partial);
+    assert!(result.hits.is_empty());
+    assert!(result.signals_used.is_empty());
+    assert_eq!(result.tokens_used, 0);
+    assert!(deadline.was_cut_short());
+    Ok(())
+}
+
+#[test]
+fn high_rejects_nonfinite_reranker_without_losing_spend() -> TestResult {
+    let (_dir, vault, _, _, _) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("fixture actor"));
+    let lease = minted_lease();
+    let backend = ScriptedBackend::new(Vec::new())
+        .with_spend(0, 9)
+        .with_rerank_scores(vec![f32::NAN; 3]);
+    let request = hosted_request("launch", Effort::High, Some(&lease), Some(&backend));
+    let error = scoped.search_with_effort(&request).unwrap_err();
+    assert!(matches!(error.error, Error::InvalidConfig(_)));
+    assert_eq!(error.tokens_used, 9);
+    Ok(())
+}
+
+#[test]
+fn pipeline_deadline_skips_rerank_after_admitted_text_and_keeps_best_pack() -> TestResult {
+    let (_dir, vault, anchor, _, _) = seeded_vault();
+    struct MustNotRerank;
+    impl crate::rerank::Reranker for MustNotRerank {
+        fn id(&self) -> &str {
+            "never"
+        }
+        fn rerank(&self, _: &str, _: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+            panic!("deadline skipped rerank")
+        }
+    }
+    let deadline = RetrievalDeadline::after(std::time::Duration::from_secs(60));
+    let filter = |_: &crate::store::Store, _: &heed::RoTxn<'_>, id: &EntityId| {
+        deadline.cancel();
+        Ok(*id == anchor)
+    };
+    let ordinary = vault
+        .query()
+        .search_text("launch", 10)
+        .filter_candidates(&filter)
+        .search_temporal(0, 100, 10)
+        .rerank(&MustNotRerank, crate::rerank::RerankOptions::default())
+        .deadline(&deadline)
+        .run()?;
+    assert_eq!(
+        ordinary.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![anchor]
+    );
+    assert!(deadline.was_cut_short());
+    let expired = RetrievalDeadline::at(std::time::Instant::now());
+    let empty = vault
+        .query()
+        .search_text("launch", 10)
+        .deadline(&expired)
+        .run()?;
+    assert!(empty.is_empty());
+    assert!(expired.was_cut_short());
+    Ok(())
+}

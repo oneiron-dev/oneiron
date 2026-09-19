@@ -741,7 +741,7 @@ fn off_record_recall_registers_its_run_in_the_room_and_close_consumes_it() -> Re
         .recall_in_session(
             &session,
             "armbrecallneedle",
-            crate::memory::Effort::Standard,
+            crate::memory::Effort::Medium,
             &crate::memory::RecallScope::default(),
             10,
             None,
@@ -859,7 +859,7 @@ fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<
     facade
         .recall(
             "armbcontrolneedle",
-            crate::memory::Effort::Standard,
+            crate::memory::Effort::Medium,
             &crate::memory::RecallScope::default(),
             10,
             None,
@@ -877,7 +877,7 @@ fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<
         .recall_in_session(
             &session,
             "armbcontrolneedle",
-            crate::memory::Effort::Standard,
+            crate::memory::Effort::Medium,
             &crate::memory::RecallScope::default(),
             10,
             None,
@@ -1000,7 +1000,7 @@ fn recall_in_session_refuses_a_room_from_another_vault() -> Result<()> {
         .recall_in_session(
             &stranger,
             "armbcrossvaultneedle",
-            crate::memory::Effort::Standard,
+            crate::memory::Effort::Medium,
             &crate::memory::RecallScope::default(),
             10,
             None,

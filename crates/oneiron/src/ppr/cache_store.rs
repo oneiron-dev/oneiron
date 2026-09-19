@@ -20,8 +20,8 @@ pub(super) const CACHE_HEADER_LEN: usize = 17;
 pub(super) const CACHE_STALE_OFFSET: usize = 16;
 const CACHE_ENTRY_LEN: usize = 20;
 pub(super) const CACHE_STATE_MAGIC: &[u8; 4] = b"FPRS";
-const CACHE_STATE_VERSION: u8 = 1;
-const CACHE_STATE_PREFIX_LEN: usize = 21;
+const CACHE_STATE_VERSION: u8 = 2;
+const CACHE_STATE_PREFIX_LEN: usize = 29;
 const CACHE_FRONTIER_ENTRY_LEN: usize = ENTITY_ID_LEN + 8;
 pub(super) const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
 #[cfg(test)]
@@ -46,7 +46,8 @@ pub(super) const MAX_PPR_DEPTH: u32 = 10;
 /// byte. v4 = ONE-1236 lexical query hint side claims are skipped during
 /// `ClaimOf` traversal so synthetic hint records do not consume transition
 /// mass. v5 = stored-edge VAD salience, with both alphas in cache identity.
-pub(super) const PPR_FORMULA_VERSION: u32 = 5;
+/// v6 = deterministic Forward-Push rounds with retained below-threshold residual.
+pub(super) const PPR_FORMULA_VERSION: u32 = 6;
 pub(crate) const MAX_PPR_SEEDS: usize = 256;
 /// Recency-tiered `ppr_cache` serve TTL (ARCH-0019 "PPR cache TTL" table /
 /// ARCH-0014 "TTL strategy"; ONE-1116 pinned decision).
@@ -524,7 +525,7 @@ fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
 fn is_state_cache_payload(payload: &[u8]) -> bool {
     // Legacy score-only rows are exactly `[EntityId | f32] * n`, so their
     // payload length is always a multiple of `CACHE_ENTRY_LEN`. Current state
-    // rows start with `FPRS` but have a 21-byte prefix, making that shape
+    // rows start with `FPRS` but have a 29-byte prefix, making that shape
     // impossible; use both checks so a legacy EntityId may safely begin with
     // the state magic bytes.
     payload.starts_with(CACHE_STATE_MAGIC) && !payload.len().is_multiple_of(CACHE_ENTRY_LEN)
@@ -545,6 +546,15 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
     let frontier_count = decode_u32(&payload[13..17], "ppr cache state")? as usize;
     let dependency_count = decode_u32(&payload[17..21], "ppr cache state")? as usize;
 
+    let residual_count = decode_u32(&payload[21..25], "ppr cache residual")? as usize;
+    let push_threshold = f32::from_le_bytes(payload[25..29].try_into().expect("checked prefix"));
+    if !push_threshold.is_finite() || push_threshold < 0.0 || completed_depth > MAX_PPR_DEPTH {
+        return Err(Error::CorruptedIndex("ppr cache residual"));
+    }
+    let residual_bytes = residual_count
+        .checked_mul(CACHE_FRONTIER_ENTRY_LEN)
+        .ok_or(Error::CorruptedIndex("ppr cache residual"))?;
+
     let score_bytes = score_count
         .checked_mul(CACHE_ENTRY_LEN)
         .ok_or(Error::CorruptedIndex("ppr cache state"))?;
@@ -558,6 +568,7 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
         .checked_add(score_bytes)
         .and_then(|len| len.checked_add(frontier_bytes))
         .and_then(|len| len.checked_add(dependency_bytes))
+        .and_then(|len| len.checked_add(residual_bytes))
         .ok_or(Error::CorruptedIndex("ppr cache state"))?;
     if payload.len() != expected_len {
         return Err(Error::CorruptedIndex("ppr cache state"));
@@ -565,7 +576,8 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
 
     let scores_start = CACHE_STATE_PREFIX_LEN;
     let frontier_start = scores_start + score_bytes;
-    let dependency_start = frontier_start + frontier_bytes;
+    let residual_start = frontier_start + frontier_bytes;
+    let dependency_start = residual_start + residual_bytes;
 
     let scores = decode_legacy_cache_scores(&payload[scores_start..frontier_start])?;
     let mut frontier = Vec::with_capacity(frontier_count);
@@ -583,7 +595,7 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("ppr cache state"))?,
         );
-        if !score.is_finite() {
+        if !score.is_finite() || score < 0.0 || structural_hops > 2 {
             return Err(Error::CorruptedIndex("ppr cache state"));
         }
         frontier.push(PprFrontierEntry {
@@ -593,6 +605,12 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
         });
     }
 
+    let residual = frontier.split_off(frontier_count);
+    if frontier.iter().any(|entry| entry.score <= push_threshold)
+        || residual.iter().any(|entry| entry.score > push_threshold)
+    {
+        return Err(Error::CorruptedIndex("ppr cache residual"));
+    }
     let mut dependencies = Vec::with_capacity(dependency_count);
     for chunk in payload[dependency_start..].chunks_exact(ENTITY_ID_LEN) {
         dependencies.push(
@@ -607,6 +625,8 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
 
     Ok(PprCacheState {
         completed_depth,
+        residual,
+        push_threshold,
         scores,
         frontier,
         dependencies,
@@ -642,11 +662,16 @@ pub(super) fn encode_cache_value_with_state(
     let dependency_count = u32::try_from(state.dependencies.len())
         .map_err(|_| Error::CorruptedIndex("ppr cache state"))?;
 
+    let residual_count = u32::try_from(state.residual.len())
+        .map_err(|_| Error::CorruptedIndex("ppr cache residual"))?;
+    if !state.push_threshold.is_finite() || state.push_threshold < 0.0 {
+        return Err(Error::CorruptedIndex("ppr cache residual"));
+    }
     let mut value = Vec::with_capacity(
         CACHE_HEADER_LEN
             + CACHE_STATE_PREFIX_LEN
             + state.scores.len() * CACHE_ENTRY_LEN
-            + state.frontier.len() * CACHE_FRONTIER_ENTRY_LEN
+            + (state.frontier.len() + state.residual.len()) * CACHE_FRONTIER_ENTRY_LEN
             + state.dependencies.len() * ENTITY_ID_LEN,
     );
     value.extend_from_slice(&computed_at.to_le_bytes());
@@ -658,11 +683,13 @@ pub(super) fn encode_cache_value_with_state(
     value.extend_from_slice(&score_count.to_le_bytes());
     value.extend_from_slice(&frontier_count.to_le_bytes());
     value.extend_from_slice(&dependency_count.to_le_bytes());
+    value.extend_from_slice(&residual_count.to_le_bytes());
+    value.extend_from_slice(&state.push_threshold.to_le_bytes());
     for scored in &state.scores {
         value.extend_from_slice(scored.id.as_bytes());
         value.extend_from_slice(&scored.score.to_le_bytes());
     }
-    for entry in &state.frontier {
+    for entry in state.frontier.iter().chain(&state.residual) {
         value.extend_from_slice(entry.id.as_bytes());
         value.extend_from_slice(&entry.structural_hops.to_le_bytes());
         value.extend_from_slice(&entry.score.to_le_bytes());

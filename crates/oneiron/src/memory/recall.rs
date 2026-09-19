@@ -17,6 +17,8 @@ use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
+use crate::rerank::RerankOptions;
+use crate::retrieval_depth::RecallExecution;
 use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use crate::serialize::{SerializeConfig, serialize_pack};
 
@@ -35,38 +37,61 @@ pub(super) const RECALL_TOKEN_BUDGET: usize = 4000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Effort {
-    /// Pure lexical retrieval: text search only, no graph expansion, no
-    /// hydration, minimal fields. No LLM, no lease.
-    Minimal,
-    /// Text + PPR graph expansion, 1-hop edges, hydration, standard
-    /// fields, recency/salience/confidence boosts. No LLM, no lease.
-    Standard,
-    /// Lease-gated deep retrieval. No lease-issuer exists yet (OF-131
-    /// IN_BUILD): without a lease this is a typed `LEASE_REQUIRED` error;
-    /// with one it executes as `Standard` plus `deep_pending: true` until
-    /// the LLMB chain wires execution.
-    Deep,
+    /// Available vector, text, phonetic and temporal signals, then blend.
+    Light,
+    /// Light plus seed-specific search PPR.
+    Medium,
+    /// Medium plus two-hop expansion and top-30 reranking.
+    High,
+    /// Four-hop expansion and top-50 reranking.
+    Xhigh,
+    /// Ten-hop expansion, top-50 reranking and bitemporal search.
+    Max,
 }
 
 impl Effort {
-    /// Stable string form.
+    /// Stable five-level wire vocabulary. Retired names are not aliases.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Minimal => "minimal",
-            Self::Standard => "standard",
-            Self::Deep => "deep",
+            Self::Light => "light",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+            Self::Max => "max",
         }
     }
-
-    /// Parses the stable string form.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "minimal" => Some(Self::Minimal),
-            "standard" => Some(Self::Standard),
-            "deep" => Some(Self::Deep),
+            "light" => Some(Self::Light),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "xhigh" => Some(Self::Xhigh),
+            "max" => Some(Self::Max),
             _ => None,
+        }
+    }
+    /// Paid tiers require an explicit lease and reranker; never silent fallback.
+    #[must_use]
+    pub const fn requires_rerank(self) -> bool {
+        matches!(self, Self::High | Self::Xhigh | Self::Max)
+    }
+    #[must_use]
+    pub const fn graph_depth(self) -> u32 {
+        match self {
+            Self::Light => 0,
+            Self::Medium => 1,
+            Self::High => 2,
+            Self::Xhigh => 4,
+            Self::Max => 10,
+        }
+    }
+    #[must_use]
+    pub const fn rerank_top_n(self) -> usize {
+        match self {
+            Self::Xhigh | Self::Max => 50,
+            _ => 30,
         }
     }
 }
@@ -142,9 +167,11 @@ pub struct RetrievalMeta {
     pub total_candidates: u64,
     /// CLAIM items in the returned pack.
     pub claims_returned: u64,
-    /// Set when a leased `Deep` call executed as `Standard` (LLMB chain
-    /// not yet wired).
+    /// Retained wire field. Always `None`: paid work never pretends to complete.
     pub deep_pending: Option<bool>,
+    /// Requested stages skipped at the explicit deadline.
+    #[serde(default)]
+    pub partial: bool,
 }
 
 /// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
@@ -213,12 +240,13 @@ impl Memory<'_> {
         let mut pack = self.recall_routed(
             None,
             query,
-            Effort::Minimal,
+            Effort::Light,
             scope,
             limit,
             None,
             None,
             Some(&filter),
+            &RecallExecution::default(),
         )?;
         let world_hex = world.map(|id| id.to_hex());
         pack.items.retain(|item| {
@@ -231,14 +259,10 @@ impl Memory<'_> {
 
     /// Effort-dialed retrieval into an S6 `MemoryPack`.
     ///
-    /// `Deep` requires a [`BudgetLease`] (W4/C4). No lease-issuer exists at
-    /// base (OF-131), so `Deep` without a lease is a typed
-    /// `LEASE_REQUIRED` error, and a leased `Deep` executes as `Standard`
-    /// with `retrieval_meta.deep_pending = true`.
-    ///
-    /// Retrieval is sparse-only today (`retrieval_meta.sparse = true`): the
-    /// engine takes caller-supplied query vectors and no embedder lane has
-    /// landed, so the vector signal joins later without a contract change.
+    /// High, xhigh and max require a lease and a prepared reranker; use
+    /// [`Self::recall_with_execution`] to supply execution inputs. The ordinary
+    /// door refuses unsupported paid work instead of returning a fake success.
+    /// Dense and phonetic inputs are optional, explicit host inputs.
     pub fn recall(
         &self,
         query: &str,
@@ -248,27 +272,43 @@ impl Memory<'_> {
         format: Option<&str>,
         lease: Option<&BudgetLease>,
     ) -> MemoryResult<MemoryPack> {
-        self.recall_routed(None, query, effort, scope, limit, format, lease, None)
+        self.recall_routed(
+            None,
+            query,
+            effort,
+            scope,
+            limit,
+            format,
+            lease,
+            None,
+            &RecallExecution::default(),
+        )
     }
 
-    /// Recalls FROM INSIDE a session (ONE-1570 Arm B), the retrieval sibling
-    /// of [`Self::witness_into_session`].
-    ///
-    /// Identical retrieval to [`Self::recall`] — same scoring, same scope,
-    /// same pack. What the session changes is where the run's TELEMETRY
-    /// lands. A retrieval-run row carries `result_ids` and a score breakdown,
-    /// so it betrays what the room was asking about even though the retrieval
-    /// itself reads base. While the room is off record every run this call
-    /// registers — the context pack's, the facet pipeline's, and the PPR seed
-    /// search's — rides the session's own overlay and evaporates with the
-    /// transcript at close, counted there as a deleted context receipt.
-    ///
-    /// After a flip back on record the room's retrievals are ORDINARY ones and
-    /// their runs land in the base ledger exactly as [`Self::recall`]'s do.
-    /// The session is an explicit ARGUMENT for the same reason witness takes
-    /// one: an ordinary commissioned recall issued while some room happens to
-    /// be live elsewhere is not a room retrieval and never enters its receipt
-    /// set. Ambient live-session state is never consulted.
+    /// Runs the same recall body with dense input, prepared scoring and/or a deadline.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "adds per-request execution inputs to recall"
+    )]
+    pub fn recall_with_execution(
+        &self,
+        query: &str,
+        effort: Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        lease: Option<&BudgetLease>,
+        execution: &RecallExecution<'_>,
+    ) -> MemoryResult<MemoryPack> {
+        self.recall_routed(
+            None, query, effort, scope, limit, format, lease, None, execution,
+        )
+    }
+
+    /// Recalls inside a session. Retrieval and scope are unchanged; every
+    /// telemetry write (including the seed search and pack finalization) rides
+    /// the one session route captured for this call. Off-record rows therefore
+    /// evaporate with the room, never leaking into the base retrieval ledger.
     #[expect(
         clippy::too_many_arguments,
         reason = "recall's public parameter list plus the session it runs inside; the two \
@@ -293,6 +333,36 @@ impl Memory<'_> {
             format,
             lease,
             None,
+            &RecallExecution::default(),
+        )
+    }
+
+    /// Recall with explicit execution inputs, keeping all telemetry on the room route.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "session sibling of recall_with_execution"
+    )]
+    pub fn recall_in_session_with_execution(
+        &self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        query: &str,
+        effort: Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        lease: Option<&BudgetLease>,
+        execution: &RecallExecution<'_>,
+    ) -> MemoryResult<MemoryPack> {
+        self.recall_routed(
+            Some(session),
+            query,
+            effort,
+            scope,
+            limit,
+            format,
+            lease,
+            None,
+            execution,
         )
     }
 
@@ -313,6 +383,7 @@ impl Memory<'_> {
         format: Option<&str>,
         lease: Option<&BudgetLease>,
         candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
+        execution: &RecallExecution<'_>,
     ) -> MemoryResult<MemoryPack> {
         if limit == 0 {
             return Err(MemoryError::bad_request("recall limit must be at least 1"));
@@ -347,29 +418,42 @@ impl Memory<'_> {
             (Some(session), Some(route)) => Some(session.retrieval_telemetry(route)?),
             _ => None,
         };
-        let mut deep_pending = None;
-        let effective = match effort {
-            Effort::Deep => {
-                if lease.is_none() {
-                    return Err(MemoryError::new(
-                        MEMORY_CODE_LEASE_REQUIRED,
-                        "deep recall requires a budget lease and no lease was presented",
-                        &[
-                            "Use standard effort or present a budget lease.",
-                            "The lease issuer lands with the LLMB chain (OF-131).",
-                        ],
-                    ));
-                }
-                deep_pending = Some(true);
-                Effort::Standard
+        if effort.requires_rerank() {
+            if lease.is_none() {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_LEASE_REQUIRED,
+                    "high, xhigh and max recall require a budget lease",
+                    &["Use light or medium, or present a lease."],
+                ));
             }
-            other => other,
-        };
+            if execution.reranker.is_none() {
+                return Err(MemoryError::bad_request(
+                    "paid recall requires a prepared reranker",
+                ));
+            }
+        }
+        let effective = effort;
+        let deep_pending = None;
         let world_scope = match &scope.world_ref {
             Some(world_ref) => WorldScope::World(self.resolve_ref(world_ref)?),
             None => WorldScope::All,
         };
         let pack_format = format.map(parse_pack_format).transpose()?;
+        let seeds = if effective != Effort::Light
+            && !execution
+                .deadline
+                .is_some_and(crate::retrieval_depth::RetrievalDeadline::stop_before_stage)
+        {
+            let hits = match (session, route.as_ref()) {
+                (Some(session), Some(route)) => {
+                    session.search_text_routed(route, query, PPR_SEED_LIMIT)?
+                }
+                _ => self.vault.search_text(query, PPR_SEED_LIMIT)?,
+            };
+            hits.into_iter().map(|hit| hit.id).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
         let (items, total_candidates, rendered, retrieval_quality) = match &scope.facet {
             Some(facet_ref) => {
@@ -383,14 +467,33 @@ impl Memory<'_> {
                     .query()
                     .search_text(query, limit)
                     .facet(&facet_id, FacetMode::Strict)
-                    .world(world_scope);
+                    .world(world_scope)
+                    .retrieval_effort(effective, &seeds);
                 if let Some(filter) = candidate_filter {
                     pipeline = pipeline.filter_candidates(filter);
                 }
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }
-                if effective == Effort::Standard {
+                if let Some(deadline) = execution.deadline {
+                    pipeline = pipeline.deadline(deadline);
+                }
+                if let Some(vector) = execution.embedding {
+                    pipeline = pipeline.search_vector(vector, limit);
+                }
+                if !execution.phonetic_codes.is_empty() {
+                    pipeline = pipeline.search_phonetic(execution.phonetic_codes);
+                }
+                if effective.requires_rerank() {
+                    pipeline = pipeline.rerank(
+                        execution.reranker.expect("validated reranker"),
+                        RerankOptions {
+                            top_n: effective.rerank_top_n(),
+                            query: Some(query.to_owned()),
+                        },
+                    );
+                }
+                if effective != Effort::Light {
                     pipeline = pipeline
                         .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
                         .boost_salience()
@@ -413,36 +516,40 @@ impl Memory<'_> {
                     .context_pack()
                     .search_text(query, limit)
                     .limit(limit)
-                    .world(world_scope);
+                    .world(world_scope)
+                    .retrieval_effort(effective, &seeds);
                 if let Some(filter) = candidate_filter {
                     builder = builder.filter_candidates(filter);
                 }
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     builder = builder.in_session(telemetry);
                 }
+                if let Some(deadline) = execution.deadline {
+                    builder = builder.deadline(deadline);
+                }
+                if let Some(vector) = execution.embedding {
+                    builder = builder.search_vector(vector, limit);
+                }
+                if !execution.phonetic_codes.is_empty() {
+                    builder = builder.search_phonetic(execution.phonetic_codes);
+                }
+                if effective.requires_rerank() {
+                    builder = builder.rerank(
+                        execution.reranker.expect("validated reranker"),
+                        RerankOptions {
+                            top_n: effective.rerank_top_n(),
+                            query: Some(query.to_owned()),
+                        },
+                    );
+                }
                 match effective {
-                    Effort::Minimal => {
+                    Effort::Light => {
                         builder = builder
                             .hydrate(false)
                             .include_edges(false)
                             .field_profile(FieldProfile::Minimal);
                     }
-                    Effort::Standard | Effort::Deep => {
-                        // The seed search is a SECOND retrieval and registers
-                        // its own run. Left on the base door it would publish
-                        // a durable row naming what the room searched for, so
-                        // in a room it takes the session's routed sibling.
-                        let seed_hits = match (session, route.as_ref()) {
-                            (Some(session), Some(route)) => {
-                                session.search_text_routed(route, query, PPR_SEED_LIMIT)?
-                            }
-                            _ => self.vault.search_text(query, PPR_SEED_LIMIT)?,
-                        };
-                        let seeds: Vec<EntityId> =
-                            seed_hits.into_iter().map(|hit| hit.id).collect();
-                        if !seeds.is_empty() {
-                            builder = builder.expand_ppr(&seeds, 1);
-                        }
+                    Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
                         builder = builder
                             .include_edges(true)
                             .edge_hop(1)
@@ -459,8 +566,10 @@ impl Memory<'_> {
                     let config = SerializeConfig {
                         format: fmt,
                         profile: match effective {
-                            Effort::Minimal => FieldProfile::Minimal,
-                            Effort::Standard | Effort::Deep => FieldProfile::Standard,
+                            Effort::Light => FieldProfile::Minimal,
+                            Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
+                                FieldProfile::Standard
+                            }
                         },
                         budget: RECALL_TOKEN_BUDGET,
                         allocation: crate::context_pack::TokenAllocation::default(),
@@ -490,7 +599,10 @@ impl Memory<'_> {
                 quality: retrieval_quality.quality,
                 degradation: retrieval_quality.degradation,
                 confidence_adjustment: retrieval_quality.confidence_adjustment,
-                sparse: Some(true),
+                sparse: Some(execution.embedding.is_none()),
+                partial: execution
+                    .deadline
+                    .is_some_and(crate::retrieval_depth::RetrievalDeadline::was_cut_short),
                 total_candidates,
                 claims_returned,
                 deep_pending,

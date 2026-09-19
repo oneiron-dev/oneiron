@@ -4,7 +4,12 @@
 
 mod blend_tuning;
 mod run_store;
+mod state;
+#[cfg(test)]
+mod state_tests;
+mod turn_index;
 mod types;
+pub use state::{RetrievalState, RetrievalTurn};
 
 pub(crate) use self::run_store::RETRIEVAL_RUN_KEY_PREFIX;
 pub(in crate::store) use self::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
