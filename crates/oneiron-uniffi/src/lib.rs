@@ -260,6 +260,37 @@ mod tests {
     }
 
     #[test]
+    fn relationship_scoped_claim_roundtrips_the_uniffi_wire() {
+        use super::{ClaimInput, UniFfiTag, WireJson};
+        use uniffi::FfiConverter;
+
+        for relationship_ref in [None, Some("22222222222222222222222222222222".to_owned())] {
+            let input = ClaimInput {
+                id: None,
+                predicate: "profile.nickname".to_owned(),
+                subject_ref: "11111111111111111111111111111111".to_owned(),
+                value: WireJson {
+                    canonical_json: "\"Ada\"".to_owned(),
+                },
+                confidence: 1.0,
+                source: "user_stated".to_owned(),
+                world_ref: None,
+                relationship_ref,
+                scope: None,
+                valid_from: None,
+                valid_to: None,
+                occurred_at: Some(100),
+                learned_at: None,
+                salience: None,
+            };
+            let bytes = <ClaimInput as FfiConverter<UniFfiTag>>::lower(input.clone());
+            let decoded = <ClaimInput as FfiConverter<UniFfiTag>>::try_lift(bytes)
+                .expect("generated UniFFI claim wire roundtrip");
+            assert_eq!(decoded, input);
+        }
+    }
+
+    #[test]
     fn definition_only_entrypoints_fail_closed() {
         assert_invalid_state(Oneiron::open(None, None));
         assert_invalid_state(Oneiron::open(

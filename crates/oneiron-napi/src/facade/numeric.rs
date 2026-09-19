@@ -159,6 +159,19 @@ mod tests {
     }
 
     #[test]
+    fn claim_relationship_scope_survives_napi_conversion() {
+        for relationship_ref in [None, Some("22222222222222222222222222222222".to_owned())] {
+            let mut input = claim([None; 4]);
+            input.relationship_ref = relationship_ref.clone();
+            input.world_ref = Some("33333333333333333333333333333333".to_owned());
+            let converted = claim_input_to_engine(&input).expect("claim converts");
+            assert_eq!(converted.relationship_ref, relationship_ref);
+            assert_eq!(converted.world_ref, input.world_ref);
+            assert_eq!(converted.subject_ref, input.subject_ref);
+        }
+    }
+
+    #[test]
     fn all_claim_timestamps_reject_lossy_numbers() {
         for (index, field) in ["valid_from", "valid_to", "occurred_at", "learned_at"]
             .into_iter()

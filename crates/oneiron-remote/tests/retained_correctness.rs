@@ -61,5 +61,16 @@ fn both_backends_refuse_complete_claim_payload_before_dispatch() {
             MEMORY_CODE_BAD_REQUEST,
         );
     }
+    claim.world_ref = None;
+    claim.relationship_ref = Some("x".repeat(MAX_ENTITY_PAYLOAD_BYTES));
+    for client in [&embedded, &remote] {
+        assert_eq!(
+            client
+                .claim_upsert(&claim)
+                .expect_err("over-cap relationship ref")
+                .code,
+            MEMORY_CODE_BAD_REQUEST,
+        );
+    }
     assert_eq!(embedded.receipts(10).expect("no writes"), before);
 }
