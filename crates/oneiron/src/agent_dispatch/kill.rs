@@ -12,8 +12,8 @@ use crate::error::{Error, Result};
 use super::codec::decode_agent_dispatch_input;
 use super::dispatch::AgentDispatcher;
 use super::types::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, DispatchHealer,
-    HEALER_REFERENCE_CONTEXT_SEAM_ABSENT, HealerSlot, HealerSlotOutcome, KillOutcome, KillProposal,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, DispatchHealer, HealerSlot,
+    HealerSlotOutcome, KillOutcome, KillProposal,
 };
 use crate::error::ArtifactError;
 
@@ -57,9 +57,30 @@ impl AgentDispatcher<'_> {
                         "healer agent definition exceeds the propose-only ceiling",
                     )));
                 }
-                Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                    HEALER_REFERENCE_CONTEXT_SEAM_ABSENT,
-                )))
+                let result = self.dispatch_with_context(
+                    super::DispatchAgent {
+                        target: AgentDispatchTarget::Custom(healer_ref),
+                        parent_attempt: Some(input.case.failing_attempt_id),
+                        dedupe_key: Some(format!("healer:{}", input.case.case_ref)),
+                        run_id: input.run_id,
+                        now: input.now,
+                    },
+                    super::AgentSpawnContext {
+                        healer_case: Some(input.case),
+                        // The healer cannot recursively spend the failing task's
+                        // whole depth budget. Repairs remain proposals.
+                        depth_remaining: Some(1),
+                        ..Default::default()
+                    },
+                )?;
+                Ok(match result {
+                    super::AgentDispatchOutcome::Dispatched(status) => {
+                        HealerSlotOutcome::Dispatched(status)
+                    }
+                    super::AgentDispatchOutcome::Existing(status) => {
+                        HealerSlotOutcome::Existing(status)
+                    }
+                })
             }
         }
     }

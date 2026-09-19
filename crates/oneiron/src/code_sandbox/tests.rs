@@ -178,6 +178,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "self.speak",
             "self.think",
             "self.express",
+            "self.report_blocked",
         ]
     );
     let write_imports = first_party
@@ -192,6 +193,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
+            "self.report_blocked",
         ]
     );
     let write_effects = first_party
@@ -205,6 +207,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             SelfEffect::MemoryPutClaim,
             SelfEffect::MemorySupersedeClaim,
             SelfEffect::MemoryPutEdge,
+            SelfEffect::ReportBlocked,
         ]
     );
     assert_eq!(

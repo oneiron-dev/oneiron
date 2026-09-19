@@ -31,6 +31,16 @@ pub struct TxnBatchBuilder<'a> {
 }
 
 impl<'a> TxnBatchBuilder<'a> {
+    /// Vector sibling of the batch door, retained in the caller's transaction.
+    pub(crate) fn vector(mut self, id: &EntityId, vector: &[f32]) -> Self {
+        self.ops.push(BatchOp::Vector {
+            id: *id,
+            vector: vector.to_vec(),
+            pending_embedding_token: None,
+        });
+        self
+    }
+
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             vault,

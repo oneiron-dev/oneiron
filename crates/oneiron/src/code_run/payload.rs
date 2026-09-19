@@ -53,6 +53,12 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("tgt", entity_id_value(call.tgt)),
             ("weight", Value::F32(call.weight)),
         ]),
+        SelfCall::ReportBlocked(call) => request_map(vec![
+            ("category", Value::from(call.category.as_str())),
+            ("detail", Value::from(call.detail.as_str())),
+            ("order", Value::from(call.order)),
+            ("occurred_at", Value::from(call.occurred_at)),
+        ]),
         SelfCall::AskHuman(call) => {
             request_map(vec![("prompt", Value::from(call.prompt.as_str()))])
         }
@@ -187,6 +193,10 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Valu
                 context_spec_json(&result.spec).map_or(Value::Nil, Value::from),
             ),
         ]),
+        SelfDispatchOutcome::ReportBlocked { receipt } => request_map(vec![
+            ("kind", Value::from("report_blocked")),
+            ("receipt", entity_id_value(*receipt)),
+        ]),
         SelfDispatchOutcome::Speech(result) => request_map(vec![
             ("kind", Value::from("speech")),
             ("effect", Value::from(result.effect.as_str())),
@@ -201,6 +211,9 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
     let entries = expect_map(value, "dispatch outcome must be a map")?;
     let kind = str_value(map_get(entries, "kind")?)?;
     match kind {
+        "report_blocked" => Ok(SelfDispatchOutcome::ReportBlocked {
+            receipt: entity_value(map_get(entries, "receipt")?)?,
+        }),
         "memory_search" => {
             let results = decode_array(map_get(entries, "results")?, decode_scored_entity)?;
             Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
@@ -334,6 +347,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.speak" => Ok(SelfEffect::Speak),
         "self.think" => Ok(SelfEffect::Think),
         "self.express" => Ok(SelfEffect::Express),
+        "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }

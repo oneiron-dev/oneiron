@@ -347,9 +347,8 @@ impl Vault {
     /// its own first use, and the journaled step's send continues through the
     /// existing outbound machinery untouched.
     ///
-    /// Production wiring is DECLARED DEFERRED (blueprint §9): this lane ships
-    /// the hook uncalled and direct-call tested, without claiming an ingress
-    /// caller.
+    /// Called on managed HTTP ingress, outbound transport completion, and
+    /// durable LLM provider replies. Rebuilding remains a first-use operation.
     ///
     /// # Errors
     ///

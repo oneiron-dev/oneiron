@@ -47,6 +47,7 @@ pub enum SelfCall {
     Think(SelfSpeechCall),
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
+    ReportBlocked(super::blocked::SelfReportBlockedCall),
 }
 
 impl SelfCall {
@@ -66,6 +67,7 @@ impl SelfCall {
             Self::Speak(_) => SelfEffect::Speak,
             Self::Think(_) => SelfEffect::Think,
             Self::Express(_) => SelfEffect::Express,
+            Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
         }
     }
 
@@ -88,6 +90,7 @@ impl SelfCall {
             Self::Speak(call) => Self::Speak(call.with_bridge_stamp(order, occurred_at)),
             Self::Think(call) => Self::Think(call.with_bridge_stamp(order, occurred_at)),
             Self::Express(call) => Self::Express(call.with_bridge_stamp(order, occurred_at)),
+            Self::ReportBlocked(call) => Self::ReportBlocked(call.stamped(order, occurred_at)),
             other => other,
         }
     }
@@ -117,6 +120,7 @@ pub enum SelfEffect {
     Think,
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
+    ReportBlocked,
 }
 
 impl SelfEffect {
@@ -137,6 +141,7 @@ impl SelfEffect {
             Self::Speak => "self.speak",
             Self::Think => "self.think",
             Self::Express => "self.express",
+            Self::ReportBlocked => "self.report_blocked",
         }
     }
 
@@ -161,7 +166,8 @@ impl SelfEffect {
             | Self::DestructiveFixture
             | Self::OutboundFixture
             | Self::TaskDelegate
-            | Self::Context => None,
+            | Self::Context
+            | Self::ReportBlocked => None,
         }
     }
 
@@ -376,6 +382,9 @@ pub enum SelfDispatchOutcome {
     Context(SelfContextResult),
     /// One durable MESSAGE bubble emitted by the speech family (ONE-1686).
     Speech(SelfSpeechResult),
+    ReportBlocked {
+        receipt: EntityId,
+    },
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.

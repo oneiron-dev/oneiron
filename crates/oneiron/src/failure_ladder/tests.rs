@@ -162,10 +162,14 @@ fn policy_with(agent_ref: EntityId, limit: u16, mode: FailureEscalationMode) -> 
 fn put_receipt_message(vault: &Vault, seed: u8, order: u32) -> Result<EntityId> {
     let id = test_id(seed);
     let body = crate::gate::canonical_witness_message_body_for_test(
-        "user",
-        "dialogue",
-        "blocked report",
-        true,
+        "companion",
+        "executor.think",
+        &crate::code_run::blocked::BlockedReceipt::new(
+            crate::code_run::blocked::BlockedCategory::Tool,
+            "blocked report",
+        )?
+        .content()?,
+        false,
         order,
     )?;
     vault

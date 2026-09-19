@@ -249,6 +249,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::Speak(call) => self.dispatch_speech(SelfEffect::Speak, call, run_id),
             SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
             SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
+            SelfCall::ReportBlocked(call) => self.dispatch_report_blocked(call, run_id),
         }
     }
 }

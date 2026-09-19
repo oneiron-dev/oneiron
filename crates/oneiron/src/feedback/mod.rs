@@ -81,6 +81,7 @@ mod bundle;
 mod consent;
 mod dispatch;
 mod error;
+pub mod intake;
 
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_KEYS,

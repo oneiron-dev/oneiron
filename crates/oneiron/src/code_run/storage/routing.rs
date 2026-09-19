@@ -332,6 +332,26 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    pub(crate) fn witness_blocked_report(
+        &self,
+        run_ref: &str,
+        run_id: Option<EntityId>,
+        call: &crate::code_run::blocked::SelfReportBlockedCall,
+        actor: WriteActor,
+    ) -> Result<EntityId> {
+        let receipt = crate::code_run::blocked::BlockedReceipt::new(call.category, &call.detail)?;
+        self.witness_executor_utterance(
+            run_ref,
+            run_id,
+            ExecutorUtterance::Think,
+            &receipt.content()?,
+            call.occurred_at,
+            call.order,
+            actor,
+        )?;
+        executor_speech_message_id_for_run(run_ref, run_id, call.order)
+    }
+
     pub(crate) fn get_code_run_replay_record(
         &self,
         run_id: &EntityId,

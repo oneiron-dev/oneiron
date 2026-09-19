@@ -150,6 +150,16 @@ impl<'a> AgentDispatcher<'a> {
         };
 
         let requested_definition = self.dispatchable_definition(&input.target)?;
+        if let Some(case) = &spawn.healer_case {
+            super::healer_context::validate(case)?;
+            if input.parent_attempt != Some(case.failing_attempt_id)
+                || requested_definition.ceiling != crate::agent_def::AgentCeiling::Proposed
+            {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "healer context requires its failing parent and propose-only ceiling",
+                )));
+            }
+        }
 
         // 2. AUTHORITY BOUND. Both sides read the LIVE stored rows; the frozen
         //    payload ceiling stays non-authoritative on every path.
@@ -173,6 +183,7 @@ impl<'a> AgentDispatcher<'a> {
         //    against live parent state in `dispatch_with_context`; the executor
         //    resolves it again at read time, which is what keeps it fresh.
         let dispatch_input = AgentDispatchInput {
+            healer_case: spawn.healer_case,
             target,
             definition,
             context_spec: spawn.context_spec,
@@ -197,6 +208,14 @@ impl<'a> AgentDispatcher<'a> {
 
         Ok(match outcome {
             EnqueueDreamerAttemptOutcome::Enqueued(status) => {
+                if let Some(case) = &dispatch_input.healer_case {
+                    crate::failure_ladder::oversight::proposed_in_txn(
+                        self.vault,
+                        wtxn,
+                        &case.case_ref,
+                        input.now,
+                    )?;
+                }
                 AgentDispatchOutcome::Dispatched(agent_dispatch_status(status)?)
             }
             EnqueueDreamerAttemptOutcome::Existing(status) => {
@@ -216,7 +235,8 @@ impl<'a> AgentDispatcher<'a> {
                 // The dedupe key names the INTENT, so the persisted row must
                 // carry the SAME effective spawn input; a different one is a
                 // typed error, never a silent reuse.
-                if status.input.context_spec != dispatch_input.context_spec
+                if status.input.healer_case != dispatch_input.healer_case
+                    || status.input.context_spec != dispatch_input.context_spec
                     || status.input.context_from != dispatch_input.context_from
                     || status.input.depth_remaining != dispatch_input.depth_remaining
                 {

@@ -214,6 +214,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
         verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
     }
     let outcome = transport.send(&call);
+    vault.resume_from_slim_on_inbound()?;
     match outcome {
         OutboundSendOutcome::Acked => {
             let done = complete_record(vault, record.id, now_ms)?;
