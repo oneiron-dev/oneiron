@@ -409,3 +409,58 @@ fn legacy_childof_append_cannot_orphan_a_record_after_dag_adoption() {
         .unwrap();
     assert_eq!(vault.head(&conversation).unwrap(), Some(next.id));
 }
+
+#[test]
+fn branch_scope_with_forks_includes_siblings_but_not_retained_sub_sessions() {
+    let (_dir, vault, conv, actor) = fixture();
+    let root = vault
+        .append_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = vault
+        .append_record(&input(conv, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let branch = vault
+        .append_record(&input(conv, Some(root), false, actor))
+        .unwrap()
+        .id;
+    let leaf = vault
+        .append_record(&input(conv, Some(branch), false, actor))
+        .unwrap()
+        .id;
+    let session = vault.spawn_sub_session(&branch, actor).unwrap();
+    let worker = vault
+        .append_record(&AppendRecord {
+            session: Some(session),
+            ..input(conv, Some(branch), false, actor)
+        })
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault
+            .resolve_scope(&scope(conv, ScopePath::Branch(leaf), false))
+            .unwrap()
+            .records,
+        [root, branch, leaf]
+    );
+    let expanded = vault
+        .resolve_scope(&scope(conv, ScopePath::Branch(leaf), true))
+        .unwrap()
+        .records;
+    assert_eq!(expanded.len(), 4);
+    assert_eq!(
+        expanded
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [root, trunk, branch, leaf].into()
+    );
+    assert_eq!(
+        vault
+            .resolve_scope(&scope(conv, ScopePath::SubSession(session), false))
+            .unwrap()
+            .records,
+        [worker]
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}

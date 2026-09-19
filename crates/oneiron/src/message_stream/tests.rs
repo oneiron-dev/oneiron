@@ -154,3 +154,73 @@ fn refused_finalization_keeps_buffer_and_mints_neither_message_nor_receipt() {
         "not authorized"
     );
 }
+
+#[test]
+fn agent_chat_override_survives_reopen_is_isolated_and_only_changes_future_streams() {
+    let (dir, vault, owner) = fixture();
+    let agent = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    vault
+        .put_entity(
+            &agent.entity_ref(),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"streaming agent",
+        )
+        .unwrap();
+    vault
+        .memory(agent.entity_ref(), agent.actor_class())
+        .set_message_stream_override(Some(streamed()))
+        .unwrap();
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let active_id = EntityId::now();
+    let active = vault
+        .begin_message_stream(active_id, template(), agent, None)
+        .unwrap();
+    assert_eq!(active.mode(), streamed());
+    let other = vault
+        .begin_message_stream(EntityId::now(), template(), owner, None)
+        .unwrap();
+    assert_eq!(other.mode(), MessageWriteMode::Atomic);
+    assert!(
+        vault
+            .append_to_stream(&other, "owner partial")
+            .unwrap()
+            .is_none()
+    );
+
+    // Removing an override changes the next begin, not an active stream.
+    vault
+        .memory(agent.entity_ref(), agent.actor_class())
+        .set_message_stream_override(None)
+        .unwrap();
+    let future = vault
+        .begin_message_stream(EntityId::now(), template(), agent, None)
+        .unwrap();
+    assert_eq!(future.mode(), MessageWriteMode::Atomic);
+    assert!(
+        vault
+            .append_to_stream(&future, "future partial")
+            .unwrap()
+            .is_none()
+    );
+    let frame = vault
+        .append_to_stream(&active, "active partial")
+        .unwrap()
+        .unwrap();
+    assert_eq!(frame.text, "active partial");
+    assert_eq!(frame.originator, agent.entity_ref());
+    assert_eq!(frame.visibility, StreamSyncVisibility::AllDevices);
+    assert!(vault.get(&active_id).unwrap().is_none());
+    assert!(vault.message_finality_receipt(active_id).unwrap().is_none());
+    drop(vault);
+
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    assert!(vault.get(&active_id).unwrap().is_none());
+    assert!(vault.message_finality_receipt(active_id).unwrap().is_none());
+    let after_reopen = vault
+        .begin_message_stream(active_id, template(), agent, None)
+        .unwrap();
+    assert_eq!(after_reopen.mode(), MessageWriteMode::Atomic);
+}

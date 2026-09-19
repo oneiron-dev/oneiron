@@ -101,6 +101,26 @@ async fn dag_routes_roundtrip_trunk_thread_fork_scope_migration_and_auth() {
     )
     .await;
     assert_eq!(branch["records"], json!([root["id"], trunk["id"]]));
+    let expanded = post(
+        &server,
+        &format!("{path}/scope"),
+        json!({"path": {"branch": trunk["id"]}, "include_forks": true}),
+    )
+    .await;
+    let records = expanded["records"].as_array().unwrap();
+    assert_eq!(records.len(), 3);
+    assert_eq!(
+        records
+            .iter()
+            .map(|id| id.as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            root["id"].as_str().unwrap(),
+            trunk["id"].as_str().unwrap(),
+            thread["id"].as_str().unwrap()
+        ]
+        .into()
+    );
     let migrated = post(&server, &format!("{path}/migrate-dag"), json!({})).await;
     assert_eq!(migrated["migrated"], false);
     let (status, error) = route_json(server.clone(), json_request("POST", &records,

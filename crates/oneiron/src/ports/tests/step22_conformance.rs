@@ -216,3 +216,70 @@ fn derived_edges_register_dependencies_in_the_same_transaction() -> Result<()> {
     check(&vault)?;
     check(&memory)
 }
+
+#[test]
+fn vault_delete_invalidates_and_enqueues_only_indexed_dependents() -> Result<()> {
+    let (_temp, vault, _memory, _clock) = fixtures();
+    let source = id(51);
+    let other_source = id(52);
+    let first = id(53);
+    let second = id(54);
+    let unrelated = id(55);
+    let mut txn = vault.write()?;
+    for entity in [source, other_source, first, second, unrelated] {
+        vault.port_entity_put(&mut txn, &entity, &row(ENTITY_TYPE_PERSON, b"nebula"))?;
+        vault.port_retrieval_upsert(&mut txn, &entity, None, Some(&[("body", "nebula")]))?;
+    }
+    for (dependent, document) in [(first, source), (second, source), (unrelated, other_source)] {
+        vault.port_edge_upsert(
+            &mut txn,
+            &dependent,
+            crate::EdgeKind::DerivedFrom,
+            &document,
+            1.0,
+        )?;
+    }
+    vault.commit(txn)?;
+
+    // Exercise the real deletion door, not a direct tombstone adapter call.
+    vault.delete_entity(&source)?;
+    assert!(vault.get(&source)?.is_none());
+    let mut txn = vault.write()?;
+    for dependent in [first, second] {
+        assert!(safe_read_text(&vault, &txn, &dependent)?.is_none());
+    }
+    for live in [other_source, unrelated] {
+        assert_eq!(
+            safe_read_text(&vault, &txn, &live)?,
+            Some(b"nebula".to_vec())
+        );
+    }
+    assert_eq!(
+        vault
+            .port_retrieval_text_search(&txn, "nebula", 10)?
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([other_source, unrelated])
+    );
+    let mut queued = Vec::new();
+    while let ClaimOutcome::Claimed(job) = vault.port_job_claim(
+        &mut txn,
+        Some("derived.regenerate"),
+        ClaimAttempt {
+            lease_owner: "regenerator".into(),
+            now: 999,
+        },
+    )? {
+        assert_eq!(&job.payload[..16], source.as_bytes());
+        queued.push(crate::EntityId::from_bytes(
+            job.payload[16..].try_into().unwrap(),
+        )?);
+    }
+    assert_eq!(queued.len(), 2);
+    assert_eq!(
+        queued.into_iter().collect::<BTreeSet<_>>(),
+        BTreeSet::from([first, second])
+    );
+    vault.commit(txn)
+}

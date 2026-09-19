@@ -494,3 +494,41 @@ fn source_bridge_refuses_retained_stale_asset_text() {
             .is_empty()
     );
 }
+
+#[test]
+fn append_to_section_uses_its_unicode_anchor_after_another_edit() {
+    let (_dir, vault, actor) = fixture();
+    let id = vault
+        .create_note("research", "# α\nfirst\n# β\nsecond", actor)
+        .unwrap();
+    let read = vault.note_document(id).unwrap().unwrap();
+    let end = read.anchor("# α\nfirst\n".chars().count()).unwrap();
+    vault
+        .edit_note(
+            id,
+            &NoteEdit::InsertAfter {
+                anchor: read.anchor(0).unwrap(),
+                text: "preface 🦀\n".into(),
+            },
+            actor,
+        )
+        .unwrap();
+    vault
+        .edit_note(
+            id,
+            &NoteEdit::AppendToSection {
+                end,
+                text: "appended\n".into(),
+            },
+            actor,
+        )
+        .unwrap();
+    assert_eq!(
+        current(&vault, id),
+        "preface 🦀\n# α\nfirst\nappended\n# β\nsecond"
+    );
+    assert_eq!(
+        vault.note_document(id).unwrap().unwrap().head(),
+        read.head()
+    );
+}
