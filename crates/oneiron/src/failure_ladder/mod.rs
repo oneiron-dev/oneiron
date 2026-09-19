@@ -20,6 +20,7 @@
 
 mod blocked_reports;
 mod classify;
+mod healer_case;
 mod ladder;
 mod lineage;
 pub mod oversight;
@@ -31,6 +32,7 @@ pub use self::classify::{
     DEFAULT_MAX_CONSECUTIVE_TRANSIENTS, DetectorTier, FailureClass, TypedFailureEvidence,
     TypedFailureVerdict, classify_failure,
 };
+pub(crate) use self::healer_case::require_in_txn as require_healer_case_in_txn;
 pub use self::ladder::{FailureLadder, failure_card_ref, failure_case_ref};
 pub(crate) use self::lineage::retry_lineage_ordinal;
 pub use self::lineage::{

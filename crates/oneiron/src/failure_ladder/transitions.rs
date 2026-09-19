@@ -111,13 +111,29 @@ pub(super) fn fail_once(
     queue: &AttemptQueue<'_>,
     input: &HandleAttemptFailure,
 ) -> Result<AttemptRecord> {
-    match queue.fail(FailAttempt {
+    new_failure(queue.fail(fail_request(input))?)
+}
+
+pub(super) fn fail_once_in_txn(
+    queue: &AttemptQueue<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    input: &HandleAttemptFailure,
+) -> Result<AttemptRecord> {
+    new_failure(queue.fail_in_txn(txn, fail_request(input))?)
+}
+
+fn fail_request(input: &HandleAttemptFailure) -> FailAttempt {
+    FailAttempt {
         id: input.attempt_id,
         lease_owner: input.lease_owner.clone(),
         attempt_count: input.attempt_count,
         reason: input.evidence.stable_reason.clone(),
         now: input.now,
-    })? {
+    }
+}
+
+fn new_failure(outcome: FailOutcome) -> Result<AttemptRecord> {
+    match outcome {
         FailOutcome::Failed(record) => Ok(record),
         FailOutcome::AlreadyFailed(_) => Err(Error::Artifact(
             ArtifactError::InvalidAttemptQueueTransition {

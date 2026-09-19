@@ -152,6 +152,12 @@ impl<'a> AgentDispatcher<'a> {
         let requested_definition = self.dispatchable_definition(&input.target)?;
         if let Some(case) = &spawn.healer_case {
             super::healer_context::validate(case)?;
+            crate::failure_ladder::require_healer_case_in_txn(
+                self.vault,
+                wtxn,
+                case,
+                input.run_id.as_deref(),
+            )?;
             if input.parent_attempt != Some(case.failing_attempt_id)
                 || requested_definition.ceiling != crate::agent_def::AgentCeiling::Proposed
             {

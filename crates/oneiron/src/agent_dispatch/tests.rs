@@ -2586,7 +2586,39 @@ fn failing_case(vault: &Vault) -> Result<(EntityId, AttemptId, HealerCase)> {
     })?)
     .attempt
     .id;
-    Ok((agent, failing, healer_case_fixture(failing, agent)))
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) =
+        AttemptQueue::new(vault).claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "healer-fixture-worker".to_owned(),
+            now: 11,
+        })?
+    else {
+        panic!("claim failing attempt");
+    };
+    assert_eq!(leased.id, failing);
+    let fixture = healer_case_fixture(failing, agent);
+    let outcome = crate::failure_ladder::FailureLadder::new(vault).handle_attempt_failure(
+        crate::failure_ladder::HandleAttemptFailure {
+            attempt_id: failing,
+            lease_owner: "healer-fixture-worker".to_owned(),
+            attempt_count: leased.attempt_count,
+            evidence: crate::failure_ladder::TypedFailureEvidence {
+                evidence_ref: Some(fixture.evidence_ref.clone()),
+                verdict: crate::failure_ladder::TypedFailureVerdict::NonRetryable,
+                tier: Some(crate::failure_ladder::DetectorTier::T3Judge),
+                stable_reason: "healer.fixture.failure".to_owned(),
+            },
+            blocked_reports: Vec::new(),
+            pre_fail_checkpoint_ref: test_id(0x51),
+            qa_thread_ref: test_id(0x52),
+            retry_at: 15,
+            now: 12,
+        },
+        crate::failure_ladder::FailureScopePolicy::auto(fixture.scope),
+    )?;
+    let crate::failure_ladder::FailureLadderOutcome::Healer(outcome) = outcome else {
+        panic!("genuine ladder case");
+    };
+    Ok((agent, failing, outcome.case))
 }
 
 fn heal(slot: HealerSlot, case: HealerCase, now: u64) -> DispatchHealer {
@@ -2667,7 +2699,7 @@ fn configured_healer_dedupe_is_case_scoped() -> Result<()> {
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), 2);
     assert_eq!(
         AttemptQueue::new(&vault).get(failing)?.unwrap().state,
-        AttemptState::Queued
+        AttemptState::Failed
     );
     Ok(())
 }
@@ -2699,7 +2731,16 @@ fn healer_context_is_reference_only() -> Result<()> {
 #[test]
 fn healer_spawn_cannot_force_cancel_attempt() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let (_agent, failing, case) = failing_case(&vault)?;
+    let (agent, failing, case) = failing_case(&vault)?;
+    let running = dispatched(AgentDispatcher::new(&vault).dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-live".to_owned()),
+        now: 14,
+    })?)
+    .attempt
+    .id;
     let queue = AttemptQueue::new(&vault);
     let crate::attempt_queue::ClaimOutcome::Claimed(claimed) =
         queue.claim(crate::attempt_queue::ClaimAttempt {
@@ -2709,14 +2750,18 @@ fn healer_spawn_cannot_force_cancel_attempt() -> Result<()> {
     else {
         panic!("expected a claim");
     };
-    assert_eq!(claimed.id, failing);
+    assert_eq!(claimed.id, running);
 
     AgentDispatcher::new(&vault).dispatch_healer_slot(heal(HealerSlot::Reserved, case, 20))?;
 
-    // The still-running failing attempt keeps its lease and its whole
-    // graceful-cancel lifecycle: a healer asking it to land must go through
+    // The separate live attempt keeps its lease and its whole graceful-cancel
+    // lifecycle: a healer asking it to land must go through
     // ONE-1896's public soft request API, separately.
-    let row = queue.get(failing)?.expect("failing row");
+    assert_eq!(
+        queue.get(failing)?.expect("failed parent").state,
+        AttemptState::Failed
+    );
+    let row = queue.get(running)?.expect("running row");
     assert_eq!(row.state, AttemptState::Leased);
     assert_eq!(row.cancellation(), None);
     assert!(row.cancel_receipts().is_empty());
@@ -2786,6 +2831,115 @@ fn healer_activity_emits_three_signed_per_vault_receipts() -> Result<()> {
         let mut tampered = receipt.clone();
         tampered.counts.reviewed += 1;
         assert!(!tampered.verify(&receipts[0].signer));
+    }
+    Ok(())
+}
+
+#[test]
+fn fabricated_healer_case_requires_a_ladder_minted_failure() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_row(
+        &vault,
+        0x37,
+        "oneiron.agent.failure-auth",
+        AgentCeiling::Proposed,
+    )?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    let failing = dispatched(AgentDispatcher::new(&vault).dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-heal".to_owned()),
+        now: 10,
+    })?)
+    .attempt
+    .id;
+    let case = healer_case_fixture(failing, agent);
+    let queue = AttemptQueue::new(&vault);
+    let refuse = || -> Result<()> {
+        let before = queue.list()?;
+        for slot in [
+            HealerSlot::Reserved,
+            HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+        ] {
+            let error = AgentDispatcher::new(&vault)
+                .dispatch_healer_slot(heal(slot, case.clone(), 20))
+                .expect_err("unminted case");
+            assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+        }
+        assert_eq!(queue.list()?, before);
+        Ok(())
+    };
+    refuse()?; // Merely queued.
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) =
+        queue.claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "failure-auth".to_owned(),
+            now: 11,
+        })?
+    else {
+        panic!("claim");
+    };
+    assert_eq!(leased.id, failing);
+    refuse()?; // A valid lease is not a failure or a case mint.
+    queue.fail(crate::attempt_queue::FailAttempt {
+        id: failing,
+        lease_owner: "failure-auth".to_owned(),
+        attempt_count: leased.attempt_count,
+        reason: "direct failure without ladder evidence".to_owned(),
+        now: 12,
+    })?;
+    refuse()?; // Even a Failed row alone cannot authenticate the DTO.
+    for receipt in vault.emit_healer_oversight(30)? {
+        assert_eq!(receipt.counts.proposed, 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn healer_admission_binds_scope_and_evidence_at_both_public_dispatch_doors() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_, failing, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    let mut wrong_scope = case.clone();
+    wrong_scope.scope.agent_ref = test_id(0x71).to_hex();
+    let mut wrong_evidence = case.clone();
+    wrong_evidence.evidence_ref = test_id(0x72).to_hex();
+    let queue = AttemptQueue::new(&vault);
+    let before = queue.list()?;
+    for forged in [wrong_scope, wrong_evidence] {
+        let error = AgentDispatcher::new(&vault)
+            .dispatch_healer_slot(heal(
+                HealerSlot::AgentDef {
+                    agent_def_ref: healer.to_hex(),
+                },
+                forged.clone(),
+                20,
+            ))
+            .expect_err("changed minted case");
+        assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+        let error = AgentDispatcher::new(&vault)
+            .dispatch_with_context(
+                DispatchAgent {
+                    target: AgentDispatchTarget::Custom(healer),
+                    parent_attempt: Some(failing),
+                    dedupe_key: None,
+                    run_id: Some("run-heal".to_owned()),
+                    now: 20,
+                },
+                AgentSpawnContext {
+                    healer_case: Some(forged),
+                    depth_remaining: Some(1),
+                    ..Default::default()
+                },
+            )
+            .expect_err("raw spawn context cannot bypass case authentication");
+        assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+    }
+    assert_eq!(queue.list()?, before);
+    for receipt in vault.emit_healer_oversight(30)? {
+        assert_eq!(receipt.counts.proposed, 0);
     }
     Ok(())
 }

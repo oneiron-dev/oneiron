@@ -11853,6 +11853,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/failure_ladder/healer_case.rs",
+     "purpose": "Durable failure-ladder cases bind healer admission to the fenced failure",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FailureLadder"
      ],
@@ -11891,7 +11901,7 @@
      "path": "src/failure_ladder/mod.rs",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 1,
       "re-export": 5
      }
@@ -11960,7 +11970,7 @@
      "path": "src/failure_ladder/transitions.rs",
      "purpose": "Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -25817,7 +25827,7 @@
      "purpose": "—"
     },
     "failure_ladder": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -26512,7 +26522,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1522,
+   "source_files": 1523,
    "test_files": 541
   },
   "oneiron-bench": {
@@ -30820,7 +30830,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/handler/app_tier_tests.rs",
