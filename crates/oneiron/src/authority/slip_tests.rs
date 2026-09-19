@@ -366,7 +366,7 @@ fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
         .unwrap();
     assert!(!verify(&vault, &issuer, &empty).unwrap().allows_verb("read"));
 
-    let mut claims = root.claims.clone();
+    let mut claims = root.claims;
     claims.slip_id = [43; 32];
     claims.records = BTreeSet::from(["record:a".into()]);
     claims.channels = BTreeSet::from(["provider:a".into()]);

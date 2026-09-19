@@ -178,7 +178,7 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
     let refused = facade.fan_out_consults(&wider).expect("above cap surfaces");
     assert!(refused.paused.is_some());
     assert!(refused.task_refs.is_empty());
-    let mut other_scope = input.clone();
+    let mut other_scope = input;
     other_scope.question_ref = consult_turn(&vault, 0x7B);
     assert!(
         facade

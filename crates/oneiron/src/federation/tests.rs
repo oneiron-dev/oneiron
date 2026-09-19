@@ -222,7 +222,7 @@ fn valid_delegate_entries() -> Vec<(Value, Value)> {
             Some(KEY_ROLE | KEY_PRESET) => *value = Value::from("delegate"),
             Some("authority_scope") => {
                 *value = super::scope_codec::encode_scope_value(&test_delegate().authority_scope)
-                    .expect("delegate scope")
+                    .expect("delegate scope");
             }
             _ => {}
         }

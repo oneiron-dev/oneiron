@@ -1239,6 +1239,21 @@ fn atomic_genesis_owner_binding_door() {
 
 #[test]
 fn revoke_fork_beats_concurrent_higher_epoch_bind_in_every_order() {
+    fn permutations(entries: &mut [AuthorityLogEntry], at: usize, expected: &AuthorityFold) {
+        if at == entries.len() {
+            assert_eq!(
+                &fold_authority_log_without_seen_time_delay(entries),
+                expected
+            );
+        } else {
+            for i in at..entries.len() {
+                entries.swap(at, i);
+                permutations(entries, at + 1, expected);
+                entries.swap(at, i);
+            }
+        }
+    }
+
     let f = bind_fixture(190);
     let initial = cosigned_entry(
         &f,
@@ -1269,20 +1284,6 @@ fn revoke_fork_beats_concurrent_higher_epoch_bind_in_every_order() {
         folded_status(&expected, &f.agent_key),
         Some(ActorBindingStatus::Revoked)
     );
-    fn permutations(entries: &mut [AuthorityLogEntry], at: usize, expected: &AuthorityFold) {
-        if at == entries.len() {
-            assert_eq!(
-                &fold_authority_log_without_seen_time_delay(entries),
-                expected
-            );
-        } else {
-            for i in at..entries.len() {
-                entries.swap(at, i);
-                permutations(entries, at + 1, expected);
-                entries.swap(at, i);
-            }
-        }
-    }
     permutations(&mut entries, 0, &expected);
     let regrant = cosigned_entry(
         &f,

@@ -49,7 +49,7 @@ fn quorum_checkpoint_roundtrip_matches_replay_and_rejects_tampering() {
             .is_err()
     );
     let checkpoint = vault
-        .write_authority_checkpoint(vec![root_key.clone(), peer_key.clone()], |key, bytes| {
+        .write_authority_checkpoint(vec![root_key.clone(), peer_key], |key, bytes| {
             Ok(if key == &root_key {
                 root.sign(bytes).to_bytes().to_vec()
             } else {

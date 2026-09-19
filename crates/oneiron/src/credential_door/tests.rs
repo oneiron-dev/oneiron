@@ -188,10 +188,11 @@ fn long_lived_push_credential(now: VaultInstant) -> DoorCredential {
 /// A verified one-shot: single-use caveat, one named secret, one named
 /// effector, 120s of life from `issued_at`.
 fn one_shot_credential_from(door: &CredentialDoorService, issued_at: u64) -> DoorCredential {
+    use rand_core::{OsRng, RngCore};
+
     let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
     let root = door.vault().ensure_host_root_slip(&issuer).unwrap();
-    let mut claims = root.claims.clone();
-    use rand_core::{OsRng, RngCore};
+    let mut claims = root.claims;
     OsRng.fill_bytes(&mut claims.slip_id);
     claims.parent_id = None;
     claims.issued_at = issued_at;

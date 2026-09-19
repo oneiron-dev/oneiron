@@ -110,7 +110,7 @@ fn persona_rebase_replays_changes_on_person_without_minting_masks() -> Result<()
     }
     .to_claim_value()?;
     replay_change(&vault, &EntityId::now(), &pending, 40)?;
-    let read = vault.scoped_read(key.clone());
+    let read = vault.scoped_read(key);
     let compiled = read.compile_persona(&person, None)?;
     assert_eq!(
         compiled.value,

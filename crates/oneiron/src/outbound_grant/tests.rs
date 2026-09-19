@@ -836,7 +836,7 @@ fn outbound_scope_migration_preserves_bounds_and_family_errors() -> Result<()> {
                 .unwrap_err()
                 .kind(),
             crate::ErrorKind::InvalidOutboundGrantBody
-        )
+        );
     };
     let mut legacy = entries.clone();
     legacy.retain(|(k, _)| k.as_str() != Some("authority_scope"));

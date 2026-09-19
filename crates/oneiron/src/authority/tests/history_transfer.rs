@@ -44,7 +44,7 @@ fn signed_history_export_import_re_root_preserves_identity_and_bytes() {
     c.import_signed_authority_history(&moved).unwrap();
     assert_eq!(c.authority_fold().unwrap().roster, fold.roster);
     assert_eq!(moved[1], encode_authority_log_entry_body(&reroot).unwrap());
-    let mut corrupt = export.clone();
+    let mut corrupt = export;
     let last = corrupt[0].len() - 1;
     corrupt[0][last] ^= 1;
     assert!(c.import_signed_authority_history(&corrupt).is_err());
