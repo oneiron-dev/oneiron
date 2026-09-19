@@ -501,7 +501,9 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     use crate::claim::ScopedReadActorKey;
     use crate::context_pack::ContextEntity;
     use crate::note::{NoteScope, NoteWriteEnvelope};
-    let (_dir, vault) = open_vault();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::test_util::embedding_test_config())
+        .expect("vault with vectors and default policy");
     let owner = put_person(&vault, 0x61);
     let other = put_person(&vault, 0x62);
     let owner_memory = facade_for(&vault, owner);

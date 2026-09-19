@@ -214,9 +214,11 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         Err(Error::InvalidClaimBody(_))
     ));
     executor.scope = Some(no_signals);
+    // The failed no-output call already pinned its attenuation. The same
+    // attempt cannot regain those output rights under another caller scope.
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx)),
-        Err(Error::InvalidClaimBody(_))
+        Err(Error::InvalidConfig(_))
     ));
     drop(executor);
     assert_eq!(sink.accepted.len(), 1);
@@ -882,7 +884,7 @@ fn production_epoch_timestamps_hold_then_release_and_rank_source_diversity() -> 
     )?;
     assert!(!released.held);
     assert_eq!(released.candidates.len(), 2);
-    let mut diversity = config.clone();
+    let mut diversity = config;
     diversity.type_priors.clear();
     diversity.weights = selection::StrengthWeights {
         type_prior: 0.8,

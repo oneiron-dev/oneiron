@@ -171,7 +171,8 @@ fn hub_updates_scan_new_dependencies_before_exposing_them() -> Result<()> {
         TimeRange { start: 11, end: 11 },
         11,
     )?;
-    let incoming = package("4.17.20");
+    let mut incoming = package("4.17.20");
+    incoming.record.version = "2.0.0".into();
     vault.sync_skill_from_hub_with_query(
         &installed.entity,
         &reference,
