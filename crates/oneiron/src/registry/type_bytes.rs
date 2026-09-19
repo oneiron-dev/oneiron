@@ -41,6 +41,9 @@ pub const ENTITY_TYPE_NOTIFICATION: u8 = 16;
 /// shape, so it is a CORE StructuralKind. Short-ID prefix `ag`.
 pub const ENTITY_TYPE_AGENT_DEF: u8 = 17;
 
+/// OF-334 saved ordered agent composition; inert configuration, short prefix `wf`.
+pub const ENTITY_TYPE_WORKFLOW: u8 = 18;
+
 pub const ENTITY_TYPE_TASK_LIST: u8 = 100;
 
 pub const ENTITY_TYPE_TASK: u8 = 101;

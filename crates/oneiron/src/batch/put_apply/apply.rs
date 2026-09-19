@@ -317,6 +317,8 @@ pub(in crate::batch) fn apply_put(
         // SKILL's decode-site capture of `new_skill_record`.
         crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
         new_agent_definition = Some(decoded);
+    } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
+        crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {

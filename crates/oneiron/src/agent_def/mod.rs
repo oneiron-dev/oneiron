@@ -15,6 +15,7 @@ mod decode;
 mod doors;
 mod manifest;
 mod types;
+pub mod workflow;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
 pub use self::types::{
