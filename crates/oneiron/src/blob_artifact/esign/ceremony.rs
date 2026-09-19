@@ -192,7 +192,7 @@ impl Vault {
                                 at: now,
                             },
                         },
-                        actor.clone(),
+                        actor,
                         now,
                     )?;
                 }
@@ -214,10 +214,10 @@ impl Vault {
                         txn,
                         document,
                         EsignEvent::Signed {
-                            recipient: recipient.id.clone(),
+                            recipient: recipient.id,
                             next: next.clone(),
                         },
-                        actor.clone(),
+                        actor,
                         now,
                     )?;
                     enqueue_seal(self, txn, document, now)?;
@@ -229,10 +229,10 @@ impl Vault {
                         txn,
                         document,
                         EsignEvent::Declined {
-                            recipient: recipient.id.clone(),
+                            recipient: recipient.id,
                             reason: reason.clone(),
                         },
-                        actor.clone(),
+                        actor,
                         now,
                     )?;
                     enqueue_seal(self, txn, document, now)?;

@@ -162,7 +162,7 @@ impl Flow {
         if self.op_count > 250_000 {
             return Err(ContentTemplateError::Limit);
         }
-        let align = self.line.first().map(|r| r.style.align).unwrap_or(0);
+        let align = self.line.first().map_or(0, |r| r.style.align);
         let shift = match align {
             1 => (self.width() - self.x) / 2.,
             2 => self.width() - self.x,

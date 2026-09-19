@@ -107,10 +107,9 @@ impl Memory<'_> {
             .vault()
             .store
             .type_index
-            .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_CONVERSATION])
-            .map_err(Error::from)?
+            .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_CONVERSATION])?
         {
-            let (key, _) = row.map_err(Error::from)?;
+            let (key, _) = row?;
             let id = EntityId::from_bytes(key[1..].try_into().map_err(|_| invalid())?)?;
             if let Ok(room) = room_in(self.vault(), &txn, id)
                 && room.member_ids.contains(&self.actor().to_hex())
@@ -128,10 +127,9 @@ impl Memory<'_> {
             .vault()
             .store
             .vault_meta
-            .prefix_iter(&txn, TURNS)
-            .map_err(Error::from)?
+            .prefix_iter(&txn, TURNS)?
         {
-            let (_, bytes) = row.map_err(Error::from)?;
+            let (_, bytes) = row?;
             let turn: RoomTurn = decode(&bytes)?;
             if turn.room_id == room.to_hex() {
                 rows.push(turn);

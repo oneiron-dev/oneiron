@@ -157,7 +157,7 @@ impl Vault {
                     "symbol lease holder mismatch".to_owned(),
                 ));
             }
-            Ok(self.store.vault_meta.delete(txn, &key(task))?)
+            self.store.vault_meta.delete(txn, &key(task))
         })
     }
 

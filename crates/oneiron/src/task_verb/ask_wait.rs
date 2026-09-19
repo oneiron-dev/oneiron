@@ -2,7 +2,7 @@
 use super::ask::{TaskAskAnswer, TaskAskHandle, read};
 use crate::llm::{DreamerTrapKind, DurableStepContext, TrapRef};
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::{EntityId, Error, Vault};
+use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 const WAITS: &[u8] = b"tasks.ask_wait.v1/";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,8 +41,7 @@ pub(super) fn signal_waiters(
         .vault_meta
         .prefix_iter(txn, &prefix(task))?
         .map(|r| r.map(|(_, v)| v.to_vec()))
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Error::from)?;
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     for raw in rows {
         let row: WaitRow =
             serde_json::from_slice(&raw).map_err(|_| MemoryError::bad_request("wait record"))?;

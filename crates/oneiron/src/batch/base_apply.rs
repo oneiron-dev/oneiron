@@ -657,10 +657,24 @@ pub(super) fn apply_ops_with_origin(
         }
     }
 
+    finalize_batch_indexes(store, config, wtxn, &materialized_entity_ids,
+        pending_hnsw_rebuild, had_graph_mutation, had_vector_mutation)
+}
+
+/// Publish derived arrivals and index versions only after the complete batch.
+fn finalize_batch_indexes(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    materialized_entity_ids: &BTreeSet<EntityId>,
+    pending_hnsw_rebuild: bool,
+    had_graph_mutation: bool,
+    had_vector_mutation: bool,
+) -> Result<()> {
     crate::llm::decision::questions::project_arrivals_in_txn(
         store,
         wtxn,
-        &materialized_entity_ids,
+        materialized_entity_ids,
     )?;
 
     crate::hnsw::run_pending_legacy_rebuild(store, config, wtxn, pending_hnsw_rebuild)?;

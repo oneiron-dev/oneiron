@@ -421,13 +421,12 @@ fn walk(
                     format!(
                         "{}. ",
                         node.parent()
-                            .map(|p| p
+                            .map_or(1, |p| p
                                 .element_children()
                                 .iter()
                                 .take_while(|n| n.id != node.id)
                                 .count()
                                 + 1)
-                            .unwrap_or(1)
                     )
                 } else {
                     "- ".into()

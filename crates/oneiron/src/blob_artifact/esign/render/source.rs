@@ -248,7 +248,7 @@ impl VisualCopy<'_> {
         }
         let resources = resolved(self.source, value)?.as_dict()?;
         let mut copied = Dictionary::new();
-        for (kind, members) in resources.iter() {
+        for (kind, members) in resources {
             self.charge(kind.len())?;
             if kind == b"ProcSet" {
                 copied.set(kind.clone(), self.copy(out, members, depth + 1)?);
@@ -267,7 +267,7 @@ impl VisualCopy<'_> {
                 return Err(PdfPreparationError::UnsupportedPdf);
             }
             let mut map = Dictionary::new();
-            for (key, object) in resolved(self.source, members)?.as_dict()?.iter() {
+            for (key, object) in resolved(self.source, members)?.as_dict()? {
                 self.charge(key.len())?;
                 if kind == b"XObject" {
                     let stream = resolved(self.source, object)?.as_stream()?;
@@ -331,22 +331,22 @@ impl VisualCopy<'_> {
                 Some(b"PS" | b"RichMedia" | b"Movie" | b"Sound" | b"Screen" | b"3D")
             )
             || name(self.source, dict, b"S")?.is_some_and(|s| {
-                !matches!(s, b"Transparency" | b"Alpha" | b"Luminosity")
-                    && !(dict.has_type(b"OutputIntent")
+                !(matches!(s, b"Transparency" | b"Alpha" | b"Luminosity")
+                    || dict.has_type(b"OutputIntent")
                         && matches!(s, b"GTS_PDFX" | b"GTS_PDFA1" | b"ISO_PDFE1"))
             })
         {
             return Err(PdfPreparationError::UnsupportedPdf);
         }
         let mut copied = Dictionary::new();
-        for (key, value) in dict.iter() {
+        for (key, value) in dict {
             self.charge(key.len())?;
             if !matches!(key.as_slice(), b"Length" | b"Metadata" | b"PieceInfo") {
                 let object = if key == b"Resources" {
                     self.resources(out, value, depth + 1)?.into()
                 } else if key == b"CharProcs" {
                     let mut glyphs = Dictionary::new();
-                    for (name, glyph) in resolved(self.source, value)?.as_dict()?.iter() {
+                    for (name, glyph) in resolved(self.source, value)?.as_dict()? {
                         self.charge(name.len())?;
                         let mut content = Vec::new();
                         page_content(self.source, glyph, &mut content, 0, &mut 0)?;

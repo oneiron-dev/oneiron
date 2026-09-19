@@ -11,13 +11,12 @@ struct Frame {
 
 /// Neutralize ObjStm before lopdf eagerly inflates it. We expand it ourselves
 /// with an aggregate budget, exact Flate checks, and exact object indexes.
-fn defer_object_streams(id: ObjectId, object: &mut Object) -> Option<(ObjectId, Object)> {
-    if let Ok(stream) = object.as_stream_mut() {
-        if stream.dict.has_type(b"ObjStm") {
-            stream.dict.set("Type", "ESignObjectStream");
-        }
+fn defer_object_streams(object: &mut Object) {
+    if let Ok(stream) = object.as_stream_mut()
+        && stream.dict.has_type(b"ObjStm")
+    {
+        stream.dict.set("Type", "ESignObjectStream");
     }
-    Some((id, Object::Null))
 }
 
 pub(super) fn load(bytes: &[u8]) -> Result<Document> {
@@ -68,7 +67,10 @@ fn load_objects(bytes: &[u8], remaining: &mut usize) -> Result<Document> {
         bytes,
         LoadOptions {
             strict: true,
-            filter: Some(defer_object_streams),
+            filter: Some(|id, object| {
+                defer_object_streams(object);
+                Some((id, Object::Null))
+            }),
             max_decompressed_size: Some(MAX_INPUT),
             ..Default::default()
         },
@@ -124,8 +126,7 @@ fn load_objects(bytes: &[u8], remaining: &mut usize) -> Result<Document> {
         for (position, &(number, offset)) in index.iter().enumerate() {
             let end = index
                 .get(position + 1)
-                .map(|v| first + v.1)
-                .unwrap_or(decoded.len());
+                .map_or(decoded.len(), |v| first + v.1);
             let object = operand(&decoded[first + offset..end])?;
             // Check every embedded object for signatures, including stale entries.
             // Signature names normally are direct. Full indirect checks follow on doc.
@@ -168,7 +169,7 @@ fn reject_direct_signature(object: &Object) -> Result<()> {
                 {
                     return Err(PdfPreparationError::AlreadySigned);
                 }
-                for (_, v) in d.iter() {
+                for (_, v) in d {
                     scan(v)?;
                 }
             }
@@ -391,7 +392,7 @@ fn integer(value: Option<&str>) -> Result<usize> {
         .ok_or(PdfPreparationError::MalformedPdf)
 }
 fn trim_start(mut bytes: &[u8]) -> &[u8] {
-    while bytes.first().is_some_and(|b| b.is_ascii_whitespace()) {
+    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
         bytes = &bytes[1..];
     }
     bytes

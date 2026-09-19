@@ -212,7 +212,7 @@ impl EsignState {
                 if !self.ready_to_seal()
                     || *rejected != self.rejection.is_some()
                     || item_sha256.len() != self.document.items.len()
-                    || item_sha256.iter().any(|hash| *hash == [0; 32])
+                    || item_sha256.contains(&[0; 32])
                 {
                     return Err(invalid("seal outcome is not justified"));
                 }

@@ -42,11 +42,11 @@ impl Memory<'_> {
             .map_err(crate::Error::from)?;
         verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
         let mut entries = Vec::new();
-        for id in ids
-            .iter()
-            .copied()
-            .collect::<std::collections::BTreeSet<_>>()
-        {
+        // One preview/receipt per id, with stable order regardless of input.
+        let mut targets = ids.to_vec();
+        targets.sort_unstable();
+        targets.dedup();
+        for id in targets {
             let marker = archive_marker(self.vault, &txn, id)?;
             let raw = self
                 .vault
@@ -117,8 +117,7 @@ fn archive_marker(
     Ok(vault
         .store
         .sync_state
-        .get(txn, &key)
-        .map_err(crate::Error::from)?
+        .get(txn, &key)?
         .ok_or_else(stale_preview)?
         .to_vec())
 }

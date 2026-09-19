@@ -128,7 +128,7 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
         .ok_or(Error::Record(RecordError::InvalidTaskBody(
             "tasks.create.body",
         )))?;
-    let mirror_fields = task_body_optional(&entries, "mirror_fields")?
+    let mirror_fields = task_body_optional(entries, "mirror_fields")?
         .map(|value| {
             let bytes = super::wire_encode::canonical_bytes(value);
             rmp_serde::from_slice(&bytes)

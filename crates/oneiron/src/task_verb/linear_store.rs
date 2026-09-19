@@ -142,7 +142,7 @@ impl<'v> VaultLinearTaskStore<'v> {
                 .get(txn, &key)?
                 .is_some_and(|raw| raw.as_ref() == expected_revision.to_be_bytes())
             {
-                return Ok(self.vault.store.vault_meta.delete(txn, &key)?);
+                return self.vault.store.vault_meta.delete(txn, &key);
             }
             Ok(false)
         })

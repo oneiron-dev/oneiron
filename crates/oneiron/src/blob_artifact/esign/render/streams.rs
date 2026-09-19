@@ -77,8 +77,7 @@ fn predictor(stream: &Stream, data: Vec<u8>, limit: usize) -> Result<Vec<u8>> {
     let number = |name: &[u8], default| -> Result<usize> {
         params
             .get(name)
-            .map(|v| v.as_i64())
-            .unwrap_or(Ok(default))?
+            .map_or(Ok(default), Object::as_i64)?
             .try_into()
             .map_err(|_| PdfPreparationError::MalformedPdf)
     };
@@ -98,7 +97,7 @@ fn predictor(stream: &Stream, data: Vec<u8>, limit: usize) -> Result<Vec<u8>> {
         .checked_mul(colors)
         .filter(|v| *v <= limit)
         .ok_or(PdfPreparationError::Limit)?;
-    if data.len() % (width + 1) != 0 {
+    if !data.len().is_multiple_of(width + 1) {
         return Err(PdfPreparationError::MalformedPdf);
     }
     let mut output = Vec::with_capacity(data.len());
