@@ -27,7 +27,11 @@ const VALUE_V2: &[u8] = b"wave5-lease-test-value-v2";
 const EFFECTOR: &str = "connector:test";
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+    // macOS TMPDIR can contain symlink ancestors; T2 deliberately refuses those.
+    let root = std::env::temp_dir()
+        .canonicalize()
+        .expect("canonical temp root");
+    let tmp = tempfile::tempdir_in(root).expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
     (tmp, vault)
 }
