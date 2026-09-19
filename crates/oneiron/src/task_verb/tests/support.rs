@@ -913,3 +913,16 @@ pub(super) fn enqueue_sibling(queue: &AttemptQueue<'_>, task_hex: &str, now: u64
         EnqueueOutcome::Existing(_) => panic!("a sibling must be fresh"),
     }
 }
+
+/// Outcome fixtures make deliberate Approved writes. Keep the shipped policy
+/// and its actor ceilings; classify only these fixture predicates as normal.
+pub(in crate::task_verb) fn permit_outcome_fixture_predicates(vault: &Vault) -> crate::Result<()> {
+    let bytes = crate::gate::default_policy_manifest();
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
+    let rules = manifest["rules"].as_array_mut().expect("policy rules");
+    for predicate in ["outcome.earned", "outcome.changed", "judgment.answer"] {
+        rules.push(serde_json::json!({"prefix":predicate,"exact":true,"axes":{"criticality":"normal","sensitivity":"normal"}}));
+    }
+    crate::test_util::put_policy_manifest_bytes(vault, crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest).expect("fixture policy"))
+}

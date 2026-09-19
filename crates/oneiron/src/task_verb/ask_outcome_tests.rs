@@ -27,6 +27,7 @@ fn spec(holder: EntityId) -> TaskAskSpec {
 }
 
 fn actors(vault: &Vault, ids: &[EntityId]) -> Result<()> {
+    super::tests::support::permit_outcome_fixture_predicates(vault)?;
     let now = crate::unix_seconds_now();
     for id in ids {
         vault.put_entity(
@@ -396,6 +397,9 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
     assert!(vault.delete_edge(&unit, EdgeKind::About, &linked)?);
     assert!(facade.tasks_ask_outcomes(&handle)?.is_empty());
 
+    // The preceding case removed this edge to prove link revocation. A real
+    // edge must exist before a provenance claim can describe it.
+    vault.batch().edge(&unit, EdgeKind::About, &linked, 1.0).commit()?;
     let mut edge = spec(unit);
     edge.idempotency_key = "edge-outcome".into();
     let binding = edge.outcome_binding.as_mut().unwrap();

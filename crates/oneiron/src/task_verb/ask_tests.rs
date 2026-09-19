@@ -9,6 +9,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn first_answer_and_both_wait_orders_resume_only_the_calling_step_once() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    super::tests::support::permit_outcome_fixture_predicates(&vault)?;
     let owner = EntityId::now();
     let one = EntityId::now();
     let two = EntityId::now();
