@@ -1,0 +1,62 @@
+{
+  "commit": "273d7cdde9b09a4dc89667dcb12a01d59ffe83b9",
+  "dataset": "w7-c05-nugget-conformance",
+  "score": {
+    "beam": {
+      "convention": "official:int(score); side:float(score).clamp(0,1); nugget mean",
+      "aggregate": {
+        "count": 4,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      },
+      "abilities": {
+        "contradiction": {
+          "count": 1,
+          "officialIntCast": 0.0,
+          "fixedFloatClamped": 0.5
+        },
+        "event_ordering": {
+          "count": 1,
+          "officialIntCast": 0.0,
+          "fixedFloatClamped": 0.5
+        },
+        "knowledge_update": {
+          "count": 1,
+          "officialIntCast": 0.0,
+          "fixedFloatClamped": 0.5
+        },
+        "temporal": {
+          "count": 1,
+          "officialIntCast": 0.0,
+          "fixedFloatClamped": 0.5
+        }
+      },
+      "wedgeBuckets": {
+        "temporal": {
+          "count": 1,
+          "officialIntCast": 0.0,
+          "fixedFloatClamped": 0.5
+        },
+        "contradiction": {
+          "count": 1,
+          "officialIntCast": 0.0,
+          "fixedFloatClamped": 0.5
+        },
+        "event_ordering": {
+          "count": 1,
+          "officialIntCast": 0.0,
+          "fixedFloatClamped": 0.5
+        },
+        "knowledge_update": {
+          "count": 1,
+          "officialIntCast": 0.0,
+          "fixedFloatClamped": 0.5
+        }
+      }
+    },
+    "scorerVersion": "beam-fixed-scorer-v1",
+    "overallScore": 0.0,
+    "abilities": []
+  },
+  "result_path": "eval-results/273d7cdde9b09a4dc89667dcb12a01d59ffe83b9/w7-c05-nugget-conformance/score.json"
+}
