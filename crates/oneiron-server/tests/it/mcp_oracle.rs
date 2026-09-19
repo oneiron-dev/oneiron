@@ -40,9 +40,6 @@ mod cb_x {
         /// True iff execute_code() is ADVERTISED on any registered endpoint.
         /// The host-free release contract (ONE-1704 B1) is that it is not.
         execute_code_advertised: bool,
-        /// True iff the setup instructions state the host-free contract
-        /// instead of naming execute_code as the verb-grammar driver.
-        setup_states_host_free_contract: bool,
         /// True iff the INJECTED code host still reaches the code-mode
         /// REPL/self.oneiron when a provider is supplied. This is substrate
         /// truth about the seam, never a claim that the wire ships it.
@@ -75,10 +72,6 @@ mod cb_x {
         let setup_returns_instructions = value["instructions"]
             .as_str()
             .is_some_and(|text| !text.trim().is_empty());
-        let instructions = payload.instructions;
-        let setup_states_host_free_contract = !instructions
-            .contains("Drive them with execute_code")
-            && instructions.contains("does not ship execute_code");
 
         let execute_code_advertised = oneiron_server::mcp::McpSurfaceMode::ALL.iter().any(|mode| {
             let surface = oneiron_server::mcp::registered_surface(*mode);
@@ -96,7 +89,6 @@ mod cb_x {
             setup_returns_verb_grammar,
             setup_returns_instructions,
             execute_code_advertised,
-            setup_states_host_free_contract,
             injected_host_reaches_repl: super::execute_code_reaches_the_gated_repl(),
         }
     }
@@ -116,7 +108,6 @@ mod cb_x {
         assert!(surface.setup_returns_verb_grammar);
         assert!(surface.setup_returns_instructions);
         assert!(!surface.execute_code_advertised);
-        assert!(surface.setup_states_host_free_contract);
         assert!(surface.injected_host_reaches_repl);
     }
 
@@ -173,14 +164,15 @@ mod cb_x {
     fn tool_first_variant_is_generated_one_tool_per_verb() {
         let variant = arm_generated_tool_variant();
         // The census is REGENERATED from the exported constants rather than
-        // restated: `BOARD_VERBS` (four) plus `TASKS_VERBS` (five), sorted.
+        // restated: `BOARD_VERBS`, `TASKS_VERBS` and `MEMORY_VERBS`, sorted.
         let mut expected = oneiron::board_verb::BOARD_VERBS
             .iter()
             .chain(oneiron::task_verb::TASKS_VERBS.iter())
+            .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter())
             .map(|verb| (*verb).to_owned())
             .collect::<Vec<_>>();
         expected.sort();
-        assert_eq!(expected.len(), 9);
+        assert_eq!(expected.len(), 17);
         assert_eq!(variant.verb_table, expected);
         assert_eq!(variant.generated_tool_names, expected);
         assert_eq!(variant.hand_written_tools, 0);

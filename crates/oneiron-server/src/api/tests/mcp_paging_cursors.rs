@@ -244,7 +244,7 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
         setup(
             credential,
             "cursor-2",
-            json!({ "limit": 7, "cursor": cursor.clone() }),
+            json!({ "limit": mcp_expected_generated_names().len(), "cursor": cursor.clone() }),
         ),
     )
     .await;

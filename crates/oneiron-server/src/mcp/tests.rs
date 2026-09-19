@@ -1286,6 +1286,18 @@ fn a_tool_registered_on_one_endpoint_is_unknown_on_the_other() {
 
 #[test]
 fn endpoint_listings_are_frozen_and_carry_no_actor_material() {
+    let credential = "very-secret-connector-key";
+    let mut actors = registry();
+    actors
+        .register(
+            credential,
+            McpConnectorActorRecord::new(
+                ACTOR_ID.parse().expect("actor id"),
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("credential registers");
     for mode in McpSurfaceMode::ALL {
         let registered = registered_surface(mode);
         let frozen = serde_json::to_string(registered.listing()).expect("listing serializes");
@@ -1304,7 +1316,7 @@ fn endpoint_listings_are_frozen_and_carry_no_actor_material() {
             mode.as_str(),
         );
         assert!(
-            !frozen.contains("connector"),
+            !frozen.contains(credential),
             "{} listing echoes credential material",
             mode.as_str(),
         );
