@@ -75,8 +75,22 @@ impl Vault {
                 .expect("digest prefix"),
         )?;
         self.with_write_txn(|txn| {
-            if let Some(id) = self.store.vault_meta.get(txn, &digest_key)? {
-                let key = [QUEUE, id.as_ref()].concat();
+            if let Some(review_id) = self.store.vault_meta.get(txn, &digest_key)? {
+                let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
+                    self,
+                    txn,
+                    &id,
+                    crate::vault::entity_revision::ReadMode::Live,
+                )?
+                .ok_or(Error::CorruptedIndex("feedback evidence missing"))?;
+                let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("feedback evidence header"))?;
+                if header.entity_type != crate::registry::ENTITY_TYPE_ASSET
+                    || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(bytes)
+                {
+                    return Err(Error::CorruptedIndex("feedback evidence mismatch"));
+                }
+                let key = [QUEUE, review_id.as_ref()].concat();
                 return decode(
                     &self
                         .store

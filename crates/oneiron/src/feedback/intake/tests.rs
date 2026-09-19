@@ -38,3 +38,39 @@ fn duplicates_queue_once_and_digest_retains_source_entities() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn identical_feedback_refuses_deleted_or_replaced_evidence() -> Result<()> {
+    let config = crate::VaultConfig {
+        dimensions: 2,
+        ..crate::test_util::embedding_test_config()
+    };
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let bundle = FeedbackBundle::new(FeedbackCategory::Bug, "1.0", FeedbackPlatform::current());
+    let bytes = encode_feedback_bundle(&bundle).unwrap();
+    let dial = FeedbackDedup::new(0.9)?;
+    let item = vault.ingest_feedback(&bytes, &[1.0, 0.0], dial, 10)?;
+    let id = item.bundles[0];
+    vault.batch().delete(&id).commit()?;
+    assert!(matches!(
+        vault.ingest_feedback(&bytes, &[1.0, 0.0], dial, 11),
+        Err(Error::CorruptedIndex(_))
+    ));
+    assert!(vault.get(&id)?.is_none());
+    vault
+        .batch()
+        .put(
+            &id,
+            crate::registry::ENTITY_TYPE_ASSET,
+            TimeRange { start: 12, end: 12 },
+            12,
+            b"replacement",
+        )
+        .commit()?;
+    assert!(matches!(
+        vault.ingest_feedback(&bytes, &[1.0, 0.0], dial, 13),
+        Err(Error::CorruptedIndex(_))
+    ));
+    assert_eq!(vault.get(&id)?.unwrap(), b"replacement");
+    Ok(())
+}
