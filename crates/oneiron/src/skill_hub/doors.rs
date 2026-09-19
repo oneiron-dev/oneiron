@@ -155,19 +155,8 @@ impl Vault {
                 None => {
                     let mut candidate = package.record.clone();
                     candidate.lifecycle_status = SkillLifecycle::Candidate;
-                    // ONE-1892: consent is a LOCAL act, so the import door
-                    // stamps it rather than copying it. A hub package is
-                    // untrusted input all the way down — it declares its own
-                    // `approvalStatus`, and an `approved` stamp arriving that
-                    // way would be a remote party answering the owner's
-                    // question for him: the activation consult only escalates
-                    // `auto`, so a self-declared approval would walk a
-                    // credential-bearing skill into `active` with no tap. The
-                    // sync door already holds this law one line at a time
-                    // ("canonical approval/lifecycle state stays local"); the
-                    // import door is where the FIRST stamp is minted, and
-                    // `auto` — the same default a locally born candidate gets
-                    // — is the only honest one.
+                    // Imported instructions never carry publisher-asserted approval.
+                    // Every tier reaches the same human install + held-out admission door.
                     candidate.approval_status = ClaimApprovalStatus::Auto;
                     candidate.content_hash = Some(content_hash);
                     self.apply_hub_import_skill_record(
@@ -217,6 +206,17 @@ impl Vault {
             content_hash,
             package,
             occurred,
+            learned_at,
+        )?;
+        let mut saved = package.clone();
+        saved.record = self.read_skill_record_in_txn(&wtxn, &entity)?;
+        self.persist_hub_package_in_txn(&mut wtxn, &entity, &saved)?;
+        self.write_hub_import_receipt_in_txn(
+            &mut wtxn,
+            &entity,
+            content_hash,
+            hub_ref,
+            None,
             learned_at,
         )?;
         wtxn.commit()?;
@@ -306,7 +306,12 @@ impl Vault {
         let admitted = self
             .read_admitted_capability_surface_in_txn(&wtxn, entity)?
             .unwrap_or_default();
-        if !package.capabilities.is_same_or_narrower_than(&admitted) {
+        let mut proposed_record = package.record.clone();
+        proposed_record.content_hash = Some(content_hash);
+        let requires_held_out = current.lifecycle_status == SkillLifecycle::Active
+            && crate::skill_optimize::skill_body_binding_digest(&current)?
+                != crate::skill_optimize::skill_body_binding_digest(&proposed_record)?;
+        if requires_held_out || !package.capabilities.is_same_or_narrower_than(&admitted) {
             let hub_value = hub_ref.to_value()?;
             let hash_hex = content_hash.to_hex();
             let encoded_caps = encode_capability_surface_value(&package.capabilities);
@@ -319,6 +324,10 @@ impl Vault {
                     && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
                     && map_text(&body.value, "version") == Some(package.record.version.as_str())
                     && map_value(&body.value, "capabilities") == Some(&encoded_caps)
+                    && map_value(&body.value, "requiresHeldOut")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        == requires_held_out
                 {
                     return Ok(HubSyncDisposition::Proposed {
                         proposal_id,
@@ -339,6 +348,10 @@ impl Vault {
                     ),
                     (Value::from("contentHash"), Value::from(hash_hex)),
                     (Value::from("capabilities"), encoded_caps),
+                    (
+                        Value::from("requiresHeldOut"),
+                        Value::Boolean(requires_held_out),
+                    ),
                 ]),
                 1.0,
                 ClaimApprovalStatus::Proposed,
@@ -411,6 +424,9 @@ impl Vault {
             occurred,
             learned_at,
         )?;
+        let mut saved = package.clone();
+        saved.record = updated;
+        self.persist_hub_package_in_txn(&mut wtxn, entity, &saved)?;
         wtxn.commit()?;
         Ok(HubSyncDisposition::Applied)
     }

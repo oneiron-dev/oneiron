@@ -431,6 +431,7 @@ impl Vault {
         // content bytes, so nothing to relocate). The maintenance helper no-ops for
         // kinds that keep no content-hash index, so the generic delete engine needs
         // no entity-kind branch of its own.
+        crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
         self.maintain_skill_content_hash_index_on_delete_in_txn(wtxn, id)?;
         // ONE-1447, the other half of the same question: this id may be the
         // conversation a SKILL was converted from, and a skill whose evidence

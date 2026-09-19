@@ -29,6 +29,9 @@ pub(super) fn credential_key(key: &str) -> bool {
             | "valuebytes"
             | "signingkey"
             | "signature"
+            | "signatures"
+            | "privatekeys"
+            | "signingkeys"
     )
 }
 

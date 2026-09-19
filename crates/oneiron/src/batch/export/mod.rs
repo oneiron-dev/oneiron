@@ -47,3 +47,9 @@ pub(crate) use document_snapshot::ExportSnapshot;
 pub use document_types::*;
 #[cfg(test)]
 mod document_tests;
+
+mod bundle_types;
+mod bundle_validation;
+pub use bundle_types::*;
+#[cfg(test)]
+mod bundle_tests;

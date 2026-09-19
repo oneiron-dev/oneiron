@@ -23,6 +23,7 @@ pub use self::identity::{
     SkillContentHash, canonical_skill_tree_hash, cross_check_declared_content_hash,
 };
 pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
+pub use self::pack_load::LoadedSkillPack;
 pub use self::record::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
     SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,

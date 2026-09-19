@@ -60,6 +60,9 @@ fn versioned_record(
 
 /// Puts a skill and walks it `candidate → active`.
 fn put_active(vault: &Vault, id: &EntityId, record: SkillRecord) -> SkillRecord {
+    if record.source == ClaimSource::Imported {
+        return crate::skill_hub::test_support::admitted_import(vault, id, record);
+    }
     vault.put_skill_record(id, &record, t(10), 11).expect("put");
     let mut active = record;
     active.lifecycle_status = SkillLifecycle::Active;
@@ -390,11 +393,14 @@ fn a_clean_scan_without_a_hub_alias_is_still_an_unvetted_import() {
     let tree = canonical_skill_tree_hash([("SKILL.md", b"# direct fixture\n".as_slice())])
         .expect("tree hashes");
     let skill = EntityId::now();
-    put_active(
-        &vault,
-        &skill,
-        record("sk05.skill.direct", ClaimSource::Imported, false).with_content_hash(tree),
-    );
+    vault
+        .put_skill_record(
+            &skill,
+            &record("sk05.skill.direct", ClaimSource::Imported, false).with_content_hash(tree),
+            t(10),
+            11,
+        )
+        .expect("candidate without a hub alias");
     ingest_verdict(
         &vault,
         &skill,

@@ -1,7 +1,11 @@
 //! Versioned six-part whole-vault interchange document.
 use serde::{Deserialize, Serialize};
 
-use super::{ExportManifest, ExportSerializerManifest, VaultImportReceipt};
+use super::{
+    ExportAgentBundle, ExportBundleOmission, ExportImportOmission, ExportImportRefusal,
+    ExportManifest, ExportSerializerManifest, ExportSkillBundle, ExportSourceBoundary,
+    VaultImportReceipt,
+};
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
@@ -17,6 +21,14 @@ pub struct WholeVaultDocumentManifest {
     pub source_vault: ExportSourceVault,
     /// Existing ABI/DB/authority validation is retained, not reimplemented.
     pub storage: ExportManifest,
+    /// Exact archive-only rows. Local scans are re-derived; foreign signals and
+    /// hub authority are retained in the archive, not restored into local state.
+    pub import_omissions: Vec<ExportImportOmission>,
+    /// Known refusals remain executable admission errors, not a replay option.
+    pub import_refusals: Vec<ExportImportRefusal>,
+    /// Missing or redacted source bundles, never presented as complete archives.
+    pub bundle_omissions: Vec<ExportBundleOmission>,
+    pub source_boundaries: Vec<ExportSourceBoundary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,7 +52,12 @@ impl WholeVaultDocumentManifest {
             crate::context_pack::PackFormat::Markdown => "markdown",
             crate::context_pack::PackFormat::Plaintext => "plaintext",
         };
-        if self.manifest_version != WHOLE_VAULT_DOCUMENT_VERSION
+        if self.source_boundaries
+            != [
+                ExportSourceBoundary::PredicatePackCatalogUnavailable,
+                ExportSourceBoundary::BuiltinAdapterCodeNotStored,
+            ]
+            || self.manifest_version != WHOLE_VAULT_DOCUMENT_VERSION
             || self.format != format
             || self.serializer != ExportSerializerManifest::current()
             || !self.secrets_nulled
@@ -91,8 +108,8 @@ pub struct WholeVaultDocument {
     pub evidence_ledger: ExportLedger,
     pub claims: Vec<ExportEntity>,
     pub packs: Vec<ExportAdapterDescriptor>,
-    pub skills: Vec<ExportEntity>,
-    pub agent_packs: Vec<ExportEntity>,
+    pub skills: Vec<ExportSkillBundle>,
+    pub agent_packs: Vec<ExportAgentBundle>,
     pub derivation_envelopes: Vec<ExportDerivationEnvelope>,
 }
 
@@ -148,6 +165,8 @@ pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
     pub inserted_entities: usize,
     pub unchanged_entities: usize,
+    /// Archived rows intentionally not restored as local authority or verdicts.
+    pub omitted_entities: usize,
 }
 
 impl WholeVaultDocument {
@@ -156,7 +175,6 @@ impl WholeVaultDocument {
             .entities
             .iter()
             .chain(self.claims.iter())
-            .chain(self.skills.iter())
-            .chain(self.agent_packs.iter())
+            .chain(self.skills.iter().map(|bundle| &bundle.entity))
     }
 }

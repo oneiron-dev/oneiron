@@ -1,6 +1,6 @@
 //! Snapshot enumeration for whole-vault export. No raw bytes leave this module
 //! except as input to the serializer's mandatory credential-nulling transform.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     ExportAdapterDescriptor, ExportEdge, ExportManifest, ExportSecretsNulledManifest,
@@ -21,6 +21,8 @@ pub(crate) struct ExportSnapshot {
     pub(crate) adapters: Vec<ExportAdapterDescriptor>,
     pub(crate) storage: ExportManifest,
     pub(crate) exported_at: u64,
+    pub(crate) skill_packages: BTreeMap<EntityId, crate::skill_hub::HubPackage>,
+    pub(crate) agent_fork_hashes: BTreeMap<EntityId, String>,
 }
 
 pub(crate) struct ExportSnapshotEntity {
@@ -42,6 +44,8 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut entities = Vec::new();
         let mut included = BTreeSet::new();
+        let mut skill_packages = BTreeMap::new();
+        let mut agent_fork_hashes = BTreeMap::new();
         for entry in self.store.entities.iter(&rtxn)? {
             let (key, raw) = entry?;
             let id = crate::entity_id::parse_entity_id(&key, "whole-vault entity id")?;
@@ -55,6 +59,21 @@ impl Vault {
                 || !live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
             {
                 continue;
+            }
+            if header.entity_type == crate::registry::ENTITY_TYPE_SKILL
+                && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
+            {
+                let record = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+                if record.content_hash != Some(package.content_hash()?) {
+                    return Err(Error::CorruptedIndex("stored skill package identity drift"));
+                }
+                skill_packages.insert(id, package);
+            }
+            if header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+                && let Some(hash) =
+                    crate::agent_def::agent_fork_hash_in_txn(&self.store, &rtxn, &id)?
+            {
+                agent_fork_hashes.insert(id, hash.to_hex());
             }
             included.insert(id);
             entities.push(ExportSnapshotEntity {
@@ -108,6 +127,8 @@ impl Vault {
                 adapters,
                 storage,
                 exported_at: crate::unix_seconds_now(),
+                skill_packages,
+                agent_fork_hashes,
             },
             format,
         )

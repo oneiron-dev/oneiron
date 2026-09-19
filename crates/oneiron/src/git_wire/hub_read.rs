@@ -54,7 +54,7 @@ pub(crate) fn read_hub_git(root: &Path, args: &[&str], limit: usize) -> Result<V
         argv.push(std::ffi::OsString::from(arg));
     }
     let mut env =
-        GitWireProcessEnv::capture()?.with_limits(Duration::from_secs(30), limit.max(1))?;
+        GitWireProcessEnv::capture()?.with_limits(Duration::from_secs(30), limit.max(4096))?;
     env.hub_root = Some(root.to_path_buf());
     let output = spawn_git(&env, root, &argv, None)?;
     if !output.success || output.timed_out || output.truncated || output.stdout.len() > limit {

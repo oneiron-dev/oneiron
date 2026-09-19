@@ -5,6 +5,13 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestEntry, ManifestKind}
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
 use crate::{EntityId, Error, Result, Vault};
 
+/// One actual tier-2 load. Native record-only skills have no file tree.
+#[derive(Debug, Clone)]
+pub struct LoadedSkillPack {
+    pub record: SkillRecord,
+    pub source_files: Option<Vec<crate::skill_hub::HubFile>>,
+}
+
 impl Vault {
     /// Mid-run tier-2 record load. Merely listing a skill at tier 1 is not evidence of body use.
     pub fn load_attempt_skill(
@@ -13,6 +20,17 @@ impl Vault {
         skill: &EntityId,
         at: u64,
     ) -> Result<SkillRecord> {
+        Ok(self.load_attempt_skill_pack(attempt, skill, at)?.record)
+    }
+
+    /// Loads the exact stored SKILL.md/scripts when present and stamps one row
+    /// atomically. A failed package check never records a successful load.
+    pub fn load_attempt_skill_pack(
+        &self,
+        attempt: AttemptId,
+        skill: &EntityId,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
         self.with_write_txn(|txn| {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                 return Err(Error::EntityNotFound);
@@ -28,12 +46,18 @@ impl Vault {
                     "pack load requires an active approved skill",
                 ));
             }
+            let source_files = self
+                .runtime_skill_package_in_txn(txn, skill, &record)?
+                .map(|package| package.files);
             AttemptQueue::new(self).append_manifest_entry_in_txn(
                 txn,
                 attempt,
                 ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
             )?;
-            Ok(record)
+            Ok(LoadedSkillPack {
+                record,
+                source_files,
+            })
         })
     }
 

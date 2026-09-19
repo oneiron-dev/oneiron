@@ -84,7 +84,6 @@ const CANON_RESERVED_UNREGISTERED: &[(u8, &str)] = &[
     // is dropped rather than the registration being hidden from conformance.
     (72, "SUSPICIOUS_WAKE"),
     (74, "CLAIM_CLASS_DESCRIPTOR"),
-    (75, "SKILL_HUB"),
 ];
 
 fn fixture_path() -> PathBuf {

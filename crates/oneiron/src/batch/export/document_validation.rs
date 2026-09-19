@@ -6,9 +6,7 @@ use super::document_import::parse_id;
 use crate::Vault;
 use crate::edge::{EdgeKind, EdgeValueLayout, edge_value_layout_for_kind};
 use crate::error::{Error, Result};
-use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SKILL,
-};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SKILL};
 use crate::serialize::{ExportBody, ExportValue};
 
 impl WholeVaultDocument {
@@ -36,17 +34,12 @@ impl WholeVaultDocument {
             || self
                 .skills
                 .iter()
-                .any(|row| row.entity_type != ENTITY_TYPE_SKILL)
+                .any(|bundle| bundle.entity.entity_type != ENTITY_TYPE_SKILL)
             || self
-                .agent_packs
+                .evidence_ledger
+                .entities
                 .iter()
-                .any(|row| row.entity_type != ENTITY_TYPE_AGENT_DEF)
-            || self.evidence_ledger.entities.iter().any(|row| {
-                matches!(
-                    row.entity_type,
-                    ENTITY_TYPE_CLAIM | ENTITY_TYPE_SKILL | ENTITY_TYPE_AGENT_DEF
-                )
-            })
+                .any(|row| matches!(row.entity_type, ENTITY_TYPE_CLAIM | ENTITY_TYPE_SKILL))
         {
             return Err(invalid("entity is in the wrong document section"));
         }
@@ -128,6 +121,7 @@ impl WholeVaultDocument {
                 return Err(invalid("unsupported import adapter version"));
             }
         }
+        self.validate_bundles()?;
         Ok(())
     }
 }

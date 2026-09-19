@@ -838,11 +838,12 @@ fn a_hub_import_carries_its_own_answer_and_a_bare_imported_stamp_does_not() -> R
     // An `imported` STAMP with no hub behind it is an assertion about a road
     // nobody travelled, so it answers nothing.
     let asserted = EntityId::now();
-    put_active(
-        &vault,
+    vault.put_skill_record(
         &asserted,
         &imported_record("oneiron.skill.asserted"),
-    );
+        t(10),
+        11,
+    )?;
     assert_eq!(vault.skill_hub_provenance_count(&asserted)?, 0);
     assert_eq!(
         skill_governance_tier(&vault, &asserted)?,
@@ -887,7 +888,8 @@ fn the_owner_marks_a_tier_through_the_ordinary_update_door() -> Result<()> {
 fn an_imported_pack_marks_its_tier_without_a_version_bump() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let id = EntityId::now();
-    let active = put_active(&vault, &id, &imported_record("oneiron.skill.imported"));
+    let active = imported_record("oneiron.skill.imported");
+    vault.put_skill_record(&id, &active, t(10), 11)?;
 
     // Imported CONTENT never changes in place — which is exactly why the tier
     // must not be content: otherwise the packs most in need of an identity

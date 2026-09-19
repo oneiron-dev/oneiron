@@ -37,3 +37,10 @@ mod export_value;
 mod vault_document;
 pub use export_value::{ExportBody, ExportValue};
 pub(crate) use vault_document::serialize_vault_snapshot;
+
+mod source_tree;
+pub(crate) use source_tree::export_source_tree;
+
+mod vault_bundles;
+
+pub(crate) use vault_bundles::populate_agent_bundles;

@@ -129,6 +129,7 @@ fn type_byte_zone_allocation_matches_contract() {
         (70, "CONNECTOR_KEY"),
         (71, "PSYCH_PROFILE"),
         (73, "ACCESS_GRANT"),
+        (75, "SKILL_HUB"),
         (76, "IDENTITY_TOPOLOGY_EVENT"),
         (77, "SECRET_CUSTODY"),
         (79, "CHANNEL_IDENTITY"),
@@ -155,7 +156,7 @@ fn type_byte_zone_allocation_matches_contract() {
     // Unregistered bytes — including bytes INSIDE structural zones — are not
     // StructuralKinds, and the write-path gate still rejects them with the
     // same typed error.
-    for byte in [63_u8, 72, 74, 75, 85, 99, 107, 125, 128, 247, 255] {
+    for byte in [63_u8, 72, 74, 85, 99, 107, 125, 128, 247, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -170,11 +171,7 @@ fn type_byte_zone_allocation_matches_contract() {
     // unregistered rather than disappearing from the record. DIAGNOSTIC (69)
     // LEFT this list when ONE-1394 built its substrate — a reserve is a
     // promise to implement, not a permanent shelf.
-    for (byte, name) in [
-        (72_u8, "SUSPICIOUS_WAKE"),
-        (74, "CLAIM_CLASS_DESCRIPTOR"),
-        (75, "SKILL_HUB"),
-    ] {
+    for (byte, name) in [(72_u8, "SUSPICIOUS_WAKE"), (74, "CLAIM_CLASS_DESCRIPTOR")] {
         assert!(
             entity_type_registry_entry(byte).is_none(),
             "{name} byte {byte} must stay reserved-unregistered"
@@ -771,7 +768,7 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     // 74 CLAIM_CLASS_DESCRIPTOR, 75 SKILL_HUB), free bytes inside
     // otherwise-live zones, the PackByteMap half (128–247), and the 255
     // sentinel.
-    for unknown in [72_u8, 74, 75, 99, 107, 125, 130, 200, 255] {
+    for unknown in [72_u8, 74, 99, 107, 125, 130, 200, 255] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")

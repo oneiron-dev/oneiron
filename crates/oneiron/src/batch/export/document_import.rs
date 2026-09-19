@@ -34,20 +34,37 @@ impl Vault {
     /// agent definitions are disabled and proposed until locally reviewed.
     ///
     /// Same-ID divergent rows are refused, never overwritten. Maintenance rows,
-    /// witness messages, notes, reserved claims and owned/provenanced edges need
+    /// witness messages, notes, other reserved claims and owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
     /// Such a failure aborts the entire transaction, not a partial import.
+    /// The manifest explicitly marks hub configuration and foreign skill signals
+    /// archive-only. They are never restored as local policy or trusted verdicts;
+    /// imported file bundles run the native scanner and Candidate admission door.
     pub fn import_whole_vault_json(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
         let document = self.read_whole_vault_json(bytes)?;
         let authority = self
             .classify_vault_import_manifest(&document.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
         // Even a forged same-chain manifest cannot enable replay or Auto here.
+        let omitted: BTreeSet<_> = document
+            .manifest
+            .import_omissions
+            .iter()
+            .map(|entry| parse_id(&entry.entity_id))
+            .collect::<Result<_>>()?;
+        let skill_bundles: BTreeMap<_, _> = document
+            .skills
+            .iter()
+            .map(|bundle| (bundle.entity.id.as_str(), bundle))
+            .collect();
         let mut wtxn = self.store.env.write_txn()?;
         let mut pending = BTreeMap::new();
         let mut unchanged_entities = 0;
         for row in document.entities() {
             let id = parse_id(&row.id)?;
+            if omitted.contains(&id) {
+                continue;
+            }
             if self.store.off_record_sessions.contains_entity(&id)? {
                 return Err(invalid("import ID belongs to an off-record overlay"));
             }
@@ -57,6 +74,12 @@ impl Vault {
                     return Err(invalid("import ID collides with a deleted entity"));
                 }
                 if matches_row(row, &existing, &row.body) {
+                    validate_existing_source(
+                        self,
+                        &wtxn,
+                        row,
+                        skill_bundles.get(row.id.as_str()).copied(),
+                    )?;
                     unchanged_entities += 1;
                     continue;
                 }
@@ -66,6 +89,12 @@ impl Vault {
                     &existing,
                     &ExportBody::from_bytes(&body, row.entity_type),
                 ) {
+                    validate_existing_source(
+                        self,
+                        &wtxn,
+                        row,
+                        skill_bundles.get(row.id.as_str()).copied(),
+                    )?;
                     unchanged_entities += 1;
                     continue;
                 }
@@ -114,13 +143,35 @@ impl Vault {
                         occurred,
                         row.learned_at,
                     )?,
-                    ENTITY_TYPE_SKILL => self.put_skill_record_in_txn(
-                        &mut wtxn,
-                        &id,
-                        &crate::skill::decode_skill_record(&body)?,
-                        occurred,
-                        row.learned_at,
-                    )?,
+                    ENTITY_TYPE_SKILL => {
+                        let record = crate::skill::decode_skill_record(&body)?;
+                        let bundle = skill_bundles
+                            .get(row.id.as_str())
+                            .ok_or(Error::InvariantViolation("skill bundle missing"))?;
+                        if let Some(tree) = &bundle.source_tree {
+                            self.import_archived_skill_in_txn(
+                                &mut wtxn,
+                                &id,
+                                &record,
+                                (
+                                    bundle
+                                        .source_format
+                                        .ok_or_else(|| invalid("skill source format missing"))?,
+                                    tree.import_files()?,
+                                ),
+                                occurred,
+                                row.learned_at,
+                            )?;
+                        } else {
+                            self.put_skill_record_in_txn(
+                                &mut wtxn,
+                                &id,
+                                &record,
+                                occurred,
+                                row.learned_at,
+                            )?;
+                        }
+                    }
                     _ => self
                         .batch_in()
                         .put(&id, row.entity_type, occurred, row.learned_at, &body)
@@ -128,7 +179,23 @@ impl Vault {
                 }
             }
         }
+        for bundle in &document.agent_packs {
+            let id = parse_id(&bundle.entity_id)?;
+            if inserted_ids.contains(&id) {
+                crate::agent_def::import_agent_fork_hash_in_txn(
+                    &self.store,
+                    &mut wtxn,
+                    &id,
+                    bundle.fork_hash.as_deref(),
+                )?;
+            }
+        }
         for edge in &document.evidence_ledger.edges {
+            if omitted.contains(&parse_id(&edge.source)?)
+                || omitted.contains(&parse_id(&edge.target)?)
+            {
+                continue;
+            }
             import_edge(self, &mut wtxn, edge, &inserted_ids)?;
         }
         wtxn.commit()?;
@@ -136,8 +203,31 @@ impl Vault {
             authority,
             inserted_entities,
             unchanged_entities,
+            omitted_entities: omitted.len(),
         })
     }
+}
+
+fn validate_existing_source(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &ExportEntity,
+    bundle: Option<&super::ExportSkillBundle>,
+) -> Result<()> {
+    if let Some(tree) = bundle.and_then(|b| b.source_tree.as_ref()) {
+        let files = tree.import_files()?;
+        let stored = vault
+            .export_hub_package_in_txn(txn, &parse_id(&row.id)?)?
+            .ok_or_else(|| invalid("existing skill has no matching stored source package"))?;
+        if stored.export_files()? != files
+            || Some(stored.format) != bundle.and_then(|bundle| bundle.source_format)
+        {
+            return Err(invalid(
+                "existing skill source package differs from archive",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn invalid(reason: &str) -> Error {

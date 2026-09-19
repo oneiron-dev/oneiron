@@ -96,6 +96,7 @@ pub(in crate::batch) fn apply_put(
     // Bodies of all other type bytes stay opaque at the storage layer.
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
+    let mut hub_origin_marker = None;
     let mut new_agent_definition = None;
     // STO-03: `Some` only when the incoming TASK body named a derived streak
     // counter, i.e. only on the sync door — the body that gets stored instead.
@@ -308,8 +309,12 @@ pub(in crate::batch) fn apply_put(
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
+        crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
-        new_skill_record = Some(crate::skill::decode_skill_record(data)?);
+        let decoded = crate::skill::decode_skill_record(data)?;
+        hub_origin_marker = crate::skill_hub::check_hub_skill_put(store, &*wtxn, &id, &decoded)?;
+        new_skill_record = Some(decoded);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
         let decoded = crate::agent_def::decode_agent_definition(data)?;
         // ONE-1890 `sys.*` reservation, at the one arm that holds both the
@@ -633,6 +638,7 @@ pub(in crate::batch) fn apply_put(
                 "validated AGENT_DEF record missing",
             ))?;
         validate_local_agent_definition_create(store, wtxn, &id, created)?;
+        crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &id, created)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let created = new_skill_record
             .as_ref()
@@ -672,6 +678,9 @@ pub(in crate::batch) fn apply_put(
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
+    if let Some((key, value)) = hub_origin_marker {
+        store.vault_meta.put(wtxn, &key, &value)?;
+    }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(

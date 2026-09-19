@@ -111,3 +111,10 @@ mod one_1698_tests {
         Ok(())
     }
 }
+
+mod portable;
+mod portable_binding;
+pub(crate) use portable::{agent_pack_files, resolve_agent_skill_refs, select_agent_knowledge};
+pub(crate) use portable_binding::{
+    agent_fork_hash_in_txn, bind_agent_birth_in_txn, import_agent_fork_hash_in_txn,
+};

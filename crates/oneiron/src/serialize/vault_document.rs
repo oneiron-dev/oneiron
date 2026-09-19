@@ -16,10 +16,10 @@ use crate::batch::export::{
 };
 use crate::context_pack::PackFormat;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
 
 pub(crate) fn serialize_vault_snapshot(
-    snapshot: ExportSnapshot,
+    mut snapshot: ExportSnapshot,
     format: PackFormat,
 ) -> Result<WholeVaultExport> {
     let storage = snapshot.storage.with_serializer_nulling();
@@ -33,6 +33,13 @@ pub(crate) fn serialize_vault_snapshot(
             exported_at: snapshot.exported_at,
         },
         storage,
+        import_omissions: Vec::new(),
+        import_refusals: Vec::new(),
+        bundle_omissions: Vec::new(),
+        source_boundaries: vec![
+            crate::batch::export::ExportSourceBoundary::PredicatePackCatalogUnavailable,
+            crate::batch::export::ExportSourceBoundary::BuiltinAdapterCodeNotStored,
+        ],
     };
     let mut document = WholeVaultDocument {
         manifest,
@@ -75,11 +82,35 @@ pub(crate) fn serialize_vault_snapshot(
         };
         match entity.entity_type {
             ENTITY_TYPE_CLAIM => document.claims.push(entity),
-            ENTITY_TYPE_SKILL => document.skills.push(entity),
-            ENTITY_TYPE_AGENT_DEF => document.agent_packs.push(entity),
+            ENTITY_TYPE_SKILL => {
+                let package = snapshot.skill_packages.remove(&raw.id);
+                let source_format = package.as_ref().map(|package| package.format);
+                let source_tree = package
+                    .map(|package| super::export_source_tree(&package.files))
+                    .transpose()?;
+                let source_tree = source_tree.map(|mut tree| {
+                    if raw.tainted {
+                        tree.content_hash = None;
+                        for file in &mut tree.files {
+                            file.content = None;
+                            file.sha256 = None;
+                        }
+                    }
+                    tree
+                });
+                document
+                    .skills
+                    .push(crate::batch::export::ExportSkillBundle {
+                        entity,
+                        source_tree,
+                        source_format,
+                    });
+            }
             _ => document.evidence_ledger.entities.push(entity),
         }
     }
+    super::vault_bundles::populate_agent_bundles(&mut document, &snapshot.agent_fork_hashes)?;
+    document.refresh_omissions()?;
     let bytes = encode_document(&document, format)?;
     Ok(WholeVaultExport {
         bytes,
