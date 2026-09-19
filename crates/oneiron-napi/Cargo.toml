@@ -22,6 +22,13 @@ napi-derive = "3"
 base64 = "0.22"
 serde_json = { workspace = true }
 
+# Linux libtest has no Node host. Enable napi-rs's supported dynamic symbol
+# loader only for the test graph; resolver 2 keeps ordinary addon builds on
+# the production dependency above. Actual Node-API calls stay covered by the
+# real Node-host tests, separately from these conversion/engine unit tests.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+napi = { version = "3", default-features = false, features = ["dyn-symbols"] }
+
 [build-dependencies]
 napi-build = "2"
 
