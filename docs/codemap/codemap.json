@@ -15022,7 +15022,7 @@
      "purpose": "Central purpose policy",
      "surface": {
       "const": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -15099,7 +15099,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalibratedVerdict",
@@ -15198,7 +15198,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 10,
       "struct": 5
@@ -27827,7 +27827,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -29834,7 +29834,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/llm/tests.rs",
