@@ -113,11 +113,15 @@ impl WireTelemetry {
                 .vault
                 .sync_state_get(&format!("{QUESTION}{start:020}"))?
                 .is_some();
-            active.window = Some(WireWindowReceipt {
+            let end = start.saturating_add(thresholds.window_secs);
+            let restored = self
+                .receipt(start)?
+                .filter(|receipt| receipt.started_at == start && receipt.ended_at == end);
+            active.window = Some(restored.unwrap_or_else(|| WireWindowReceipt {
                 started_at: start,
-                ended_at: start.saturating_add(thresholds.window_secs),
+                ended_at: end,
                 ..Default::default()
-            });
+            }));
         }
         let window = active.window.as_mut().expect("installed above");
         let verb_count = window.by_verb.entry(verb.into()).or_default();

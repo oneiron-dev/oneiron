@@ -101,3 +101,37 @@ fn router_can_be_constructed_before_entering_a_runtime() {
     });
     assert_eq!(response.status(), axum::http::StatusCode::OK);
 }
+
+#[test]
+fn restart_restores_the_active_wire_window_and_threshold_question() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let before = WireTelemetry::new(vault.clone());
+    before
+        .set_thresholds(&WireThresholds {
+            window_secs: 60,
+            per_verb: 2,
+            per_actor: 100,
+        })
+        .unwrap();
+    before.record("recall", "reader", 121).unwrap();
+    before.record("recall", "reader", 122).unwrap();
+    before.flush().unwrap();
+    drop(before);
+    let after = WireTelemetry::new(vault.clone());
+    after.record("recall", "reader", 123).unwrap();
+    let snapshot = after.snapshot().unwrap().unwrap();
+    assert_eq!(snapshot.by_verb["recall"], 3);
+    assert_eq!(snapshot.by_actor["reader"], 3);
+    let question = after.question(120).unwrap().unwrap();
+    assert_eq!(question.evidence, snapshot);
+    after.flush().unwrap();
+    assert_eq!(after.receipt(120).unwrap(), Some(snapshot));
+    drop(after);
+    let again = WireTelemetry::new(vault);
+    again.record("write", "other", 124).unwrap();
+    again.flush().unwrap();
+    assert_eq!(again.receipt(120).unwrap().unwrap().by_verb["recall"], 3);
+    assert_eq!(again.receipt(120).unwrap().unwrap().by_actor["other"], 1);
+    assert_eq!(again.question(120).unwrap(), Some(question));
+}
