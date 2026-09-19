@@ -1,0 +1,13 @@
+[package]
+name = "oneiron-stemma"
+version = "0.6.0-oneiron.1"
+edition = "2024"
+rust-version = "1.91"
+license = "Apache-2.0"
+repository = "https://github.com/stemma-sh/stemma"
+description = "Pinned stateless Stemma revision IR and post-serialization linker fork"
+
+[dependencies]
+quick-xml = "0.41"
+xmltree = { package = "xmltree-ns", version = "=0.13.0", features = ["attribute-order"] }
+serde = { version = "1", features = ["derive"] }

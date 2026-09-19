@@ -1,0 +1,429 @@
+use super::{super::utils::ARG_ANY_ONE, scalar_text_value};
+use crate::args::ArgSchema;
+use crate::function::Function;
+use crate::traits::{ArgumentHandle, FunctionContext};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_macros::func_caps;
+
+fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) | crate::traits::CalcValue::AnnotatedScalar(v, _) => v,
+        crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+        crate::traits::CalcValue::Callable(_) => LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+        ),
+    })
+}
+
+// MID(text, start_num, num_chars)
+#[derive(Debug)]
+pub struct MidFn;
+/// Returns a substring starting at a 1-based position.
+///
+/// # Remarks
+/// - `start_num` is 1-based; values below `1` return `#VALUE!`.
+/// - `num_chars` must be non-negative; negatives return `#VALUE!`.
+/// - If start is beyond the end of the text, returns an empty string.
+/// - Non-text inputs are coerced to text.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Extract middle segment"
+/// formula: '=MID("spreadsheet", 3, 5)'
+/// expected: "reads"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Start past end returns empty"
+/// formula: '=MID("abc", 10, 2)'
+/// expected: ""
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LEFT
+///   - RIGHT
+///   - REPLACE
+/// faq:
+///   - q: "How does MID handle out-of-range start positions?"
+///     a: "If start_num is beyond the text length, MID returns an empty string."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: MID
+/// Type: MidFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: MID(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for MidFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "MID"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let s = to_text(&args[0])?;
+        let start = number_like(&args[1])?;
+        let count = number_like(&args[2])?;
+        if start < 1 || count < 0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let chars: Vec<char> = s.chars().collect();
+        if (start as usize) > chars.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                String::new(),
+            )));
+        }
+        let end = ((start - 1) + count) as usize;
+        let end = min(end, chars.len());
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            chars[(start as usize - 1)..end].iter().collect(),
+        )))
+    }
+}
+
+// SUBSTITUTE(text, old_text, new_text, [instance_num]) - limited semantics
+#[derive(Debug)]
+pub struct SubstituteFn;
+/// Replaces matching text within a string.
+///
+/// `SUBSTITUTE` can replace all occurrences or only a specific instance.
+///
+/// # Remarks
+/// - Matching is case-sensitive.
+/// - If `old_text` is empty, the original text is returned unchanged.
+/// - With `instance_num`, only that 1-based occurrence is replaced.
+/// - Non-positive `instance_num` returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Replace all matches"
+/// formula: '=SUBSTITUTE("a-b-a", "a", "x")'
+/// expected: "x-b-x"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Replace only second match"
+/// formula: '=SUBSTITUTE("2024-01-2024", "2024", "FY24", 2)'
+/// expected: "2024-01-FY24"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - REPLACE
+///   - TEXTBEFORE
+///   - TEXTAFTER
+/// faq:
+///   - q: "Is SUBSTITUTE case-sensitive?"
+///     a: "Yes. It matches old_text with exact case and replaces either all or the requested instance."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SUBSTITUTE
+/// Type: SubstituteFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUBSTITUTE(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SubstituteFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SUBSTITUTE"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 3 || args.len() > 4 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let text = to_text(&args[0])?;
+        let old = to_text(&args[1])?;
+        let new = to_text(&args[2])?;
+        if old.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
+        }
+        if args.len() == 4 {
+            let instance = number_like(&args[3])?;
+            if instance <= 0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            let mut idx = 0;
+            let mut count = 0;
+            let mut out = String::new();
+            while let Some(pos) = text[idx..].find(&old) {
+                out.push_str(&text[idx..idx + pos]);
+                count += 1;
+                if count == instance {
+                    out.push_str(&new);
+                    out.push_str(&text[idx + pos + old.len()..]);
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(out)));
+                } else {
+                    out.push_str(&old);
+                    idx += pos + old.len();
+                }
+            }
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)))
+        } else {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                text.replace(&old, &new),
+            )))
+        }
+    }
+}
+
+// REPLACE(old_text, start_num, num_chars, new_text)
+#[derive(Debug)]
+pub struct ReplaceFn;
+/// Replaces part of a text string by position.
+///
+/// `REPLACE(old_text, start_num, num_chars, new_text)` works by character index.
+///
+/// # Remarks
+/// - `start_num` is 1-based and must be at least `1`.
+/// - `num_chars` must be non-negative.
+/// - If start is beyond the end, the original text is returned unchanged.
+/// - Non-text inputs are coerced to text.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Replace middle segment"
+/// formula: '=REPLACE("abcdef", 3, 2, "ZZ")'
+/// expected: "abZZef"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Insert at start"
+/// formula: '=REPLACE("report", 1, 0, "Q1-")'
+/// expected: "Q1-report"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUBSTITUTE
+///   - MID
+///   - LEFT
+/// faq:
+///   - q: "Does REPLACE match text patterns?"
+///     a: "No. REPLACE is position-based and replaces by start_num and num_chars, not by searching old text."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: REPLACE
+/// Type: ReplaceFn
+/// Min args: 4
+/// Max args: 1
+/// Variadic: false
+/// Signature: REPLACE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ReplaceFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "REPLACE"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 4 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let text = to_text(&args[0])?;
+        let start = number_like(&args[1])?;
+        let num = number_like(&args[2])?;
+        let new = to_text(&args[3])?;
+        if start < 1 || num < 0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let mut chars: Vec<char> = text.chars().collect();
+        let len = chars.len();
+        let start_idx = (start as usize).saturating_sub(1);
+        if start_idx > len {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
+        }
+        let end_idx = (start_idx + num as usize).min(len);
+        chars.splice(start_idx..end_idx, new.chars());
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            chars.into_iter().collect(),
+        )))
+    }
+}
+
+fn to_text<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
+    let v = scalar_text_value(arg)?;
+    Ok(match v {
+        LiteralValue::Text(s) => s,
+        LiteralValue::Empty => String::new(),
+        LiteralValue::Boolean(b) => {
+            if b {
+                "TRUE".into()
+            } else {
+                "FALSE".into()
+            }
+        }
+        LiteralValue::Number(f) => {
+            let mut s = f.to_string();
+            if s.ends_with(".0") {
+                s.truncate(s.len() - 2);
+            }
+            s
+        }
+        LiteralValue::Int(i) => i.to_string(),
+        LiteralValue::Error(e) => return Err(e),
+        other => other.to_string(),
+    })
+}
+fn number_like<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<i64, ExcelError> {
+    let v = scalar_like_value(arg)?;
+    Ok(match v {
+        LiteralValue::Int(i) => i,
+        LiteralValue::Number(f) => f as i64,
+        LiteralValue::Text(t) => t.parse::<i64>().unwrap_or(0),
+        LiteralValue::Boolean(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
+        LiteralValue::Empty => 0,
+        LiteralValue::Error(e) => return Err(e),
+        other => other.to_string().parse::<i64>().unwrap_or(0),
+    })
+}
+
+use std::cmp::min;
+
+pub fn register_builtins() {
+    use std::sync::Arc;
+    crate::function_registry::register_builtin(Arc::new(MidFn));
+    crate::function_registry::register_builtin(Arc::new(SubstituteFn));
+    crate::function_registry::register_builtin(Arc::new(ReplaceFn));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_common::LiteralValue;
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    fn lit(v: LiteralValue) -> ASTNode {
+        ASTNode::new(ASTNodeType::Literal(v), None)
+    }
+    #[test]
+    fn mid_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(MidFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "MID").unwrap();
+        let s = lit(LiteralValue::Text("hello".into()));
+        let start = lit(LiteralValue::Int(2));
+        let cnt = lit(LiteralValue::Int(3));
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&s, &ctx),
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&cnt, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("ell".into()));
+    }
+    #[test]
+    fn substitute_all() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SubstituteFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "SUBSTITUTE").unwrap();
+        let text = lit(LiteralValue::Text("a_b_a".into()));
+        let old = lit(LiteralValue::Text("_".into()));
+        let new = lit(LiteralValue::Text("-".into()));
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&text, &ctx),
+                    ArgumentHandle::new(&old, &ctx),
+                    ArgumentHandle::new(&new, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("a-b-a".into()));
+    }
+    #[test]
+    fn replace_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(ReplaceFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "REPLACE").unwrap();
+        let text = lit(LiteralValue::Text("hello".into()));
+        let start = lit(LiteralValue::Int(2));
+        let num = lit(LiteralValue::Int(2));
+        let new = lit(LiteralValue::Text("YY".into()));
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&text, &ctx),
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&num, &ctx),
+                    ArgumentHandle::new(&new, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("hYYlo".into()));
+    }
+}

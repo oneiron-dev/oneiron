@@ -1,0 +1,2178 @@
+use crate::args::ArgSchema;
+use crate::function::{FnCaps, Function};
+use crate::function_contract::{
+    FunctionContextDependence, FunctionDependencyContract, FunctionSemanticContract,
+};
+use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, format_a1_sheet_name};
+use formualizer_macros::func_caps;
+
+use super::utils::ARG_ANY_ONE;
+
+/* Info and type-introspection builtins for spreadsheet formulas. */
+
+fn scalar<'ctx>(value: LiteralValue) -> CalcValue<'ctx> {
+    CalcValue::Scalar(value)
+}
+
+fn workbook_metadata_contract(
+    precision: Option<FunctionDependencyContract>,
+) -> FunctionSemanticContract {
+    let mut contract = FunctionSemanticContract::trusted_builtin_default(precision);
+    contract.context = FunctionContextDependence::WorkbookMetadata;
+    contract
+}
+
+fn error_value<'ctx>(kind: ExcelErrorKind) -> CalcValue<'ctx> {
+    scalar(LiteralValue::Error(ExcelError::new(kind)))
+}
+
+fn arity_error<'ctx>() -> Result<CalcValue<'ctx>, ExcelError> {
+    Ok(error_value(ExcelErrorKind::Value))
+}
+
+fn na_result<'ctx>() -> Result<CalcValue<'ctx>, ExcelError> {
+    Ok(error_value(ExcelErrorKind::Na))
+}
+
+#[derive(Debug)]
+pub struct IsNumberFn;
+/// Returns TRUE when the value is numeric.
+///
+/// This includes integer, floating-point, and temporal serial-compatible values.
+///
+/// # Remarks
+/// - Returns TRUE for `Int`, `Number`, `Date`, `DateTime`, `Time`, and `Duration`.
+/// - Text that looks numeric is still text and returns FALSE.
+/// - Errors are treated as non-numeric and return FALSE.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Number is numeric"
+/// formula: '=ISNUMBER(42)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Numeric text is not numeric"
+/// formula: '=ISNUMBER("42")'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - N
+///   - TYPE
+/// faq:
+///   - q: "Does numeric-looking text count as a number?"
+///     a: "No. ISNUMBER checks the stored value type, so text like \"42\" returns FALSE."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISNUMBER
+/// Type: IsNumberFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNUMBER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsNumberFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISNUMBER"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        let is_num = matches!(
+            v,
+            LiteralValue::Int(_)
+                | LiteralValue::Number(_)
+                | LiteralValue::Date(_)
+                | LiteralValue::DateTime(_)
+                | LiteralValue::Time(_)
+                | LiteralValue::Duration(_)
+        );
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            is_num,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct IsTextFn;
+/// Returns TRUE when the value is text.
+///
+/// # Remarks
+/// - Only text literals return TRUE.
+/// - Numbers, booleans, blanks, and errors return FALSE.
+/// - No coercion from other types to text is performed for this check.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Detect text"
+/// formula: '=ISTEXT("alpha")'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Number is not text"
+/// formula: '=ISTEXT(100)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - T
+///   - TYPE
+///   - ISNUMBER
+/// faq:
+///   - q: "Is an empty string treated as text?"
+///     a: "Yes. An empty string literal is still text, so ISTEXT(\"\") returns TRUE."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISTEXT
+/// Type: IsTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISTEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsTextFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISTEXT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            matches!(v, LiteralValue::Text(_)),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct IsLogicalFn;
+/// Returns TRUE when the value is a boolean.
+///
+/// # Remarks
+/// - Only logical TRUE/FALSE values return TRUE.
+/// - Numeric truthy/falsy values are not considered logical by this predicate.
+/// - Errors return FALSE.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Boolean input"
+/// formula: '=ISLOGICAL(TRUE)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Numeric input"
+/// formula: '=ISLOGICAL(1)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TRUE
+///   - FALSE
+///   - TYPE
+/// faq:
+///   - q: "Do truthy numbers count as logical values?"
+///     a: "No. ISLOGICAL returns TRUE only for actual boolean TRUE/FALSE values."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISLOGICAL
+/// Type: IsLogicalFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISLOGICAL(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsLogicalFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISLOGICAL"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            matches!(v, LiteralValue::Boolean(_)),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct IsBlankFn;
+/// Returns TRUE only for a truly empty value.
+///
+/// # Remarks
+/// - Empty string `""` is text, not blank, so it returns FALSE.
+/// - Numeric zero and FALSE are not blank.
+/// - Errors return FALSE.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Reference to an empty cell"
+/// formula: '=ISBLANK(A1)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Empty string is not blank"
+/// formula: '=ISBLANK("")'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISTEXT
+///   - LEN
+///   - T
+/// faq:
+///   - q: "Why does ISBLANK(\"\") return FALSE?"
+///     a: "Because an empty string is text, not a truly empty cell value."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISBLANK
+/// Type: IsBlankFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISBLANK(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsBlankFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISBLANK"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            matches!(v, LiteralValue::Empty),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct IsErrorFn; // TRUE for any error (#N/A included)
+/// Returns TRUE for any error value.
+///
+/// # Remarks
+/// - Matches all error kinds, including `#N/A`.
+/// - Non-error values always return FALSE.
+/// - Arity mismatch returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Division error"
+/// formula: '=ISERROR(1/0)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Normal value"
+/// formula: '=ISERROR(123)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "Does ISERROR include #N/A?"
+///     a: "Yes. ISERROR returns TRUE for all error kinds, including #N/A."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISERROR
+/// Type: IsErrorFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISERROR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsErrorFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISERROR"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            matches!(v, LiteralValue::Error(_)),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct IsErrFn; // TRUE for any error except #N/A
+/// Returns TRUE for any error except `#N/A`.
+///
+/// # Remarks
+/// - `#N/A` specifically returns FALSE.
+/// - Other errors such as `#DIV/0!` or `#VALUE!` return TRUE.
+/// - Non-error values return FALSE.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "DIV/0 is an error excluding N/A"
+/// formula: '=ISERR(1/0)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "N/A is excluded"
+/// formula: '=ISERR(NA())'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERROR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "What is the difference between ISERR and ISERROR?"
+///     a: "ISERR excludes #N/A, while ISERROR treats #N/A as an error too."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISERR
+/// Type: IsErrFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISERR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsErrFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISERR"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        let is_err = match v {
+            LiteralValue::Error(e) => e.kind != ExcelErrorKind::Na,
+            _ => false,
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            is_err,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct IsNaFn; // TRUE only for #N/A
+/// Returns TRUE only for the `#N/A` error.
+///
+/// # Remarks
+/// - Other error kinds return FALSE.
+/// - Non-error values return FALSE.
+/// - Useful when `#N/A` has special business meaning.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Check for N/A"
+/// formula: '=ISNA(NA())'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Other errors are not N/A"
+/// formula: '=ISNA(1/0)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NA
+///   - IFNA
+///   - ISERROR
+/// faq:
+///   - q: "Does ISNA return TRUE for errors other than #N/A?"
+///     a: "No. It returns TRUE only when the value is exactly #N/A."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISNA
+/// Type: IsNaFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNA(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsNaFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISNA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        let is_na = matches!(v, LiteralValue::Error(e) if e.kind==ExcelErrorKind::Na);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            is_na,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct IsFormulaFn; // Requires provenance tracking (not yet) => always FALSE.
+/// Returns whether a value originates from a formula.
+///
+/// Current engine metadata does not track formula provenance at this call site.
+///
+/// # Remarks
+/// - This implementation currently returns FALSE for all inputs.
+/// - Errors are not raised solely due to provenance unavailability.
+/// - Arity mismatch returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Literal value"
+/// formula: '=ISFORMULA(10)'
+/// expected: false
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Computed value in expression context"
+/// formula: '=ISFORMULA(1+1)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TYPE
+///   - ISNUMBER
+///   - ISTEXT
+/// faq:
+///   - q: "Can ISFORMULA currently detect formula provenance?"
+///     a: "Not yet. This implementation always returns FALSE because provenance metadata is not tracked here."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISFORMULA
+/// Type: IsFormulaFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISFORMULA(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsFormulaFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISFORMULA"
+    }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        // Formula provenance metadata is not tracked yet, so ISFORMULA currently returns FALSE.
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            false,
+        )))
+    }
+}
+
+/// Returns TRUE when the argument resolves to a reference.
+///
+/// Checks reference metadata without materializing the referenced value or range.
+///
+/// ```yaml,sandbox
+/// title: "Cell reference"
+/// formula: "=ISREF(A1)"
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Expression is not a reference"
+/// formula: "=ISREF(1+1)"
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FORMULATEXT
+///   - SHEET
+///   - ISFORMULA
+/// faq:
+///   - q: "Does ISREF read cell values?"
+///     a: "No. It inspects whether the argument can resolve as a reference."
+/// ```
+#[derive(Debug)]
+pub struct IsRefFn;
+/// Returns TRUE when the argument resolves to a reference.
+///
+/// [formualizer-docgen:schema:start]
+/// Name: ISREF
+/// Type: IsRefFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISREF(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsRefFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISREF"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return arity_error();
+        }
+        let Ok(reference) = args[0].as_reference_or_eval() else {
+            return Ok(scalar(LiteralValue::Boolean(false)));
+        };
+        let is_ref = match ctx.inspect_reference(&reference) {
+            Ok(Some(info)) => info.first_cell.is_some() || info.sheet_count.is_some(),
+            Ok(None) => true,
+            Err(_) => false,
+        };
+        Ok(scalar(LiteralValue::Boolean(is_ref)))
+    }
+}
+
+/// Returns the formula text stored in the referenced cell.
+///
+/// Retrieves formula source text for a single referenced cell without evaluating
+/// that cell's value.
+///
+/// # Remarks
+/// - Returns `#N/A` if the reference does not point at a formula cell.
+/// - Staged formula text is preferred when present; otherwise canonical formula text is returned.
+///
+/// ```yaml,sandbox
+/// title: "Formula text"
+/// grid:
+///   A1: "=1+2"
+/// formula: "=FORMULATEXT(A1)"
+/// expected: "=1 + 2"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISFORMULA
+///   - ISREF
+///   - SHEET
+/// faq:
+///   - q: "Does FORMULATEXT evaluate the referenced formula?"
+///     a: "No. It retrieves formula provenance/source text only."
+/// ```
+#[derive(Debug)]
+pub struct FormulaTextFn;
+/// Returns the formula text stored in the referenced cell.
+///
+/// [formualizer-docgen:schema:start]
+/// Name: FORMULATEXT
+/// Type: FormulaTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: FORMULATEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for FormulaTextFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "FORMULATEXT"
+    }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return arity_error();
+        }
+        let reference = match args[0].as_reference_or_eval() {
+            Ok(reference) => reference,
+            Err(_) => return na_result(),
+        };
+        let Some(info) = ctx.inspect_reference(&reference)? else {
+            return na_result();
+        };
+        let Some(cell) = info.first_cell else {
+            return na_result();
+        };
+        match ctx.formula_text_at_cell(cell)? {
+            Some(text) => Ok(scalar(LiteralValue::Text(text))),
+            None => na_result(),
+        }
+    }
+}
+
+/// Returns the 1-based sheet index for the current sheet or a reference.
+///
+/// With no argument, returns the index of the sheet containing the formula. With
+/// a reference or sheet-name text argument, returns that sheet's index.
+///
+/// ```yaml,sandbox
+/// title: "Current sheet index"
+/// formula: "=SHEET()"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Referenced sheet index"
+/// formula: "=SHEET(A1)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SHEETS
+///   - ISREF
+///   - FORMULATEXT
+/// faq:
+///   - q: "Are sheet indexes 0-based?"
+///     a: "No. SHEET returns Excel-style 1-based sheet indexes."
+/// ```
+#[derive(Debug)]
+pub struct SheetFn;
+/// Returns the 1-based sheet index for the current sheet or a reference.
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SHEET
+/// Type: SheetFn
+/// Min args: 0
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SHEET(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SheetFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SHEET"
+    }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() > 1 {
+            return arity_error();
+        }
+        if args.is_empty() {
+            return ctx
+                .current_sheet_index()
+                .map(|idx| scalar(LiteralValue::Int(idx as i64)))
+                .map(Ok)
+                .unwrap_or_else(na_result);
+        }
+
+        if let Ok(reference) = args[0].as_reference_or_eval() {
+            let Some(info) = ctx.inspect_reference(&reference)? else {
+                return na_result();
+            };
+            return info
+                .first_sheet_index
+                .map(|idx| scalar(LiteralValue::Int(idx as i64)))
+                .map(Ok)
+                .unwrap_or_else(na_result);
+        }
+
+        match args[0].value()?.into_literal() {
+            LiteralValue::Text(name) => ctx
+                .sheet_index_by_name(name.as_ref())
+                .map(|idx| scalar(LiteralValue::Int(idx as i64)))
+                .map(Ok)
+                .unwrap_or_else(na_result),
+            LiteralValue::Error(e) => Ok(scalar(LiteralValue::Error(e))),
+            _ => arity_error(),
+        }
+    }
+}
+
+/// Returns the number of sheets in the workbook or reference span.
+///
+/// With no argument, returns the active workbook sheet count. With a reference,
+/// returns the number of sheets covered by that reference.
+///
+/// ```yaml,sandbox
+/// title: "Workbook sheet count"
+/// formula: "=SHEETS()"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Single-sheet reference count"
+/// formula: "=SHEETS(A1)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SHEET
+///   - ISREF
+///   - FORMULATEXT
+/// faq:
+///   - q: "What does SHEETS return for ordinary references?"
+///     a: "Ordinary references cover one sheet, so the result is 1."
+/// ```
+#[derive(Debug)]
+pub struct SheetsFn;
+/// Returns the number of sheets in the workbook or covered by a 3D reference.
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SHEETS
+/// Type: SheetsFn
+/// Min args: 0
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SHEETS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SheetsFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SHEETS"
+    }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() > 1 {
+            return arity_error();
+        }
+        if args.is_empty() {
+            return ctx
+                .workbook_sheet_count()
+                .map(|count| scalar(LiteralValue::Int(count as i64)))
+                .map(Ok)
+                .unwrap_or_else(na_result);
+        }
+        let reference = match args[0].as_reference_or_eval() {
+            Ok(reference) => reference,
+            Err(_) => return arity_error(),
+        };
+        let Some(info) = ctx.inspect_reference(&reference)? else {
+            return na_result();
+        };
+        info.sheet_count
+            .map(|count| scalar(LiteralValue::Int(count as i64)))
+            .map(Ok)
+            .unwrap_or_else(na_result)
+    }
+}
+
+#[derive(Debug)]
+pub struct TypeFn;
+/// Returns an Excel TYPE code describing the value category.
+///
+/// # Remarks
+/// - Codes: `1` number, `2` text, `4` logical, `64` array.
+/// - Errors are propagated unchanged instead of returning `16`.
+/// - Blank values map to numeric code `1` in this implementation.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Text type code"
+/// formula: '=TYPE("abc")'
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Boolean type code"
+/// formula: '=TYPE(TRUE)'
+/// expected: 4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISNUMBER
+///   - ISTEXT
+///   - ISLOGICAL
+/// faq:
+///   - q: "How are errors handled by TYPE?"
+///     a: "Errors are propagated unchanged instead of returning Excel's error type code 16."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TYPE
+/// Type: TypeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TYPE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for TypeFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "TYPE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal(); // Propagate errors directly
+        if let LiteralValue::Error(e) = v {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
+        let code = match v {
+            LiteralValue::Int(_)
+            | LiteralValue::Number(_)
+            | LiteralValue::Empty
+            | LiteralValue::Date(_)
+            | LiteralValue::DateTime(_)
+            | LiteralValue::Time(_)
+            | LiteralValue::Duration(_) => 1,
+            LiteralValue::Text(_) => 2,
+            LiteralValue::Boolean(_) => 4,
+            LiteralValue::Array(_) => 64,
+            LiteralValue::Error(_) => unreachable!(),
+            LiteralValue::Pending => 1, // treat as blank/zero numeric; may change
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(code)))
+    }
+}
+
+#[derive(Debug)]
+pub struct NaFn; // NA() -> #N/A error
+/// Returns the `#N/A` error value.
+///
+/// # Remarks
+/// - `NA()` is commonly used to mark missing lookup results.
+/// - The function takes no arguments.
+/// - The returned value is an error and propagates through dependent formulas.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Direct N/A"
+/// formula: '=NA()'
+/// expected: "#N/A"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Detect N/A"
+/// formula: '=ISNA(NA())'
+/// expected: true
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISNA
+///   - IFNA
+///   - IFERROR
+/// faq:
+///   - q: "When should I use NA() intentionally?"
+///     a: "Use it to mark missing data so lookups and downstream checks can distinguish absent values from blanks."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: NA
+/// Type: NaFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: NA()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for NaFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NA"
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Na),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct NFn; // N(value)
+/// Converts a value to its numeric representation.
+///
+/// # Remarks
+/// - Numbers pass through unchanged; booleans convert to `1`/`0`.
+/// - Text and blank values convert to `0`.
+/// - Errors propagate unchanged.
+/// - Temporal values are converted using serial number representation.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Boolean to number"
+/// formula: '=N(TRUE)'
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text to zero"
+/// formula: '=N("hello")'
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - T
+///   - TYPE
+/// faq:
+///   - q: "What does N do with text and blanks?"
+///     a: "Text and blank values convert to 0, while existing errors are passed through."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: N
+/// Type: NFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: N(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for NFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "N"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        match v {
+            LiteralValue::Int(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(i))),
+            LiteralValue::Number(n) => {
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n)))
+            }
+            LiteralValue::Date(_)
+            | LiteralValue::DateTime(_)
+            | LiteralValue::Time(_)
+            | LiteralValue::Duration(_) => {
+                // Convert via serial number helper
+                if let Some(serial) = v.as_serial_number_for(ctx.date_system()) {
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                        serial,
+                    )))
+                } else {
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
+                }
+            }
+            LiteralValue::Boolean(b) => {
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(if b {
+                    1
+                } else {
+                    0
+                })))
+            }
+            LiteralValue::Text(_) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
+            LiteralValue::Empty => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
+            LiteralValue::Array(_) => {
+                // Array-to-scalar implicit intersection is not implemented here; returns 0.
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
+            }
+            LiteralValue::Error(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            LiteralValue::Pending => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TFn; // T(value)
+/// Returns text when input is text, otherwise returns empty text.
+///
+/// # Remarks
+/// - Text values pass through unchanged.
+/// - Errors propagate unchanged.
+/// - Numbers, booleans, and blanks return an empty string.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Text passthrough"
+/// formula: '=T("report")'
+/// expected: "report"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Number becomes empty text"
+/// formula: '=T(99)'
+/// expected: ""
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - N
+///   - ISTEXT
+///   - TYPE
+/// faq:
+///   - q: "Does T hide non-text values?"
+///     a: "Yes. Non-text inputs become an empty string, but errors are still propagated."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: T
+/// Type: TFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: T(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for TFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "T"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        match v {
+            LiteralValue::Text(s) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(s))),
+            LiteralValue::Error(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            _ => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                String::new(),
+            ))),
+        }
+    }
+}
+
+/// ISEVEN(number) - Returns TRUE if number is even
+#[derive(Debug)]
+pub struct IsEvenFn;
+/// Returns TRUE when a number is even.
+///
+/// # Remarks
+/// - Numeric input is truncated toward zero before parity is checked.
+/// - Booleans are coerced (`TRUE` -> 1, `FALSE` -> 0).
+/// - Non-numeric text returns `#VALUE!`.
+/// - Errors propagate unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Even integer"
+/// formula: '=ISEVEN(6)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Decimal truncation before parity"
+/// formula: '=ISEVEN(3.9)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISODD
+///   - ISNUMBER
+///   - N
+/// faq:
+///   - q: "How are decimals handled by ISEVEN?"
+///     a: "The number is truncated toward zero before checking even/odd parity."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISEVEN
+/// Type: IsEvenFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISEVEN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsEvenFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISEVEN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        let n = match v {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            LiteralValue::Int(i) => i as f64,
+            LiteralValue::Number(n) => n,
+            LiteralValue::Boolean(b) => {
+                if b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+        };
+        // Excel truncates to integer first
+        let n = n.trunc() as i64;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            n % 2 == 0,
+        )))
+    }
+}
+
+/// ISODD(number) - Returns TRUE if number is odd
+#[derive(Debug)]
+pub struct IsOddFn;
+/// Returns TRUE when a number is odd.
+///
+/// # Remarks
+/// - Numeric input is truncated toward zero before parity is checked.
+/// - Booleans are coerced (`TRUE` -> 1, `FALSE` -> 0).
+/// - Non-numeric text returns `#VALUE!`.
+/// - Errors propagate unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Odd integer"
+/// formula: '=ISODD(7)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Boolean coercion"
+/// formula: '=ISODD(TRUE)'
+/// expected: true
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISEVEN
+///   - ISNUMBER
+///   - N
+/// faq:
+///   - q: "Are booleans valid inputs for ISODD?"
+///     a: "Yes. TRUE is treated as 1 and FALSE as 0 before the odd check."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISODD
+/// Type: IsOddFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISODD(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsOddFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISODD"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        let n = match v {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            LiteralValue::Int(i) => i as f64,
+            LiteralValue::Number(n) => n,
+            LiteralValue::Boolean(b) => {
+                if b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+        };
+        let n = n.trunc() as i64;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            n % 2 != 0,
+        )))
+    }
+}
+
+/// ERROR.TYPE(error_val) - Returns a number corresponding to an error type
+/// Returns:
+///   1 = #NULL!
+///   2 = #DIV/0!
+///   3 = #VALUE!
+///   4 = #REF!
+///   5 = #NAME?
+///   6 = #NUM!
+///   7 = #N/A
+///   8 = #GETTING_DATA (not commonly used)
+///   #N/A if the value is not an error
+///
+/// NOTE: Error codes 9-13 are non-standard extensions for internal error types.
+#[derive(Debug)]
+pub struct ErrorTypeFn;
+/// Returns the numeric code for a specific error value.
+///
+/// # Remarks
+/// - Standard mappings include: `#NULL!`=1, `#DIV/0!`=2, `#VALUE!`=3, `#REF!`=4, `#NAME?`=5, `#NUM!`=6, `#N/A`=7.
+/// - Non-error inputs return `#N/A`.
+/// - Additional internal error kinds may map to extended non-standard codes.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Map DIV/0 to code"
+/// formula: '=ERROR.TYPE(1/0)'
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Non-error input returns N/A"
+/// formula: '=ERROR.TYPE(10)'
+/// expected: "#N/A"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERROR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "What if the input is not an error value?"
+///     a: "ERROR.TYPE returns #N/A when the input is not an error."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ERROR.TYPE
+/// Type: ErrorTypeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ERROR.TYPE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+fn error_type_code(kind: ExcelErrorKind) -> i64 {
+    match kind {
+        ExcelErrorKind::Null => 1,
+        ExcelErrorKind::Div => 2,
+        ExcelErrorKind::Value => 3,
+        ExcelErrorKind::Ref => 4,
+        ExcelErrorKind::Name => 5,
+        ExcelErrorKind::Num => 6,
+        ExcelErrorKind::Na => 7,
+        ExcelErrorKind::Error => 8,
+        ExcelErrorKind::NImpl => 9,
+        ExcelErrorKind::Spill => 10,
+        ExcelErrorKind::Calc => 11,
+        ExcelErrorKind::Circ => 12,
+        ExcelErrorKind::Cancelled => 13,
+        _ => 8,
+    }
+}
+
+/// [formualizer-docgen:schema:start]
+/// Name: ERROR.TYPE
+/// Type: ErrorTypeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ERROR.TYPE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ErrorTypeFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ERROR.TYPE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        match v {
+            LiteralValue::Error(e) => {
+                let code = error_type_code(e.kind);
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(code)))
+            }
+            _ => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            ))),
+        }
+    }
+}
+
+/// Returns TRUE when the value is anything other than text.
+///
+/// # Remarks
+/// - Text literals return FALSE.
+/// - Numbers, booleans, blanks, and errors return TRUE.
+/// - This is the logical complement of `ISTEXT` in the current engine semantics.
+///
+/// # Examples
+///
+/// ```excel
+/// =ISNONTEXT(42)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Number is non-text"
+/// formula: '=ISNONTEXT(42)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text is not non-text"
+/// formula: '=ISNONTEXT("alpha")'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISTEXT
+///   - TYPE
+/// faq:
+///   - q: "Do errors count as non-text values?"
+///     a: "Yes. This implementation treats any non-text value, including errors, as TRUE for ISNONTEXT."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISNONTEXT
+/// Type: IsNonTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNONTEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+#[derive(Debug)]
+pub struct IsNonTextFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ISNONTEXT
+/// Type: IsNonTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNONTEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsNonTextFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISNONTEXT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            !matches!(v, LiteralValue::Text(_)),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct CellFn;
+
+/// Returns requested information about a reference.
+///
+/// Supported `info_type` values (case-insensitive):
+/// - `"contents"` — the value of the upper-left cell of the reference
+/// - `"address"`  — the absolute A1 address of the upper-left cell (e.g. `$A$1`)
+/// - `"col"`      — the 1-based column of the upper-left cell
+/// - `"row"`      — the 1-based row of the upper-left cell
+/// - `"type"`     — `"b"` for a blank cell, `"l"` for text, `"v"` for any value
+///
+/// Other `info_type` values (`format`, `filename`, `parentheses`, `prefix`,
+/// `protect`, `width`) and calls without a reference return `#VALUE!`, as do
+/// 3-D references and a non-reference argument for `address`, `col` or `row`.
+/// An argument that evaluates to an error propagates that error unchanged.
+///
+/// Known divergence: `CELL("contents", <blank cell>)` produces `Empty` in-graph
+/// where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
+/// here and FALSE in Excel; tracked in #333 and to be resolved with the #319
+/// blank-coercion variant study.
+///
+/// ```yaml,sandbox
+/// title: "CELL contents"
+/// grid:
+///   A1: 10
+/// formula: '=CELL("contents",A1)'
+/// expected: 10
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "CELL address of the top-left cell"
+/// formula: '=CELL("address",A1)'
+/// expected: "$A$1"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SHEET
+///   - ISREF
+/// faq:
+///   - q: "Which info types does CELL support?"
+///     a: "contents, address, col, row and type. Unsupported info types return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CELL
+/// Type: CellFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: CELL(arg1: any@scalar, arg2?: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for CellFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE
+    }
+    fn name(&self) -> &'static str {
+        "CELL"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut optional = ArgSchema::any();
+            optional.required = false;
+            vec![ArgSchema::any(), optional]
+        });
+        &SCHEMA
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let info_type = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => return Ok(scalar(LiteralValue::Error(e))),
+            LiteralValue::Text(t) => t.to_ascii_lowercase(),
+            _ => return Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
+        };
+        if args.len() < 2 {
+            // Without a reference, Excel reports on the last-changed cell, which is
+            // not reproducible here; #VALUE! keeps the result well-defined.
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        }
+
+        // A reference argument that does not resolve is not automatically a
+        // #VALUE!; see `non_reference_error`.
+        let reference = args[1].as_reference_or_eval().ok();
+
+        // Excel's CELL rejects 3-D references outright rather than reporting on
+        // the first sheet of the span.
+        if reference.as_ref().is_some_and(is_3d_reference) {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        }
+
+        // `contents` and `type` read a value, so they also accept a literal in
+        // the reference position (`=CELL("type","")` is "l" in Excel). The
+        // metadata info types (`address`, `col`, `row`) derive purely from
+        // reference metadata and must not force the referenced value.
+        match info_type.as_str() {
+            "contents" => return Ok(scalar(cell_top_left(&args[1])?)),
+            "type" => {
+                let kind = match cell_top_left(&args[1])? {
+                    LiteralValue::Error(e) => return Ok(scalar(LiteralValue::Error(e))),
+                    LiteralValue::Empty => "b",
+                    LiteralValue::Text(_) => "l",
+                    _ => "v",
+                };
+                return Ok(scalar(LiteralValue::Text(kind.into())));
+            }
+            _ => {}
+        }
+
+        let Some(reference) = reference else {
+            return Ok(scalar(non_reference_error(&args[1])?));
+        };
+
+        let Some(reference_info) = ctx.inspect_reference(&reference)? else {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        };
+        let Some(cell) = reference_info.first_cell else {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        };
+        let row = cell.coord.row() + 1;
+        let col = cell.coord.col() + 1;
+
+        match info_type.as_str() {
+            "address" => {
+                let letters = crate::reference::Coord::col_to_letters(cell.coord.col());
+                let address = format!("${letters}${row}");
+                // Excel qualifies the address with the sheet name only when the
+                // reference targets a different sheet than the formula's own.
+                let qualified = match reference_sheet(&reference) {
+                    Some(sheet) if !sheet.eq_ignore_ascii_case(ctx.current_sheet()) => {
+                        format!("{}!{address}", format_a1_sheet_name(sheet))
+                    }
+                    _ => address,
+                };
+                Ok(scalar(LiteralValue::Text(qualified)))
+            }
+            "col" => Ok(scalar(LiteralValue::Int(col as i64))),
+            "row" => Ok(scalar(LiteralValue::Int(row as i64))),
+            _ => Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
+        }
+    }
+}
+
+/// Materializes the upper-left cell of the reference argument as a literal.
+///
+/// Only `contents` and `type` need the referenced value; `address`, `col` and
+/// `row` derive purely from reference metadata and must not force evaluation of
+/// (or trip over) the referenced cell's value.
+fn cell_top_left<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<LiteralValue, ExcelError> {
+    match arg.value()? {
+        CalcValue::Scalar(lit) => Ok(lit),
+        CalcValue::AnnotatedScalar(lit, _) => Ok(lit),
+        CalcValue::Range(view) => Ok(view.get_cell(0, 0)),
+        CalcValue::Callable(_) => Ok(LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+        )),
+    }
+}
+
+/// The error CELL reports for an argument that did not resolve as a reference.
+///
+/// Excel evaluates the argument first, so an argument that *is* an error
+/// propagates that error (`=CELL("row",1/0)` is #DIV/0!, `=CELL("row",A5)`
+/// after row 5 is deleted is #REF!). #VALUE! is reserved for an argument that
+/// evaluates to a perfectly good value that simply is not a reference, such as
+/// `=CELL("address",42)`.
+fn non_reference_error<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<LiteralValue, ExcelError> {
+    Ok(match cell_top_left(arg)? {
+        LiteralValue::Error(e) => LiteralValue::Error(e),
+        _ => LiteralValue::Error(ExcelError::new_value()),
+    })
+}
+
+/// Whether the reference spans sheets (`Sheet1:Sheet2!A1`).
+///
+/// Excel's CELL rejects 3-D references with #VALUE! rather than reporting on
+/// the first sheet of the span.
+fn is_3d_reference(reference: &formualizer_parse::parser::ReferenceType) -> bool {
+    matches!(
+        reference,
+        formualizer_parse::parser::ReferenceType::Cell3D { .. }
+            | formualizer_parse::parser::ReferenceType::Range3D { .. }
+    )
+}
+
+/// The explicit sheet name carried by a reference, when it names one.
+fn reference_sheet(reference: &formualizer_parse::parser::ReferenceType) -> Option<&str> {
+    match reference {
+        formualizer_parse::parser::ReferenceType::Cell { sheet, .. } => sheet.as_deref(),
+        formualizer_parse::parser::ReferenceType::Range { sheet, .. } => sheet.as_deref(),
+        formualizer_parse::parser::ReferenceType::Cell3D { sheet_first, .. } => Some(sheet_first),
+        formualizer_parse::parser::ReferenceType::Range3D { sheet_first, .. } => Some(sheet_first),
+        _ => None,
+    }
+}
+
+pub fn register_builtins() {
+    use std::sync::Arc;
+    crate::function_registry::register_builtin(Arc::new(CellFn));
+    crate::function_registry::register_builtin(Arc::new(IsNumberFn));
+    crate::function_registry::register_builtin(Arc::new(IsTextFn));
+    crate::function_registry::register_builtin(Arc::new(IsNonTextFn));
+    crate::function_registry::register_builtin(Arc::new(IsLogicalFn));
+    crate::function_registry::register_builtin(Arc::new(IsBlankFn));
+    crate::function_registry::register_builtin(Arc::new(IsErrorFn));
+    crate::function_registry::register_builtin(Arc::new(IsErrFn));
+    crate::function_registry::register_builtin(Arc::new(IsNaFn));
+    crate::function_registry::register_builtin(Arc::new(IsFormulaFn));
+    crate::function_registry::register_builtin(Arc::new(IsRefFn));
+    crate::function_registry::register_builtin(Arc::new(FormulaTextFn));
+    crate::function_registry::register_builtin(Arc::new(SheetFn));
+    crate::function_registry::register_builtin(Arc::new(SheetsFn));
+    crate::function_registry::register_builtin(Arc::new(IsEvenFn));
+    crate::function_registry::register_builtin(Arc::new(IsOddFn));
+    crate::function_registry::register_builtin(Arc::new(ErrorTypeFn));
+    crate::function_registry::register_builtin(Arc::new(TypeFn));
+    crate::function_registry::register_builtin(Arc::new(NaFn));
+    crate::function_registry::register_builtin(Arc::new(NFn));
+    crate::function_registry::register_builtin(Arc::new(TFn));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+
+    #[test]
+    fn error_type_known_mappings_are_stable() {
+        let cases = [
+            (ExcelErrorKind::Null, 1),
+            (ExcelErrorKind::Div, 2),
+            (ExcelErrorKind::Value, 3),
+            (ExcelErrorKind::Ref, 4),
+            (ExcelErrorKind::Name, 5),
+            (ExcelErrorKind::Num, 6),
+            (ExcelErrorKind::Na, 7),
+            (ExcelErrorKind::Error, 8),
+            (ExcelErrorKind::NImpl, 9),
+            (ExcelErrorKind::Spill, 10),
+            (ExcelErrorKind::Calc, 11),
+            (ExcelErrorKind::Circ, 12),
+            (ExcelErrorKind::Cancelled, 13),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(error_type_code(kind), expected, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn isnumber_numeric_and_date() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IsNumberFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ISNUMBER").unwrap();
+        let num = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Number(std::f64::consts::PI)),
+            None,
+        );
+        let date = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Date(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            )),
+            None,
+        );
+        let txt = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("x".into())), None);
+        let args_num = vec![crate::traits::ArgumentHandle::new(&num, &ctx)];
+        let args_date = vec![crate::traits::ArgumentHandle::new(&date, &ctx)];
+        let args_txt = vec![crate::traits::ArgumentHandle::new(&txt, &ctx)];
+        assert_eq!(
+            f.dispatch(&args_num, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Boolean(true)
+        );
+        assert_eq!(
+            f.dispatch(&args_date, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Boolean(true)
+        );
+        assert_eq!(
+            f.dispatch(&args_txt, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn istest_and_isblank() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IsTextFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ISTEXT").unwrap();
+        let t = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("abc".into())), None);
+        let n = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(5)), None);
+        let args_t = vec![crate::traits::ArgumentHandle::new(&t, &ctx)];
+        let args_n = vec![crate::traits::ArgumentHandle::new(&n, &ctx)];
+        assert_eq!(
+            f.dispatch(&args_t, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Boolean(true)
+        );
+        assert_eq!(
+            f.dispatch(&args_n, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Boolean(false)
+        );
+
+        // ISBLANK
+        let wb2 = TestWorkbook::new().with_function(std::sync::Arc::new(IsBlankFn));
+        let ctx2 = interp(&wb2);
+        let f2 = ctx2.context.get_function("", "ISBLANK").unwrap();
+        let blank = ASTNode::new(ASTNodeType::Literal(LiteralValue::Empty), None);
+        let blank_args = vec![crate::traits::ArgumentHandle::new(&blank, &ctx2)];
+        assert_eq!(
+            f2.dispatch(&blank_args, &ctx2.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn iserror_variants() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IsErrorFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ISERROR").unwrap();
+        let err = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div))),
+            None,
+        );
+        let ok = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);
+        let a_err = vec![crate::traits::ArgumentHandle::new(&err, &ctx)];
+        let a_ok = vec![crate::traits::ArgumentHandle::new(&ok, &ctx)];
+        assert_eq!(
+            f.dispatch(&a_err, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Boolean(true)
+        );
+        assert_eq!(
+            f.dispatch(&a_ok, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn type_codes_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TypeFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "TYPE").unwrap();
+        let v_num = ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(2.0)), None);
+        let v_txt = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("hi".into())), None);
+        let v_bool = ASTNode::new(ASTNodeType::Literal(LiteralValue::Boolean(true)), None);
+        let v_err = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+            None,
+        );
+        let v_arr = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![LiteralValue::Int(1)]])),
+            None,
+        );
+        let a_num = vec![crate::traits::ArgumentHandle::new(&v_num, &ctx)];
+        let a_txt = vec![crate::traits::ArgumentHandle::new(&v_txt, &ctx)];
+        let a_bool = vec![crate::traits::ArgumentHandle::new(&v_bool, &ctx)];
+        let a_err = vec![crate::traits::ArgumentHandle::new(&v_err, &ctx)];
+        let a_arr = vec![crate::traits::ArgumentHandle::new(&v_arr, &ctx)];
+        assert_eq!(
+            f.dispatch(&a_num, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Int(1)
+        );
+        assert_eq!(
+            f.dispatch(&a_txt, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Int(2)
+        );
+        assert_eq!(
+            f.dispatch(&a_bool, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Int(4)
+        );
+        match f
+            .dispatch(&a_err, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
+            _ => panic!(),
+        }
+        assert_eq!(
+            f.dispatch(&a_arr, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Int(64)
+        );
+    }
+
+    #[test]
+    fn na_and_n_and_t() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(NaFn))
+            .with_function(std::sync::Arc::new(NFn))
+            .with_function(std::sync::Arc::new(TFn));
+        let ctx = wb.interpreter();
+        // NA()
+        let na_fn = ctx.context.get_function("", "NA").unwrap();
+        match na_fn
+            .eval(&[], &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#N/A"),
+            _ => panic!(),
+        }
+        // N()
+        let n_fn = ctx.context.get_function("", "N").unwrap();
+        let val = ASTNode::new(ASTNodeType::Literal(LiteralValue::Boolean(true)), None);
+        let args = vec![crate::traits::ArgumentHandle::new(&val, &ctx)];
+        assert_eq!(
+            n_fn.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Int(1)
+        );
+        // T()
+        let t_fn = ctx.context.get_function("", "T").unwrap();
+        let txt = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("abc".into())), None);
+        let args_t = vec![crate::traits::ArgumentHandle::new(&txt, &ctx)];
+        assert_eq!(
+            t_fn.dispatch(&args_t, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Text("abc".into())
+        );
+    }
+}

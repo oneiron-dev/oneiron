@@ -1,0 +1,203 @@
+use std::collections::HashMap;
+
+use formualizer_common::{ExcelError, ExcelErrorKind};
+
+use crate::SheetId;
+use crate::reference::SharedSheetLocator;
+
+#[derive(Default, Debug)]
+pub struct SheetRegistry {
+    id_by_name: HashMap<String, SheetId>,
+    name_by_id: Vec<String>,
+}
+
+impl SheetRegistry {
+    pub fn new() -> Self {
+        SheetRegistry::default()
+    }
+
+    pub fn id_for(&mut self, name: &str) -> SheetId {
+        // Sheet names are CASE-INSENSITIVE (Excel behavior): index by the lowercased name, but
+        // keep the original casing in name_by_id for display.
+        let key = name.to_lowercase();
+        if let Some(&id) = self.id_by_name.get(&key) {
+            return id;
+        }
+
+        let id = self.name_by_id.len() as SheetId;
+        self.name_by_id.push(name.to_string());
+        self.id_by_name.insert(key, id);
+        id
+    }
+
+    pub fn name(&self, id: SheetId) -> &str {
+        if (id as usize) < self.name_by_id.len() {
+            &self.name_by_id[id as usize]
+        } else {
+            ""
+        }
+    }
+
+    pub fn get_id(&self, name: &str) -> Option<SheetId> {
+        // Case-insensitive (Excel): e.g. INDIRECT("Config!B8") must find the sheet named "CONFIG".
+        self.id_by_name.get(&name.to_lowercase()).copied()
+    }
+
+    /// Resolve a [`SharedSheetLocator`] against an explicit context sheet.
+    ///
+    /// This is the single owned derivation from a locator to a [`SheetId`].
+    /// Every variant is matched explicitly so that adding a variant is a
+    /// compile error rather than a silent default:
+    ///
+    /// * `Id` is already resolved.
+    /// * `Current` means "the sheet this reference lives on" and is taken from
+    ///   `context_sheet`. It is never the workbook's default sheet: a caller
+    ///   without a context sheet has lost the information the reference needs,
+    ///   and substituting the default sheet leaks the reference onto an
+    ///   unrelated sheet (issue #110). Such callers must supply the context or
+    ///   surface an error.
+    /// * `Name` must name a registered sheet; an unknown name is `#REF!`.
+    pub fn resolve_locator(
+        &self,
+        locator: &SharedSheetLocator<'_>,
+        context_sheet: SheetId,
+    ) -> Result<SheetId, ExcelError> {
+        match locator {
+            SharedSheetLocator::Id(id) => Ok(*id),
+            SharedSheetLocator::Current => Ok(context_sheet),
+            SharedSheetLocator::Name(name) => self.get_id(name.as_ref()).ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message(format!("Sheet not found: {name}"))
+            }),
+        }
+    }
+
+    /// Count active sheets without cloning sheet names.
+    pub fn active_len(&self) -> usize {
+        self.name_by_id
+            .iter()
+            .filter(|name| !name.is_empty())
+            .count()
+    }
+
+    /// Excel-style 1-based active sheet position for a sheet id.
+    pub fn active_position_by_id(&self, id: SheetId) -> Option<usize> {
+        let idx = id as usize;
+        if idx >= self.name_by_id.len() || self.name_by_id[idx].is_empty() {
+            return None;
+        }
+        Some(
+            self.name_by_id
+                .iter()
+                .take(idx + 1)
+                .filter(|name| !name.is_empty())
+                .count(),
+        )
+    }
+
+    /// Excel-style 1-based active sheet position for a sheet name.
+    pub fn active_position(&self, name: &str) -> Option<usize> {
+        self.get_id(name)
+            .and_then(|id| self.active_position_by_id(id))
+    }
+
+    /// Inclusive count of active sheets between two sheet names.
+    pub fn active_span_len(&self, first: &str, last: &str) -> Option<usize> {
+        let a = self.active_position(first)?;
+        let b = self.active_position(last)?;
+        Some(a.abs_diff(b) + 1)
+    }
+
+    /// Get all sheet IDs and names (excluding removed sheets)
+    pub fn all_sheets(&self) -> Vec<(SheetId, String)> {
+        self.name_by_id
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| !name.is_empty())
+            .map(|(id, name)| (id as SheetId, name.clone()))
+            .collect()
+    }
+
+    /// Remove a sheet from the registry
+    /// Note: This doesn't actually free the ID, it just marks it as removed
+    pub fn remove(&mut self, id: SheetId) -> Result<(), formualizer_common::ExcelError> {
+        use formualizer_common::{ExcelError, ExcelErrorKind};
+
+        // Check if the ID exists
+        if id as usize >= self.name_by_id.len() {
+            return Err(
+                ExcelError::new(ExcelErrorKind::Value).with_message("Sheet ID does not exist")
+            );
+        }
+
+        // Get the name to remove from id_by_name
+        let name = self.name_by_id[id as usize].clone();
+        if name.is_empty() {
+            // Already removed
+            return Ok(());
+        }
+
+        // Remove from id_by_name mapping (case-insensitive key)
+        self.id_by_name.remove(&name.to_lowercase());
+
+        // Mark as removed in name_by_id (we can't actually remove it to preserve IDs)
+        self.name_by_id[id as usize] = String::new();
+
+        Ok(())
+    }
+
+    /// Rename a sheet
+    pub fn rename(
+        &mut self,
+        id: SheetId,
+        new_name: &str,
+    ) -> Result<(), formualizer_common::ExcelError> {
+        use formualizer_common::{ExcelError, ExcelErrorKind};
+
+        // Check if the ID exists
+        if id as usize >= self.name_by_id.len() {
+            return Err(
+                ExcelError::new(ExcelErrorKind::Value).with_message("Sheet ID does not exist")
+            );
+        }
+
+        // Get the old name
+        let old_name = self.name_by_id[id as usize].clone();
+
+        // Check if new name is already taken by another sheet (case-insensitive)
+        if let Some(&existing_id) = self.id_by_name.get(&new_name.to_lowercase())
+            && existing_id != id
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("Sheet name '{new_name}' already exists")));
+        }
+
+        // Remove old name mapping
+        self.id_by_name.remove(&old_name.to_lowercase());
+
+        // Update to new name
+        self.name_by_id[id as usize] = new_name.to_string();
+        self.id_by_name.insert(new_name.to_lowercase(), id);
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sheet_names_are_case_insensitive() {
+        let mut reg = SheetRegistry::new();
+        let id = reg.id_for("CONFIG");
+        // Excel resolves sheet names case-insensitively: all casings map to the same sheet.
+        assert_eq!(reg.get_id("CONFIG"), Some(id));
+        assert_eq!(reg.get_id("Config"), Some(id));
+        assert_eq!(reg.get_id("config"), Some(id));
+        // id_for must reuse the same sheet regardless of casing (no duplicate sheet created).
+        assert_eq!(reg.id_for("Config"), id);
+        // Original casing is preserved for display.
+        assert_eq!(reg.name(id), "CONFIG");
+    }
+}

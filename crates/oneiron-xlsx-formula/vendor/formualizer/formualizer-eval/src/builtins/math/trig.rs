@@ -1,0 +1,2691 @@
+use super::super::utils::{
+    ARG_ANY_ONE, ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, EPSILON_NEAR_ZERO,
+    binary_numeric_elementwise, unary_numeric_arg, unary_numeric_elementwise,
+};
+use crate::args::ArgSchema;
+use crate::function::Function;
+use crate::traits::{ArgumentHandle, FunctionContext};
+use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_macros::func_caps;
+use std::f64::consts::PI;
+
+/* ─────────────────────────── TRIG: circular ────────────────────────── */
+
+#[derive(Debug)]
+pub struct SinFn;
+/// Returns the sine of an angle in radians.
+///
+/// # Remarks
+/// - Input is interpreted as radians, not degrees.
+/// - Supports scalar and array-style elementwise evaluation.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Sine of PI/2"
+/// formula: "=SIN(PI()/2)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sine from a cell value"
+/// grid:
+///   A1: 0
+/// formula: "=SIN(A1)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - TAN
+///   - RADIANS
+/// faq:
+///   - q: "Does SIN expect degrees or radians?"
+///     a: "SIN expects radians; convert degree inputs first with RADIANS."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SIN
+/// Type: SinFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SIN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for SinFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "SIN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        unary_numeric_elementwise(args, ctx, |x| Ok(LiteralValue::Number(x.sin())))
+    }
+}
+
+#[cfg(test)]
+mod tests_sin {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "{a} !~= {b}");
+    }
+
+    #[test]
+    fn test_sin_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SinFn));
+        let ctx = interp(&wb);
+        let sin = ctx.context.get_function("", "SIN").unwrap();
+        let a0 = make_num_ast(PI / 2.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match sin
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 1.0),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+
+    #[test]
+    fn test_sin_array_literal() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SinFn));
+        let ctx = interp(&wb);
+        let sin = ctx.context.get_function("", "SIN").unwrap();
+        let arr = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Number(0.0),
+                LiteralValue::Number(PI / 2.0),
+            ]])),
+            None,
+        );
+        let args = vec![ArgumentHandle::new(&arr, &ctx)];
+
+        match sin
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            formualizer_common::LiteralValue::Array(rows) => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 2);
+                match (&rows[0][0], &rows[0][1]) {
+                    (
+                        formualizer_common::LiteralValue::Number(a),
+                        formualizer_common::LiteralValue::Number(b),
+                    ) => {
+                        assert_close(*a, 0.0);
+                        assert_close(*b, 1.0);
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CosFn;
+/// Returns the cosine of an angle in radians.
+///
+/// # Remarks
+/// - Input must be in radians.
+/// - Supports elementwise evaluation for array inputs.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cosine at zero"
+/// formula: "=COS(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Cosine at PI"
+/// formula: "=COS(PI())"
+/// expected: -1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - TAN
+///   - PI
+/// faq:
+///   - q: "Why can COS look wrong for degree values like 60?"
+///     a: "COS interprets 60 as radians, not degrees; use COS(RADIANS(60))."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COS
+/// Type: CosFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COS(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for CosFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "COS"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        unary_numeric_elementwise(args, ctx, |x| Ok(LiteralValue::Number(x.cos())))
+    }
+}
+
+#[cfg(test)]
+mod tests_cos {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_cos_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CosFn));
+        let ctx = interp(&wb);
+        let cos = ctx.context.get_function("", "COS").unwrap();
+        let a0 = make_num_ast(0.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match cos
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 1.0),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TanFn;
+/// Returns the tangent of an angle in radians.
+///
+/// # Remarks
+/// - Input is interpreted as radians.
+/// - Near odd multiples of `PI()/2`, results can become very large.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Tangent at PI/4"
+/// formula: "=TAN(PI()/4)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Tangent at zero"
+/// formula: "=TAN(0)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - COS
+///   - ATAN
+/// faq:
+///   - q: "Why does TAN explode near PI()/2?"
+///     a: "Because COS approaches zero there, TAN can become extremely large in magnitude."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TAN
+/// Type: TanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TAN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for TanFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "TAN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        unary_numeric_elementwise(args, ctx, |x| Ok(LiteralValue::Number(x.tan())))
+    }
+}
+
+#[cfg(test)]
+mod tests_tan {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_tan_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TanFn));
+        let ctx = interp(&wb);
+        let tan = ctx.context.get_function("", "TAN").unwrap();
+        let a0 = make_num_ast(PI / 4.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match tan
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 1.0),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AsinFn;
+/// Returns the angle in radians whose sine is the input value.
+///
+/// Use `ASIN` to recover an angle from a normalized ratio.
+///
+/// # Remarks
+/// - Domain: input must be between `-1` and `1`, inclusive.
+/// - Radians: output is in the range `[-PI()/2, PI()/2]`.
+/// - Errors: returns `#NUM!` when the input is outside the valid domain.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arcsine of one half"
+/// formula: "=ASIN(0.5)"
+/// expected: 0.5235987755982989
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Lower boundary"
+/// formula: "=ASIN(-1)"
+/// expected: -1.5707963267948966
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - ACOS
+///   - ATAN
+/// faq:
+///   - q: "When does ASIN return #NUM!?"
+///     a: "ASIN returns #NUM! when the input is outside the closed interval [-1, 1]."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ASIN
+/// Type: AsinFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ASIN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AsinFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ASIN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        if !(-1.0..=1.0).contains(&x) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.asin(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_asin {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_asin_basic_and_domain() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AsinFn));
+        let ctx = interp(&wb);
+        let asin = ctx.context.get_function("", "ASIN").unwrap();
+        // valid
+        let a0 = make_num_ast(0.5);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match asin
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, (0.5f64).asin()),
+            v => panic!("unexpected {v:?}"),
+        }
+        // invalid domain
+        let a1 = make_num_ast(2.0);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match asin
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AcosFn;
+/// Returns the angle in radians whose cosine is the input value.
+///
+/// Use `ACOS` when you need an angle from a normalized adjacent/hypotenuse ratio.
+///
+/// # Remarks
+/// - Domain: input must be between `-1` and `1`, inclusive.
+/// - Radians: output is in the range `[0, PI()]`.
+/// - Errors: returns `#NUM!` when the input is outside the valid domain.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arccosine of one half"
+/// formula: "=ACOS(0.5)"
+/// expected: 1.0471975511965979
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Upper-angle boundary"
+/// formula: "=ACOS(-1)"
+/// expected: 3.141592653589793
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - ASIN
+///   - ATAN2
+/// faq:
+///   - q: "Why does ACOS reject values like 1.0001?"
+///     a: "ACOS is only defined on [-1, 1], so out-of-range inputs return #NUM!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ACOS
+/// Type: AcosFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOS(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AcosFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ACOS"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        if !(-1.0..=1.0).contains(&x) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.acos(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_acos {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_acos_basic_and_domain() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AcosFn));
+        let ctx = interp(&wb);
+        let acos = ctx.context.get_function("", "ACOS").unwrap();
+        let a0 = make_num_ast(0.5);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match acos
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, (0.5f64).acos()),
+            v => panic!("unexpected {v:?}"),
+        }
+        let a1 = make_num_ast(-2.0);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match acos
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AtanFn;
+/// Returns the angle in radians whose tangent is the input value.
+///
+/// `ATAN` is useful for recovering a slope angle from a ratio.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: output is in the range `(-PI()/2, PI()/2)`.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arctangent of one"
+/// formula: "=ATAN(1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative slope angle"
+/// formula: "=ATAN(-1)"
+/// expected: -0.7853981633974483
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAN
+///   - ATAN2
+///   - ACOT
+/// faq:
+///   - q: "Does ATAN ever return #NUM! for large values?"
+///     a: "No. ATAN accepts any real input and asymptotically approaches +/-PI()/2."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ATAN
+/// Type: AtanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ATAN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AtanFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ATAN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.atan(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_atan {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_atan_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AtanFn));
+        let ctx = interp(&wb);
+        let atan = ctx.context.get_function("", "ATAN").unwrap();
+        let a0 = make_num_ast(1.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match atan
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, (1.0f64).atan()),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Atan2Fn;
+/// Returns the arctangent of `y/x`, preserving quadrant information.
+///
+/// # Remarks
+/// - Formualizer uses Excel-style argument order: `ATAN2(x_num, y_num)`.
+/// - Returns `#DIV/0!` when both arguments are zero.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "First quadrant angle"
+/// formula: "=ATAN2(1,1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Undefined angle at origin"
+/// formula: "=ATAN2(0,0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATAN
+///   - ACOT
+///   - RADIANS
+/// faq:
+///   - q: "Why does ATAN2 return #DIV/0! at (0,0)?"
+///     a: "The origin has no defined direction angle, so ATAN2 reports #DIV/0!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ATAN2
+/// Type: Atan2Fn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: ATAN2(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for Atan2Fn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ATAN2"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // Excel: ATAN2(x_num, y_num)
+        binary_numeric_elementwise(args, ctx, |x, y| {
+            if x == 0.0 && y == 0.0 {
+                Ok(LiteralValue::Error(ExcelError::from_error_string(
+                    "#DIV/0!",
+                )))
+            } else {
+                Ok(LiteralValue::Number(y.atan2(x)))
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests_atan2 {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_atan2_basic_and_zero_zero() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(Atan2Fn));
+        let ctx = interp(&wb);
+        let atan2 = ctx.context.get_function("", "ATAN2").unwrap();
+        // ATAN2(1,1) = pi/4
+        let a0 = make_num_ast(1.0);
+        let a1 = make_num_ast(1.0);
+        let args = vec![
+            ArgumentHandle::new(&a0, &ctx),
+            ArgumentHandle::new(&a1, &ctx),
+        ];
+        match atan2
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, PI / 4.0),
+            v => panic!("unexpected {v:?}"),
+        }
+        // ATAN2(0,0) => #DIV/0!
+        let b0 = make_num_ast(0.0);
+        let b1 = make_num_ast(0.0);
+        let args2 = vec![
+            ArgumentHandle::new(&b0, &ctx),
+            ArgumentHandle::new(&b1, &ctx),
+        ];
+        match atan2
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn test_atan2_broadcast_scalar_over_array() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(Atan2Fn));
+        let ctx = interp(&wb);
+        let atan2 = ctx.context.get_function("", "ATAN2").unwrap();
+
+        // ATAN2(x_num=1, y_num={0,1}) => {0, pi/4}
+        let x = make_num_ast(1.0);
+        let y = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Number(0.0),
+                LiteralValue::Number(1.0),
+            ]])),
+            None,
+        );
+        let args = vec![ArgumentHandle::new(&x, &ctx), ArgumentHandle::new(&y, &ctx)];
+
+        match atan2
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            formualizer_common::LiteralValue::Array(rows) => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 2);
+                match (&rows[0][0], &rows[0][1]) {
+                    (
+                        formualizer_common::LiteralValue::Number(a),
+                        formualizer_common::LiteralValue::Number(b),
+                    ) => {
+                        assert_close(*a, 0.0);
+                        assert_close(*b, PI / 4.0);
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SecFn;
+/// Returns the secant of an angle, defined as `1 / COS(angle)`.
+///
+/// Use `SEC` for reciprocal-cosine calculations in radian-based formulas.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `COS(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` near odd multiples of `PI()/2`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Secant at zero"
+/// formula: "=SEC(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Singularity at PI over 2"
+/// formula: "=SEC(PI()/2)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - COT
+///   - CSC
+/// faq:
+///   - q: "When does SEC return #DIV/0!?"
+///     a: "SEC returns #DIV/0! when COS(angle) is effectively zero."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SEC
+/// Type: SecFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SEC(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for SecFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "SEC"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        let c = x.cos();
+        if c.abs() < EPSILON_NEAR_ZERO {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / c,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_sec {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_sec_basic_and_div0() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SecFn));
+        let ctx = interp(&wb);
+        let sec = ctx.context.get_function("", "SEC").unwrap();
+        let a0 = make_num_ast(0.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match sec
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 1.0),
+            v => panic!("unexpected {v:?}"),
+        }
+        let a1 = make_num_ast(PI / 2.0);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match sec
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            LiteralValue::Number(n) => assert!(n.abs() > 1e12), // near singularity
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CscFn;
+/// Returns the cosecant of an angle, defined as `1 / SIN(angle)`.
+///
+/// Use `CSC` for reciprocal-sine calculations in radian-based formulas.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `SIN(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cosecant at PI over 2"
+/// formula: "=CSC(PI()/2)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Zero sine denominator"
+/// formula: "=CSC(0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - COT
+///   - SEC
+/// faq:
+///   - q: "When does CSC return #DIV/0!?"
+///     a: "CSC returns #DIV/0! when SIN(angle) is effectively zero."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CSC
+/// Type: CscFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CSC(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for CscFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "CSC"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        let s = x.sin();
+        if s.abs() < EPSILON_NEAR_ZERO {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / s,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_csc {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_csc_basic_and_div0() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CscFn));
+        let ctx = interp(&wb);
+        let csc = ctx.context.get_function("", "CSC").unwrap();
+        let a0 = make_num_ast(PI / 2.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match csc
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 1.0),
+            v => panic!("unexpected {v:?}"),
+        }
+        let a1 = make_num_ast(0.0);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match csc
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CotFn;
+/// Returns the cotangent of an angle, defined as `1 / TAN(angle)`.
+///
+/// `COT` is useful when working with reciprocal tangent relationships.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `TAN(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cotangent at PI over 4"
+/// formula: "=COT(PI()/4)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Undefined cotangent at zero"
+/// formula: "=COT(0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAN
+///   - SEC
+///   - CSC
+/// faq:
+///   - q: "Why is COT undefined at integer multiples of PI()?"
+///     a: "At those points TAN is zero, so 1/TAN triggers a #DIV/0! condition."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COT
+/// Type: CotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for CotFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "COT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        let t = x.tan();
+        if t.abs() < EPSILON_NEAR_ZERO {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / t,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_cot {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_cot_basic_and_div0() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CotFn));
+        let ctx = interp(&wb);
+        let cot = ctx.context.get_function("", "COT").unwrap();
+        let a0 = make_num_ast(PI / 4.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match cot
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 1.0),
+            v => panic!("unexpected {v:?}"),
+        }
+        let a1 = make_num_ast(0.0);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match cot
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AcotFn;
+/// Returns the angle in radians whose cotangent is the input value.
+///
+/// `ACOT` maps real inputs to principal angles in `(0, PI())`.
+///
+/// # Remarks
+/// - Domain: accepts any real number, including `0`.
+/// - Radians: output is in `(0, PI())`, with `ACOT(0) = PI()/2`.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arccotangent of one"
+/// formula: "=ACOT(1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Arccotangent of negative one"
+/// formula: "=ACOT(-1)"
+/// expected: 2.356194490192345
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATAN
+///   - ATAN2
+///   - COT
+/// faq:
+///   - q: "What is ACOT(0)?"
+///     a: "ACOT(0) is PI()/2 in the principal-value branch used here."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ACOT
+/// Type: AcotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AcotFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ACOT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        let result = if x == 0.0 {
+            PI / 2.0
+        } else if x > 0.0 {
+            (1.0 / x).atan()
+        } else {
+            (1.0 / x).atan() + PI
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_acot {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_acot_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AcotFn));
+        let ctx = interp(&wb);
+        let acot = ctx.context.get_function("", "ACOT").unwrap();
+        let a0 = make_num_ast(2.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match acot
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 0.4636476090008061),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+/* ─────────────────────────── TRIG: hyperbolic ──────────────────────── */
+
+#[derive(Debug)]
+pub struct SinhFn;
+/// Returns the hyperbolic sine of a number.
+///
+/// `SINH` computes `(e^x - e^-x) / 2`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic sine at zero"
+/// formula: "=SINH(0)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic sine at one"
+/// formula: "=SINH(1)"
+/// expected: 1.1752011936438014
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ASINH
+///   - COSH
+///   - TANH
+/// faq:
+///   - q: "Is SINH expecting radians like SIN?"
+///     a: "No. SINH is hyperbolic and treats input as a pure numeric value, not an angle unit."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SINH
+/// Type: SinhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SINH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for SinhFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "SINH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.sinh(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_sinh {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_sinh_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SinhFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "SINH").unwrap();
+        let a0 = make_num_ast(1.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        let fctx = ctx.function_context(None);
+        match f.dispatch(&args, &fctx).unwrap().into_literal() {
+            LiteralValue::Number(n) => assert_close(n, (1.0f64).sinh()),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CoshFn;
+/// Returns the hyperbolic cosine of a number.
+///
+/// `COSH` computes `(e^x + e^-x) / 2`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosine at zero"
+/// formula: "=COSH(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosine at one"
+/// formula: "=COSH(1)"
+/// expected: 1.5430806348152437
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ACOSH
+///   - SINH
+///   - TANH
+/// faq:
+///   - q: "Can COSH produce #NUM! domain errors?"
+///     a: "No function-specific domain errors are enforced for real inputs."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COSH
+/// Type: CoshFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COSH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for CoshFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "COSH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.cosh(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_cosh {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_cosh_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CoshFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "COSH").unwrap();
+        let a0 = make_num_ast(1.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, (1.0f64).cosh()),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TanhFn;
+/// Returns the hyperbolic tangent of a number.
+///
+/// `TANH` computes `SINH(x) / COSH(x)`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic tangent at zero"
+/// formula: "=TANH(0)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic tangent at two"
+/// formula: "=TANH(2)"
+/// expected: 0.9640275800758169
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATANH
+///   - SINH
+///   - COSH
+/// faq:
+///   - q: "What output range should TANH produce?"
+///     a: "For real inputs, TANH stays strictly between -1 and 1."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TANH
+/// Type: TanhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TANH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for TanhFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "TANH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.tanh(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_tanh {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_tanh_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TanhFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "TANH").unwrap();
+        let a0 = make_num_ast(0.5);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, (0.5f64).tanh()),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AsinhFn;
+/// Returns the inverse hyperbolic sine of a number.
+///
+/// `ASINH` is the inverse of `SINH` over all real inputs.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic sine of one"
+/// formula: "=ASINH(1)"
+/// expected: 0.881373587019543
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic sine of negative two"
+/// formula: "=ASINH(-2)"
+/// expected: -1.4436354751788103
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SINH
+///   - ACOSH
+///   - ATANH
+/// faq:
+///   - q: "Does ASINH have restricted input domain?"
+///     a: "No. ASINH accepts any real-valued input."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ASINH
+/// Type: AsinhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ASINH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AsinhFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ASINH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.asinh(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_asinh {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_asinh_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AsinhFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ASINH").unwrap();
+        let a0 = make_num_ast(1.5);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, (1.5f64).asinh()),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AcoshFn;
+/// Returns the inverse hyperbolic cosine of a number.
+///
+/// `ACOSH` is the inverse of `COSH` for inputs at or above `1`.
+///
+/// # Remarks
+/// - Domain: input must be greater than or equal to `1`.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: returns `#NUM!` when the input is less than `1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Boundary value"
+/// formula: "=ACOSH(1)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic cosine of ten"
+/// formula: "=ACOSH(10)"
+/// expected: 2.993222846126381
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COSH
+///   - ASINH
+///   - ATANH
+/// faq:
+///   - q: "When does ACOSH return #NUM!?"
+///     a: "ACOSH requires input >= 1; values below 1 return #NUM!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ACOSH
+/// Type: AcoshFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOSH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AcoshFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ACOSH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        if x < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.acosh(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_acosh {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    #[test]
+    fn test_acosh_basic_and_domain() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AcoshFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ACOSH").unwrap();
+        let a0 = make_num_ast(1.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(0.0)
+        );
+        let a1 = make_num_ast(0.5);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AtanhFn;
+/// Returns the inverse hyperbolic tangent of a number.
+///
+/// `ATANH` is the inverse of `TANH` on the open interval `(-1, 1)`.
+///
+/// # Remarks
+/// - Domain: input must be strictly between `-1` and `1`.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: returns `#NUM!` when the input is `<= -1` or `>= 1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic tangent of one half"
+/// formula: "=ATANH(0.5)"
+/// expected: 0.5493061443340548
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Domain boundary error"
+/// formula: "=ATANH(1)"
+/// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TANH
+///   - ATAN
+///   - ASINH
+/// faq:
+///   - q: "Which inputs are invalid for ATANH?"
+///     a: "ATANH is only defined on (-1, 1); endpoints and outside values return #NUM!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ATANH
+/// Type: AtanhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ATANH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AtanhFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ATANH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        if x <= -1.0 || x >= 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.atanh(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_atanh {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_atanh_basic_and_domain() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AtanhFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ATANH").unwrap();
+        let a0 = make_num_ast(0.5);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, (0.5f64).atanh()),
+            v => panic!("unexpected {v:?}"),
+        }
+        let a1 = make_num_ast(1.0);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SechFn;
+/// Returns the hyperbolic secant of a number, defined as `1 / COSH(x)`.
+///
+/// `SECH` produces values in `(0, 1]` for real inputs.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic secant at zero"
+/// formula: "=SECH(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic secant at two"
+/// formula: "=SECH(2)"
+/// expected: 0.2658022288340797
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COSH
+///   - CSCH
+///   - COTH
+/// faq:
+///   - q: "Can SECH be negative for real inputs?"
+///     a: "No. For real numbers, SECH = 1/COSH is always positive."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SECH
+/// Type: SechFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SECH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for SechFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "SECH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / x.cosh(),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_sech {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_sech_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SechFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "SECH").unwrap();
+        let a0 = make_num_ast(0.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 1.0),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CschFn;
+/// Returns the hyperbolic cosecant of a number, defined as `1 / SINH(x)`.
+///
+/// `CSCH` is the reciprocal of `SINH` where defined.
+///
+/// # Remarks
+/// - Domain: valid for all real numbers except `0`.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosecant at one"
+/// formula: "=CSCH(1)"
+/// expected: 0.8509181282393216
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Division by zero at origin"
+/// formula: "=CSCH(0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SINH
+///   - COTH
+///   - SECH
+/// faq:
+///   - q: "When does CSCH return #DIV/0!?"
+///     a: "CSCH returns #DIV/0! when SINH(x) is zero, which occurs at x = 0."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CSCH
+/// Type: CschFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CSCH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for CschFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "CSCH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        let s = x.sinh(); // CSCH = 1/sinh(x), not 1/sin(x)
+        if s.abs() < EPSILON_NEAR_ZERO {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / s,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_csch {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_csch_basic_and_div0() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CschFn));
+        let ctx = interp(&wb);
+        let csch = ctx.context.get_function("", "CSCH").unwrap();
+        // CSCH(1) = 1/sinh(1) ~= 0.8509
+        let a0 = make_num_ast(1.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match csch
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 0.8509181282393216),
+            v => panic!("unexpected {v:?}"),
+        }
+        // CSCH(0) should be #DIV/0! since sinh(0) = 0
+        let a1 = make_num_ast(0.0);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match csch
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CothFn;
+/// Returns the hyperbolic cotangent of a number, defined as `COSH(x) / SINH(x)`.
+///
+/// `COTH` is the reciprocal of `TANH` where defined.
+///
+/// # Remarks
+/// - Domain: valid for all real numbers except `0`.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cotangent at one"
+/// formula: "=COTH(1)"
+/// expected: 1.3130352854993312
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Division by zero at origin"
+/// formula: "=COTH(0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TANH
+///   - CSCH
+///   - SECH
+/// faq:
+///   - q: "Why is COTH undefined at zero?"
+///     a: "COTH divides by SINH(x), and SINH(0) is zero, so #DIV/0! is returned."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COTH
+/// Type: CothFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COTH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for CothFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "COTH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        let s = x.sinh();
+        if s.abs() < EPSILON_NEAR_ZERO {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.cosh() / s,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_coth {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    #[test]
+    fn test_coth_div0() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CothFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "COTH").unwrap();
+        let a0 = make_num_ast(0.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+/* ───────────────────── Angle conversion & constant ─────────────────── */
+
+#[derive(Debug)]
+pub struct RadiansFn;
+/// Converts an angle from degrees to radians.
+///
+/// # Remarks
+/// - Use this before trigonometric functions when your source angle is in degrees.
+/// - Output is `degrees * PI() / 180`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert 180°"
+/// formula: "=RADIANS(180)"
+/// expected: 3.141592653589793
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert 45°"
+/// formula: "=RADIANS(45)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DEGREES
+///   - SIN
+///   - COS
+/// faq:
+///   - q: "When should I wrap angles with RADIANS?"
+///     a: "Use it whenever your source angle is in degrees and the downstream trig function expects radians."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: RADIANS
+/// Type: RadiansFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: RADIANS(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for RadiansFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "RADIANS"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let deg = unary_numeric_arg(args)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            deg * PI / 180.0,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_radians {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_radians_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(RadiansFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "RADIANS").unwrap();
+        let a0 = make_num_ast(180.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, PI),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DegreesFn;
+/// Converts an angle from radians to degrees.
+///
+/// # Remarks
+/// - Useful when converting the output of inverse trig functions.
+/// - Output is `radians * 180 / PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert PI radians"
+/// formula: "=DEGREES(PI())"
+/// expected: 180
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert PI/2 radians"
+/// formula: "=DEGREES(PI()/2)"
+/// expected: 90
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RADIANS
+///   - ATAN
+///   - ACOS
+/// faq:
+///   - q: "Does DEGREES change the angle value or just units?"
+///     a: "It converts units only, multiplying radians by 180/PI()."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: DEGREES
+/// Type: DegreesFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: DEGREES(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for DegreesFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "DEGREES"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let rad = unary_numeric_arg(args)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            rad * 180.0 / PI,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_degrees {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    #[test]
+    fn test_degrees_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(DegreesFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "DEGREES").unwrap();
+        let a0 = make_num_ast(PI);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 180.0),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct PiFn;
+/// Returns the mathematical constant π.
+///
+/// # Remarks
+/// - `PI()` takes no arguments.
+/// - Commonly used with trig and geometry formulas.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Pi constant"
+/// formula: "=PI()"
+/// expected: 3.141592653589793
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Circle circumference with radius 2"
+/// formula: "=2*PI()*2"
+/// expected: 12.566370614359172
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RADIANS
+///   - DEGREES
+///   - SIN
+/// faq:
+///   - q: "Can PI take arguments?"
+///     a: "No. PI() has arity zero and always returns the same constant."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: PI
+/// Type: PiFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: PI()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for PiFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "PI"
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(PI)))
+    }
+}
+
+#[cfg(test)]
+mod tests_pi {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_parse::LiteralValue;
+    #[test]
+    fn test_pi_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(PiFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "PI").unwrap();
+        assert_eq!(
+            f.eval(&[], &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(PI)
+        );
+    }
+}
+
+#[derive(Debug)]
+pub struct AcothFn;
+/// Returns the inverse hyperbolic cotangent of a number.
+///
+/// # Examples
+///
+/// ```excel
+/// =ACOTH(2)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic cotangent"
+/// formula: '=ACOTH(2)'
+/// expected: 0.5493061443340548
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATANH
+///   - ACOT
+/// faq:
+///   - q: "When does ACOTH return #NUM!?"
+///     a: "ACOTH requires |x| > 1, so inputs between -1 and 1 inclusive return #NUM!."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: ACOTH
+/// Type: AcothFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOTH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AcothFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ACOTH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        if x.abs() <= 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        // acoth(x) = 0.5 * ln((x+1)/(x-1))
+        let result = 0.5 * ((x + 1.0) / (x - 1.0)).ln();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_acoth {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "{a} !~= {b}");
+    }
+    #[test]
+    fn test_acoth_basic_and_domain() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AcothFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ACOTH").unwrap();
+        let a0 = make_num_ast(2.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 0.5 * (3.0f64 / 1.0).ln()),
+            v => panic!("unexpected {v:?}"),
+        }
+        // domain error for |x| <= 1
+        let a1 = make_num_ast(0.5);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
+pub fn register_builtins() {
+    // --- Trigonometry: circular ---
+    crate::function_registry::register_builtin(std::sync::Arc::new(SinFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CosFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(TanFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AsinFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AcosFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AtanFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(Atan2Fn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SecFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CscFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CotFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AcotFn));
+
+    // --- Trigonometry: hyperbolic ---
+    crate::function_registry::register_builtin(std::sync::Arc::new(SinhFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CoshFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(TanhFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AsinhFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AcoshFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AtanhFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AcothFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SechFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CschFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CothFn));
+
+    // --- Angle conversion and constants ---
+    crate::function_registry::register_builtin(std::sync::Arc::new(RadiansFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(DegreesFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(PiFn));
+}

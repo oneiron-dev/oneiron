@@ -1,0 +1,148 @@
+[package]
+name = "formualizer-eval"
+version = "0.9.3"
+edition = "2024"
+description = "High-performance Arrow-backed Excel formula engine with dependency graph and incremental recalculation"
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+readme = "README.md"
+keywords = ["spreadsheet", "excel", "evaluation", "arrow", "dependency-graph"]
+categories = ["data-structures", "mathematics"]
+
+[lints.rust]
+unused_variables = "allow"
+dead_code = "allow"
+
+[lints.rust.unexpected_cfgs]
+level = "allow"
+check-cfg = ['cfg(skip_until_transaction_context_impl)']
+
+[lints.clippy]
+too_many_arguments = "allow"
+only_used_in_recursion = "allow"
+
+[dependencies]
+formualizer-parse = { workspace = true }
+formualizer-macros  = { workspace = true }
+formualizer-common = { workspace = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+once_cell = { workspace = true }
+rustc-hash = { workspace = true }
+# default-features = false: SmallRng + seeded PRNG only; no OsRng / getrandom at runtime.
+rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
+rayon = "1.8"
+dashmap = "6.1.0"
+# clock feature controlled by the `system-clock` cargo feature below.
+chrono = { workspace = true }
+bitflags = "2.9.1"
+bumpalo = { version = "3.16", features = ["collections"] }
+smallvec = { workspace = true }
+# web-time is only needed for the js-runtime (browser/wasm-bindgen) profile.
+web-time = { workspace = true, optional = true }
+
+# Arrow (per-crate) — pinned to 58.x series
+arrow-array = "59.2.0"
+arrow-buffer = "59.2.0"
+arrow-schema = "59.2.0"
+arrow-select = "59.2.0"
+arrow-cast = "59.2.0"
+arrow = "59.2.0"
+
+[dependencies.tracing]
+version = "0.1"
+optional = true
+default-features = false
+features = ["std", "attributes"]
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+optional = true
+default-features = false
+features = ["std", "fmt", "env-filter"]
+
+[dependencies.tracing-chrome]
+version = "0.7"
+optional = true
+
+# JS entropy shims — only needed for the browser/wasm-bindgen profile.
+# For portable raw wasm (wasmtime guests) these are omitted; rand uses SmallRng
+# seeded from context and no ambient OsRng calls are made.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"], optional = true }
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { workspace = true }
+glob = "0.3"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+# Pure generators only (fp_coverage); default-features off keeps the umya/xlsx
+# fixture helpers out of the eval dev tree.
+formualizer-testkit = { path = "../formualizer-testkit", default-features = false }
+
+[[bench]]
+name = "interval_tree_bench"
+harness = false
+
+[[bench]]
+name = "sheet_ops"
+harness = false
+required-features = ["test-support"]
+
+[[test]]
+name = "fp8_ingest_pipeline_parity"
+path = "tests/fp8_ingest_pipeline_parity.rs"
+required-features = ["test-support"]
+
+[features]
+# system-clock: enables SystemClock + chrono ambient-time (Local::now / Utc::now).
+# Included in default for native + wasm-js consumers; disable for portable wasm guests.
+default = ["system-clock"]
+system-clock = ["chrono/clock"]
+serde = ["dep:serde", "formualizer-common/serde"]
+
+# js-runtime: opt into browser/wasm-bindgen execution environment.
+# Activates web-time (performance.now Instant), JS-backed getrandom entropy,
+# and chrono's JS Date clock (`wasmbind`) so the system-clock profile's
+# ambient `Local::now()` / `Utc::now()` (e.g. the per-recalc volatile clock
+# sample) works on wasm32-unknown-unknown instead of panicking with
+# "time not implemented on this platform".
+# Used by the formualizer-wasm binding crate; NOT enabled by default.
+js-runtime = ["dep:web-time", "dep:getrandom", "dep:getrandom02", "chrono/wasmbind"]
+
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
+tracing_chrome = ["tracing", "dep:tracing-chrome"]
+perf_instrumentation = []
+formula_plane_diagnostics = []
+# Private benchmark-only forced-replay seam; not a product configuration surface.
+benchmark_internal = []
+# Private test and integration support; never enabled by default.
+test-support = []
+
+[[example]]
+name = "perf_tranche_probe"
+path = "examples/perf_tranche_probe.rs"
+required-features = ["test-support"]
+
+[[example]]
+name = "range_projection_probe"
+path = "examples/range_projection_probe.rs"
+required-features = ["test-support"]
+
+[[example]]
+name = "recalc_quadratic"
+path = "examples/recalc_quadratic.rs"
+required-features = ["test-support"]
+
+[[example]]
+name = "recalc_reuse"
+path = "examples/recalc_reuse.rs"
+required-features = ["test-support"]
+
+[[example]]
+name = "recalc_invalidation"
+path = "examples/recalc_invalidation.rs"
+required-features = ["test-support"]

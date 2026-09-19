@@ -1,0 +1,1516 @@
+use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
+use crate::function::{FnCaps, Function, FunctionResolution};
+use crate::traits::{ArgumentHandle, FunctionContext};
+use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_parse::parser::ReferenceType;
+
+fn number_strict_scalar() -> ArgSchema {
+    ArgSchema {
+        kinds: smallvec::smallvec![ArgKind::Number],
+        required: true,
+        by_ref: false,
+        shape: ShapeKind::Scalar,
+        coercion: CoercionPolicy::NumberStrict,
+        max: None,
+        repeating: None,
+        default: None,
+    }
+}
+
+fn arg_byref_array() -> Vec<ArgSchema> {
+    vec![
+        // Accept both references and array literals
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Any],
+            required: true,
+            by_ref: false,
+            shape: ShapeKind::Range,
+            coercion: CoercionPolicy::None,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+        number_strict_scalar(),
+        // Column is optional for 1D arrays
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Number],
+            required: false,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::NumberStrict,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+    ]
+}
+
+fn arg_byref_reference() -> Vec<ArgSchema> {
+    vec![
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Range],
+            required: true,
+            by_ref: true,
+            shape: ShapeKind::Range,
+            coercion: CoercionPolicy::None,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+        number_strict_scalar(),
+        number_strict_scalar(),
+        ArgSchema {
+            // height optional
+            kinds: smallvec::smallvec![ArgKind::Number],
+            required: false,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::NumberStrict,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+        ArgSchema {
+            // width optional
+            kinds: smallvec::smallvec![ArgKind::Number],
+            required: false,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::NumberStrict,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+    ]
+}
+
+/// Resolve a reference's concrete 1-based inclusive bounds as
+/// `(sheet, start_row, start_col, end_row, end_col)`.
+///
+/// Fully bounded ranges use their declared bounds directly. Unbounded
+/// whole-column/whole-row (or open-ended) ranges are clamped to the used
+/// region via `ctx.resolve_range_view`, mirroring how MATCH/VLOOKUP resolve
+/// the same references. An empty resolved view yields `#REF!`.
+fn resolve_reference_bounds<'b>(
+    ctx: &dyn FunctionContext<'b>,
+    base: &ReferenceType,
+) -> Result<(Option<String>, u32, u32, u32, u32), ExcelError> {
+    match base {
+        ReferenceType::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } => {
+            if let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                (start_row, start_col, end_row, end_col)
+            {
+                return Ok((sheet.clone(), *sr, *sc, *er, *ec));
+            }
+            let rv = ctx.resolve_range_view(base, ctx.current_sheet())?;
+            if rv.is_empty() {
+                return Err(ExcelError::new(ExcelErrorKind::Ref));
+            }
+            // RangeView exposes absolute 0-based coordinates; ReferenceType is 1-based.
+            Ok((
+                sheet.clone(),
+                rv.start_row() as u32 + 1,
+                rv.start_col() as u32 + 1,
+                rv.end_row() as u32 + 1,
+                rv.end_col() as u32 + 1,
+            ))
+        }
+        ReferenceType::Cell {
+            sheet, row, col, ..
+        } => Ok((sheet.clone(), *row, *col, *row, *col)),
+        _ => Err(ExcelError::new(ExcelErrorKind::Ref)),
+    }
+}
+
+#[derive(Debug)]
+pub struct IndexFn;
+
+impl IndexFn {
+    fn index_argument<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<Option<i64>, ExcelError> {
+        if arg.is_omitted() {
+            return Ok(Some(0));
+        }
+        match arg.value()? {
+            crate::traits::CalcValue::Range(_)
+            | crate::traits::CalcValue::Scalar(LiteralValue::Array(_)) => Ok(None),
+            value => match value.into_literal() {
+                LiteralValue::Number(number) => Ok(Some(number as i64)),
+                LiteralValue::Int(integer) => Ok(Some(integer)),
+                _ => Err(ExcelError::new(ExcelErrorKind::Value)),
+            },
+        }
+    }
+
+    fn bounded_dimensions(base: &ReferenceType) -> Option<(u32, u32)> {
+        match base {
+            ReferenceType::Cell { .. } => Some((1, 1)),
+            ReferenceType::Range {
+                start_row: Some(start_row),
+                start_col: Some(start_col),
+                end_row: Some(end_row),
+                end_col: Some(end_col),
+                ..
+            } => Some((
+                end_row.checked_sub(*start_row)?.checked_add(1)?,
+                end_col.checked_sub(*start_col)?.checked_add(1)?,
+            )),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn precise_single_cell_selection<'a, 'b>(
+        args: &[ArgumentHandle<'a, 'b>],
+        rows: u32,
+        cols: u32,
+    ) -> bool {
+        if !(2..=3).contains(&args.len()) {
+            return false;
+        }
+        let Ok(Some(position)) = Self::index_argument(&args[1]) else {
+            return false;
+        };
+        if args.len() == 3 {
+            let Ok(Some(column)) = Self::index_argument(&args[2]) else {
+                return false;
+            };
+            if args[1].is_omitted() {
+                column > 0 && rows == 1 && u32::try_from(column).is_ok_and(|col| col <= cols)
+            } else if args[2].is_omitted() {
+                position > 0 && cols == 1 && u32::try_from(position).is_ok_and(|row| row <= rows)
+            } else {
+                position > 0
+                    && column > 0
+                    && u32::try_from(position).is_ok_and(|row| row <= rows)
+                    && u32::try_from(column).is_ok_and(|col| col <= cols)
+            }
+        } else if rows == 1 {
+            position > 0 && u32::try_from(position).is_ok_and(|col| col <= cols)
+        } else if cols == 1 {
+            position > 0 && u32::try_from(position).is_ok_and(|row| row <= rows)
+        } else {
+            false
+        }
+    }
+
+    fn reference_from_base<'a, 'b>(
+        args: &[ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+        base: ReferenceType,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        let position = match Self::index_argument(&args[1]) {
+            Ok(Some(position)) => position,
+            Ok(None) => return None,
+            Err(error) => return Some(Err(error)),
+        };
+        let explicit_col = if args.len() >= 3 {
+            match Self::index_argument(&args[2]) {
+                Ok(Some(column)) => Some(column),
+                Ok(None) => return None,
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            None
+        };
+
+        let (sheet, sr, sc, er, ec) = match resolve_reference_bounds(ctx, &base) {
+            Ok(bounds) => bounds,
+            Err(error) => return Some(Err(error)),
+        };
+        let (row, col) = match explicit_col {
+            Some(col) => (position, col),
+            None if sr == er => (1, position),
+            None => (position, 1),
+        };
+        if row < 0 || col < 0 {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+        }
+        let range_ref = |sheet, sr, sc, er, ec| ReferenceType::Range {
+            sheet,
+            start_row: Some(sr),
+            start_col: Some(sc),
+            end_row: Some(er),
+            end_col: Some(ec),
+            start_row_abs: false,
+            start_col_abs: false,
+            end_row_abs: false,
+            end_col_abs: false,
+        };
+        if col == 0 {
+            if row == 0 {
+                return Some(Ok(range_ref(sheet, sr, sc, er, ec)));
+            }
+            let r = sr + (row as u32) - 1;
+            if r > er {
+                return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+            }
+            return Some(Ok(if sc == ec {
+                ReferenceType::cell(sheet, r, sc)
+            } else {
+                range_ref(sheet, r, sc, r, ec)
+            }));
+        }
+        if row == 0 {
+            let c = sc + (col as u32) - 1;
+            if c > ec {
+                return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+            }
+            return Some(Ok(if sr == er {
+                ReferenceType::cell(sheet, sr, c)
+            } else {
+                range_ref(sheet, sr, c, er, c)
+            }));
+        }
+        let r = sr + (row as u32) - 1;
+        let c = sc + (col as u32) - 1;
+        if r > er || c > ec {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+        }
+        Some(Ok(ReferenceType::cell(sheet, r, c)))
+    }
+
+    fn materialize_reference<'b>(
+        ctx: &dyn FunctionContext<'b>,
+        reference: &ReferenceType,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let view = ctx.resolve_range_view(reference, ctx.current_sheet())?;
+        let (rows, cols) = view.dims();
+        if rows == 1 && cols == 1 {
+            Ok(crate::traits::CalcValue::Scalar(
+                view.as_1x1().unwrap_or(LiteralValue::Empty),
+            ))
+        } else {
+            Ok(crate::traits::CalcValue::Range(view))
+        }
+    }
+
+    /// Attempt the precise single-cell fast path.
+    ///
+    /// Returns `None` when any gate declines, in which case the caller falls
+    /// back to `validated_dispatch`. Factored out of `dispatch` (and
+    /// parameterized over the dispatching function) so tests can assert which
+    /// path a given argument shape takes and observe the format policy being
+    /// applied to the precise result.
+    pub(crate) fn precise_dispatch<'a, 'b, 'c>(
+        function: &dyn Function,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Option<crate::traits::CalcValue<'b>> {
+        let argument = args.first()?;
+        if !argument.may_return_reference() {
+            return None;
+        }
+        let Ok(FunctionResolution::Reference(base)) = argument.resolve_reference_or_value() else {
+            return None;
+        };
+        let (rows, cols) = Self::bounded_dimensions(&base)?;
+        if !Self::precise_single_cell_selection(args, rows, cols) {
+            return None;
+        }
+        let Some(Ok(reference @ ReferenceType::Cell { .. })) =
+            Self::reference_from_base(args, ctx, base)
+        else {
+            return None;
+        };
+        let value = Self::materialize_reference(ctx, &reference).ok()?;
+        Some(function.apply_format_propagation(value))
+    }
+
+    fn validated_dispatch<'a, 'b>(
+        &self,
+        args: &[ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        use crate::args::{ValidationOptions, validate_and_prepare};
+        if let Err(error) = validate_and_prepare(
+            args,
+            self.arg_schema(),
+            ValidationOptions {
+                warn_only: false,
+                min_args: self.min_args(),
+            },
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+        }
+        self.eval(args, ctx)
+            .map(|result| self.apply_format_propagation(result))
+    }
+}
+
+/// Returns the value or reference at a 1-based row and column within an array or range.
+///
+/// `INDEX` can operate on both references and array literals. When the first argument is
+/// a reference, this implementation resolves a referenced cell and materializes its value in
+/// value context.
+///
+/// # Remarks
+/// - Indexing is 1-based for both `row_num` and `column_num`.
+/// - If `column_num` is omitted for a single-row or single-column input, `row_num` selects the
+///   position along that 1D vector.
+/// - For rectangular 2D inputs, omitted `column_num` defaults to the first column.
+/// - A `row_num` or `column_num` of `0` selects the entire column or row respectively
+///   (both `0` selects the whole range), matching Excel.
+/// - Negative or out-of-bounds indexes return `#REF!`.
+/// - Non-numeric index arguments return `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Pick a value from a 2D table"
+/// grid:
+///   A1: "Item"
+///   B1: "Price"
+///   A2: "Pen"
+///   B2: 2.5
+///   A3: "Book"
+///   B3: 8
+/// formula: '=INDEX(A1:B3,3,2)'
+/// expected: 8
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Index into a 1D vector"
+/// grid:
+///   A1: "Q1"
+///   A2: "Q2"
+///   A3: "Q3"
+/// formula: '=INDEX(A1:A3,2)'
+/// expected: "Q2"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MATCH
+///   - XLOOKUP
+///   - OFFSET
+/// faq:
+///   - q: "How does INDEX behave when column_num is omitted?"
+///     a: "For single-row or single-column inputs, row_num selects the position along that vector; for 2D inputs, omitted column_num defaults to the first column."
+///   - q: "Which errors indicate bad indexes?"
+///     a: "Non-numeric index arguments return #VALUE!. A 0 row_num/column_num selects an entire column/row (Excel behavior); negative or out-of-bounds indexes return #REF!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: INDEX
+/// Type: IndexFn
+/// Min args: 2
+/// Max args: 3
+/// Variadic: false
+/// Signature: INDEX(arg1: any@range, arg2: number@scalar, arg3?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}
+/// Caps: PURE, RETURNS_REFERENCE
+/// [formualizer-docgen:schema:end]
+impl Function for IndexFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE | FnCaps::RETURNS_REFERENCE
+    }
+    fn name(&self) -> &'static str {
+        "INDEX"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use once_cell::sync::Lazy;
+        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_byref_array);
+        &SCHEMA
+    }
+
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if let Some(value) = Self::precise_dispatch(self, args, ctx) {
+            return Ok(value);
+        }
+        self.validated_dispatch(args, ctx)
+    }
+
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        if args.len() < 2 {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
+        }
+        let base = match args[0].resolve_reference_or_value() {
+            Ok(FunctionResolution::Reference(reference)) => reference,
+            Ok(FunctionResolution::ReferenceError(_) | FunctionResolution::Value(_)) | Err(_) => {
+                return None;
+            }
+        };
+        Self::reference_from_base(args, ctx, base)
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // First try to handle as a reference
+        if let Some(result) = self.eval_reference(args, ctx) {
+            match result {
+                Ok(reference) => Self::materialize_reference(ctx, &reference).or_else(|error| {
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)))
+                }),
+                Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            }
+        } else {
+            // Handle array literal
+            if args.len() < 2 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
+            }
+            let v = args[0].value()?.into_literal();
+            let table: Vec<Vec<LiteralValue>> = match v {
+                LiteralValue::Array(rows) => rows,
+                other => vec![vec![other]],
+            };
+            // Defensive: value() currently materializes omitted indexes as Number(0), so these
+            // row/column checks are redundant while documenting whole-row/column intent.
+            let index = if args[1].is_omitted() {
+                0
+            } else {
+                match args[1].value()?.into_literal() {
+                    LiteralValue::Number(n) => n as i64,
+                    LiteralValue::Int(i) => i,
+                    _ => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value),
+                        )));
+                    }
+                }
+            };
+
+            // Optional explicit column_num (third argument).
+            let explicit_col = if args.len() >= 3 {
+                Some(if args[2].is_omitted() {
+                    0
+                } else {
+                    match args[2].value()?.into_literal() {
+                        LiteralValue::Number(n) => n as i64,
+                        LiteralValue::Int(i) => i,
+                        _ => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                                ExcelError::new(ExcelErrorKind::Value),
+                            )));
+                        }
+                    }
+                })
+            } else {
+                None
+            };
+
+            let nrows = table.len();
+            let ncols = table.iter().map(|r| r.len()).max().unwrap_or(0);
+            let single_row = nrows == 1;
+
+            // Map (index, optional column) to (row, col) exactly like eval_reference:
+            // for a single-row input the lone index selects the column, otherwise it
+            // selects the row and the column defaults to 1.
+            let (row, col) = match explicit_col {
+                Some(c) => (index, c),
+                None if single_row => (1, index),
+                None => (index, 1),
+            };
+
+            // Negative indices are #REF!. A 0 selects the entire row (column_num == 0)
+            // or entire column (row_num == 0); 0 for both yields the whole array.
+            // This mirrors the reference path so the two don't drift apart.
+            let ref_err = || {
+                crate::traits::CalcValue::Scalar(LiteralValue::Error(ExcelError::new(
+                    ExcelErrorKind::Ref,
+                )))
+            };
+            if row < 0 || col < 0 {
+                return Ok(ref_err());
+            }
+
+            // Wrap a multi-cell array result in a RangeView so aggregations
+            // (SUM, etc.) iterate it, matching how the reference path returns
+            // CalcValue::Range. A literal LiteralValue::Array would otherwise be
+            // strict-coerced as a single scalar by numeric callers.
+            let as_range = |rows: Vec<Vec<LiteralValue>>| {
+                crate::traits::CalcValue::Range(
+                    crate::engine::range_view::RangeView::from_owned_rows(rows, ctx.date_system()),
+                )
+            };
+
+            if col == 0 {
+                if row == 0 {
+                    // INDEX(array, 0, 0) -> the whole array.
+                    return Ok(as_range(table));
+                }
+                // INDEX(array, r, 0) -> the entire row r (scalar for a single-column array).
+                if row as usize > nrows {
+                    return Ok(ref_err());
+                }
+                let r = &table[row as usize - 1];
+                if ncols == 1 {
+                    return Ok(crate::traits::CalcValue::Scalar(
+                        r.first().cloned().unwrap_or(LiteralValue::Empty),
+                    ));
+                }
+                return Ok(as_range(vec![r.clone()]));
+            }
+            if row == 0 {
+                // INDEX(array, 0, c) -> the entire column c (scalar for a single-row array).
+                if col as usize > ncols {
+                    return Ok(ref_err());
+                }
+                let cidx = col as usize - 1;
+                if single_row {
+                    return Ok(crate::traits::CalcValue::Scalar(
+                        table[0].get(cidx).cloned().unwrap_or(LiteralValue::Empty),
+                    ));
+                }
+                let column: Vec<Vec<LiteralValue>> = table
+                    .iter()
+                    .map(|r| vec![r.get(cidx).cloned().unwrap_or(LiteralValue::Empty)])
+                    .collect();
+                return Ok(as_range(column));
+            }
+
+            // 1-based positive indexing.
+            if row as usize > nrows || col as usize > ncols {
+                return Ok(ref_err());
+            }
+            let val = table
+                .get(row as usize - 1)
+                .and_then(|r| r.get(col as usize - 1))
+                .cloned()
+                .unwrap_or_else(|| LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
+            Ok(crate::traits::CalcValue::Scalar(val))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct OffsetFn;
+
+/// Returns a reference shifted from a starting reference by rows and columns.
+///
+/// `OFFSET` is volatile and returns a reference that can point to a single cell or a resized
+/// range, depending on the optional `height` and `width` arguments.
+///
+/// # Remarks
+/// - `rows` and `cols` shift from the top-left of `reference`.
+/// - If omitted, `height` and `width` default to the original reference size.
+/// - Non-positive target coordinates or dimensions return `#REF!`.
+/// - Non-numeric offset/size inputs return `#VALUE!`.
+/// - In value context, a 1x1 result returns a scalar; larger results spill as an array.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Move one row down and one column right"
+/// grid:
+///   A1: 10
+///   B2: 42
+/// formula: '=OFFSET(A1,1,1)'
+/// expected: 42
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Offset and resize a range"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   A3: 3
+///   B1: 4
+///   B2: 5
+///   B3: 6
+/// formula: '=SUM(OFFSET(A1,1,0,2,2))'
+/// expected: 16
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDEX
+///   - INDIRECT
+///   - ADDRESS
+/// faq:
+///   - q: "What defaults are used when height and width are omitted?"
+///     a: "OFFSET keeps the source reference size, then applies the row/column shift to that same-sized block."
+///   - q: "When does OFFSET return #REF!?"
+///     a: "It returns #REF! if the shifted start goes to row/column <= 0 or if requested height/width are non-positive."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: OFFSET
+/// Type: OffsetFn
+/// Min args: 3
+/// Max args: 5
+/// Variadic: false
+/// Signature: OFFSET(arg1: range@range, arg2: number@scalar, arg3: number@scalar, arg4?: number@scalar, arg5?: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}
+/// Caps: PURE, VOLATILE, RETURNS_REFERENCE, DYNAMIC_DEPENDENCY
+/// [formualizer-docgen:schema:end]
+impl Function for OffsetFn {
+    fn caps(&self) -> FnCaps {
+        // OFFSET is volatile in Excel semantics and has runtime-dynamic dependencies.
+        FnCaps::PURE | FnCaps::RETURNS_REFERENCE | FnCaps::VOLATILE | FnCaps::DYNAMIC_DEPENDENCY
+    }
+    fn name(&self) -> &'static str {
+        "OFFSET"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use once_cell::sync::Lazy;
+        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_byref_reference);
+        &SCHEMA
+    }
+
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        if args.len() < 3 {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
+        }
+        let base = match args[0].as_reference_or_eval() {
+            Ok(r) => r,
+            Err(e) => return Some(Err(e)),
+        };
+        let dr = match args[1].value() {
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Number(n) => n as i64,
+                LiteralValue::Int(i) => i,
+                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+            },
+            Err(e) => return Some(Err(e)),
+        };
+        let dc = match args[2].value() {
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Number(n) => n as i64,
+                LiteralValue::Int(i) => i,
+                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+            },
+            Err(e) => return Some(Err(e)),
+        };
+
+        // Unbounded ranges (e.g. B:B, 2:2) are clamped to the used region
+        // instead of erroring.
+        let (sheet, sr, sc, er, ec) = match resolve_reference_bounds(ctx, &base) {
+            Ok(bounds) => bounds,
+            Err(e) => return Some(Err(e)),
+        };
+
+        let nsr = (sr as i64) + dr;
+        let nsc = (sc as i64) + dc;
+        let height = if args.len() >= 4 && !args[3].is_omitted() {
+            match args[3].value() {
+                Ok(cv) => match cv.into_literal() {
+                    LiteralValue::Number(n) => n as i64,
+                    LiteralValue::Int(i) => i,
+                    _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+                },
+                Err(e) => return Some(Err(e)),
+            }
+        } else {
+            (er as i64) - (sr as i64) + 1
+        };
+        let width = if args.len() >= 5 && !args[4].is_omitted() {
+            match args[4].value() {
+                Ok(cv) => match cv.into_literal() {
+                    LiteralValue::Number(n) => n as i64,
+                    LiteralValue::Int(i) => i,
+                    _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+                },
+                Err(e) => return Some(Err(e)),
+            }
+        } else {
+            (ec as i64) - (sc as i64) + 1
+        };
+
+        if nsr <= 0 || nsc <= 0 || height <= 0 || width <= 0 {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+        }
+        let ner = nsr + height - 1;
+        let nec = nsc + width - 1;
+
+        if height == 1 && width == 1 {
+            Some(Ok(ReferenceType::cell(sheet, nsr as u32, nsc as u32)))
+        } else {
+            Some(Ok(ReferenceType::range(
+                sheet,
+                Some(nsr as u32),
+                Some(nsc as u32),
+                Some(ner as u32),
+                Some(nec as u32),
+            )))
+        }
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if let Some(Ok(r)) = self.eval_reference(args, ctx) {
+            let current_sheet = ctx.current_sheet();
+            match ctx.resolve_range_view(&r, current_sheet) {
+                Ok(rv) => {
+                    let (rows, cols) = rv.dims();
+                    if rows == 1 && cols == 1 {
+                        Ok(crate::traits::CalcValue::Scalar(
+                            rv.as_1x1().unwrap_or(LiteralValue::Empty),
+                        ))
+                    } else {
+                        Ok(crate::traits::CalcValue::Range(rv))
+                    }
+                }
+                Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            }
+        } else {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Ref),
+            )))
+        }
+    }
+}
+
+fn arg_indirect() -> Vec<ArgSchema> {
+    vec![
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Text],
+            required: true,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::None,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Logical, ArgKind::Number],
+            required: false,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::Logical,
+            max: None,
+            repeating: None,
+            default: Some(LiteralValue::Boolean(true)),
+        },
+    ]
+}
+
+#[derive(Debug)]
+pub struct IndirectFn;
+
+/// Converts text into a reference and returns the referenced value or range.
+///
+/// `INDIRECT` lets formulas build references dynamically from strings such as `"A1"` or
+/// `"Sheet2!B3:C5"`.
+///
+/// # Remarks
+/// - `a1_style` defaults to `TRUE` (A1 style parsing).
+/// - `a1_style=FALSE` (R1C1 parsing) is currently not implemented and returns `#N/IMPL!`.
+/// - Invalid or unresolved references return `#REF!`.
+/// - The function is volatile because target references can change without direct dependency links.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Resolve a direct cell reference"
+/// grid:
+///   A1: 99
+/// formula: '=INDIRECT("A1")'
+/// expected: 99
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Resolve a range and aggregate it"
+/// grid:
+///   A1: 5
+///   A2: 7
+///   A3: 9
+/// formula: '=SUM(INDIRECT("A1:A3"))'
+/// expected: 21
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ADDRESS
+///   - INDEX
+///   - OFFSET
+/// faq:
+///   - q: "What happens if a1_style is FALSE?"
+///     a: "R1C1 parsing is not implemented here yet, so INDIRECT(...,FALSE) returns #N/IMPL!."
+///   - q: "How are bad reference strings reported?"
+///     a: "If the text cannot be parsed or resolved to a valid reference, INDIRECT returns #REF!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: INDIRECT
+/// Type: IndirectFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: INDIRECT(arg1: text@scalar, arg2?: logical|number@scalar)
+/// Arg schema: arg1{kinds=text,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=logical|number,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE, VOLATILE, RETURNS_REFERENCE, DYNAMIC_DEPENDENCY
+/// [formualizer-docgen:schema:end]
+impl Function for IndirectFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE | FnCaps::RETURNS_REFERENCE | FnCaps::VOLATILE | FnCaps::DYNAMIC_DEPENDENCY
+    }
+    fn name(&self) -> &'static str {
+        "INDIRECT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use once_cell::sync::Lazy;
+        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_indirect);
+        &SCHEMA
+    }
+
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        if args.is_empty() {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
+        }
+
+        let ref_text = match args[0].value() {
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Text(s) => s.to_string(),
+                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+            },
+            Err(e) => return Some(Err(e)),
+        };
+
+        let a1_style = if args.len() >= 2 {
+            match args[1].value() {
+                Ok(cv) => match cv.into_literal() {
+                    LiteralValue::Boolean(b) => b,
+                    LiteralValue::Int(i) => i != 0,
+                    LiteralValue::Number(n) => n != 0.0,
+                    _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+                },
+                Err(e) => return Some(Err(e)),
+            }
+        } else {
+            true
+        };
+
+        if !a1_style {
+            // The A1/R1C1 flag does not apply to defined names or tables (they are
+            // neither A1 nor R1C1 syntax). Excel resolves `INDIRECT(name, FALSE)`
+            // exactly like `INDIRECT(name)`, so handle those before refusing R1C1.
+            // Real R1C1 cell/range text remains unsupported.
+            return match formualizer_parse::parser::ReferenceType::from_string(&ref_text) {
+                Ok(ReferenceType::NamedRange(name)) => Some(Ok(ReferenceType::NamedRange(name))),
+                Ok(ReferenceType::Table(tref)) => Some(Ok(ReferenceType::Table(tref))),
+                _ => Some(Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                    "INDIRECT with R1C1 style (second argument FALSE) is not yet supported",
+                ))),
+            };
+        }
+
+        let parsed = formualizer_parse::parser::ReferenceType::parse_sheet_ref(&ref_text);
+
+        match parsed {
+            Ok(formualizer_common::SheetRef::Cell(cell)) => {
+                let sheet = match cell.sheet {
+                    formualizer_common::SheetLocator::Current => None,
+                    formualizer_common::SheetLocator::Name(name) => Some(name.to_string()),
+                    formualizer_common::SheetLocator::Id(_) => None,
+                };
+                Some(Ok(ReferenceType::Cell {
+                    sheet,
+                    row: cell.coord.row() + 1,
+                    col: cell.coord.col() + 1,
+                    row_abs: cell.coord.row_abs(),
+                    col_abs: cell.coord.col_abs(),
+                }))
+            }
+            Ok(formualizer_common::SheetRef::Range(range)) => {
+                let sheet = match range.sheet {
+                    formualizer_common::SheetLocator::Current => None,
+                    formualizer_common::SheetLocator::Name(name) => Some(name.to_string()),
+                    formualizer_common::SheetLocator::Id(_) => None,
+                };
+                Some(Ok(ReferenceType::Range {
+                    sheet,
+                    start_row: range.start_row.map(|b| b.index + 1),
+                    start_col: range.start_col.map(|b| b.index + 1),
+                    end_row: range.end_row.map(|b| b.index + 1),
+                    end_col: range.end_col.map(|b| b.index + 1),
+                    start_row_abs: range.start_row.map(|b| b.abs).unwrap_or(false),
+                    start_col_abs: range.start_col.map(|b| b.abs).unwrap_or(false),
+                    end_row_abs: range.end_row.map(|b| b.abs).unwrap_or(false),
+                    end_col_abs: range.end_col.map(|b| b.abs).unwrap_or(false),
+                }))
+            }
+            Err(_) => match formualizer_parse::parser::ReferenceType::from_string(&ref_text) {
+                Ok(ReferenceType::NamedRange(name)) => Some(Ok(ReferenceType::NamedRange(name))),
+                Ok(ReferenceType::Table(tref)) => Some(Ok(ReferenceType::Table(tref))),
+                _ => Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
+            },
+        }
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        match self.eval_reference(args, ctx) {
+            Some(Ok(r)) => {
+                let current_sheet = ctx.current_sheet();
+                match ctx.resolve_range_view(&r, current_sheet) {
+                    Ok(rv) => {
+                        let (rows, cols) = rv.dims();
+                        if rows == 1 && cols == 1 {
+                            Ok(crate::traits::CalcValue::Scalar(
+                                rv.as_1x1().unwrap_or(LiteralValue::Empty),
+                            ))
+                        } else {
+                            Ok(crate::traits::CalcValue::Range(rv))
+                        }
+                    }
+                    Err(e) => {
+                        let mapped = if e.kind == ExcelErrorKind::Name {
+                            ExcelError::new(ExcelErrorKind::Ref)
+                        } else {
+                            e
+                        };
+                        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            mapped,
+                        )))
+                    }
+                }
+            }
+            Some(Err(e)) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Ref),
+            ))),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct HyperlinkFn;
+
+/// Returns the friendly name of a hyperlink, or its link location when no name is given.
+///
+/// The returned value is `friendly_name` when the second argument is present,
+/// otherwise `link_location`.
+///
+/// Known divergence: the friendly name is always returned as text, whereas
+/// Excel passes numbers and booleans through with their original type, so
+/// `=ISNUMBER(HYPERLINK("x",1))` is FALSE here and TRUE in Excel.
+///
+/// ```yaml,sandbox
+/// title: "Hyperlink with a friendly name"
+/// formula: '=HYPERLINK("https://example.com","Example")'
+/// expected: "Example"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperlink without a friendly name"
+/// formula: '=HYPERLINK("https://example.com")'
+/// expected: "https://example.com"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDIRECT
+/// faq:
+///   - q: "What does HYPERLINK return?"
+///     a: "The friendly name when provided, otherwise the link location, always as text."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: HYPERLINK
+/// Type: HyperlinkFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: HYPERLINK(arg1: any@scalar, arg2?: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for HyperlinkFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE
+    }
+    fn name(&self) -> &'static str {
+        "HYPERLINK"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut optional = ArgSchema::any();
+            optional.required = false;
+            vec![ArgSchema::any(), optional]
+        });
+        &SCHEMA
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let link = hyperlink_text(&args[0])?;
+        if args.len() < 2 {
+            return Ok(link);
+        }
+        hyperlink_text(&args[1])
+    }
+}
+
+/// Coerces a HYPERLINK argument to its display text.
+///
+/// Errors propagate as the argument's own error. Multi-cell references and
+/// array constants cannot name a hyperlink target, so they surface `#VALUE!`
+/// instead of leaking a debug-formatted array literal into the cell text.
+/// A 1x1 array collapses to its single element.
+fn hyperlink_text<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    let lit = match arg.value()? {
+        crate::traits::CalcValue::Scalar(lit) => lit,
+        crate::traits::CalcValue::AnnotatedScalar(lit, _) => lit,
+        crate::traits::CalcValue::Range(view) => {
+            let (rows, cols) = view.dims();
+            if rows == 1 && cols == 1 {
+                view.get_cell(0, 0)
+            } else {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+        }
+        crate::traits::CalcValue::Callable(_) => {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+            )));
+        }
+    };
+    Ok(crate::traits::CalcValue::Scalar(match lit {
+        LiteralValue::Error(e) => LiteralValue::Error(e),
+        LiteralValue::Array(arr) if arr.len() == 1 && arr[0].len() == 1 => {
+            LiteralValue::Text(crate::coercion::to_text_invariant(&arr[0][0]))
+        }
+        LiteralValue::Array(_) => LiteralValue::Error(ExcelError::new_value()),
+        other => LiteralValue::Text(crate::coercion::to_text_invariant(&other)),
+    }))
+}
+
+pub fn register_builtins() {
+    crate::function_registry::register_builtin(std::sync::Arc::new(IndexFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(OffsetFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(IndirectFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(HyperlinkFn));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builtins::lookup::MatchFn;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_common::error::{ExcelError, ExcelErrorKind};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, Parser};
+
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+
+    fn evaluate_formula(formula: &str, wb: &TestWorkbook) -> Result<LiteralValue, ExcelError> {
+        let mut parser = Parser::new(formula).unwrap();
+        let ast = parser
+            .parse()
+            .map_err(|e| ExcelError::new(ExcelErrorKind::Error).with_message(e.message.clone()))?;
+        Ok(interp(wb).evaluate_ast(&ast)?.into_literal())
+    }
+
+    #[test]
+    fn index_returns_reference_and_materializes_in_value_context() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(42))
+            .with_function(std::sync::Arc::new(IndexFn));
+        let ctx = interp(&wb);
+
+        // Build INDEX(A1:C3,2,2) expecting B2
+        let array_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:C3".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(3),
+                    end_col: Some(3),
+                    start_row_abs: false,
+                    start_col_abs: false,
+                    end_row_abs: false,
+                    end_col_abs: false,
+                },
+            },
+            None,
+        );
+        let row = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+        let col = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+        let call = ASTNode::new(
+            ASTNodeType::Function {
+                name: "INDEX".into(),
+                args: vec![array_ref.clone(), row.clone(), col.clone()],
+            },
+            None,
+        );
+
+        // Reference context
+        let r = ctx.evaluate_ast_as_reference(&call).expect("ref ok");
+        match r {
+            ReferenceType::Cell { row, col, .. } => {
+                assert_eq!((row, col), (2, 2));
+            }
+            _ => panic!(),
+        }
+
+        // Value context (scalar materialization)
+        let args = vec![
+            ArgumentHandle::new(&array_ref, &ctx),
+            ArgumentHandle::new(&row, &ctx),
+            ArgumentHandle::new(&col, &ctx),
+        ];
+        let f = ctx.context.get_function("", "INDEX").unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(42.0));
+    }
+
+    #[test]
+    fn index_single_row_reference_uses_omitted_col_as_horizontal_position() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+        let ctx = interp(&wb);
+
+        let array_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:C1".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(1),
+                    end_col: Some(3),
+                    start_row_abs: false,
+                    start_col_abs: false,
+                    end_row_abs: false,
+                    end_col_abs: false,
+                },
+            },
+            None,
+        );
+        let index = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+        let call = ASTNode::new(
+            ASTNodeType::Function {
+                name: "INDEX".into(),
+                args: vec![array_ref.clone(), index.clone()],
+            },
+            None,
+        );
+
+        let r = ctx.evaluate_ast_as_reference(&call).expect("ref ok");
+        match r {
+            ReferenceType::Cell { row, col, .. } => assert_eq!((row, col), (1, 2)),
+            _ => panic!(),
+        }
+
+        let args = vec![
+            ArgumentHandle::new(&array_ref, &ctx),
+            ArgumentHandle::new(&index, &ctx),
+        ];
+        let f = ctx.context.get_function("", "INDEX").unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_single_column_reference_keeps_omitted_col_as_vertical_position() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+        let ctx = interp(&wb);
+
+        let array_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:A3".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(3),
+                    end_col: Some(1),
+                    start_row_abs: false,
+                    start_col_abs: false,
+                    end_row_abs: false,
+                    end_col_abs: false,
+                },
+            },
+            None,
+        );
+        let index = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+        let args = vec![
+            ArgumentHandle::new(&array_ref, &ctx),
+            ArgumentHandle::new(&index, &ctx),
+        ];
+        let f = ctx.context.get_function("", "INDEX").unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_rectangular_reference_defaults_omitted_col_to_first_column() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(200))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(A1:B2,2)", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_single_row_reference_match_position_materializes_value() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn))
+            .with_function(std::sync::Arc::new(MatchFn));
+
+        let value = evaluate_formula("=INDEX(A1:C1,MATCH(20,A1:C1,0))", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_single_row_reference_out_of_bounds_is_ref() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(A1:C1,4)", &wb).unwrap();
+        match value {
+            LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Ref),
+            other => panic!("expected #REF!, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn index_zero_column_degenerates_to_cell_in_single_column_range() {
+        // INDEX(B1:B5, 2, 0) -> entire row 2 of a single-column range = B2.
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(B1:B5,2,0)", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_zero_row_degenerates_to_cell_in_single_row_range() {
+        // INDEX(A1:C1, 0, 2) -> entire column 2 of a single-row range = B1.
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(A1:C1,0,2)", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_zero_column_returns_entire_row_range() {
+        // INDEX(A1:C3, 2, 0) -> entire row 2 (A2:C2); SUM materializes it.
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(2))
+            .with_cell_a1("Sheet1", "C2", LiteralValue::Int(3))
+            .with_function(std::sync::Arc::new(IndexFn))
+            .with_function(std::sync::Arc::new(crate::builtins::math::aggregate::SumFn));
+
+        let value = evaluate_formula("=SUM(INDEX(A1:C3,2,0))", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(6.0));
+    }
+
+    #[test]
+    fn index_zero_row_returns_entire_column_range() {
+        // INDEX(A1:C3, 0, 2) -> entire column 2 (B1:B3); SUM materializes it.
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(4))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(5))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Int(6))
+            .with_function(std::sync::Arc::new(IndexFn))
+            .with_function(std::sync::Arc::new(crate::builtins::math::aggregate::SumFn));
+
+        let value = evaluate_formula("=SUM(INDEX(A1:C3,0,2))", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(15.0));
+    }
+
+    #[test]
+    fn index_negative_index_is_ref() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(A1:C3,-1,2)", &wb).unwrap();
+        match value {
+            LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Ref),
+            other => panic!("expected #REF!, got {other:?}"),
+        }
+    }
+
+    fn as_number(v: &LiteralValue) -> f64 {
+        match v {
+            LiteralValue::Number(n) => *n,
+            LiteralValue::Int(i) => *i as f64,
+            other => panic!("expected number, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn index_array_constant_zero_column_returns_entire_row() {
+        // INDEX({1,2,3},0) over an array constant -> the whole row {1,2,3}.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let raw = evaluate_formula("=INDEX({1,2,3},0)", &wb).unwrap();
+        let LiteralValue::Array(rows) = raw else {
+            panic!("expected a 1x3 array, got {raw:?}");
+        };
+        assert_eq!(rows.len(), 1);
+        let flat: Vec<f64> = rows[0].iter().map(as_number).collect();
+        assert_eq!(flat, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn index_array_constant_zero_row_returns_entire_column() {
+        // INDEX({1,2;3,4},0,2) over an array constant -> the whole column {2;4}.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let raw = evaluate_formula("=INDEX({1,2;3,4},0,2)", &wb).unwrap();
+        let LiteralValue::Array(rows) = raw else {
+            panic!("expected a 2x1 array, got {raw:?}");
+        };
+        let flat: Vec<f64> = rows.iter().map(|r| as_number(&r[0])).collect();
+        assert_eq!(flat, vec![2.0, 4.0]);
+    }
+
+    #[test]
+    fn index_array_constant_zero_zero_returns_whole_array() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let raw = evaluate_formula("=INDEX({1,2;3,4},0,0)", &wb).unwrap();
+        let LiteralValue::Array(rows) = raw else {
+            panic!("expected the whole 2x2 array, got {raw:?}");
+        };
+        let flat: Vec<f64> = rows.iter().flatten().map(as_number).collect();
+        assert_eq!(flat, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn index_array_constant_row_zero_for_single_row_degenerates_to_scalar() {
+        // INDEX({1,2,3},0,2): single-row array, entire column 2 -> scalar 2.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX({1,2,3},0,2)", &wb).unwrap();
+        assert_eq!(as_number(&value), 2.0);
+    }
+
+    #[test]
+    fn index_array_constant_negative_is_ref() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX({1,2,3},-1)", &wb).unwrap();
+        match value {
+            LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Ref),
+            other => panic!("expected #REF!, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn offset_returns_reference_and_materializes() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(5))
+            .with_function(std::sync::Arc::new(OffsetFn));
+        let ctx = interp(&wb);
+
+        let base = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1".into(),
+                reference: ReferenceType::Cell {
+                    sheet: None,
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                },
+            },
+            None,
+        );
+        let dr = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);
+        let dc = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);
+        let call = ASTNode::new(
+            ASTNodeType::Function {
+                name: "OFFSET".into(),
+                args: vec![base.clone(), dr.clone(), dc.clone()],
+            },
+            None,
+        );
+
+        let r = ctx.evaluate_ast_as_reference(&call).expect("ref ok");
+        match r {
+            ReferenceType::Cell { row, col, .. } => assert_eq!((row, col), (2, 2)),
+            _ => panic!(),
+        }
+
+        let args = vec![
+            ArgumentHandle::new(&base, &ctx),
+            ArgumentHandle::new(&dr, &ctx),
+            ArgumentHandle::new(&dc, &ctx),
+        ];
+        let f = ctx.context.get_function("", "OFFSET").unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(5.0));
+    }
+}

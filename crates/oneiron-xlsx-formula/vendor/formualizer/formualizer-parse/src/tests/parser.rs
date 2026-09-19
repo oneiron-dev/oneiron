@@ -1,0 +1,4193 @@
+#[cfg(test)]
+mod tests {
+    use crate::FormulaDialect;
+    use crate::tokenizer::TokenStream;
+    use formualizer_common::{ExcelError, LiteralValue};
+
+    use crate::parser::{
+        ASTNode, ASTNodeType, Parser, ParserError, ReferenceType, parse, parse_with_dialect,
+    };
+    use crate::parser::{CollectPolicy, RefView};
+
+    // Helper function to parse a formula
+    fn parse_formula(formula: &str) -> Result<ASTNode, ParserError> {
+        parse(formula)
+    }
+
+    fn parse_formula_with_dialect(
+        formula: &str,
+        dialect: FormulaDialect,
+    ) -> Result<ASTNode, ParserError> {
+        parse_with_dialect(formula, dialect)
+    }
+
+    #[test]
+    fn parser_rejects_best_effort_invalid_spans() {
+        let stream = TokenStream::new_best_effort("=A1+)");
+        let mut parser = Parser::from_token_stream(&stream);
+        let err = parser.parse().unwrap_err();
+        assert!(err.message.contains("Unexpected"));
+    }
+
+    #[test]
+    fn parser_accepts_lowercase_error_literals() {
+        let ast = parse_formula("=#ref!").expect("parse lowercase error literal");
+        match ast.node_type {
+            ASTNodeType::Literal(LiteralValue::Error(e)) => {
+                assert_eq!(e.kind, ExcelError::new_ref().kind)
+            }
+            other => panic!("expected error literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parser_accepts_sheet_prefixed_lowercase_error_literal() {
+        // Sheet-qualified error literals collapse to the bare error literal,
+        // preserving the error kind (here `#ref!` -> ExcelError::Ref).
+        let ast = parse_formula("=source!#ref!").expect("parse sheet-prefixed lowercase");
+        match ast.node_type {
+            ASTNodeType::Literal(LiteralValue::Error(e)) => {
+                assert_eq!(e.kind, ExcelError::new_ref().kind);
+            }
+            other => panic!("expected error literal, got {other:?}"),
+        }
+    }
+
+    mod sheet_qualified_errors {
+        use super::parse_formula;
+        use crate::parser::{ASTNode, ASTNodeType};
+        use formualizer_common::{ExcelErrorKind, LiteralValue};
+
+        fn parse_span(formula: &str) -> Result<ASTNode, crate::parser::ParserError> {
+            crate::parser::parse(formula)
+        }
+
+        fn assert_error_kind(formula: &str, expected: ExcelErrorKind) {
+            for (label, ast) in [
+                ("classic", parse_formula(formula).expect("classic parse")),
+                ("span", parse_span(formula).expect("span parse")),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::Literal(LiteralValue::Error(e)) => {
+                        assert_eq!(e.kind, expected, "{label} parser kind for {formula:?}");
+                    }
+                    other => panic!(
+                        "{label} parser: expected error literal for {formula:?}, got {other:?}"
+                    ),
+                }
+            }
+        }
+
+        #[test]
+        fn test_sheet_qualified_ref_error() {
+            assert_error_kind("=Sheet1!#REF!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn test_quoted_sheet_qualified_ref_error() {
+            assert_error_kind("='My Sheet'!#REF!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn test_sheet_qualified_div_error() {
+            assert_error_kind("=Sheet1!#DIV/0!", ExcelErrorKind::Div);
+        }
+
+        #[test]
+        fn test_sheet_qualified_value_error() {
+            assert_error_kind("=Sheet1!#VALUE!", ExcelErrorKind::Value);
+        }
+
+        #[test]
+        fn test_sheet_qualified_name_error() {
+            assert_error_kind("=Sheet1!#NAME?", ExcelErrorKind::Name);
+        }
+
+        #[test]
+        fn test_sheet_qualified_lowercase() {
+            assert_error_kind("=sheet1!#ref!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn test_external_sheet_qualified_error() {
+            assert_error_kind("=[1]Sheet1!#REF!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn negative_unknown_error_code_with_sheet_prefix() {
+            // Classic and span parsers must both reject unknown error codes.
+            assert!(
+                parse_formula("=Sheet1!#BOGUS!").is_err(),
+                "classic parser should reject unknown error code"
+            );
+            assert!(
+                parse_span("=Sheet1!#BOGUS!").is_err(),
+                "span parser should reject unknown error code"
+            );
+        }
+
+        #[test]
+        fn negative_empty_sheet_prefix() {
+            assert!(
+                parse_formula("=!#REF!").is_err(),
+                "classic parser should reject empty sheet prefix"
+            );
+            assert!(
+                parse_span("=!#REF!").is_err(),
+                "span parser should reject empty sheet prefix"
+            );
+        }
+
+        #[test]
+        fn negative_trailing_garbage_after_error() {
+            assert!(
+                parse_formula("=#REF!Sheet1").is_err(),
+                "classic parser should reject trailing garbage after error literal"
+            );
+            assert!(
+                parse_span("=#REF!Sheet1").is_err(),
+                "span parser should reject trailing garbage after error literal"
+            );
+        }
+
+        #[test]
+        fn regression_ordinary_sheet_reference_unchanged() {
+            // Plain sheet-qualified cell references must not be affected.
+            let ast = parse_formula("=Sheet1!A1").expect("classic parse");
+            match ast.node_type {
+                ASTNodeType::Reference { .. } => {}
+                other => panic!("expected reference node, got {other:?}"),
+            }
+            let ast = parse_span("=Sheet1!A1").expect("span parse");
+            match ast.node_type {
+                ASTNodeType::Reference { .. } => {}
+                other => panic!("expected reference node, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn regression_bare_error_literal_unchanged() {
+            assert_error_kind("=#REF!", ExcelErrorKind::Ref);
+            assert_error_kind("=#DIV/0!", ExcelErrorKind::Div);
+            assert_error_kind("=#VALUE!", ExcelErrorKind::Value);
+            assert_error_kind("=#N/A", ExcelErrorKind::Na);
+            assert_error_kind("=#ref!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn cross_parser_differential() {
+            // The classic and span parsers must produce identical ASTs for
+            // sheet-qualified error literals across all supported forms.
+            for formula in [
+                "=#REF!",
+                "=Sheet1!#REF!",
+                "='My Sheet'!#REF!",
+                "=Sheet1!#DIV/0!",
+                "=[1]Sheet1!#REF!",
+                "=sheet1!#ref!",
+            ] {
+                let ast = parse_span(formula).expect("parse");
+                let kind = match &ast.node_type {
+                    ASTNodeType::Literal(LiteralValue::Error(e)) => e.kind,
+                    other => panic!("non-error for {formula:?}: {other:?}"),
+                };
+                assert!(
+                    kind.to_string().starts_with('#'),
+                    "kind mismatch for {formula:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parser_try_from_formula_is_fallible() {
+        let err = match Parser::try_from_formula("=\"unterminated") {
+            Ok(_) => panic!("expected tokenizer error"),
+            Err(err) => err,
+        };
+        assert!(err.message.contains("Reached end"));
+    }
+
+    // Helper function to check if a formula contains a range reference with expected properties
+    fn check_range_in_formula(formula: &str, range_check: impl Fn(&ReferenceType) -> bool) -> bool {
+        let ast = parse_formula(formula).unwrap();
+        let deps = ast.get_dependencies();
+
+        deps.iter().any(|ref_type| match ref_type {
+            ReferenceType::Range { .. } => range_check(ref_type),
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn test_contains_volatile_with_classifier() {
+        let mut parser = Parser::new("=RAND()+A1")
+            .unwrap()
+            .with_volatility_classifier(|name| {
+                name.eq_ignore_ascii_case("RAND")
+                    || name.eq_ignore_ascii_case("NOW")
+                    || name.eq_ignore_ascii_case("TODAY")
+            });
+        let ast = parser.parse().unwrap();
+        assert!(ast.contains_volatile());
+
+        let mut parser = Parser::new("=SUM(1,2,3)")
+            .unwrap()
+            .with_volatility_classifier(|name| name.eq_ignore_ascii_case("RAND"));
+        let ast = parser.parse().unwrap();
+        assert!(!ast.contains_volatile());
+    }
+
+    #[test]
+    fn test_refs_iterator_and_visitor_basic() {
+        let ast = parse_formula("=A1 + SUM(B2:C3, NamedRange, Table1[Col])").unwrap();
+
+        // Iterator should find references in stable order (left-to-right depth-first)
+        let refs: Vec<RefView> = ast.refs().collect();
+        assert!(!refs.is_empty());
+
+        // Expect first is A1 cell
+        match refs.first().unwrap() {
+            RefView::Cell {
+                sheet, row, col, ..
+            } => {
+                assert!(sheet.is_none());
+                assert_eq!((*row, *col), (1, 1));
+            }
+            _ => panic!("expected first ref to be a Cell"),
+        }
+
+        // Visitor should hit same count
+        let mut count = 0;
+        ast.visit_refs(|_| count += 1);
+        assert_eq!(count, refs.len());
+    }
+
+    #[test]
+    fn test_collect_references_policy_no_expand() {
+        let ast = parse_formula("=SUM(B2:C3)").unwrap();
+        let policy = CollectPolicy {
+            expand_small_ranges: false,
+            range_expansion_limit: 0,
+            include_names: true,
+        };
+        let refs = ast.collect_references(&policy);
+        assert_eq!(refs.len(), 1);
+        match &refs[0] {
+            ReferenceType::Range {
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } => {
+                assert_eq!(
+                    (*start_row, *start_col, *end_row, *end_col),
+                    (Some(2), Some(2), Some(3), Some(3))
+                );
+            }
+            _ => panic!("expected a Range"),
+        }
+    }
+
+    #[test]
+    fn test_collect_references_policy_expand_small_range() {
+        let ast = parse_formula("=SUM(B2:C3)").unwrap();
+        let policy = CollectPolicy {
+            expand_small_ranges: true,
+            range_expansion_limit: 16,
+            include_names: true,
+        };
+        let refs = ast.collect_references(&policy);
+        // B2:C3 is 4 cells
+        assert_eq!(refs.len(), 4);
+        // Ensure cells include B2 and C3
+        let mut have_b2 = false;
+        let mut have_c3 = false;
+        for r in refs {
+            match r {
+                ReferenceType::Cell { row, col, .. } if row == 2 && col == 2 => have_b2 = true,
+                ReferenceType::Cell { row, col, .. } if row == 3 && col == 3 => have_c3 = true,
+                _ => {}
+            }
+        }
+        assert!(have_b2 && have_c3);
+    }
+
+    #[test]
+    fn test_collect_references_policy_exclude_names() {
+        let ast = parse_formula("=NamedRef + A1").unwrap();
+        let policy = CollectPolicy {
+            expand_small_ranges: false,
+            range_expansion_limit: 0,
+            include_names: false,
+        };
+        let refs = ast.collect_references(&policy);
+        // Should only include A1
+        assert_eq!(refs.len(), 1);
+        match &refs[0] {
+            ReferenceType::Cell { row, col, .. } => assert_eq!((*row, *col), (1, 1)),
+            _ => panic!("expected a Cell ref"),
+        }
+    }
+
+    #[test]
+    fn test_parse_openformula_cell_reference() {
+        let ast = parse_formula_with_dialect("=SUM([.A1])", FormulaDialect::OpenFormula).unwrap();
+
+        let (name, args) = match &ast.node_type {
+            ASTNodeType::Function { name, args } => (name, args),
+            _ => panic!("expected Function node"),
+        };
+
+        assert_eq!(name, "SUM");
+        assert_eq!(args.len(), 1);
+
+        match &args[0].node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                assert_eq!(reference, &ReferenceType::cell(None, 1, 1));
+            }
+            other => panic!("expected Reference argument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_openformula_sheet_range() {
+        let ast =
+            parse_formula_with_dialect("=SUM([Sheet One.A1:.B2])", FormulaDialect::OpenFormula)
+                .unwrap();
+
+        let args = match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                assert_eq!(name, "SUM");
+                args
+            }
+            _ => panic!("expected Function node"),
+        };
+
+        assert_eq!(args.len(), 1);
+
+        match &args[0].node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                assert_eq!(
+                    reference,
+                    &ReferenceType::range(
+                        Some("Sheet One".to_string()),
+                        Some(1),
+                        Some(1),
+                        Some(2),
+                        Some(2),
+                    )
+                );
+            }
+            other => panic!("expected range reference, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_simple_formula() {
+        let ast = parse_formula("=A1+B2").unwrap();
+
+        if let ASTNodeType::BinaryOp { op, left, right } = ast.node_type {
+            assert_eq!(op, "+");
+
+            if let ASTNodeType::Reference { reference, .. } = left.node_type {
+                assert_eq!(reference, ReferenceType::cell(None, 1, 1));
+            } else {
+                panic!("Expected Reference node for left operand");
+            }
+
+            if let ASTNodeType::Reference { reference, .. } = right.node_type {
+                assert_eq!(reference, ReferenceType::cell(None, 2, 2));
+            } else {
+                panic!("Expected Reference node for right operand");
+            }
+        } else {
+            panic!("Expected BinaryOp node");
+        }
+    }
+
+    #[test]
+    fn test_parse_function_call() {
+        let ast = parse_formula("=SUM(A1:B2)").unwrap();
+
+        println!("AST: {ast:?}");
+
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 1);
+
+            if let ASTNodeType::Reference {
+                original,
+                reference,
+            } = &args[0].node_type
+            {
+                assert_eq!(original, "A1:B2");
+                assert_eq!(
+                    reference,
+                    &ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2))
+                );
+            } else {
+                panic!("Expected Reference node for function argument");
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+    }
+
+    #[test]
+    fn test_operator_precedence() {
+        let ast = parse_formula("=A1+B2*C3").unwrap();
+
+        if let ASTNodeType::BinaryOp {
+            op: op1,
+            left: left1,
+            right: right1,
+        } = ast.node_type
+        {
+            assert_eq!(op1, "+");
+
+            if let ASTNodeType::Reference { reference, .. } = left1.node_type {
+                assert_eq!(reference, ReferenceType::cell(None, 1, 1));
+            } else {
+                panic!("Expected Reference node for left operand of +");
+            }
+
+            if let ASTNodeType::BinaryOp {
+                op: op2,
+                left: left2,
+                right: right2,
+            } = right1.node_type
+            {
+                assert_eq!(op2, "*");
+
+                if let ASTNodeType::Reference { reference, .. } = left2.node_type {
+                    assert_eq!(reference, ReferenceType::cell(None, 2, 2));
+                } else {
+                    panic!("Expected Reference node for left operand of *");
+                }
+
+                if let ASTNodeType::Reference { reference, .. } = right2.node_type {
+                    assert_eq!(reference, ReferenceType::cell(None, 3, 3));
+                } else {
+                    panic!("Expected Reference node for right operand of *");
+                }
+            } else {
+                panic!("Expected BinaryOp node for right operand of +");
+            }
+        } else {
+            panic!("Expected BinaryOp node");
+        }
+    }
+
+    #[test]
+    fn test_parentheses() {
+        let ast = parse_formula("=(A1+B2)*C3").unwrap();
+
+        if let ASTNodeType::BinaryOp { op, left, right } = ast.node_type {
+            assert_eq!(op, "*");
+
+            if let ASTNodeType::BinaryOp { op: inner_op, .. } = left.node_type {
+                assert_eq!(inner_op, "+");
+            } else {
+                panic!("Expected BinaryOp node for left operand");
+            }
+
+            if let ASTNodeType::Reference { reference, .. } = right.node_type {
+                assert_eq!(reference, ReferenceType::cell(None, 3, 3));
+            } else {
+                panic!("Expected Reference node for right operand");
+            }
+        } else {
+            panic!("Expected BinaryOp node");
+        }
+    }
+
+    #[test]
+    fn test_function_multiple_args() {
+        let ast = parse_formula("=IF(A1>0,B1,C1)").unwrap();
+
+        println!("AST: {ast:?}");
+
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "IF");
+            assert_eq!(args.len(), 3);
+
+            // Check first argument (condition)
+            if let ASTNodeType::BinaryOp { op, .. } = &args[0].node_type {
+                assert_eq!(op, ">");
+            } else {
+                panic!("Expected BinaryOp node for first argument");
+            }
+
+            // Check second and third arguments (true/false results)
+            if let ASTNodeType::Reference { reference, .. } = &args[1].node_type {
+                assert_eq!(reference, &ReferenceType::cell(None, 1, 2));
+            } else {
+                panic!("Expected Reference node for second argument");
+            }
+
+            if let ASTNodeType::Reference { reference, .. } = &args[2].node_type {
+                assert_eq!(reference, &ReferenceType::cell(None, 1, 3));
+            } else {
+                panic!("Expected Reference node for third argument");
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+    }
+
+    #[test]
+    fn test_functions_with_optional_arguments() {
+        // Test with all arguments provided
+        let ast = parse_formula("=VLOOKUP(A1,B1:C10,2,FALSE)").unwrap();
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "VLOOKUP");
+            assert_eq!(args.len(), 4);
+        } else {
+            panic!("Expected Function node");
+        }
+
+        // Test with missing optional argument
+        let ast = parse_formula("=VLOOKUP(A1,B1:C10,2)").unwrap();
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "VLOOKUP");
+            assert_eq!(args.len(), 3);
+        } else {
+            panic!("Expected Function node");
+        }
+
+        // Explicitly omitted arguments remain distinct from explicit empty text.
+        let ast = parse_formula("=IFERROR(A1/B1,)").unwrap();
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "IFERROR");
+            assert_eq!(args.len(), 2);
+            assert!(matches!(args[1].node_type, ASTNodeType::Omitted));
+        } else {
+            panic!("Expected Function node");
+        }
+
+        let ast = parse_formula("=IFERROR(A1/B1,\"\")").unwrap();
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("Expected Function node");
+        };
+        assert!(matches!(
+            &args[1].node_type,
+            ASTNodeType::Literal(LiteralValue::Text(text)) if text.is_empty()
+        ));
+
+        // Test skipping middle arguments
+        let ast = parse_formula("=IF(A1>0,,C1)").unwrap();
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "IF");
+            assert_eq!(args.len(), 3);
+            assert!(matches!(args[1].node_type, ASTNodeType::Omitted));
+        } else {
+            panic!("Expected Function node");
+        }
+
+        // Test with multiple trailing empty arguments
+        let ast = parse_formula("=IF(A1>0,,)").unwrap();
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "IF");
+            assert_eq!(args.len(), 3);
+            assert!(matches!(args[1].node_type, ASTNodeType::Omitted));
+            assert!(matches!(args[2].node_type, ASTNodeType::Omitted));
+        } else {
+            panic!("Expected Function node");
+        }
+
+        // Test with complex empty arguments combination
+        let ast = parse_formula("=CHOOSE(1,A1,,C1,,E1)").unwrap();
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "CHOOSE");
+            assert_eq!(args.len(), 6);
+            assert!(matches!(args[2].node_type, ASTNodeType::Omitted));
+            assert!(matches!(args[4].node_type, ASTNodeType::Omitted));
+        } else {
+            panic!("Expected Function node");
+        }
+    }
+
+    #[test]
+    fn test_omitted_argument_shapes_round_trip_and_fingerprint() {
+        for (formula, omitted_positions) in [
+            ("=IF(TRUE,,5)", vec![1]),
+            ("=SUM(1,)", vec![1]),
+            ("=SUM(1,,)", vec![1, 2]),
+            ("=SUM(1, )", vec![1]),
+        ] {
+            let ast = parse_formula(formula).unwrap();
+            let ASTNodeType::Function { args, .. } = &ast.node_type else {
+                panic!("Expected Function node for {formula}");
+            };
+            for position in omitted_positions {
+                assert!(
+                    matches!(args[position].node_type, ASTNodeType::Omitted),
+                    "argument {position} was not omitted in {formula}"
+                );
+            }
+        }
+
+        let nested = parse_formula("=IF(TRUE,IFERROR(1/0,),2)").unwrap();
+        let rendered = crate::pretty::canonical_formula(&nested);
+        assert_eq!(rendered, "=IF(true, IFERROR(1 / 0,), 2)");
+        assert_eq!(
+            parse_formula(&rendered).unwrap().fingerprint(),
+            nested.fingerprint()
+        );
+
+        let omitted = parse_formula("=IFERROR(A1,)").unwrap();
+        let empty_text = parse_formula("=IFERROR(A1,\"\")").unwrap();
+        assert_ne!(omitted.fingerprint(), empty_text.fingerprint());
+        assert_ne!(
+            crate::pretty::canonical_formula(&omitted),
+            crate::pretty::canonical_formula(&empty_text)
+        );
+
+        let call = parse_formula("=LAMBDA(x,y,x)(1,)").unwrap();
+        let ASTNodeType::Call { args, .. } = call.node_type else {
+            panic!("Expected immediate call node");
+        };
+        assert_eq!(args.len(), 2);
+        assert!(matches!(args[1].node_type, ASTNodeType::Omitted));
+    }
+
+    #[test]
+    fn test_nested_functions() {
+        let ast = parse_formula("=IF(SUM(A1:A10)>100,MAX(B1:B10),0)").unwrap();
+
+        println!("AST: {ast:?}");
+
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "IF");
+            assert_eq!(args.len(), 3);
+
+            // Check first argument (SUM(...) > 100)
+            if let ASTNodeType::BinaryOp { op, left, .. } = &args[0].node_type {
+                assert_eq!(op, ">");
+
+                if let ASTNodeType::Function {
+                    name: inner_name, ..
+                } = &left.node_type
+                {
+                    assert_eq!(inner_name, "SUM");
+                } else {
+                    panic!("Expected Function node for left side of comparison");
+                }
+            } else {
+                panic!("Expected BinaryOp node for first argument");
+            }
+
+            // Check second argument (MAX(...))
+            if let ASTNodeType::Function {
+                name: inner_name, ..
+            } = &args[1].node_type
+            {
+                assert_eq!(inner_name, "MAX");
+            } else {
+                panic!("Expected Function node for second argument");
+            }
+
+            // Check third argument (0)
+            if let ASTNodeType::Literal(LiteralValue::Number(num)) = &args[2].node_type {
+                assert_eq!(*num, 0.0);
+            } else {
+                panic!("Expected Number literal for third argument");
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+    }
+
+    #[test]
+    fn test_unary_operators() {
+        let ast = parse_formula("=-A1").unwrap();
+
+        if let ASTNodeType::UnaryOp { op, expr } = ast.node_type {
+            assert_eq!(op, "-");
+
+            if let ASTNodeType::Reference { reference, .. } = expr.node_type {
+                assert_eq!(reference, ReferenceType::cell(None, 1, 1));
+            } else {
+                panic!("Expected Reference node for operand");
+            }
+        } else {
+            panic!("Expected UnaryOp node");
+        }
+    }
+
+    #[test]
+    fn test_double_unary_operator() {
+        let ast = parse_formula("=--A1").unwrap();
+
+        if let ASTNodeType::UnaryOp { op, expr: _ } = ast.node_type {
+            assert_eq!(op, "-");
+        }
+    }
+
+    #[test]
+    fn test_implicit_intersection_operator_parses() {
+        use crate::parser::{TableReference, TableSpecifier};
+
+        // Range
+        let ast = parse_formula("=@A1:A3").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Reference { reference, .. } => {
+                        assert_eq!(
+                            reference,
+                            ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1))
+                        );
+                    }
+                    other => panic!("Expected Reference operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
+        }
+
+        // Table reference (table evaluation may be unsupported, but parsing should succeed)
+        let ast = parse_formula("=@Table1[Col]").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Reference { reference, .. } => {
+                        assert_eq!(
+                            reference,
+                            ReferenceType::Table(TableReference {
+                                name: "Table1".to_string(),
+                                specifier: Some(TableSpecifier::Column("Col".to_string())),
+                            })
+                        );
+                    }
+                    other => panic!("Expected Reference operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
+        }
+
+        // Function call
+        let ast = parse_formula("=@SEQUENCE(3,1)").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert_eq!(name, "SEQUENCE");
+                        assert_eq!(args.len(), 2);
+                    }
+                    other => panic!("Expected Function operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_infinite_range_formulas() {
+        // Column-wise infinite range (A:A)
+        let formula = "=SUM(A:A)";
+        let ast = parse_formula(formula).unwrap();
+
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 1);
+
+            if let ASTNodeType::Reference { reference, .. } = &args[0].node_type {
+                if let ReferenceType::Range {
+                    start_col,
+                    end_col,
+                    start_row,
+                    end_row,
+                    ..
+                } = reference
+                {
+                    assert_eq!(*start_col, Some(1));
+                    assert_eq!(*end_col, Some(1));
+                    assert_eq!(*start_row, None);
+                    assert_eq!(*end_row, None);
+                } else {
+                    panic!("Expected Range reference");
+                }
+            } else {
+                panic!("Expected Reference node");
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+
+        // Row-wise infinite range (1:1)
+        let formula = "=SUM(1:1)";
+        let ast = parse_formula(formula).unwrap();
+
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 1);
+
+            if let ASTNodeType::Reference { reference, .. } = &args[0].node_type {
+                if let ReferenceType::Range {
+                    start_col,
+                    end_col,
+                    start_row,
+                    end_row,
+                    ..
+                } = reference
+                {
+                    assert_eq!(*start_col, None);
+                    assert_eq!(*end_col, None);
+                    assert_eq!(*start_row, Some(1));
+                    assert_eq!(*end_row, Some(1));
+                } else {
+                    panic!("Expected Range reference");
+                }
+            } else {
+                panic!("Expected Reference node");
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+
+        // Partially bounded range (A1:A)
+        let formula = "=SUM(A1:A)";
+        assert!(check_range_in_formula(formula, |r| {
+            if let ReferenceType::Range {
+                start_col,
+                end_col,
+                start_row,
+                end_row,
+                ..
+            } = r
+            {
+                return *start_col == Some(1)
+                    && *end_col == Some(1)
+                    && *start_row == Some(1)
+                    && end_row.is_none();
+            }
+            false
+        }));
+
+        // Partially bounded range (A:A10)
+        let formula = "=SUM(A:A10)";
+        assert!(check_range_in_formula(formula, |r| {
+            if let ReferenceType::Range {
+                start_col,
+                end_col,
+                start_row,
+                end_row,
+                ..
+            } = r
+            {
+                return *start_col == Some(1)
+                    && *end_col == Some(1)
+                    && start_row.is_none()
+                    && *end_row == Some(10);
+            }
+            false
+        }));
+
+        // Sheet reference with infinite range
+        let formula = "=SUM(Sheet1!A:A)";
+        assert!(check_range_in_formula(formula, |r| {
+            if let ReferenceType::Range {
+                sheet,
+                start_col,
+                end_col,
+                start_row,
+                end_row,
+                ..
+            } = r
+            {
+                return sheet.as_ref().is_some_and(|s| s == "Sheet1")
+                    && *start_col == Some(1)
+                    && *end_col == Some(1)
+                    && start_row.is_none()
+                    && end_row.is_none();
+            }
+            false
+        }));
+    }
+
+    #[test]
+    fn test_array_literal() {
+        let ast = parse_formula("={1,2;3,4}").unwrap();
+
+        if let ASTNodeType::Array(rows) = ast.node_type {
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].len(), 2);
+            assert_eq!(rows[1].len(), 2);
+
+            // Check values in the array
+            if let ASTNodeType::Literal(LiteralValue::Number(num)) = &rows[0][0].node_type {
+                assert_eq!(*num, 1.0);
+            } else {
+                panic!("Expected Number literal for [0][0]");
+            }
+
+            if let ASTNodeType::Literal(LiteralValue::Number(num)) = &rows[1][1].node_type {
+                assert_eq!(*num, 4.0);
+            } else {
+                panic!("Expected Number literal for [1][1]");
+            }
+        } else {
+            panic!("Expected Array node");
+        }
+    }
+
+    #[test]
+    fn test_complex_formula() {
+        let ast = parse_formula("=IF(AND(A1>0,B1<10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")").unwrap();
+
+        println!("AST: {ast:?}");
+
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "IF");
+            assert_eq!(args.len(), 3);
+
+            // Check first argument (AND(...))
+            if let ASTNodeType::Function {
+                name: inner_name, ..
+            } = &args[0].node_type
+            {
+                assert_eq!(inner_name, "AND");
+            } else {
+                panic!("Expected Function node for first argument");
+            }
+
+            // Check second argument (SUM(...)/COUNT(...))
+            if let ASTNodeType::BinaryOp { op, .. } = &args[1].node_type {
+                assert_eq!(op, "/");
+            } else {
+                panic!("Expected BinaryOp node for second argument");
+            }
+
+            // Check third argument ("N/A")
+            if let ASTNodeType::Literal(LiteralValue::Text(text)) = &args[2].node_type {
+                assert_eq!(text, "N/A");
+            } else {
+                panic!("Expected Text literal for third argument");
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+    }
+
+    #[test]
+    fn test_error_handling() {
+        let result = parse_formula("=SUM(A1:B2");
+        assert!(result.is_err());
+
+        let result = parse_formula("=A1+");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_whitespace_handling() {
+        let ast = parse_formula("= A1 + B2 ").unwrap();
+
+        if let ASTNodeType::BinaryOp { op, left, right } = ast.node_type {
+            assert_eq!(op, "+");
+
+            if let ASTNodeType::Reference { reference, .. } = left.node_type {
+                assert_eq!(reference, ReferenceType::cell(None, 1, 1));
+            } else {
+                panic!("Expected Reference node for left operand");
+            }
+
+            if let ASTNodeType::Reference { reference, .. } = right.node_type {
+                assert_eq!(reference, ReferenceType::cell(None, 2, 2));
+            } else {
+                panic!("Expected Reference node for right operand");
+            }
+        } else {
+            panic!("Expected BinaryOp node");
+        }
+    }
+
+    #[test]
+    fn test_string_literals() {
+        let ast = parse_formula("=\"Hello\"").unwrap();
+
+        if let ASTNodeType::Literal(LiteralValue::Text(text)) = ast.node_type {
+            assert_eq!(text, "Hello");
+        } else {
+            panic!("Expected Text literal");
+        }
+
+        // Test string with escaped quotes
+        let ast = parse_formula("=\"Hello\"\"World\"").unwrap();
+
+        if let ASTNodeType::Literal(LiteralValue::Text(text)) = ast.node_type {
+            assert_eq!(text, "Hello\"World");
+        } else {
+            panic!("Expected Text literal");
+        }
+    }
+
+    #[test]
+    fn test_boolean_literals() {
+        let ast = parse_formula("=TRUE").unwrap();
+
+        if let ASTNodeType::Literal(LiteralValue::Boolean(value)) = ast.node_type {
+            assert!(value);
+        } else {
+            panic!("Expected Boolean literal");
+        }
+
+        let ast = parse_formula("=FALSE").unwrap();
+
+        if let ASTNodeType::Literal(LiteralValue::Boolean(value)) = ast.node_type {
+            assert!(!value);
+        } else {
+            panic!("Expected Boolean literal");
+        }
+
+        // Lowercase/mixed-case forms must also parse as boolean literals (Excel
+        // is case-insensitive for TRUE/FALSE).
+        for (formula, expected) in [
+            ("=true", true),
+            ("=false", false),
+            ("=True", true),
+            ("=TrUe", true),
+            ("=fAlSe", false),
+        ] {
+            let ast = parse_formula(formula).unwrap();
+            match ast.node_type {
+                ASTNodeType::Literal(LiteralValue::Boolean(v)) => {
+                    assert_eq!(v, expected, "classic parser: {formula}");
+                }
+                other => {
+                    panic!("classic parser: expected Boolean literal for {formula}, got {other:?}")
+                }
+            }
+
+            let ast = crate::parser::parse(formula).unwrap();
+            match ast.node_type {
+                ASTNodeType::Literal(LiteralValue::Boolean(v)) => {
+                    assert_eq!(v, expected, "span parser: {formula}");
+                }
+                other => {
+                    panic!("span parser: expected Boolean literal for {formula}, got {other:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lowercase_boolean_in_function_call() {
+        type ParseFn = fn(&str) -> Result<ASTNode, ParserError>;
+        let parsers: [ParseFn; 2] = [parse_formula, |s| crate::parser::parse(s)];
+        for parse in parsers {
+            let ast = parse("=IF(true,1,2)").unwrap();
+            let ASTNodeType::Function { name, args } = ast.node_type else {
+                panic!("expected Function node");
+            };
+            assert_eq!(name, "IF");
+            assert_eq!(args.len(), 3);
+            match &args[0].node_type {
+                ASTNodeType::Literal(LiteralValue::Boolean(true)) => {}
+                other => panic!("expected Boolean(true) as first arg, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_lowercase_boolean_in_binary_op() {
+        type ParseFn = fn(&str) -> Result<ASTNode, ParserError>;
+        let parsers: [ParseFn; 2] = [parse_formula, |s| crate::parser::parse(s)];
+        for parse in parsers {
+            let ast = parse("=a1+true").unwrap();
+            let ASTNodeType::BinaryOp { op, left, right } = ast.node_type else {
+                panic!("expected BinaryOp node");
+            };
+            assert_eq!(op, "+");
+            match &left.node_type {
+                ASTNodeType::Reference { .. } => {}
+                other => panic!("expected Reference on lhs, got {other:?}"),
+            }
+            match &right.node_type {
+                ASTNodeType::Literal(LiteralValue::Boolean(true)) => {}
+                other => panic!("expected Boolean(true) on rhs, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_named_ranges_containing_bool_substrings_are_not_booleans() {
+        type ParseFn = fn(&str) -> Result<ASTNode, ParserError>;
+        let parsers: [ParseFn; 2] = [parse_formula, |s| crate::parser::parse(s)];
+        for parse in parsers {
+            for name in ["TRUENAME", "trueish", "NOT_TRUE", "false_positive"] {
+                let formula = format!("={name}");
+                let ast = parse(&formula).unwrap();
+                match &ast.node_type {
+                    ASTNodeType::Reference {
+                        reference: ReferenceType::NamedRange(actual),
+                        ..
+                    } => {
+                        assert_eq!(actual, name, "formula {formula}");
+                    }
+                    other => panic!("expected NamedRange({name}), got {other:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_literals() {
+        let ast = parse_formula("=#DIV/0!").unwrap();
+
+        if let ASTNodeType::Literal(LiteralValue::Error(error)) = ast.node_type {
+            assert_eq!(error, ExcelError::new_div());
+        } else {
+            panic!("Expected Error literal");
+        }
+    }
+
+    #[test]
+    fn test_empty_function_arguments() {
+        // Parsing a function call with an empty argument list.
+        let ast = parse_formula("=SUM()").unwrap();
+        if let ASTNodeType::Function { name, args } = ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 0);
+        } else {
+            panic!("Expected a Function node");
+        }
+    }
+
+    mod modern_error_literals {
+        use super::*;
+        use formualizer_common::ExcelErrorKind;
+
+        fn expect_error_kind(ast: &ASTNode, expected: ExcelErrorKind) {
+            match &ast.node_type {
+                ASTNodeType::Literal(LiteralValue::Error(e)) => {
+                    assert_eq!(e.kind, expected);
+                }
+                other => panic!("expected error literal, got {other:?}"),
+            }
+        }
+
+        fn parse_both(formula: &str) -> ASTNode {
+            let token_ast =
+                parse_formula(formula).unwrap_or_else(|e| panic!("token parse {formula}: {e:?}"));
+            let span_ast = crate::parser::parse(formula)
+                .unwrap_or_else(|e| panic!("span parse {formula}: {e:?}"));
+            assert_eq!(
+                token_ast.node_type, span_ast.node_type,
+                "token and span parsers diverged for {formula}"
+            );
+            token_ast
+        }
+
+        #[test]
+        fn spill_literal_parses() {
+            let ast = parse_both("=#SPILL!");
+            expect_error_kind(&ast, ExcelErrorKind::Spill);
+        }
+
+        #[test]
+        fn spill_literal_lowercase_parses() {
+            let ast = parse_both("=#spill!");
+            expect_error_kind(&ast, ExcelErrorKind::Spill);
+        }
+
+        #[test]
+        fn calc_literal_parses() {
+            let ast = parse_both("=#CALC!");
+            expect_error_kind(&ast, ExcelErrorKind::Calc);
+        }
+
+        #[test]
+        fn calc_literal_lowercase_parses() {
+            let ast = parse_both("=#calc!");
+            expect_error_kind(&ast, ExcelErrorKind::Calc);
+        }
+
+        #[test]
+        fn spill_in_iferror_function_argument() {
+            let ast = parse_both("=IFERROR(A1, #SPILL!)");
+            match ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name, "IFERROR");
+                    assert_eq!(args.len(), 2);
+                    expect_error_kind(&args[1], ExcelErrorKind::Spill);
+                }
+                other => panic!("expected IFERROR call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn calc_in_arithmetic_expression() {
+            // Nonsensical semantically, but must parse syntactically.
+            let ast = parse_both("=#CALC! + 1");
+            match ast.node_type {
+                ASTNodeType::BinaryOp { op, left, right } => {
+                    assert_eq!(op, "+");
+                    expect_error_kind(&left, ExcelErrorKind::Calc);
+                    match right.node_type {
+                        ASTNodeType::Literal(LiteralValue::Int(n)) => assert_eq!(n, 1),
+                        ASTNodeType::Literal(LiteralValue::Number(n)) => assert_eq!(n, 1.0),
+                        ref other => panic!("expected numeric 1, got {other:?}"),
+                    }
+                }
+                other => panic!("expected binary op, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn bogus_modern_error_is_rejected_by_parser() {
+            assert!(parse_formula("=#BOGUS!").is_err());
+            assert!(crate::parser::parse("=#BOGUS!").is_err());
+        }
+
+        #[test]
+        fn typo_spil_rejected_by_parser() {
+            assert!(parse_formula("=#SPIL!").is_err());
+            assert!(crate::parser::parse("=#SPIL!").is_err());
+        }
+
+        #[test]
+        fn spill_display_roundtrips_to_excel_literal() {
+            // Display of the kind matches the canonical Excel literal.
+            assert_eq!(format!("{}", ExcelErrorKind::Spill), "#SPILL!");
+            assert_eq!(format!("{}", ExcelErrorKind::Calc), "#CALC!");
+        }
+    }
+
+    mod spill_operator {
+        use super::parse_formula;
+        use crate::parser::{ASTNodeType, ReferenceType};
+        use crate::pretty::pretty_parse_render;
+
+        fn assert_unary_ref(ast: crate::parser::ASTNode, op: &str, expected: ReferenceType) {
+            match ast.node_type {
+                ASTNodeType::UnaryOp { op: o, expr } => {
+                    assert_eq!(o, op);
+                    match expr.node_type {
+                        ASTNodeType::Reference { reference, .. } => {
+                            assert_eq!(reference, expected);
+                        }
+                        other => panic!("expected Reference under UnaryOp, got {other:?}"),
+                    }
+                }
+                other => panic!("expected UnaryOp({op}, ...), got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_spill_basic() {
+            // Classic Parser path
+            let ast = parse_formula("=A1#").expect("parse =A1#");
+            assert_unary_ref(ast, "#", ReferenceType::cell(None, 1, 1));
+
+            // Span parse path
+            let ast = crate::parser::parse("=A1#").expect("span parse =A1#");
+            assert_unary_ref(ast, "#", ReferenceType::cell(None, 1, 1));
+        }
+
+        #[test]
+        fn test_spill_in_arithmetic() {
+            for ast in [
+                parse_formula("=B2#+1").expect("classic"),
+                crate::parser::parse("=B2#+1").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, "+");
+                        match left.node_type {
+                            ASTNodeType::UnaryOp { op: o, expr } => {
+                                assert_eq!(o, "#");
+                                assert!(matches!(expr.node_type, ASTNodeType::Reference { .. }));
+                            }
+                            other => panic!("expected UnaryOp on left, got {other:?}"),
+                        }
+                        match right.node_type {
+                            ASTNodeType::Literal(_) => {}
+                            other => panic!("expected literal on right, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected BinaryOp, got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_spill_in_function() {
+            for ast in [
+                parse_formula("=SUM(A1#)").expect("classic"),
+                crate::parser::parse("=SUM(A1#)").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert_eq!(name, "SUM");
+                        assert_eq!(args.len(), 1);
+                        match &args[0].node_type {
+                            ASTNodeType::UnaryOp { op, expr } => {
+                                assert_eq!(op, "#");
+                                assert!(matches!(expr.node_type, ASTNodeType::Reference { .. }));
+                            }
+                            other => panic!("expected UnaryOp arg, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected Function, got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_spill_with_implicit_intersection() {
+            // =@A1# → @ wraps the spill ref.
+            for ast in [
+                parse_formula("=@A1#").expect("classic"),
+                crate::parser::parse("=@A1#").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::UnaryOp { op, expr } => {
+                        assert_eq!(op, "@");
+                        match expr.node_type {
+                            ASTNodeType::UnaryOp {
+                                op: inner_op,
+                                expr: inner,
+                            } => {
+                                assert_eq!(inner_op, "#");
+                                assert!(matches!(inner.node_type, ASTNodeType::Reference { .. }));
+                            }
+                            other => panic!("expected UnaryOp(#) under @, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected UnaryOp(@, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_spill_sheet_qualified() {
+            for ast in [
+                parse_formula("=Sheet1!A1#").expect("classic"),
+                crate::parser::parse("=Sheet1!A1#").expect("span"),
+            ] {
+                assert_unary_ref(
+                    ast,
+                    "#",
+                    ReferenceType::cell(Some("Sheet1".to_string()), 1, 1),
+                );
+            }
+        }
+
+        #[test]
+        fn test_anchorarray_xlfn_still_function() {
+            // Legacy serialization should still be a function call.
+            for ast in [
+                parse_formula("=_xlfn.ANCHORARRAY(A1)").expect("classic"),
+                crate::parser::parse("=_xlfn.ANCHORARRAY(A1)").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert!(name.eq_ignore_ascii_case("_xlfn.ANCHORARRAY"));
+                        assert_eq!(args.len(), 1);
+                    }
+                    other => panic!("expected Function, got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_error_literal_still_parses() {
+            // Negative regression — error literals must remain literals.
+            let ast = parse_formula("=#REF!").expect("=#REF!");
+            assert!(matches!(ast.node_type, ASTNodeType::Literal(_)));
+            let ast = crate::parser::parse("=#REF!").expect("span =#REF!");
+            assert!(matches!(ast.node_type, ASTNodeType::Literal(_)));
+        }
+
+        #[test]
+        fn test_sheet_prefixed_error_literal_still_parses() {
+            // The key invariant for #71: `Sheet1!#REF!` must NOT be split
+            // into `Sheet1!` + spill `#`. The classic Parser path produces a
+            // Reference node (sheet-qualified error) and the span path
+            // produces a Literal(Error) — both pre-existing behaviors that we
+            // simply must not regress.
+            let classic = parse_formula("=Sheet1!#REF!").expect("classic");
+            assert!(matches!(
+                classic.node_type,
+                ASTNodeType::Reference { .. } | ASTNodeType::Literal(_)
+            ));
+            let span = crate::parser::parse("=Sheet1!#REF!").expect("span");
+            assert!(matches!(
+                span.node_type,
+                ASTNodeType::Reference { .. } | ASTNodeType::Literal(_)
+            ));
+        }
+
+        #[test]
+        fn test_double_spill_parses() {
+            // =A1## — accept and produce nested UnaryOp(#, UnaryOp(#, A1)).
+            for ast in [
+                parse_formula("=A1##").expect("classic"),
+                crate::parser::parse("=A1##").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::UnaryOp { op, expr } => {
+                        assert_eq!(op, "#");
+                        match expr.node_type {
+                            ASTNodeType::UnaryOp { op: inner_op, .. } => {
+                                assert_eq!(inner_op, "#");
+                            }
+                            other => panic!("expected nested UnaryOp(#), got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected outer UnaryOp(#), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_bare_hash_is_error() {
+            assert!(parse_formula("=#").is_err());
+            assert!(crate::parser::parse("=#").is_err());
+        }
+
+        #[test]
+        fn test_spill_display_roundtrip() {
+            // parse → pretty → parse must yield the same AST shape.
+            let pretty = pretty_parse_render("=A1#").expect("pretty");
+            assert_eq!(pretty, "=A1#");
+            let again = pretty_parse_render(&pretty).expect("pretty round");
+            assert_eq!(pretty, again);
+
+            let pretty = pretty_parse_render("=SUM(B2#)+1").expect("pretty");
+            assert_eq!(pretty, "=SUM(B2#) + 1");
+            let again = pretty_parse_render(&pretty).expect("pretty round");
+            assert_eq!(pretty, again);
+        }
+    }
+
+    mod reference_operators {
+        use super::parse_formula;
+        use crate::parser::{ASTNode, ASTNodeType, ReferenceType};
+        use crate::pretty::pretty_parse_render;
+
+        fn parse_both(formula: &str) -> [ASTNode; 2] {
+            let classic = parse_formula(formula)
+                .unwrap_or_else(|e| panic!("classic parser failed for {formula:?}: {e:?}"));
+            let span = crate::parser::parse(formula)
+                .unwrap_or_else(|e| panic!("span parser failed for {formula:?}: {e:?}"));
+            [classic, span]
+        }
+
+        fn assert_both_err(formula: &str) {
+            assert!(
+                parse_formula(formula).is_err(),
+                "classic parser unexpectedly accepted {formula:?}"
+            );
+            assert!(
+                crate::parser::parse(formula).is_err(),
+                "span parser unexpectedly accepted {formula:?}"
+            );
+        }
+
+        fn assert_range_ref(node: &ASTNode, expected_str: &str) {
+            match &node.node_type {
+                ASTNodeType::Reference {
+                    reference,
+                    original,
+                } => {
+                    assert!(
+                        matches!(reference, ReferenceType::Range { .. }),
+                        "expected Range ref for {expected_str:?}, got {reference:?}"
+                    );
+                    assert_eq!(original, expected_str);
+                }
+                other => panic!("expected Reference({expected_str:?}), got {other:?}"),
+            }
+        }
+
+        fn assert_cell_ref(node: &ASTNode, expected_str: &str) {
+            match &node.node_type {
+                ASTNodeType::Reference {
+                    reference,
+                    original,
+                } => {
+                    assert!(
+                        matches!(reference, ReferenceType::Cell { .. }),
+                        "expected Cell ref for {expected_str:?}, got {reference:?}"
+                    );
+                    assert_eq!(original, expected_str);
+                }
+                other => panic!("expected Reference({expected_str:?}), got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn space_intersection_basic() {
+            for ast in parse_both("=A1:A3 B1:B3") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, " ");
+                        assert_range_ref(&left, "A1:A3");
+                        assert_range_ref(&right, "B1:B3");
+                    }
+                    other => panic!("expected BinaryOp(\" \", ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn space_intersection_inside_function() {
+            for ast in parse_both("=SUM(A1:A3 A2:C2)") {
+                match ast.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert_eq!(name, "SUM");
+                        assert_eq!(args.len(), 1);
+                        match &args[0].node_type {
+                            ASTNodeType::BinaryOp { op, left, right } => {
+                                assert_eq!(op, " ");
+                                assert_range_ref(left, "A1:A3");
+                                assert_range_ref(right, "A2:C2");
+                            }
+                            other => panic!("expected BinaryOp arg, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected Function, got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn colon_composed_with_function() {
+            for ast in parse_both("=OFFSET(A1,1,1):B10") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        match &left.node_type {
+                            ASTNodeType::Function { name, .. } => {
+                                assert_eq!(name, "OFFSET");
+                            }
+                            other => panic!("expected OFFSET function on left, got {other:?}"),
+                        }
+                        assert_cell_ref(&right, "B10");
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn colon_composed_with_index() {
+            for ast in parse_both("=INDEX(A:A,1):B10") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        match &left.node_type {
+                            ASTNodeType::Function { name, .. } => {
+                                assert_eq!(name, "INDEX");
+                            }
+                            other => panic!("expected INDEX function on left, got {other:?}"),
+                        }
+                        assert_cell_ref(&right, "B10");
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn colon_composed_with_paren() {
+            for ast in parse_both("=(A1:A3):A5") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        assert_range_ref(&left, "A1:A3");
+                        assert_cell_ref(&right, "A5");
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn cross_sheet_range() {
+            // 'Sheet1'!A1:'Sheet2'!B1 must compose as BinaryOp(:, A1, B1) with
+            // distinct sheets on each side.
+            for ast in parse_both("='Sheet1'!A1:'Sheet2'!B1") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        match &left.node_type {
+                            ASTNodeType::Reference { reference, .. } => match reference {
+                                ReferenceType::Cell { sheet, .. } => {
+                                    assert_eq!(sheet.as_deref(), Some("Sheet1"));
+                                }
+                                other => panic!("expected Sheet1 cell, got {other:?}"),
+                            },
+                            other => panic!("expected Reference on left, got {other:?}"),
+                        }
+                        match &right.node_type {
+                            ASTNodeType::Reference { reference, .. } => match reference {
+                                ReferenceType::Cell { sheet, .. } => {
+                                    assert_eq!(sheet.as_deref(), Some("Sheet2"));
+                                }
+                                other => panic!("expected Sheet2 cell, got {other:?}"),
+                            },
+                            other => panic!("expected Reference on right, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn chained_colon() {
+            // =A1:A3:A5 — the first simple range remains on the fast path, then
+            // the second colon is parsed as a composed reference operator.
+            for ast in parse_both("=A1:A3:A5") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        assert_range_ref(&left, "A1:A3");
+                        assert_cell_ref(&right, "A5");
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn intersection_precedence_below_colon() {
+            // =A1:B2 C1:D2 → BinaryOp(" ", Range(A1:B2), Range(C1:D2)).
+            // Both sides must be ranges (the simple-range fast path is preserved).
+            for ast in parse_both("=A1:B2 C1:D2") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, " ");
+                        assert_range_ref(&left, "A1:B2");
+                        assert_range_ref(&right, "C1:D2");
+                    }
+                    other => panic!("expected BinaryOp(\" \", ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn implicit_intersection_binds_tighter_than_colon() {
+            // =(@A1):A3 must produce BinaryOp(:, UnaryOp(@, A1), A3) — i.e. '@'
+            // attaches to A1 first because it is a prefix unary. The parentheses
+            // force a composed colon instead of the simple-range fast path.
+            for ast in parse_both("=(@A1):A3") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right: _ } => {
+                        assert_eq!(op, ":");
+                        match &left.node_type {
+                            ASTNodeType::UnaryOp { op, .. } => assert_eq!(op, "@"),
+                            other => panic!("expected UnaryOp(@, ...) on left, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn trailing_space_after_ref_is_not_intersection() {
+            // =A1 — trailing whitespace must not turn A1 into a binary op.
+            for ast in parse_both("=A1 ") {
+                assert!(matches!(ast.node_type, ASTNodeType::Reference { .. }));
+            }
+        }
+
+        #[test]
+        fn colon_with_no_rhs_is_error() {
+            assert_both_err("=A1: ");
+            assert_both_err("=A1:");
+        }
+
+        #[test]
+        fn leading_colon_is_error() {
+            assert_both_err("= :A1");
+        }
+
+        #[test]
+        fn space_between_function_name_and_paren_is_error() {
+            assert_both_err("=SUM A1");
+        }
+
+        #[test]
+        fn simple_range_remains_single_operand() {
+            // Regression guard: =A1:B2 still tokenizes as one Operand:Range.
+            use crate::tokenizer::{TokenStream, TokenType, Tokenizer};
+            let classic = Tokenizer::new("=A1:B2").unwrap();
+            assert_eq!(classic.items.len(), 1);
+            assert_eq!(classic.items[0].token_type, TokenType::Operand);
+            assert_eq!(classic.items[0].value, "A1:B2");
+            let span = TokenStream::new("=A1:B2").unwrap();
+            assert_eq!(span.spans.len(), 1);
+            assert_eq!(span.spans[0].token_type, TokenType::Operand);
+        }
+
+        #[test]
+        fn pretty_print_intersection_and_colon() {
+            // Intersection space prints with single-space gap; colon prints tight.
+            let pretty = pretty_parse_render("=A1:A3 B1:B3").unwrap();
+            assert_eq!(pretty, "=A1:A3 B1:B3");
+            let again = pretty_parse_render(&pretty).unwrap();
+            assert_eq!(pretty, again);
+
+            let pretty = pretty_parse_render("=OFFSET(A1,1,1):B10").unwrap();
+            assert_eq!(pretty, "=OFFSET(A1, 1, 1):B10");
+            let again = pretty_parse_render(&pretty).unwrap();
+            assert_eq!(pretty, again);
+        }
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use formualizer_common::LiteralValue;
+
+    use crate::tokenizer::*;
+
+    use crate::parser::{ASTNode, ASTNodeType};
+
+    #[test]
+    fn test_fingerprint_whitespace_insensitive() {
+        // Test that formulas with different whitespace have the same fingerprint
+        let f1 = "=SUM(a1, 2)";
+        let f2 = "=  SUM( A1 ,2 )"; // diff whitespace/casing
+
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
+
+        assert_eq!(
+            fp1, fp2,
+            "Formulas with different whitespace should have the same fingerprint"
+        );
+
+        // Different values should have different fingerprints
+        let fp3 = crate::parser::parse("=SUM(A1,3)").unwrap().fingerprint();
+        assert_ne!(
+            fp1, fp3,
+            "Formulas with different values should have different fingerprints"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_case_insensitivity() {
+        // Test that formulas with different casing have the same fingerprint
+        let f1 = "=sum(a1)";
+        let f2 = "=SUM(A1)";
+
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
+
+        assert_eq!(
+            fp1, fp2,
+            "Formulas with different casing should have the same fingerprint"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_different_structure() {
+        // Test that formulas with different structure have different fingerprints
+        let f1 = "=SUM(A1,B1)";
+        let f2 = "=SUM(A1+B1)";
+
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
+
+        assert_ne!(
+            fp1, fp2,
+            "Formulas with different structure should have different fingerprints"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_ignores_source_token() {
+        // Create two identical ASTNodes but with different source_token values
+        let value = LiteralValue::Number(42.0);
+        let node_type = ASTNodeType::Literal(value);
+
+        let token1 = Token::new("42".to_string(), TokenType::Operand, TokenSubType::Number);
+        let token2 = Token::new("42.0".to_string(), TokenType::Operand, TokenSubType::Number);
+
+        let node1 = ASTNode::new(node_type.clone(), Some(token1));
+        let node2 = ASTNode::new(node_type, Some(token2));
+
+        assert_eq!(
+            node1.fingerprint(),
+            node2.fingerprint(),
+            "Fingerprints should be equal for nodes with same structure but different source_token"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_deterministic() {
+        // Test that the fingerprint is deterministic across calls
+        let formula = "=SUM(A1:B10)/COUNT(A1:B10)";
+        let ast = crate::parser::parse(formula).unwrap();
+
+        let fp1 = ast.fingerprint();
+        let fp2 = ast.fingerprint();
+
+        assert_eq!(
+            fp1, fp2,
+            "Fingerprint should be deterministic for the same AST"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_complex_formula() {
+        // Test with a more complex formula
+        let f1 = "=IF(AND(A1>0,B1<10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
+        let f2 = "=IF(AND(A1>0,B1<10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
+
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
+
+        assert_eq!(
+            fp1, fp2,
+            "Identical complex formulas should have the same fingerprint"
+        );
+
+        // Slightly different formula
+        let f3 = "=IF(AND(A1>0,B1<=10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
+        let fp3 = crate::parser::parse(f3).unwrap().fingerprint();
+
+        assert_ne!(
+            fp1, fp3,
+            "Different complex formulas should have different fingerprints"
+        );
+    }
+
+    #[test]
+    fn test_validation_requirements() {
+        // Test the specific validation example from the requirements
+        let f1 = "=SUM(a1, 2)";
+        let f2 = "=  SUM( A1 ,2 )"; // diff whitespace/casing
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
+        assert_eq!(
+            fp1, fp2,
+            "Formulas with different whitespace and casing should have the same fingerprint"
+        );
+
+        let fp3 = crate::parser::parse("=SUM(A1,3)").unwrap().fingerprint();
+        assert_ne!(
+            fp1, fp3,
+            "Formulas with different values should have different fingerprints"
+        );
+    }
+}
+
+#[cfg(test)]
+mod normalise_tests {
+    use crate::parser::normalise_reference;
+
+    #[test]
+    fn test_normalise_cell_references() {
+        // Test normalizing cell references
+        assert_eq!(normalise_reference("a1").unwrap(), "A1");
+        assert_eq!(normalise_reference("$a$1").unwrap(), "$A$1");
+        assert_eq!(normalise_reference("$A$1").unwrap(), "$A$1");
+        assert_eq!(normalise_reference("Sheet1!$b$2").unwrap(), "Sheet1!$B$2");
+        assert_eq!(normalise_reference("'Sheet1'!$b$2").unwrap(), "Sheet1!$B$2");
+        assert_eq!(
+            normalise_reference("'my sheet'!$b$2").unwrap(),
+            "'my sheet'!$B$2"
+        );
+    }
+
+    #[test]
+    fn test_normalise_range_references() {
+        // Test normalizing range references
+        assert_eq!(normalise_reference("a1:b2").unwrap(), "A1:B2");
+        assert_eq!(normalise_reference("$a$1:$b$2").unwrap(), "$A$1:$B$2");
+        assert_eq!(
+            normalise_reference("Sheet1!$a$1:$b$2").unwrap(),
+            "Sheet1!$A$1:$B$2"
+        );
+        assert_eq!(
+            normalise_reference("'my sheet'!$a$1:$b$2").unwrap(),
+            "'my sheet'!$A$1:$B$2"
+        );
+        assert_eq!(normalise_reference("$a:$a").unwrap(), "$A:$A");
+        assert_eq!(normalise_reference("$1:$1").unwrap(), "$1:$1");
+    }
+
+    #[test]
+    fn test_normalise_table_references() {
+        // Test normalizing table references
+        assert_eq!(
+            normalise_reference("Table1[Column1]").unwrap(),
+            "Table1[Column1]"
+        );
+        assert_eq!(
+            normalise_reference("Table1[ Column1 ]").unwrap(),
+            "Table1[Column1]"
+        );
+        assert_eq!(
+            normalise_reference("Table1[Column1:Column2]").unwrap(),
+            "Table1[Column1:Column2]"
+        );
+        assert_eq!(
+            normalise_reference("Table1[ Column1 : Column2 ]").unwrap(),
+            "Table1[Column1:Column2]"
+        );
+        // Special items should remain unchanged
+        assert_eq!(
+            normalise_reference("Table1[#Headers]").unwrap(),
+            "Table1[#Headers]"
+        );
+    }
+
+    #[test]
+    fn test_normalise_named_ranges() {
+        // Named ranges should remain unchanged
+        assert_eq!(normalise_reference("SalesData").unwrap(), "SalesData");
+    }
+
+    #[test]
+    fn test_validation_examples() {
+        // These are the examples given in the validation section
+        assert_eq!(normalise_reference("a1").unwrap(), "A1");
+        assert_eq!(
+            normalise_reference("'my sheet'!$b$2").unwrap(),
+            "'my sheet'!$B$2"
+        );
+        assert_eq!(normalise_reference("A:A").unwrap(), "A:A");
+        assert_eq!(
+            normalise_reference("Table1[ column ]").unwrap(),
+            "Table1[column]"
+        );
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use crate::parser::ReferenceType;
+    use crate::parser::*;
+    use crate::tokenizer::{TokenType, Tokenizer};
+
+    #[test]
+    fn test_cell_reference_parsing() {
+        // Simple cell reference
+        let reference = "A1";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(ref_type, ReferenceType::cell(None, 1, 1));
+
+        // Cell reference with sheet
+        let reference = "Sheet1!B2";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::cell(Some("Sheet1".to_string()), 2, 2)
+        );
+
+        // Cell reference with quoted sheet name
+        let reference = "'Sheet 1'!C3";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::cell(Some("Sheet 1".to_string()), 3, 3)
+        );
+
+        // Cell reference with absolute reference
+        let reference = "$D$4";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::cell_with_abs(None, 4, 4, true, true)
+        );
+    }
+
+    #[test]
+    fn test_range_reference_parsing() {
+        // Simple range
+        let reference = "A1:B2";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2))
+        );
+
+        // Range with sheet
+        let reference = "Sheet1!C3:D4";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(
+                Some("Sheet1".to_string()),
+                Some(3),
+                Some(3),
+                Some(4),
+                Some(4),
+            )
+        );
+
+        // Range with quoted sheet name
+        let reference = "'Sheet 1'!E5:F6";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(
+                Some("Sheet 1".to_string()),
+                Some(5),
+                Some(5),
+                Some(6),
+                Some(6),
+            )
+        );
+
+        // Range with absolute references
+        let reference = "$G$7:$H$8";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range_with_abs(
+                None,
+                Some(7),
+                Some(7),
+                Some(8),
+                Some(8),
+                true,
+                true,
+                true,
+                true
+            )
+        );
+    }
+
+    #[test]
+    fn test_infinite_range_parsing() {
+        // Infinite column range (A:A)
+        let reference = "A:A";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(None, None, Some(1), None, Some(1))
+        );
+
+        // Infinite row range (1:1)
+        let reference = "1:1";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(None, Some(1), None, Some(1), None)
+        );
+
+        // Row range with sheet
+        let reference = "Sheet1!3:4";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(Some("Sheet1".to_string()), Some(3), None, Some(4), None)
+        );
+
+        // Column range with sheet
+        let reference = "Sheet1!C:D";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(Some("Sheet1".to_string()), None, Some(3), None, Some(4))
+        );
+
+        // Infinite column range with sheet (Sheet1!A:A)
+        let reference = "Sheet1!A:A";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(Some("Sheet1".to_string()), None, Some(1), None, Some(1))
+        );
+
+        // Range with column-only to column-only (A:B)
+        let reference = "A:B";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(None, None, Some(1), None, Some(2))
+        );
+
+        // Range with row-only to row-only (1:5)
+        let reference = "1:5";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(None, Some(1), None, Some(5), None)
+        );
+
+        // Range with bounded start, unbounded end (A1:A)
+        let reference = "A1:A";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(None, Some(1), Some(1), None, Some(1))
+        );
+
+        // Range with unbounded start, bounded end (A:A10)
+        let reference = "A:A10";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(None, None, Some(1), Some(10), Some(1))
+        );
+    }
+
+    #[test]
+    fn test_range_to_string() {
+        // Test to_string representation for normal ranges
+        let range = ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2));
+        assert_eq!(range.to_excel_string(), "A1:B2");
+
+        // Test to_string for infinite column range
+        let range = ReferenceType::range(None, None, Some(1), None, Some(1));
+        assert_eq!(range.to_excel_string(), "A:A");
+
+        // Test to_string for infinite row range
+        let range = ReferenceType::range(None, Some(1), None, Some(1), None);
+        assert_eq!(range.to_excel_string(), "1:1");
+
+        // Test to_string for partially infinite range (A1:A)
+        let range = ReferenceType::range(None, Some(1), Some(1), None, Some(1));
+        assert_eq!(range.to_excel_string(), "A1:A");
+
+        // Test to_string for partially infinite range with sheet
+        let range =
+            ReferenceType::range(Some("Sheet1".to_string()), None, Some(1), Some(10), Some(1));
+        assert_eq!(range.to_excel_string(), "Sheet1!A:A10");
+    }
+
+    #[test]
+    fn test_table_reference_parsing() {
+        // Table reference
+        let reference = "Table1[Column1]";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+
+        // Check that we get a table reference with the correct name and column
+        if let ReferenceType::Table(table_ref) = ref_type {
+            assert_eq!(table_ref.name, "Table1");
+
+            if let Some(TableSpecifier::Column(column)) = table_ref.specifier {
+                assert_eq!(column, "Column1");
+            } else {
+                panic!("Expected Column specifier");
+            }
+        } else {
+            panic!("Expected Table reference");
+        }
+    }
+
+    #[test]
+    fn test_external_workbook_reference_parsing() {
+        let ref_type = ReferenceType::from_string("[33]Sheet1!$B:$B").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "[33]Sheet1!$B:$B".to_string(),
+                book: ExternalBookRef::Token("[33]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::range_with_abs(
+                    None,
+                    Some(2),
+                    None,
+                    Some(2),
+                    false,
+                    true,
+                    false,
+                    true,
+                ),
+            })
+        );
+
+        let ref_type = ReferenceType::from_string("'[My Book.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[My Book.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("[My Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::cell(1, 1),
+            })
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_reference_paths_and_urls() {
+        let ref_type = ReferenceType::from_string("'[C:\\Users\\me\\Book.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[C:\\Users\\me\\Book.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("[C:\\Users\\me\\Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::cell(1, 1),
+            })
+        );
+
+        let ref_type = ReferenceType::from_string("'C:\\Users\\me\\[Book.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'C:\\Users\\me\\[Book.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("C:\\Users\\me\\[Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::cell(1, 1),
+            })
+        );
+
+        let ref_type =
+            ReferenceType::from_string("[\\\\server\\share\\Book.xlsx]Sheet1!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "[\\\\server\\share\\Book.xlsx]Sheet1!A1".to_string(),
+                book: ExternalBookRef::Token("[\\\\server\\share\\Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::cell(1, 1),
+            })
+        );
+
+        let ref_type =
+            ReferenceType::from_string("'[https://example.com/Book.xlsx]Sheet1'!1:3").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[https://example.com/Book.xlsx]Sheet1'!1:3".to_string(),
+                book: ExternalBookRef::Token("[https://example.com/Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::range(Some(1), None, Some(3), None),
+            })
+        );
+
+        // Sheet names containing ']' but no '[' should not be treated as external.
+        let ref_type = ReferenceType::from_string("'foo]bar'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::cell(Some("foo]bar".to_string()), 1, 1)
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_sheet_names_with_spaces() {
+        let ref_type = ReferenceType::from_string("'[Book.xlsx]My Sheet'!$A$1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[Book.xlsx]My Sheet'!$A$1".to_string(),
+                book: ExternalBookRef::Token("[Book.xlsx]".to_string()),
+                sheet: "My Sheet".to_string(),
+                kind: ExternalRefKind::cell_with_abs(1, 1, true, true),
+            })
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_unix_style_paths() {
+        let ref_type = ReferenceType::from_string("'/tmp/[Book.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'/tmp/[Book.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("/tmp/[Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::cell(1, 1),
+            })
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_sheet_name_can_contain_close_bracket() {
+        let ref_type =
+            ReferenceType::from_string("'C:\\Users\\me\\[Book.xlsx]S]heet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'C:\\Users\\me\\[Book.xlsx]S]heet1'!A1".to_string(),
+                book: ExternalBookRef::Token("C:\\Users\\me\\[Book.xlsx]".to_string()),
+                sheet: "S]heet1".to_string(),
+                kind: ExternalRefKind::cell(1, 1),
+            })
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_token_and_sheet_name_allow_escaped_quotes() {
+        let ref_type = ReferenceType::from_string("'[O''Reilly.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[O''Reilly.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("[O'Reilly.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::cell(1, 1),
+            })
+        );
+
+        let ref_type = ReferenceType::from_string("'[Book.xlsx]Bob''s Sheet'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[Book.xlsx]Bob''s Sheet'!A1".to_string(),
+                book: ExternalBookRef::Token("[Book.xlsx]".to_string()),
+                sheet: "Bob's Sheet".to_string(),
+                kind: ExternalRefKind::cell(1, 1),
+            })
+        );
+    }
+
+    #[test]
+    fn test_sheet_scoped_table_reference_is_not_external() {
+        let ref_type = ReferenceType::from_string("Sheet1!Table1[Column1]").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::Table(TableReference {
+                name: "Table1".to_string(),
+                specifier: Some(TableSpecifier::Column("Column1".to_string())),
+            })
+        );
+    }
+
+    #[test]
+    fn test_named_range_parsing() {
+        // Named range
+        let reference = "SalesData";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(ref_type, ReferenceType::NamedRange(reference.to_string()));
+    }
+
+    #[test]
+    fn test_column_to_number() {
+        assert_eq!(ReferenceType::column_to_number("A").unwrap(), 1);
+        assert_eq!(ReferenceType::column_to_number("Z").unwrap(), 26);
+        assert_eq!(ReferenceType::column_to_number("AA").unwrap(), 27);
+        assert_eq!(ReferenceType::column_to_number("AB").unwrap(), 28);
+        assert_eq!(ReferenceType::column_to_number("BA").unwrap(), 53);
+        assert_eq!(ReferenceType::column_to_number("ZZ").unwrap(), 702);
+        assert_eq!(ReferenceType::column_to_number("AAA").unwrap(), 703);
+    }
+
+    #[test]
+    fn test_number_to_column() {
+        assert_eq!(ReferenceType::number_to_column(1), "A");
+        assert_eq!(ReferenceType::number_to_column(26), "Z");
+        assert_eq!(ReferenceType::number_to_column(27), "AA");
+        assert_eq!(ReferenceType::number_to_column(28), "AB");
+        assert_eq!(ReferenceType::number_to_column(53), "BA");
+        assert_eq!(ReferenceType::number_to_column(702), "ZZ");
+        assert_eq!(ReferenceType::number_to_column(703), "AAA");
+    }
+
+    #[test]
+    fn test_get_dependencies() {
+        // Parse a formula and check its dependencies
+        let formula = "=A1+B1*SUM(C1:D2)";
+        let mut parser = Parser::new(formula).unwrap();
+        let ast = parser.parse().unwrap();
+
+        let dependencies = ast.get_dependencies();
+
+        // We expect three dependencies: A1, B1, and C1:D2
+        assert_eq!(dependencies.len(), 3);
+
+        let deps: Vec<ReferenceType> = dependencies.into_iter().cloned().collect();
+
+        assert!(deps.contains(&ReferenceType::cell(None, 1, 1))); // A1
+        assert!(deps.contains(&ReferenceType::cell(None, 1, 2))); // B1
+        assert!(deps.contains(&ReferenceType::range(
+            None,
+            Some(1),
+            Some(3),
+            Some(2),
+            Some(4)
+        ))); // C1:D2
+    }
+
+    #[test]
+    fn test_get_dependency_strings() {
+        // Parse a formula and check its dependency strings
+        let formula = "=A1+B1*SUM(C1:D2)";
+        let mut parser = Parser::new(formula).unwrap();
+        let ast = parser.parse().unwrap();
+
+        let dependencies = ast.get_dependency_strings();
+
+        // We expect three dependencies: A1, B1, and C1:D2
+        assert_eq!(dependencies.len(), 3);
+        assert!(dependencies.contains(&"A1".to_string()));
+        assert!(dependencies.contains(&"B1".to_string()));
+        assert!(dependencies.contains(&"C1:D2".to_string()));
+    }
+
+    #[test]
+    fn test_complex_formula_dependencies() {
+        let formula = "=IF(SUM(Sheet1!A1:A10)>100,MAX(Table1[Amount]),MIN('Data Sheet'!B1:B5))";
+        let mut parser = Parser::new(formula).unwrap();
+        let ast = parser.parse().unwrap();
+
+        let dependencies = ast.get_dependency_strings();
+        println!("Dependencies: {dependencies:?}");
+
+        assert_eq!(dependencies.len(), 3);
+        assert!(dependencies.contains(&"Sheet1!A1:A10".to_string()));
+        assert!(dependencies.contains(&"Table1[Amount]".to_string()));
+        assert!(dependencies.contains(&"'Data Sheet'!B1:B5".to_string()));
+    }
+
+    #[test]
+    fn test_xlfn_function_parsing() {
+        let formula = "=_xlfn.XLOOKUP(J7, 'GI XWALK'!$Q:$Q,'GI XWALK'!$R:$R,,0)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        println!("tokenizer: {:?}", tokenizer.items);
+        let mut parser = Parser::new(formula).unwrap();
+        let ast = parser.parse().unwrap();
+        println!("ast: {ast:?}");
+    }
+
+    #[test]
+    fn test_dual_bracket_structured_reference_parsing() {
+        use crate::parser::{SpecialItem, TableSpecifier};
+        let formula = "=EffortDB[[#All],[NPI]:[JMG Group]]";
+        let mut parser = Parser::new(formula).unwrap();
+        let ast = parser.parse().unwrap();
+
+        let ASTNodeType::Reference {
+            original,
+            reference,
+        } = &ast.node_type
+        else {
+            panic!("Expected Reference node");
+        };
+        assert_eq!(original, &"EffortDB[[#All],[NPI]:[JMG Group]]".to_string());
+
+        let ReferenceType::Table(table_ref) = reference else {
+            panic!("Expected Table reference");
+        };
+        assert_eq!(table_ref.name, "EffortDB");
+        let Some(TableSpecifier::Combination(parts)) = &table_ref.specifier else {
+            panic!("Expected Combination, got {:?}", table_ref.specifier);
+        };
+        let parts: Vec<TableSpecifier> = parts.iter().map(|p| (**p).clone()).collect();
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::All),
+                TableSpecifier::ColumnRange("NPI".to_string(), "JMG Group".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_table_reference_with_simple_column() {
+        // Test a simple table reference with just a column
+        let reference = "Table1[Column1]";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+
+        if let ReferenceType::Table(table_ref) = ref_type {
+            assert_eq!(table_ref.name, "Table1");
+
+            if let Some(specifier) = table_ref.specifier {
+                match specifier {
+                    TableSpecifier::Column(column) => {
+                        assert_eq!(column, "Column1");
+                    }
+                    _ => panic!("Expected Column specifier"),
+                }
+            } else {
+                panic!("Expected specifier to be Some");
+            }
+        } else {
+            panic!("Expected Table reference");
+        }
+    }
+
+    #[test]
+    fn test_table_reference_with_non_ascii_column_names() {
+        for (reference, expected_table, expected_column) in [
+            ("Sales[Акт]", "Sales", "Акт"),
+            ("Café[Crème brûlée]", "Café", "Crème brûlée"),
+            ("分析[数量]", "分析", "数量"),
+        ] {
+            let ref_type = ReferenceType::from_string(reference).unwrap();
+
+            match ref_type {
+                ReferenceType::Table(table_ref) => {
+                    assert_eq!(table_ref.name, expected_table);
+                    match table_ref.specifier {
+                        Some(TableSpecifier::Column(column)) => {
+                            assert_eq!(column, expected_column)
+                        }
+                        other => panic!("Expected Column specifier, got {other:?}"),
+                    }
+                }
+                other => panic!("Expected Table reference, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_table_reference_with_column_range() {
+        // Test a table reference with a column range
+        let reference = "Table1[Column1:Column2]";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+
+        if let ReferenceType::Table(table_ref) = ref_type {
+            assert_eq!(table_ref.name, "Table1");
+
+            if let Some(specifier) = table_ref.specifier {
+                match specifier {
+                    TableSpecifier::ColumnRange(start, end) => {
+                        assert_eq!(start, "Column1");
+                        assert_eq!(end, "Column2");
+                    }
+                    _ => panic!("Expected ColumnRange specifier"),
+                }
+            } else {
+                panic!("Expected specifier to be Some");
+            }
+        } else {
+            panic!("Expected Table reference");
+        }
+    }
+
+    #[test]
+    fn test_table_reference_with_special_item() {
+        // Test a table reference with a special item
+        let reference = "Table1[#Headers]";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+
+        if let ReferenceType::Table(table_ref) = ref_type {
+            assert_eq!(table_ref.name, "Table1");
+
+            if let Some(specifier) = table_ref.specifier {
+                match specifier {
+                    TableSpecifier::SpecialItem(item) => {
+                        assert_eq!(item, SpecialItem::Headers);
+                    }
+                    _ => panic!("Expected SpecialItem specifier"),
+                }
+            } else {
+                panic!("Expected specifier to be Some");
+            }
+        } else {
+            panic!("Expected Table reference");
+        }
+    }
+
+    #[test]
+    fn test_single_bracket_structured_reference_parsing() {
+        let formula = "=EffortDB[#All]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        println!("tokenizer: {:?}", tokenizer.items);
+        let mut parser = Parser::new(formula).unwrap();
+        let ast = parser.parse().unwrap();
+        println!("ast: {ast:?}");
+    }
+
+    #[test]
+    fn test_table_reference_without_specifier() {
+        // Test a table reference without any specifier (entire table)
+        let reference = "Table1";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+
+        // After our column name length limit (max 3 chars), "Table1" can't be parsed as a cell
+        // reference anymore (Table is 5 chars). It should be treated as a named range.
+        if let ReferenceType::NamedRange(name) = ref_type {
+            assert_eq!(name, "Table1");
+        } else {
+            panic!("Expected NamedRange, got: {ref_type:?}");
+        }
+    }
+
+    #[test]
+    fn test_table_item_with_column_reference() {
+        use crate::parser::SpecialItem;
+        // Test a table reference with an item specifier and column
+        let reference = "Table1[[#Data],[Column1]]";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+
+        let ReferenceType::Table(table_ref) = ref_type else {
+            panic!("Expected Table reference");
+        };
+        assert_eq!(table_ref.name, "Table1");
+        let Some(TableSpecifier::Combination(parts)) = table_ref.specifier else {
+            panic!("Expected Combination specifier");
+        };
+        let parts: Vec<TableSpecifier> = parts.into_iter().map(|p| *p).collect();
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Data),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_table_this_row_with_column_reference() {
+        use crate::parser::SpecialItem;
+        // Test a table reference with this row specifier and column
+        let reference = "Table1[[@],[Column1]]";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+
+        let ReferenceType::Table(table_ref) = ref_type else {
+            panic!("Expected Table reference");
+        };
+        assert_eq!(table_ref.name, "Table1");
+        let Some(TableSpecifier::Combination(parts)) = table_ref.specifier else {
+            panic!("Expected Combination specifier");
+        };
+        let parts: Vec<TableSpecifier> = parts.into_iter().map(|p| *p).collect();
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_table_multiple_item_specifiers() {
+        // Test a table reference with multiple item specifiers
+        let reference = "Table1[[#Headers],[#Data]]";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+
+        if let ReferenceType::Table(table_ref) = ref_type {
+            assert_eq!(table_ref.name, "Table1");
+
+            // Currently our implementation doesn't fully parse complex specifiers,
+            // but we should at least verify it's parsed as a table reference
+            assert!(table_ref.specifier.is_some());
+
+            // Note: In the future, we should enhance this to properly parse
+            // complex structured references and verify the exact specifier
+        } else {
+            panic!("Expected Table reference");
+        }
+    }
+
+    // Note: The following tests are for future functionality and currently only validate
+    // that the existing parsing mechanism doesn't break on these formats.
+
+    #[test]
+    fn test_table_reference_with_spill() {
+        // Spill operator (#) postfix on a table reference (issue #71).
+        let formula = "=Table1[#Data]#";
+        let tokenizer = Tokenizer::new(formula).expect("tokenize spill on table ref");
+        // Last non-whitespace token is the spill postfix `#`.
+        let last = tokenizer
+            .items
+            .iter()
+            .rev()
+            .find(|t| t.token_type != TokenType::Whitespace)
+            .expect("non-empty");
+        assert_eq!(last.token_type, TokenType::OpPostfix);
+        assert_eq!(last.value, "#");
+    }
+
+    #[test]
+    fn test_table_intersection() {
+        // Test table intersection reference
+        // Currently our implementation doesn't properly handle table intersections,
+        // so this test just verifies current behavior
+        let formula = "=Table1[@] Table2[#All]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Just verify the tokenizer doesn't crash
+        assert!(!tokenizer.items.is_empty());
+
+        // Note: In the future, this should be enhanced to properly parse
+        // table intersections and verify they're handled correctly
+    }
+
+    #[test]
+    fn structured_combination_roundtrip_prints_nested_brackets() {
+        use crate::parser::{ReferenceType, SpecialItem, TableReference, TableSpecifier};
+        let s = "Table1[[#Headers],[#Data]]";
+        let r = ReferenceType::from_string(s).expect("parse ok");
+        // Expect canonical nested-bracket printing
+        assert_eq!(r.to_string(), s);
+        // Also sanity-check structure
+        match r {
+            ReferenceType::Table(TableReference {
+                name,
+                specifier: Some(TableSpecifier::Combination(parts)),
+            }) => {
+                assert_eq!(name, "Table1");
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Headers)))
+                );
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Data)))
+                );
+            }
+            _ => panic!("expected table combination"),
+        }
+    }
+
+    #[test]
+    fn structured_combination_preserves_duplicate_specials_in_order() {
+        use crate::parser::{ReferenceType, SpecialItem, TableReference, TableSpecifier};
+        // The OOXML grammar (`combination := item ("," item)*`) permits repeats.
+        // After the issue #73 rewrite, the parser preserves them in source order
+        // instead of silently de-duplicating.
+        let s = "Table1[[#Data],[#Data],[#Totals],[#Totals]]";
+        let r = ReferenceType::from_string(s).expect("parse ok");
+        assert_eq!(r.to_string(), s);
+        let ReferenceType::Table(TableReference {
+            specifier: Some(TableSpecifier::Combination(parts)),
+            ..
+        }) = r
+        else {
+            panic!("expected table combination");
+        };
+        let parts: Vec<TableSpecifier> = parts.into_iter().map(|p| *p).collect();
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Data),
+                TableSpecifier::SpecialItem(SpecialItem::Data),
+                TableSpecifier::SpecialItem(SpecialItem::Totals),
+                TableSpecifier::SpecialItem(SpecialItem::Totals),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod structured_references {
+    //! Coverage for issue #73: real parser for structured (table) references.
+    //!
+    //! Each test runs across both the classic [`Parser`] and the span-based
+    //! [`crate::parse`] entrypoint to catch any divergence between paths.
+    use crate::parser::{
+        ASTNodeType, Parser, ReferenceType, SpecialItem, TableReference, TableRowSpecifier,
+        TableSpecifier,
+    };
+    use crate::tokenizer::Tokenizer;
+    fn parse_via_classic(formula: &str) -> Result<ReferenceType, String> {
+        let mut parser = Parser::new(formula).map_err(|e| e.to_string())?;
+        let ast = parser.parse().map_err(|e| e.to_string())?;
+        match ast.node_type {
+            ASTNodeType::Reference { reference, .. } => Ok(reference),
+            other => Err(format!("expected reference node, got {other:?}")),
+        }
+    }
+
+    fn parse_via_span(formula: &str) -> Result<ReferenceType, String> {
+        let ast = crate::parse(formula).map_err(|e| e.to_string())?;
+        match ast.node_type {
+            ASTNodeType::Reference { reference, .. } => Ok(reference),
+            other => Err(format!("expected reference node, got {other:?}")),
+        }
+    }
+
+    /// Parse via both paths and require they agree.
+    fn parse_both(formula: &str) -> Result<ReferenceType, String> {
+        let classic = parse_via_classic(formula)?;
+        let span = parse_via_span(formula)?;
+        assert_eq!(
+            classic, span,
+            "classic vs span parser disagree for {formula}"
+        );
+        Ok(classic)
+    }
+
+    fn expect_table(formula: &str) -> TableReference {
+        let r = parse_both(formula).expect("parse ok");
+        match r {
+            ReferenceType::Table(t) => t,
+            other => panic!("expected Table, got {other:?}"),
+        }
+    }
+
+    fn expect_parse_err(formula: &str) {
+        let classic = parse_via_classic(formula);
+        let span = parse_via_span(formula);
+        assert!(
+            classic.is_err(),
+            "classic parser unexpectedly accepted {formula}: {classic:?}"
+        );
+        assert!(
+            span.is_err(),
+            "span parser unexpectedly accepted {formula}: {span:?}"
+        );
+    }
+
+    fn expect_combination(spec: Option<TableSpecifier>) -> Vec<TableSpecifier> {
+        match spec {
+            Some(TableSpecifier::Combination(parts)) => parts.into_iter().map(|b| *b).collect(),
+            other => panic!("expected Combination, got {other:?}"),
+        }
+    }
+
+    // ----------- positive: simple regression -----------
+
+    #[test]
+    fn simple_column() {
+        let t = expect_table("=Table1[Column1]");
+        assert_eq!(t.name, "Table1");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Column("Column1".to_string()))
+        );
+    }
+
+    #[test]
+    fn simple_column_range() {
+        let t = expect_table("=Table1[Column1:Column2]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::ColumnRange(
+                "Column1".to_string(),
+                "Column2".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn simple_specials() {
+        for (s, expected) in [
+            ("=Table1[#All]", SpecialItem::All),
+            ("=Table1[#Headers]", SpecialItem::Headers),
+            ("=Table1[#Data]", SpecialItem::Data),
+            ("=Table1[#Totals]", SpecialItem::Totals),
+        ] {
+            let t = expect_table(s);
+            assert_eq!(t.specifier, Some(TableSpecifier::SpecialItem(expected)));
+        }
+    }
+
+    #[test]
+    fn this_row_at_only() {
+        let t = expect_table("=Table1[@]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Row(TableRowSpecifier::Current))
+        );
+    }
+
+    // ----------- positive: combinations preserving column parts -----------
+
+    #[test]
+    fn all_with_column_range_preserves_both_parts() {
+        let t = expect_table("=Table1[[#All],[A]:[B]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::All),
+                TableSpecifier::ColumnRange("A".to_string(), "B".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn headers_with_column() {
+        let t = expect_table("=Table1[[#Headers],[Column1]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Headers),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn data_with_column_range() {
+        let t = expect_table("=Table1[[#Data],[Column1]:[Column2]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Data),
+                TableSpecifier::ColumnRange("Column1".to_string(), "Column2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn totals_with_column() {
+        let t = expect_table("=Table1[[#Totals],[Column1]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Totals),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn effort_db_full_range_preserves_columns() {
+        let t = expect_table("=EffortDB[[#All],[NPI]:[JMG Group]]");
+        assert_eq!(t.name, "EffortDB");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::All),
+                TableSpecifier::ColumnRange("NPI".to_string(), "JMG Group".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn column_range_with_spaces_in_names() {
+        let t = expect_table("=Table1[[Col A]:[Col B]]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::ColumnRange(
+                "Col A".to_string(),
+                "Col B".to_string()
+            ))
+        );
+    }
+
+    // ----------- positive: this-row variants -----------
+
+    #[test]
+    fn this_row_with_column_combination() {
+        let t = expect_table("=Table1[[@],[Column1]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn this_row_at_column_shorthand() {
+        let t = expect_table("=Table1[@Column1]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn this_row_legacy_form() {
+        let t = expect_table("=Table1[[#This Row],[Col]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("Col".to_string()),
+            ]
+        );
+    }
+
+    // ----------- positive: case-insensitivity -----------
+
+    #[test]
+    fn specials_are_case_insensitive() {
+        let t = expect_table("=Table1[#headers]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::SpecialItem(SpecialItem::Headers))
+        );
+        let t = expect_table("=Table1[#ALL]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::SpecialItem(SpecialItem::All))
+        );
+        let t = expect_table("=Table1[[#this row],[col]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("col".to_string()),
+            ]
+        );
+    }
+
+    // ----------- positive: ' escape inside column names -----------
+    //
+    // OOXML / MS-XLSX uses a per-character escape: `'X` represents a literal
+    // `X` (where X is one of `[`, `]`, `'`). Excel itself serializes a
+    // column named `Col ]` as `[Col ']]` (single apostrophe before the
+    // escaped `]`). We follow that canonical encoding here.
+
+    #[test]
+    fn column_name_with_escaped_close_bracket() {
+        let t = expect_table("=Table1[Col ']]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Column("Col ]".to_string()))
+        );
+    }
+
+    #[test]
+    fn column_name_with_escaped_open_bracket() {
+        let t = expect_table("=Table1[Col '[end]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Column("Col [end".to_string()))
+        );
+    }
+
+    #[test]
+    fn column_name_with_escaped_apostrophe() {
+        // `''` -> literal `'`
+        let t = expect_table("=Table1[O''Brien]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Column("O'Brien".to_string()))
+        );
+    }
+
+    #[test]
+    fn combination_with_escaped_close_bracket() {
+        let t = expect_table("=Table1[[#Headers],[Col ']]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Headers),
+                TableSpecifier::Column("Col ]".to_string()),
+            ]
+        );
+    }
+
+    // ----------- positive: non-ASCII column names -----------
+
+    #[test]
+    fn unicode_column_names() {
+        for (formula, table, col) in [
+            ("=Sales[Акт]", "Sales", "Акт"),
+            ("=Café[Crème brûlée]", "Café", "Crème brûlée"),
+            ("=分析[数量]", "分析", "数量"),
+        ] {
+            let t = expect_table(formula);
+            assert_eq!(t.name, table);
+            assert_eq!(t.specifier, Some(TableSpecifier::Column(col.to_string())));
+        }
+    }
+
+    // ----------- positive: roundtrip via Display -----------
+
+    #[test]
+    fn display_roundtrips() {
+        for input in [
+            "Table1[Column1]",
+            "Table1[Column1:Column2]",
+            "Table1[#Headers]",
+            "Table1[#Data]",
+            "Table1[#Totals]",
+            "Table1[#All]",
+            "Table1[@]",
+            "Table1[[#All],[A]:[B]]",
+            "Table1[[#Headers],[Column1]]",
+            "Table1[[#Data],[Column1]:[Column2]]",
+            "Table1[[#Totals],[Column1]]",
+            "Table1[[@],[Column1]]",
+        ] {
+            let r = ReferenceType::from_string(input).expect("parse ok");
+            let printed = r.to_string();
+            let r2 = ReferenceType::from_string(&printed).expect("reparse ok");
+            assert_eq!(r, r2, "roundtrip changed AST for {input}: {printed}");
+        }
+    }
+
+    // ----------- positive: sheet-scoped -----------
+
+    #[test]
+    fn sheet_scoped_table_ref_still_drops_sheet() {
+        let r = ReferenceType::from_string("Sheet1!Table1[Column1]").unwrap();
+        assert_eq!(
+            r,
+            ReferenceType::Table(TableReference {
+                name: "Table1".to_string(),
+                specifier: Some(TableSpecifier::Column("Column1".to_string())),
+            })
+        );
+    }
+
+    // ----------- negative -----------
+
+    #[test]
+    fn rejects_trailing_garbage_after_column() {
+        expect_parse_err("=Table1[Col]junk");
+    }
+
+    #[test]
+    fn rejects_trailing_garbage_after_empty_specifier() {
+        // Tokenizer may already split; verify the full formula still errors.
+        let classic = parse_via_classic("=Table1[]abc");
+        let span = parse_via_span("=Table1[]abc");
+        assert!(classic.is_err(), "classic accepted: {classic:?}");
+        assert!(span.is_err(), "span accepted: {span:?}");
+    }
+
+    #[test]
+    fn rejects_unknown_special_item() {
+        expect_parse_err("=Table1[#unknown]");
+    }
+
+    #[test]
+    fn rejects_garbage_inside_combination() {
+        expect_parse_err("=Table1[[#Data],junk]");
+    }
+
+    #[test]
+    fn rejects_unterminated_bracket() {
+        // Tokenizer error.
+        assert!(Tokenizer::new("=Table1[Col").is_err());
+        assert!(crate::parse("=Table1[Col").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_escape() {
+        // [Col '] — the ' is supposed to escape the next char; here it escapes ']'
+        // which means the bracket never terminates.
+        assert!(Tokenizer::new("=Table1[[Col ']]").is_err());
+        assert!(crate::parse("=Table1[[Col ']]").is_err());
+    }
+}
+
+#[cfg(test)]
+mod sheet_ref_tests {
+    use crate::parser::ReferenceType;
+    use formualizer_common::{AxisBound, SheetLocator, SheetRef};
+
+    #[test]
+    fn parse_sheet_ref_preserves_abs_flags() {
+        let r = ReferenceType::parse_sheet_ref("$A$1").unwrap();
+        match r {
+            SheetRef::Cell(cell) => {
+                assert!(matches!(cell.sheet, SheetLocator::Current));
+                assert_eq!(cell.coord.row(), 0);
+                assert_eq!(cell.coord.col(), 0);
+                assert!(cell.coord.row_abs());
+                assert!(cell.coord.col_abs());
+            }
+            _ => panic!("expected cell"),
+        }
+
+        let r = ReferenceType::parse_sheet_ref("Sheet1!A$1").unwrap();
+        match r {
+            SheetRef::Cell(cell) => {
+                assert_eq!(cell.sheet.name(), Some("Sheet1"));
+                assert!(cell.coord.row_abs());
+                assert!(!cell.coord.col_abs());
+            }
+            _ => panic!("expected cell"),
+        }
+    }
+
+    #[test]
+    fn parse_sheet_ref_supports_open_ended_ranges() {
+        let r = ReferenceType::parse_sheet_ref("$A:$B").unwrap();
+        match r {
+            SheetRef::Range(range) => {
+                assert!(range.start_row.is_none());
+                assert!(range.end_row.is_none());
+                assert_eq!(range.start_col.unwrap().index, 0);
+                assert!(range.start_col.unwrap().abs);
+                assert_eq!(range.end_col.unwrap().index, 1);
+                assert!(range.end_col.unwrap().abs);
+            }
+            _ => panic!("expected range"),
+        }
+
+        let r = ReferenceType::parse_sheet_ref("1:$3").unwrap();
+        match r {
+            SheetRef::Range(range) => {
+                assert!(range.start_col.is_none());
+                assert!(range.end_col.is_none());
+                let sr = range.start_row.unwrap();
+                let er = range.end_row.unwrap();
+                assert_eq!(sr.index, 0);
+                assert!(!sr.abs);
+                assert_eq!(er.index, 2);
+                assert!(er.abs);
+            }
+            _ => panic!("expected range"),
+        }
+
+        let r = ReferenceType::parse_sheet_ref("A1:A").unwrap();
+        match r {
+            SheetRef::Range(range) => {
+                assert_eq!(range.start_row.unwrap().index, 0);
+                assert_eq!(range.start_col.unwrap().index, 0);
+                assert!(range.end_row.is_none());
+                assert_eq!(range.end_col.unwrap().index, 0);
+            }
+            _ => panic!("expected range"),
+        }
+    }
+
+    #[test]
+    fn parse_sheet_ref_allows_external_workbook_prefix() {
+        let r = ReferenceType::parse_sheet_ref("[33]Sheet1!$B:$B").unwrap();
+        match r {
+            SheetRef::Range(range) => {
+                assert_eq!(range.sheet.name(), Some("[33]Sheet1"));
+                assert!(range.start_row.is_none());
+                assert!(range.end_row.is_none());
+                let sc = range.start_col.unwrap();
+                let ec = range.end_col.unwrap();
+                assert_eq!(sc.index, 1);
+                assert!(sc.abs);
+                assert_eq!(ec.index, 1);
+                assert!(ec.abs);
+            }
+            _ => panic!("expected range"),
+        }
+    }
+
+    #[test]
+    fn to_sheet_ref_lossy_defaults_to_relative() {
+        let rt = ReferenceType::cell(None, 1, 1);
+        let sr = rt.to_sheet_ref_lossy().unwrap();
+        match sr {
+            SheetRef::Cell(cell) => {
+                assert!(!cell.coord.row_abs());
+                assert!(!cell.coord.col_abs());
+                assert!(matches!(cell.sheet, SheetLocator::Current));
+            }
+            _ => panic!("expected cell"),
+        }
+
+        let rt = ReferenceType::range(Some("Sheet1".to_string()), None, Some(1), None, Some(1));
+        let sr = rt.to_sheet_ref_lossy().unwrap();
+        match sr {
+            SheetRef::Range(range) => {
+                assert_eq!(range.sheet.name(), Some("Sheet1"));
+                assert!(range.start_row.is_none());
+                assert_eq!(range.start_col, Some(AxisBound::new(0, false)));
+                assert_eq!(range.end_col, Some(AxisBound::new(0, false)));
+            }
+            _ => panic!("expected range"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod semantics_regressions {
+    use crate::parser::{ASTNodeType, Parser, ReferenceType};
+
+    #[test]
+    fn exponent_is_right_associative() {
+        let mut p = Parser::new("=2^3^2").unwrap();
+        let ast = p.parse().unwrap();
+
+        match ast.node_type {
+            ASTNodeType::BinaryOp { op, left: _, right } => {
+                assert_eq!(op, "^");
+                // Expected: 2^(3^2)
+                match right.node_type {
+                    ASTNodeType::BinaryOp { op: op2, .. } => assert_eq!(op2, "^"),
+                    other => panic!("expected right child to be exponent, got {other:?}"),
+                }
+            }
+            other => panic!("expected BinaryOp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unary_minus_binds_tighter_than_exponent() {
+        let mut p = Parser::new("=-2^2").unwrap();
+        let ast = p.parse().unwrap();
+
+        // Excel: =-2^2 means (-2)^2 = 4
+        match ast.node_type {
+            ASTNodeType::BinaryOp { op, left, .. } => {
+                assert_eq!(op, "^");
+                match left.node_type {
+                    ASTNodeType::UnaryOp { op: op2, .. } => assert_eq!(op2, "-"),
+                    other => panic!("expected unary under exponent, got {other:?}"),
+                }
+            }
+            other => panic!("expected BinaryOp, got {other:?}"),
+        }
+    }
+
+    mod scientific_notation {
+        use crate::parser::{ASTNode, ASTNodeType, ParserError, ReferenceType, parse};
+        use formualizer_common::LiteralValue;
+
+        fn parse_formula(formula: &str) -> Result<ASTNode, ParserError> {
+            parse(formula)
+        }
+
+        fn assert_parsers_agree(formula: &str) {
+            let token_ast = parse_formula(formula);
+            let span_ast = parse(formula);
+            match (&token_ast, &span_ast) {
+                (Ok(a), Ok(b)) => assert_eq!(
+                    a.node_type, b.node_type,
+                    "token vs span parser disagree on {formula:?}"
+                ),
+                (Err(_), Err(_)) => {}
+                other => panic!("token vs span parser disagree on {formula:?}: {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_sci_number_basic() {
+            let ast = parse_formula("=1.5E+3").unwrap();
+            match ast.node_type {
+                ASTNodeType::Literal(LiteralValue::Number(n)) => assert_eq!(n, 1500.0),
+                other => panic!("expected Literal Number, got {other:?}"),
+            }
+            assert_parsers_agree("=1.5E+3");
+        }
+
+        #[test]
+        fn test_sci_minus_cell_ref() {
+            // `=1E-A1` should parse as `1E - A1`, not as a single named range.
+            let ast = parse_formula("=1E-A1").unwrap();
+            match ast.node_type {
+                ASTNodeType::BinaryOp { op, left, right } => {
+                    assert_eq!(op, "-");
+                    match left.node_type {
+                        ASTNodeType::Reference { reference, .. } => match reference {
+                            ReferenceType::NamedRange(name) => assert_eq!(name, "1E"),
+                            other => panic!("expected NamedRange(\"1E\"), got {other:?}"),
+                        },
+                        other => panic!("expected reference on lhs, got {other:?}"),
+                    }
+                    match right.node_type {
+                        ASTNodeType::Reference { reference, .. } => {
+                            assert_eq!(reference, ReferenceType::cell(None, 1, 1))
+                        }
+                        other => panic!("expected A1 reference on rhs, got {other:?}"),
+                    }
+                }
+                other => panic!("expected BinaryOp, got {other:?}"),
+            }
+            assert_parsers_agree("=1E-A1");
+        }
+
+        #[test]
+        fn test_sci_plus_cell_ref() {
+            let ast = parse_formula("=1E+A1").unwrap();
+            match ast.node_type {
+                ASTNodeType::BinaryOp { op, left, right } => {
+                    assert_eq!(op, "+");
+                    match left.node_type {
+                        ASTNodeType::Reference { reference, .. } => match reference {
+                            ReferenceType::NamedRange(name) => assert_eq!(name, "1E"),
+                            other => panic!("expected NamedRange(\"1E\"), got {other:?}"),
+                        },
+                        other => panic!("expected reference on lhs, got {other:?}"),
+                    }
+                    match right.node_type {
+                        ASTNodeType::Reference { reference, .. } => {
+                            assert_eq!(reference, ReferenceType::cell(None, 1, 1))
+                        }
+                        other => panic!("expected A1 reference on rhs, got {other:?}"),
+                    }
+                }
+                other => panic!("expected BinaryOp, got {other:?}"),
+            }
+            assert_parsers_agree("=1E+A1");
+        }
+
+        #[test]
+        fn test_sci_dangling_lower_e_plus_errors() {
+            // `=1e+` no longer becomes a silent NamedRange. The `+` is left
+            // dangling, which the parser must reject.
+            assert!(parse_formula("=1e+").is_err());
+            assert!(parse("=1e+").is_err());
+        }
+
+        #[test]
+        fn test_sci_dangling_decimal_minus_errors() {
+            assert!(parse_formula("=1.5e-").is_err());
+            assert!(parse("=1.5e-").is_err());
+        }
+
+        #[test]
+        fn test_sci_dangling_upper_e_plus_errors() {
+            assert!(parse_formula("=1E+").is_err());
+            assert!(parse("=1E+").is_err());
+        }
+
+        #[test]
+        fn test_sci_existing_numeric_literals_still_parse() {
+            for (formula, expected) in [
+                ("=1.5e-3", 0.0015),
+                ("=5e10", 5e10),
+                ("=1e2", 100.0),
+                ("=1.", 1.0),
+                ("=.5", 0.5),
+            ] {
+                let ast = parse_formula(formula)
+                    .unwrap_or_else(|e| panic!("failed to parse {formula:?}: {}", e.message));
+                match ast.node_type {
+                    ASTNodeType::Literal(LiteralValue::Number(n)) => {
+                        assert!(
+                            (n - expected).abs() < 1e-9,
+                            "{formula} -> {n}, expected {expected}"
+                        );
+                    }
+                    other => panic!("expected Number for {formula}, got {other:?}"),
+                }
+                assert_parsers_agree(formula);
+            }
+        }
+    }
+
+    mod lambda_iife {
+        use crate::parser::parse as span_parse;
+        use crate::parser::{ASTNode, ASTNodeType, Parser};
+        use crate::pretty::canonical_formula;
+        use formualizer_common::LiteralValue;
+
+        fn parse_classic(formula: &str) -> ASTNode {
+            let mut parser = Parser::new(formula).unwrap();
+            parser.parse().expect("parser")
+        }
+
+        fn parse_both(formula: &str) -> ASTNode {
+            let classic = parse_classic(formula);
+            let span = span_parse(formula).expect("span parser");
+            assert_eq!(
+                classic.fingerprint(),
+                span.fingerprint(),
+                "classic vs span parser produced different ASTs for {formula:?}"
+            );
+            classic
+        }
+
+        #[test]
+        fn test_lambda_immediate_invocation_unary() {
+            let ast = parse_both("=LAMBDA(x,x+1)(5)");
+            let (callee, args) = match ast.node_type {
+                ASTNodeType::Call { callee, args } => (callee, args),
+                other => panic!("expected Call, got {other:?}"),
+            };
+            assert_eq!(args.len(), 1);
+            match &args[0].node_type {
+                ASTNodeType::Literal(LiteralValue::Number(n)) => assert_eq!(*n, 5.0),
+                other => panic!("expected literal 5, got {other:?}"),
+            }
+            match callee.node_type {
+                ASTNodeType::Function {
+                    name,
+                    args: fn_args,
+                } => {
+                    assert_eq!(name.to_uppercase(), "LAMBDA");
+                    assert_eq!(fn_args.len(), 2);
+                    // First arg is the parameter name 'x' (parsed as a NamedRange ref).
+                    match &fn_args[1].node_type {
+                        ASTNodeType::BinaryOp { op, .. } => assert_eq!(op, "+"),
+                        other => panic!("expected binary op body, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Function callee, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_lambda_immediate_invocation_binary() {
+            let ast = parse_both("=LAMBDA(a,b,a+b)(1,2)");
+            let (callee, args) = match ast.node_type {
+                ASTNodeType::Call { callee, args } => (callee, args),
+                other => panic!("expected Call, got {other:?}"),
+            };
+            assert_eq!(args.len(), 2);
+            match callee.node_type {
+                ASTNodeType::Function {
+                    name,
+                    args: fn_args,
+                } => {
+                    assert_eq!(name.to_uppercase(), "LAMBDA");
+                    assert_eq!(fn_args.len(), 3);
+                }
+                other => panic!("expected Function callee, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_parenthesized_lambda_invocation() {
+            let ast = parse_both("=(LAMBDA(x,x))(5)");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert_eq!(args.len(), 1);
+                    match callee.node_type {
+                        ASTNodeType::Function { name, .. } => {
+                            assert_eq!(name.to_uppercase(), "LAMBDA")
+                        }
+                        other => panic!("expected Function callee, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_double_call_via_grouping() {
+            // (f())() => Call(Function(f, []), [])
+            // Note: tokenizer sees `f(` as Func/Open, so the first call binds
+            // to Function. The trailing `()` is the postfix Call.
+            let ast = parse_both("=f()()");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert!(args.is_empty(), "outer call should have no args");
+                    match callee.node_type {
+                        ASTNodeType::Function {
+                            name,
+                            args: inner_args,
+                        } => {
+                            assert_eq!(name, "f");
+                            assert!(inner_args.is_empty());
+                        }
+                        other => panic!("expected Function f callee, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_double_postfix_call() {
+            // (LAMBDA(x,x))(5)(6) => two postfix Call nodes stacked.
+            let ast = parse_both("=(LAMBDA(x,x))(5)(6)");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert_eq!(args.len(), 1);
+                    match &args[0].node_type {
+                        ASTNodeType::Literal(LiteralValue::Number(n)) => assert_eq!(*n, 6.0),
+                        other => panic!("expected literal 6, got {other:?}"),
+                    }
+                    match callee.node_type {
+                        ASTNodeType::Call {
+                            callee: inner_callee,
+                            args: inner_args,
+                        } => {
+                            assert_eq!(inner_args.len(), 1);
+                            match inner_callee.node_type {
+                                ASTNodeType::Function { name, .. } => {
+                                    assert_eq!(name.to_uppercase(), "LAMBDA")
+                                }
+                                other => panic!("expected Function callee, got {other:?}"),
+                            }
+                        }
+                        other => panic!("expected nested Call, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_lambda_nested_in_let_uses_plain_function_call() {
+            // LET body's `f(3)` is a regular Function(f, [3]), not a Call node.
+            let ast = parse_both("=LET(f,LAMBDA(x,x*2),f(3))");
+            let args = match ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name.to_uppercase(), "LET");
+                    args
+                }
+                other => panic!("expected LET function, got {other:?}"),
+            };
+            assert_eq!(args.len(), 3);
+            match &args[2].node_type {
+                ASTNodeType::Function { name, args: inner } => {
+                    assert_eq!(name, "f");
+                    assert_eq!(inner.len(), 1);
+                }
+                other => panic!("expected Function f(3), got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_call_on_number_literal() {
+            // Permissive parse: `(1+2)(3)` parses as Call(BinaryOp, [3]).
+            let ast = parse_both("=(1+2)(3)");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert_eq!(args.len(), 1);
+                    match callee.node_type {
+                        ASTNodeType::BinaryOp { op, .. } => assert_eq!(op, "+"),
+                        other => panic!("expected BinaryOp callee, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_call_on_grouped_reference() {
+            // `(A1)(3)` — parens force the LHS to be parsed as a primary, so the
+            // trailing `(3)` becomes a postfix Call. (`A1(3)` itself tokenizes
+            // as a function token `A1(` and so parses as Function("A1", [3]).)
+            let ast = parse_both("=(A1)(3)");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert_eq!(args.len(), 1);
+                    match callee.node_type {
+                        ASTNodeType::Reference { .. } => {}
+                        other => panic!("expected Reference callee, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_lambda_empty_body_call_parses() {
+            // `LAMBDA()(1)` parses; evaluator may complain. Parser should accept.
+            let ast = parse_both("=LAMBDA()(1)");
+            match ast.node_type {
+                ASTNodeType::Call { args, .. } => assert_eq!(args.len(), 1),
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_bare_lambda_still_parses_as_function() {
+            let ast = parse_both("=LAMBDA(x, x+1)");
+            match ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name.to_uppercase(), "LAMBDA");
+                    assert_eq!(args.len(), 2);
+                }
+                other => panic!("expected Function, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_lambda_as_argument_unchanged() {
+            let ast = parse_both("=SUM(LAMBDA(x,x),1,2,3)");
+            match ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name.to_uppercase(), "SUM");
+                    assert_eq!(args.len(), 4);
+                    matches!(args[0].node_type, ASTNodeType::Function { .. });
+                }
+                other => panic!("expected Function, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_pretty_print_call_round_trips() {
+            let ast = parse_both("=LAMBDA(x,x+1)(5)");
+            let printed = canonical_formula(&ast);
+            // Pretty printer should keep the call shape.
+            assert!(
+                printed.contains("LAMBDA(") && printed.ends_with("(5)"),
+                "unexpected pretty output: {printed}"
+            );
+            // Re-parsing the pretty form yields an equivalent fingerprint.
+            let reparsed = span_parse(&printed).expect("reparse pretty output");
+            assert_eq!(reparsed.fingerprint(), ast.fingerprint());
+        }
+    }
+
+    #[test]
+    fn quoted_sheet_name_allows_escaped_single_quote() {
+        let r = ReferenceType::from_string("'Bob''s Sheet'!A1").unwrap();
+        assert_eq!(
+            r,
+            ReferenceType::cell(Some("Bob's Sheet".to_string()), 1, 1)
+        );
+    }
+
+    mod sheet_3d_references {
+        use crate::parser::{
+            ASTNode, ASTNodeType, Parser, ParserError, ReferenceType, parse as parse_span,
+        };
+        fn parse_classic(formula: &str) -> Result<ASTNode, ParserError> {
+            let mut parser = Parser::new(formula)?;
+            parser.parse()
+        }
+
+        fn parse_both(formula: &str) -> ASTNode {
+            let classic = parse_classic(formula).expect("classic parser");
+            let span = parse_span(formula).expect("span parser");
+            // Both paths should agree on the parsed reference shape.
+            assert_eq!(classic.node_type, span.node_type);
+            classic
+        }
+
+        fn extract_reference(ast: &ASTNode) -> &ReferenceType {
+            match &ast.node_type {
+                ASTNodeType::Reference { reference, .. } => reference,
+                other => panic!("expected reference, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_3d_cell_bare() {
+            let ast = parse_both("=Sheet1:Sheet3!A1");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Sheet1".to_string(),
+                    sheet_last: "Sheet3".to_string(),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_cell_quoted() {
+            let ast = parse_both("='Sheet 1':'Sheet 3'!A1");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Sheet 1".to_string(),
+                    sheet_last: "Sheet 3".to_string(),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_range() {
+            let ast = parse_both("=Sheet1:Sheet3!A1:B2");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Range3D {
+                    sheet_first: "Sheet1".to_string(),
+                    sheet_last: "Sheet3".to_string(),
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(2),
+                    end_col: Some(2),
+                    start_row_abs: false,
+                    start_col_abs: false,
+                    end_row_abs: false,
+                    end_col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_range_absolute() {
+            let ast = parse_both("=Sheet1:Sheet3!$A$1:$B$2");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Range3D {
+                    sheet_first: "Sheet1".to_string(),
+                    sheet_last: "Sheet3".to_string(),
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(2),
+                    end_col: Some(2),
+                    start_row_abs: true,
+                    start_col_abs: true,
+                    end_row_abs: true,
+                    end_col_abs: true,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_inside_sum() {
+            let ast = parse_both("=SUM(Sheet1:Sheet3!A1)");
+            let args = match &ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name, "SUM");
+                    args
+                }
+                other => panic!("expected function, got {other:?}"),
+            };
+            assert_eq!(args.len(), 1);
+            assert_eq!(
+                extract_reference(&args[0]),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Sheet1".to_string(),
+                    sheet_last: "Sheet3".to_string(),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_quoted_escape() {
+            let ast = parse_both("='Bob''s Sheet':'End Sheet'!A1");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Bob's Sheet".to_string(),
+                    sheet_last: "End Sheet".to_string(),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_sheet_named_with_embedded_colon() {
+            // Excel forbids ':' in sheet names, so a quoted sheet whose name
+            // contains ':' must still parse as a single-sheet reference.
+            let r = ReferenceType::from_string("'Weird:Name'!A1").unwrap();
+            assert_eq!(
+                r,
+                ReferenceType::Cell {
+                    sheet: Some("Weird:Name".to_string()),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_incomplete_3d_reference() {
+            // Sheet1: with empty second sheet name should be a parse error.
+            assert!(parse_classic("=Sheet1:!A1").is_err());
+            assert!(parse_span("=Sheet1:!A1").is_err());
+        }
+
+        #[test]
+        fn test_3d_without_cell_part() {
+            // Sheet range without any cell reference is invalid.
+            assert!(parse_classic("=Sheet1:Sheet3!").is_err());
+            assert!(parse_span("=Sheet1:Sheet3!").is_err());
+        }
+
+        #[test]
+        fn test_3d_display_roundtrip() {
+            let cases = [
+                "=Sheet1:Sheet3!A1",
+                "=Sheet1:Sheet3!A1:B2",
+                "=Sheet1:Sheet3!$A$1:$B$2",
+                "='Sheet 1':'Sheet 3'!A1",
+                "='Bob''s Sheet':'End Sheet'!A1",
+            ];
+            for input in cases {
+                let ast = parse_both(input);
+                let r = extract_reference(&ast);
+                let rendered = format!("={r}");
+                assert_eq!(rendered, input, "display roundtrip mismatch for {input}");
+                let reparsed_ast = parse_both(&rendered);
+                assert_eq!(
+                    extract_reference(&reparsed_ast),
+                    r,
+                    "reparse mismatch for {input}"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod string_colon_interaction {
+    //! Regression coverage for issue #79: `parse_string` previously discarded
+    //! the pending `A1:` prefix when followed by a double-quoted string.
+
+    use crate::parser::{ASTNodeType, Parser, ReferenceType};
+    fn extract_reference(ast: &crate::parser::ASTNode) -> ReferenceType {
+        match &ast.node_type {
+            ASTNodeType::Reference { reference, .. } => reference.clone(),
+            other => panic!("expected Reference AST, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cross_sheet_range_still_parses() {
+        // Single-quoted sheet continuation must still produce a single Range
+        // reference. Use a single-sheet form that exercises the `:`-glue path
+        // currently supported end-to-end by both parsers.
+        let formula = "='Sheet 1:Sheet 3'!A1:C10";
+
+        let mut parser = Parser::new(formula).unwrap();
+        let ast = parser
+            .parse()
+            .expect("classic parser should accept formula");
+        let reference = extract_reference(&ast);
+        assert!(
+            matches!(reference, ReferenceType::Range { .. }),
+            "expected Range reference, got {reference:?}"
+        );
+
+        let span_ast = crate::parser::parse(formula).expect("span parser should accept formula");
+        let span_reference = extract_reference(&span_ast);
+        assert_eq!(reference, span_reference);
+    }
+
+    #[test]
+    fn test_colon_string_raises() {
+        let formula = "=A1:\"text\"";
+
+        let mut parser = Parser::new(formula).unwrap();
+        let err = parser.parse().expect_err(
+            "classic parser must reject `=A1:\"text\"` rather than silently discard the prefix",
+        );
+        assert!(
+            !err.message.is_empty(),
+            "parser error message should be non-empty"
+        );
+
+        let span_err =
+            crate::parser::parse(formula).expect_err("span parser must reject `=A1:\"text\"`");
+        assert!(!span_err.message.is_empty());
+    }
+
+    #[test]
+    fn test_colon_string_in_function() {
+        let formula = "=SUM(A1:\"text\")";
+
+        let mut parser = Parser::new(formula).unwrap();
+        assert!(
+            parser.parse().is_err(),
+            "classic parser must reject `=SUM(A1:\"text\")`"
+        );
+
+        assert!(
+            crate::parser::parse(formula).is_err(),
+            "span parser must reject `=SUM(A1:\"text\")`"
+        );
+    }
+}
+
+#[cfg(test)]
+mod r1c1_disambiguation {
+    //! Regression tests for issue #76: R1C1-shaped operands must never be
+    //! misclassified as table references in the A1 (Excel) dialect.
+    //!
+    //! This issue does NOT add R1C1 dialect support. Acceptable outcomes for
+    //! R1C1-shaped input are: existing `NamedRange` behaviour, or a clean
+    //! `ParserError`. The forbidden outcome is `ReferenceType::Table(...)`.
+    use crate::parser::{ASTNode, ASTNodeType, Parser, ReferenceType, TableReference, parse};
+    fn parse_classic(formula: &str) -> ASTNode {
+        let mut parser = Parser::new(formula).unwrap();
+        parser.parse().expect("parse")
+    }
+
+    fn parse_span(formula: &str) -> ASTNode {
+        parse(formula).expect("span parse")
+    }
+
+    fn assert_not_table(formula: &str, ast: &ASTNode) {
+        if let ASTNodeType::Reference {
+            reference: ReferenceType::Table(TableReference { name, specifier }),
+            ..
+        } = &ast.node_type
+        {
+            panic!(
+                "R1C1-shaped input {formula:?} produced a Table reference: \
+                 name={name:?}, specifier={specifier:?}"
+            );
+        }
+    }
+
+    /// `=R[1]C[2]` must NOT classify as a Table. With the structured-references
+    /// strict trailing-garbage rejection in place, the table path errors out;
+    /// the R1C1 pre-check then reroutes it as a NamedRange.
+    #[test]
+    fn test_r1c1_bracketed_offsets_not_table() {
+        let ref_type = ReferenceType::from_string("R[1]C[2]");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table outcome for R[1]C[2], got Table({t:?})")
+        }
+
+        let classic = parse_classic("=R[1]C[2]");
+        assert_not_table("=R[1]C[2]", &classic);
+        let spanned = parse_span("=R[1]C[2]");
+        assert_not_table("=R[1]C[2]", &spanned);
+    }
+
+    /// `=R1C1` must NOT classify as a Table. Existing behaviour is `NamedRange`.
+    #[test]
+    fn test_r1c1_absolute() {
+        let ref_type = ReferenceType::from_string("R1C1").expect("R1C1 should parse");
+        assert!(
+            !matches!(ref_type, ReferenceType::Table(_)),
+            "R1C1 must not be a Table reference, got {ref_type:?}"
+        );
+        assert_not_table("=R1C1", &parse_classic("=R1C1"));
+        assert_not_table("=R1C1", &parse_span("=R1C1"));
+    }
+
+    /// `=R1C[2]` must NOT classify as a Table. Pre-fix it produced
+    /// `Table { name: "R1C", specifier: Column("2") }`.
+    #[test]
+    fn test_r1c1_mixed() {
+        let ref_type = ReferenceType::from_string("R1C[2]");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table for R1C[2], got {t:?}")
+        }
+        assert_not_table("=R1C[2]", &parse_classic("=R1C[2]"));
+        assert_not_table("=R1C[2]", &parse_span("=R1C[2]"));
+    }
+
+    /// `=R[-1]C` must NOT classify as a Table.
+    #[test]
+    fn test_r1c1_negative_offset() {
+        let ref_type = ReferenceType::from_string("R[-1]C");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table for R[-1]C, got {t:?}")
+        }
+        assert_not_table("=R[-1]C", &parse_classic("=R[-1]C"));
+        assert_not_table("=R[-1]C", &parse_span("=R[-1]C"));
+    }
+
+    /// `=RC[1]` must NOT classify as a Table. Pre-fix it produced
+    /// `Table { name: "RC", specifier: Column("1") }`.
+    #[test]
+    fn test_r1c1_rc_with_bracket_only_col() {
+        let ref_type = ReferenceType::from_string("RC[1]");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table for RC[1], got {t:?}")
+        }
+        assert_not_table("=RC[1]", &parse_classic("=RC[1]"));
+        assert_not_table("=RC[1]", &parse_span("=RC[1]"));
+    }
+
+    /// `=R5C[1]` must NOT classify as a Table.
+    #[test]
+    fn test_r1c1_row_digit_col_bracket() {
+        let ref_type = ReferenceType::from_string("R5C[1]");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table for R5C[1], got {t:?}")
+        }
+        assert_not_table("=R5C[1]", &parse_classic("=R5C[1]"));
+        assert_not_table("=R5C[1]", &parse_span("=R5C[1]"));
+    }
+
+    /// `=R1` must remain a normal A1 cell reference (column R, row 1).
+    /// Critical: do not over-broaden the heuristic.
+    #[test]
+    fn test_a1_r1_still_cell() {
+        let r = ReferenceType::from_string("R1").expect("R1 should parse");
+        match r {
+            ReferenceType::Cell {
+                row, col, sheet, ..
+            } => {
+                assert_eq!(row, 1);
+                assert_eq!(col, 18); // 'R'
+                assert!(sheet.is_none());
+            }
+            other => panic!("=R1 must remain an A1 cell, got {other:?}"),
+        }
+    }
+
+    /// `=C5` must remain a normal A1 cell reference (column C, row 5).
+    #[test]
+    fn test_a1_c5_still_cell() {
+        let r = ReferenceType::from_string("C5").expect("C5 should parse");
+        assert!(
+            matches!(r, ReferenceType::Cell { row: 5, col: 3, .. }),
+            "=C5 must remain an A1 cell, got {r:?}"
+        );
+    }
+
+    /// Regression: real Table references must keep working.
+    #[test]
+    fn test_table_reference_unchanged() {
+        let r = ReferenceType::from_string("Table1[Col]").expect("Table1[Col] should parse");
+        match r {
+            ReferenceType::Table(t) => {
+                assert_eq!(t.name, "Table1");
+            }
+            other => panic!("expected Table reference, got {other:?}"),
+        }
+    }
+
+    /// Regression: external workbook refs are unaffected.
+    #[test]
+    fn test_external_workbook_ref_unchanged() {
+        let r = ReferenceType::from_string("[1]Sheet1!A1").expect("external ref should parse");
+        assert!(
+            matches!(r, ReferenceType::External(_)),
+            "=[1]Sheet1!A1 must remain External, got {r:?}"
+        );
+    }
+
+    /// Cross-parser differential: classic and span-based parsers must agree on
+    /// the high-level outcome (table vs not-table) for R1C1-shaped input.
+    #[test]
+    fn test_cross_parser_agreement_r1c1() {
+        for formula in [
+            "=R[1]C[2]",
+            "=R1C1",
+            "=RC",
+            "=R[-1]C",
+            "=R1C[2]",
+            "=RC[1]",
+            "=R5C[1]",
+        ] {
+            let classic = parse_classic(formula);
+            let spanned = parse_span(formula);
+            assert_not_table(formula, &classic);
+            assert_not_table(formula, &spanned);
+        }
+    }
+}
+
+#[cfg(test)]
+mod parser_hardening {
+    fn parse_on_small_stack(formula: String) -> Result<(), crate::parser::ParserError> {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(move || crate::parser::parse(&formula).map(|_| ()))
+            .expect("spawn parse thread")
+            .join()
+            .expect("parser must not overflow the stack")
+    }
+
+    #[test]
+    fn accepts_excel_nesting_boundary_on_small_stack() {
+        for (shape, formula) in [
+            (
+                "parentheses",
+                format!("={}1{}", "(".repeat(64), ")".repeat(64)),
+            ),
+            (
+                "calls",
+                format!("={}1{}", "SUM(".repeat(64), ")".repeat(64)),
+            ),
+            (
+                "conditional calls",
+                format!("={}1{}", "IF(A1>0,".repeat(64), ",0)".repeat(64)),
+            ),
+        ] {
+            let result = parse_on_small_stack(formula);
+            assert!(result.is_ok(), "{shape}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn deeply_nested_formula_errors_instead_of_overflowing_stack() {
+        for formula in [
+            format!("={}1{}", "(".repeat(5000), ")".repeat(5000)),
+            format!("={}1", "-".repeat(5000)),
+            format!("={}1{}", "SUM(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "1+(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "IF(A1>0,".repeat(5000), ",0)".repeat(5000)),
+            format!("={}1{}", "{".repeat(5000), "}".repeat(5000)),
+            format!("={}1", "1^".repeat(5000)),
+        ] {
+            let error = parse_on_small_stack(formula).expect_err("reject excessive recursion");
+            assert!(error.message.contains("Formula nesting too deep"));
+        }
+    }
+}

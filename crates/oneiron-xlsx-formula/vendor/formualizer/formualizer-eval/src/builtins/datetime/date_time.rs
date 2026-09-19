@@ -1,0 +1,430 @@
+//! DATE and TIME functions
+
+use super::serial::create_date_normalized;
+use crate::args::ArgSchema;
+use crate::function::Function;
+use crate::traits::{ArgumentHandle, FunctionContext};
+use chrono::NaiveTime;
+use formualizer_common::{ExcelError, LiteralValue, date_to_serial_for, time_to_fraction};
+use formualizer_macros::func_caps;
+
+fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
+    let v = arg.value()?.into_literal();
+    match v {
+        LiteralValue::Int(i) => Ok(i as i32),
+        LiteralValue::Number(f) => Ok(f.trunc() as i32),
+        LiteralValue::Text(s) => s.parse::<f64>().map(|f| f.trunc() as i32).map_err(|_| {
+            ExcelError::new_value().with_message("DATE/TIME argument is not a valid number")
+        }),
+        LiteralValue::Boolean(b) => Ok(if b { 1 } else { 0 }),
+        LiteralValue::Empty => Ok(0),
+        LiteralValue::Error(e) => Err(e),
+        _ => Err(ExcelError::new_value()
+            .with_message("DATE/TIME expects numeric or text-numeric arguments")),
+    }
+}
+
+/// Returns the serial number for a calendar date from year, month, and day.
+///
+/// `DATE` normalizes out-of-range month and day values to produce a valid calendar date.
+///
+/// # Remarks
+/// - Years in the range `0..=1899` are interpreted as `1900..=3799` for Excel compatibility.
+/// - The returned serial is date-system aware and depends on the active workbook system (`1900` vs `1904`).
+/// - In the `1900` system, serial mapping preserves Excel's historical phantom `1900-02-29` behavior.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Build a standard date"
+/// formula: "=DATE(2024, 1, 15)"
+/// expected: 45306
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Normalize overflowing month input"
+/// formula: "=DATE(2024, 13, 5)"
+/// expected: 45662
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DATEVALUE
+///   - YEAR
+///   - EDATE
+/// faq:
+///   - q: "Does DATE follow the workbook 1900/1904 date system?"
+///     a: "Yes. DATE emits a serial in the active workbook date system, so the same calendar date can map to different serials across 1900 vs 1904 mode."
+/// ```
+#[derive(Debug)]
+pub struct DateFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: DATE
+/// Type: DateFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: DATE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for DateFn {
+    fn propagate_format(
+        &self,
+        _result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        Some(crate::format::FormatId::DATE)
+    }
+
+    func_caps!(PURE);
+
+    fn name(&self) -> &'static str {
+        "DATE"
+    }
+
+    fn min_args(&self) -> usize {
+        3
+    }
+
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        // DATE(year, month, day) – all scalar, numeric lenient (allow text numbers)
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let year = coerce_to_int(&args[0])?;
+        let month = coerce_to_int(&args[1])?;
+        let day = coerce_to_int(&args[2])?;
+
+        // Excel interprets years 0-1899 as 1900-3799
+        let adjusted_year = if (0..=1899).contains(&year) {
+            year + 1900
+        } else {
+            year
+        };
+
+        let date = create_date_normalized(adjusted_year, month, day)?;
+        let serial = date_to_serial_for(ctx.date_system(), &date);
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            serial,
+        )))
+    }
+}
+
+/// Returns the fractional-day serial for a time built from hour, minute, and second.
+///
+/// `TIME` normalizes overflowing and negative components by wrapping across day boundaries.
+///
+/// # Remarks
+/// - The result is always in the range `0.0..1.0` and represents only a time-of-day fraction.
+/// - Values are normalized like Excel (for example, `25` hours becomes `01:00:00`).
+/// - Time fractions are date-system independent because they do not include a date component.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Create noon"
+/// formula: "=TIME(12, 0, 0)"
+/// expected: 0.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Wrap overflowing hour"
+/// formula: "=TIME(25, 0, 0)"
+/// expected: 0.0416666667
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TIMEVALUE
+///   - HOUR
+///   - NOW
+/// faq:
+///   - q: "Can TIME return values greater than 1 day?"
+///     a: "No. TIME wraps overflow and always returns a fraction in [0,1), so extra days are discarded."
+/// ```
+#[derive(Debug)]
+pub struct TimeFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: TIME
+/// Type: TimeFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: TIME(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for TimeFn {
+    fn propagate_format(
+        &self,
+        _result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        Some(crate::format::FormatId::TIME)
+    }
+
+    func_caps!(PURE);
+
+    fn name(&self) -> &'static str {
+        "TIME"
+    }
+
+    fn min_args(&self) -> usize {
+        3
+    }
+
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        // TIME(hour, minute, second) – scalar numeric lenient
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let hour = coerce_to_int(&args[0])?;
+        let minute = coerce_to_int(&args[1])?;
+        let second = coerce_to_int(&args[2])?;
+
+        // Excel normalizes time values
+        let total_seconds = hour * 3600 + minute * 60 + second;
+
+        // Handle negative time by wrapping
+        let normalized_seconds = if total_seconds < 0 {
+            let days_back = (-total_seconds - 1) / 86400 + 1;
+            total_seconds + days_back * 86400
+        } else {
+            total_seconds
+        };
+
+        // Get just the time portion (modulo full days)
+        let time_seconds = normalized_seconds % 86400;
+        let hours = (time_seconds / 3600) as u32;
+        let minutes = ((time_seconds % 3600) / 60) as u32;
+        let seconds = (time_seconds % 60) as u32;
+
+        match NaiveTime::from_hms_opt(hours, minutes, seconds) {
+            Some(time) => {
+                let fraction = time_to_fraction(&time);
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    fraction,
+                )))
+            }
+            None => Err(ExcelError::new_num()),
+        }
+    }
+}
+
+pub fn register_builtins() {
+    use std::sync::Arc;
+    crate::function_registry::register_builtin(Arc::new(DateFn));
+    crate::function_registry::register_builtin(Arc::new(TimeFn));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    use std::sync::Arc;
+
+    fn lit(v: LiteralValue) -> ASTNode {
+        ASTNode::new(ASTNodeType::Literal(v), None)
+    }
+
+    #[test]
+    fn test_date_basic() {
+        let wb = TestWorkbook::new().with_function(Arc::new(DateFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "DATE").unwrap();
+
+        // DATE(2024, 1, 15)
+        let year = lit(LiteralValue::Int(2024));
+        let month = lit(LiteralValue::Int(1));
+        let day = lit(LiteralValue::Int(15));
+
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&year, &ctx),
+                    ArgumentHandle::new(&month, &ctx),
+                    ArgumentHandle::new(&day, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+
+        match result {
+            LiteralValue::Number(n) => {
+                // Should be a positive serial number
+                assert!(n > 0.0);
+                // Should be an integer (no time component)
+                assert_eq!(n.trunc(), n);
+            }
+            _ => panic!("DATE should return a number"),
+        }
+    }
+
+    #[test]
+    fn test_date_normalization() {
+        let wb = TestWorkbook::new().with_function(Arc::new(DateFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "DATE").unwrap();
+
+        // DATE(2024, 13, 5) should normalize to 2025-01-05
+        let year = lit(LiteralValue::Int(2024));
+        let month = lit(LiteralValue::Int(13));
+        let day = lit(LiteralValue::Int(5));
+
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&year, &ctx),
+                    ArgumentHandle::new(&month, &ctx),
+                    ArgumentHandle::new(&day, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap();
+
+        // Just verify it returns a valid number
+        assert!(matches!(result.into_literal(), LiteralValue::Number(_)));
+    }
+
+    #[test]
+    fn test_date_system_1900_vs_1904() {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::interpreter::Interpreter;
+
+        // Engine with default 1900 system
+        let cfg_1900 = EvalConfig::default();
+        let eng_1900 = Engine::new(TestWorkbook::new(), cfg_1900.clone());
+        let interp_1900 = Interpreter::new(&eng_1900, "Sheet1");
+        let f = interp_1900.context.get_function("", "DATE").unwrap();
+        let y = lit(LiteralValue::Int(1904));
+        let m = lit(LiteralValue::Int(1));
+        let d = lit(LiteralValue::Int(1));
+        let args = [
+            crate::traits::ArgumentHandle::new(&y, &interp_1900),
+            crate::traits::ArgumentHandle::new(&m, &interp_1900),
+            crate::traits::ArgumentHandle::new(&d, &interp_1900),
+        ];
+        let v1900 = f
+            .dispatch(&args, &interp_1900.function_context(None))
+            .unwrap()
+            .into_literal();
+
+        // Engine with 1904 system
+        let cfg_1904 = EvalConfig {
+            date_system: crate::engine::DateSystem::Excel1904,
+            ..Default::default()
+        };
+        let eng_1904 = Engine::new(TestWorkbook::new(), cfg_1904);
+        let interp_1904 = Interpreter::new(&eng_1904, "Sheet1");
+        let f2 = interp_1904.context.get_function("", "DATE").unwrap();
+        let args2 = [
+            crate::traits::ArgumentHandle::new(&y, &interp_1904),
+            crate::traits::ArgumentHandle::new(&m, &interp_1904),
+            crate::traits::ArgumentHandle::new(&d, &interp_1904),
+        ];
+        let v1904 = f2
+            .dispatch(&args2, &interp_1904.function_context(None))
+            .unwrap()
+            .into_literal();
+
+        match (v1900, v1904) {
+            (LiteralValue::Number(a), LiteralValue::Number(b)) => {
+                // 1904-01-01 is 1462 in 1900 system, 0 in 1904 system
+                assert!((a - 1462.0).abs() < 1e-9, "expected 1462, got {a}");
+                assert!(b.abs() < 1e-9, "expected 0, got {b}");
+            }
+            other => panic!("Unexpected results: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_time_basic() {
+        let wb = TestWorkbook::new().with_function(Arc::new(TimeFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TIME").unwrap();
+
+        // TIME(12, 0, 0) = noon = 0.5
+        let hour = lit(LiteralValue::Int(12));
+        let minute = lit(LiteralValue::Int(0));
+        let second = lit(LiteralValue::Int(0));
+
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&hour, &ctx),
+                    ArgumentHandle::new(&minute, &ctx),
+                    ArgumentHandle::new(&second, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+
+        match result {
+            LiteralValue::Number(n) => {
+                assert!((n - 0.5).abs() < 1e-10);
+            }
+            _ => panic!("TIME should return a number"),
+        }
+    }
+
+    #[test]
+    fn test_time_normalization() {
+        let wb = TestWorkbook::new().with_function(Arc::new(TimeFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TIME").unwrap();
+
+        // TIME(25, 0, 0) = 1:00 AM next day = 1/24
+        let hour = lit(LiteralValue::Int(25));
+        let minute = lit(LiteralValue::Int(0));
+        let second = lit(LiteralValue::Int(0));
+
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&hour, &ctx),
+                    ArgumentHandle::new(&minute, &ctx),
+                    ArgumentHandle::new(&second, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+
+        match result {
+            LiteralValue::Number(n) => {
+                // Should wrap to 1:00 AM = 1/24
+                assert!((n - 1.0 / 24.0).abs() < 1e-10);
+            }
+            _ => panic!("TIME should return a number"),
+        }
+    }
+}

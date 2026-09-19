@@ -1,0 +1,407 @@
+use crate::engine::VertexEditor;
+use crate::engine::graph::DependencyGraph;
+use crate::reference::{CellRef, Coord};
+use formualizer_common::LiteralValue;
+use formualizer_parse::parser::parse;
+use formualizer_parse::pretty::canonical_formula;
+
+fn lit_num(value: f64) -> LiteralValue {
+    LiteralValue::Number(value)
+}
+
+fn sheet1_cell(graph: &DependencyGraph, row: u32, col: u32) -> CellRef {
+    let sid = graph.sheet_id("Sheet1").unwrap();
+    CellRef::new(sid, Coord::from_excel(row, col, true, true))
+}
+
+#[test]
+fn test_insert_columns() {
+    let mut graph = super::common::graph_truth_graph();
+
+    // Setup: A1=10, B1=20, C1=30, D1=SUM(A1:C1)
+    // Excel uses 1-based indexing
+    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    graph.set_cell_value("Sheet1", 1, 2, lit_num(20.0)).unwrap();
+    graph.set_cell_value("Sheet1", 1, 3, lit_num(30.0)).unwrap();
+    let sum_result = graph
+        .set_cell_formula("Sheet1", 1, 4, parse("=SUM(A1:C1)").unwrap())
+        .unwrap();
+    let sum_id = sum_result.affected_vertices[0];
+
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+    let b1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+        .unwrap();
+    let c1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3))
+        .unwrap();
+
+    // Use editor to insert columns
+    let mut editor = VertexEditor::new(&mut graph);
+
+    // Insert 2 columns before column 2 (B).
+    // VertexEditor uses internal 0-based indices for structural edits.
+    let summary = editor.insert_columns(0, 1, 2).unwrap();
+
+    // Drop editor to release borrow
+    drop(editor);
+
+    // Verify shifts via vertex id mapping (graph does not cache cell values).
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
+        Some(&a1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 4)),
+        Some(&b1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 5)),
+        Some(&c1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 6)),
+        Some(&sum_id)
+    );
+
+    // Formula should be updated: SUM(A1:C1) -> SUM(A1:E1)
+    let formula = graph.get_formula(sum_id);
+    assert!(formula.is_some());
+    // The formula should now reference the expanded range
+
+    assert_eq!(summary.vertices_moved.len(), 3); // B1, C1, and D1 moved
+    assert_eq!(summary.formulas_updated, 1); // F1 formula updated
+}
+
+#[test]
+fn test_delete_columns() {
+    let mut graph = super::common::graph_truth_graph();
+
+    // Setup: A1 through E1 with values
+    for i in 1..=5 {
+        graph
+            .set_cell_value("Sheet1", 1, i, lit_num(i as f64 * 10.0))
+            .unwrap();
+    }
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+    let d1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 4))
+        .unwrap();
+    let e1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 5))
+        .unwrap();
+    let formula_result = graph
+        .set_cell_formula("Sheet1", 1, 7, parse("=SUM(A1:E1)").unwrap())
+        .unwrap();
+
+    let mut editor = VertexEditor::new(&mut graph);
+
+    // Delete columns 2-3 (B and C). Editor uses 0-based cols.
+    let summary = editor.delete_columns(0, 1, 2).unwrap();
+
+    drop(editor);
+
+    // Verify remaining vertices
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
+        Some(&a1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2)),
+        Some(&d1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3)),
+        Some(&e1_id)
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 4))
+            .is_none()
+    );
+
+    assert_eq!(summary.vertices_deleted.len(), 2);
+    assert_eq!(summary.vertices_moved.len(), 3); // D1, E1, and G1 moved left
+}
+
+#[test]
+fn test_insert_columns_adjusts_formulas() {
+    let mut graph = super::common::graph_truth_graph();
+
+    // Create cells with formulas
+    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    graph.set_cell_value("Sheet1", 1, 3, lit_num(30.0)).unwrap();
+
+    // A2 = A1 * 2
+    graph
+        .set_cell_formula("Sheet1", 2, 1, parse("=A1*2").unwrap())
+        .unwrap();
+    // C2 = C1 + 5
+    let c2_result = graph
+        .set_cell_formula("Sheet1", 2, 3, parse("=C1+5").unwrap())
+        .unwrap();
+    let c2_id = c2_result.affected_vertices[0];
+
+    let mut editor = VertexEditor::new(&mut graph);
+
+    // Insert column before column 2 (B). Editor uses 0-based cols.
+    editor.insert_columns(0, 1, 1).unwrap();
+
+    drop(editor);
+
+    // C2 formula (now at D2) should reference D1
+    let d2_formula = graph.get_formula(c2_id);
+    assert!(d2_formula.is_some());
+    // The formula should now reference D1 instead of C1
+}
+
+#[test]
+fn test_delete_column_creates_ref_error() {
+    let mut graph = super::common::graph_truth_graph();
+
+    // A1 = 10
+    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    // B1 = 20
+    graph.set_cell_value("Sheet1", 1, 2, lit_num(20.0)).unwrap();
+    // B2 = B1 * 2
+    let b2_result = graph
+        .set_cell_formula("Sheet1", 2, 2, parse("=B1*2").unwrap())
+        .unwrap();
+    let b2_id = b2_result.affected_vertices[0];
+
+    let mut editor = VertexEditor::new(&mut graph);
+
+    // Delete column 2 (B). Editor uses 0-based cols.
+    editor.delete_columns(0, 1, 1).unwrap();
+
+    drop(editor);
+
+    // B2 should be deleted
+    assert!(graph.is_deleted(b2_id));
+
+    // B1 vertex should be gone
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+            .is_none()
+    );
+}
+
+#[test]
+fn test_insert_columns_with_absolute_references() {
+    let mut graph = super::common::graph_truth_graph();
+
+    // Setup cells
+    graph
+        .set_cell_value("Sheet1", 1, 1, lit_num(100.0))
+        .unwrap();
+    graph
+        .set_cell_value("Sheet1", 1, 5, lit_num(500.0))
+        .unwrap();
+
+    // Formula with absolute reference: =$A$1+E1
+    let formula_result = graph
+        .set_cell_formula("Sheet1", 2, 5, parse("=$A$1+E1").unwrap())
+        .unwrap();
+    let formula_id = formula_result.affected_vertices[0];
+
+    let mut editor = VertexEditor::new(&mut graph);
+
+    // Insert columns before column 3 (C). Editor uses 0-based cols.
+    editor.insert_columns(0, 2, 2).unwrap();
+
+    drop(editor);
+
+    // The formula should still reference $A$1 (absolute) but E1 should become G1
+    let updated_formula = graph.get_formula(formula_id);
+    assert!(updated_formula.is_some());
+    // Check that absolute reference is preserved
+}
+
+#[test]
+fn test_multiple_column_operations() {
+    let mut graph = super::common::graph_truth_graph();
+
+    // Setup initial data
+    for i in 1..=10 {
+        graph
+            .set_cell_value("Sheet1", 1, i, lit_num(i as f64))
+            .unwrap();
+    }
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+
+    let mut editor = VertexEditor::new(&mut graph);
+
+    editor.begin_batch();
+
+    // Insert 2 columns at column 3 (public). Editor uses 0-based cols.
+    editor.insert_columns(0, 2, 2).unwrap();
+
+    // Delete 1 column at column 8 (public), now column 10 after insertion.
+    // Editor expects 0-based cols, so delete internal col 9.
+    editor.delete_columns(0, 9, 1).unwrap();
+
+    // Insert 1 column at column 1 (public). Editor uses 0-based cols.
+    editor.insert_columns(0, 0, 1).unwrap();
+
+    editor.commit_batch();
+
+    drop(editor);
+
+    // Verify final state: original A1 should now be at B1
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2)),
+        Some(&a1_id)
+    );
+}
+
+#[test]
+fn test_mixed_row_column_operations() {
+    let mut graph = super::common::graph_truth_graph();
+
+    // Setup: Create a 3x3 grid with values
+    for row in 1..=3 {
+        for col in 1..=3 {
+            graph
+                .set_cell_value("Sheet1", row, col, lit_num((row * 10 + col) as f64))
+                .unwrap();
+        }
+    }
+
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+    let b1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+        .unwrap();
+    let a2_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
+        .unwrap();
+    let b2_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 2))
+        .unwrap();
+
+    // Add formula: D4 = SUM(A1:C3)
+    let formula_result = graph
+        .set_cell_formula("Sheet1", 4, 4, parse("=SUM(A1:C3)").unwrap())
+        .unwrap();
+    let formula_id = formula_result.affected_vertices[0];
+
+    let mut editor = VertexEditor::new(&mut graph);
+
+    editor.begin_batch();
+
+    // Insert 1 row before row 2 (public). Editor uses 0-based rows.
+    editor.insert_rows(0, 1, 1).unwrap();
+
+    // Insert 1 column before column 2 (public). Editor uses 0-based cols.
+    editor.insert_columns(0, 1, 1).unwrap();
+
+    editor.commit_batch();
+
+    drop(editor);
+
+    // Verify grid shifted correctly via vertex mapping
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
+        Some(&a1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3)),
+        Some(&b1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 1)),
+        Some(&a2_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 3)),
+        Some(&b2_id)
+    );
+
+    // Formula should be updated for both shifts
+    let updated_formula = graph.get_formula(formula_id);
+    assert!(updated_formula.is_some());
+    // Formula range should now be expanded
+}
+
+#[test]
+fn test_delete_columns_with_dependencies() {
+    let mut graph = super::common::graph_truth_graph();
+
+    // Setup: A1=10, B1=A1*2, C1=B1+5, D1=C1
+    // Excel uses 1-based indexing
+    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
+        .unwrap();
+    let c1_result = graph
+        .set_cell_formula("Sheet1", 1, 3, parse("=B1+5").unwrap())
+        .unwrap();
+    let c1_id = c1_result.affected_vertices[0];
+    graph
+        .set_cell_formula("Sheet1", 1, 4, parse("=C1").unwrap())
+        .unwrap();
+
+    let mut editor = VertexEditor::new(&mut graph);
+
+    // Delete column B (public col 2). Editor uses 0-based cols.
+    editor.delete_columns(0, 1, 1).unwrap();
+
+    drop(editor);
+
+    // C1 -> B1. Its deleted B1 operand is now an ordinary #REF! literal;
+    // the graph-global forced-error marker is reserved for errors without an AST expression.
+    let ast = graph
+        .get_formula(c1_id)
+        .expect("the moved formula should still exist");
+    assert_eq!(canonical_formula(&ast), "=#REF! + 5");
+    assert!(!graph.is_ref_error(c1_id));
+}
+
+#[test]
+fn structural_ref_literal_survives_undo_and_redo() {
+    use crate::engine::ChangeLog;
+    use crate::engine::graph::editor::undo_engine::UndoEngine;
+
+    let mut graph = super::common::graph_truth_graph();
+    graph.set_cell_value("Sheet1", 1, 2, lit_num(10.0)).unwrap();
+    let formula_id = graph
+        .set_cell_formula("Sheet1", 1, 3, parse("=B1+5").unwrap())
+        .unwrap()
+        .affected_vertices[0];
+
+    let mut log = ChangeLog::new();
+    {
+        let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+        editor.delete_columns(0, 1, 1).unwrap();
+    }
+    assert_eq!(
+        canonical_formula(&graph.get_formula(formula_id).expect("formula after delete")),
+        "=#REF! + 5"
+    );
+
+    let mut undo = UndoEngine::new();
+    undo.undo(&mut graph, &mut log).unwrap();
+    assert_eq!(
+        canonical_formula(&graph.get_formula(formula_id).expect("formula after undo")),
+        "=B1 + 5"
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+            .is_some()
+    );
+
+    undo.redo(&mut graph, &mut log).unwrap();
+    assert_eq!(
+        canonical_formula(&graph.get_formula(formula_id).expect("formula after redo")),
+        "=#REF! + 5"
+    );
+}

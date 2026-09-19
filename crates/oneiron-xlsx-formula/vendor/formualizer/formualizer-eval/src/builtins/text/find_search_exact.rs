@@ -1,0 +1,471 @@
+use super::{super::utils::ARG_ANY_ONE, scalar_text_value};
+use crate::args::ArgSchema;
+use crate::function::Function;
+use crate::traits::{ArgumentHandle, FunctionContext};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_macros::func_caps;
+
+fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) | crate::traits::CalcValue::AnnotatedScalar(v, _) => v,
+        crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+        crate::traits::CalcValue::Callable(_) => LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+        ),
+    })
+}
+
+fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
+    let v = scalar_text_value(a)?;
+    Ok(match v {
+        LiteralValue::Text(s) => s,
+        LiteralValue::Empty => String::new(),
+        LiteralValue::Boolean(b) => {
+            if b {
+                "TRUE".into()
+            } else {
+                "FALSE".into()
+            }
+        }
+        LiteralValue::Int(i) => i.to_string(),
+        LiteralValue::Number(f) => f.to_string(),
+        LiteralValue::Error(e) => return Err(e),
+        other => other.to_string(),
+    })
+}
+
+// FIND(find_text, within_text, [start_num]) - case sensitive
+#[derive(Debug)]
+pub struct FindFn;
+/// Returns the 1-based position of one text string inside another.
+///
+/// `FIND` is case-sensitive and does not interpret wildcard characters.
+///
+/// # Remarks
+/// - Search is case-sensitive (`"A"` and `"a"` are different).
+/// - `start_num` is 1-based and must be greater than `0`.
+/// - If no match is found, returns `#VALUE!`.
+/// - Errors in either argument are propagated.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Case-sensitive match"
+/// formula: '=FIND("World", "Hello World")'
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Case mismatch fails"
+/// formula: '=FIND("world", "Hello World")'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SEARCH
+///   - EXACT
+///   - TEXTBEFORE
+/// faq:
+///   - q: "Do wildcard characters work in FIND?"
+///     a: "No. FIND treats * and ? as literal characters and matches case-sensitively."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: FIND
+/// Type: FindFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FIND(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for FindFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "FIND"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let needle = to_text(&args[0])?;
+        let hay = to_text(&args[1])?;
+        let start = if args.len() == 3 {
+            let n = number_like(&args[2])?;
+            if n < 1 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            (n - 1) as usize
+        } else {
+            0
+        };
+        if needle.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)));
+        }
+        // FIND renvoie une position en CARACTERES (pas en octets) : indexer par char
+        // evite la panique "char boundary" sur l'accentue et donne la position Excel.
+        match char_find(&hay, &needle, start) {
+            Some(idx) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                (idx + 1) as i64,
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            ))),
+        }
+    }
+}
+
+// SEARCH(find_text, within_text, [start_num]) - case insensitive + simple wildcard * ?
+#[derive(Debug)]
+pub struct SearchFn;
+/// Returns the 1-based position of one text string inside another.
+///
+/// `SEARCH` is case-insensitive and supports `*` and `?` wildcards.
+///
+/// # Remarks
+/// - Search is case-insensitive.
+/// - `*` matches any sequence and `?` matches a single character.
+/// - `start_num` is 1-based and must be greater than `0`.
+/// - If no match is found, returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Case-insensitive search"
+/// formula: '=SEARCH("world", "Hello World")'
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Wildcard pattern"
+/// formula: '=SEARCH("d?ta*", "Meta Data Lake")'
+/// expected: 6
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FIND
+///   - EXACT
+///   - SUBSTITUTE
+/// faq:
+///   - q: "How are case and wildcards handled?"
+///     a: "SEARCH is case-insensitive and supports * for any sequence plus ? for one character."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SEARCH
+/// Type: SearchFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SEARCH(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SearchFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SEARCH"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let needle = to_text(&args[0])?.to_ascii_lowercase();
+        let hay_raw = to_text(&args[1])?;
+        let hay = hay_raw.to_ascii_lowercase();
+        let start = if args.len() == 3 {
+            let n = number_like(&args[2])?;
+            if n < 1 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            (n - 1) as usize
+        } else {
+            0
+        };
+        if needle.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)));
+        }
+        // SEARCH renvoie une position en CARACTERES et accepte les jokers * et ?.
+        // On indexe par char (pas par octet) -> pas de panique "char boundary" sur
+        // l'accentue, et ? compte bien pour UN caractere (sémantique Excel).
+        let hay_chars: Vec<char> = hay.chars().collect();
+        if start > hay_chars.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let found = if needle.contains('*') || needle.contains('?') {
+            let pat: Vec<char> = needle.chars().collect();
+            char_wildcard_search(&pat, &hay_chars, start)
+        } else {
+            char_find(&hay, &needle, start)
+        };
+        match found {
+            Some(idx) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                (idx + 1) as i64,
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#VALUE!"),
+            ))),
+        }
+    }
+}
+
+/// Recherche en espace CARACTERES (Excel) : position 0-based du 1er match de `needle`
+/// dans `hay` a partir du caractere `start`. Indexer par char (et non par octet) evite
+/// la panique "byte index is not a char boundary" sur les chaines accentuees.
+fn char_find(hay: &str, needle: &str, start: usize) -> Option<usize> {
+    let hay_chars: Vec<char> = hay.chars().collect();
+    let needle_chars: Vec<char> = needle.chars().collect();
+    if needle_chars.is_empty() {
+        return Some(start.min(hay_chars.len()));
+    }
+    if needle_chars.len() > hay_chars.len() || start > hay_chars.len() {
+        return None;
+    }
+    let last = hay_chars.len() - needle_chars.len();
+    let mut i = start;
+    while i <= last {
+        if hay_chars[i..i + needle_chars.len()] == needle_chars[..] {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Recherche joker (* / ?) en espace CARACTERES. `?` = exactement un caractere.
+fn char_wildcard_search(pat: &[char], hay: &[char], start: usize) -> Option<usize> {
+    let mut i = start;
+    while i <= hay.len() {
+        if wildcard_match_chars(pat, &hay[i..]) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn wildcard_match_chars(p: &[char], t: &[char]) -> bool {
+    if p.is_empty() {
+        return true;
+    }
+    match p[0] {
+        '*' => (0..=t.len()).any(|i| wildcard_match_chars(&p[1..], &t[i..])),
+        '?' => !t.is_empty() && wildcard_match_chars(&p[1..], &t[1..]),
+        c => !t.is_empty() && t[0] == c && wildcard_match_chars(&p[1..], &t[1..]),
+    }
+}
+
+// EXACT(text1,text2)
+#[derive(Debug)]
+pub struct ExactFn;
+/// Compares two text values for exact equality.
+///
+/// # Remarks
+/// - Comparison is case-sensitive.
+/// - No wildcard semantics are applied.
+/// - Non-text values are converted to text before comparison.
+/// - Errors in either argument are propagated.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Exact same text"
+/// formula: '=EXACT("Form", "Form")'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Case difference is not equal"
+/// formula: '=EXACT("Form", "form")'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FIND
+///   - SEARCH
+///   - UPPER
+/// faq:
+///   - q: "Does EXACT perform case-sensitive comparison?"
+///     a: "Yes. EXACT compares the resulting text values with exact case and character equality."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: EXACT
+/// Type: ExactFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: EXACT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ExactFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "EXACT"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let a = to_text(&args[0])?;
+        let b = to_text(&args[1])?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            a == b,
+        )))
+    }
+}
+
+fn number_like<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<i64, ExcelError> {
+    let v = scalar_like_value(a)?;
+    Ok(match v {
+        LiteralValue::Int(i) => i,
+        LiteralValue::Number(f) => f as i64,
+        LiteralValue::Text(t) => t.parse::<i64>().unwrap_or(0),
+        LiteralValue::Boolean(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
+        LiteralValue::Empty => 0,
+        LiteralValue::Error(e) => return Err(e),
+        other => other.to_string().parse::<i64>().unwrap_or(0),
+    })
+}
+
+pub fn register_builtins() {
+    use std::sync::Arc;
+    crate::function_registry::register_builtin(Arc::new(FindFn));
+    crate::function_registry::register_builtin(Arc::new(SearchFn));
+    crate::function_registry::register_builtin(Arc::new(ExactFn));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_common::LiteralValue;
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    fn lit(v: LiteralValue) -> ASTNode {
+        ASTNode::new(ASTNodeType::Literal(v), None)
+    }
+    #[test]
+    fn find_search() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(FindFn))
+            .with_function(std::sync::Arc::new(SearchFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "FIND").unwrap();
+        let s = ctx.context.get_function("", "SEARCH").unwrap();
+        let hay = lit(LiteralValue::Text("Hello World".into()));
+        let needle = lit(LiteralValue::Text("World".into()));
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&needle, &ctx),
+                    ArgumentHandle::new(&hay, &ctx)
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(7)
+        );
+        let needle2 = lit(LiteralValue::Text("world".into()));
+        assert_eq!(
+            s.dispatch(
+                &[
+                    ArgumentHandle::new(&needle2, &ctx),
+                    ArgumentHandle::new(&hay, &ctx)
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(7)
+        );
+    }
+
+    /// Regression: FIND/SEARCH must index by CHARACTER (Excel), not by byte.
+    /// On multi-byte UTF-8 (accents), the old byte-based implementation returned wrong
+    /// positions and, in SEARCH's wildcard scan, panicked when a byte offset landed inside
+    /// a multi-byte char ("byte index N is not a char boundary").
+    #[test]
+    fn find_search_utf8_char_positions() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(FindFn))
+            .with_function(std::sync::Arc::new(SearchFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "FIND").unwrap();
+        let s = ctx.context.get_function("", "SEARCH").unwrap();
+        let call =
+            |func: &std::sync::Arc<dyn crate::function::Function>, needle: &str, hay: &str| {
+                let n = lit(LiteralValue::Text(needle.into()));
+                let h = lit(LiteralValue::Text(hay.into()));
+                func.dispatch(
+                    &[ArgumentHandle::new(&n, &ctx), ArgumentHandle::new(&h, &ctx)],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal()
+            };
+
+        // "éz": 'z' is the 2nd CHARACTER (but starts at byte 2 because 'é' is 2 bytes).
+        // Byte-based FIND returned 3; the correct Excel answer is 2.
+        assert_eq!(call(&f, "z", "éz"), LiteralValue::Int(2));
+
+        // SEARCH wildcard scan over an accented haystack. The byte-based loop sliced
+        // &hay[1..] at offset 1 — inside 'é' — and panicked. Must return char position 1.
+        assert_eq!(call(&s, "?z", "éz"), LiteralValue::Int(1));
+
+        // '?' matches exactly one CHARACTER (not one byte) even when that char is multi-byte.
+        assert_eq!(call(&s, "c?fé", "cafés"), LiteralValue::Int(1));
+    }
+}

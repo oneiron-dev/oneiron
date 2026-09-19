@@ -1,0 +1,2685 @@
+//! Time Value of Money functions: PMT, PV, FV, NPV, NPER, RATE, IPMT, PPMT, XNPV, XIRR, DOLLARDE, DOLLARFR
+
+use crate::args::ArgSchema;
+use crate::coercion::to_serial_strict;
+use crate::function::Function;
+use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
+use formualizer_common::{DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_macros::func_caps;
+
+/// Numeric coercion for financial arguments.
+///
+/// Excel has no separate date type on the sheet: a date cell holds a number
+/// and is only *formatted* as a date, so every date/time literal reaching a
+/// financial builtin must coerce to its serial in the workbook's date system.
+/// This delegates to the crate-central [`crate::coercion::to_serial_strict`]
+/// rather than re-implementing the value -> number policy locally; the old
+/// private `coerce_literal_num`/`coerce_literal_date_serial` pair silently
+/// dropped `Date`/`DateTime`/`Time`/`Duration` cells (see #328).
+fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
+    let v = arg.value()?.into_literal();
+    to_serial_strict(&v, arg.date_system())
+}
+
+/// Excel truncates date serials to whole days inside XNPV/XIRR: a cell holding
+/// `2024-01-01 12:00` (serial 45292.5) discounts as day 45292. Documented in
+/// Microsoft's XNPV/XIRR remarks ("numbers in dates are truncated to
+/// integers") and reproduced by LibreOffice 24.2.7.
+fn truncate_date_serials(dates: &mut [f64]) {
+    for d in dates.iter_mut() {
+        *d = d.trunc();
+    }
+}
+
+/// Calculates the constant payment amount for a fixed-rate annuity or loan.
+///
+/// Use this to solve for periodic payment size when rate, term, and present/future value
+/// targets are known.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period (for example, annual rate / 12 for monthly payments).
+/// - Cash-flow sign convention: cash paid out is negative and cash received is positive.
+/// - `type = 0` means end-of-period payments; `type != 0` means beginning-of-period payments.
+/// - Returns `#NUM!` when `nper` is zero.
+/// - Propagates argument conversion and underlying value errors.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =PMT(0.06/12, 360, 300000)
+/// result: -1798.6515754582708
+/// ```
+/// ```yaml,sandbox
+/// formula: =PMT(0.05/4, 20, -10000, 0, 1)
+/// result: 561.1890334005388
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PV
+///   - FV
+///   - NPER
+///   - RATE
+/// faq:
+///   - q: "Why is `PMT` usually negative for a loan?"
+///     a: "TVM sign convention treats cash you pay as negative; with positive `pv`, payment outputs are typically negative."
+/// ```
+#[derive(Debug)]
+pub struct PmtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PMT
+/// Type: PmtFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for PmtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "PMT"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // rate
+                ArgSchema::number_lenient_scalar(), // nper
+                ArgSchema::number_lenient_scalar(), // pv
+                ArgSchema::number_lenient_scalar(), // fv (optional)
+                ArgSchema::number_lenient_scalar(), // type (optional)
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let nper = coerce_num(&args[1])?;
+        let pv = coerce_num(&args[2])?;
+        let fv = if args.len() > 3 {
+            coerce_num(&args[3])?
+        } else {
+            0.0
+        };
+        let pmt_type = if args.len() > 4 {
+            coerce_num(&args[4])? as i32
+        } else {
+            0
+        };
+
+        if nper == 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let pmt = if rate.abs() < 1e-10 {
+            // When rate is 0, PMT = -(pv + fv) / nper
+            -(pv + fv) / nper
+        } else {
+            // PMT = (rate * (pv * (1+rate)^nper + fv)) / ((1+rate)^nper - 1)
+            // With type adjustment for beginning of period
+            let factor = (1.0 + rate).powf(nper);
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
+        };
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(pmt)))
+    }
+}
+
+/// Calculates present value from periodic cash flows at a fixed rate.
+///
+/// Use this to discount a regular payment stream and optional terminal value back to time zero.
+///
+/// # Remarks
+/// - `rate` is the discount rate per period.
+/// - Cash-flow sign convention: inflows are positive and outflows are negative.
+/// - `type = 0` assumes payments at period end; `type != 0` assumes period start.
+/// - When `rate` is zero, present value is computed with simple arithmetic (no discounting).
+/// - Returns argument-related errors if coercion fails or an input is an error value.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =PV(0.06/12, 360, -1798.65157545827)
+/// result: 299999.9999999998
+/// ```
+/// ```yaml,sandbox
+/// formula: =PV(0, 10, -500)
+/// result: 5000
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - FV
+///   - NPER
+///   - RATE
+/// faq:
+///   - q: "How does `type` change `PV`?"
+///     a: "`type=0` discounts end-of-period payments, while non-zero `type` treats payments as beginning-of-period (annuity due)."
+/// ```
+#[derive(Debug)]
+pub struct PvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PV
+/// Type: PvFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for PvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "PV"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let nper = coerce_num(&args[1])?;
+        let pmt = coerce_num(&args[2])?;
+        let fv = if args.len() > 3 {
+            coerce_num(&args[3])?
+        } else {
+            0.0
+        };
+        let pmt_type = if args.len() > 4 {
+            coerce_num(&args[4])? as i32
+        } else {
+            0
+        };
+
+        let pv = if rate.abs() < 1e-10 {
+            -fv - pmt * nper
+        } else {
+            let factor = (1.0 + rate).powf(nper);
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+            (-fv - pmt * type_adj * (factor - 1.0) / rate) / factor
+        };
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(pv)))
+    }
+}
+
+/// Calculates future value from a fixed periodic rate and payment stream.
+///
+/// Use this to project an ending balance after compounding a present value and periodic payments.
+///
+/// # Remarks
+/// - `rate` is the interest rate per period.
+/// - Cash-flow sign convention: payments you make are negative; receipts are positive.
+/// - `type = 0` models end-of-period payments; `type != 0` models beginning-of-period payments.
+/// - When `rate` is zero, result is linear (`-pv - pmt * nper`).
+/// - Returns argument-related errors if coercion fails or an input is an error value.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =FV(0.04/12, 120, -200)
+/// result: 29449.96094509572
+/// ```
+/// ```yaml,sandbox
+/// formula: =FV(0, 24, -150, 1000)
+/// result: 2600
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PV
+///   - PMT
+///   - NPER
+///   - RATE
+/// faq:
+///   - q: "What happens when `rate` is zero in `FV`?"
+///     a: "It falls back to linear accumulation: `-pv - pmt * nper` with no compounding."
+/// ```
+#[derive(Debug)]
+pub struct FvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FV
+/// Type: FvFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for FvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "FV"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let nper = coerce_num(&args[1])?;
+        let pmt = coerce_num(&args[2])?;
+        let pv = if args.len() > 3 {
+            coerce_num(&args[3])?
+        } else {
+            0.0
+        };
+        let pmt_type = if args.len() > 4 {
+            coerce_num(&args[4])? as i32
+        } else {
+            0
+        };
+
+        let fv = if rate.abs() < 1e-10 {
+            -pv - pmt * nper
+        } else {
+            let factor = (1.0 + rate).powf(nper);
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+            -pv * factor - pmt * type_adj * (factor - 1.0) / rate
+        };
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(fv)))
+    }
+}
+
+/// Calculates net present value for equally spaced cash flows.
+///
+/// The first cash-flow argument is discounted one period from the present, matching spreadsheet
+/// `NPV` behavior for periodic series.
+///
+/// # Remarks
+/// - `rate` is the discount rate per period.
+/// - Cash-flow sign convention: investments/outflows are negative, returns/inflows are positive.
+/// - Text, blank, and logical cells in references are ignored. Direct scalar and computed-array
+///   values are consumed left-to-right, and direct non-numeric text returns `#VALUE!`.
+/// - Embedded error values inside provided cash-flow values are propagated as errors.
+/// - Returns argument coercion errors for invalid `rate` or direct scalar failures.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =NPV(0.08, 4000, 5000, 6000)
+/// result: 12753.391251333636
+/// ```
+/// ```yaml,sandbox
+/// formula: =NPV(0.10, -5000, 2000, 2500, 3000)
+/// result: 1034.7653848780812
+/// ```
+/// ```yaml,docs
+/// related:
+///   - XNPV
+///   - IRR
+///   - MIRR
+/// faq:
+///   - q: "Is the first cash flow discounted at period 0 or period 1?"
+///     a: "`NPV` discounts the first supplied cash flow one full period, matching spreadsheet `NPV` behavior."
+/// ```
+#[derive(Debug)]
+pub struct NpvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NPV
+/// Type: NpvFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: NPV(arg1: number@scalar, arg2...: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for NpvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NPV"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut schema = vec![ArgSchema::number_lenient_scalar(), ArgSchema::any()];
+            schema[1].repeating = Some(1);
+            schema
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() > 255 {
+            return Err(ExcelError::new_value()
+                .with_message("NPV accepts at most 255 total arguments (rate plus 254 values)"));
+        }
+
+        let date_system = ctx.date_system();
+        let rate = coerce_num(&args[0])?;
+        let mut npv = 0.0;
+        let mut period = 1;
+
+        for arg in &args[1..] {
+            if arg.is_omitted() {
+                period += 1;
+                continue;
+            }
+
+            // CalcValue::Range describes shape, not provenance: both a cell range and a computed
+            // array (for example TRANSPOSE(...)) use it, while a one-cell reference is Scalar.
+            // ArgumentHandle's reference path retains that distinction, including functions that
+            // genuinely return references, without guessing from the argument's syntax.
+            let reference_argument = arg.has_reference_semantics();
+            match arg.value()? {
+                CalcValue::Range(range) => {
+                    let (rows, cols) = range.dims();
+                    for row in 0..rows {
+                        for col in 0..cols {
+                            accumulate_npv_cash_flow(
+                                range.get_cell(row, col),
+                                reference_argument,
+                                rate,
+                                &mut npv,
+                                &mut period,
+                                date_system,
+                            )?;
+                        }
+                    }
+                }
+                CalcValue::Scalar(LiteralValue::Array(arr)) => {
+                    for row in arr {
+                        for cell in row {
+                            accumulate_npv_cash_flow(
+                                cell,
+                                reference_argument,
+                                rate,
+                                &mut npv,
+                                &mut period,
+                                date_system,
+                            )?;
+                        }
+                    }
+                }
+                CalcValue::Scalar(value) | CalcValue::AnnotatedScalar(value, _) => {
+                    accumulate_npv_cash_flow(
+                        value,
+                        reference_argument,
+                        rate,
+                        &mut npv,
+                        &mut period,
+                        date_system,
+                    )?
+                }
+                CalcValue::Callable(_) => {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Calc)
+                            .with_message("LAMBDA value must be invoked"),
+                    )));
+                }
+            }
+        }
+
+        if npv.is_finite() {
+            Ok(CalcValue::Scalar(LiteralValue::Number(npv)))
+        } else {
+            Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ))
+        }
+    }
+}
+
+fn accumulate_npv_cash_flow(
+    value: LiteralValue,
+    reference_argument: bool,
+    rate: f64,
+    npv: &mut f64,
+    period: &mut i32,
+    date_system: DateSystem,
+) -> Result<(), ExcelError> {
+    let numeric = match value {
+        LiteralValue::Number(n) => Some(n),
+        LiteralValue::Int(i) => Some(i as f64),
+        // Excel's NPV documentation says logical values in references are ignored. LibreOffice
+        // 24.2.7 counts them as 1, so this intentionally follows the Excel-targeted rule.
+        LiteralValue::Boolean(_) if reference_argument => None,
+        LiteralValue::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
+        LiteralValue::Text(_) | LiteralValue::Empty if reference_argument => None,
+        LiteralValue::Error(error) => return Err(error),
+        // A date cell is a number on the sheet; take its serial rather than #VALUE!.
+        ref other
+            if matches!(
+                other,
+                LiteralValue::Date(_)
+                    | LiteralValue::DateTime(_)
+                    | LiteralValue::Time(_)
+                    | LiteralValue::Duration(_)
+            ) =>
+        {
+            Some(to_serial_strict(other, date_system)?)
+        }
+        _ => return Err(ExcelError::new_value()),
+    };
+
+    if let Some(value) = numeric {
+        *npv += value / (1.0 + rate).powi(*period);
+        *period += 1;
+    }
+    Ok(())
+}
+
+/// Calculates the number of periods needed to satisfy a cash-flow target.
+///
+/// Use this to solve term length when periodic rate, payment, and value constraints are known.
+///
+/// # Remarks
+/// - `rate` is the interest rate per period.
+/// - Cash-flow sign convention: at least one of `pmt`, `pv`, or `fv` should usually have opposite sign.
+/// - `type = 0` means payments at period end; `type != 0` means period start.
+/// - Returns `#NUM!` when inputs imply no finite solution (for example, invalid logarithm domain).
+/// - Returns `#NUM!` when both `rate = 0` and `pmt = 0`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =NPER(0.06/12, -1798.65157545827, 300000)
+/// result: 360.00000000000045
+/// ```
+/// ```yaml,sandbox
+/// formula: =NPER(0, -250, 5000)
+/// result: 20
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - PV
+///   - RATE
+/// faq:
+///   - q: "Why does `NPER` return `#NUM!` for some sign combinations?"
+///     a: "If the logarithm domain is non-positive (or `rate=0` with `pmt=0`), there is no finite solution and `#NUM!` is returned."
+/// ```
+#[derive(Debug)]
+pub struct NperFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NPER
+/// Type: NperFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: NPER(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for NperFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NPER"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let pmt = coerce_num(&args[1])?;
+        let pv = coerce_num(&args[2])?;
+        let fv = if args.len() > 3 {
+            coerce_num(&args[3])?
+        } else {
+            0.0
+        };
+        let pmt_type = if args.len() > 4 {
+            coerce_num(&args[4])? as i32
+        } else {
+            0
+        };
+
+        let nper = if rate.abs() < 1e-10 {
+            if pmt.abs() < 1e-10 {
+                return Ok(CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new_num()),
+                ));
+            }
+            -(pv + fv) / pmt
+        } else {
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+            let pmt_adj = pmt * type_adj;
+            let numerator = pmt_adj - fv * rate;
+            let denominator = pv * rate + pmt_adj;
+            if numerator / denominator <= 0.0 {
+                return Ok(CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new_num()),
+                ));
+            }
+            (numerator / denominator).ln() / (1.0 + rate).ln()
+        };
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(nper)))
+    }
+}
+
+/// Solves for the periodic interest rate implied by annuity cash flows.
+///
+/// This function uses Newton-Raphson iteration and returns the per-period rate that satisfies
+/// the TVM equation.
+///
+/// # Remarks
+/// - Output is a rate per period; convert to annual terms externally if needed.
+/// - Cash-flow sign convention matters for convergence: use opposite signs for borrow/repay sides.
+/// - `guess` defaults to `0.1` and influences convergence speed and branch selection.
+/// - `type = 0` means end-of-period payments; `type != 0` means beginning-of-period payments.
+/// - Returns `#NUM!` on non-convergence, near-zero derivative, or unsatisfied numeric conditions.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =RATE(360, -1798.65157545827, 300000)
+/// result: 0.005000000000000038
+/// ```
+/// ```yaml,sandbox
+/// formula: =RATE(12, -88.84878867834166, 1000)
+/// result: 0.010000000000005125
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - NPER
+///   - IRR
+/// faq:
+///   - q: "How important is `guess` for `RATE`?"
+///     a: "`RATE` uses Newton-Raphson from `guess` (default `0.1`); a poor starting point can lead to non-convergence and `#NUM!`."
+/// ```
+#[derive(Debug)]
+pub struct RateFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RATE
+/// Type: RateFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: RATE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for RateFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "RATE"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let nper = coerce_num(&args[0])?;
+        let pmt = coerce_num(&args[1])?;
+        let pv = coerce_num(&args[2])?;
+        let fv = if args.len() > 3 {
+            coerce_num(&args[3])?
+        } else {
+            0.0
+        };
+        let pmt_type = if args.len() > 4 {
+            coerce_num(&args[4])? as i32
+        } else {
+            0
+        };
+        let guess = if args.len() > 5 {
+            coerce_num(&args[5])?
+        } else {
+            0.1
+        };
+
+        // Newton-Raphson iteration to find rate
+        let mut rate = guess;
+        let max_iter = 100;
+        let tolerance = 1e-10;
+
+        for _ in 0..max_iter {
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+
+            if rate.abs() < 1e-10 {
+                // Special case for very small rate
+                let f = pv + pmt * nper + fv;
+                if f.abs() < tolerance {
+                    return Ok(CalcValue::Scalar(LiteralValue::Number(rate)));
+                }
+                rate = 0.01; // Nudge away from zero
+                continue;
+            }
+
+            let factor = (1.0 + rate).powf(nper);
+            let f = pv * factor + pmt * type_adj * (factor - 1.0) / rate + fv;
+
+            // Derivative
+            let factor_prime = nper * (1.0 + rate).powf(nper - 1.0);
+            let df = pv * factor_prime
+                + pmt * type_adj * (factor_prime / rate - (factor - 1.0) / (rate * rate));
+
+            if df.abs() < 1e-20 {
+                break;
+            }
+
+            let new_rate = rate - f / df;
+
+            if (new_rate - rate).abs() < tolerance {
+                return Ok(CalcValue::Scalar(LiteralValue::Number(new_rate)));
+            }
+
+            rate = new_rate;
+
+            // Prevent rate from going too negative
+            if rate < -0.99 {
+                rate = -0.99;
+            }
+        }
+
+        // If we didn't converge, return error
+        Ok(CalcValue::Scalar(
+            LiteralValue::Error(ExcelError::new_num()),
+        ))
+    }
+}
+
+/// Returns the interest-only component of a payment for a specific period.
+///
+/// Use this with `PMT` or `PPMT` to break a fixed payment into interest and principal pieces.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period.
+/// - `per` is 1-based and must satisfy `1 <= per <= nper`.
+/// - Cash-flow sign convention: for a positive loan principal (`pv`), interest components are typically negative.
+/// - `type = 1` yields zero interest in period 1 (annuity-due first payment).
+/// - Returns `#NUM!` when `per` is outside valid bounds.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =IPMT(0.06/12, 1, 360, 300000)
+/// result: -1500
+/// ```
+/// ```yaml,sandbox
+/// formula: =IPMT(0.06/12, 12, 360, 300000)
+/// result: -1483.1572957145672
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - PPMT
+///   - CUMIPMT
+/// faq:
+///   - q: "Why is `IPMT` period 1 equal to zero for `type=1`?"
+///     a: "With beginning-of-period payments, the first payment occurs before interest accrues, so period-1 interest is zero."
+/// ```
+#[derive(Debug)]
+pub struct IpmtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IPMT
+/// Type: IpmtFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IpmtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IPMT"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let per = coerce_num(&args[1])?;
+        let nper = coerce_num(&args[2])?;
+        let pv = coerce_num(&args[3])?;
+        let fv = if args.len() > 4 {
+            coerce_num(&args[4])?
+        } else {
+            0.0
+        };
+        let pmt_type = if args.len() > 5 {
+            coerce_num(&args[5])? as i32
+        } else {
+            0
+        };
+
+        if per < 1.0 || per > nper {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Calculate PMT first
+        let pmt = if rate.abs() < 1e-10 {
+            -(pv + fv) / nper
+        } else {
+            let factor = (1.0 + rate).powf(nper);
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
+        };
+
+        // Calculate FV at start of period
+        let fv_at_start = if rate.abs() < 1e-10 {
+            -pv - pmt * (per - 1.0)
+        } else {
+            let factor = (1.0 + rate).powf(per - 1.0);
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+            -pv * factor - pmt * type_adj * (factor - 1.0) / rate
+        };
+
+        // Interest is rate * balance at start of period
+        // fv_at_start is negative of balance, so ipmt = fv_at_start * rate
+        let ipmt = if pmt_type != 0 && per == 1.0 {
+            0.0 // No interest in first period for annuity due
+        } else {
+            fv_at_start * rate
+        };
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(ipmt)))
+    }
+}
+
+/// Returns the principal component of a payment for a specific period.
+///
+/// `PPMT` is computed as `PMT - IPMT` using the same rate, timing, and sign convention.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period.
+/// - `per` is 1-based and must satisfy `1 <= per <= nper`.
+/// - Cash-flow sign convention: with a positive borrowed `pv`, principal components are usually negative.
+/// - `type = 1` means beginning-of-period payments.
+/// - Returns `#NUM!` when `per` is outside valid bounds.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =PPMT(0.06/12, 1, 360, 300000)
+/// result: -298.6515754582708
+/// ```
+/// ```yaml,sandbox
+/// formula: =PPMT(0.06/12, 12, 360, 300000)
+/// result: -315.4942797437036
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - IPMT
+///   - CUMPRINC
+/// faq:
+///   - q: "How is `PPMT` computed?"
+///     a: "`PPMT` is computed as `PMT - IPMT` for the same `rate`, `per`, `nper`, `pv`, `fv`, and `type`."
+/// ```
+#[derive(Debug)]
+pub struct PpmtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PPMT
+/// Type: PpmtFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for PpmtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "PPMT"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let per = coerce_num(&args[1])?;
+        let nper = coerce_num(&args[2])?;
+        let pv = coerce_num(&args[3])?;
+        let fv = if args.len() > 4 {
+            coerce_num(&args[4])?
+        } else {
+            0.0
+        };
+        let pmt_type = if args.len() > 5 {
+            coerce_num(&args[5])? as i32
+        } else {
+            0
+        };
+
+        if per < 1.0 || per > nper {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Calculate PMT
+        let pmt = if rate.abs() < 1e-10 {
+            -(pv + fv) / nper
+        } else {
+            let factor = (1.0 + rate).powf(nper);
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
+        };
+
+        // Calculate IPMT
+        let fv_at_start = if rate.abs() < 1e-10 {
+            -pv - pmt * (per - 1.0)
+        } else {
+            let factor = (1.0 + rate).powf(per - 1.0);
+            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+            -pv * factor - pmt * type_adj * (factor - 1.0) / rate
+        };
+
+        let ipmt = if pmt_type != 0 && per == 1.0 {
+            0.0
+        } else {
+            fv_at_start * rate
+        };
+
+        // PPMT = PMT - IPMT
+        let ppmt = pmt - ipmt;
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(ppmt)))
+    }
+}
+
+/// Converts a nominal annual rate into an effective annual rate.
+///
+/// This is useful when nominal APR is quoted with periodic compounding and you need annualized
+/// yield including compounding effects.
+///
+/// # Remarks
+/// - `nominal_rate` is annual; `npery` is compounding periods per year.
+/// - `npery` is truncated to an integer before computation.
+/// - Sign convention is not cash-flow based; this function transforms rate conventions only.
+/// - Returns `#NUM!` when `nominal_rate <= 0` or `npery < 1`.
+/// - Result formula: `(1 + nominal_rate / npery)^npery - 1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =EFFECT(0.12, 12)
+/// result: 0.12682503013196977
+/// ```
+/// ```yaml,sandbox
+/// formula: =EFFECT(0.08, 4)
+/// result: 0.08243215999999998
+/// ```
+/// ```yaml,docs
+/// related:
+///   - NOMINAL
+///   - RATE
+/// faq:
+///   - q: "Does `EFFECT` accept fractional compounding periods?"
+///     a: "`npery` is truncated to an integer first; values less than 1 (or non-positive `nominal_rate`) return `#NUM!`."
+/// ```
+#[derive(Debug)]
+pub struct EffectFn;
+/// [formualizer-docgen:schema:start]
+/// Name: EFFECT
+/// Type: EffectFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: EFFECT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for EffectFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "EFFECT"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let nominal_rate = coerce_num(&args[0])?;
+        let npery = coerce_num(&args[1])?.trunc() as i32;
+
+        // Validation
+        if nominal_rate <= 0.0 || npery < 1 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // EFFECT = (1 + nominal_rate/npery)^npery - 1
+        let effect = (1.0 + nominal_rate / npery as f64).powi(npery) - 1.0;
+        Ok(CalcValue::Scalar(LiteralValue::Number(effect)))
+    }
+}
+
+/// Converts an effective annual rate into a nominal annual rate.
+///
+/// This is the inverse-style transformation of `EFFECT` for a chosen compounding frequency.
+///
+/// # Remarks
+/// - `effect_rate` is annual effective yield; `npery` is periods per year.
+/// - `npery` is truncated to an integer before computation.
+/// - Sign convention is not cash-flow based; this function converts annual rate representation.
+/// - Returns `#NUM!` when `effect_rate <= 0` or `npery < 1`.
+/// - Result formula: `npery * ((1 + effect_rate)^(1/npery) - 1)`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =NOMINAL(0.12682503013196977, 12)
+/// result: 0.1200000000000001
+/// ```
+/// ```yaml,sandbox
+/// formula: =NOMINAL(0.08243216, 4)
+/// result: 0.08000000000000007
+/// ```
+/// ```yaml,docs
+/// related:
+///   - EFFECT
+///   - RATE
+/// faq:
+///   - q: "Is `NOMINAL` an exact inverse of `EFFECT`?"
+///     a: "It is the corresponding transformation for the same integer `npery`; both functions require positive rates and `npery >= 1`."
+/// ```
+#[derive(Debug)]
+pub struct NominalFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NOMINAL
+/// Type: NominalFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: NOMINAL(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for NominalFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NOMINAL"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let effect_rate = coerce_num(&args[0])?;
+        let npery = coerce_num(&args[1])?.trunc() as i32;
+
+        // Validation
+        if effect_rate <= 0.0 || npery < 1 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // NOMINAL = npery * ((1 + effect_rate)^(1/npery) - 1)
+        let nominal = npery as f64 * ((1.0 + effect_rate).powf(1.0 / npery as f64) - 1.0);
+        Ok(CalcValue::Scalar(LiteralValue::Number(nominal)))
+    }
+}
+
+/// Compute NPV at a given rate.
+fn irr_npv(cashflows: &[f64], rate: f64) -> f64 {
+    let mut npv = 0.0;
+    for (i, &cf) in cashflows.iter().enumerate() {
+        npv += cf / (1.0 + rate).powi(i as i32);
+    }
+    npv
+}
+
+/// Compute NPV and its derivative w.r.t. rate.
+fn irr_npv_deriv(cashflows: &[f64], rate: f64) -> (f64, f64) {
+    let mut npv = 0.0;
+    let mut d_npv = 0.0;
+    for (i, &cf) in cashflows.iter().enumerate() {
+        let factor = (1.0 + rate).powi(i as i32);
+        npv += cf / factor;
+        if i > 0 {
+            d_npv -= (i as f64) * cf / (factor * (1.0 + rate));
+        }
+    }
+    (npv, d_npv)
+}
+
+/// Solve for IRR using Newton-Raphson with Brent's method fallback.
+///
+/// Strategy:
+/// 1. Try Newton-Raphson from the user's guess (fast when it works).
+/// 2. If Newton diverges, bracket the root by scanning probe points,
+///    then use Brent's method (superlinear convergence with guaranteed
+///    bracketing) to find the root precisely.
+fn irr_solve(cashflows: &[f64], guess: f64) -> Option<f64> {
+    const MAX_NR: usize = 100;
+    const MAX_BRENT: usize = 200;
+    const TOL: f64 = 1e-12;
+    const MACH_EPS: f64 = f64::EPSILON;
+
+    // --- Phase 1: Newton-Raphson from the given guess ---
+    let mut rate = guess;
+    for _ in 0..MAX_NR {
+        let (npv, d_npv) = irr_npv_deriv(cashflows, rate);
+        if d_npv.abs() < TOL {
+            break; // flat derivative, fall through to Brent
+        }
+        let new_rate = rate - npv / d_npv;
+        // Accept if converged and rate > -1 (pole at -1)
+        if (new_rate - rate).abs() < TOL && new_rate > -1.0 {
+            return Some(new_rate);
+        }
+        // If Newton shoots below -1 or to NaN/Inf, bail out
+        if new_rate <= -1.0 || !new_rate.is_finite() {
+            break;
+        }
+        rate = new_rate;
+    }
+
+    // --- Phase 2: Bracket the root, then apply Brent's method ---
+    // Search for a sign change in NPV across a wide range of rates.
+    let probes: &[f64] = &[
+        -0.99, -0.9, -0.5, -0.1, -0.01, 0.0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3,
+        0.5, 1.0, 2.0, 5.0, 10.0,
+    ];
+    let mut lo = f64::NAN;
+    let mut hi = f64::NAN;
+    let mut npv_lo = f64::NAN;
+
+    for &r in probes {
+        let npv = irr_npv(cashflows, r);
+        if !npv.is_finite() {
+            continue;
+        }
+        if lo.is_nan() {
+            lo = r;
+            npv_lo = npv;
+            continue;
+        }
+        if npv_lo * npv < 0.0 {
+            hi = r;
+            break;
+        }
+        lo = r;
+        npv_lo = npv;
+    }
+
+    if hi.is_nan() {
+        return None; // no sign change found — no real IRR
+    }
+
+    // Brent's method (following scipy's brentq / Brent's zeroin algorithm).
+    // Combines inverse quadratic interpolation, secant, and bisection.
+    // xpre/xcur maintain the bracket; xblk is the contrapoint.
+    let mut xpre = lo;
+    let mut xcur = hi;
+    let mut fpre = irr_npv(cashflows, xpre);
+    let mut fcur = irr_npv(cashflows, xcur);
+
+    if fpre == 0.0 {
+        return Some(xpre);
+    }
+    if fcur == 0.0 {
+        return Some(xcur);
+    }
+
+    let mut xblk = 0.0;
+    let mut fblk = 0.0;
+    let mut spre = 0.0;
+    let mut scur = 0.0;
+
+    for _ in 0..MAX_BRENT {
+        // If xpre and xcur bracket the root, reset the contrapoint
+        if fpre * fcur < 0.0 {
+            xblk = xpre;
+            fblk = fpre;
+            spre = xcur - xpre;
+            scur = spre;
+        }
+
+        // Ensure xcur is the best approximation (|fcur| <= |fblk|)
+        if fblk.abs() < fcur.abs() {
+            xpre = xcur;
+            xcur = xblk;
+            xblk = xpre;
+            fpre = fcur;
+            fcur = fblk;
+            fblk = fpre;
+        }
+
+        let delta = (MACH_EPS * xcur.abs() + 0.5 * TOL).max(MACH_EPS);
+        let sbis = (xblk - xcur) * 0.5;
+
+        if fcur == 0.0 || sbis.abs() < delta {
+            return Some(xcur);
+        }
+
+        if spre.abs() >= delta && fcur.abs() < fpre.abs() {
+            // Try interpolation
+            let stry = if (xpre - xblk).abs() < MACH_EPS {
+                // Secant step
+                -fcur * (xcur - xpre) / (fcur - fpre)
+            } else {
+                // Inverse quadratic interpolation
+                let dpre = (fpre - fcur) / (xpre - xcur);
+                let dblk = (fblk - fcur) / (xblk - xcur);
+                -fcur * (fblk * dblk - fpre * dpre) / (dblk * dpre * (fblk - fpre))
+            };
+
+            // Accept if step is small enough
+            if 2.0 * stry.abs() < spre.abs().min(3.0 * sbis.abs() - delta) {
+                spre = scur;
+                scur = stry;
+            } else {
+                spre = sbis;
+                scur = sbis;
+            }
+        } else {
+            // Bisection
+            spre = sbis;
+            scur = sbis;
+        }
+
+        xpre = xcur;
+        fpre = fcur;
+
+        if scur.abs() > delta {
+            xcur += scur;
+        } else {
+            xcur += if sbis > 0.0 { delta } else { -delta };
+        }
+        fcur = irr_npv(cashflows, xcur);
+    }
+    Some(xcur)
+}
+
+/// Calculates periodic internal rate of return for regularly spaced cash flows.
+///
+/// The function iteratively finds the per-period rate where discounted cash flows sum to zero.
+///
+/// # Remarks
+/// - Output is a rate per cash-flow period (not automatically annualized).
+/// - Cash-flow sign convention: outflows are negative and inflows are positive.
+/// - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+/// - A callable value input returns `#CALC!`.
+/// - Returns `#NUM!` if fewer than two numeric cash flows are available, if derivative is near zero, or if iteration does not converge.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =IRR({-10000,3000,4200,6800})
+/// result: 0.16340560068898924
+/// ```
+/// ```yaml,sandbox
+/// formula: =IRR({-5000,1200,1410,1875,1050}, 0.1)
+/// result: 0.041848876015677466
+/// ```
+/// ```yaml,docs
+/// related:
+///   - MIRR
+///   - NPV
+///   - XIRR
+/// faq:
+///   - q: "Why can `IRR` return `#NUM!` even with numeric cash flows?"
+///     a: "The Newton solve can fail if derivative terms become unstable or no convergent root is reached from the chosen guess."
+/// ```
+#[derive(Debug)]
+pub struct IrrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IRR
+/// Type: IrrFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IRR(arg1: any@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IrrFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IRR"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> =
+            LazyLock::new(|| vec![ArgSchema::any(), ArgSchema::number_lenient_scalar()]);
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
+        // Collect cash flows
+        let mut cashflows = Vec::new();
+        let val = args[0].value()?;
+        match val {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
+                LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+                LiteralValue::Array(arr) => {
+                    for row in arr {
+                        for cell in row {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
+                                cashflows.push(n);
+                            }
+                        }
+                    }
+                }
+                other => cashflows.push(to_serial_strict(&other, date_system)?),
+            },
+            CalcValue::Range(range) => {
+                let (rows, cols) = range.dims();
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let cell = range.get_cell(r, c);
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
+                            cashflows.push(n);
+                        }
+                    }
+                }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
+        }
+
+        if cashflows.len() < 2 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Initial guess
+        let guess = if args.len() > 1 {
+            coerce_num(&args[1])?
+        } else {
+            0.1
+        };
+
+        match irr_solve(&cashflows, guess) {
+            Some(rate) => Ok(CalcValue::Scalar(LiteralValue::Number(rate))),
+            None => Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            )),
+        }
+    }
+}
+
+/// Calculates modified internal rate of return with separate finance and reinvest rates.
+///
+/// Negative cash flows are discounted at `finance_rate` and positive cash flows are compounded at
+/// `reinvest_rate`, then combined into a single periodic return.
+///
+/// # Remarks
+/// - `finance_rate` and `reinvest_rate` are both rates per cash-flow period.
+/// - Cash-flow sign convention: at least one negative and one positive cash flow are required.
+/// - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+/// - A callable value input returns `#CALC!`.
+/// - Returns `#NUM!` for insufficient cash flows, and `#DIV/0!` when computed positive/negative legs are invalid.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =MIRR({-10000,3000,4200,6800}, 0.1, 0.12)
+/// result: 0.15147133664676304
+/// ```
+/// ```yaml,sandbox
+/// formula: =MIRR({-120000,39000,30000,21000,37000,46000}, 0.1, 0.12)
+/// result: 0.1260941303659051
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IRR
+///   - NPV
+///   - XNPV
+/// faq:
+///   - q: "Why does `MIRR` return `#DIV/0!` for some cash-flow sets?"
+///     a: "`MIRR` needs both a negative leg and a positive leg; if discounted negatives or compounded positives are invalid, it returns `#DIV/0!`."
+/// ```
+#[derive(Debug)]
+pub struct MirrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MIRR
+/// Type: MirrFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: MIRR(arg1: any@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for MirrFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "MIRR"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::any(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
+        // Collect cash flows
+        let mut cashflows = Vec::new();
+        let val = args[0].value()?;
+        match val {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
+                LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+                LiteralValue::Array(arr) => {
+                    for row in arr {
+                        for cell in row {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
+                                cashflows.push(n);
+                            }
+                        }
+                    }
+                }
+                other => cashflows.push(to_serial_strict(&other, date_system)?),
+            },
+            CalcValue::Range(range) => {
+                let (rows, cols) = range.dims();
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let cell = range.get_cell(r, c);
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
+                            cashflows.push(n);
+                        }
+                    }
+                }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
+        }
+
+        let finance_rate = coerce_num(&args[1])?;
+        let reinvest_rate = coerce_num(&args[2])?;
+
+        if cashflows.len() < 2 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let n = cashflows.len() as i32;
+
+        // Present value of negative cash flows (discounted at finance_rate)
+        let mut pv_neg = 0.0;
+        // Future value of positive cash flows (compounded at reinvest_rate)
+        let mut fv_pos = 0.0;
+
+        for (i, &cf) in cashflows.iter().enumerate() {
+            if cf < 0.0 {
+                pv_neg += cf / (1.0 + finance_rate).powi(i as i32);
+            } else {
+                fv_pos += cf * (1.0 + reinvest_rate).powi(n - 1 - i as i32);
+            }
+        }
+
+        if pv_neg >= 0.0 || fv_pos <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_div()),
+            ));
+        }
+
+        // MIRR = (FV_pos / -PV_neg)^(1/(n-1)) - 1
+        let mirr = (-fv_pos / pv_neg).powf(1.0 / (n - 1) as f64) - 1.0;
+        Ok(CalcValue::Scalar(LiteralValue::Number(mirr)))
+    }
+}
+
+/// Returns cumulative interest paid between two inclusive payment periods.
+///
+/// Use this to total the interest component over a slice of an amortization schedule.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period.
+/// - `start_period` and `end_period` are 1-based, inclusive integer periods.
+/// - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
+/// - Sign convention follows this implementation's balance model; with positive `pv`, cumulative interest is typically positive.
+/// - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =CUMIPMT(0.06/12, 360, 300000, 1, 12, 0)
+/// result: 16929.385083045923
+/// ```
+/// ```yaml,sandbox
+/// formula: =CUMIPMT(0.06/12, 360, 300000, 13, 24, 0)
+/// result: 14681.09233746059
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IPMT
+///   - PMT
+///   - CUMPRINC
+/// faq:
+///   - q: "Are `start_period` and `end_period` inclusive in `CUMIPMT`?"
+///     a: "Yes. Both bounds are inclusive and interpreted as 1-based periods after truncation to integers."
+/// ```
+#[derive(Debug)]
+pub struct CumipmtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CUMIPMT
+/// Type: CumipmtFn
+/// Min args: 6
+/// Max args: 6
+/// Variadic: false
+/// Signature: CUMIPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for CumipmtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CUMIPMT"
+    }
+    fn min_args(&self) -> usize {
+        6
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let nper = coerce_num(&args[1])?.trunc() as i32;
+        let pv = coerce_num(&args[2])?;
+        let start = coerce_num(&args[3])?.trunc() as i32;
+        let end = coerce_num(&args[4])?.trunc() as i32;
+        let pay_type = coerce_num(&args[5])?.trunc() as i32;
+
+        // Validation
+        if rate <= 0.0
+            || nper <= 0
+            || pv <= 0.0
+            || start < 1
+            || end < start
+            || end > nper
+            || (pay_type != 0 && pay_type != 1)
+        {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Calculate PMT
+        let pmt = if rate == 0.0 {
+            -pv / nper as f64
+        } else {
+            -pv * rate * (1.0 + rate).powi(nper) / ((1.0 + rate).powi(nper) - 1.0)
+        };
+
+        // Sum interest payments from start to end
+        let mut cum_int = 0.0;
+        let mut balance = pv;
+
+        for period in 1..=end {
+            let interest = if pay_type == 1 && period == 1 {
+                0.0
+            } else {
+                balance * rate
+            };
+
+            if period >= start {
+                cum_int += interest;
+            }
+
+            let principal = pmt - interest;
+            balance += principal;
+        }
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(cum_int)))
+    }
+}
+
+/// Returns cumulative principal paid between two inclusive payment periods.
+///
+/// Use this to measure principal reduction over a selected amortization window.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period.
+/// - `start_period` and `end_period` are 1-based, inclusive integer periods.
+/// - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
+/// - Sign convention follows payment direction; with positive `pv`, cumulative principal is typically negative.
+/// - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =CUMPRINC(0.06/12, 360, 300000, 1, 12, 0)
+/// result: -38513.20398854517
+/// ```
+/// ```yaml,sandbox
+/// formula: =CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)
+/// result: -36264.91124295984
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PPMT
+///   - PMT
+///   - CUMIPMT
+/// faq:
+///   - q: "Why is `CUMPRINC` often negative for loans?"
+///     a: "With positive `pv`, payment cash outflows are negative in this convention, so cumulative principal is typically negative."
+/// ```
+#[derive(Debug)]
+pub struct CumprincFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CUMPRINC
+/// Type: CumprincFn
+/// Min args: 6
+/// Max args: 6
+/// Variadic: false
+/// Signature: CUMPRINC(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for CumprincFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CUMPRINC"
+    }
+    fn min_args(&self) -> usize {
+        6
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let nper = coerce_num(&args[1])?.trunc() as i32;
+        let pv = coerce_num(&args[2])?;
+        let start = coerce_num(&args[3])?.trunc() as i32;
+        let end = coerce_num(&args[4])?.trunc() as i32;
+        let pay_type = coerce_num(&args[5])?.trunc() as i32;
+
+        // Validation
+        if rate <= 0.0
+            || nper <= 0
+            || pv <= 0.0
+            || start < 1
+            || end < start
+            || end > nper
+            || (pay_type != 0 && pay_type != 1)
+        {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Calculate PMT
+        let pmt = if rate == 0.0 {
+            -pv / nper as f64
+        } else {
+            -pv * rate * (1.0 + rate).powi(nper) / ((1.0 + rate).powi(nper) - 1.0)
+        };
+
+        // Sum principal payments from start to end
+        let mut cum_princ = 0.0;
+        let mut balance = pv;
+
+        for period in 1..=end {
+            let interest = if pay_type == 1 && period == 1 {
+                0.0
+            } else {
+                balance * rate
+            };
+
+            let principal = pmt - interest;
+
+            if period >= start {
+                cum_princ += principal;
+            }
+
+            balance += principal;
+        }
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(cum_princ)))
+    }
+}
+
+/// Calculates annualized net present value for irregularly dated cash flows.
+///
+/// Discounting uses an actual-day offset divided by 365 from the first provided date.
+///
+/// # Remarks
+/// - `rate` is an annual discount rate.
+/// - Cash-flow sign convention: outflows are negative and inflows are positive.
+/// - `values` and `dates` are flattened to numeric entries; non-numeric entries are ignored.
+/// - Scalar error inputs are propagated; callable inputs return `#CALC!`.
+/// - Returns `#NUM!` when `values` and `dates` lengths differ or no numeric pair exists.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =XNPV(0.10, {-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})
+/// result: 332.4567993989465
+/// ```
+/// ```yaml,sandbox
+/// formula: =XNPV(0.08, {-5000,1200,1800,2400}, {0,180,365,730})
+/// result: -120.41078799700836
+/// ```
+/// ```yaml,docs
+/// related:
+///   - NPV
+///   - XIRR
+///   - MIRR
+/// faq:
+///   - q: "How are dates interpreted in `XNPV`?"
+///     a: "Each cash flow is discounted by `(date_i - first_date) / 365`, so dates must align one-to-one with values."
+/// ```
+#[derive(Debug)]
+pub struct XnpvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: XNPV
+/// Type: XnpvFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: XNPV(arg1: number@scalar, arg2: any@scalar, arg3: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for XnpvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "XNPV"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // rate
+                ArgSchema::any(),                   // values
+                ArgSchema::any(),                   // dates
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
+        let rate = coerce_num(&args[0])?;
+
+        // Collect values
+        let mut values = Vec::new();
+        let val = args[1].value()?;
+        match val {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
+                LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+                LiteralValue::Array(arr) => {
+                    for row in arr {
+                        for cell in row {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
+                                values.push(n);
+                            }
+                        }
+                    }
+                }
+                other => values.push(to_serial_strict(&other, date_system)?),
+            },
+            CalcValue::Range(range) => {
+                let (rows, cols) = range.dims();
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let cell = range.get_cell(r, c);
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
+                            values.push(n);
+                        }
+                    }
+                }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
+        }
+
+        // Collect dates
+        let mut dates = Vec::new();
+        let date_val = args[2].value()?;
+        match date_val {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
+                LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+                LiteralValue::Array(arr) => {
+                    for row in arr {
+                        for cell in row {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
+                                dates.push(n);
+                            }
+                        }
+                    }
+                }
+                other => dates.push(to_serial_strict(&other, date_system)?),
+            },
+            CalcValue::Range(range) => {
+                let (rows, cols) = range.dims();
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let cell = range.get_cell(r, c);
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
+                            dates.push(n);
+                        }
+                    }
+                }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
+        }
+
+        truncate_date_serials(&mut dates);
+
+        // Validate that values and dates have the same length
+        if values.len() != dates.len() || values.is_empty() {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Calculate XNPV: Sum of values[i] / (1 + rate)^((dates[i] - dates[0]) / 365)
+        let first_date = dates[0];
+        let mut xnpv = 0.0;
+
+        for (i, &value) in values.iter().enumerate() {
+            let days_from_start = dates[i] - first_date;
+            let years = days_from_start / 365.0;
+            xnpv += value / (1.0 + rate).powf(years);
+        }
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(xnpv)))
+    }
+}
+
+/// Helper function to calculate XNPV given rate, values, and dates
+fn calculate_xnpv(rate: f64, values: &[f64], dates: &[f64]) -> f64 {
+    if values.is_empty() || dates.is_empty() {
+        return 0.0;
+    }
+    let first_date = dates[0];
+    let mut xnpv = 0.0;
+    for (i, &value) in values.iter().enumerate() {
+        let days_from_start = dates[i] - first_date;
+        let years = days_from_start / 365.0;
+        xnpv += value / (1.0 + rate).powf(years);
+    }
+    xnpv
+}
+
+/// Helper function to calculate the derivative of XNPV with respect to rate
+fn calculate_xnpv_derivative(rate: f64, values: &[f64], dates: &[f64]) -> f64 {
+    if values.is_empty() || dates.is_empty() {
+        return 0.0;
+    }
+    let first_date = dates[0];
+    let mut d_xnpv = 0.0;
+    for (i, &value) in values.iter().enumerate() {
+        let days_from_start = dates[i] - first_date;
+        let years = days_from_start / 365.0;
+        // d/dr [value / (1+r)^years] = -years * value / (1+r)^(years+1)
+        d_xnpv -= years * value / (1.0 + rate).powf(years + 1.0);
+    }
+    d_xnpv
+}
+
+/// Calculates annualized internal rate of return for irregularly dated cash flows.
+///
+/// The solver uses Newton-Raphson on `XNPV(rate, values, dates) = 0` with day-count basis 365.
+///
+/// # Remarks
+/// - Output is an annualized rate.
+/// - Cash-flow sign convention requires at least one negative and one positive value.
+/// - `guess` defaults to `0.1` and can materially affect convergence.
+/// - Non-numeric entries in value/date arrays are ignored; callable inputs return `#CALC!`.
+/// - Returns `#NUM!` for mismatched lengths, insufficient valid points, missing sign change, derivative failure, or non-convergence.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =XIRR({-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})
+/// result: 0.11541278310055854
+/// ```
+/// ```yaml,sandbox
+/// formula: =XIRR({-5000,1200,1800,2400}, {0,180,365,730}, 0.1)
+/// result: 0.06001829492127762
+/// ```
+/// ```yaml,docs
+/// related:
+///   - XNPV
+///   - IRR
+///   - NPV
+/// faq:
+///   - q: "What data shape does `XIRR` require?"
+///     a: "`values` and `dates` must have equal numeric length with at least one positive and one negative cash flow, or `#NUM!` is returned."
+/// ```
+#[derive(Debug)]
+pub struct XirrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: XIRR
+/// Type: XirrFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: XIRR(arg1: any@scalar, arg2: any@scalar, arg3...: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for XirrFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "XIRR"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::any(),                   // values
+                ArgSchema::any(),                   // dates
+                ArgSchema::number_lenient_scalar(), // guess (optional)
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
+        // Collect values
+        let mut values = Vec::new();
+        let val = args[0].value()?;
+        match val {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
+                LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+                LiteralValue::Array(arr) => {
+                    for row in arr {
+                        for cell in row {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
+                                values.push(n);
+                            }
+                        }
+                    }
+                }
+                other => values.push(to_serial_strict(&other, date_system)?),
+            },
+            CalcValue::Range(range) => {
+                let (rows, cols) = range.dims();
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let cell = range.get_cell(r, c);
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
+                            values.push(n);
+                        }
+                    }
+                }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
+        }
+
+        // Collect dates
+        let mut dates = Vec::new();
+        let date_val = args[1].value()?;
+        match date_val {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
+                LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+                LiteralValue::Array(arr) => {
+                    for row in arr {
+                        for cell in row {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
+                                dates.push(n);
+                            }
+                        }
+                    }
+                }
+                other => dates.push(to_serial_strict(&other, date_system)?),
+            },
+            CalcValue::Range(range) => {
+                let (rows, cols) = range.dims();
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let cell = range.get_cell(r, c);
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
+                            dates.push(n);
+                        }
+                    }
+                }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
+        }
+
+        truncate_date_serials(&mut dates);
+
+        // Validate
+        if values.len() != dates.len() || values.len() < 2 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Check that we have at least one positive and one negative cash flow
+        let has_positive = values.iter().any(|&v| v > 0.0);
+        let has_negative = values.iter().any(|&v| v < 0.0);
+        if !has_positive || !has_negative {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Initial guess
+        let guess = if args.len() > 2 {
+            coerce_num(&args[2])?
+        } else {
+            0.1
+        };
+
+        // Newton-Raphson iteration to find XIRR
+        let mut rate = guess;
+        const MAX_ITER: i32 = 100;
+        const EPSILON: f64 = 1e-10;
+
+        for _ in 0..MAX_ITER {
+            let xnpv = calculate_xnpv(rate, &values, &dates);
+            let d_xnpv = calculate_xnpv_derivative(rate, &values, &dates);
+
+            if d_xnpv.abs() < EPSILON {
+                return Ok(CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new_num()),
+                ));
+            }
+
+            let new_rate = rate - xnpv / d_xnpv;
+
+            if (new_rate - rate).abs() < EPSILON {
+                return Ok(CalcValue::Scalar(LiteralValue::Number(new_rate)));
+            }
+
+            rate = new_rate;
+
+            // Prevent rate from going too negative (would make (1+rate) negative)
+            if rate <= -1.0 {
+                rate = -0.99;
+            }
+        }
+
+        Ok(CalcValue::Scalar(
+            LiteralValue::Error(ExcelError::new_num()),
+        ))
+    }
+}
+
+/// Converts fractional-dollar notation into a decimal dollar value.
+///
+/// This is commonly used for security price formats such as thirty-seconds (`fraction = 32`).
+///
+/// # Remarks
+/// - `fraction` is truncated to an integer denominator and must be `>= 1`.
+/// - Sign convention: sign is preserved (`-x` maps to `-result`).
+/// - No periodic rate is involved in this conversion.
+/// - Returns `#NUM!` when `fraction < 1` after truncation.
+/// - Fractional parsing uses denominator digit width (`ceil(log10(fraction))`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =DOLLARDE(1.02, 16)
+/// result: 1.125
+/// ```
+/// ```yaml,sandbox
+/// formula: =DOLLARDE(-3.15, 32)
+/// result: -3.46875
+/// ```
+/// ```yaml,docs
+/// related:
+///   - DOLLARFR
+/// faq:
+///   - q: "Why does `DOLLARDE` truncate `fraction`?"
+///     a: "The denominator is treated as an integer quote base; values below `1` after truncation return `#NUM!`."
+/// ```
+#[derive(Debug)]
+pub struct DollardeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DOLLARDE
+/// Type: DollardeFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: DOLLARDE(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for DollardeFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "DOLLARDE"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // fractional_dollar
+                ArgSchema::number_lenient_scalar(), // fraction
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let fractional_dollar = coerce_num(&args[0])?;
+        let fraction = coerce_num(&args[1])?.trunc() as i32;
+
+        // Validate fraction
+        if fraction < 1 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Determine how many decimal places are in the fractional part
+        // The fractional part represents numerator / fraction
+        let sign = if fractional_dollar < 0.0 { -1.0 } else { 1.0 };
+        let abs_value = fractional_dollar.abs();
+        let integer_part = abs_value.trunc();
+        let fractional_part = abs_value - integer_part;
+
+        // Calculate the number of digits needed to represent the fraction denominator
+        let digits = (fraction as f64).log10().ceil() as i32;
+        let multiplier = 10_f64.powi(digits);
+
+        // The fractional part is scaled by the multiplier, then divided by the fraction
+        let numerator = (fractional_part * multiplier).round();
+        let decimal_fraction = numerator / fraction as f64;
+
+        let result = sign * (integer_part + decimal_fraction);
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// Converts a decimal dollar value into fractional-dollar notation.
+///
+/// This is the inverse-style formatting helper used for quoted fractional price conventions.
+///
+/// # Remarks
+/// - `fraction` is truncated to an integer denominator and must be `>= 1`.
+/// - Sign convention: sign is preserved (`-x` maps to `-result`).
+/// - No periodic rate is involved in this conversion.
+/// - Returns `#NUM!` when `fraction < 1` after truncation.
+/// - Fraction output is encoded by denominator digit width (`ceil(log10(fraction))`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =DOLLARFR(1.125, 16)
+/// result: 1.02
+/// ```
+/// ```yaml,sandbox
+/// formula: =DOLLARFR(-3.46875, 32)
+/// result: -3.15
+/// ```
+/// ```yaml,docs
+/// related:
+///   - DOLLARDE
+/// faq:
+///   - q: "How does `DOLLARFR` encode the fractional part?"
+///     a: "It scales the numerator into decimal digits based on `ceil(log10(fraction))`, preserving the input sign."
+/// ```
+#[derive(Debug)]
+pub struct DollarfrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DOLLARFR
+/// Type: DollarfrFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: DOLLARFR(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for DollarfrFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "DOLLARFR"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // decimal_dollar
+                ArgSchema::number_lenient_scalar(), // fraction
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let decimal_dollar = coerce_num(&args[0])?;
+        let fraction = coerce_num(&args[1])?.trunc() as i32;
+
+        // Validate fraction
+        if fraction < 1 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let sign = if decimal_dollar < 0.0 { -1.0 } else { 1.0 };
+        let abs_value = decimal_dollar.abs();
+        let integer_part = abs_value.trunc();
+        let decimal_part = abs_value - integer_part;
+
+        // Convert decimal fraction to fractional representation
+        // numerator = decimal_part * fraction
+        let numerator = decimal_part * fraction as f64;
+
+        // Calculate the number of digits needed to represent the fraction denominator
+        let digits = (fraction as f64).log10().ceil() as i32;
+        let divisor = 10_f64.powi(digits);
+
+        // The fractional dollar format puts the numerator after the decimal point
+        let result = sign * (integer_part + numerator / divisor);
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// RRI(nper, pv, fv) — equivalent interest rate for growth of an investment.
+/// Returns (fv/pv)^(1/nper) - 1  (i.e. CAGR).
+#[derive(Debug)]
+pub struct RriFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RRI
+/// Type: RriFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: RRI(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for RriFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "RRI"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // nper
+                ArgSchema::number_lenient_scalar(), // pv
+                ArgSchema::number_lenient_scalar(), // fv
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let nper = coerce_num(&args[0])?;
+        let pv = coerce_num(&args[1])?;
+        let fv = coerce_num(&args[2])?;
+
+        // nper must be > 0, pv must be non-zero
+        if nper <= 0.0 || pv == 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // If pv and fv have different signs, the ratio is negative and
+        // fractional exponent would produce NaN → Excel returns #NUM!
+        let ratio = fv / pv;
+        if ratio < 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let result = ratio.powf(1.0 / nper) - 1.0;
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// Returns the interest paid on the outstanding principal for a specific period
+/// of an investment with even principal payments.
+/// Calculates interest paid in a period for a loan repaid with equal-principal payments.
+///
+/// Unlike `IPMT`, `ISPMT` assumes the principal is repaid in equal installments
+/// so the interest portion decreases linearly over the life of the loan.
+///
+/// # Remarks
+/// - `rate` is the interest rate per period.
+/// - `per` is 0-based period number (0 to `nper - 1`).
+/// - `nper` is the total number of payment periods; must be non-zero.
+/// - `pv` is the present value (principal).
+/// - Formula: `pv * rate * (per / nper - 1)`.
+/// - The result is typically negative for a positive loan principal, representing interest paid.
+/// - Returns `#NUM!` when `nper` is zero.
+///
+/// # Examples
+/// ```excel
+/// =ISPMT(0.005, 1, 24, 100000)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Interest in the first period"
+/// formula: '=ISPMT(0.005, 1, 24, 100000)'
+/// expected: -479.1666666666667
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IPMT
+///   - PPMT
+///   - PMT
+/// faq:
+///   - q: "How is ISPMT different from IPMT?"
+///     a: "ISPMT assumes equal principal repayment, so interest declines linearly instead of following an annuity schedule."
+/// ```
+#[derive(Debug)]
+pub struct IspmtFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: ISPMT
+/// Type: IspmtFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: ISPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IspmtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISPMT"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // rate
+                ArgSchema::number_lenient_scalar(), // per
+                ArgSchema::number_lenient_scalar(), // nper
+                ArgSchema::number_lenient_scalar(), // pv
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let per = coerce_num(&args[1])?;
+        let nper = coerce_num(&args[2])?;
+        let pv = coerce_num(&args[3])?;
+
+        if nper == 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // ISPMT = pv * rate * (per / nper - 1)
+        let result = pv * rate * (per / nper - 1.0);
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// Returns the number of periods required for an investment to reach a
+/// specified future value at a constant interest rate.
+///
+/// # Remarks
+/// - `rate` is the interest rate per compounding period; must be positive.
+/// - `pv` and `fv` must be positive and `fv > pv` (growth scenario) or
+///   `fv < pv` is valid as long as both are positive.
+/// - Formula: `(ln(fv) - ln(pv)) / ln(1 + rate)`.
+/// - Returns `#NUM!` when `rate <= 0`, or `pv` or `fv` are non-positive.
+///
+/// # Examples
+/// ```excel
+/// =PDURATION(0.10, 1000, 2000)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Time to double at ten percent"
+/// formula: '=PDURATION(0.10, 1000, 2000)'
+/// expected: 7.272540897341713
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NPER
+///   - RRI
+///   - FV
+/// faq:
+///   - q: "Does PDURATION require growth?"
+///     a: "It requires positive present and future values plus a positive rate; the logarithmic formula then returns the compounding periods needed to move between them."
+/// ```
+#[derive(Debug)]
+pub struct PdurationFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: PDURATION
+/// Type: PdurationFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: PDURATION(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for PdurationFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "PDURATION"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // rate
+                ArgSchema::number_lenient_scalar(), // pv
+                ArgSchema::number_lenient_scalar(), // fv
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let pv = coerce_num(&args[1])?;
+        let fv = coerce_num(&args[2])?;
+
+        if rate <= 0.0 || pv <= 0.0 || fv <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let result = (fv.ln() - pv.ln()) / (1.0 + rate).ln();
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+pub fn register_builtins() {
+    use std::sync::Arc;
+    crate::function_registry::register_builtin(Arc::new(PmtFn));
+    crate::function_registry::register_builtin(Arc::new(PvFn));
+    crate::function_registry::register_builtin(Arc::new(FvFn));
+    crate::function_registry::register_builtin(Arc::new(NpvFn));
+    crate::function_registry::register_builtin(Arc::new(NperFn));
+    crate::function_registry::register_builtin(Arc::new(RateFn));
+    crate::function_registry::register_builtin(Arc::new(IpmtFn));
+    crate::function_registry::register_builtin(Arc::new(PpmtFn));
+    crate::function_registry::register_builtin(Arc::new(EffectFn));
+    crate::function_registry::register_builtin(Arc::new(NominalFn));
+    crate::function_registry::register_builtin(Arc::new(IrrFn));
+    crate::function_registry::register_builtin(Arc::new(MirrFn));
+    crate::function_registry::register_builtin(Arc::new(CumipmtFn));
+    crate::function_registry::register_builtin(Arc::new(CumprincFn));
+    crate::function_registry::register_builtin(Arc::new(XnpvFn));
+    crate::function_registry::register_builtin(Arc::new(XirrFn));
+    crate::function_registry::register_builtin(Arc::new(DollardeFn));
+    crate::function_registry::register_builtin(Arc::new(DollarfrFn));
+    crate::function_registry::register_builtin(Arc::new(RriFn));
+    crate::function_registry::register_builtin(Arc::new(IspmtFn));
+    crate::function_registry::register_builtin(Arc::new(PdurationFn));
+}

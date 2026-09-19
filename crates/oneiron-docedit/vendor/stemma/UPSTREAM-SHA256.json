@@ -1,0 +1,7 @@
+{
+  "docx_validate_annotations.rs": "db60ac736026cf79cc033338593edc1776f49c603cd42306457d52a70baefdde",
+  "xml_attrs.rs": "a78f3f69bae3d04905b62fa194560a2dde8cf803be7526ad34662e9cc6f687a0",
+  "docx_validate.rs": "c00951461af3b25d3e2c7aa9249f3ee55aeda07d84fcbdc321d726b79e824aa9",
+  "domain/mod.rs": "9e88a18163e5bbb5ba8d3b89e84d8b45aa27e76e67d8947f5d6f66cd4a30042e",
+  "word_xml.rs": "6e5fbfdf4d8b2e477e080170e8445a5d3deba56d87560a12f77f7a933070d1e5"
+}

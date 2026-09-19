@@ -1,0 +1,2227 @@
+#[cfg(test)]
+mod tests {
+    use crate::FormulaDialect;
+    use crate::tokenizer::{
+        RecoveryAction, Token, TokenSpan, TokenStream, TokenSubType, TokenType, Tokenizer,
+    };
+    macro_rules! assert_token_types {
+        ($actual:expr, $expected:expr) => {
+            if $actual.len() != $expected.len() {
+                panic!(
+                    "Token count mismatch!\nExpected {} tokens but got {} tokens.",
+                    $expected.len(),
+                    $actual.len()
+                );
+            }
+
+            for (i, (actual, (exp_type, exp_value, exp_subtype))) in $actual.iter().zip($expected.iter()).enumerate() {
+                if actual.token_type != **exp_type || actual.value != *exp_value || actual.subtype != **exp_subtype {
+                    panic!(
+                        "Token mismatch at position {}!\n\nExpected: <{:?} subtype: {:?} value: {}>\nActual: <{:?} subtype: {:?} value: {}>",
+                        i,
+                        *exp_type,
+                        *exp_subtype,
+                        exp_value,
+                        actual.token_type,
+                        actual.subtype,
+                        actual.value
+                    );
+                }
+            }
+        };
+    }
+
+    fn assert_full_span_coverage(formula: &str, spans: &[TokenSpan]) {
+        let mut covered = vec![false; formula.len()];
+        let offset = if formula.starts_with('=') { 1 } else { 0 };
+
+        for span in spans {
+            assert!(span.start <= span.end, "invalid span order {:?}", span);
+            assert!(span.end <= formula.len(), "span out of bounds {:?}", span);
+            for (idx, slot) in covered
+                .iter_mut()
+                .enumerate()
+                .take(span.end)
+                .skip(span.start)
+            {
+                assert!(!*slot, "overlapping spans at {idx}: {:?}", span);
+                *slot = true;
+            }
+        }
+
+        if formula.len() > offset {
+            assert!(
+                covered
+                    .iter()
+                    .enumerate()
+                    .skip(offset)
+                    .all(|(_, covered)| *covered),
+                "non-covered bytes in {formula:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_literal_formula() {
+        // If the formula does not start with '=', it is treated as a literal.
+        let formula = "SUM(A1:B2)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Literal);
+        assert_eq!(tokenizer.items[0].value, formula);
+    }
+
+    #[test]
+    fn test_basic_formula() {
+        let formula = "=A1+B2";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Expected tokens: Operand("A1"), OpInfix("+"), Operand("B2")
+        assert_eq!(tokenizer.items.len(), 3);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].value, "A1");
+        // A1 cannot be parsed as a number, so subtype should be Range.
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.items[1].token_type, TokenType::OpInfix);
+        assert_eq!(tokenizer.items[1].value, "+");
+        assert_eq!(tokenizer.items[2].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[2].value, "B2");
+        // The rendered formula should match the original.
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_nested_formula() {
+        let formula = "=SUM(A1:B2, VLOOKUP(C3, D4:E5, 2, FALSE))";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // We expect 17 tokens overall.
+        assert_eq!(tokenizer.items.len(), 17);
+        // Check a few key tokens:
+        assert_eq!(tokenizer.items[0].value, "SUM(");
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Func);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Open);
+        assert_eq!(tokenizer.items[1].value, "A1:B2");
+        assert_eq!(tokenizer.items[4].value, "VLOOKUP(");
+        assert_eq!(tokenizer.items[5].value, "C3");
+        assert_eq!(tokenizer.items[11].value, "2");
+        assert_eq!(tokenizer.items[11].subtype, TokenSubType::Number);
+        assert_eq!(tokenizer.items[14].value, "FALSE");
+        // Render should match the original.
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_unary_operator() {
+        let formula = "=-A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Expected tokens: OpPrefix("-"), Operand("A1")
+        assert_eq!(tokenizer.items.len(), 2);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::OpPrefix);
+        assert_eq!(tokenizer.items[0].value, "-");
+        assert_eq!(tokenizer.items[1].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[1].value, "A1");
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_double_unary_operator() {
+        let formula = "=--A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Expected tokens: OpPrefix("-"), OpPrefix("-"), Operand("A1")
+        assert_eq!(tokenizer.items.len(), 3);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::OpPrefix);
+        assert_eq!(tokenizer.items[0].value, "-");
+        assert_eq!(tokenizer.items[1].token_type, TokenType::OpPrefix);
+        assert_eq!(tokenizer.items[1].value, "-");
+        assert_eq!(tokenizer.items[2].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[2].value, "A1");
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_parentheses() {
+        let formula = "=(A1+B2)*-C3";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Expected tokens:
+        // 0: "(" (Paren, Open)
+        // 1: Operand "A1"
+        // 2: OpInfix "+"
+        // 3: Operand "B2"
+        // 4: ")" (Paren, Close)
+        // 5: OpInfix "*"
+        // 6: OpPrefix "-"
+        // 7: Operand "C3"
+        assert_eq!(tokenizer.items.len(), 8);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Paren);
+        assert_eq!(tokenizer.items[0].value, "(");
+        assert_eq!(tokenizer.items[1].value, "A1");
+        assert_eq!(tokenizer.items[2].value, "+");
+        assert_eq!(tokenizer.items[3].value, "B2");
+        assert_eq!(tokenizer.items[4].token_type, TokenType::Paren);
+        assert_eq!(tokenizer.items[4].subtype, TokenSubType::Close);
+        assert_eq!(tokenizer.items[5].value, "*");
+        assert_eq!(tokenizer.items[6].token_type, TokenType::OpPrefix);
+        assert_eq!(tokenizer.items[6].value, "-");
+        assert_eq!(tokenizer.items[7].value, "C3");
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_large_formula() {
+        let formula = "=SUMIFS('FY24 POLR_Match Date'!$P:$P,'FY24 POLR_Match Date'!$K:$K, 'Ambulatory','FY24 POLR_Match Date'!$D:$D, 'Calculations Incentive'!$A13)+SUMIF('DFCI FY24'!$A:$A, 'Calculations Incentive'!A13, 'DFCI FY24'!$O:$O)+SUMIF('BWH Tx wRVUs'!$F:$F, 'Calculations Incentive'!A13, 'BWH Tx wRVUs'!$N:$N)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Here we simply check that tokenization succeeds and that the rendered formula matches.
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_scientific_notation() {
+        let formula = "=1.23E+3";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Expect a single operand token representing a number.
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].value, "1.23E+3");
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Number);
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_string_literal() {
+        let formula = "=\"abc\"\"def\"";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // A double-quoted string should be treated as a text operand.
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        // The token value includes the quotes.
+        assert_eq!(tokenizer.items[0].value, "\"abc\"\"def\"");
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Text);
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_brackets() {
+        let formula = "=[A1]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Since the formula starts with '=', we expect the brackets to be processed
+        // and then saved as an operand.
+        assert_eq!(tokenizer.items.len(), 1);
+        // The accumulated token should be "[A1]".
+        assert_eq!(tokenizer.items[0].value, "[A1]");
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_error_token() {
+        let formula = "=#DIV/0!";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Expect a single operand token with error subtype.
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].value, "#DIV/0!");
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Error);
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_openformula_semicolon_argument_separator() {
+        let formula = "=SUM([.A1];[.A2])";
+        let tokenizer = Tokenizer::new_with_dialect(formula, FormulaDialect::OpenFormula).unwrap();
+
+        assert_eq!(tokenizer.items.len(), 5);
+        assert_eq!(tokenizer.items[0].value, "SUM(");
+        assert_eq!(tokenizer.items[1].value, "[.A1]");
+        assert_eq!(tokenizer.items[2].token_type, TokenType::Sep);
+        assert_eq!(tokenizer.items[2].subtype, TokenSubType::Arg);
+        assert_eq!(tokenizer.items[3].value, "[.A2]");
+        assert_eq!(tokenizer.items[4].token_type, TokenType::Func);
+        assert_eq!(tokenizer.items[4].subtype, TokenSubType::Close);
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_openformula_array_row_separator() {
+        let formula = "={1;2}";
+        let tokenizer = Tokenizer::new_with_dialect(formula, FormulaDialect::OpenFormula).unwrap();
+
+        assert!(
+            tokenizer
+                .items
+                .iter()
+                .any(|token| token.token_type == TokenType::Sep
+                    && token.subtype == TokenSubType::Row)
+        );
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_whitespace() {
+        let formula = "= A1 \n + B2";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // We expect tokens for whitespace to appear.
+        // One possible tokenization:
+        // 0: Whitespace " " (first token)
+        // 1: Operand "A1"
+        // 2: Whitespace " \n " (grouped by the regex)
+        // 3: OpInfix "+"
+        // 4: Whitespace " "
+        // 5: Operand "B2"
+        let non_ws: Vec<&Token> = tokenizer
+            .items
+            .iter()
+            .filter(|t| t.token_type != TokenType::Whitespace)
+            .collect();
+        assert!(non_ws.len() >= 3);
+        assert_eq!(non_ws[0].value, "A1");
+        assert_eq!(non_ws[1].value, "+");
+        assert_eq!(non_ws[2].value, "B2");
+    }
+
+    #[test]
+    fn test_mismatched_parentheses() {
+        let formula = "=A1+B2)";
+        let result = Tokenizer::new(formula);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unmatched_bracket() {
+        let formula = "=[A1";
+        let result = Tokenizer::new(formula);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_array_formulas() {
+        let formula = "={1,2,3;4,5,6}";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Array, "{", &TokenSubType::Open),
+                (&TokenType::Operand, "1", &TokenSubType::Number),
+                (&TokenType::Sep, ",", &TokenSubType::Arg),
+                (&TokenType::Operand, "2", &TokenSubType::Number),
+                (&TokenType::Sep, ",", &TokenSubType::Arg),
+                (&TokenType::Operand, "3", &TokenSubType::Number),
+                (&TokenType::Sep, ";", &TokenSubType::Row),
+                (&TokenType::Operand, "4", &TokenSubType::Number),
+                (&TokenType::Sep, ",", &TokenSubType::Arg),
+                (&TokenType::Operand, "5", &TokenSubType::Number),
+                (&TokenType::Sep, ",", &TokenSubType::Arg),
+                (&TokenType::Operand, "6", &TokenSubType::Number),
+                (&TokenType::Array, "}", &TokenSubType::Close)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_table_references() {
+        let formula = "=Table1[Column1]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "Table1[Column1]", &TokenSubType::Range)]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_structured_references() {
+        let formula = "=[@Column1]+[@Column2]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Operand, "[@Column1]", &TokenSubType::Range),
+                (&TokenType::OpInfix, "+", &TokenSubType::None),
+                (&TokenType::Operand, "[@Column2]", &TokenSubType::Range)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_complex_structured_references() {
+        // Test column range reference
+        let formula = "=Table1[[Column1]:[Column3]]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "Table1[[Column1]:[Column3]]",
+                &TokenSubType::Range
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test headers reference
+        let formula = "=Table1[#Headers]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "Table1[#Headers]",
+                &TokenSubType::Range
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test all data reference
+        let formula = "=Table1[#All]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "Table1[#All]", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test data area reference
+        let formula = "=Table1[#Data]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "Table1[#Data]", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test totals reference
+        let formula = "=Table1[#Totals]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "Table1[#Totals]", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test headers with column range
+        let formula = "=Table1[[#Headers],[Column1]:[Column3]]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "Table1[[#Headers],[Column1]:[Column3]]",
+                &TokenSubType::Range
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test column with spaces in name
+        let formula = "=[@[Column Name]]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "[@[Column Name]]",
+                &TokenSubType::Range
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test multiple special items
+        let formula = "=SUM(Table1[[#Headers],[#Data],[Column1]])";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Func, "SUM(", &TokenSubType::Open),
+                (
+                    &TokenType::Operand,
+                    "Table1[[#Headers],[#Data],[Column1]]",
+                    &TokenSubType::Range
+                ),
+                (&TokenType::Func, ")", &TokenSubType::Close)
+            ]
+        );
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_function_multiple_args() {
+        let formula = "=IF(A1>0,MAX(B1,C1),MIN(D1,E1))";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Print tokens for debugging
+        println!("Tokens in test_function_multiple_args:");
+        for (i, token) in tokenizer.items.iter().enumerate() {
+            println!(
+                "{}: {:?} - {:?} - {}",
+                i, token.token_type, token.subtype, token.value
+            );
+        }
+
+        // Find the IF open parenthesis
+        let if_open_index = tokenizer
+            .items
+            .iter()
+            .position(|t| t.value == "IF(")
+            .unwrap();
+
+        // Before investigating comma types, first check the basic formula structure
+        assert!(
+            tokenizer.items.len() >= 5,
+            "Formula should have at least 5 tokens"
+        );
+        assert_eq!(tokenizer.items[if_open_index].token_type, TokenType::Func);
+        assert_eq!(tokenizer.items[if_open_index].subtype, TokenSubType::Open);
+
+        // Verify formula is parsed correctly by checking render output
+        assert_eq!(tokenizer.render(), formula);
+
+        // Check for commas - but use the right token type
+        // The tokenizer might categorize commas as OpInfix rather than Sep tokens
+        // when they're in certain contexts
+        let commas: Vec<(usize, &Token)> = tokenizer
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.value == ",")
+            .collect();
+
+        // Make sure we have at least 2 commas in the top-level function
+        assert!(
+            commas.len() >= 2,
+            "Expected at least 2 commas in the formula, found {}",
+            commas.len()
+        );
+    }
+
+    #[test]
+    fn test_complex_ranges() {
+        let formula = "=SUM('Sheet 1:Sheet 3'!A1:C10)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Func, "SUM(", &TokenSubType::Open),
+                (
+                    &TokenType::Operand,
+                    "'Sheet 1:Sheet 3'!A1:C10",
+                    &TokenSubType::Range
+                ),
+                (&TokenType::Func, ")", &TokenSubType::Close)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_sheet_names_with_special_characters() {
+        // Test with hyphen in sheet name
+        let formula = "='Sheet-1'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "'Sheet-1'!A1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with period in sheet name
+        let formula = "='Sheet.1'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "'Sheet.1'!A1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with hash symbol in sheet name
+        let formula = "='Sheet#1'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "'Sheet#1'!A1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with parentheses in sheet name
+        let formula = "='Sheet(1)'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "'Sheet(1)'!A1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with exclamation mark in sheet name (escaped with single quotes)
+        let formula = "='Sheet!1'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "'Sheet!1'!A1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with multiple special characters in sheet name
+        let formula = "='Sheet-1.2#3!4'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "'Sheet-1.2#3!4'!A1",
+                &TokenSubType::Range
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with sheet name containing a mix of spaces and special characters
+        let formula = "='My Special Sheet!'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "'My Special Sheet!'!A1",
+                &TokenSubType::Range
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with URL-like characters in sheet name
+        let formula = "='Sheet/Path?Query'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "'Sheet/Path?Query'!A1",
+                &TokenSubType::Range
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with external reference and special characters in sheet name
+        let formula = "='[Book1.xlsx]Sheet#1'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "'[Book1.xlsx]Sheet#1'!A1",
+                &TokenSubType::Range
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_infinite_range() {
+        let column_wise = "A:A";
+        let row_wise = "1:1";
+        let formula = format!("=SUM({column_wise})");
+        let tokenizer = Tokenizer::new(&formula).unwrap();
+        assert_eq!(tokenizer.items[0].value, "SUM(");
+        assert_eq!(tokenizer.items[1].value, "A:A");
+        assert_eq!(tokenizer.items[1].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.render(), formula);
+
+        let formula = format!("=SUM({row_wise})");
+        let tokenizer = Tokenizer::new(&formula).unwrap();
+        assert_eq!(tokenizer.items[0].value, "SUM(");
+        assert_eq!(tokenizer.items[1].value, "1:1");
+        assert_eq!(tokenizer.items[1].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.render(), formula);
+
+        let column_wise_with_sheet = "Sheet1!A:A";
+        let column_wise_with_quoted_sheet = "'Sheet 1'!A:A";
+
+        let formula = format!("=SUM({column_wise_with_sheet})");
+        let tokenizer = Tokenizer::new(&formula).unwrap();
+        assert_eq!(tokenizer.items[0].value, "SUM(");
+        assert_eq!(tokenizer.items[1].value, "Sheet1!A:A");
+        assert_eq!(tokenizer.items[1].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.render(), formula);
+
+        let formula = format!("=SUM({column_wise_with_quoted_sheet})");
+        let tokenizer = Tokenizer::new(&formula).unwrap();
+        assert_eq!(tokenizer.items[0].value, "SUM(");
+        assert_eq!(tokenizer.items[1].value, "'Sheet 1'!A:A");
+        assert_eq!(tokenizer.items[1].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.render(), formula);
+
+        let column_wise_with_lower_bound = "=A1:A";
+        let tokenizer = Tokenizer::new(column_wise_with_lower_bound).unwrap();
+        assert_eq!(tokenizer.items[0].value, "A1:A");
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.render(), column_wise_with_lower_bound);
+
+        let column_wise_with_upper_bound = "=A:A500";
+        let tokenizer = Tokenizer::new(column_wise_with_upper_bound).unwrap();
+        assert_eq!(tokenizer.items[0].value, "A:A500");
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.render(), column_wise_with_upper_bound);
+    }
+
+    #[test]
+    fn test_r1c1_references() {
+        let formula = "=R[-1]C[0]+R[0]C[-1]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Operand, "R[-1]C[0]", &TokenSubType::Range),
+                (&TokenType::OpInfix, "+", &TokenSubType::None),
+                (&TokenType::Operand, "R[0]C[-1]", &TokenSubType::Range)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_r1c1_references_with_absolute_relative_mix() {
+        // Test absolute R1C1 reference
+        let formula = "=R1C1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "R1C1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test cell reference with mixed absolute/relative
+        let formula = "=R[1]C1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "R[1]C1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test cell reference with mixed relative/absolute
+        let formula = "=R1C[-1]";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "R1C[-1]", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with sheet reference
+        let formula = "=Sheet1!R1C1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "Sheet1!R1C1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with RC (current row, current column)
+        let formula = "=RC";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "RC", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test with quoted sheet name
+        let formula = "='Sheet 1'!R2C3";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "'Sheet 1'!R2C3", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_logical_operators() {
+        let formula = "=AND(A1>0,OR(B1<10,C1=5))";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Check logical operators are properly tokenized
+        let gt_pos = tokenizer.items.iter().position(|t| t.value == ">").unwrap();
+        let lt_pos = tokenizer.items.iter().position(|t| t.value == "<").unwrap();
+        let eq_pos = tokenizer.items.iter().position(|t| t.value == "=").unwrap();
+
+        assert_token_types!(
+            vec![
+                tokenizer.items[gt_pos].clone(),
+                tokenizer.items[lt_pos].clone(),
+                tokenizer.items[eq_pos].clone()
+            ],
+            vec![
+                (&TokenType::OpInfix, ">", &TokenSubType::None),
+                (&TokenType::OpInfix, "<", &TokenSubType::None),
+                (&TokenType::OpInfix, "=", &TokenSubType::None)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_nested_strings() {
+        let formula = "=CONCATENATE(\"First\",\" \",\"Second\")";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Check string literals
+        let strings: Vec<&Token> = tokenizer
+            .items
+            .iter()
+            .filter(|t| t.subtype == TokenSubType::Text)
+            .collect();
+
+        assert_eq!(strings.len(), 3);
+        assert_eq!(strings[0].value, "\"First\"");
+        assert_eq!(strings[1].value, "\" \"");
+        assert_eq!(strings[2].value, "\"Second\"");
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_named_ranges() {
+        let formula = "=MyNamedRange*2";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Operand, "MyNamedRange", &TokenSubType::Range),
+                (&TokenType::OpInfix, "*", &TokenSubType::None),
+                (&TokenType::Operand, "2", &TokenSubType::Number)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_external_references() {
+        let formula = "='[Book1.xlsx]Sheet1'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "'[Book1.xlsx]Sheet1'!A1",
+                &TokenSubType::Range
+            )]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_dynamic_array_formulas() {
+        // Test dynamic array functions that return multiple values
+        let formula = "=SORT(A1:B10)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Func, "SORT(", &TokenSubType::Open),
+                (&TokenType::Operand, "A1:B10", &TokenSubType::Range),
+                (&TokenType::Func, ")", &TokenSubType::Close)
+            ]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test SEQUENCE function which creates a range of values
+        let formula = "=SEQUENCE(4,3)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Func, "SEQUENCE(", &TokenSubType::Open),
+                (&TokenType::Operand, "4", &TokenSubType::Number),
+                (&TokenType::Sep, ",", &TokenSubType::Arg),
+                (&TokenType::Operand, "3", &TokenSubType::Number),
+                (&TokenType::Func, ")", &TokenSubType::Close)
+            ]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Test UNIQUE function
+        let formula = "=UNIQUE(A1:A10)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Func, "UNIQUE(", &TokenSubType::Open),
+                (&TokenType::Operand, "A1:A10", &TokenSubType::Range),
+                (&TokenType::Func, ")", &TokenSubType::Close)
+            ]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        // Note: Spill range operator '#' and implicit intersection operator '@' tests
+        // are currently skipped as the tokenizer doesn't yet support these.
+        // These will need to be implemented as feature enhancements.
+
+        // Commented tests for future implementation:
+        // - Spill range operator: "=A1#"
+        // - Spill range with sheet reference: "=Sheet1!A1#"
+        // - Implicit intersection operator: "=@A:A"
+    }
+
+    #[test]
+    fn test_space_in_formula() {
+        let formula = "=SUM( A1:B2 ) / COUNT( C1:D2 )";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Filter out whitespace tokens for this check
+        let no_whitespace: Vec<Token> = tokenizer
+            .items
+            .iter()
+            .filter(|t| t.token_type != TokenType::Whitespace)
+            .cloned()
+            .collect();
+
+        assert_token_types!(
+            no_whitespace,
+            vec![
+                (&TokenType::Func, "SUM(", &TokenSubType::Open),
+                (&TokenType::Operand, "A1:B2", &TokenSubType::Range),
+                (&TokenType::Func, ")", &TokenSubType::Close),
+                (&TokenType::OpInfix, "/", &TokenSubType::None),
+                (&TokenType::Func, "COUNT(", &TokenSubType::Open),
+                (&TokenType::Operand, "C1:D2", &TokenSubType::Range),
+                (&TokenType::Func, ")", &TokenSubType::Close)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_percentage_operator() {
+        let formula = "=50%+25%";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Operand, "50", &TokenSubType::Number),
+                (&TokenType::OpPostfix, "%", &TokenSubType::None),
+                (&TokenType::OpInfix, "+", &TokenSubType::None),
+                (&TokenType::Operand, "25", &TokenSubType::Number),
+                (&TokenType::OpPostfix, "%", &TokenSubType::None)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_mixed_operators() {
+        let formula = "=5+10*2^3/4-1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Operand, "5", &TokenSubType::Number),
+                (&TokenType::OpInfix, "+", &TokenSubType::None),
+                (&TokenType::Operand, "10", &TokenSubType::Number),
+                (&TokenType::OpInfix, "*", &TokenSubType::None),
+                (&TokenType::Operand, "2", &TokenSubType::Number),
+                (&TokenType::OpInfix, "^", &TokenSubType::None),
+                (&TokenType::Operand, "3", &TokenSubType::Number),
+                (&TokenType::OpInfix, "/", &TokenSubType::None),
+                (&TokenType::Operand, "4", &TokenSubType::Number),
+                (&TokenType::OpInfix, "-", &TokenSubType::None),
+                (&TokenType::Operand, "1", &TokenSubType::Number)
+            ]
+        );
+
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_incomplete_string_literal() {
+        // A string missing its closing quote should produce an error.
+        let formula = "=\"Hello";
+        let result = Tokenizer::new(formula);
+        assert!(
+            result.is_err(),
+            "Expected error for incomplete string literal"
+        );
+    }
+
+    #[test]
+    fn test_multiple_percentage_operators() {
+        // Formula with two consecutive percentage operators.
+        let formula = "=50%%";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Expected tokens: Operand("50"), OpPostfix("%"), OpPostfix("%")
+        assert_eq!(tokenizer.items.len(), 3);
+        assert_eq!(tokenizer.items[0].value, "50");
+        assert_eq!(tokenizer.items[1].value, "%");
+        assert_eq!(tokenizer.items[1].token_type, TokenType::OpPostfix);
+        assert_eq!(tokenizer.items[2].value, "%");
+        assert_eq!(tokenizer.items[2].token_type, TokenType::OpPostfix);
+    }
+
+    #[test]
+    fn test_absolute_references() {
+        // Check that a formula with dollar signs is tokenized as a single operand.
+        let formula = "=$A$1+1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // Expected tokens: Operand("$A$1"), OpInfix("+"), Operand("1")
+        assert!(tokenizer.items.len() >= 3);
+        assert_eq!(tokenizer.items[0].value, "$A$1");
+        assert_eq!(tokenizer.items[1].value, "+");
+        assert_eq!(tokenizer.items[2].value, "1");
+    }
+
+    #[test]
+    fn test_formula_only_whitespace() {
+        // A formula that starts with "=" and is followed only by whitespace.
+        let formula = "=   ";
+        let result = Tokenizer::new(formula);
+        assert!(
+            result.is_ok(),
+            "Expected tokenizer to handle whitespace-only formulas"
+        );
+        let tokenizer = result.unwrap();
+        let non_whitespace: Vec<&Token> = tokenizer
+            .items
+            .iter()
+            .filter(|t| t.token_type != TokenType::Whitespace)
+            .collect();
+        assert_eq!(non_whitespace.len(), 0, "Expected no non-whitespace tokens");
+    }
+
+    #[test]
+    fn test_escaped_quotes_in_string() {
+        // A string with escaped double-quotes.
+        let formula = "=\"He said \"\"Hello\"\"\"";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        // The token value should include the escaped quotes.
+        assert_eq!(tokenizer.items[0].value, "\"He said \"\"Hello\"\"\"");
+    }
+
+    #[test]
+    fn test_big_formula() {
+        let formula = "=-SUMIFS($COGS!$J:$J,$COGS!$D:$D, \">=\"&$'Test 24-25'!C2, $COGS!$D:$D, \"<=\"&$'Test 24-25'!C3,$COGS!$A:$A,$'Test 24-25'!$A$4)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        let items = tokenizer.items;
+        println!("items: {items:?}");
+        assert_eq!(items.len(), 23);
+        assert_eq!(items[0].value, "-");
+        assert_eq!(items[1].value, "SUMIFS(");
+        assert_eq!(items[2].value, "$COGS!$J:$J");
+        assert_eq!(items[3].value, ",");
+        assert_eq!(items[4].value, "$COGS!$D:$D");
+        assert_eq!(items[5].value, ",");
+        assert_eq!(items[6].value, " ");
+        assert_eq!(items[7].value, "\">=\"");
+        assert_eq!(items[8].value, "&");
+        assert_eq!(items[9].value, "$'Test 24-25'!C2");
+    }
+
+    #[test]
+    fn test_xlfn_functions() {
+        let formula = "=_xlfn.XLOOKUP(J7, 'GI XWALK'!$Q:$Q,'GI XWALK'!$R:$R,,0)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        println!("tokenizer: {:?}", tokenizer.items);
+        assert_eq!(tokenizer.items[0].value, "_xlfn.XLOOKUP(");
+        assert_eq!(tokenizer.items[1].value, "J7");
+        assert_eq!(tokenizer.items[2].value, ",");
+    }
+
+    /// Helper function to validate token substring matches source
+    fn assert_token_substring_matches(formula: &str, token: &Token) {
+        let actual_substring = &formula[token.start..token.end];
+        assert_eq!(
+            actual_substring, token.value,
+            "Token value '{}' doesn't match substring '{}' at [{}..{})",
+            token.value, actual_substring, token.start, token.end
+        );
+    }
+
+    #[test]
+    fn test_basic_token_positions() {
+        let formula = "=A1+10";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "A1"(1,3), "+"(3,4), "10"(4,6)
+        assert_eq!(tokenizer.items.len(), 3);
+
+        let a1_token = &tokenizer.items[0];
+        assert_eq!(a1_token.value, "A1");
+        assert_eq!(a1_token.start, 1);
+        assert_eq!(a1_token.end, 3);
+        assert_token_substring_matches(formula, a1_token);
+
+        let plus_token = &tokenizer.items[1];
+        assert_eq!(plus_token.value, "+");
+        assert_eq!(plus_token.start, 3);
+        assert_eq!(plus_token.end, 4);
+        assert_token_substring_matches(formula, plus_token);
+
+        let ten_token = &tokenizer.items[2];
+        assert_eq!(ten_token.value, "10");
+        assert_eq!(ten_token.start, 4);
+        assert_eq!(ten_token.end, 6);
+        assert_token_substring_matches(formula, ten_token);
+    }
+
+    #[test]
+    fn test_function_positions() {
+        let formula = "=SUM(B2:B4)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "SUM("(1,5), "B2:B4"(5,10), ")"(10,11)
+        assert_eq!(tokenizer.items.len(), 3);
+
+        let sum_token = &tokenizer.items[0];
+        assert_eq!(sum_token.value, "SUM(");
+        assert_eq!(sum_token.start, 1);
+        assert_eq!(sum_token.end, 5);
+        assert_token_substring_matches(formula, sum_token);
+
+        let range_token = &tokenizer.items[1];
+        assert_eq!(range_token.value, "B2:B4");
+        assert_eq!(range_token.start, 5);
+        assert_eq!(range_token.end, 10);
+        assert_token_substring_matches(formula, range_token);
+
+        let close_token = &tokenizer.items[2];
+        assert_eq!(close_token.value, ")");
+        assert_eq!(close_token.start, 10);
+        assert_eq!(close_token.end, 11);
+        assert_token_substring_matches(formula, close_token);
+    }
+
+    #[test]
+    fn test_string_with_quotes_positions() {
+        let formula = "=\"ab\"\"c\"";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "\"ab\"\"c\""(1,8)
+        assert_eq!(tokenizer.items.len(), 1);
+
+        let string_token = &tokenizer.items[0];
+        assert_eq!(string_token.value, "\"ab\"\"c\"");
+        assert_eq!(string_token.start, 1);
+        assert_eq!(string_token.end, 8);
+        assert_token_substring_matches(formula, string_token);
+    }
+
+    #[test]
+    fn test_error_literal_positions() {
+        let formula = "=#DIV/0!";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "#DIV/0!"(1,8)
+        assert_eq!(tokenizer.items.len(), 1);
+
+        let error_token = &tokenizer.items[0];
+        assert_eq!(error_token.value, "#DIV/0!");
+        assert_eq!(error_token.start, 1);
+        assert_eq!(error_token.end, 8);
+        assert_token_substring_matches(formula, error_token);
+    }
+
+    #[test]
+    fn test_whitespace_positions() {
+        let formula = "= A1 + B2 ";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens (with whitespace): " "(1,2), "A1"(2,4), " "(4,5), "+"(5,6), " "(6,7), "B2"(7,9), " "(9,10)
+        let whitespace_tokens: Vec<&Token> = tokenizer
+            .items
+            .iter()
+            .filter(|t| t.token_type == TokenType::Whitespace)
+            .collect();
+
+        assert!(whitespace_tokens.len() >= 3);
+
+        // Verify each token's substring matches
+        for token in &tokenizer.items {
+            assert_token_substring_matches(formula, token);
+        }
+    }
+
+    #[test]
+    fn test_complex_formula_positions() {
+        let formula = "=SUM(A1:B2)*MAX(C3,D4)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Verify all tokens have correct positions
+        for token in &tokenizer.items {
+            assert_token_substring_matches(formula, token);
+            // Verify positions are valid
+            assert!(token.start <= token.end);
+            assert!(token.end <= formula.len());
+        }
+    }
+
+    #[test]
+    fn test_literal_formula_positions() {
+        let formula = "SUM(A1:B2)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // For literal formulas (not starting with =), we should have one token spanning entire string
+        assert_eq!(tokenizer.items.len(), 1);
+
+        let literal_token = &tokenizer.items[0];
+        assert_eq!(literal_token.value, formula);
+        assert_eq!(literal_token.start, 0);
+        assert_eq!(literal_token.end, formula.len());
+        assert_token_substring_matches(formula, literal_token);
+    }
+
+    #[test]
+    fn test_operator_positions() {
+        let formula = "=A1>=B1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "A1"(1,3), ">="(3,5), "B1"(5,7)
+        assert_eq!(tokenizer.items.len(), 3);
+
+        let a1_token = &tokenizer.items[0];
+        assert_eq!(a1_token.value, "A1");
+        assert_token_substring_matches(formula, a1_token);
+
+        let ge_token = &tokenizer.items[1];
+        assert_eq!(ge_token.value, ">=");
+        assert_eq!(ge_token.start, 3);
+        assert_eq!(ge_token.end, 5);
+        assert_token_substring_matches(formula, ge_token);
+
+        let b1_token = &tokenizer.items[2];
+        assert_eq!(b1_token.value, "B1");
+        assert_token_substring_matches(formula, b1_token);
+    }
+
+    #[test]
+    fn test_array_formula_positions() {
+        let formula = "={1,2;3,4}";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Verify all tokens have correct byte positions
+        for token in &tokenizer.items {
+            assert_token_substring_matches(formula, token);
+        }
+
+        // Check specific tokens
+        let open_brace = tokenizer.items.iter().find(|t| t.value == "{").unwrap();
+        assert_eq!(open_brace.start, 1);
+        assert_eq!(open_brace.end, 2);
+
+        let close_brace = tokenizer.items.iter().find(|t| t.value == "}").unwrap();
+        assert_eq!(close_brace.start, 9);
+        assert_eq!(close_brace.end, 10);
+    }
+
+    #[test]
+    fn test_scientific_notation_positions() {
+        let formula = "=1.23E+45";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_eq!(tokenizer.items.len(), 1);
+        let scientific_token = &tokenizer.items[0];
+        assert_eq!(scientific_token.value, "1.23E+45");
+        assert_eq!(scientific_token.start, 1);
+        assert_eq!(scientific_token.end, 9);
+        assert_token_substring_matches(formula, scientific_token);
+    }
+
+    #[test]
+    fn test_strict_tokenizer_rejects_unmatched_closer() {
+        let formula = "=A1+)";
+        assert!(Tokenizer::new(formula).is_err());
+        let strict = TokenStream::new(formula);
+        assert!(strict.is_err());
+    }
+
+    #[test]
+    fn test_token_stream_render_preserves_legacy_payload_behavior() {
+        let stream = TokenStream::new("=A1+2").unwrap();
+        assert_eq!(stream.render(), "A1+2");
+        assert_eq!(stream.render_formula(), "=A1+2");
+
+        let literal = TokenStream::new("A1+2").unwrap();
+        assert_eq!(literal.render(), "A1+2");
+        assert_eq!(literal.render_formula(), "A1+2");
+    }
+
+    #[test]
+    fn test_best_effort_unmatched_closer_recovers_span() {
+        let formula = "=A1+)";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+
+        let span = stream.invalid_spans()[0];
+        assert_eq!((span.start, span.end), (4, 5));
+        assert_eq!(stream.diagnostics().len(), 1);
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::SkippedUnmatchedCloser
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_unmatched_opener_recovers_span() {
+        let formula = "=SUM(A1";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 5));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::UnmatchedOpener
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_unterminated_string_recovers_span() {
+        let formula = "=\"abc";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 5));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::UnterminatedString
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_unmatched_bracket_recovers_span() {
+        let formula = "=[A1";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 4));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::UnmatchedBracket
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_invalid_error_literal_recovers_span() {
+        let formula = "=#BAD";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert!(!stream.invalid_spans().is_empty());
+        assert!(stream.diagnostics()[0].recovery == RecoveryAction::InvalidErrorLiteral);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 5));
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_mismatched_pair_recovers_span() {
+        let formula = "=(1}";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 2);
+        assert_eq!(stream.diagnostics().len(), 2);
+
+        let opener = stream.invalid_spans()[0];
+        assert_eq!((opener.start, opener.end), (1, 2));
+
+        let mismatched = stream.invalid_spans()[1];
+        assert_eq!((mismatched.start, mismatched.end), (3, 4));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::SkippedUnmatchedCloser
+        );
+        assert_eq!(
+            stream.diagnostics()[1].recovery,
+            RecoveryAction::UnmatchedOpener
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_invalid_error_literal_stops_before_opener() {
+        let formula = "=#BAD(A1)";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+        assert_eq!(stream.diagnostics().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 5));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::InvalidErrorLiteral
+        );
+
+        assert_eq!(stream.spans[1].token_type, TokenType::Paren);
+        assert_eq!(stream.spans[1].subtype, TokenSubType::Open);
+        assert_eq!((stream.spans[1].start, stream.spans[1].end), (5, 6));
+
+        assert_eq!(stream.spans[3].token_type, TokenType::Paren);
+        assert_eq!(stream.spans[3].subtype, TokenSubType::Close);
+        assert_eq!((stream.spans[3].start, stream.spans[3].end), (8, 9));
+
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_mismatched_pair_preserves_stack_for_next_closer() {
+        let formula = "=(1})";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+        assert_eq!(stream.diagnostics().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (3, 4));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::SkippedUnmatchedCloser
+        );
+
+        let close = stream.spans.last().unwrap();
+        assert_eq!(close.token_type, TokenType::Paren);
+        assert_eq!(close.subtype, TokenSubType::Close);
+        assert_eq!((close.start, close.end), (4, 5));
+
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_full_span_coverage_fuzz() {
+        let alphabet = [
+            '=', '(', ')', '{', '}', '[', ']', '!', '#', '+', '-', '*', '/', '^', '&', '<', '>',
+            '=', ',', ';', ',', 'A', '1', '.', '"', '\'', '\n', ' ', 'X', 'Y', 'Z', '0', '2', '3',
+        ];
+        let mut state = 0x1234_u64;
+
+        for _case_idx in 0..512 {
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            let len = ((state % 32) + 1) as usize;
+
+            let mut formula = String::with_capacity(len);
+            let mut local = state;
+            for _ in 0..len {
+                local = local.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                let ch = alphabet[(local as usize) % alphabet.len()];
+                formula.push(ch);
+            }
+
+            let stream = TokenStream::new_best_effort(&formula);
+            assert_eq!(stream.render_formula(), formula);
+            assert_full_span_coverage(&formula, &stream.spans);
+
+            if stream.diagnostics_ref().is_empty() {
+                // Ensure no invalid spans are emitted on a diagnostic-free stream.
+                assert!(stream.invalid_spans().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_best_effort_tokenizer_api_matches_stream() {
+        let formula = "=A1+";
+
+        let stream = TokenStream::new_best_effort(formula);
+        let tokenizer = Tokenizer::new_best_effort(formula);
+
+        assert_eq!(tokenizer.items.len(), stream.spans.len());
+        for (token, span) in tokenizer.items.iter().zip(&stream.spans) {
+            assert_eq!(token.start, span.start);
+            assert_eq!(token.end, span.end);
+            assert_eq!(token.value, &stream.source()[span.start..span.end]);
+            assert_eq!(token.token_type, span.token_type);
+            assert_eq!(token.subtype, span.subtype);
+        }
+    }
+
+    mod scientific_notation {
+        use crate::tokenizer::{TokenSubType, TokenType, Tokenizer};
+
+        #[test]
+        fn test_sci_extends_for_digit() {
+            let formula = "=1e+2";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Number);
+            assert_eq!(tokenizer.items[0].value, "1e+2");
+        }
+
+        #[test]
+        fn test_sci_does_not_extend_for_letter() {
+            // `=1E-A1` must not slurp `-A1` into the numeric token.
+            let formula = "=1E-A1";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 3);
+            assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[0].value, "1E");
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+            assert_eq!(tokenizer.items[1].token_type, TokenType::OpInfix);
+            assert_eq!(tokenizer.items[1].value, "-");
+            assert_eq!(tokenizer.items[2].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[2].value, "A1");
+            assert_eq!(tokenizer.items[2].subtype, TokenSubType::Range);
+        }
+
+        #[test]
+        fn test_sci_does_not_extend_for_eof() {
+            // `=1e+` must flush `1e` and emit a trailing operator instead of
+            // consuming the dangling `+` as part of the number.
+            let formula = "=1e+";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 2);
+            assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[0].value, "1e");
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+            assert_eq!(tokenizer.items[1].value, "+");
+            // The trailing operator may classify as either prefix or infix;
+            // the important property is that the number did not absorb it.
+            assert!(matches!(
+                tokenizer.items[1].token_type,
+                TokenType::OpInfix | TokenType::OpPrefix
+            ));
+        }
+
+        #[test]
+        fn test_sci_dot_after_exponent_documented_shape() {
+            // `=1e+2.5` is ambiguous (#78). Today the tokenizer keeps it as a
+            // single (non-numeric) operand because `parse::<f64>` rejects a
+            // dot after the exponent. The important property is that the
+            // text is preserved verbatim, so this test just pins the
+            // current shape so a future intentional change is visible.
+            let formula = "=1e+2.5";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.render(), formula);
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].value, "1e+2.5");
+        }
+
+        #[test]
+        fn test_sci_with_decimal_base() {
+            let formula = "=1.5e-3";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].value, "1.5e-3");
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Number);
+        }
+
+        #[test]
+        fn test_sci_without_sign() {
+            let formula = "=5e10";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].value, "5e10");
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Number);
+        }
+
+        #[test]
+        fn test_bare_1e() {
+            let formula = "=1e";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].value, "1e");
+            // `1e` is not a valid float, so it falls through to a range/named
+            // range subtype.
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+        }
+
+        #[test]
+        fn test_sci_chain_after_valid_number() {
+            // `=1.5E+3E+2` is documented as ambiguous in #78. Today the
+            // tokenizer accumulates `1.5E+3E` as a single operand (the
+            // trailing `E` disqualifies the scientific-notation base check
+            // when the next `+` is processed), then emits `+ 2` separately.
+            // Pin that shape; the formula must render back losslessly.
+            let formula = "=1.5E+3E+2";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.render(), formula);
+            assert_eq!(tokenizer.items.len(), 3);
+            assert_eq!(tokenizer.items[0].value, "1.5E+3E");
+            assert_eq!(tokenizer.items[1].token_type, TokenType::OpInfix);
+            assert_eq!(tokenizer.items[1].value, "+");
+            assert_eq!(tokenizer.items[2].value, "2");
+            assert_eq!(tokenizer.items[2].subtype, TokenSubType::Number);
+        }
+    }
+
+    #[test]
+    fn test_error_literals_are_case_insensitive() {
+        let tokenizer = Tokenizer::new("=#ref!").expect("tokenize lowercase ref error");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Error);
+        assert_eq!(tokenizer.items[0].value, "#ref!");
+    }
+
+    #[test]
+    fn test_sheet_prefixed_lowercase_error_literal_tokenizes() {
+        // Sheet-qualified error literals discard the sheet prefix at tokenize
+        // time and emit a single Error operand identical to the bare literal.
+        let tokenizer = Tokenizer::new("=source!#ref!").expect("tokenize sheet-prefixed lowercase");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Error);
+        assert_eq!(tokenizer.items[0].value, "#ref!");
+    }
+
+    #[test]
+    fn lowercase_true_is_logical_subtype() {
+        let tokenizer = Tokenizer::new("=true").expect("tokenize lowercase true");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Logical);
+        assert_eq!(tokenizer.items[0].value, "true");
+
+        let stream = TokenStream::new("=true").expect("span tokenize lowercase true");
+        assert_eq!(stream.spans.len(), 1);
+        assert_eq!(stream.spans[0].token_type, TokenType::Operand);
+        assert_eq!(stream.spans[0].subtype, TokenSubType::Logical);
+    }
+
+    #[test]
+    fn mixed_case_false_is_logical_subtype() {
+        let tokenizer = Tokenizer::new("=fAlSe").expect("tokenize mixed-case false");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Logical);
+        assert_eq!(tokenizer.items[0].value, "fAlSe");
+
+        let stream = TokenStream::new("=fAlSe").expect("span tokenize mixed-case false");
+        assert_eq!(stream.spans.len(), 1);
+        assert_eq!(stream.spans[0].token_type, TokenType::Operand);
+        assert_eq!(stream.spans[0].subtype, TokenSubType::Logical);
+    }
+
+    #[test]
+    fn truename_is_not_logical_subtype() {
+        let tokenizer = Tokenizer::new("=TRUENAME").expect("tokenize TRUENAME");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.items[0].value, "TRUENAME");
+    }
+
+    // Issue #79: `parse_string` silently discarded pending `A1:` prefix when
+    // the next character was a double quote. Single-quoted continuations must
+    // remain glued to the prior token; double-quoted strings must always flush.
+
+    #[test]
+    fn test_cross_sheet_range_single_quote_preserved() {
+        let formula = "=Sheet1!A1:'Other Sheet'!B2";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![
+                (&TokenType::Operand, "Sheet1!A1", &TokenSubType::Range),
+                (&TokenType::OpInfix, ":", &TokenSubType::None),
+                (
+                    &TokenType::Operand,
+                    "'Other Sheet'!B2",
+                    &TokenSubType::Range
+                ),
+            ]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        let stream = TokenStream::new(formula).unwrap();
+        assert_eq!(stream.spans.len(), 3);
+        assert_eq!(stream.spans[0].token_type, TokenType::Operand);
+        assert_eq!(stream.spans[0].subtype, TokenSubType::Range);
+        assert_eq!(
+            &formula[stream.spans[0].start..stream.spans[0].end],
+            "Sheet1!A1"
+        );
+        assert_eq!(stream.spans[1].token_type, TokenType::OpInfix);
+        assert_eq!(stream.spans[1].subtype, TokenSubType::None);
+        assert_eq!(&formula[stream.spans[1].start..stream.spans[1].end], ":");
+        assert_eq!(stream.spans[2].token_type, TokenType::Operand);
+        assert_eq!(stream.spans[2].subtype, TokenSubType::Range);
+        assert_eq!(
+            &formula[stream.spans[2].start..stream.spans[2].end],
+            "'Other Sheet'!B2"
+        );
+    }
+
+    #[test]
+    fn test_string_after_colon_flushes_token() {
+        // Classic tokenizer must flush the pending `A1:` before emitting the
+        // double-quoted string. The exact token classification of the leading
+        // fragment is left to downstream parsing, but the prefix must not be
+        // silently discarded and the text operand must follow it.
+        let formula = "=A1:\"text\"";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert!(
+            tokenizer.items.len() >= 2,
+            "expected at least two tokens, got {:?}",
+            tokenizer.items
+        );
+        let first = &tokenizer.items[0];
+        assert_eq!(first.token_type, TokenType::Operand);
+        assert!(
+            first.value.ends_with("A1:"),
+            "expected first token to retain `A1:` prefix, got {:?}",
+            first.value
+        );
+        let last = tokenizer.items.last().unwrap();
+        assert_eq!(last.token_type, TokenType::Operand);
+        assert_eq!(last.subtype, TokenSubType::Text);
+        assert_eq!(last.value, "\"text\"");
+        assert_eq!(tokenizer.render(), formula);
+
+        // Span tokenizer parity: same flush behavior, full coverage preserved.
+        let stream = TokenStream::new(formula).unwrap();
+        assert!(
+            stream.spans.len() >= 2,
+            "expected at least two spans, got {:?}",
+            stream.spans
+        );
+        let first_span = &stream.spans[0];
+        assert_eq!(first_span.token_type, TokenType::Operand);
+        assert!(
+            formula[first_span.start..first_span.end].ends_with("A1:"),
+            "expected first span to retain `A1:` prefix"
+        );
+        let last_span = stream.spans.last().unwrap();
+        assert_eq!(last_span.token_type, TokenType::Operand);
+        assert_eq!(last_span.subtype, TokenSubType::Text);
+        assert_eq!(&formula[last_span.start..last_span.end], "\"text\"");
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_dollar_single_quote_preserved() {
+        // The `$'sheet'!A1` dollar-ref special case must continue to glue the
+        // single-quoted sheet name onto the leading `$`.
+        let formula = "=$'sheet'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "$'sheet'!A1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        let stream = TokenStream::new(formula).unwrap();
+        assert_eq!(stream.spans.len(), 1);
+        assert_eq!(
+            &formula[stream.spans[0].start..stream.spans[0].end],
+            "$'sheet'!A1"
+        );
+    }
+
+    mod modern_error_literals {
+        use super::*;
+
+        fn assert_error_token(formula: &str, expected_value: &str) {
+            let tokenizer = Tokenizer::new(formula)
+                .unwrap_or_else(|e| panic!("failed to tokenize {formula}: {e}"));
+            assert_eq!(tokenizer.items.len(), 1, "formula {formula}");
+            assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Error);
+            assert_eq!(tokenizer.items[0].value, expected_value);
+        }
+
+        #[test]
+        fn spill_uppercase() {
+            assert_error_token("=#SPILL!", "#SPILL!");
+        }
+
+        #[test]
+        fn spill_lowercase() {
+            assert_error_token("=#spill!", "#spill!");
+        }
+
+        #[test]
+        fn calc_uppercase() {
+            assert_error_token("=#CALC!", "#CALC!");
+        }
+
+        #[test]
+        fn calc_lowercase() {
+            assert_error_token("=#calc!", "#calc!");
+        }
+
+        #[test]
+        fn bogus_modern_error_is_rejected() {
+            assert!(Tokenizer::new("=#BOGUS!").is_err());
+        }
+
+        #[test]
+        fn typo_spil_is_rejected() {
+            assert!(Tokenizer::new("=#SPIL!").is_err());
+        }
+
+        #[test]
+        fn missing_bang_spill_is_rejected() {
+            // Without the trailing '!' this is not a complete error literal.
+            assert!(Tokenizer::new("=#SPILL").is_err());
+        }
+
+        #[test]
+        fn legacy_error_literals_still_tokenize() {
+            assert_error_token("=#REF!", "#REF!");
+            assert_error_token("=#DIV/0!", "#DIV/0!");
+            assert_error_token("=#N/A", "#N/A");
+        }
+    }
+
+    mod spill_operator {
+        use crate::tokenizer::{TokenStream, TokenSubType, TokenType, Tokenizer};
+
+        fn classic_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let t = Tokenizer::new(formula).expect("tokenize");
+            t.items
+                .iter()
+                .filter(|tok| tok.token_type != TokenType::Whitespace)
+                .map(|tok| (tok.token_type, tok.subtype, tok.value.clone()))
+                .collect()
+        }
+
+        fn span_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let stream = TokenStream::new(formula).expect("span tokenize");
+            stream
+                .spans
+                .iter()
+                .filter(|span| span.token_type != TokenType::Whitespace)
+                .map(|span| {
+                    (
+                        span.token_type,
+                        span.subtype,
+                        formula[span.start..span.end].to_string(),
+                    )
+                })
+                .collect()
+        }
+
+        #[test]
+        fn spill_postfix_after_cell() {
+            let expected = vec![
+                (TokenType::Operand, TokenSubType::Range, "A1".to_string()),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=A1#"), expected);
+            assert_eq!(span_non_ws("=A1#"), expected);
+        }
+
+        #[test]
+        fn spill_postfix_then_operator() {
+            let expected = vec![
+                (TokenType::Operand, TokenSubType::Range, "A1".to_string()),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+                (TokenType::OpInfix, TokenSubType::None, "+".to_string()),
+                (TokenType::Operand, TokenSubType::Number, "1".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=A1#+1"), expected);
+            assert_eq!(span_non_ws("=A1#+1"), expected);
+        }
+
+        #[test]
+        fn hash_at_start_still_error_literal() {
+            let expected = vec![(TokenType::Operand, TokenSubType::Error, "#REF!".to_string())];
+            assert_eq!(classic_non_ws("=#REF!"), expected);
+            assert_eq!(span_non_ws("=#REF!"), expected);
+        }
+
+        #[test]
+        fn hash_after_operator_is_error_literal() {
+            let classic = classic_non_ws("=1+#DIV/0!");
+            assert_eq!(classic.last().unwrap().0, TokenType::Operand);
+            assert_eq!(classic.last().unwrap().1, TokenSubType::Error);
+            assert_eq!(classic.last().unwrap().2, "#DIV/0!");
+            let span = span_non_ws("=1+#DIV/0!");
+            assert_eq!(span.last().unwrap().0, TokenType::Operand);
+            assert_eq!(span.last().unwrap().1, TokenSubType::Error);
+            assert_eq!(span.last().unwrap().2, "#DIV/0!");
+        }
+
+        #[test]
+        fn hash_after_sheet_qualified_cell() {
+            let expected = vec![
+                (
+                    TokenType::Operand,
+                    TokenSubType::Range,
+                    "Sheet1!A1".to_string(),
+                ),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=Sheet1!A1#"), expected);
+            assert_eq!(span_non_ws("=Sheet1!A1#"), expected);
+        }
+
+        #[test]
+        fn sheet_qualified_error_literal_unchanged() {
+            // The key invariant: `Sheet1!#REF!` must remain a single Operand
+            // token and NOT be split into `Sheet1!` + `#` postfix. The exact
+            // operand subtype for sheet-qualified error literals is a
+            // pre-existing path divergence (classic=Range, span=Error) and is
+            // out of scope for #71.
+            let classic = classic_non_ws("=Sheet1!#REF!");
+            assert_eq!(classic.len(), 1);
+            assert_eq!(classic[0].0, TokenType::Operand);
+            assert_eq!(classic[0].2, "#REF!");
+            assert_ne!(classic[0].1, TokenSubType::None);
+            let span = span_non_ws("=Sheet1!#REF!");
+            assert_eq!(span.len(), 1);
+            assert_eq!(span[0].0, TokenType::Operand);
+            assert_eq!(span[0].2, "#REF!");
+            assert_ne!(span[0].1, TokenSubType::None);
+        }
+
+        #[test]
+        fn spill_after_external_ref() {
+            let expected = vec![
+                (
+                    TokenType::Operand,
+                    TokenSubType::Range,
+                    "[1]Sheet1!A1".to_string(),
+                ),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=[1]Sheet1!A1#"), expected);
+            assert_eq!(span_non_ws("=[1]Sheet1!A1#"), expected);
+        }
+
+        #[test]
+        fn spill_after_paren_close() {
+            let expected = vec![
+                (TokenType::Paren, TokenSubType::Open, "(".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "A1".to_string()),
+                (TokenType::Paren, TokenSubType::Close, ")".to_string()),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=(A1)#"), expected);
+            assert_eq!(span_non_ws("=(A1)#"), expected);
+        }
+
+        #[test]
+        fn double_spill_emits_two_postfix() {
+            let classic = classic_non_ws("=A1##");
+            assert_eq!(
+                classic
+                    .iter()
+                    .filter(|t| t.0 == TokenType::OpPostfix && t.2 == "#")
+                    .count(),
+                2
+            );
+            let span = span_non_ws("=A1##");
+            assert_eq!(
+                span.iter()
+                    .filter(|t| t.0 == TokenType::OpPostfix && t.2 == "#")
+                    .count(),
+                2
+            );
+        }
+
+        #[test]
+        fn spill_with_whitespace_between_two_refs() {
+            // Two spilled ranges separated by whitespace; tokenizer-only check (parser
+            // intersection handling is tracked separately).
+            let classic = classic_non_ws("=A1# B1#");
+            let posts: Vec<_> = classic
+                .iter()
+                .filter(|t| t.0 == TokenType::OpPostfix && t.2 == "#")
+                .collect();
+            assert_eq!(posts.len(), 2);
+            let span = span_non_ws("=A1# B1#");
+            let posts_span: Vec<_> = span
+                .iter()
+                .filter(|t| t.0 == TokenType::OpPostfix && t.2 == "#")
+                .collect();
+            assert_eq!(posts_span.len(), 2);
+        }
+    }
+
+    mod reference_operators {
+        use crate::parser::{ASTNodeType, parse};
+        use crate::tokenizer::{TokenStream, TokenSubType, TokenType, Tokenizer};
+
+        fn classic_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let t = Tokenizer::new(formula).expect("tokenize");
+            t.items
+                .iter()
+                .filter(|tok| tok.token_type != TokenType::Whitespace)
+                .map(|tok| (tok.token_type, tok.subtype, tok.value.clone()))
+                .collect()
+        }
+
+        fn classic_all(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let t = Tokenizer::new(formula).expect("tokenize");
+            t.items
+                .iter()
+                .map(|tok| (tok.token_type, tok.subtype, tok.value.clone()))
+                .collect()
+        }
+
+        fn span_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let stream = TokenStream::new(formula).expect("span tokenize");
+            stream
+                .spans
+                .iter()
+                .filter(|span| span.token_type != TokenType::Whitespace)
+                .map(|span| {
+                    (
+                        span.token_type,
+                        span.subtype,
+                        formula[span.start..span.end].to_string(),
+                    )
+                })
+                .collect()
+        }
+
+        fn span_all(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let stream = TokenStream::new(formula).expect("span tokenize");
+            stream
+                .spans
+                .iter()
+                .map(|span| {
+                    (
+                        span.token_type,
+                        span.subtype,
+                        formula[span.start..span.end].to_string(),
+                    )
+                })
+                .collect()
+        }
+
+        #[test]
+        fn space_between_ranges_is_intersection_op() {
+            // =A1:A3 B1:B3 → Range, OpInfix(" "), Range
+            let expected = vec![
+                (TokenType::Operand, TokenSubType::Range, "A1:A3".to_string()),
+                (TokenType::OpInfix, TokenSubType::None, " ".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "B1:B3".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=A1:A3 B1:B3"), expected);
+            assert_eq!(span_non_ws("=A1:A3 B1:B3"), expected);
+        }
+
+        #[test]
+        fn space_not_between_refs_is_whitespace() {
+            // = 1 + 2 → all whitespace stays Whitespace.
+            let classic = classic_all("= 1 + 2 ");
+            // After leading '=' there is a leading Whitespace before 1.
+            assert_eq!(classic[0].0, TokenType::Whitespace);
+            // No OpInfix " " anywhere.
+            assert!(
+                classic
+                    .iter()
+                    .all(|t| !(t.0 == TokenType::OpInfix && t.2 == " ")),
+                "unexpected space-intersection in {classic:?}"
+            );
+            let span = span_all("= 1 + 2 ");
+            assert!(
+                span.iter()
+                    .all(|t| !(t.0 == TokenType::OpInfix && t.2 == " ")),
+                "unexpected space-intersection in {span:?}"
+            );
+        }
+
+        #[test]
+        fn colon_after_close_paren_is_op() {
+            // =SUM(A1):B2 → Func, Range(A1), FuncClose, OpInfix(:), Range(B2)
+            let expected = vec![
+                (TokenType::Func, TokenSubType::Open, "SUM(".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "A1".to_string()),
+                (TokenType::Func, TokenSubType::Close, ")".to_string()),
+                (TokenType::OpInfix, TokenSubType::None, ":".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "B2".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=SUM(A1):B2"), expected);
+            assert_eq!(span_non_ws("=SUM(A1):B2"), expected);
+        }
+
+        #[test]
+        fn colon_inside_simple_range_is_not_op() {
+            // =A1:B2 still tokenizes as a single Operand:Range.
+            let expected = vec![(TokenType::Operand, TokenSubType::Range, "A1:B2".to_string())];
+            assert_eq!(classic_non_ws("=A1:B2"), expected);
+            assert_eq!(span_non_ws("=A1:B2"), expected);
+        }
+
+        #[test]
+        fn nested_space_and_colon() {
+            // =(A1:A3) (B1:B3)
+            let expected = vec![
+                (TokenType::Paren, TokenSubType::Open, "(".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "A1:A3".to_string()),
+                (TokenType::Paren, TokenSubType::Close, ")".to_string()),
+                (TokenType::OpInfix, TokenSubType::None, " ".to_string()),
+                (TokenType::Paren, TokenSubType::Open, "(".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "B1:B3".to_string()),
+                (TokenType::Paren, TokenSubType::Close, ")".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=(A1:A3) (B1:B3)"), expected);
+            assert_eq!(span_non_ws("=(A1:A3) (B1:B3)"), expected);
+        }
+
+        #[test]
+        fn colon_after_close_bracket_is_op() {
+            // =Table1[Col]:B10 → table reference followed by colon op.
+            let classic = classic_non_ws("=Table1[Col]:B10");
+            assert_eq!(classic.len(), 3);
+            assert_eq!(classic[0].0, TokenType::Operand);
+            assert_eq!(classic[0].2, "Table1[Col]");
+            assert_eq!(
+                (classic[1].0, classic[1].1, classic[1].2.as_str()),
+                (TokenType::OpInfix, TokenSubType::None, ":")
+            );
+            assert_eq!(classic[2].2, "B10");
+            let span = span_non_ws("=Table1[Col]:B10");
+            assert_eq!(
+                (span[1].0, span[1].1, span[1].2.as_str()),
+                (TokenType::OpInfix, TokenSubType::None, ":")
+            );
+        }
+
+        #[test]
+        fn colon_after_postfix_hash_is_op() {
+            // =A1#:B10
+            let classic = classic_non_ws("=A1#:B10");
+            assert_eq!(
+                classic
+                    .iter()
+                    .find(|t| t.2 == ":" && t.0 == TokenType::OpInfix)
+                    .map(|t| t.0),
+                Some(TokenType::OpInfix)
+            );
+            let span = span_non_ws("=A1#:B10");
+            assert!(span.iter().any(|t| t.2 == ":" && t.0 == TokenType::OpInfix));
+        }
+
+        #[test]
+        fn mixed_whitespace_with_space_is_canonical_intersection() {
+            let formula = "=A1:A3\r\n \tB1:B3";
+            let classic = Tokenizer::new(formula).expect("classic tokenize");
+            let classic_op = classic
+                .items
+                .iter()
+                .find(|token| token.token_type == TokenType::OpInfix)
+                .expect("classic intersection token");
+            assert_eq!(classic_op.value, " ");
+            assert_eq!(&formula[classic_op.start..classic_op.end], "\r\n \t");
+
+            let stream = TokenStream::new(formula).expect("span tokenize");
+            let span = stream
+                .spans
+                .iter()
+                .find(|span| span.token_type == TokenType::OpInfix)
+                .expect("span intersection token");
+            assert_eq!(&formula[span.start..span.end], "\r\n \t");
+            let owned = stream.to_tokens();
+            let owned_op = owned
+                .iter()
+                .find(|token| token.token_type == TokenType::OpInfix)
+                .expect("owned span intersection token");
+            assert_eq!(owned_op.value, " ");
+            assert_eq!(stream.render_formula(), formula);
+
+            let ast = parse(formula).expect("intersection parse");
+            assert!(matches!(
+                ast.node_type,
+                ASTNodeType::BinaryOp { ref op, .. } if op == " "
+            ));
+        }
+
+        #[test]
+        fn crlf_and_tabs_are_ordinary_whitespace_without_space() {
+            // Regression: the tokenizer treated only ' ' and '\n' as whitespace,
+            // so Windows CRLF and tabs could be absorbed into operands.
+            for formula in [
+                "=SUM(\r\n1,2\r\n)",
+                "=A1 +\r\nB1",
+                "=IF(A1,\r\nB1)",
+                "=SUM(A1,\tA2)",
+                "=\tSUM(A1,A2)\t",
+            ] {
+                let classic = Tokenizer::new(formula).expect("classic tokenize");
+                let stream = TokenStream::new(formula).expect("span tokenize");
+                assert!(parse(formula).is_ok(), "failed to parse {formula:?}");
+                assert_eq!(stream.render_formula(), formula);
+                assert!(
+                    classic.items.iter().all(|token| {
+                        !matches!(token.token_type, TokenType::Operand)
+                            || !token
+                                .value
+                                .bytes()
+                                .any(|byte| matches!(byte, b'\t' | b'\r' | b'\n'))
+                    }),
+                    "control whitespace leaked into an operand: {:?}",
+                    classic.items
+                );
+                assert_eq!(classic.items.len(), stream.spans.len());
+            }
+
+            // Only ASCII space spells intersection. Other whitespace between
+            // adjacent references remains ordinary whitespace, so the formula
+            // is rejected rather than creating a raw CR/LF/TAB operator.
+            for formula in ["=A1\tB1", "=A1\rB1", "=A1\nB1", "=A1\r\nB1"] {
+                let classic = Tokenizer::new(formula).expect("classic tokenize");
+                let stream = TokenStream::new(formula).expect("span tokenize");
+                assert!(
+                    classic
+                        .items
+                        .iter()
+                        .all(|token| token.token_type != TokenType::OpInfix)
+                );
+                assert!(
+                    stream
+                        .spans
+                        .iter()
+                        .all(|span| span.token_type != TokenType::OpInfix)
+                );
+                assert!(parse(formula).is_err(), "unexpectedly parsed {formula:?}");
+            }
+        }
+
+        #[test]
+        fn control_whitespace_inside_quotes_is_preserved() {
+            for formula in ["=\"a\tb\r\nc\"", "='Sheet\tOne'!A1"] {
+                let classic = Tokenizer::new(formula).expect("classic tokenize");
+                let stream = TokenStream::new(formula).expect("span tokenize");
+                assert_eq!(stream.render_formula(), formula);
+                assert!(parse(formula).is_ok(), "failed to parse {formula:?}");
+                assert!(classic.items.iter().any(|token| {
+                    token.value.contains('\t')
+                        && !matches!(token.token_type, TokenType::Whitespace | TokenType::OpInfix)
+                }));
+            }
+        }
+    }
+}

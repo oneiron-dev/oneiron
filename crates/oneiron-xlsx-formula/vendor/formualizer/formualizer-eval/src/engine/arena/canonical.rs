@@ -1,0 +1,1057 @@
+//! Arena-native canonical metadata computation (FP8 Phase 1 substrate).
+//!
+//! This module is intentionally pure and currently unused by production call
+//! sites. Given an [`AstNodeData`] value plus the already-computed metadata of
+//! its children, it returns the node's canonical labels and a stable 64-bit
+//! FNV-1a hash.
+//!
+//! Hash construction mirrors the legacy `formula_plane::template_canonical`
+//! payload shape without allocating a payload string:
+//!
+//! * mix a version tag and node-kind discriminant;
+//! * mix local invariants that identify the canonical expression (literal raw
+//!   value refs, normalized operator/function names, sheet bindings, reference
+//!   shape, array dimensions);
+//! * mix child canonical hashes in the same order the arena node references
+//!   them;
+//! * mix final label/reject bitsets so unsupported families do not merge during
+//!   parity diagnostics.
+//!
+//! Reference axes are normalized in the same spirit as the tree canonicalizer:
+//! absolute axes contribute their literal coordinate, while relative axes
+//! contribute a placement-normalized delta supplied by the caller. Arena callers
+//! that start from placement-bearing AST data must rewrite relative finite axes
+//! to those deltas before invoking this pure node-local helper.
+
+#![allow(dead_code)]
+
+use super::ast::{
+    AstNodeData, AstNodeMetadata, CanonicalLabels, CompactRefType, ReferenceReturningAdmission,
+    SheetKey,
+};
+use super::string_interner::StringInterner;
+use crate::traits::FunctionProvider;
+use formualizer_parse::parser::ExternalRefKind;
+
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+const KIND_LITERAL: u8 = 1;
+const KIND_REFERENCE: u8 = 2;
+const KIND_UNARY: u8 = 3;
+const KIND_BINARY: u8 = 4;
+const KIND_FUNCTION: u8 = 5;
+const KIND_ARRAY: u8 = 6;
+const KIND_OMITTED: u8 = 7;
+
+const REF_CELL: u8 = 1;
+const REF_RANGE: u8 = 2;
+const REF_EXTERNAL: u8 = 3;
+const REF_NAMED: u8 = 4;
+const REF_TABLE: u8 = 5;
+const REF_CELL_3D: u8 = 6;
+const REF_RANGE_3D: u8 = 7;
+
+const AXIS_RELATIVE: u8 = 1;
+const AXIS_ABSOLUTE: u8 = 2;
+const AXIS_OPEN_START: u8 = 3;
+const AXIS_OPEN_END: u8 = 4;
+const AXIS_WHOLE: u8 = 5;
+
+/// Compute a node's canonical metadata from structural data plus child metadata.
+///
+/// `children` must be ordered as the node references them: unary expression;
+/// binary left then right; function arguments in call order; array elements in
+/// row-major order. Extra children are mixed defensively after node-local data;
+/// missing children simply result in fewer child hash contributions.
+pub(crate) fn compute_node_metadata(
+    data: &AstNodeData,
+    children: &[&AstNodeMetadata],
+    data_store_strings: &StringInterner,
+    function_provider: &dyn FunctionProvider,
+    allow_function_semantics: bool,
+) -> AstNodeMetadata {
+    let mut labels = CanonicalLabels::default();
+    for child in children {
+        labels.flags |= child.labels.flags;
+        labels.rejects |= child.labels.rejects;
+    }
+
+    let mut hasher = StableHasher::new();
+    hasher.mix_bytes(b"fp8-arena-canonical:v1");
+    let mut admission = ReferenceReturningAdmission::default();
+
+    match data {
+        AstNodeData::Literal(value) => {
+            hasher.mix_u8(KIND_LITERAL);
+            hasher.mix_u32(value.as_raw());
+            admission = ReferenceReturningAdmission::new(true, true);
+        }
+        AstNodeData::Omitted => {
+            hasher.mix_u8(KIND_OMITTED);
+            admission = ReferenceReturningAdmission::new(true, true);
+        }
+        AstNodeData::Reference {
+            original_id,
+            ref_type,
+        } => {
+            hasher.mix_u8(KIND_REFERENCE);
+            let original = data_store_strings.get(*original_id).unwrap_or("");
+            if original.trim_end().ends_with('#') {
+                labels.rejects |= CanonicalLabels::REJECT_SPILL_REFERENCE;
+            }
+            if matches!(ref_type, CompactRefType::Table { .. }) {
+                mix_string(&mut hasher, original);
+            }
+            mix_reference(&mut hasher, &mut labels, *ref_type, data_store_strings);
+            admission = reference_admission(*ref_type, labels.rejects == 0);
+        }
+        AstNodeData::UnaryOp { op_id, .. } => {
+            hasher.mix_u8(KIND_UNARY);
+            let op = data_store_strings.get(*op_id).unwrap_or("");
+            mix_string(&mut hasher, op);
+            match op {
+                "#" => labels.rejects |= CanonicalLabels::REJECT_SPILL_RESULT_REGION_OPERATOR,
+                "@" => labels.rejects |= CanonicalLabels::REJECT_IMPLICIT_INTERSECTION_OPERATOR,
+                _ => {}
+            }
+            let child = children.first().copied().cloned().unwrap_or_default();
+            let supported = matches!(op, "+" | "-" | "%");
+            admission = ReferenceReturningAdmission::new(
+                supported && child.reference_returning_admission.safe(),
+                supported && child.reference_returning_admission.scalar(),
+            );
+            mix_children(&mut hasher, children);
+        }
+        AstNodeData::BinaryOp { op_id, .. } => {
+            hasher.mix_u8(KIND_BINARY);
+            let op = data_store_strings.get(*op_id).unwrap_or("");
+            mix_string(&mut hasher, op);
+            let supported = matches!(
+                op,
+                "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
+            );
+            let safe = supported
+                && children
+                    .iter()
+                    .all(|child| child.reference_returning_admission.safe());
+            let scalar = supported
+                && children
+                    .iter()
+                    .all(|child| child.reference_returning_admission.scalar());
+            admission = ReferenceReturningAdmission::new(safe, scalar);
+            mix_children(&mut hasher, children);
+        }
+        AstNodeData::Function {
+            name_id,
+            args_count,
+            ..
+        } => {
+            hasher.mix_u8(KIND_FUNCTION);
+            labels.flags |= CanonicalLabels::FLAG_CONTAINS_FUNCTION;
+            let raw_name = data_store_strings.get(*name_id).unwrap_or("");
+            hasher.mix_u16(*args_count);
+            let classification = classify_and_mix_function(
+                raw_name,
+                usize::from(*args_count),
+                function_provider,
+                allow_function_semantics,
+                &mut hasher,
+                &mut labels,
+            );
+            let all_safe = children
+                .iter()
+                .all(|child| child.reference_returning_admission.safe());
+            if matches!(
+                classification.canonical_name.as_str(),
+                "IF" | "IFS" | "CHOOSE"
+            ) {
+                let step = if classification.canonical_name == "IFS" {
+                    2
+                } else {
+                    1
+                };
+                let arms_scalar = (1..children.len())
+                    .step_by(step)
+                    .all(|index| children[index].reference_returning_admission.scalar());
+                let admitted = all_safe && arms_scalar;
+                if admitted {
+                    labels.rejects &= !(CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION
+                        | CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION);
+                    labels.flags &= !CanonicalLabels::FLAG_CONTAINS_ARRAY;
+                }
+                admission = ReferenceReturningAdmission::new(admitted, admitted);
+            } else {
+                let safe = all_safe && classification.static_scalar;
+                admission = ReferenceReturningAdmission::new(safe, safe);
+            }
+            mix_children(&mut hasher, children);
+        }
+        AstNodeData::Array { rows, cols, .. } => {
+            hasher.mix_u8(KIND_ARRAY);
+            labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
+            labels.rejects |= CanonicalLabels::REJECT_ARRAY_LITERAL;
+            hasher.mix_u16(*rows);
+            hasher.mix_u16(*cols);
+            mix_children(&mut hasher, children);
+        }
+    }
+
+    finalize_anchor_flags(&mut labels);
+    hasher.mix_u64(labels.flags);
+    hasher.mix_u64(labels.rejects);
+
+    AstNodeMetadata {
+        canonical_hash: hasher.finish(),
+        labels,
+        reference_returning_admission: admission,
+    }
+}
+
+fn reference_admission(reference: CompactRefType, no_rejects: bool) -> ReferenceReturningAdmission {
+    if !no_rejects {
+        return ReferenceReturningAdmission::default();
+    }
+    match reference {
+        CompactRefType::Cell { .. } => ReferenceReturningAdmission::new(true, true),
+        CompactRefType::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } if start_row != 0 && start_col != 0 && end_row != u32::MAX && end_col != u32::MAX => {
+            ReferenceReturningAdmission::new(true, false)
+        }
+        CompactRefType::Range { .. }
+        | CompactRefType::External { .. }
+        | CompactRefType::NamedRange(_)
+        | CompactRefType::Table { .. }
+        | CompactRefType::Cell3D { .. }
+        | CompactRefType::Range3D { .. } => ReferenceReturningAdmission::default(),
+    }
+}
+
+fn mix_reference(
+    hasher: &mut StableHasher,
+    labels: &mut CanonicalLabels,
+    ref_type: CompactRefType,
+    strings: &StringInterner,
+) {
+    match ref_type {
+        CompactRefType::Cell {
+            sheet,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } => {
+            hasher.mix_u8(REF_CELL);
+            mix_sheet(hasher, labels, sheet, strings);
+            mix_axis_value(hasher, labels, row, row_abs);
+            mix_axis_value(hasher, labels, col, col_abs);
+        }
+        CompactRefType::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        } => {
+            hasher.mix_u8(REF_RANGE);
+            if start_row != 0 && end_row != u32::MAX && start_col != 0 && end_col != u32::MAX {
+                labels.flags |= CanonicalLabels::FLAG_CONTAINS_RANGE;
+            }
+            mix_sheet(hasher, labels, sheet, strings);
+
+            classify_range_axis(labels, start_row, end_row);
+            classify_range_axis(labels, start_col, end_col);
+
+            mix_range_axis_start(hasher, labels, start_row, start_row_abs);
+            mix_range_axis_start(hasher, labels, start_col, start_col_abs);
+            mix_range_axis_end(hasher, labels, end_row, end_row_abs);
+            mix_range_axis_end(hasher, labels, end_col, end_col_abs);
+        }
+        CompactRefType::External {
+            raw_id,
+            book_id,
+            sheet_id,
+            kind,
+        } => {
+            hasher.mix_u8(REF_EXTERNAL);
+            labels.rejects |= CanonicalLabels::REJECT_EXTERNAL_REFERENCE;
+            mix_string_id(hasher, strings, raw_id);
+            mix_string_id(hasher, strings, book_id);
+            mix_string_id(hasher, strings, sheet_id);
+            mix_external_kind(hasher, kind);
+        }
+        CompactRefType::NamedRange(name_id) => {
+            hasher.mix_u8(REF_NAMED);
+            // Named references no longer reject at the canonical-label layer:
+            // they canonicalize by identity and the accept decision is made by
+            // the per-cell read projections (which resolve the name against
+            // the live registry at ingest time).
+            labels.flags |= CanonicalLabels::FLAG_CONTAINS_NAME;
+            let normalized = strings
+                .get(name_id)
+                .map(|name| name.to_ascii_uppercase())
+                .unwrap_or_default();
+            mix_string(hasher, &normalized);
+        }
+        CompactRefType::Table {
+            name_id,
+            specifier_id,
+        } => {
+            hasher.mix_u8(REF_TABLE);
+            labels.flags |= CanonicalLabels::FLAG_CONTAINS_TABLE
+                | CanonicalLabels::FLAG_CONTAINS_STRUCTURED_REF;
+            labels.rejects |= CanonicalLabels::REJECT_STRUCTURED_REFERENCE;
+            if strings.get(name_id).is_some_and(str::is_empty) {
+                labels.flags |= CanonicalLabels::FLAG_NEEDS_PLACEMENT_REWRITE;
+            }
+            mix_string_id(hasher, strings, name_id);
+            match specifier_id {
+                Some(id) => {
+                    hasher.mix_u8(1);
+                    hasher.mix_u32(id.as_u32());
+                }
+                None => hasher.mix_u8(0),
+            }
+        }
+        CompactRefType::Cell3D {
+            sheet_first,
+            sheet_last,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } => {
+            hasher.mix_u8(REF_CELL_3D);
+            labels.flags |= CanonicalLabels::FLAG_EXPLICIT_SHEET;
+            labels.rejects |= CanonicalLabels::REJECT_THREE_D_REFERENCE;
+            mix_string_id(hasher, strings, sheet_first);
+            mix_string_id(hasher, strings, sheet_last);
+            mix_axis_value(hasher, labels, row, row_abs);
+            mix_axis_value(hasher, labels, col, col_abs);
+        }
+        CompactRefType::Range3D {
+            sheet_first,
+            sheet_last,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        } => {
+            hasher.mix_u8(REF_RANGE_3D);
+            labels.flags |=
+                CanonicalLabels::FLAG_CONTAINS_RANGE | CanonicalLabels::FLAG_EXPLICIT_SHEET;
+            labels.rejects |= CanonicalLabels::REJECT_THREE_D_REFERENCE;
+            mix_string_id(hasher, strings, sheet_first);
+            mix_string_id(hasher, strings, sheet_last);
+            classify_range_axis(labels, start_row, end_row);
+            classify_range_axis(labels, start_col, end_col);
+            mix_range_axis_start(hasher, labels, start_row, start_row_abs);
+            mix_range_axis_start(hasher, labels, start_col, start_col_abs);
+            mix_range_axis_end(hasher, labels, end_row, end_row_abs);
+            mix_range_axis_end(hasher, labels, end_col, end_col_abs);
+        }
+    }
+}
+
+fn mix_sheet(
+    hasher: &mut StableHasher,
+    labels: &mut CanonicalLabels,
+    sheet: Option<SheetKey>,
+    strings: &StringInterner,
+) {
+    match sheet {
+        Some(SheetKey::Id(id)) => {
+            labels.flags |= CanonicalLabels::FLAG_EXPLICIT_SHEET;
+            hasher.mix_u8(1);
+            hasher.mix_u16(id);
+        }
+        Some(SheetKey::Name(id)) => {
+            labels.flags |= CanonicalLabels::FLAG_EXPLICIT_SHEET;
+            hasher.mix_u8(2);
+            mix_string_id(hasher, strings, id);
+        }
+        None => {
+            labels.flags |= CanonicalLabels::FLAG_CURRENT_SHEET;
+            hasher.mix_u8(0);
+        }
+    }
+}
+
+fn mix_axis_value(hasher: &mut StableHasher, labels: &mut CanonicalLabels, value: u32, abs: bool) {
+    if abs {
+        labels.flags |= CanonicalLabels::FLAG_ABSOLUTE_ONLY;
+        hasher.mix_u8(AXIS_ABSOLUTE);
+        hasher.mix_u32(value);
+    } else {
+        labels.flags |= CanonicalLabels::FLAG_RELATIVE_ONLY;
+        hasher.mix_u8(AXIS_RELATIVE);
+        hasher.mix_u32(value);
+    }
+}
+
+fn classify_range_axis(labels: &mut CanonicalLabels, start: u32, end: u32) {
+    match (start == 0, end == u32::MAX) {
+        (true, true) => {}
+        (true, false) | (false, true) => {
+            labels.rejects |= CanonicalLabels::REJECT_OPEN_RANGE_REFERENCE;
+        }
+        (false, false) => {}
+    }
+}
+
+fn mix_range_axis_start(
+    hasher: &mut StableHasher,
+    labels: &mut CanonicalLabels,
+    value: u32,
+    abs: bool,
+) {
+    if value == 0 {
+        hasher.mix_u8(AXIS_OPEN_START);
+    } else {
+        mix_axis_value(hasher, labels, value, abs);
+    }
+}
+
+fn mix_range_axis_end(
+    hasher: &mut StableHasher,
+    labels: &mut CanonicalLabels,
+    value: u32,
+    abs: bool,
+) {
+    if value == u32::MAX {
+        hasher.mix_u8(AXIS_OPEN_END);
+    } else {
+        mix_axis_value(hasher, labels, value, abs);
+    }
+}
+
+fn finalize_anchor_flags(labels: &mut CanonicalLabels) {
+    if labels.has_flag(CanonicalLabels::FLAG_RELATIVE_ONLY)
+        && labels.has_flag(CanonicalLabels::FLAG_ABSOLUTE_ONLY)
+    {
+        labels.flags |= CanonicalLabels::FLAG_MIXED_ANCHORS;
+    }
+}
+
+struct FunctionClassification {
+    canonical_name: String,
+    static_scalar: bool,
+}
+
+fn classify_and_mix_function(
+    raw_name: &str,
+    arity: usize,
+    function_provider: &dyn FunctionProvider,
+    allow_function_semantics: bool,
+    hasher: &mut StableHasher,
+    labels: &mut CanonicalLabels,
+) -> FunctionClassification {
+    use crate::function::FnCaps;
+    use crate::function_contract::{
+        FunctionContextDependence, FunctionDependencySemantics, FunctionEnvironmentSemantics,
+    };
+    let identity = allow_function_semantics
+        .then(|| function_provider.function_semantic_identity("", raw_name, arity))
+        .flatten();
+    let Some(identity) = identity else {
+        mix_string(hasher, "");
+        mix_string(hasher, &raw_name.trim().to_ascii_uppercase());
+        hasher.mix_u64(0);
+        labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
+        return FunctionClassification {
+            canonical_name: raw_name.trim().to_ascii_uppercase(),
+            static_scalar: false,
+        };
+    };
+    let canonical_name = identity.canonical_name.clone();
+    let encoded = identity.encode();
+    hasher.mix_usize(encoded.len());
+    hasher.mix_bytes(&encoded);
+    let caps = identity.caps;
+    let contract = identity.contract;
+    if caps.contains(FnCaps::VOLATILE) {
+        labels.flags |= CanonicalLabels::FLAG_VOLATILE;
+        labels.rejects |= CanonicalLabels::REJECT_VOLATILE_FUNCTION;
+    }
+    if caps.contains(FnCaps::DYNAMIC_DEPENDENCY) {
+        labels.flags |= CanonicalLabels::FLAG_DYNAMIC;
+        labels.rejects |= CanonicalLabels::REJECT_DYNAMIC_REFERENCE;
+    }
+    if caps.contains(FnCaps::LOCAL_ENVIRONMENT) {
+        labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
+        labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
+    }
+    if caps.contains(FnCaps::RETURNS_REFERENCE) {
+        labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
+    }
+    if caps.contains(FnCaps::MAY_SPILL) {
+        labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
+        labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
+    }
+    match contract.dependency {
+        FunctionDependencySemantics::RecursiveSyntacticArgs => {}
+        FunctionDependencySemantics::Dynamic => {
+            labels.flags |= CanonicalLabels::FLAG_DYNAMIC;
+            labels.rejects |= CanonicalLabels::REJECT_DYNAMIC_REFERENCE;
+        }
+        FunctionDependencySemantics::Unsupported => {
+            labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
+        }
+    }
+    if contract.environment != FunctionEnvironmentSemantics::None {
+        labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
+        labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
+    }
+    if contract.result.may_return_reference() {
+        labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
+    }
+    if contract.result.may_spill() {
+        labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
+        labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
+    }
+    if contract.context != FunctionContextDependence::None {
+        labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
+    }
+    let forbidden_caps = FnCaps::VOLATILE
+        | FnCaps::DYNAMIC_DEPENDENCY
+        | FnCaps::LOCAL_ENVIRONMENT
+        | FnCaps::RETURNS_REFERENCE
+        | FnCaps::MAY_SPILL;
+    let static_scalar = (caps & forbidden_caps).is_empty()
+        && matches!(
+            contract.dependency,
+            FunctionDependencySemantics::RecursiveSyntacticArgs
+        )
+        && contract.environment == FunctionEnvironmentSemantics::None
+        && !contract.result.may_return_reference()
+        && !contract.result.may_spill()
+        && contract.context == FunctionContextDependence::None;
+    FunctionClassification {
+        canonical_name,
+        static_scalar,
+    }
+}
+
+fn mix_children(hasher: &mut StableHasher, children: &[&AstNodeMetadata]) {
+    hasher.mix_usize(children.len());
+    for child in children {
+        hasher.mix_u64(child.canonical_hash);
+    }
+}
+
+fn mix_string_id(
+    hasher: &mut StableHasher,
+    strings: &StringInterner,
+    id: super::string_interner::StringId,
+) {
+    mix_string(hasher, strings.get(id).unwrap_or(""));
+}
+
+fn mix_string(hasher: &mut StableHasher, value: &str) {
+    hasher.mix_usize(value.len());
+    hasher.mix_bytes(value.as_bytes());
+}
+
+fn mix_external_kind(hasher: &mut StableHasher, kind: ExternalRefKind) {
+    match kind {
+        ExternalRefKind::Cell {
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } => {
+            hasher.mix_u8(1);
+            hasher.mix_u32(row);
+            hasher.mix_u32(col);
+            hasher.mix_u8(u8::from(row_abs));
+            hasher.mix_u8(u8::from(col_abs));
+        }
+        ExternalRefKind::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        } => {
+            hasher.mix_u8(2);
+            mix_optional_u32(hasher, start_row);
+            mix_optional_u32(hasher, start_col);
+            mix_optional_u32(hasher, end_row);
+            mix_optional_u32(hasher, end_col);
+            hasher.mix_u8(u8::from(start_row_abs));
+            hasher.mix_u8(u8::from(start_col_abs));
+            hasher.mix_u8(u8::from(end_row_abs));
+            hasher.mix_u8(u8::from(end_col_abs));
+        }
+    }
+}
+
+fn mix_optional_u32(hasher: &mut StableHasher, value: Option<u32>) {
+    match value {
+        Some(value) => {
+            hasher.mix_u8(1);
+            hasher.mix_u32(value);
+        }
+        None => hasher.mix_u8(0),
+    }
+}
+
+struct StableHasher {
+    state: u64,
+}
+
+impl StableHasher {
+    fn new() -> Self {
+        Self { state: FNV_OFFSET }
+    }
+
+    fn mix_bytes(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(FNV_PRIME);
+        }
+    }
+
+    fn mix_u8(&mut self, value: u8) {
+        self.mix_bytes(&[value]);
+    }
+
+    fn mix_u16(&mut self, value: u16) {
+        self.mix_bytes(&value.to_le_bytes());
+    }
+
+    fn mix_u32(&mut self, value: u32) {
+        self.mix_bytes(&value.to_le_bytes());
+    }
+
+    fn mix_u64(&mut self, value: u64) {
+        self.mix_bytes(&value.to_le_bytes());
+    }
+
+    fn mix_usize(&mut self, value: usize) {
+        self.mix_u64(value as u64);
+    }
+
+    fn finish(self) -> u64 {
+        self.state
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::function::{FnCaps, Function};
+    use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
+    use formualizer_common::{ExcelError, LiteralValue};
+    use std::sync::Arc;
+
+    struct NoopProvider;
+
+    impl FunctionProvider for NoopProvider {
+        fn get_function(&self, _ns: &str, _name: &str) -> Option<Arc<dyn Function>> {
+            None
+        }
+    }
+
+    struct CapsProvider {
+        caps: FnCaps,
+    }
+
+    impl FunctionProvider for CapsProvider {
+        fn get_function(&self, _ns: &str, _name: &str) -> Option<Arc<dyn Function>> {
+            Some(Arc::new(TestFunction { caps: self.caps }))
+        }
+    }
+
+    struct TestFunction {
+        caps: FnCaps,
+    }
+
+    impl Function for TestFunction {
+        fn caps(&self) -> FnCaps {
+            self.caps
+        }
+
+        fn name(&self) -> &'static str {
+            "TEST"
+        }
+
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, ExcelError> {
+            Ok(CalcValue::Scalar(LiteralValue::Empty))
+        }
+    }
+
+    fn meta(
+        data: &AstNodeData,
+        children: &[&AstNodeMetadata],
+        strings: &StringInterner,
+    ) -> AstNodeMetadata {
+        compute_node_metadata(data, children, strings, &NoopProvider, false)
+    }
+
+    #[test]
+    fn literal_hash_is_stable_and_unlabelled() {
+        let strings = StringInterner::new();
+        let data = AstNodeData::Literal(super::super::value_ref::ValueRef::small_int(42).unwrap());
+
+        let first = meta(&data, &[], &strings);
+        let second = meta(&data, &[], &strings);
+
+        assert_eq!(first.canonical_hash, second.canonical_hash);
+        assert_ne!(first.canonical_hash, 0);
+        assert_eq!(first.labels, CanonicalLabels::default());
+    }
+
+    #[test]
+    fn reference_axes_set_relative_absolute_and_mixed_flags() {
+        let mut strings = StringInterner::new();
+        let original_id = strings.intern("A1");
+
+        let relative = AstNodeData::Reference {
+            original_id,
+            ref_type: CompactRefType::Cell {
+                sheet: None,
+                row: 1,
+                col: 1,
+                row_abs: false,
+                col_abs: false,
+            },
+        };
+        let relative_meta = meta(&relative, &[], &strings);
+        assert!(
+            relative_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_RELATIVE_ONLY)
+        );
+        assert!(
+            !relative_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_ABSOLUTE_ONLY)
+        );
+        assert!(
+            !relative_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_MIXED_ANCHORS)
+        );
+
+        let absolute = AstNodeData::Reference {
+            original_id,
+            ref_type: CompactRefType::Cell {
+                sheet: None,
+                row: 1,
+                col: 1,
+                row_abs: true,
+                col_abs: true,
+            },
+        };
+        let absolute_meta = meta(&absolute, &[], &strings);
+        assert!(
+            absolute_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_ABSOLUTE_ONLY)
+        );
+        assert!(
+            !absolute_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_RELATIVE_ONLY)
+        );
+        assert!(
+            !absolute_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_MIXED_ANCHORS)
+        );
+
+        let mixed = AstNodeData::Reference {
+            original_id,
+            ref_type: CompactRefType::Cell {
+                sheet: None,
+                row: 1,
+                col: 1,
+                row_abs: true,
+                col_abs: false,
+            },
+        };
+        let mixed_meta = meta(&mixed, &[], &strings);
+        assert!(
+            mixed_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_RELATIVE_ONLY)
+        );
+        assert!(
+            mixed_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_ABSOLUTE_ONLY)
+        );
+        assert!(
+            mixed_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_MIXED_ANCHORS)
+        );
+    }
+
+    #[test]
+    fn compact_whole_column_range_does_not_set_whole_axis_reject() {
+        let mut strings = StringInterner::new();
+        let original_id = strings.intern("$A:$A");
+        let data = AstNodeData::Reference {
+            original_id,
+            ref_type: CompactRefType::Range {
+                sheet: None,
+                start_row: 0,
+                start_col: 1,
+                end_row: u32::MAX,
+                end_col: 1,
+                start_row_abs: false,
+                start_col_abs: true,
+                end_row_abs: false,
+                end_col_abs: true,
+            },
+        };
+
+        let metadata = meta(&data, &[], &strings);
+
+        assert!(
+            !metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_WHOLE_AXIS_REFERENCE)
+        );
+        assert!(
+            !metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_OPEN_RANGE_REFERENCE)
+        );
+    }
+
+    #[test]
+    fn compact_open_range_still_sets_open_range_reject() {
+        let mut strings = StringInterner::new();
+        let original_id = strings.intern("$A$1:$A");
+        let data = AstNodeData::Reference {
+            original_id,
+            ref_type: CompactRefType::Range {
+                sheet: None,
+                start_row: 1,
+                start_col: 1,
+                end_row: u32::MAX,
+                end_col: 1,
+                start_row_abs: true,
+                start_col_abs: true,
+                end_row_abs: false,
+                end_col_abs: true,
+            },
+        };
+
+        let metadata = meta(&data, &[], &strings);
+
+        assert!(
+            metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_OPEN_RANGE_REFERENCE)
+        );
+    }
+
+    #[test]
+    fn function_provider_caps_do_not_override_legacy_function_classification() {
+        let mut strings = StringInterner::new();
+        let name_id = strings.intern("CUSTOMRAND");
+        let data = AstNodeData::Function {
+            name_id,
+            args_offset: 0,
+            args_count: 0,
+        };
+        let provider = CapsProvider {
+            caps: FnCaps::VOLATILE,
+        };
+
+        let metadata = compute_node_metadata(&data, &[], &strings, &provider, true);
+
+        assert!(
+            metadata
+                .labels
+                .has_flag(CanonicalLabels::FLAG_CONTAINS_FUNCTION)
+        );
+        assert!(!metadata.labels.has_flag(CanonicalLabels::FLAG_VOLATILE));
+        assert!(
+            !metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_VOLATILE_FUNCTION)
+        );
+        assert!(
+            metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION)
+        );
+    }
+
+    #[test]
+    fn relative_references_with_same_normalized_deltas_hash_the_same() {
+        let mut strings = StringInterner::new();
+        let plus_id = strings.intern("+");
+        let a1_id = strings.intern("A1");
+        let b1_id = strings.intern("B1");
+        let a2_id = strings.intern("A2");
+        let b2_id = strings.intern("B2");
+
+        let a1 = AstNodeData::Reference {
+            original_id: a1_id,
+            ref_type: CompactRefType::Cell {
+                sheet: None,
+                row: 1,
+                col: 1,
+                row_abs: false,
+                col_abs: false,
+            },
+        };
+        let b1 = AstNodeData::Reference {
+            original_id: b1_id,
+            ref_type: CompactRefType::Cell {
+                sheet: None,
+                row: 1,
+                col: 2,
+                row_abs: false,
+                col_abs: false,
+            },
+        };
+        let a2 = AstNodeData::Reference {
+            original_id: a2_id,
+            ref_type: CompactRefType::Cell {
+                sheet: None,
+                row: 1,
+                col: 1,
+                row_abs: false,
+                col_abs: false,
+            },
+        };
+        let b2 = AstNodeData::Reference {
+            original_id: b2_id,
+            ref_type: CompactRefType::Cell {
+                sheet: None,
+                row: 1,
+                col: 2,
+                row_abs: false,
+                col_abs: false,
+            },
+        };
+
+        let a1_meta = meta(&a1, &[], &strings);
+        let b1_meta = meta(&b1, &[], &strings);
+        let a2_meta = meta(&a2, &[], &strings);
+        let b2_meta = meta(&b2, &[], &strings);
+        assert_eq!(a1_meta.canonical_hash, a2_meta.canonical_hash);
+        assert_eq!(b1_meta.canonical_hash, b2_meta.canonical_hash);
+
+        let first_sum = AstNodeData::BinaryOp {
+            op_id: plus_id,
+            left_id: super::super::ast::AstNodeId::from_u32(0),
+            right_id: super::super::ast::AstNodeId::from_u32(1),
+        };
+        let second_sum = AstNodeData::BinaryOp {
+            op_id: plus_id,
+            left_id: super::super::ast::AstNodeId::from_u32(2),
+            right_id: super::super::ast::AstNodeId::from_u32(3),
+        };
+
+        let first = meta(&first_sum, &[&a1_meta, &b1_meta], &strings);
+        let second = meta(&second_sum, &[&a2_meta, &b2_meta], &strings);
+
+        assert_eq!(first.canonical_hash, second.canonical_hash);
+    }
+
+    #[test]
+    fn reject_bits_cover_let_lambda_structured_refs_and_arrays() {
+        let mut strings = StringInterner::new();
+        let let_id = strings.intern("LET");
+        let empty_table_name = strings.intern("");
+        let table_original = strings.intern("[#This Row]");
+
+        let let_fn = AstNodeData::Function {
+            name_id: let_id,
+            args_offset: 0,
+            args_count: 3,
+        };
+        crate::builtins::load_builtins();
+        let let_meta = compute_node_metadata(
+            &let_fn,
+            &[],
+            &strings,
+            &crate::function_registry::GlobalRegistryFunctionProvider,
+            true,
+        );
+        assert!(
+            let_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA)
+        );
+        assert!(
+            let_meta
+                .labels
+                .has_reject(CanonicalLabels::REJECT_LOCAL_ENVIRONMENT)
+        );
+
+        let table_ref = AstNodeData::Reference {
+            original_id: table_original,
+            ref_type: CompactRefType::Table {
+                name_id: empty_table_name,
+                specifier_id: None,
+            },
+        };
+        let table_meta = meta(&table_ref, &[], &strings);
+        assert!(
+            table_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_CONTAINS_STRUCTURED_REF)
+        );
+        assert!(
+            table_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_CONTAINS_TABLE)
+        );
+        assert!(
+            table_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_NEEDS_PLACEMENT_REWRITE)
+        );
+        assert!(
+            table_meta
+                .labels
+                .has_reject(CanonicalLabels::REJECT_STRUCTURED_REFERENCE)
+        );
+
+        let array = AstNodeData::Array {
+            rows: 1,
+            cols: 0,
+            elements_offset: 0,
+        };
+        let array_meta = meta(&array, &[], &strings);
+        assert!(
+            array_meta
+                .labels
+                .has_flag(CanonicalLabels::FLAG_CONTAINS_ARRAY)
+        );
+        assert!(
+            array_meta
+                .labels
+                .has_reject(CanonicalLabels::REJECT_ARRAY_LITERAL)
+        );
+    }
+}
