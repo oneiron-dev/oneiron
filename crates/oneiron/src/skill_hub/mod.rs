@@ -1,6 +1,7 @@
 //! Skill-hub records, provenance aliases, adapter contracts, and update gates.
 
 mod adapter;
+mod bootstrap;
 mod doors;
 mod index;
 mod package;
@@ -76,3 +77,5 @@ use crate::temporal::TimeRange;
 use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
+
+pub(crate) use bootstrap::seed_bootstrap_skills;
