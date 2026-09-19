@@ -1293,9 +1293,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/mod.rs` | src | s | 2 re-export · 5 crate-vis | — | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `src/off_record/promote.rs` | src | m | 2 struct · 1 fn · 12 crate-vis | OffRecordPromoteReceipt, PromoteOutcome | Explicit promotion from an off-record session into the durable vault |
 | `src/off_record/tests.rs` | test | L | — | — | — |
-| `src/origin/lfs/chunk_tests.rs` | test | s | — | — | Chunked storage acceptance through public IO and stored ASSET rows |
+| `src/origin/lfs/chunk_tests.rs` | test | m | — | — | Chunked storage acceptance through public IO and stored ASSET rows |
 | `src/origin/lfs/chunks.rs` | src | s | 3 struct · 7 fn · 3 const · 12 crate-vis | LfsChunkParameters, LfsChunkRef, LfsManifest | Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters |
-| `src/origin/lfs/lifecycle.rs` | src | s | 4 fn · 9 crate-vis | — | Last-reference byte reclamation and permanent object deletion markers |
+| `src/origin/lfs/lifecycle.rs` | src | m | 4 fn · 9 crate-vis | — | Last-reference byte reclamation and permanent object deletion markers |
 | `src/origin/lfs/mod.rs` | src | s | 5 re-export · 2 crate-vis | — | Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage |
 | `src/origin/lfs/oid.rs` | src | s | 1 struct · 5 fn · 2 const | LfsOid | Object-id type with hex parse/spelling codec and OID length consts |
 | `src/origin/lfs/pointer.rs` | src | s | 2 struct · 2 fn | LfsPointerIntent, LfsPushedPointer | Pointer grammar: pushed-pointer parsing, per-repo intents, pointer field consts |

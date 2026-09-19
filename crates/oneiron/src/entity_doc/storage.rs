@@ -245,7 +245,13 @@ impl Vault {
                 }
             }
             let (initial, pointer) = replace_text(body, field, &entity.to_hex())?;
-            crate::origin::lfs::guard_lfs_asset_put(&self.store, txn, entity, &pointer)?;
+            crate::origin::lfs::guard_lfs_asset_put(
+                &self.store,
+                txn,
+                entity,
+                header.entity_type,
+                &pointer,
+            )?;
             let doc = EntityDoc::open(*entity, &initial, birth_actor, header.occurred_start)?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
             let mut replacement = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();

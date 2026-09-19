@@ -16402,7 +16402,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/origin/lfs/chunk_tests.rs",
@@ -16427,7 +16427,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/lfs/lifecycle.rs",

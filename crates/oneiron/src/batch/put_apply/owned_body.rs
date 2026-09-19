@@ -16,7 +16,7 @@ pub(super) fn guard_storage_owned_body(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
-    crate::origin::lfs::guard_lfs_asset_put(store, wtxn, id, data)?;
+    crate::origin::lfs::guard_lfs_asset_put(store, wtxn, id, entity_type, data)?;
     #[cfg(feature = "sync")]
     crate::entity_doc::guard_record_put(store, wtxn, id, data)?;
     if store

@@ -90,6 +90,103 @@ fn four_kib_edit_reuses_chunks_and_last_reference_gc_is_permanent() {
 }
 
 #[test]
+fn collected_chunk_can_serve_a_new_oid_without_reviving_deleted_object() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let original = data(3 * LFS_CHUNK_MAX);
+    let first = LfsOid::digest(&original);
+    vault
+        .put_lfs_object(first, &original, time(), time().start)
+        .unwrap();
+    let before = vault.lfs_manifest(first).unwrap().unwrap();
+    let shared = &before.chunks[0];
+    let chunk_id = chunks::chunk_id(&shared.hash).unwrap();
+    let chunk_bytes = &original[..shared.size as usize];
+    assert_eq!(
+        vault
+            .lfs_object_chunk(first, shared.hash)
+            .unwrap()
+            .as_deref(),
+        Some(chunk_bytes)
+    );
+    #[cfg(feature = "sync")]
+    let chunk_blob = vault.get_raw(&chunk_id).unwrap().unwrap();
+
+    assert!(vault.delete_lfs_object(first).unwrap());
+    assert!(vault.get_raw(&chunk_id).unwrap().is_none());
+    for (kind, body) in [
+        (ENTITY_TYPE_ASSET, b"tampered".as_slice()),
+        (crate::registry::ENTITY_TYPE_PERSON, chunk_bytes),
+    ] {
+        assert_eq!(
+            vault
+                .put_entity(&chunk_id, kind, time(), time().start, body)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::InvalidLfsObject
+        );
+        assert!(vault.get_raw(&chunk_id).unwrap().is_none());
+    }
+
+    #[cfg(feature = "sync")]
+    {
+        // The retained reservation rejects both a stale ASSET blob and a
+        // retyped blob that the content-address detector alone cannot identify.
+        let key = crate::sync::WindowKey::new("2023-11");
+        let materializer = crate::sync::bridge::Materializer::new();
+        for kind in [ENTITY_TYPE_ASSET, crate::registry::ENTITY_TYPE_PERSON] {
+            let doc = crate::sync::schema::create_window_doc("remote", &key);
+            let entities = doc.get_map("entities");
+            let mut stale = chunk_blob.clone();
+            stale[0] = kind;
+            crate::sync::loro_support::map_insert_bytes(&entities, &chunk_id.to_hex(), &stale)
+                .unwrap();
+            let control = EntityId::now();
+            crate::sync::loro_support::map_insert_bytes(&entities, &control.to_hex(), &stale)
+                .unwrap();
+            doc.commit();
+            crate::sync::window::forward_rematerialize(&vault, &doc, &materializer, &key).unwrap();
+            assert!(vault.get_raw(&chunk_id).unwrap().is_none());
+            assert_eq!(vault.get(&control).unwrap().as_deref(), Some(chunk_bytes));
+        }
+    }
+
+    // The last byte is beyond the first maximum-size FastCDC chunk. This
+    // changes the SHA-256 OID without changing that chunk under any vault seed.
+    let mut edited = original.clone();
+    *edited.last_mut().unwrap() ^= 1;
+    let second = LfsOid::digest(&edited);
+    assert_ne!(second, first);
+    let published = vault
+        .put_lfs_object(second, &edited, time(), time().start)
+        .unwrap();
+    assert!(!published.deduplicated);
+    let after = vault.lfs_manifest(second).unwrap().unwrap();
+    assert_eq!(after.chunks[0], *shared);
+    assert_eq!(
+        vault
+            .lfs_object_chunk(second, shared.hash)
+            .unwrap()
+            .as_deref(),
+        Some(chunk_bytes)
+    );
+    assert_eq!(vault.get_lfs_object(second).unwrap(), Some(edited));
+    assert!(vault.lfs_object(first).unwrap().is_none());
+    assert!(
+        vault
+            .lfs_object_chunk(first, shared.hash)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        vault
+            .put_lfs_object(first, &original, time(), time().start)
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::InvalidLfsObject
+    );
+}
+
+#[test]
 fn cross_transport_boundary_credentials_never_publish_assets() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let mut bytes = vec![b' '; LFS_CHUNK_MAX - 10];

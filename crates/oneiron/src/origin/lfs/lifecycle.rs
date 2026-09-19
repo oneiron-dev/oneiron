@@ -254,26 +254,48 @@ pub(crate) fn guard_lfs_asset_put(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
+    entity_type: u8,
     data: &[u8],
 ) -> Result<()> {
-    let protected = store
+    let chunk_hash = store
         .vault_meta
-        .get(txn, &chunks::key(chunks::CHUNK_MARK, id.as_bytes()))?
-        .is_some()
-        || store
-            .vault_meta
-            .get(txn, &chunks::key(REVERSE, id.as_bytes()))?
-            .is_some();
-    if protected {
-        let old = store
-            .entities
-            .get(txn, id.as_bytes())?
-            .ok_or(Error::CorruptedIndex("lfs protected asset missing"))?;
-        if old.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(data) {
+        .get(txn, &chunks::key(chunks::CHUNK_MARK, id.as_bytes()))?;
+    let manifest = store
+        .vault_meta
+        .get(txn, &chunks::key(REVERSE, id.as_bytes()))?
+        .is_some();
+    if chunk_hash.is_none() && !manifest {
+        return Ok(());
+    }
+    if entity_type != crate::registry::ENTITY_TYPE_ASSET {
+        return Err(chunks::invalid(
+            "content-addressed lfs assets cannot change kind",
+        ));
+    }
+    let Some(old) = store.entities.get(txn, id.as_bytes())? else {
+        // GC retires bytes, not the chunk-id reservation. Only authenticated
+        // bytes can restore that chunk; a missing published manifest is corrupt.
+        let Some(hash) = chunk_hash.filter(|_| !manifest) else {
+            return Err(Error::CorruptedIndex("lfs protected asset missing"));
+        };
+        let hash: [u8; 32] = hash
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("lfs chunk marker"))?;
+        if chunks::chunk_id(&hash)? != *id {
+            return Err(Error::CorruptedIndex("lfs chunk marker id"));
+        }
+        if data.len() > super::LFS_CHUNK_MAX || blake3::hash(data).as_bytes() != &hash {
             return Err(chunks::invalid(
-                "content-addressed lfs assets are immutable",
+                "restored lfs chunk must match its content id",
             ));
         }
+        return Ok(());
+    };
+    if old.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(data) {
+        return Err(chunks::invalid(
+            "content-addressed lfs assets are immutable",
+        ));
     }
     Ok(())
 }
