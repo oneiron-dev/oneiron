@@ -83,9 +83,9 @@ impl DocxOutcome {
     /// Convert to the same outcome accepted by the engine's single settlement door.
     pub fn into_edit_outcome(self, base_version: Option<u64>) -> Result<EditOutcome> {
         match self {
-            Self::Proposed(proposal) => Ok(EditOutcome::Proposed(
+            Self::Proposed(proposal) => Ok(EditOutcome::Proposed(Box::new(
                 proposal.into_edit_proposal(base_version)?,
-            )),
+            ))),
             Self::Rejected { report, .. } => Ok(EditOutcome::Rejected {
                 inspection: crate::roundtrip::StructureSummary {
                     format: OfficeFormat::Docx,

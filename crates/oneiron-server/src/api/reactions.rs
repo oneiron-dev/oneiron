@@ -378,7 +378,7 @@ pub(crate) async fn list_conversation_messages(
     let row_count = rows.len() as u64;
     let response = PaginatedResponse::new(
         rows,
-        message_ids.last().map(|id| id.to_hex()),
+        message_ids.last().map(oneiron::EntityId::to_hex),
         match params.count_mode {
             CountMode::None => ResponseMeta::none(),
             CountMode::Estimate => ResponseMeta::estimate(row_count),

@@ -27,23 +27,7 @@ fn line_push_quota() -> Value {
 
 pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
     vec![
-        manifest(
-            "artifact",
-            "artifact",
-            "Local pinned exports; public hosting is not enabled.",
-            vec![verb(
-                "publish",
-                "artifact.publish",
-                json!({"artifact": "artifact ref", "version": "pinned export ref", "channel": "published|preview"}),
-                OutboundInterruptionClass::Ambient,
-                OutboundDeliverySemanticsKind::Replaceable,
-                None,
-                OutboundRetryClass::IdempotentEmulated,
-                OutboundPermissionState::Conditional,
-                false,
-                "Publishing requires per-artifact outbound authority; an unapproved request remains Proposed.",
-            )],
-        ),
+        artifact_manifest(),
         manifest(
             "line",
             "chat",
@@ -538,6 +522,26 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
             )],
         ),
     ]
+}
+
+fn artifact_manifest() -> OutboundCapabilityManifest {
+    manifest(
+        "artifact",
+        "artifact",
+        "Local pinned exports; public hosting is not enabled.",
+        vec![verb(
+            "publish",
+            "artifact.publish",
+            json!({"artifact": "artifact ref", "version": "pinned export ref", "channel": "published|preview"}),
+            OutboundInterruptionClass::Ambient,
+            OutboundDeliverySemanticsKind::Replaceable,
+            None,
+            OutboundRetryClass::IdempotentEmulated,
+            OutboundPermissionState::Conditional,
+            false,
+            "Publishing requires per-artifact outbound authority; an unapproved request remains Proposed.",
+        )],
+    )
 }
 
 fn manifest(

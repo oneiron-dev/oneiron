@@ -48,7 +48,7 @@ impl EditProposal {
 /// bytes forward.
 #[derive(Debug, Clone)]
 pub enum EditOutcome {
-    Proposed(EditProposal),
+    Proposed(Box<EditProposal>),
     Rejected {
         inspection: StructureSummary,
         report: ValidationReport,
@@ -75,7 +75,7 @@ fn from_organ(outcome: organ::EditOutcome) -> EditOutcome {
         organ::EditOutcome::Rejected { inspection, report } => {
             EditOutcome::Rejected { inspection, report }
         }
-        organ::EditOutcome::Proposed(p) => EditOutcome::Proposed(EditProposal {
+        organ::EditOutcome::Proposed(p) => EditOutcome::Proposed(Box::new(EditProposal {
             run_ref: p.run_ref,
             format: p.format,
             new_bytes: p.new_bytes,
@@ -87,7 +87,7 @@ fn from_organ(outcome: organ::EditOutcome) -> EditOutcome {
             base_content_hash: p.base_content_hash,
             prepared: p.prepared,
             engine: p.engine,
-        }),
+        })),
     }
 }
 pub fn run_edit_roundtrip<S: EditSession>(

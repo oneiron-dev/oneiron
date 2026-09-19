@@ -150,9 +150,7 @@ pub(super) fn put_structural(
     let input = body;
     check_payload_bytes(
         "structural body",
-        serde_json::to_vec(&input.body)
-            .map(|bytes| bytes.len())
-            .unwrap_or(0),
+        serde_json::to_vec(&input.body).map_or(0, |bytes| bytes.len()),
     )?;
     memory.put_structural(&input)
 }

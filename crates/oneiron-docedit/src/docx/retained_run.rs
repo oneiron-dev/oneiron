@@ -7,10 +7,10 @@ impl Run {
         // Original text can acquire boundary whitespace after a split.
         if let Some(start) = opening.find("xml:space=") {
             let value = start + "xml:space=".len();
-            if let Some(quote @ (b'\'' | b'"')) = opening.as_bytes().get(value).copied() {
-                if let Some(end) = opening[value + 1..].find(char::from(quote)) {
-                    opening.replace_range(value + 1..value + 1 + end, "preserve");
-                }
+            if let Some(quote @ (b'\'' | b'"')) = opening.as_bytes().get(value).copied()
+                && let Some(end) = opening[value + 1..].find(char::from(quote))
+            {
+                opening.replace_range(value + 1..value + 1 + end, "preserve");
             }
         } else if text.starts_with([' ', '\t', '\n', '\r'])
             || text.ends_with([' ', '\t', '\n', '\r'])

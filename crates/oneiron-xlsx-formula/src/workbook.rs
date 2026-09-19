@@ -294,17 +294,17 @@ pub(crate) fn external_formulas(package: &Package) -> Result<BTreeMap<(String, S
             .enumerate()
             .filter(|(_, node)| node.is(MAIN, "c"))
         {
-            if let Some((_, formula)) = xml.child(index, MAIN, "f")? {
-                if !route_workbook([], [], [formula.text.as_str()]).is_in_process() {
-                    let address = cell
-                        .attr("r")
-                        .ok_or_else(|| invalid("linked cell address missing"))?;
-                    if formulas
-                        .insert((part.clone(), address.into()), formula.text.clone())
-                        .is_some()
-                    {
-                        return Err(invalid("duplicate linked cell"));
-                    }
+            if let Some((_, formula)) = xml.child(index, MAIN, "f")?
+                && !route_workbook([], [], [formula.text.as_str()]).is_in_process()
+            {
+                let address = cell
+                    .attr("r")
+                    .ok_or_else(|| invalid("linked cell address missing"))?;
+                if formulas
+                    .insert((part.clone(), address.into()), formula.text.clone())
+                    .is_some()
+                {
+                    return Err(invalid("duplicate linked cell"));
                 }
             }
         }
@@ -353,10 +353,10 @@ fn rich_text(xml: &Xml, index: usize) -> Result<String> {
     for (child, node) in xml.children(index) {
         if node.is(MAIN, "t") {
             text.push_str(&node.text);
-        } else if node.is(MAIN, "r") {
-            if let Some((_, value)) = xml.child(child, MAIN, "t")? {
-                text.push_str(&value.text);
-            }
+        } else if node.is(MAIN, "r")
+            && let Some((_, value)) = xml.child(child, MAIN, "t")?
+        {
+            text.push_str(&value.text);
         }
     }
     // OOXML's escape alphabet is not XML entity syntax. Until that codec is
@@ -430,8 +430,7 @@ fn cell_value(xml: &Xml, index: usize, strings: &[String]) -> Result<LiteralValu
     let node = &xml.nodes[index];
     let value = xml
         .child(index, MAIN, "v")?
-        .map(|(_, node)| node.text.as_str())
-        .unwrap_or("");
+        .map_or("", |(_, node)| node.text.as_str());
     Ok(match node.attr("t") {
         None | Some("n") if value.is_empty() => LiteralValue::Empty,
         None | Some("n") => {

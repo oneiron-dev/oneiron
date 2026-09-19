@@ -3,8 +3,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::{EntityId, Result, Vault};
 
 pub(crate) fn soft_audit_blob(map: &loro::LoroMap, id: &EntityId, blob: &[u8]) -> bool {
-    if !EntityMetadataHeader::parse(blob)
-        .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_REACTION)
+    if EntityMetadataHeader::parse(blob)
+        .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_REACTION)
     {
         return false;
     }

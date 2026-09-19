@@ -60,30 +60,8 @@ pub(in crate::batch) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
-    // Publication admission reuses the write-door decode and must precede
-    // gate receipts, debits, and every other write effect.
-    let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
-        Some(crate::claim::validate_claim_body_and_decode(
-            data,
-            allow_reserved_predicate,
-        )?)
-    } else {
-        None
-    };
-    crate::artifact_hosting::guard_artifact_put(
-        store,
-        wtxn,
-        id,
-        entity_type,
-        data,
-        incoming_claim_body.as_ref(),
-    )?;
-    crate::booking::publication::guard_publication_put(
-        store,
-        wtxn,
-        id,
-        incoming_claim_body.as_ref(),
-    )?;
+    let incoming_claim_body =
+        guard_publication_input(store, wtxn, id, entity_type, data, allow_reserved_predicate)?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
     // at a live overlay member's id would publish the room into base, so it
@@ -768,4 +746,39 @@ pub(in crate::batch) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
+}
+
+fn guard_publication_input(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    allow_reserved_predicate: bool,
+) -> Result<Option<crate::claim::ClaimBody>> {
+    // Publication admission reuses the write-door decode and must precede
+    // gate receipts, debits, and every other write effect.
+    let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
+        Some(crate::claim::validate_claim_body_and_decode(
+            data,
+            allow_reserved_predicate,
+        )?)
+    } else {
+        None
+    };
+    crate::artifact_hosting::guard_artifact_put(
+        store,
+        wtxn,
+        id,
+        entity_type,
+        data,
+        incoming_claim_body.as_ref(),
+    )?;
+    crate::booking::publication::guard_publication_put(
+        store,
+        wtxn,
+        id,
+        incoming_claim_body.as_ref(),
+    )?;
+    Ok(incoming_claim_body)
 }

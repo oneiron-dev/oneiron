@@ -139,7 +139,7 @@ fn splice_comment_markers(
     let mut owned = body.to_owned();
     for caret in [span.end, span.start] {
         let current = scan_runs(&owned)?;
-        owned = split_at_caret(&owned, &current, caret)?;
+        owned = split_at_caret(&owned, &current, caret);
     }
     let placed = scan_runs(&owned)?;
     if placed.is_empty() {
@@ -169,7 +169,7 @@ fn splice_comment_markers(
     Ok(owned)
 }
 
-fn split_at_caret(body: &str, runs: &[Run], caret: u32) -> Result<String> {
+fn split_at_caret(body: &str, runs: &[Run], caret: u32) -> String {
     let mut offset = 0u32;
     for run in runs {
         let len = run.text.chars().count() as u32;
@@ -189,9 +189,9 @@ fn split_at_caret(body: &str, runs: &[Run], caret: u32) -> Result<String> {
         out.push_str(&body[..run.range.start]);
         out.push_str(&replacement);
         out.push_str(&body[run.range.end..]);
-        return Ok(out);
+        return out;
     }
-    Ok(body.to_owned())
+    body.to_owned()
 }
 
 fn caret_byte(runs: &[Run], caret: u32) -> Result<usize> {

@@ -58,7 +58,7 @@ pub(crate) fn message_visible_in_txn(
     message: &EntityId,
     viewer: &EntityId,
 ) -> Result<bool> {
-    if !live_header(store, txn, viewer)?.is_some_and(|h| h.entity_type == ENTITY_TYPE_PERSON) {
+    if live_header(store, txn, viewer)?.is_none_or(|h| h.entity_type != ENTITY_TYPE_PERSON) {
         return Ok(false);
     }
     let Some(header) = live_header(store, txn, message)? else {
@@ -96,8 +96,8 @@ pub(crate) fn message_visible_in_txn(
         for entry in store.edges_out.prefix_iter(txn, &prefix)? {
             let (key, value) = entry?;
             let edge = parse_strict_edge_record(&key, &value)?;
-            if !live_header(store, txn, &edge.target)?
-                .is_some_and(|h| h.entity_type == ENTITY_TYPE_CONVERSATION)
+            if live_header(store, txn, &edge.target)?
+                .is_none_or(|h| h.entity_type != ENTITY_TYPE_CONVERSATION)
                 || parent.is_some()
             {
                 return Ok(false);

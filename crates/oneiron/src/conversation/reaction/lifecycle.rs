@@ -45,8 +45,7 @@ impl Vault {
             return Err(invalid("reaction by must be the bound actor"));
         }
 
-        if !live_header(&self.store, txn, actor)?
-            .is_some_and(|h| h.entity_type == ENTITY_TYPE_PERSON)
+        if live_header(&self.store, txn, actor)?.is_none_or(|h| h.entity_type != ENTITY_TYPE_PERSON)
         {
             return Err(invalid("reactor must be a live PERSON"));
         }

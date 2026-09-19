@@ -175,7 +175,7 @@ fn position_inner(
                         } else {
                             union_ids(position.facets.clone(), ScopeIdAxis::Some(vec![id]))
                         }
-                    })
+                    });
                 }
                 Err(()) => position.facets = ScopeIdAxis::All,
                 Ok(None) => {}
@@ -190,10 +190,10 @@ fn position_inner(
                 return Ok(unknown_position(entity_type));
             }
             let parent = store.entities.get(txn, parents[0].as_bytes())?;
-            if !parent
+            if parent
                 .as_ref()
                 .and_then(|raw| EntityMetadataHeader::parse(raw))
-                .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_TURN)
             {
                 return Ok(unknown_position(entity_type));
             }

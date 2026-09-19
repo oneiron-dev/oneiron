@@ -50,7 +50,7 @@ const SPAN_TEXT_CONTAINER: &str = "span_text";
 /// both ends, so the peer carries no identity — but it must be constant, or two
 /// builds of the same bytes would mint different op ids and the cursors taken at
 /// select time would not resolve at use time.
-const SPAN_DOC_PEER_ID: u64 = 0x5eED;
+const SPAN_DOC_PEER_ID: u64 = 0x5eed;
 
 /// Domain tag for the span revision pin. The pin binds (entity id, body bytes);
 /// the tag keeps the hash from colliding with any other blake3 use in the crate.

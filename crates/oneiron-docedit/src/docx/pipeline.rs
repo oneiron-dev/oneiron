@@ -115,7 +115,7 @@ pub struct DocxProposal {
 /// says which check failed. A rejection never carries proposal bytes.
 #[derive(Debug, Clone)]
 pub enum DocxOutcome {
-    Proposed(DocxProposal),
+    Proposed(Box<DocxProposal>),
     Rejected {
         inspection: DocxStructure,
         report: DocxValidationReport,
@@ -224,7 +224,7 @@ pub fn run_docx_roundtrip(
         report: &report,
         engine: &manifest.engine.engine_id(),
     })?;
-    Ok(DocxOutcome::Proposed(DocxProposal {
+    Ok(DocxOutcome::Proposed(Box::new(DocxProposal {
         run_ref: run_ref.to_owned(),
         new_bytes: current,
         manifest,
@@ -233,7 +233,7 @@ pub fn run_docx_roundtrip(
         linker,
         base_content_hash,
         prepared,
-    }))
+    })))
 }
 
 struct AppliedPlan {

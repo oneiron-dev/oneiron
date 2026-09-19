@@ -51,7 +51,7 @@ pub struct EditProposal {
 /// bytes forward.
 #[derive(Debug, Clone)]
 pub enum EditOutcome {
-    Proposed(EditProposal),
+    Proposed(Box<EditProposal>),
     Rejected {
         inspection: StructureSummary,
         report: ValidationReport,
@@ -169,7 +169,7 @@ pub fn run_edit_roundtrip<S: EditSession<E>, E: From<Error>>(
         report: &report,
         engine: &engine,
     })?;
-    Ok(EditOutcome::Proposed(EditProposal {
+    Ok(EditOutcome::Proposed(Box::new(EditProposal {
         run_ref: run_ref.to_owned(),
         format,
         new_bytes: current,
@@ -183,5 +183,5 @@ pub fn run_edit_roundtrip<S: EditSession<E>, E: From<Error>>(
         base_content_hash,
         engine,
         prepared,
-    }))
+    })))
 }

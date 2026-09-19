@@ -59,10 +59,10 @@ fn scan_revision_ids(xml: &str) -> Vec<i64> {
         while let Some(pos) = rest.find(tag) {
             let after = &rest[pos + tag.len()..];
             let end = after.find('>').unwrap_or(after.len());
-            if let Some(id) = attr_i64(&after[..end], "w:id=\"") {
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
+            if let Some(id) = attr_i64(&after[..end], "w:id=\"")
+                && !ids.contains(&id)
+            {
+                ids.push(id);
             }
             rest = &after[end..];
         }
@@ -78,10 +78,10 @@ fn scan_comment_ids(xml: &str) -> Vec<i64> {
         while let Some(pos) = rest.find(tag) {
             let after = &rest[pos + tag.len()..];
             let end = after.find('>').unwrap_or(after.len());
-            if let Some(id) = attr_i64(&after[..end], "w:id=\"") {
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
+            if let Some(id) = attr_i64(&after[..end], "w:id=\"")
+                && !ids.contains(&id)
+            {
+                ids.push(id);
             }
             rest = &after[end..];
         }

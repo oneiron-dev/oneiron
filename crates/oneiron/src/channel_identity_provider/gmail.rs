@@ -621,7 +621,6 @@ impl GmailDelegatedAdapter {
     /// [`Error::InvalidEntityType`] when the id names another kind, and
     /// [`Error::InvalidConfig`] when the row is not this adapter's delegated
     /// mailbox, custody record, and scope set, or is not `Active`.
-
     fn require_active_row_matches_adapter(
         &self,
         vault: &Vault,

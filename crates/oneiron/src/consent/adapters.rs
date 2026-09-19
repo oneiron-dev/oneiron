@@ -298,7 +298,7 @@ fn scope_id_axis_selector(axis: &crate::disclosure::ScopeIdAxis) -> String {
         ScopeIdAxis::Bottom => "bottom".to_owned(),
         ScopeIdAxis::Some(ids) => ids
             .iter()
-            .map(|id| id.to_hex())
+            .map(crate::EntityId::to_hex)
             .collect::<Vec<_>>()
             .join("+"),
     }
@@ -311,7 +311,7 @@ fn scope_kind_axis_selector(axis: &crate::disclosure::ScopeKindAxis) -> String {
         ScopeKindAxis::Bottom => "bottom".to_owned(),
         ScopeKindAxis::Some(kinds) => kinds
             .iter()
-            .map(|kind| kind.to_string())
+            .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("+"),
     }

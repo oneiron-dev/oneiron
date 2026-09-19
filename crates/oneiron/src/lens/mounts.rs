@@ -114,6 +114,18 @@ impl LensMountRegistry {
         id: &LensMountId,
         regenerator: &R,
     ) -> Result<Option<LensRegenOutcome>> {
+        struct Bound<'a, R> {
+            prompt: &'a str,
+            inner: &'a R,
+        }
+        impl<R: LensIntentRegenerator> LensRegenerator for Bound<'_, R> {
+            fn regenerate(
+                &self,
+                request: &LensRegenRequest,
+            ) -> std::result::Result<LensEvaluatedRevision, LensRegenFailure> {
+                self.inner.regenerate(self.prompt, request)
+            }
+        }
         let Some(mount) = self.mounts.get_mut(id) else {
             return Ok(None);
         };
@@ -139,18 +151,6 @@ impl LensMountRegistry {
                 }));
             }
         };
-        struct Bound<'a, R> {
-            prompt: &'a str,
-            inner: &'a R,
-        }
-        impl<R: LensIntentRegenerator> LensRegenerator for Bound<'_, R> {
-            fn regenerate(
-                &self,
-                request: &LensRegenRequest,
-            ) -> std::result::Result<LensEvaluatedRevision, LensRegenFailure> {
-                self.inner.regenerate(self.prompt, request)
-            }
-        }
         let outcome = regenerate_lens(
             &Bound {
                 prompt: &prompt,

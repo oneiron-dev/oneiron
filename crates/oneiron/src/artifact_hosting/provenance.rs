@@ -107,9 +107,6 @@ impl ArtifactBirthEnvelope {
         ])
     }
     fn decode(value: &Value) -> Result<Self> {
-        let fields = value
-            .as_map()
-            .ok_or_else(|| error("birth envelope is not a map"))?;
         const KEYS: [&str; 10] = [
             "v",
             "trigger_kind",
@@ -122,6 +119,9 @@ impl ArtifactBirthEnvelope {
             "params_hash",
             "purpose",
         ];
+        let fields = value
+            .as_map()
+            .ok_or_else(|| error("birth envelope is not a map"))?;
         if fields.len() != KEYS.len()
             || KEYS.iter().any(|key| {
                 fields
