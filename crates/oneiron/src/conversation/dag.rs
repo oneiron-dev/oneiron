@@ -188,6 +188,7 @@ impl Vault {
         self.with_write_txn(|txn| {
             authorize(self, txn, actor)?;
             body::body_in(self, txn, conversation)?;
+            require_kind(self, txn, to, ENTITY_TYPE_TURN)?;
             require_room(self, txn, to, conversation)?;
             let mut child = to;
             let mut seen = BTreeSet::new();

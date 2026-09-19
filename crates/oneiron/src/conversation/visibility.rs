@@ -49,18 +49,7 @@ impl AudienceCache {
                 return Ok(false);
             }
             body::body_in(vault, txn, room)?;
-            let revision = vault
-                .store
-                .vault_meta
-                .get(txn, &key(b"conversation_membership:seq:v1:", room))?
-                .map(|v| {
-                    v.as_ref()
-                        .try_into()
-                        .map(u64::from_be_bytes)
-                        .map_err(|_| Error::CorruptedIndex("membership revision"))
-                })
-                .transpose()?
-                .unwrap_or(0);
+            let revision = membership::revision_in(&vault.store, txn, room)?;
             if !self.rows.contains_key(&(room, revision)) {
                 if self.rows.len() >= 1024 {
                     self.rows.clear();

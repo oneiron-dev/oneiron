@@ -26,11 +26,17 @@ pub(super) fn guard_storage_owned_body(
             &[b"conversation_dag:record:v1:".as_slice(), id.as_bytes()].concat(),
         )?
         .is_some()
-        && let Some(raw) = store.entities.get(wtxn, id.as_bytes())?
     {
+        let raw = store
+            .entities
+            .get(wtxn, id.as_bytes())?
+            .ok_or(Error::Record(RecordError::ConversationState(
+                "DAG records are append-only",
+            )))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("DAG record header"))?;
-        if raw[ENTITY_METADATA_HEADER_LEN..] != *data
+        if header.entity_type != entity_type
+            || raw[ENTITY_METADATA_HEADER_LEN..] != *data
             || header.occurred_start != occurred.start
             || header.occurred_end != occurred.end
         {

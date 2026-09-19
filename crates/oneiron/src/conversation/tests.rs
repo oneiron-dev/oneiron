@@ -664,3 +664,86 @@ fn legacy_dag_initializes_on_read_and_nonadvancing_roots_stay_off_head() {
             .is_empty()
     );
 }
+
+#[test]
+fn deleted_dag_records_cannot_be_recreated_by_generic_put() {
+    let (_dir, vault, actor, room, _) = fixture();
+    let row = record(room, actor, 2);
+    vault.append_record(&row).unwrap();
+    vault.batch().delete(&row.id).commit().unwrap();
+    assert!(!vault.entity_exists(&row.id).unwrap());
+    let result = vault.put_entity(
+        &row.id,
+        crate::registry::ENTITY_TYPE_TURN,
+        TimeRange { start: 3, end: 3 },
+        3,
+        &encode(&serde_json::json!({"txt":"rewritten"})).unwrap(),
+    );
+    assert!(matches!(
+        result,
+        Err(Error::Record(RecordError::ConversationState(_)))
+    ));
+    assert!(!vault.entity_exists(&row.id).unwrap());
+}
+
+#[test]
+fn moving_head_to_a_room_or_sub_session_is_atomic_and_refused() {
+    let (_dir, vault, actor, room, _) = fixture();
+    let first = record(room, actor, 2);
+    vault.append_record(&first).unwrap();
+    let second = record(room, actor, 3);
+    vault.append_record(&second).unwrap();
+    let session = EntityId::now();
+    vault
+        .spawn_sub_session(session, first.id, actor, 4)
+        .unwrap();
+    for target in [room, session] {
+        assert!(matches!(
+            vault.move_conversation_head(room, target, actor),
+            Err(Error::Record(RecordError::InvalidConversationBody(_)))
+        ));
+        assert_eq!(vault.conversation_head(room).unwrap(), Some(second.id));
+        assert_eq!(vault.canonical_child(first.id).unwrap(), Some(second.id));
+        assert_eq!(
+            vault
+                .resolve_scope(&ScopeSelector::Canonical(room), false)
+                .unwrap(),
+            vec![first.id, second.id]
+        );
+    }
+}
+
+#[test]
+fn membership_rows_without_their_revision_never_grant_audience_reads() {
+    let (_dir, vault, actor, room, bob) = fixture();
+    vault
+        .join_member(room, bob, actor, 2, HistoryChoice::Share)
+        .unwrap();
+    let row = record(room, actor, 3);
+    vault.append_record(&row).unwrap();
+    let reader = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
+        .for_audience(&[bob]);
+    assert!(reader.get(&row.id).unwrap().is_some());
+    for revision in [None, Some(0_u64), Some(2_u64)] {
+        vault
+            .with_write_txn(|txn| {
+                let k = key(b"conversation_membership:seq:v1:", room);
+                if let Some(revision) = revision {
+                    vault
+                        .store
+                        .vault_meta
+                        .put(txn, &k, &revision.to_be_bytes())?;
+                } else {
+                    vault.store.vault_meta.delete(txn, &k)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert!(matches!(reader.get(&row.id), Err(Error::CorruptedIndex(_))));
+        assert!(matches!(
+            vault.membership_at(room, 3),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
+}

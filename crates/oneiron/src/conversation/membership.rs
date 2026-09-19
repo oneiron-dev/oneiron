@@ -40,6 +40,35 @@ impl MembershipWindow {
     }
 }
 
+pub(super) fn revision_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    conversation: EntityId,
+) -> Result<u64> {
+    let revision = store
+        .vault_meta
+        .get(txn, &key(b"conversation_membership:seq:v1:", conversation))?
+        .map(|bytes| {
+            bytes
+                .as_ref()
+                .try_into()
+                .map(u64::from_be_bytes)
+                .map_err(|_| Error::CorruptedIndex("membership revision"))
+        })
+        .transpose()?;
+    if revision.unwrap_or(0) == 0
+        && store
+            .vault_meta
+            .prefix_iter(txn, &key(PREFIX, conversation))?
+            .next()
+            .transpose()?
+            .is_some()
+    {
+        return Err(Error::CorruptedIndex("membership rows without revision"));
+    }
+    Ok(revision.unwrap_or(0))
+}
+
 pub(super) fn rows_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -61,6 +90,11 @@ pub(super) fn rows_in(
             return Err(Error::CorruptedIndex("membership ledger order"));
         }
         rows.push(row);
+    }
+    if revision_in(store, txn, conversation)? != rows.len() as u64 {
+        return Err(Error::CorruptedIndex(
+            "membership revision does not match rows",
+        ));
     }
     Ok(rows)
 }
