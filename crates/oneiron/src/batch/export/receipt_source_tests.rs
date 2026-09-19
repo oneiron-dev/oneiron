@@ -245,3 +245,95 @@ fn real_cited_receipt_source_survives_import_reopen_and_reexport_without_native_
     );
     Ok(())
 }
+
+#[test]
+fn receipt_id_collision_cannot_replace_either_bound_archive_or_native_terminal_data() -> Result<()>
+{
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    let (imported_claim, _) = fixture(&source)?;
+    let (native_claim, native_receipt) = fixture(&target)?;
+    let export = source.export_whole_vault(PackFormat::Json)?;
+    let mut document = source.read_whole_vault_json(export.bytes())?;
+    // This is deliberately hostile foreign data, not a claimed local terminal
+    // act. It alleges the same receipt ID as a real local terminal event.
+    let claim = document
+        .claims
+        .iter_mut()
+        .find(|row| row.id == imported_claim.to_hex())
+        .unwrap();
+    let mut body = crate::claim::decode_claim_body(&claim.body.to_bytes()?, true)?;
+    let Some(rmpv::Value::Map(evidence)) = &mut body.evidence else {
+        panic!("task evidence");
+    };
+    *evidence
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("receipts"))
+        .unwrap() = (
+        "receipts".into(),
+        rmpv::Value::Array(vec![native_receipt.receipt_id.clone().into()]),
+    );
+    claim.body = crate::serialize::ExportBody::from_bytes(
+        &crate::claim::encode_claim_body(&body)?,
+        crate::registry::ENTITY_TYPE_CLAIM,
+    );
+    let crate::serialize::ExportBody::MessagePack(crate::serialize::ExportValue::Map(entries)) =
+        &claim.body
+    else {
+        panic!("claim tree");
+    };
+    let evidence = entries
+        .iter()
+        .find(|(key, _)| matches!(key,crate::serialize::ExportValue::String(key) if key=="evid"))
+        .unwrap()
+        .1
+        .clone();
+    let envelope = document
+        .derivation_envelopes
+        .iter_mut()
+        .find(|row| row.id == imported_claim.to_hex())
+        .unwrap();
+    envelope.evidence = evidence;
+    let mut foreign = native_receipt.clone();
+    foreign
+        .fields
+        .insert("foreign_fixture".into(), "different untrusted data".into());
+    envelope.receipts = vec![ExportReceiptSource::from_record(
+        foreign.receipt_id.clone(),
+        Some(&foreign),
+    )?];
+    target.import_whole_vault_json(&serde_json::to_vec(&document).unwrap())?;
+    assert_eq!(
+        attempt_pack_receipt(&target, &native_receipt.receipt_id)?,
+        Some(native_receipt.clone())
+    );
+    let export = target.export_whole_vault(PackFormat::Json)?;
+    let document = target.read_whole_vault_json(export.bytes())?;
+    let imported = document
+        .derivation_envelopes
+        .iter()
+        .find(|row| row.id == imported_claim.to_hex())
+        .unwrap();
+    assert_eq!(imported.receipts[0].record()?, Some(foreign));
+    assert!(matches!(
+        imported.receipts[0],
+        ExportReceiptSource::Preserved {
+            origin: ReceiptSourceOrigin::ImportedArchive,
+            ..
+        }
+    ));
+    let native = document
+        .derivation_envelopes
+        .iter()
+        .find(|row| row.id == native_claim.to_hex())
+        .unwrap();
+    assert_eq!(native.receipts[0].record()?, Some(native_receipt));
+    assert!(matches!(
+        native.receipts[0],
+        ExportReceiptSource::Preserved {
+            origin: ReceiptSourceOrigin::CapturedLocalTerminal,
+            ..
+        }
+    ));
+    Ok(())
+}

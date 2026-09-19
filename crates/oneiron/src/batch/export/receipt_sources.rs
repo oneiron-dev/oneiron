@@ -173,12 +173,12 @@ pub(crate) fn receipt_sources_for_body(
     task_receipt_refs_from_body(body)
         .into_iter()
         .map(|id| {
-            let record = receipts.get(&id);
-            if record.is_none()
-                && let Some(source) = archived.and_then(|rows| rows.get(&id))
-            {
+            // Imported history keeps its exact bound source. A coincident local
+            // receipt ID cannot silently rewrite the archived claim's trace.
+            if let Some(source) = archived.and_then(|rows| rows.get(&id)) {
                 return Ok(source.clone());
             }
+            let record = receipts.get(&id);
             ExportReceiptSource::from_record(id, record)
         })
         .collect()

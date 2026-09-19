@@ -2475,7 +2475,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/batch/export/receipt_source_tests.rs",
