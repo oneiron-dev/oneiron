@@ -199,6 +199,29 @@ fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionReason> {
         ENTITY_TYPE_SKILL_CONTENT_ANCHOR => Some(ImportOmissionReason::SkillAnchorRecomputed),
         ENTITY_TYPE_SKILL_HUB => Some(ImportOmissionReason::HubConfigurationNotRestored),
         ENTITY_TYPE_POLICY_MANIFEST => Some(ImportOmissionReason::PolicyAuthorityNotRestored),
+        crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+        | crate::registry::ENTITY_TYPE_FEDERATION_GRANT
+        | crate::registry::ENTITY_TYPE_ACCESS_GRANT
+        | crate::registry::ENTITY_TYPE_CONNECTOR_KEY
+        | crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY
+        | crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT
+        | crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
+            Some(ImportOmissionReason::LocalAuthorityNotRestored)
+        }
+        crate::registry::ENTITY_TYPE_DIAGNOSTIC
+        | crate::registry::ENTITY_TYPE_REDACTION_AUDIT
+        | crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT
+        | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+        | crate::registry::ENTITY_TYPE_COMM_RECORD => {
+            Some(ImportOmissionReason::LocalHistoryNotRestored)
+        }
+        crate::registry::ENTITY_TYPE_PSYCH_PROFILE => {
+            Some(ImportOmissionReason::LocalProjectionNotRestored)
+        }
+        crate::registry::ENTITY_TYPE_MESSAGE => {
+            Some(ImportOmissionReason::WitnessAuthorizationNotRestored)
+        }
+        crate::registry::ENTITY_TYPE_NOTE => Some(ImportOmissionReason::NoteAuthorshipNotRestored),
         ENTITY_TYPE_CLAIM => {
             // Decode a reserved claim only for classification; NEVER store it.
             let predicate = match &row.body {
@@ -221,6 +244,11 @@ fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionReason> {
                 )
             ) {
                 Some(ImportOmissionReason::ForeignSkillSignalNotRestored)
+            } else if matches!(
+                predicate,
+                Some("actor.peer_binding" | "actor.confidence_prior")
+            ) {
+                Some(ImportOmissionReason::LocalActorConfigurationNotRestored)
             } else {
                 None
             }

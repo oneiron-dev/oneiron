@@ -2686,3 +2686,52 @@ fn credentials_are_null_in_every_format_without_an_opt_out() {
     assert!(output["claims"][0]["val"]["api_key"].is_null());
     assert!(output["claims"][0]["val"]["nested"][0]["accessToken"].is_null());
 }
+
+#[test]
+fn whole_vault_provenance_references_are_preserved_only_in_the_typed_value() {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::provenance::{EdgeProvenanceClaimBody, SupersessionStatus};
+    let mut provenance =
+        EdgeProvenanceClaimBody::new(EntityId::now(), 0.75, SupersessionStatus::Proposed);
+    provenance.actor_class = Some(crate::edge::EdgeActorClass::Human);
+    provenance.substrate_ref = Some(EntityId::now());
+    provenance.source_revision_ref = Some([128; 16]);
+    provenance.body_snapshot_ref = Some([129; 16]);
+    let mut claim = ClaimBody::new(
+        crate::provenance::PREDICATE_EDGE_PROVENANCE,
+        ClaimSubject::Edge {
+            source: EntityId::now(),
+            kind: crate::edge::EdgeKind::DerivedFrom,
+            target: EntityId::now(),
+        },
+        crate::provenance::encode_edge_provenance_value(&provenance),
+        0.75,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("substrate_ref"),
+        rmpv::Value::Binary(vec![128; 16]),
+    )]));
+    let bytes = crate::claim::encode_claim_body(&claim).unwrap();
+    let exported = super::ExportBody::from_bytes(&bytes, crate::registry::ENTITY_TYPE_CLAIM);
+    exported
+        .validate(crate::registry::ENTITY_TYPE_CLAIM)
+        .unwrap();
+    let imported = crate::claim::decode_claim_body(&exported.to_bytes().unwrap(), true).unwrap();
+    assert_eq!(imported.value, claim.value);
+    assert_eq!(
+        imported.scope,
+        Some(rmpv::Value::Map(vec![(
+            rmpv::Value::from("substrate_ref"),
+            rmpv::Value::Nil
+        )]))
+    );
+    claim.predicate = "preference.example".into();
+    let exported = super::ExportBody::from_bytes(
+        &crate::claim::encode_claim_body(&claim).unwrap(),
+        crate::registry::ENTITY_TYPE_CLAIM,
+    );
+    let imported = crate::claim::decode_claim_body(&exported.to_bytes().unwrap(), false).unwrap();
+    assert!(crate::provenance::decode_edge_provenance_body(&imported.value).is_err());
+}

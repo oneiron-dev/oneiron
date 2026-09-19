@@ -64,7 +64,11 @@ impl ExportBody {
         if let Ok(value) = rmpv::decode::read_value(&mut cursor)
             && cursor.position() == bytes.len() as u64
         {
-            return Self::MessagePack(export_value(&value, "", entity_type, 0));
+            let mut exported = export_value(&value, "", entity_type, 0);
+            if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                export_provenance_references(bytes, &mut exported);
+            }
+            return Self::MessagePack(exported);
         }
         match std::str::from_utf8(bytes) {
             Ok(text) if safe_text(text) => Self::Utf8(text.to_owned()),
@@ -107,6 +111,55 @@ impl ExportBody {
             ));
         }
         Ok(())
+    }
+}
+
+// Only the owning, validated edge.provenance value map gets these four
+// binary reference fields. An equally named field in arbitrary evidence is
+// still subject to ordinary opaque-byte nulling.
+fn export_provenance_references(bytes: &[u8], exported: &mut ExportValue) {
+    let Ok(claim) = crate::claim::decode_claim_body(bytes, true) else {
+        return;
+    };
+    if claim.predicate != crate::provenance::PREDICATE_EDGE_PROVENANCE {
+        return;
+    }
+    let Ok(record) = crate::provenance::decode_edge_provenance_body(&claim.value) else {
+        return;
+    };
+    if crate::provenance::resolve_persisted_actor_class(&record, claim.evidence.as_ref()).is_err() {
+        return;
+    }
+    let ExportValue::Map(entries) = exported else {
+        return;
+    };
+    let Some(ExportValue::Map(values)) = entries.iter_mut().find_map(|(key, value)| {
+        matches!(key, ExportValue::String(key) if key == "val").then_some(value)
+    }) else {
+        return;
+    };
+    for (name, bytes) in [
+        (
+            "actor_entity_ref",
+            Some(*record.actor_entity_ref.as_bytes()),
+        ),
+        (
+            "substrate_ref",
+            record.substrate_ref.map(|id| *id.as_bytes()),
+        ),
+        ("source_revision_ref", record.source_revision_ref),
+        ("body_snapshot_ref", record.body_snapshot_ref),
+    ] {
+        if let Some(bytes) = bytes {
+            if scan_file_content("", &bytes).is_some() {
+                continue;
+            }
+            if let Some(value) = values.iter_mut().find_map(|(key, value)| {
+                matches!(key, ExportValue::String(key) if key == name).then_some(value)
+            }) {
+                *value = ExportValue::EntityReference(bytes.to_vec());
+            }
+        }
     }
 }
 

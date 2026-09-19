@@ -87,6 +87,18 @@ pub enum ImportOmissionReason {
     HubConfigurationNotRestored,
     /// Policy bodies remain archive data; only a local authority can install policy.
     PolicyAuthorityNotRestored,
+    /// A foreign authority roster, grant, address or credential binding is not a local act.
+    LocalAuthorityNotRestored,
+    /// Local audit/sequence history remains readable archive data, never replay authority.
+    LocalHistoryNotRestored,
+    /// Derived cache state is rebuilt from locally admitted inputs.
+    LocalProjectionNotRestored,
+    /// A witness MESSAGE needs live witness authorization; an archive supplies none.
+    WitnessAuthorizationNotRestored,
+    /// Attributed NOTE authorship is not conferred on the importing actor.
+    NoteAuthorshipNotRestored,
+    /// Device-local routing/binding and owner confidence are not portable authority.
+    LocalActorConfigurationNotRestored,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.

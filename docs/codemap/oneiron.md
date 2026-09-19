@@ -1666,7 +1666,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/text_tests.rs` | test | s | — | — | — |
 | `src/self_heal/untrusted_text.rs` | src | s | 3 crate-vis | — | Untrusted detail-text validation and escaping |
 | `src/serialize/credential_nulling.rs` | src | s | 2 crate-vis | — | Unconditional credential removal before any context/export format writer |
-| `src/serialize/export_value.rs` | src | s | 2 enum · 4 crate-vis | ExportBody, ExportValue | Credential-safe, type-preserving MessagePack values for whole-vault JSON |
+| `src/serialize/export_value.rs` | src | m | 2 enum · 4 crate-vis | ExportBody, ExportValue | Credential-safe, type-preserving MessagePack values for whole-vault JSON |
 | `src/serialize/field_profile_table.rs` | src | s | 1 crate-vis | — | Static entity-type x [`FieldProfile`] to allowed-field-slice table |
 | `src/serialize/group_labels.rs` | src | s | 7 crate-vis | — | Static entity-type to section-label lookup used by every writer |
 | `src/serialize/item_budget.rs` | src | m | 4 crate-vis | — | Per-item token-budget enforcement and value truncation |

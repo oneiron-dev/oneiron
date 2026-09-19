@@ -335,3 +335,64 @@ fn whole_vault_export_skips_live_overlay_members_without_refusing_export() -> Re
     session.close()?;
     Ok(())
 }
+
+#[test]
+fn foreign_archive_authority_and_witness_rows_remain_data_not_local_rights() -> Result<()> {
+    use crate::registry::*;
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    let person = crate::EntityId::now();
+    source.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        range(),
+        789,
+        b"portable person",
+    )?;
+    let mut ids = Vec::new();
+    // Hostile/historical archive bytes must not become local acts merely because
+    // their type byte claims to be an authority, audit, note or witness record.
+    for kind in [
+        ENTITY_TYPE_AUTHORITY_LOG,
+        ENTITY_TYPE_FEDERATION_GRANT,
+        ENTITY_TYPE_ACCESS_GRANT,
+        ENTITY_TYPE_CONNECTOR_KEY,
+        ENTITY_TYPE_CHANNEL_IDENTITY,
+        ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        ENTITY_TYPE_OUTBOUND_GRANT,
+        ENTITY_TYPE_DIAGNOSTIC,
+        ENTITY_TYPE_REDACTION_AUDIT,
+        ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+        ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        ENTITY_TYPE_COMM_RECORD,
+        ENTITY_TYPE_PSYCH_PROFILE,
+        ENTITY_TYPE_MESSAGE,
+        ENTITY_TYPE_NOTE,
+    ] {
+        let id = crate::EntityId::now();
+        raw_residue(&source, &id, kind, b"foreign local-act evidence")?;
+        ids.push(id);
+    }
+    let export = source.export_whole_vault(PackFormat::Json)?;
+    let document = target.read_whole_vault_json(export.bytes())?;
+    assert!(document.manifest.import_refusals.is_empty());
+    for id in &ids {
+        assert!(document.entities().any(|row| row.id == id.to_hex()));
+        assert!(
+            document
+                .manifest
+                .import_omissions
+                .iter()
+                .any(|row| row.entity_id == id.to_hex())
+        );
+    }
+    target.import_whole_vault_json(export.bytes())?;
+    assert!(target.get_entity(&person)?.is_some());
+    for id in ids {
+        assert!(target.get_entity(&id)?.is_none());
+    }
+    // Re-import cannot turn omitted foreign rows into native authority either.
+    let replay = target.import_whole_vault_json(export.bytes())?;
+    assert_eq!(replay.inserted_entities, 0);
+    Ok(())
+}
