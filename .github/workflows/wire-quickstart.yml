@@ -22,6 +22,8 @@ on:
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
       - "scripts/tests/test_wire_workflow.py"
+      - "scripts/code-sandbox/**"
+      - "scripts/tests/test_sandbox_wit.*"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -41,6 +43,8 @@ on:
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
       - "scripts/tests/test_wire_workflow.py"
+      - "scripts/code-sandbox/**"
+      - "scripts/tests/test_sandbox_wit.*"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -143,6 +147,8 @@ jobs:
           python packages/oneiron/scripts/agent-docs.py --check
           node packages/oneiron/scripts/check-readme-snippets.mjs
           bun test --cwd packages/oneiron-ai-sdk
+          python scripts/code-sandbox/generate.py --check
+          node scripts/tests/test_sandbox_wit.mjs
 
       - name: Build the SDK crates (dev profile)
         run: |

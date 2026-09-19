@@ -19,6 +19,7 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+wasmtime = { version = "=38.0.4", optional = true, default-features = false, features = ["runtime", "component-model", "cranelift", "std", "wat"] }
 heed = { workspace = true }
 half = "2"
 uuid = { workspace = true }
@@ -31,6 +32,7 @@ rmp-serde = { workspace = true }
 rmpv = { workspace = true }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
+schemars = "=0.8.22"
 serde_json = { workspace = true }
 postcard = { workspace = true, optional = true }
 blake3 = { workspace = true }
@@ -156,6 +158,7 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
+code-sandbox-wasmtime = ["dep:wasmtime"]
 image-station-ocr = ["dep:ocrs", "dep:rten"]
 artifact-publish-verb = []
 # CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest
