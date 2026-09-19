@@ -488,6 +488,65 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         );
         last_delivery = Some((notice, receipt_frame));
     }
+    // An in-flight full-view receipt is also a derived carrier. After a
+    // cited source is erased, the NOTE itself remains exportable, but this
+    // older queued receipt must not restore the removed quote on the wire.
+    let claim = EntityId::now();
+    let body = oneiron::claim::ClaimBody::new(
+        "profile.name",
+        oneiron::claim::ClaimSubject::Entity(author),
+        rmpv::Value::from("queued quote"),
+        0.9,
+        oneiron::claim::ClaimApprovalStatus::Approved,
+        oneiron::claim::ClaimLifecycleStatus::Active,
+    );
+    vault
+        .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let memory = vault.memory(author, EdgeActorClass::Human);
+    let source = EntityId::from_hex(
+        &memory
+            .author_take(TakeTarget::Subject(author), "queued quote")
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    let pin = vault.pin_note_span(source, claim, 0, 12).unwrap();
+    memory.cite_note_span(note, &pin).unwrap();
+    let edit = command(&vault, note, 0, 0, "edit ");
+    handle_document(
+        &server,
+        1,
+        note,
+        document_sub_tags::NOTE_OPS,
+        &edit.encode().unwrap(),
+        &direct,
+        &mut state,
+    )
+    .unwrap();
+    let notice = responses.try_recv().unwrap();
+    let stale_receipt = responses.try_recv().unwrap();
+    let frame = transport::decode_document(&stale_receipt[1..]).unwrap();
+    let receipt: oneiron::note::NoteOperationReceipt =
+        serde_json::from_slice(frame.payload).unwrap();
+    assert!(matches!(&receipt.outcome, NoteEditOutcome::Applied(view) if view.pins == vec![pin]));
+    assert_eq!(
+        super::documents::document_delivery(&server, &state, &stale_receipt).unwrap(),
+        vec![stale_receipt.clone()]
+    );
+    vault.delete_entity(&source).unwrap();
+    assert!(vault.note_document(note).unwrap().pins.is_empty());
+    assert_eq!(
+        super::documents::document_delivery(&server, &state, &notice)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        super::documents::document_delivery(&server, &state, &stale_receipt)
+            .unwrap()
+            .is_empty()
+    );
     let before = vault.note_document(note).unwrap();
     crate::auth::revoke_token_jti(&vault, JTI).unwrap();
     let (notice, receipt_frame) = last_delivery.unwrap();

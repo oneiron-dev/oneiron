@@ -184,6 +184,18 @@ pub(super) fn document_delivery(
                 &request.remote_vv,
             ) {
                 if doc.kind == document_sub_tags::NOTE_RECEIPT {
+                    let receipt: oneiron::note::NoteOperationReceipt =
+                        serde_json::from_slice(doc.payload)
+                            .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?;
+                    // The current document may now be exportable because erasure
+                    // removed a hidden pin. Never send its pre-erasure queued view.
+                    if !server
+                        .vault
+                        .note_receipt_is_current(doc.entity, &receipt)
+                        .map_err(storage_error)?
+                    {
+                        continue;
+                    }
                     out.push(
                         transport::encode_document(doc.entity, doc.kind, doc.payload)
                             .into_result()

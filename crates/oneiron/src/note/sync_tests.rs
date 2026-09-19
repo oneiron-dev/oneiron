@@ -660,3 +660,73 @@ fn note_open_checkpoints_replayed_updates_without_dropping_them() {
         "birth + recovered"
     );
 }
+
+#[test]
+fn note_edit_and_replay_receipts_cannot_bypass_citation_selector() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    let author = actor(&vault);
+    let memory = vault.memory(author, EdgeActorClass::Human);
+    let claim = EntityId::now();
+    let world = EntityId::now();
+    let mut body = crate::claim::ClaimBody::new(
+        "profile.name",
+        crate::claim::ClaimSubject::Entity(author),
+        rmpv::Value::from("private quote"),
+        0.9,
+        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault
+        .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let source = EntityId::from_hex(
+        &memory
+            .author_take(TakeTarget::Subject(author), "private quote")
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    memory.bless_brief_kind().unwrap();
+    let pin = vault.pin_note_span(source, claim, 0, 13).unwrap();
+    let brief = EntityId::from_hex(&memory.author_brief("prose", &[]).unwrap().id_hex).unwrap();
+    let all = selector(&vault, author, FederationGrantRole::Member);
+    let mut base = all.clone();
+    base.world = SyncSelectorWorld::Base;
+    let scope = crate::FederationGrantScope::vault(7);
+    let setup = edit(&vault, brief, 0, 0, "Free ");
+    let plain = memory
+        .admit_note_operation(brief, scope, &base, JTI, &setup)
+        .unwrap();
+    assert!(matches!(plain.outcome, NoteEditOutcome::Applied(view)
+        if view.markdown == "Free prose" && view.pins.is_empty()));
+    memory.cite_note_span(brief, &pin).unwrap();
+    let before = vault.note_document(brief).unwrap();
+    let op = edit(&vault, brief, 0, 0, "new ");
+    // The NOTE is writable in the base selector, but its cited claim is not.
+    // Refusal must precede both mutation and the full-view result.
+    assert!(
+        memory
+            .admit_note_operation(brief, scope, &base, JTI, &op)
+            .is_err()
+    );
+    assert_eq!(vault.note_document(brief).unwrap(), before);
+    let receipt = memory
+        .admit_note_operation(brief, scope, &all, JTI, &op)
+        .unwrap();
+    assert!(matches!(&receipt.outcome, NoteEditOutcome::Applied(view)
+        if view.markdown == "new Free prose" && view.pins == vec![pin]));
+    // A saved successful receipt is not a reusable disclosure capability.
+    assert!(
+        memory
+            .admit_note_operation(brief, scope, &base, JTI, &op)
+            .is_err()
+    );
+    assert_eq!(
+        memory
+            .admit_note_operation(brief, scope, &all, JTI, &op)
+            .unwrap(),
+        receipt
+    );
+}

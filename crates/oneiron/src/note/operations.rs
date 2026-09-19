@@ -97,6 +97,27 @@ pub(super) fn record_authorship(doc: &NoteDocument, record: &NoteAuthorship) -> 
     Ok(())
 }
 
+impl crate::Vault {
+    /// Whether a queued NOTE receipt still has its authoritative durable row.
+    /// Host delivery combines this freshness check with current selector admission.
+    /// Erasure deletes copied full-view receipts in the same writer as their pins.
+    pub fn note_receipt_is_current(
+        &self,
+        note: EntityId,
+        receipt: &NoteOperationReceipt,
+    ) -> crate::Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        super::citation_erase::ensure_citations_ready(&self.store, &txn, note)?;
+        let key = format!("nr:e:{}:{}", note.to_hex(), receipt.request_id.to_hex());
+        let Some(bytes) = self.store.sync_state.get(&txn, &key)? else {
+            return Ok(false);
+        };
+        let saved: (EntityIdWire, NoteOperationReceipt) =
+            serde_json::from_slice(&bytes).map_err(|_| invalid("NOTE receipt corrupt"))?;
+        Ok(saved.1 == *receipt)
+    }
+}
+
 impl Memory<'_> {
     /// Host boundary for an already MAC-verified, live session. `self.actor()`
     /// and class MUST come from that credential, never the command or selector.
@@ -145,6 +166,13 @@ impl Memory<'_> {
                 selector,
                 Some(self.actor()),
             )?;
+            // Applied and replayed receipts carry the full document view. A
+            // writable NOTE alone cannot widen disclosure of its existing pins.
+            // Check the same citation closure as document export before any edit
+            // or saved receipt can escape this committing transaction.
+            for pin in load(self.vault(), txn, note)?.pins()? {
+                super::replica::admit_pin_disclosure(self.vault(), txn, scope, selector, &pin)?;
+            }
             if let NoteChange::Cite { pin } = &operation.change {
                 super::replica::admit_pin_disclosure(self.vault(), txn, scope, selector, pin)?;
             }
