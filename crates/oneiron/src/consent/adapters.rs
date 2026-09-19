@@ -159,6 +159,7 @@ pub(super) fn outbound_scope_axes(
             server,
             tool,
             data_class_ceiling,
+            tool_data_classes,
             endpoint_allowlist,
         } => {
             let mut selectors = vec![
@@ -166,6 +167,11 @@ pub(super) fn outbound_scope_axes(
                 format!("tool:{tool}"),
                 format!("data_class_ceiling:{}", data_class_ceiling.as_str()),
             ];
+            selectors.extend(
+                tool_data_classes
+                    .iter()
+                    .map(|class| format!("tool_data_class:{}", class.as_str())),
+            );
             selectors.extend(
                 endpoint_allowlist
                     .iter()

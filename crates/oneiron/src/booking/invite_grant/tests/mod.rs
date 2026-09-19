@@ -478,6 +478,9 @@ fn booking_page_invite_scope_round_trips_without_retagging_existing_scopes() {
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         StandingOutboundGrantScope::BookingPageInvites { page_ref: page },

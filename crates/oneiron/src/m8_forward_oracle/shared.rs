@@ -60,6 +60,9 @@ pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixtur
                 server: "files".to_owned(),
                 tool: "read_file".to_owned(),
                 data_class_ceiling: DataClass::Personal,
+                tool_data_classes: vec![
+                    crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+                ],
                 endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
             },
             10,
@@ -106,12 +109,26 @@ pub(super) fn oracle_prepared_effect(
     idempotency_supported: bool,
 ) -> PreparedEffect {
     let call = fixture.call.clone();
+    let prepared = crate::outbound_consent::tool_call::prepare_tool_call(
+        call.clone(),
+        crate::outbound_consent::tool_call::ToolCallDescriptor {
+            schema: &serde_json::json!({"properties": {}}),
+            destructive_hint: false,
+            replay: crate::outbound_intent_ledger::OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(idempotency_supported),
+            },
+        },
+        &serde_json::json!({"fixture_bytes": payload}),
+        crate::outbound_consent::tool_call::MutationIntent::default(),
+    )
+    .expect("prepare oracle tool call");
     PreparedEffect {
         attempt_id,
         call_seq,
         server: call.server.clone(),
         tool: call.tool.clone(),
-        payload,
+        payload: prepared.frozen_bytes().to_vec(),
         idempotency_supported,
         resolved_endpoint: Some(call.resolved_endpoint.clone()),
         gate: crate::gate::ExternalEffectGateInput {
@@ -143,7 +160,7 @@ pub(super) fn oracle_prepared_effect(
         authorization: PreparedAuthorization::ScopedMcp {
             grant_id: fixture.grant_id,
             principal_ref: fixture.principal_ref.clone(),
-            call,
+            prepared,
         },
         verified_actor: None,
     }

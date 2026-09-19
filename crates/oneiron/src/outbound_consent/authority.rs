@@ -13,10 +13,8 @@ use crate::outbound_intent_ledger::{
 };
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 
-use super::scope::{
-    ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
-    evaluate_scoped_mcp_call,
-};
+use super::scope::{ScopedMcpConsentDecision, ScopedMcpEscalationReason};
+use super::tool_call::{FrozenToolCall, PreparedToolCall};
 
 #[cfg(test)]
 std::thread_local! {
@@ -25,6 +23,13 @@ std::thread_local! {
 }
 
 /// Once-serialized payload consumed by the durable outbound pipeline.
+///
+/// Only descriptor-based preparation constructs this type.
+/// ```compile_fail
+/// use oneiron::outbound_consent::FrozenMcpPayload;
+/// let raw = FrozenMcpPayload::new(br#"{"headers":{"x-tenant":"unguarded"}}"#.to_vec());
+/// ```
+#[derive(Clone)]
 pub struct FrozenMcpPayload {
     pub(super) bytes: Vec<u8>,
     #[cfg(test)]
@@ -32,10 +37,9 @@ pub struct FrozenMcpPayload {
 }
 
 impl FrozenMcpPayload {
-    /// Freezes caller-serialized bytes. No later stage has a serialization
-    /// API; the buffer is moved into the ledger request unchanged.
+    /// Only the preparation module may create a frozen scoped payload.
     #[must_use]
-    pub fn new(serialized: Vec<u8>) -> Self {
+    pub(super) fn new(serialized: Vec<u8>) -> Self {
         #[cfg(test)]
         let freeze_event_baseline = FROZEN_MCP_PAYLOAD_FREEZE_EVENTS.with(|counter| {
             let baseline = counter.get();
@@ -106,6 +110,8 @@ impl OutboundBindingAuthority {
 
     /// Mints only after the persisted live grant passes every scoped-consent
     /// axis. The caller's grant copy is never an authorization authority.
+    /// Only a descriptor-prepared request can mint a binding; raw bytes and
+    /// separately asserted call axes are not accepted at this door.
     #[expect(clippy::too_many_arguments)]
     pub fn authorize_request(
         &self,
@@ -115,9 +121,9 @@ impl OutboundBindingAuthority {
         principal_ref: &str,
         attempt_id: AttemptId,
         call_seq: u64,
-        call: &ScopedMcpCallContext,
-        payload: &[u8],
+        prepared: &PreparedToolCall,
     ) -> std::result::Result<ScopedMcpAuthorization, IntentLedgerError> {
+        let call = prepared.call();
         let Some(grant) = vault.get_standing_outbound_grant(&grant_id)? else {
             return Ok(ScopedMcpAuthorization {
                 decision: ScopedMcpConsentDecision::Escalate(
@@ -140,7 +146,7 @@ impl OutboundBindingAuthority {
         let decision = if grant.is_active_under_policy(&current_policy_floor) {
             grant.scope.scoped_mcp_grant().map_or(
                 ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant),
-                |scope| evaluate_scoped_mcp_call(scope, call.as_call()),
+                |scope| prepared.decision(scope),
             )
         } else {
             ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant)
@@ -152,7 +158,7 @@ impl OutboundBindingAuthority {
             });
         }
 
-        let payload_hash = *blake3::hash(payload).as_bytes();
+        let payload_hash = *blake3::hash(prepared.frozen_bytes()).as_bytes();
         let intent_id = derive_intent_id(
             attempt_id,
             call_seq,
@@ -184,7 +190,6 @@ impl OutboundBindingAuthority {
     /// safe canonical server have all been admitted on this txn — it is the one
     /// value that later carries capability authority into the durable ledger
     /// and recovery (ONE-1885).
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn mint_scoped_binding_in_txn(
         &self,
         vault: &Vault,
@@ -192,8 +197,7 @@ impl OutboundBindingAuthority {
         grant_id: EntityId,
         principal_ref: &str,
         intent_id: &[u8; 32],
-        call: &ScopedMcpCallContext,
-        payload_hash: &[u8; 32],
+        prepared: &PreparedToolCall,
     ) -> std::result::Result<
         Option<(OutboundAuthorizationBinding, ScopedCapabilityProvenance)>,
         IntentLedgerError,
@@ -213,9 +217,11 @@ impl OutboundBindingAuthority {
         let Some(scope) = grant.scope.scoped_mcp_grant() else {
             return Ok(None);
         };
-        if evaluate_scoped_mcp_call(scope, call.as_call()) != ScopedMcpConsentDecision::AutoFire {
+        if prepared.decision(scope) != ScopedMcpConsentDecision::AutoFire {
             return Ok(None);
         }
+        let call = prepared.call();
+        let payload_hash = *blake3::hash(prepared.frozen_bytes()).as_bytes();
         // The admitted call's server is safe and canonical (the scoped-consent
         // axes just proved it), so this is the real engine-produced per-grant
         // key identity — not a spelling anyone asserted.
@@ -229,7 +235,7 @@ impl OutboundBindingAuthority {
                 intent_id,
                 &call.server,
                 &call.tool,
-                payload_hash,
+                &payload_hash,
                 Some(&call.resolved_endpoint),
             ),
             capability,
@@ -348,6 +354,21 @@ impl OutboundBindingAuthority {
                     OutboundBindingValidation::Invalid,
                 ));
             }
+            let Ok(prepared) = FrozenToolCall::decode(call.payload()) else {
+                return Ok(FrozenCallValidation::Rejected(
+                    OutboundBindingValidation::Invalid,
+                ));
+            };
+            if prepared.call.server != call.server()
+                || prepared.call.tool != call.tool()
+                || Some(prepared.call.resolved_endpoint.as_str()) != call.resolved_endpoint()
+                || prepared.idempotency_supported() != call.idempotency_supported()
+                || prepared.decision(scope) != ScopedMcpConsentDecision::AutoFire
+            {
+                return Ok(FrozenCallValidation::Rejected(
+                    OutboundBindingValidation::Invalid,
+                ));
+            }
             return Ok(FrozenCallValidation::Valid);
         }
         Ok(FrozenCallValidation::Rejected(
@@ -431,11 +452,16 @@ fn grant_scope_binding_digest(grant: &StandingOutboundGrant) -> [u8; 32] {
             tool,
             data_class_ceiling,
             endpoint_allowlist,
+            tool_data_classes,
         } => {
             binding_hash_str(&mut hasher, "scoped_mcp");
             binding_hash_str(&mut hasher, server);
             binding_hash_str(&mut hasher, tool);
             binding_hash_str(&mut hasher, data_class_ceiling.as_str());
+            binding_hash_bytes(&mut hasher, &(tool_data_classes.len() as u64).to_le_bytes());
+            for class in tool_data_classes {
+                binding_hash_str(&mut hasher, class.as_str());
+            }
             for endpoint in endpoint_allowlist {
                 binding_hash_str(&mut hasher, endpoint);
             }
@@ -469,7 +495,6 @@ pub(crate) fn observed_freeze_events_since(baseline: usize) -> usize {
 }
 
 #[cfg(not(test))]
-#[allow(dead_code)]
 pub(super) const fn observed_freeze_events_since(_baseline: ()) -> usize {
     0
 }
