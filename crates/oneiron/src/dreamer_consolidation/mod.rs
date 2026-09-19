@@ -28,6 +28,7 @@
 //! enforce it.
 
 mod assembly;
+pub(crate) mod branch_scope;
 mod conflict;
 mod executor;
 mod extracted_people;
@@ -35,6 +36,7 @@ mod gap;
 mod open_conflict;
 mod partition;
 mod provenance;
+mod resources;
 pub mod routing;
 pub mod selection;
 mod support;

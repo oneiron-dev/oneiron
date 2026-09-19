@@ -24,6 +24,7 @@ use crate::{
 use super::*;
 
 mod person_extraction;
+mod scope_enforcement;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
@@ -1490,6 +1491,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -1779,6 +1781,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -1828,6 +1831,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -1849,7 +1853,16 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         escalations: 0,
         decayed: false,
     };
-    let delta = upsert_gap_queue(&vault, vec![probe], 22_000)?;
+    let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
+    let resources = super::resources::BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &probe.evidence_turn_refs,
+        admitted.status.attempt.id,
+        None,
+    )?;
+    let delta = resources.upsert_gaps(resources.scope(), vec![probe], 22_000)?;
     assert_eq!(delta.refreshed, 1, "escalation created the gap row");
     assert_eq!(delta.created, 0);
     Ok(())
@@ -2142,6 +2155,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -2204,6 +2218,7 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -2275,6 +2290,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            scope: None,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
@@ -2344,6 +2360,7 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            scope: None,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,

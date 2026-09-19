@@ -66,4 +66,5 @@ use rmpv::Value;
 
 pub mod authority;
 
+pub mod connector_event;
 pub mod maintenance;

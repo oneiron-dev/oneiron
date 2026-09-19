@@ -87,6 +87,12 @@ fn subscriptions_roundtrip_revoke_and_wake_only_matching_non_depleted_keys() -> 
             .iter()
             .any(|r| r.content_kind == "connector_wake" && r.claim_id == Some(*a.as_bytes()))
     );
+    let mut delivered = EventConsumer::default();
+    deliver_queued_event(&vault, &mut delivered)?;
+    assert_eq!(delivered.events.len(), 1);
+    assert_eq!(delivered.events[0].agent, agent_a);
+    assert_eq!(delivered.events[0].event, event);
+    assert_eq!(delivered.events[0].source(), ClaimSource::ToolOutput);
     vault.revoke_connector_event_subscription(&owner, a)?;
     assert!(
         vault
@@ -153,4 +159,56 @@ fn corrupt_subscription_claim_fails_closed() -> Result<()> {
             .is_err()
     );
     Ok(())
+}
+
+#[derive(Default)]
+struct EventConsumer {
+    events: Vec<crate::dreamer_runner::connector_event::ConnectorEventWake>,
+}
+impl crate::dreamer_wake::DreamerAttemptExecutor for EventConsumer {
+    async fn execute(
+        &mut self,
+        attempt: &crate::dreamer_runner::DreamerAdmittedAttempt,
+        _ctx: &mut crate::dreamer_wake::WakeAttemptContext<'_>,
+    ) -> Result<crate::dreamer_wake::DreamerAttemptExecution> {
+        self.events.push(
+            crate::dreamer_runner::connector_event::ConnectorEventWake::from_attempt(attempt)?,
+        );
+        Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 })
+    }
+}
+fn deliver_queued_event(vault: &Vault, exec: &mut EventConsumer) -> Result<()> {
+    use crate::dreamer_wake::{
+        DreamerWakeDriver, RunWakePass, WakeCancellation, WakePassDeadline, WakeTrigger,
+    };
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    let mut driver = DreamerWakeDriver::new(
+        vault,
+        "connector-event-fixture",
+        WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0)),
+    );
+    let cancel = WakeCancellation::new();
+    let future = driver.run_wake_pass(
+        RunWakePass {
+            trigger: WakeTrigger::Event,
+            scope: crate::dreamer_runner::DreamerConsolidationScope::Micro,
+            local_node_id: 1,
+            lease_owner: "connector-event-consumer".into(),
+            budget_total_units: 1000,
+            reserve_units: 10,
+            now: crate::unix_seconds_now() + 1,
+        },
+        exec,
+        &cancel,
+    );
+    let mut future = std::pin::pin!(future);
+    let mut context = Context::from_waker(Waker::noop());
+    for _ in 0..100 {
+        if let Poll::Ready(report) = future.as_mut().poll(&mut context) {
+            assert_eq!(report?.completed, 1);
+            return Ok(());
+        }
+    }
+    Err(invalid())
 }

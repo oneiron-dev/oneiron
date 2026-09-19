@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+mod extraction;
+
+use super::resources::BranchResources;
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
@@ -45,6 +48,10 @@ pub struct ConsolidationExecutor<'a> {
     pub actor: WriteActor,
     pub model: ModelId,
     pub sink: &'a mut dyn ConsolidationSink,
+    /// Trusted caller's exact branch scope, in addition to actor authority.
+    /// A queued scope is its upper bound. None inherits that scope, or admits
+    /// only the queued partition's resources when no caller bound was queued.
+    pub scope: Option<crate::llm::Scope>,
 }
 
 /// Outcome of the (possibly multi-step) LLM work inside one consolidation
@@ -69,160 +76,10 @@ enum PartitionRun {
 }
 
 impl ConsolidationExecutor<'_> {
-    fn extraction_request(
-        &self,
-        partition: &ConsolidationPartitionKey,
-        transcript: &str,
-    ) -> LlmRequest {
-        let system = "Extract durable memory claims from the conversation transcript. \
-             Respond with JSON: {\"candidates\": [{\"subject\": \"<32-hex entity id>\", \
-             \"predicate\": \"<dotted.predicate>\", \"value\": <json>, \"confidence\": <0..1>, \
-             \"evidence_turn_refs\": [\"<32-hex turn id>\"]}]}. Only claims stated by the \
-             user or assistant; never invent evidence refs.";
-        LlmRequest {
-            model: self.model.clone(),
-            envelope: CallEnvelope {
-                scope: crate::llm::Scope::default(),
-                purpose: CallPurpose::Extraction,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence {
-                    per_call: None,
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: ModelTierRef("consolidation".to_owned()),
-                },
-                response_format: ResponseFormat::Json {
-                    schema: super::extracted_people::extraction_response_schema(),
-                },
-                locality: ModelLocality::OwnServer,
-            },
-            messages: vec![
-                LlmMessage {
-                    role: LlmMessageRole::System,
-                    content: vec![ContentPart::Text {
-                        text: system.to_owned(),
-                    }],
-                },
-                LlmMessage {
-                    role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text {
-                        text: format!(
-                            "conversation {}\n{transcript}",
-                            bytes_to_hex_lower(partition.conversation_ref.as_bytes())
-                        ),
-                    }],
-                },
-            ],
-            tools: Vec::new(),
-            params: BTreeMap::new(),
-            provider_options: BTreeMap::new(),
-        }
-    }
-
-    fn decode_candidates(
-        &self,
-        partition: &ConsolidationPartitionKey,
-        response: &LlmResponse,
-        attempt_id: crate::attempt_queue::AttemptId,
-        now_ms: u64,
-    ) -> Result<Vec<PromotionCandidate>> {
-        let text: String = response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        let parsed: serde_json::Value = serde_json::from_str(text.trim())
-            .map_err(|_| invalid_consolidation("extraction response must be JSON"))?;
-        let Some(items) = parsed.get("candidates").and_then(|value| value.as_array()) else {
-            return Ok(Vec::new());
-        };
-
-        let mut candidates = Vec::new();
-        for item in items {
-            let Some(subject) = item
-                .get("subject")
-                .and_then(|value| value.as_str())
-                .and_then(entity_id_from_hex)
-            else {
-                continue;
-            };
-            let Some(predicate) = item.get("predicate").and_then(|value| value.as_str()) else {
-                continue;
-            };
-            let confidence = item
-                .get("confidence")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or(0.5) as f32;
-            let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
-            let rel = match item.get("rel") {
-                None | Some(serde_json::Value::Null) => None,
-                Some(value) => Some(
-                    value
-                        .as_str()
-                        .and_then(entity_id_from_hex)
-                        .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
-                ),
-            };
-            let claim_id = deterministic_claim_id(
-                attempt_id,
-                subject,
-                predicate,
-                &value,
-                partition.world_ref,
-                partition.facet_ref,
-                rel,
-            );
-            let evidence_turn_refs: Vec<EntityId> = item
-                .get("evidence_turn_refs")
-                .and_then(|value| value.as_array())
-                .map(|refs| {
-                    refs.iter()
-                        .filter_map(|entry| entry.as_str().and_then(entity_id_from_hex))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let mut candidate =
-                ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence);
-            if let Some(rel) = rel {
-                candidate = candidate.with_relationship(rel);
-            }
-            if let Some(world) = partition.world_ref {
-                candidate = candidate.with_world(world);
-            }
-            if let Some(facet) = partition.facet_ref {
-                candidate = candidate.with_scope(Value::Map(vec![(
-                    Value::from(TURN_BODY_FACET_REF_KEY),
-                    Value::Binary(facet.as_bytes().to_vec()),
-                )]));
-            }
-            candidates.push(PromotionCandidate {
-                claim_id,
-                candidate,
-                evidence_turn_refs,
-                // Extraction output from the working set carries no external
-                // chain; a peer-derived candidate gets its hops from
-                // `peer_answer_provenance_chain` at the landing seam.
-                provenance_chain: Vec::new(),
-                supersedes: None,
-                evidence_meet: ClaimSource::Generated,
-                occurred: TimeRange {
-                    start: now_ms,
-                    end: now_ms,
-                },
-                learned_at: now_ms,
-            });
-        }
-        Ok(candidates)
-    }
-
     async fn run_partition_attempt(
         &mut self,
         payload_input: &Value,
+        resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
         attempt_id: crate::attempt_queue::AttemptId,
         run_id: Option<String>,
@@ -230,18 +87,9 @@ impl ConsolidationExecutor<'_> {
         let run_id_ref = run_id.as_ref();
         let (partition, turn_ids, _watermark) = decode_partition_payload(payload_input)?;
 
-        let mut transcript = String::new();
-        for turn_id in &turn_ids {
-            let facts = read_turn_facts(ctx.vault, turn_id)?;
-            let speaker = facts.speaker.unwrap_or_else(|| "unknown".to_owned());
-            let text = facts.text.unwrap_or_default();
-            transcript.push_str(&format!(
-                "[{} {}] {}\n",
-                bytes_to_hex_lower(turn_id.as_bytes()),
-                speaker,
-                text
-            ));
-        }
+        resources.require_output(resources.scope())?;
+        resources.require_signals(resources.scope())?;
+        let transcript = resources.transcript(resources.scope(), &turn_ids)?;
 
         let step_ctx = DurableStepContext {
             vault: ctx.vault,
@@ -253,7 +101,7 @@ impl ConsolidationExecutor<'_> {
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
         };
-        let request = self.extraction_request(&partition, &transcript);
+        let request = self.extraction_request(&partition, &transcript, resources.scope());
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await?;
         let (response, spent) = match outcome {
             StepOutcome::Finished { response, .. } => {
@@ -269,13 +117,26 @@ impl ConsolidationExecutor<'_> {
             // empty extraction (#485-1).
             StepOutcome::Trapped(_) => return Ok(PartitionRun::Trapped),
         };
-        let candidates = self.decode_candidates(&partition, &response, attempt_id, ctx.now_ms)?;
+        let candidates = self.decode_candidates(
+            &partition,
+            &response,
+            resources.scope(),
+            attempt_id,
+            ctx.now_ms,
+        )?;
+        resources.validate_candidates(resources.scope(), &candidates)?;
+        resources.require_output(resources.scope())?;
         super::extracted_people::mint_extracted_people(
-            ctx.vault, &response, &turn_ids, ctx.now_ms,
+            ctx.vault,
+            &response,
+            &turn_ids,
+            resources.scope(),
+            ctx.now_ms,
         )?;
         match self
             .resolve_conflicts(
                 candidates,
+                resources,
                 ctx,
                 attempt_id_for_steps(attempt_id, run_id_ref),
             )
@@ -308,10 +169,11 @@ impl ConsolidationExecutor<'_> {
     async fn resolve_conflicts(
         &mut self,
         candidates: Vec<PromotionCandidate>,
+        resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
     ) -> DurableStepResult<PartitionRun> {
-        let assembled = super::assembly::assemble(ctx.vault, candidates, ctx.now_ms)?;
+        let assembled = super::assembly::assemble(ctx.vault, resources, candidates, ctx.now_ms)?;
         let candidates = assembled.candidates;
         let conflicts = assembled.conflicts;
         if conflicts.is_empty() {
@@ -339,7 +201,7 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|index| &candidates[*index])
                 .collect();
-            let request = self.merge_request(&conflict.identity, &members)?;
+            let request = self.merge_request(&conflict.identity, &members, resources.scope())?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,
@@ -355,6 +217,7 @@ impl ConsolidationExecutor<'_> {
                 Err(error) => {
                     // Budget/consent traps are StepOutcome, not judge outages.
                     // A failed admitted judge leaves an observable open question.
+                    resources.require_output(resources.scope())?;
                     super::open_conflict::park_open_conflict(
                         ctx.vault,
                         self.actor,
@@ -408,7 +271,7 @@ impl ConsolidationExecutor<'_> {
         }
 
         if !escalated.is_empty() {
-            upsert_gap_queue(ctx.vault, escalated, ctx.now_ms)?;
+            resources.upsert_gaps(resources.scope(), escalated, ctx.now_ms)?;
         }
 
         let mut surviving: Vec<PromotionCandidate> = candidates
@@ -434,6 +297,7 @@ impl ConsolidationExecutor<'_> {
         &self,
         identity: &ConflictIdentity,
         members: &[&PromotionCandidate],
+        scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
         let mut lines = String::new();
         for member in members {
@@ -451,7 +315,7 @@ impl ConsolidationExecutor<'_> {
         Ok(LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
-                scope: crate::llm::Scope::default(),
+                scope: scope.clone(),
                 purpose: CallPurpose::Consolidation,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence {
@@ -633,10 +497,26 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 "executor actor is not the queued Dreamer authority",
             ));
         }
+        let branch_scope = super::branch_scope::resolve_scope(
+            ctx.vault,
+            attempt.status.payload.parent_attempt,
+            super::branch_scope::decode_branch_scope(&attempt.status.payload.input)?,
+            self.scope.as_ref(),
+        )?;
         // ED-04 (ONE-1760): the recurring-substitution miner is a
         // consolidation-scope job like the gap scan — deterministic, no LLM
         // step, so it spends no units. The payload shape and the pass itself
         // are the miner's; this arm is the registration.
+        if branch_scope.is_some()
+            && matches!(
+                attempt.status.payload.attempt_type.as_str(),
+                DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE | DREAMER_GAP_SCAN_ATTEMPT_TYPE
+            )
+        {
+            return Err(invalid_consolidation(
+                "this job has no branch resource contract",
+            ));
+        }
         if attempt.status.payload.attempt_type == DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE {
             let session = crate::edit_distance::miner::miner_session_from_input(
                 &attempt.status.payload.input,
@@ -689,10 +569,20 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
 
+        let (partition, turns, _) = decode_partition_payload(&attempt.status.payload.input)?;
+        let resources = BranchResources::open(
+            ctx.vault,
+            self.actor,
+            partition,
+            &turns,
+            attempt.status.attempt.id,
+            branch_scope.as_ref(),
+        )?;
         let run_id = attempt.status.attempt.run_id.clone();
         match self
             .run_partition_attempt(
                 &attempt.status.payload.input,
+                &resources,
                 ctx,
                 attempt.status.attempt.id,
                 run_id,
@@ -700,13 +590,13 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             .await
         {
             Ok(PartitionRun::Completed { candidates, spent }) => {
-                self.sink.accept(candidates)?;
+                resources.accept(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: spent,
                 })
             }
             Ok(PartitionRun::Held { candidates, spent }) => {
-                self.sink.accept(candidates)?;
+                resources.accept(resources.scope(), self.sink, candidates)?;
                 let _ = spent;
                 Ok(DreamerAttemptExecution::Park {
                     reason: "consolidation selection hold".into(),
@@ -732,28 +622,5 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 reason: other.to_string(),
             }),
         }
-    }
-}
-
-fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
-    let hex = hex.trim();
-    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut raw = [0_u8; 16];
-    for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(chunk[0])?;
-        let low = hex_nibble(chunk[1])?;
-        raw[index] = (high << 4) | low;
-    }
-    EntityId::from_bytes(raw).ok()
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
     }
 }

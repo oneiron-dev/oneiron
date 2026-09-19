@@ -133,7 +133,10 @@ impl<'a> DreamerRunnerStore<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueDreamerConsolidationAttempt,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.enqueue_kind_in_txn(
+        let requested_scope =
+            crate::dreamer_consolidation::branch_scope::decode_branch_scope(&input.input)?;
+        let requested_parent = input.parent_attempt;
+        let outcome = self.enqueue_kind_in_txn(
             wtxn,
             input.scope.attempt_kind(),
             DreamerAttemptPayload {
@@ -144,7 +147,18 @@ impl<'a> DreamerRunnerStore<'a> {
             input.dedupe_key,
             input.run_id,
             input.now,
-        )
+        )?;
+        if let EnqueueDreamerAttemptOutcome::Existing(status) = &outcome
+            && (status.payload.parent_attempt != requested_parent
+                || crate::dreamer_consolidation::branch_scope::decode_branch_scope(
+                    &status.payload.input,
+                )? != requested_scope)
+        {
+            return Err(invalid_dreamer_runner(
+                "consolidation dedupe cannot change branch scope or parent",
+            ));
+        }
+        Ok(outcome)
     }
 
     /// Enqueues a SKILL-OPT maintenance attempt (ONE-1448) on its own queue
@@ -514,7 +528,8 @@ pub(super) fn decode_dreamer_attempt_status(record: AttemptRecord) -> Result<Dre
 }
 
 fn is_dreamer_queue_kind(kind: &str) -> bool {
-    kind == super::maintenance::MAINTENANCE_QUEUE_KIND
+    kind == super::connector_event::CONNECTOR_EVENT_QUEUE_KIND
+        || kind == super::maintenance::MAINTENANCE_QUEUE_KIND
         || kind == DREAMER_RUNNER_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
