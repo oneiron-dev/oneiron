@@ -29,6 +29,32 @@ class StoredMeasurements(unittest.TestCase):
         self.assertEqual(recorded["at_or_above_libreoffice"],
                          result["counts"]["formualizer_unchanged"]["passed"] >= result["counts"]["libreoffice"]["passed"])
 
+    def test_docx_preservation_rate_comes_from_same_input_word_receipts(self):
+        fixture = FIXTURES / "docx-corpus"
+        native = fixture / "native-report.json"
+        report = json.loads((fixture / "word-libreoffice-comparison.json").read_bytes())
+        self.assertEqual(report["status"], "completed")
+        self.assertEqual(report["native_report_sha256"], hashlib.sha256(native.read_bytes()).hexdigest())
+        counts = {"scored": 0, "native_pass": 0, "libreoffice_pass": 0}
+        for case in report["cases"].values():
+            if not case["scored"]:
+                self.assertEqual(case["status"], "native-refusal")
+                continue
+            native_word = case["word"]["native"]
+            lo_word = case["word"]["libreoffice"]
+            self.assertEqual(case["input_sha256"], native_word["input_sha256"])
+            for observed in [native_word, lo_word]:
+                self.assertEqual(observed["status"], "completed")
+                self.assertEqual(observed["after_revisions"], 0)
+                self.assertEqual(observed["initial_documents"], observed["final_documents"])
+                self.assertFalse(observed["lock_retained"])
+            lo_pass = all(native_word[key] == lo_word[key] for key in ["resolved_text", "paragraphs", "before_revisions"])
+            self.assertEqual(case["libreoffice_pass"], lo_pass)
+            counts["scored"] += 1
+            counts["native_pass"] += 1
+            counts["libreoffice_pass"] += int(lo_pass)
+        self.assertEqual(report["counts"], counts)
+
     def test_word_revision_receipts_bind_authored_inputs_and_native_semantics(self):
         fixtures = FIXTURES / "docx/word-semantics"
         expected = {
