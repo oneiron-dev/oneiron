@@ -95,23 +95,67 @@ fn abort_and_drop_fan_out_partial_done_once() {
 }
 #[test]
 fn chunking_and_progress_do_not_change_full_grain_events() {
+    let ledger = Arc::new(Mutex::new(Vec::new()));
+    let mut bus = LlmEventBus::new(Box::new(Sink(ledger.clone())));
+    let mut raw = bus.subscribe();
+    let mut voice = bus.subscribe();
+    let mut progress_feed = bus.subscribe();
     let mut chunker = VoiceChunker::default();
     let mut progress = ProgressSubscriber::default();
     let delta = |s: &str| LlmStreamEvent::TextDelta {
         part_id: "t".into(),
         text: s.into(),
     };
-    let original = delta("Hello. one two three four five six ");
-    assert_eq!(
-        chunker.observe(&original, 0),
-        vec!["Hello.", " one two three four five six "]
-    );
-    assert_eq!(original, delta("Hello. one two three four five six "));
-    assert!(chunker.observe(&delta("tail"), 10).is_empty());
-    assert_eq!(chunker.tick(159), None);
-    assert_eq!(chunker.tick(160), Some("tail".into()));
-    assert!(progress.observe(&original, 0).is_none());
-    assert!(progress.observe(&delta("x"), 999).is_none());
-    assert!(progress.observe(&delta("y"), 1000).is_some());
-    assert!(progress.observe(&delta("z"), 1001).is_none());
+    let events = vec![
+        LlmStreamEvent::TextStart {
+            part_id: "t".into(),
+        },
+        delta("Hello. one two three four five six "),
+        delta("tail"),
+        delta("x"),
+        delta("y"),
+        delta("z"),
+    ];
+    let times = [0, 0, 10, 999, 1000, 1001];
+    for event in &events {
+        bus.publish(event.clone()).unwrap();
+    }
+    let mut chunks = Vec::new();
+    for (event, time) in drain(&mut voice).iter().zip(times) {
+        if time == 999 {
+            assert_eq!(chunker.tick(159), None);
+            assert_eq!(chunker.tick(160), Some("tail".into()));
+        }
+        chunks.extend(chunker.observe(event, time));
+    }
+    assert_eq!(chunks, vec!["Hello.", " one two three four five six "]);
+    let reports: Vec<_> = drain(&mut progress_feed)
+        .iter()
+        .zip(times)
+        .filter_map(|(event, time)| progress.observe(event, time))
+        .collect();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(drain(&mut raw), events);
+    assert!(ledger.lock().unwrap().is_empty());
+    bus.publish(LlmStreamEvent::TextEnd {
+        part_id: "t".into(),
+    })
+    .unwrap();
+    let done = LlmStreamEvent::Done {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content: vec![ContentPart::Text {
+                text: "Hello. one two three four five six tailxyz".into(),
+            }],
+        },
+        usage: LlmUsage::zero(),
+        finish_reason: FinishReason::Stop,
+    };
+    assert_eq!(chunker.observe(&done, 1002), vec!["xyz"]);
+    assert!(progress.observe(&done, 1002).unwrap().terminal);
+    bus.publish(done.clone()).unwrap();
+    for sub in [&mut raw, &mut voice, &mut progress_feed] {
+        assert_eq!(drain(sub).last(), Some(&done));
+    }
+    assert_eq!(ledger.lock().unwrap().len(), 1);
 }

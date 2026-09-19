@@ -2667,6 +2667,24 @@ fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation(
         let value: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(value["secrets_nulled"], serde_json::json!(true));
         assert!(value[field].as_array().is_some_and(|v| !v.is_empty()));
+        for message in value[field].as_array().unwrap() {
+            assert!(message["role"].as_str().is_some());
+            match format {
+                PackFormat::OpenaiCompat => assert!(message["content"].is_string()),
+                PackFormat::AnthropicMessages => {
+                    for block in message["content"].as_array().unwrap() {
+                        assert_eq!(block["type"], "text");
+                        assert!(block["text"].is_string());
+                    }
+                }
+                PackFormat::Gemini => {
+                    for part in message["parts"].as_array().unwrap() {
+                        assert!(part["text"].is_string());
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
         let normalized = crate::ingest::INGEST_SOURCE_REGISTRY
             .normalize(source, &text)
             .unwrap();

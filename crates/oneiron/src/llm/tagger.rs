@@ -203,3 +203,6 @@ pub async fn render_on_delta(
     };
     Ok(GatedRender { receipt, step })
 }
+
+#[cfg(test)]
+mod tests;
