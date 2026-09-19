@@ -9,6 +9,7 @@ Timestamps are Unix SECONDS everywhere and are never converted. Blob content is
 in these stubs.
 """
 
+from .agent_verbs import TasksVerbs, RoomsVerbs
 import os
 from typing import Any, Literal, NotRequired, TypedDict
 
@@ -116,6 +117,8 @@ class OneironError(RuntimeError):
     def __init__(self, code: str, message: str, suggestions: list[str]) -> None: ...
 
 class Oneiron:
+    tasks: TasksVerbs
+    rooms: RoomsVerbs
     @classmethod
     def open(
         cls,

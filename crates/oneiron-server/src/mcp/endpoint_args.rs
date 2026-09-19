@@ -259,13 +259,10 @@ pub const MCP_TASK_LABEL_MAX_BYTES: usize =
     oneiron::context_board::MAX_BOARD_ROW_BYTES - MCP_TASK_ROW_FIXED_TOKEN_BYTES;
 
 pub(super) const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&'static str] {
+    if let Some(fields) = super::surface::agent_argument_fields(binding) {
+        return fields;
+    }
     match binding {
-        McpVerbBinding::TasksAsk => &["spec"],
-        McpVerbBinding::TasksWait => &["task_ref", "key"],
-        McpVerbBinding::RoomsList => &[],
-        McpVerbBinding::RoomsMessages => &["room_ref"],
-        McpVerbBinding::RoomsSpeak => &["room_ref", "spec"],
-        McpVerbBinding::RoomsClaim => &["room_ref", "turn_ref"],
         McpVerbBinding::BoardExpand => &["key", "frame_epoch"],
         McpVerbBinding::BoardRefresh => &["frame_epoch"],
         McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => &["scopes"],
@@ -274,17 +271,15 @@ pub(super) const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&
         }
         McpVerbBinding::TasksCheck => &[],
         McpVerbBinding::TasksCreate => &["spec", "label"],
+        _ => &[],
     }
 }
 
 pub(super) const fn verb_required_fields(binding: McpVerbBinding) -> &'static [&'static str] {
+    if let Some(fields) = super::surface::agent_argument_fields(binding) {
+        return fields;
+    }
     match binding {
-        McpVerbBinding::TasksAsk => &["spec"],
-        McpVerbBinding::TasksWait => &["task_ref", "key"],
-        McpVerbBinding::RoomsList => &[],
-        McpVerbBinding::RoomsMessages => &["room_ref"],
-        McpVerbBinding::RoomsSpeak => &["room_ref", "spec"],
-        McpVerbBinding::RoomsClaim => &["room_ref", "turn_ref"],
         McpVerbBinding::BoardExpand => &["key"],
         McpVerbBinding::BoardRefresh | McpVerbBinding::TasksCheck => &[],
         McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => &["scopes"],
@@ -292,6 +287,7 @@ pub(super) const fn verb_required_fields(binding: McpVerbBinding) -> &'static [&
             &["task_ref"]
         }
         McpVerbBinding::TasksCreate => &["spec"],
+        _ => &[],
     }
 }
 

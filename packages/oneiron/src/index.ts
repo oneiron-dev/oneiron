@@ -14,6 +14,7 @@
 
 import { OneironError, translateNativeError } from "./error.js"
 import { NativeClient } from "./native.js"
+import { agentVerbs } from "./agent-verbs.js"
 import type {
   ClaimInput,
   CommitReceipt,
@@ -28,6 +29,8 @@ import type {
 /** A handle on one Oneiron memory, embedded or remote. */
 export class Oneiron {
   readonly #client: NativeClient
+  readonly tasks: ReturnType<typeof agentVerbs>["tasks"]
+  readonly rooms: ReturnType<typeof agentVerbs>["rooms"]
 
   /**
    * Internal. `open` and `connect` are the only public constructors; direct
@@ -36,6 +39,12 @@ export class Oneiron {
    */
   private constructor(client: NativeClient) {
     this.#client = client
+    const verbs = agentVerbs((method, input) => this.#call(() => {
+      const call = this.#client[method as keyof NativeClient] as (input: unknown) => unknown
+      return call.call(this.#client, input)
+    }))
+    this.tasks = verbs.tasks
+    this.rooms = verbs.rooms
   }
 
   /**
@@ -130,3 +139,5 @@ export class Oneiron {
 
 export { OneironError }
 export type * from "./types.js"
+
+export type { OutcomeBinding, CalibrationPair, TaskAskSpec, TaskAskHandle, TaskAskReceipt, TaskAskAnswer, TaskWaitOutcome } from "./agent-verbs.js"

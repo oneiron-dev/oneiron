@@ -29,9 +29,10 @@ fn execute_mcp_tasks_verb(
     let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
     let arguments = &args.payload.arguments;
     match args.tool.binding {
-        crate::mcp::McpVerbBinding::TasksAsk | crate::mcp::McpVerbBinding::TasksWait => {
-            super::agent_verbs::execute(server, args, actor)
-        }
+        crate::mcp::McpVerbBinding::TasksOutcomes
+        | crate::mcp::McpVerbBinding::TasksAsk
+        | crate::mcp::McpVerbBinding::TasksAnswer
+        | crate::mcp::McpVerbBinding::TasksWait => super::agent_verbs::execute(server, args, actor),
         crate::mcp::McpVerbBinding::TasksCheck => {
             let section = facade.tasks_check().map_err(mcp_facade_error)?;
             let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, section)?;
@@ -182,6 +183,7 @@ pub(crate) async fn execute_mcp_generated_verb(
         crate::mcp::McpVerbBinding::BoardExpand
             | crate::mcp::McpVerbBinding::TasksCheck
             | crate::mcp::McpVerbBinding::TasksExpand
+            | crate::mcp::McpVerbBinding::TasksOutcomes
             | crate::mcp::McpVerbBinding::RoomsList
             | crate::mcp::McpVerbBinding::RoomsMessages
     );

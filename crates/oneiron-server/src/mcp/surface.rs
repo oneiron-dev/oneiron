@@ -143,24 +143,6 @@ impl McpVerbFamily {
 /// exported row and can never introduce a tool name of its own. A row with no
 /// binding is unprojectable and fails endpoint construction rather than
 /// listing a tool nothing can execute.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum McpVerbBinding {
-    BoardExpand,
-    BoardRefresh,
-    BoardSubscribe,
-    BoardUnsubscribe,
-    TasksAsk,
-    TasksWait,
-    RoomsList,
-    RoomsMessages,
-    RoomsSpeak,
-    RoomsClaim,
-    TasksAck,
-    TasksCancel,
-    TasksCheck,
-    TasksCreate,
-    TasksExpand,
-}
 
 /// One tool-first tool, generated 1:1 from one exported verb row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -251,18 +233,17 @@ fn project_verb_row(
     })
 }
 
+include!("agent_catalog.rs");
+
 fn verb_binding(family: McpVerbFamily, verb: &str) -> Option<McpVerbBinding> {
+    if let Some(binding) = agent_binding(family, verb) {
+        return Some(binding);
+    }
     match (family, verb) {
         (McpVerbFamily::Board, "expand") => Some(McpVerbBinding::BoardExpand),
         (McpVerbFamily::Board, "refresh") => Some(McpVerbBinding::BoardRefresh),
         (McpVerbFamily::Board, "subscribe") => Some(McpVerbBinding::BoardSubscribe),
         (McpVerbFamily::Board, "unsubscribe") => Some(McpVerbBinding::BoardUnsubscribe),
-        (McpVerbFamily::Tasks, "ask") => Some(McpVerbBinding::TasksAsk),
-        (McpVerbFamily::Tasks, "wait") => Some(McpVerbBinding::TasksWait),
-        (McpVerbFamily::Rooms, "list") => Some(McpVerbBinding::RoomsList),
-        (McpVerbFamily::Rooms, "messages") => Some(McpVerbBinding::RoomsMessages),
-        (McpVerbFamily::Rooms, "speak") => Some(McpVerbBinding::RoomsSpeak),
-        (McpVerbFamily::Rooms, "claim") => Some(McpVerbBinding::RoomsClaim),
         (McpVerbFamily::Tasks, "ack") => Some(McpVerbBinding::TasksAck),
         (McpVerbFamily::Tasks, "cancel") => Some(McpVerbBinding::TasksCancel),
         (McpVerbFamily::Tasks, "check") => Some(McpVerbBinding::TasksCheck),

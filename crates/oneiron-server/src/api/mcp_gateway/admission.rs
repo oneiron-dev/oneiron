@@ -73,6 +73,8 @@ pub(crate) fn mcp_admit_scoped_call(
     if matches!(
         verb.tool.binding,
         crate::mcp::McpVerbBinding::TasksCreate
+            | crate::mcp::McpVerbBinding::TasksOutcomes
+            | crate::mcp::McpVerbBinding::TasksAnswer
             | crate::mcp::McpVerbBinding::TasksAsk
             | crate::mcp::McpVerbBinding::RoomsList
             | crate::mcp::McpVerbBinding::RoomsMessages

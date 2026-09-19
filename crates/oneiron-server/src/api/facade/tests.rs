@@ -111,3 +111,116 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
         before
     );
 }
+
+#[tokio::test]
+async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_semantics() {
+    const SECRET: &str = "sdk-agent-verbs";
+    async fn post(app: axum::Router, token: &str, verb: &str, input: Value) -> (StatusCode, Value) {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/core/facade/{verb}"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&input).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let second = EntityId::now();
+    vault
+        .put_entity(
+            &second,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"holder",
+        )
+        .unwrap();
+    let token = |actor: EntityId, scope: &str| {
+        crate::auth::mint_core_token_v2(
+            SECRET,
+            &format!(
+                "scope={scope};principal_ref={};actor_class=human",
+                actor.to_hex()
+            ),
+        )
+    };
+    let owner_token = token(owner, "core:read,core:write");
+    let second_token = token(second, "core:read,core:write");
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            crate::config::SyncServerConfig {
+                auth_secret: Some(SECRET.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let app = crate::build_app(server);
+    let (status, _) = post(app.clone(), SECRET, "tasks.ask", json!({})).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    for answer_first in [false, true] {
+        let spec = json!({"question":{"text":"Proceed?"},"holders":[owner.to_hex(),second.to_hex()],"idempotency_key":format!("order-{answer_first}"),"outcome_binding":null});
+        let (status, receipt) = post(app.clone(), &owner_token, "tasks.ask", spec.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{receipt}");
+        let handle = receipt["handle"].clone();
+        let (_, retry) = post(app.clone(), &owner_token, "tasks.ask", spec).await;
+        assert_eq!(retry["handle"], handle);
+        assert_eq!(retry["replayed"], true);
+        let wait = json!({"handle":handle,"step_key":"caller-step"});
+        let (status, _) = post(
+            app.clone(),
+            &token(owner, "core:read"),
+            "tasks.wait",
+            wait.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        if !answer_first {
+            let (status, pending) =
+                post(app.clone(), &owner_token, "tasks.wait", wait.clone()).await;
+            assert_eq!(status, StatusCode::OK, "{pending}");
+            assert!(pending.get("Pending").is_some());
+            // Only that logical step waited: the caller can issue another ask now.
+            let (status,other)=post(app.clone(),&owner_token,"tasks.ask",json!({"question":{"text":"Unrelated"},"holders":[owner.to_hex()],"idempotency_key":"kept-working","outcome_binding":null})).await;
+            assert_eq!(status, StatusCode::OK, "{other}");
+        }
+        let (status, first) = post(
+            app.clone(),
+            &owner_token,
+            "tasks.answer",
+            json!({"handle":handle,"result_ref":owner.to_hex()}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        let (status, second_answer) = post(
+            app.clone(),
+            &second_token,
+            "tasks.answer",
+            json!({"handle":handle,"result_ref":second.to_hex()}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{second_answer}");
+        assert_eq!(second_answer, first);
+        let (_, ready) = post(app.clone(), &owner_token, "tasks.wait", wait.clone()).await;
+        assert_eq!(ready["Ready"], first);
+        let (_, replayed) = post(app.clone(), &owner_token, "tasks.wait", wait).await;
+        assert_eq!(replayed["AlreadyResumed"], first);
+    }
+    for i in 0..12 {
+        let (status,body)=post(app.clone(),&owner_token,"tasks.ask",json!({"question":{"text":"burst"},"holders":[owner.to_hex()],"idempotency_key":format!("burst-{i}"),"outcome_binding":null})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["count"].as_u64().unwrap() > 0);
+    }
+}

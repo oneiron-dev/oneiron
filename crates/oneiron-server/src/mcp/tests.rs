@@ -1864,6 +1864,10 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
 /// The minimal in-grammar `arguments` object for one generated verb.
 fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
     match verb.binding {
+        McpVerbBinding::TasksOutcomes => json!({"task_ref":ACTOR_ID}),
+        McpVerbBinding::TasksAnswer => {
+            json!({"spec":{"handle":{"task_ref":ACTOR_ID},"result_ref":ACTOR_ID}})
+        }
         McpVerbBinding::TasksAsk => {
             json!({"spec":{"question":{"text":"answer"},"holders":[ACTOR_ID],"idempotency_key":"ask-test","outcome_binding":null}})
         }

@@ -1,0 +1,102 @@
+{
+  "legacy_mcp": [
+    "board.expand",
+    "board.refresh",
+    "board.subscribe",
+    "board.unsubscribe",
+    "tasks.ack",
+    "tasks.cancel",
+    "tasks.check",
+    "tasks.create",
+    "tasks.expand"
+  ],
+  "verbs": [
+    {
+      "name": "tasks.ask",
+      "input": "crate::task_verb::TaskAskSpec",
+      "output": "crate::task_verb::TaskAskReceipt",
+      "call": "memory.tasks_ask(&input)?",
+      "scope": "Write",
+      "mcp_fields": [
+        "spec"
+      ]
+    },
+    {
+      "name": "tasks.wait",
+      "input": "TaskWaitRequest",
+      "output": "crate::task_verb::TaskWaitOutcome",
+      "call": "memory.tasks_wait_external(&input.handle, &input.step_key)?",
+      "scope": "Write",
+      "mcp_fields": [
+        "task_ref",
+        "key"
+      ]
+    },
+    {
+      "name": "tasks.answer",
+      "input": "TaskAnswerRequest",
+      "output": "crate::task_verb::TaskAskAnswer",
+      "call": "memory.tasks_answer(&input.handle, crate::EntityId::from_hex(&input.result_ref)?)?",
+      "scope": "Write",
+      "mcp_fields": [
+        "spec"
+      ]
+    },
+    {
+      "name": "tasks.outcomes",
+      "input": "crate::task_verb::TaskAskHandle",
+      "output": "Vec<crate::llm::decision::questions::CalibrationPair>",
+      "call": "memory.tasks_ask_outcomes(&input)?",
+      "scope": "Read",
+      "mcp_fields": [
+        "task_ref"
+      ]
+    },
+    {
+      "name": "rooms.list",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::RoomEntry>",
+      "call": "memory.rooms_list()?.into_iter().map(|(id, room)| RoomEntry { id: id.to_hex(), room }).collect::<Vec<_>>()",
+      "scope": "Read",
+      "mcp_fields": []
+    },
+    {
+      "name": "rooms.messages",
+      "input": "RoomRequest",
+      "output": "Vec<crate::workspace_roster::RoomTurn>",
+      "call": "memory.rooms_messages(crate::EntityId::from_hex(&input.room_ref)?)?",
+      "scope": "Read",
+      "mcp_fields": [
+        "room_ref"
+      ]
+    },
+    {
+      "name": "rooms.claim",
+      "input": "RoomClaimRequest",
+      "output": "crate::workspace_roster::RoomClaimOutcome",
+      "call": "memory.rooms_claim(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?, crate::unix_seconds_now())?",
+      "scope": "Write",
+      "mcp_fields": [
+        "room_ref",
+        "turn_ref"
+      ]
+    },
+    {
+      "name": "rooms.speak",
+      "input": "crate::memory::WitnessTurn",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "memory.rooms_speak(&input)?",
+      "scope": "Write",
+      "mcp_fields": [
+        "room_ref",
+        "spec"
+      ]
+    }
+  ],
+  "legacy_facade": [
+    "witness",
+    "claim_upsert",
+    "recall",
+    "receipts"
+  ]
+}

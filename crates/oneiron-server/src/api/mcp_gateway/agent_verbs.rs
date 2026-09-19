@@ -1,5 +1,5 @@
-//! Generated agent verbs retain facade identity and membership gates.
-use super::{McpGatewayError, mcp_api_error, mcp_facade_error};
+//! MCP framing over the same generated agent SDK dispatcher as every other wire.
+use super::{McpGatewayError, mcp_facade_error};
 use crate::mcp::{McpPageSource, McpResolvedActor, McpVerbBinding, McpVerbToolArgs};
 use crate::server::SyncServer;
 use serde_json::{Value, json};
@@ -8,7 +8,6 @@ pub(super) fn execute(
     args: &McpVerbToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<(Value, McpPageSource), McpGatewayError> {
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
     let a = &args.payload.arguments;
     let invalid = || {
         McpGatewayError::new(
@@ -17,53 +16,51 @@ pub(super) fn execute(
             "invalid typed agent-verb argument",
         )
     };
-    let parse = |s: Option<&str>, field: &'static str| {
-        crate::api::parse_entity_id_param(s.ok_or_else(invalid)?, field).map_err(mcp_api_error)
-    };
-    let output = match args.tool.binding {
-        McpVerbBinding::TasksAsk => {
-            let spec: oneiron::task_verb::TaskAskSpec =
-                serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
-                    .map_err(|_| invalid())?;
-            json!({"kind":"ask_receipt","receipt":memory.tasks_ask(&spec).map_err(mcp_facade_error)?})
+    let input = match args.tool.binding {
+        McpVerbBinding::TasksAsk | McpVerbBinding::TasksAnswer => {
+            a.spec.clone().ok_or_else(invalid)?
         }
         McpVerbBinding::TasksWait => {
-            let handle = oneiron::task_verb::TaskAskHandle {
-                task_ref: parse(a.task_ref.as_deref(), "arguments.task_ref")?.to_hex(),
-            };
-            json!({"kind":"step_wait","receipt":memory.tasks_wait_external(&handle,a.key.as_deref().ok_or_else(invalid)?).map_err(mcp_facade_error)?})
+            json!({"handle":{"task_ref":a.task_ref.as_deref().ok_or_else(invalid)?},"step_key":a.key.as_deref().ok_or_else(invalid)?})
         }
-        McpVerbBinding::RoomsList => {
-            let rooms = memory.rooms_list().map_err(mcp_facade_error)?;
-            json!({"kind":"rooms","rows":rooms.into_iter().map(|(id,room)|json!({"id":id.to_hex(),"room":room})).collect::<Vec<_>>()})
+        McpVerbBinding::TasksOutcomes => {
+            json!({"task_ref":a.task_ref.as_deref().ok_or_else(invalid)?})
         }
+        McpVerbBinding::RoomsList => json!({}),
         McpVerbBinding::RoomsMessages => {
-            json!({"kind":"room_turns","rows":memory.rooms_messages(parse(a.room_ref.as_deref(),"arguments.room_ref")?).map_err(mcp_facade_error)?})
+            json!({"room_ref":a.room_ref.as_deref().ok_or_else(invalid)?})
         }
         McpVerbBinding::RoomsClaim => {
-            let receipt = memory
-                .rooms_claim(
-                    parse(a.room_ref.as_deref(), "arguments.room_ref")?,
-                    parse(a.turn_ref.as_deref(), "arguments.turn_ref")?,
-                    crate::api::unix_seconds_now(),
-                )
-                .map_err(mcp_facade_error)?;
-            use oneiron::workspace_roster::RoomClaimOutcome;
-            match receipt {
-                RoomClaimOutcome::Claimed(r) => json!({"kind":"claimed","receipt":r}),
-                RoomClaimOutcome::HeldBy(r) => json!({"kind":"held_by","receipt":r}),
-                RoomClaimOutcome::NotAddressed => json!({"kind":"not_addressed"}),
-            }
+            json!({"room_ref":a.room_ref.as_deref().ok_or_else(invalid)?,"turn_ref":a.turn_ref.as_deref().ok_or_else(invalid)?})
         }
         McpVerbBinding::RoomsSpeak => {
-            let room = parse(a.room_ref.as_deref(), "arguments.room_ref")?;
-            let turn: oneiron::WitnessTurn =
-                serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
-                    .map_err(|_| invalid())?;
-            if turn.conversation_ref != room.to_hex() {
+            let turn = a.spec.clone().ok_or_else(invalid)?;
+            if turn.get("conversation_ref").and_then(Value::as_str) != a.room_ref.as_deref() {
                 return Err(invalid());
             }
-            json!({"kind":"speak_receipt","receipt":memory.rooms_speak(&turn).map_err(mcp_facade_error)?})
+            turn
+        }
+        _ => return Err(invalid()),
+    };
+    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let result = oneiron::task_verb::sdk::invoke(&memory, args.tool.name, input)
+        .map_err(mcp_facade_error)?;
+    let output = match args.tool.binding {
+        McpVerbBinding::TasksAsk => json!({"kind":"ask_receipt","receipt":result}),
+        McpVerbBinding::TasksWait => json!({"kind":"step_wait","receipt":result}),
+        McpVerbBinding::TasksAnswer => json!({"kind":"answer_receipt","receipt":result}),
+        McpVerbBinding::TasksOutcomes => json!({"kind":"ask_outcomes","rows":result}),
+        McpVerbBinding::RoomsList => json!({"kind":"rooms","rows":result}),
+        McpVerbBinding::RoomsMessages => json!({"kind":"room_turns","rows":result}),
+        McpVerbBinding::RoomsSpeak => json!({"kind":"speak_receipt","receipt":result}),
+        McpVerbBinding::RoomsClaim => {
+            if let Some(receipt) = result.get("Claimed") {
+                json!({"kind":"claimed","receipt":receipt})
+            } else if let Some(receipt) = result.get("HeldBy") {
+                json!({"kind":"held_by","receipt":receipt})
+            } else {
+                json!({"kind":"not_addressed"})
+            }
         }
         _ => return Err(invalid()),
     };
