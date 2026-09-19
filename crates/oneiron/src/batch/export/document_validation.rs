@@ -21,7 +21,13 @@ impl WholeVaultDocument {
             if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
                 return Err(invalid("custody rows cannot appear in exports"));
             }
-            vault.store.validate_entity_type(row.entity_type)?;
+            if crate::registry::zone_of(row.entity_type)
+                != crate::registry::TypeByteZone::PackHandle
+            {
+                vault.store.validate_entity_type(row.entity_type)?;
+            } else if !matches!(row.body, ExportBody::Pack(_) | ExportBody::Nulled) {
+                return Err(invalid("runtime pack row lacks name-bearing envelope"));
+            }
             if row.occurred_start > row.occurred_end {
                 return Err(invalid("invalid entity time range"));
             }

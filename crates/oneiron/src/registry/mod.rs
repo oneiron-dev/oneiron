@@ -1,6 +1,7 @@
 //! Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators.
 
 mod namespaces;
+pub mod pack_byte_map;
 mod registry_table;
 mod type_bytes;
 mod validation;

@@ -394,6 +394,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool)> {
+        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {
@@ -519,6 +520,7 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
+        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let decoded = decode_tombstone_value(raw_value);
         // Cleanup is local visibility, never a replicated deletion intent.
         // Accepting byte 5 here would irreversibly scrub a retained archive

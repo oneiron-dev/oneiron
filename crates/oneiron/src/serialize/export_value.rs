@@ -48,11 +48,18 @@ pub enum ExportValue {
 pub enum ExportBody {
     MessagePack(ExportValue),
     Utf8(String),
+    Pack(Box<super::ExportPackInstance>),
     Nulled,
 }
 
 impl ExportBody {
     pub(crate) fn from_bytes(bytes: &[u8], entity_type: u8) -> Self {
+        if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+            return match crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(bytes) {
+                Ok(value) => Self::Pack(Box::new(super::ExportPackInstance::from_envelope(value))),
+                Err(_) => Self::Nulled,
+            };
+        }
         let mut cursor = Cursor::new(bytes);
         if let Ok(value) = rmpv::decode::read_value(&mut cursor)
             && cursor.position() == bytes.len() as u64
@@ -74,6 +81,7 @@ impl ExportBody {
                 Ok(bytes)
             }
             Self::Utf8(text) => Ok(text.as_bytes().to_vec()),
+            Self::Pack(value) => value.envelope()?.to_bytes(),
             Self::Nulled => Err(invalid(
                 "nulled opaque body needs its owning import adapter",
             )),
@@ -85,6 +93,12 @@ impl ExportBody {
     pub(crate) fn validate(&self, entity_type: u8) -> Result<()> {
         if matches!(self, Self::Nulled) {
             return Ok(());
+        }
+        if let Self::Pack(value) = self {
+            if crate::registry::zone_of(entity_type) != crate::registry::TypeByteZone::PackHandle {
+                return Err(invalid("pack envelope attached to non-pack kind"));
+            }
+            return value.validate();
         }
         let bytes = self.to_bytes()?;
         if Self::from_bytes(&bytes, entity_type) != *self {

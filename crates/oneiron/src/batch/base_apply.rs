@@ -136,14 +136,28 @@ pub(super) fn apply_ops_with_origin(
         match op {
             BatchOp::Put {
                 id,
-                entity_type,
+                mut entity_type,
                 occurred,
                 learned_at,
-                data,
+                mut data,
                 allow_maintenance,
                 allow_reserved_predicate,
                 hub_sync_imported,
             } => {
+                // Replay/import resolves GLOBAL identity before local-byte validation.
+                // Foreign byte and generation never select the destination kind.
+                if allow_maintenance
+                    && allow_reserved_predicate
+                    && crate::registry::zone_of(entity_type)
+                        == crate::registry::TypeByteZone::PackHandle
+                {
+                    let source =
+                        crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(&data)?;
+                    let (local_handle, local_envelope) =
+                        store.remap_pack_instance_in_txn(wtxn, &source)?;
+                    entity_type = local_handle;
+                    data = local_envelope.to_bytes()?;
+                }
                 if hub_sync_imported
                     && (entity_type != ENTITY_TYPE_SKILL
                         || allow_maintenance
@@ -187,7 +201,12 @@ pub(super) fn apply_ops_with_origin(
                 {
                     return Err(crate::secret_custody::reject_secret_custody_byte());
                 }
-                if allow_maintenance {
+                if crate::registry::zone_of(entity_type)
+                    == crate::registry::TypeByteZone::PackHandle
+                {
+                    store.validate_pack_handle_in_txn(wtxn, entity_type)?;
+                    store.validate_pack_instance_in_txn(wtxn, entity_type, &data)?;
+                } else if allow_maintenance {
                     store.validate_entity_type(entity_type)?;
                 } else {
                     store.validate_public_entity_type(entity_type)?;

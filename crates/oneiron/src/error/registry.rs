@@ -14,6 +14,16 @@ use super::ErrorKind;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RegistryError {
+    /// Names are global identity. Another owner, source or schema cannot replace one.
+    #[error("pack kind name collision: {0}")]
+    PackKindNameCollision(String),
+    /// Only a locally installed exact identity may admit instances.
+    #[error("pack kind is not installed locally: {0}")]
+    PackKindNotInstalled(String),
+    /// Malformed, corrupted, or stale map/instance identity.
+    #[error("invalid pack byte map: {0}")]
+    InvalidPackByteMap(&'static str),
+
     /// The active facet supplied to the retrieval pipeline does not resolve to
     /// an EXISTING FACET entity (type byte 13, per contracts.ts §1). Rejected
     /// fail-closed at query setup: a bogus id (`found = None`, no such entity)
@@ -157,6 +167,9 @@ impl RegistryError {
     #[must_use]
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
+            Self::PackKindNameCollision(_) => ErrorKind::PackKindNameCollision,
+            Self::PackKindNotInstalled(_) => ErrorKind::PackKindNotInstalled,
+            Self::InvalidPackByteMap(_) => ErrorKind::InvalidPackByteMap,
             // The structural ChildOf tree rejections are coarse-mapped onto
             // the existing TASK-body kind on purpose: remote replay already
             // classifies it quarantine-and-continue, so a new tree check adds

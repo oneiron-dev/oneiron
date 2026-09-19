@@ -61,6 +61,7 @@ pub(in crate::batch) fn apply_put(
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
+    store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
     let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
@@ -465,6 +466,8 @@ pub(in crate::batch) fn apply_put(
     // fail with `InvalidEntityType` on the missing prefix.
     let short_id_prefix = if is_lexical_query_hint_claim {
         None
+    } else if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+        Some(store.pack_short_id_prefix_in_txn(wtxn, entity_type, data)?)
     } else {
         store.short_id_prefix(entity_type).ok()
     };

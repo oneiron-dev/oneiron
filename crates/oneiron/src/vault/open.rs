@@ -535,6 +535,8 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        // Carrier data must still match the local installation head on reopen.
+        let _ = vault.pack_byte_map_snapshot()?;
         Ok(vault)
     }
 

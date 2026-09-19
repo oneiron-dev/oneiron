@@ -19586,6 +19586,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
      "surface": {
       "crate-vis": 3,
+      "mod": 1,
       "re-export": 4
      }
     },
@@ -19604,6 +19605,84 @@
       "enum": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/registry/pack_byte_map/doors.rs",
+     "purpose": "Local installation commands and name-based instance admission",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/registry/pack_byte_map/hex_bytes.rs",
+     "purpose": "Canonical hex identities, never opaque byte-array credential containers",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/registry/pack_byte_map/mod.rs",
+     "purpose": "Per-vault runtime-kind handles",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/registry/pack_byte_map/persistence.rs",
+     "purpose": "Content-addressed ASSET custody plus a vault-local install-authority head pin",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/registry/pack_byte_map/state.rs",
+     "purpose": "Pure interning state machine",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/registry/pack_byte_map/tests.rs",
+     "purpose": "PackByteMap contract tests: public results, persisted rows, and typed refusals",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackByteMapSnapshot",
+      "PackInstanceEnvelope",
+      "PackInstanceOrigin",
+      "PackKindIdentity",
+      "PackKindRegistration"
+     ],
+     "path": "src/registry/pack_byte_map/types.rs",
+     "purpose": "Name-bearing portable kinds, local registrations, and instance envelopes",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -20727,7 +20806,20 @@
      "purpose": "Context-pack serialization",
      "surface": {
       "crate-vis": 5,
-      "re-export": 2
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExportPackInstance"
+     ],
+     "path": "src/serialize/pack_archive.rs",
+     "purpose": "Typed runtime-pack archive bodies: identity is data, payloads always pass nulling",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
      }
     },
     {
@@ -26987,8 +27079,8 @@
      "purpose": "Canonical recovery artifact loader shell"
     },
     "registry": {
-     "files": 6,
-     "impl_vault": false,
+     "files": 13,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
@@ -27078,7 +27170,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27339,8 +27431,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1568,
-   "test_files": 565
+   "source_files": 1575,
+   "test_files": 566
   },
   "oneiron-bench": {
    "files": [

@@ -272,6 +272,9 @@ pub enum ErrorKind {
     VaultCleanupProposalNotFound,
     VaultCleanupWakeTriggerRejected,
     VaultRead,
+    PackKindNameCollision,
+    PackKindNotInstalled,
+    InvalidPackByteMap,
 }
 
 /// Crate error type.

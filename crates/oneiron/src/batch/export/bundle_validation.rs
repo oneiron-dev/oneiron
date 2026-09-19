@@ -83,9 +83,14 @@ impl WholeVaultDocument {
             if archive_only_reason(row).is_some() {
                 continue;
             }
-            let reason = if matches!(row.body, ExportBody::Nulled) {
+            let reason = if matches!(row.body, ExportBody::Nulled)
+                || matches!(&row.body, ExportBody::Pack(value) if matches!(value.payload, ExportBody::Nulled))
+            {
                 Some(ImportRefusalReason::RedactedBody)
-            } else if crate::registry::validate_public_entity_type(row.entity_type).is_err() {
+            } else if crate::registry::zone_of(row.entity_type)
+                != crate::registry::TypeByteZone::PackHandle
+                && crate::registry::validate_public_entity_type(row.entity_type).is_err()
+            {
                 Some(ImportRefusalReason::OwningEntityAdapterRequired)
             } else if row.entity_type == ENTITY_TYPE_CLAIM
                 && crate::claim::decode_claim_body(&row.body.to_bytes()?, false).is_err()

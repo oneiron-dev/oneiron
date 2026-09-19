@@ -41,7 +41,7 @@ impl Vault {
     /// archive-only. They are never restored as local policy or trusted verdicts;
     /// imported file bundles run the native scanner and Candidate admission door.
     pub fn import_whole_vault_json(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
-        let document = self.read_whole_vault_json(bytes)?;
+        let mut document = self.read_whole_vault_json(bytes)?;
         let authority = self
             .classify_vault_import_manifest(&document.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
@@ -52,12 +52,21 @@ impl Vault {
             .iter()
             .map(|entry| parse_id(&entry.entity_id))
             .collect::<Result<_>>()?;
+        let mut wtxn = self.store.env.write_txn()?;
+        for row in &mut document.evidence_ledger.entities {
+            if let ExportBody::Pack(value) = &row.body {
+                let (handle, envelope) = self
+                    .store
+                    .remap_pack_instance_in_txn(&wtxn, &value.envelope()?)?;
+                row.entity_type = handle;
+                row.body = ExportBody::from_bytes(&envelope.to_bytes()?, handle);
+            }
+        }
         let skill_bundles: BTreeMap<_, _> = document
             .skills
             .iter()
             .map(|bundle| (bundle.entity.id.as_str(), bundle))
             .collect();
-        let mut wtxn = self.store.env.write_txn()?;
         let mut pending = BTreeMap::new();
         let mut unchanged_entities = 0;
         for row in document.entities() {
