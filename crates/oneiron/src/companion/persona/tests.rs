@@ -7,6 +7,11 @@ use serde_json::json;
 // The replay fixture door retains strict CLAIM/Scope validation; the gate suite
 // separately proves that a direct unconfirmed write cannot mark itself approved.
 fn replay_change(vault: &Vault, id: &EntityId, body: &ClaimBody, at: u64) -> Result<()> {
+    let ClaimSubject::Entity(person) = body.subject else {
+        return Err(Error::InvalidClaimBody(
+            "persona fixture requires a PERSON subject",
+        ));
+    };
     vault
         .batch()
         .put_replicated(
@@ -16,6 +21,7 @@ fn replay_change(vault: &Vault, id: &EntityId, body: &ClaimBody, at: u64) -> Res
             at,
             &crate::claim::encode_claim_body(body)?,
         )
+        .edge(id, EdgeKind::ClaimOf, &person, 1.0)
         .commit()
 }
 
