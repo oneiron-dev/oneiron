@@ -159,3 +159,28 @@ fn chunking_and_progress_do_not_change_full_grain_events() {
     }
     assert_eq!(ledger.lock().unwrap().len(), 1);
 }
+
+#[test]
+fn failed_terminal_write_is_not_published_and_can_be_retried() {
+    struct FailOnce(bool);
+    impl TerminalSink for FailOnce {
+        fn record(&mut self, _: &LlmResponse) -> LlmResult<()> {
+            if std::mem::replace(&mut self.0, false) {
+                Err(RetryableLlmError::ServerError.into())
+            } else { Ok(()) }
+        }
+    }
+    let mut bus = LlmEventBus::new(Box::new(FailOnce(true)));
+    let mut sub = bus.subscribe();
+    let terminal = LlmStreamEvent::Done {
+        message: LlmMessage { role: LlmMessageRole::Assistant, content: vec![] },
+        usage: LlmUsage::zero(), finish_reason: FinishReason::Stop,
+    };
+    assert!(bus.publish(terminal.clone()).is_err());
+    assert!(drain(&mut sub).is_empty());
+    let mut late = bus.subscribe();
+    assert!(drain(&mut late).is_empty());
+    bus.publish(terminal.clone()).unwrap();
+    assert_eq!(drain(&mut sub), vec![terminal.clone()]);
+    assert_eq!(drain(&mut late), vec![terminal]);
+}

@@ -79,7 +79,6 @@ impl LlmEventBus {
                 usage,
                 finish_reason,
             } => {
-                self.closed = true;
                 Some(LlmResponse {
                     message: message.clone(),
                     usage: usage.clone(),
@@ -88,6 +87,11 @@ impl LlmEventBus {
             }
             _ => None,
         };
+        if let Some(terminal) = terminal {
+            // A failed write leaves the bus open for explicit retry or abort.
+            self.sink.record(&terminal)?;
+            self.closed = true;
+        }
         self.history.push(event.clone());
         self.subscribers.retain(|weak| {
             let Some(state) = weak.upgrade() else {
@@ -104,9 +108,6 @@ impl LlmEventBus {
             }
             true
         });
-        if let Some(terminal) = terminal {
-            self.sink.record(&terminal)?;
-        }
         Ok(())
     }
     /// A host supplies actual usage on cancellation; incomplete tools are omitted.

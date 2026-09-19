@@ -191,6 +191,10 @@ pub async fn call_as_step_with_fallbacks(
             };
             match fallbacks.run(fallback, &request, &error) {
                 Ok(mut response) => {
+                    if let Err(error) = super::schema::validate_fallback(&request, &response) {
+                        settle_failed_usage(guard, &admission.lease, &failed_usage);
+                        return Err(error);
+                    }
                     response.usage = failed_usage;
                     response
                 }

@@ -100,3 +100,20 @@ fn floor_band_and_mode_fail_closed_without_granting() {
         serde_json::json!({"model":"test/checker@1","slot":"llm","floor":0.9,"mode":"enforce"});
     assert!(ModelManifest::from_json(&serde_json::to_vec(&manifest).unwrap()).is_err());
 }
+
+#[test]
+fn verdict_modes_preserve_legacy_refusals_and_reasons() {
+    for mode in [VerdictMode::Shadow, VerdictMode::Enforce] {
+        let binding = VerdictBinding {
+            model: ModelId::new("test/checker@1").unwrap(),
+            slot: ModelSlot::Llm,
+            floor: ConfidenceBand::High,
+            mode,
+        };
+        for outcome in [AutoCheckOutcome::Unavailable, AutoCheckOutcome::Hold {
+            reasons: vec!["host_policy".into(), "missing_evidence".into()],
+        }] {
+            assert_eq!(apply_verdict_floor(Some(&binding), outcome.clone()), (outcome, None));
+        }
+    }
+}
