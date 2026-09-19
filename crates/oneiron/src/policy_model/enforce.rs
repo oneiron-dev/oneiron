@@ -434,6 +434,15 @@ impl Vault {
         } else {
             None
         };
+        let action = match held.as_ref().and_then(|item| item.resolution) {
+            Some(super::PolicyHoldResolution::Cleared) => PolicyEnforcementAction::Allow,
+            Some(super::PolicyHoldResolution::Declined) => PolicyEnforcementAction::Block,
+            None => action,
+        };
+        if held.as_ref().is_some_and(|item| item.resolution.is_some()) {
+            // Do not surface an obsolete pending notice after a terminal ruling.
+            system_notices.retain(|notice| notice.notice_type != "policy_hold");
+        }
         let receipt_ref = held
             .as_ref()
             .map(|item| item.receipt_ref.clone())

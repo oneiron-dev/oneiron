@@ -253,7 +253,7 @@ impl Vault {
                 self.supersede_claim_in_txn(txn, id, &old, now)?;
                 self.store.close_pending_gate_consent_in_txn(
                     txn,
-                    &old,
+                    id,
                     now,
                     "superseded",
                     vec!["gate.supersede.contradiction_closure".to_owned()],

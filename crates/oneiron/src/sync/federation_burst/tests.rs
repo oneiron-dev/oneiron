@@ -379,3 +379,65 @@ fn deferred_payloads_coalesce_into_one_review_bundle_and_replay_without_a_human(
     }
     assert!(vault.federation_burst_review_bundles().unwrap().is_empty());
 }
+
+#[test]
+fn deferred_storage_budget_preserves_existing_work_and_is_shared_across_selectors() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let peer = test_peer(&vault);
+    vault.config.map_size = 65_536;
+    let payload = request(&peer);
+    let mut accepted = Vec::new();
+    for month in 1..=12 {
+        let key = WindowKey::new(format!("2026-{month:02}"));
+        let work = DeferredWork::new(&peer, &key, WorkKind::Selector, &payload).unwrap();
+        match vault.with_write_txn(|txn| work.put_in_txn(&vault, txn)) {
+            Ok(()) => accepted.push((key, work)),
+            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::StorageFull => break,
+            other => panic!("unexpected storage result: {other:?}"),
+        }
+    }
+    assert!(!accepted.is_empty() && accepted.len() < 12);
+    let mut narrow_selector = peer.selector.clone();
+    narrow_selector.world = SyncSelectorWorld::Base;
+    let narrowed =
+        FederationPeer::authorize(&vault, peer.principal, peer.scope, &narrow_selector).unwrap();
+    let narrow_work = DeferredWork::new(
+        &narrowed,
+        &WindowKey::new("2026-12"),
+        WorkKind::Selector,
+        &request(&narrowed),
+    )
+    .unwrap();
+    assert!(
+        matches!(vault.with_write_txn(|txn| narrow_work.put_in_txn(&vault, txn)), Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::StorageFull)
+    );
+    let bundles = vault.federation_burst_review_bundles().unwrap();
+    assert_eq!(bundles[0].request_refs.len(), accepted.len());
+    let (key, saved) = &accepted[0];
+    let replay =
+        admit_work_at(&vault, &peer, key, WorkKind::Selector, &payload, (1000, 1)).unwrap();
+    assert!(matches!(replay.0, FederationBurstDecision::Allow(_)));
+    assert_eq!(replay.1.unwrap().id, saved.id);
+    // Replacing the exact item is free, and completion frees capacity without discarding another item.
+    vault
+        .with_write_txn(|txn| saved.put_in_txn(&vault, txn))
+        .unwrap();
+    saved.complete(&vault, &peer).unwrap();
+    let another = DeferredWork::new(
+        &peer,
+        &WindowKey::new("2027-01"),
+        WorkKind::Selector,
+        &payload,
+    )
+    .unwrap();
+    vault
+        .with_write_txn(|txn| another.put_in_txn(&vault, txn))
+        .unwrap();
+    assert_eq!(
+        vault.federation_burst_review_bundles().unwrap()[0]
+            .request_refs
+            .len(),
+        accepted.len()
+    );
+}

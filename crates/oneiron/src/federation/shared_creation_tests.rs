@@ -138,3 +138,90 @@ fn equal_admins_keep_both_rulings_and_newest_wins_in_any_fold_order() -> Result<
     );
     Ok(())
 }
+
+fn replay_entity_between(source: &Vault, target: &Vault, id: EntityId) -> Result<()> {
+    let raw = source.get_raw(&id)?.expect("replicated entity");
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    target
+        .batch()
+        .put_replicated(
+            &id,
+            header.entity_type,
+            TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()?;
+    for edge in source.edges_out(&id)? {
+        target.put_edge(&id, edge.kind, &edge.target, edge.weight)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn concurrent_admin_rulings_merge_through_replicated_claims() -> Result<()> {
+    let (_dir, left, owner, admin) = fixture();
+    let (_other_dir, right) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let creation = left.initialize_shared_vault(
+        &owner,
+        42,
+        None,
+        &[
+            InitialSharedMember {
+                member_ref: owner.actor(),
+                role: Some(FederationGrantRole::Admin),
+            },
+            InitialSharedMember {
+                member_ref: admin.actor(),
+                role: Some(FederationGrantRole::Admin),
+            },
+        ],
+        1,
+    )?;
+    for id in [owner.actor(), admin.actor()] {
+        replay_entity_between(&left, &right, id)?;
+    }
+    for id in &creation.grant_refs {
+        replay_entity_between(&left, &right, EntityId::from_hex(id)?)?;
+    }
+    let remote_admin = right.authenticate_owner(
+        admin.actor(),
+        &admin.actor().to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let a = left.append_admin_ruling(&owner, 42, "review:12", serde_json::json!("keep"), 2)?;
+    let b = right.append_admin_ruling(
+        &remote_admin,
+        42,
+        "review:12",
+        serde_json::json!("replace"),
+        3,
+    )?;
+    let anchor = super::rulings::ruling_anchor_id(42)?;
+    replay_entity_between(&left, &right, anchor)?;
+    replay_entity_between(&left, &right, EntityId::from_hex(&a.ruling.id)?)?;
+    replay_entity_between(&right, &left, EntityId::from_hex(&b.ruling.id)?)?;
+    assert_eq!(
+        left.admin_ruling_receipts(42)?,
+        right.admin_ruling_receipts(42)?
+    );
+    let rows = left.admin_ruling_receipts(42)?;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1].previous_ruling, Some(rows[0].ruling.id.clone()));
+    assert_eq!(rows[1].previous_holder, Some(rows[0].ruling.holder.clone()));
+    assert_eq!(rows[1].previous_value, Some(rows[0].ruling.value.clone()));
+    assert_eq!(
+        left.live_admin_ruling(42, "review:12")?,
+        right.live_admin_ruling(42, "review:12")?
+    );
+    let next =
+        left.append_admin_ruling(&owner, 42, "review:12", serde_json::json!("after merge"), 1)?;
+    assert_eq!(next.ruling.ledger_order, 2); // Causal order wins over a skewed wall clock.
+    assert_eq!(left.live_admin_ruling(42, "review:12")?, Some(next.ruling));
+    Ok(())
+}

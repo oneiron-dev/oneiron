@@ -5,11 +5,9 @@ use rand_core::RngCore;
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
 
-thread_local! {
-    // Preserve the existing mint-order contract even when several ids share
-    // one millisecond. Thread-local entropy avoids a process-global lock.
-    static LAST_ULID: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-}
+// Entity ids cross vault and worker boundaries. A single mint sequence is required
+// by newest-id projections; thread-local counters invert causal cross-thread order.
+static LAST_ULID: std::sync::Mutex<u128> = std::sync::Mutex::new(0);
 
 /// An opaque time-ordered ULID. Existing 16-byte UUIDv7 rows remain valid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -23,20 +21,20 @@ impl EntityId {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("entity ids require a clock after the Unix epoch")
             .as_millis() as u64;
-        LAST_ULID.with(|last| {
-            let mut bytes = [0; 16];
-            bytes[..6].copy_from_slice(&millis.to_be_bytes()[2..]);
-            rand_core::OsRng.fill_bytes(&mut bytes[6..]);
-            let random = u128::from_be_bytes(bytes);
-            let prior = last.get();
-            let next = if (random >> 80) <= (prior >> 80) {
-                prior.checked_add(1).expect("ULID exhausted")
-            } else {
-                random
-            };
-            last.set(next);
-            Self(next.to_be_bytes())
-        })
+        let mut bytes = [0; 16];
+        bytes[..6].copy_from_slice(&millis.to_be_bytes()[2..]);
+        rand_core::OsRng.fill_bytes(&mut bytes[6..]);
+        let random = u128::from_be_bytes(bytes);
+        let mut prior = LAST_ULID
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let next = if (random >> 80) <= (*prior >> 80) {
+            prior.checked_add(1).expect("ULID exhausted")
+        } else {
+            random
+        };
+        *prior = next;
+        Self(next.to_be_bytes())
     }
 
     /// Canonical 26-character Crockford representation. Identity is not encoded
@@ -447,6 +445,28 @@ mod tests {
                 "{raw:?} must not parse as a short ref"
             );
         }
+    }
+
+    #[test]
+    fn entity_id_mint_order_survives_cross_thread_handoffs() {
+        let (request, requests) = std::sync::mpsc::channel();
+        let (response, responses) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            for () in requests {
+                response.send(EntityId::now()).unwrap();
+            }
+        });
+        let mut prior = EntityId::now();
+        for _ in 0..1024 {
+            request.send(()).unwrap();
+            let remote = responses.recv().unwrap();
+            assert!(remote > prior);
+            let local = EntityId::now();
+            assert!(local > remote);
+            prior = local;
+        }
+        drop(request);
+        worker.join().unwrap();
     }
 
     #[test]

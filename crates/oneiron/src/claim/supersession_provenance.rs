@@ -182,11 +182,19 @@ fn write(
     envelope: &WriteEnvelope,
     now: u64,
 ) -> Result<()> {
-    if vault.get_claim_in_txn(txn, &id)?.is_some() {
-        return Ok(());
-    }
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
+    }
+    if let Some(existing) = vault.get_claim_in_txn(txn, &id)? {
+        let mut expected = candidate.into_claim_body(envelope);
+        // Approval is the gate's result, not part of the deterministic candidate.
+        expected.approval = existing.approval;
+        if existing != expected {
+            return Err(Error::InvalidClaimBody(
+                "supersession companion identity collision",
+            ));
+        }
+        return Ok(());
     }
     vault
         .batch_in()
@@ -224,3 +232,6 @@ pub(super) fn validate(body: &ClaimBody) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

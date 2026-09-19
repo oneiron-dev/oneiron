@@ -1517,6 +1517,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/sequence_ancestry.rs",
+     "purpose": "Causally vouched history may arrive after its already-observed descendant",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/sequence_observation.rs",
      "purpose": "Durable signer sequence maxima and content-addressed first-observation receipts",
      "surface": {
@@ -6036,6 +6046,14 @@
      "surface": {
       "crate-vis": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/claim/supersession_provenance/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -12334,6 +12352,7 @@
      "path": "src/federation/rulings.rs",
      "purpose": "Append-only equal-holder rulings and deterministic newest-wins projection",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 2
      }
@@ -13580,13 +13599,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graph_fs/claim_grep.rs",
+     "purpose": "Indexed claim grep with search and final-hydration narrowing receipts",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/graph_fs/coreutils.rs",
      "purpose": "grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -13621,7 +13650,7 @@
       "const": 10,
       "crate-vis": 5,
       "enum": 4,
-      "fn": 32,
+      "fn": 33,
       "struct": 6
      }
     },
@@ -18262,7 +18291,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -21608,10 +21637,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/local_queue_budget.rs",
+     "purpose": "Byte accounting for bounded device-local queues, separate from verdict/rate policy",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 9
      }
     },
@@ -25430,7 +25469,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25556,7 +25595,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25962,7 +26001,7 @@
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)"
     },
     "graph_fs": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26438,7 +26477,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26601,8 +26640,8 @@
    },
    "over_bar": 1,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1531,
-   "test_files": 539
+   "source_files": 1534,
+   "test_files": 540
   },
   "oneiron-bench": {
    "files": [

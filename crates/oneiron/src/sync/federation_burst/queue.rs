@@ -148,6 +148,26 @@ impl DeferredWork {
             streak: self.inputs.streak,
         })
         .map_err(|_| corrupt())?;
+        // Storage capacity is distinct from the peer-relative burst verdict.
+        // Keep accepted work durable; the sender can retry a capacity refusal.
+        crate::store::check_queue_capacity(
+            &vault.store.sync_queue,
+            txn,
+            b"m:federation-",
+            &self.key(),
+            value.len(),
+            vault.config.map_size / 16,
+        )?;
+        let mut peer_prefix = b"m:federation-deferred:v1:".to_vec();
+        peer_prefix.extend_from_slice(&self.peer);
+        crate::store::check_queue_capacity(
+            &vault.store.sync_queue,
+            txn,
+            &peer_prefix,
+            &self.key(),
+            value.len(),
+            vault.config.map_size / 32,
+        )?;
         vault.store.sync_queue.put(txn, &self.key(), &value)?;
         Ok(())
     }

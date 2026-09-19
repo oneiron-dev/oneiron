@@ -723,6 +723,19 @@ fn critical_supersession_closes_only_after_bound_clear_with_companion() -> Resul
         vault.get_claim(&old)?.expect("prior").lifecycle,
         crate::claim::ClaimLifecycleStatus::Active
     );
+    let demotion = crate::claim::ClaimDemotionAction::Decay {
+        new_claim_of_weight: 0.1,
+    };
+    assert_eq!(
+        vault
+            .apply_claim_demotion(&old, demotion, now)
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::GateWriteRejected
+    );
+    let _old_pending = vault
+        .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &old))?
+        .expect("independent old consent");
     let pending = vault
         .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &new))?
         .expect("confirm");
@@ -741,6 +754,23 @@ fn critical_supersession_closes_only_after_bound_clear_with_companion() -> Resul
         vault.get_claim(&old)?.expect("closed").lifecycle,
         crate::claim::ClaimLifecycleStatus::Superseded
     );
+    let retained = vault
+        .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &old))?
+        .expect("old consent retained");
+    assert_eq!(retained.claim_id, *old.as_bytes());
+    assert_eq!(vault.pending_claim_demotion(&old)?, Some(demotion));
+    assert!(
+        vault
+            .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &new))?
+            .is_none()
+    );
+    assert!(vault.store.gate_decisions(100)?.iter().any(|row| {
+        row.claim_id == Some(*new.as_bytes())
+            && row
+                .reason_codes
+                .iter()
+                .any(|reason| reason == "gate.supersede.contradiction_closure")
+    }));
     assert!(vault.claims_for_subject(&new)?.into_iter().any(|id| {
         vault
             .get_claim(&id)

@@ -38,18 +38,20 @@ impl GraphFsResolver<'_, '_> {
             && recursive
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
-            let (bytes, next_cursor, total) = self.grep_claims_pushdown(literal, cursor)?;
-            return Ok(self.finish_coreutils_command(
+            let page = self.grep_claims_pushdown(literal, cursor)?;
+            let mut output = self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Grep,
                 started,
                 started_at,
                 GraphFsCoreutilsDecision::Pushdown,
                 "claims text index",
-                bytes,
-                next_cursor,
+                page.bytes,
+                page.next_cursor,
                 vec![RetrievalSignal::Text],
-                total,
-            ));
+                page.total,
+            );
+            output.search_receipt = Some(page.receipt);
+            return Ok(output);
         }
 
         let (bytes, next_cursor, total) =
@@ -242,38 +244,6 @@ impl GraphFsResolver<'_, '_> {
             Vec::new(),
             0,
         ))
-    }
-
-    fn grep_claims_pushdown(
-        &self,
-        pattern: &str,
-        cursor: Option<&str>,
-    ) -> Result<(Vec<u8>, Option<String>, usize)> {
-        let mut out = CommandOutputBuilder::new(self.options);
-        let mut last_emitted = cursor.map(str::to_owned);
-        let mut skipping = cursor.is_some();
-        let mut total = 0;
-        for hit in self
-            .scoped_read
-            .search_text(pattern, self.coreutils_result_cap(), None)?
-        {
-            let id_hex = hit.id.to_hex();
-            if skipping {
-                if cursor == Some(id_hex.as_str()) {
-                    skipping = false;
-                }
-                continue;
-            }
-            let Some(line) = self.render_claim_grep_line(&hit.id)? else {
-                continue;
-            };
-            if !out.try_push(line.as_bytes()) {
-                return Ok((out.into_bytes(), last_emitted, total));
-            }
-            total += 1;
-            last_emitted = Some(id_hex);
-        }
-        Ok((out.into_bytes(), None, total))
     }
 
     fn grep_walk(
@@ -515,23 +485,6 @@ impl GraphFsResolver<'_, '_> {
         Ok(Some(format!("{output}\n")))
     }
 
-    fn render_claim_grep_line(&self, claim_id: &EntityId) -> Result<Option<String>> {
-        let Some((entity_type, _, body)) = self.scoped_read.get_entity_parts(claim_id)? else {
-            return Ok(None);
-        };
-        if entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(None);
-        }
-        let body = decode_claim_body(&body, true)?;
-        Ok(Some(format!(
-            "/claims/{}:id={}\tpredicate={}\tvalue={}\n",
-            claim_id.to_hex(),
-            claim_id.to_hex(),
-            sanitize_coreutils_field(&body.predicate),
-            sanitize_coreutils_field(&claim_value_text(&body.value))
-        )))
-    }
-
     fn coreutils_path_visible(&self, path: &str) -> Result<bool> {
         let components = path_components(path)?;
         match components.as_slice() {
@@ -584,7 +537,7 @@ impl GraphFsResolver<'_, '_> {
         Ok(visible_worlds.iter().any(|world| world == &id.to_hex()))
     }
 
-    fn coreutils_result_cap(&self) -> usize {
+    pub(super) fn coreutils_result_cap(&self) -> usize {
         self.options
             .max_entries
             .clamp(1, GRAPH_FS_COREUTILS_MAX_RESULT_CAP)
@@ -635,6 +588,7 @@ impl GraphFsResolver<'_, '_> {
             decision,
             decision_reason: decision_reason.to_owned(),
             telemetry_run_id: run_id,
+            search_receipt: None,
         }
     }
 }
@@ -691,22 +645,6 @@ fn append_grep_file_matches(
         }
         *total += 1;
     }
-}
-
-fn claim_value_text(value: &Value) -> String {
-    value
-        .as_str()
-        .map_or_else(|| format!("{value:?}"), str::to_owned)
-}
-
-fn sanitize_coreutils_field(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            '\t' | '\n' | '\r' => ' ',
-            _ => ch,
-        })
-        .collect()
 }
 
 fn join_graph_path(parent: &str, name: &str) -> String {

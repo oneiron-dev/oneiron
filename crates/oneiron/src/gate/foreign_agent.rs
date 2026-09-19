@@ -172,6 +172,13 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let mut row = load(&self.store, txn, foreign)?.ok_or(Error::EntityNotFound)?;
+            if row.owner != *owner.actor().as_bytes() {
+                return Err(Error::Gate(
+                    crate::error::GateError::ConsentOwnerNotAuthenticated(
+                        "foreign introduction belongs to another owner",
+                    ),
+                ));
+            }
             let policy = resolve_policy_manifest(&self.store, txn)?;
             let current = resolve(
                 &self.store,

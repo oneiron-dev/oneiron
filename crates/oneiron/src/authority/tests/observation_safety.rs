@@ -317,3 +317,45 @@ fn authority_replay_admits_every_row_and_raises_one_typed_peer_check() {
     let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     assert_eq!(reopened.authority_ingest_checks().unwrap(), checks);
 }
+
+#[test]
+fn late_causal_ancestors_heal_without_allowing_unrelated_rollback() {
+    let owner = ed_key(181);
+    let genesis = genesis_entry(181, DEFAULT_PENDING_WIDEN_DELAY_SECS, u64::MAX);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let middle = set_tier_floor_entry(vault_id, &genesis, &owner, 5, AuthorityTier::Software);
+    let tip = set_tier_floor_entry(vault_id, &middle, &owner, 10, AuthorityTier::Software);
+    let old = set_tier_floor_entry_at(vault_id, &genesis, &owner, 4, AuthorityTier::Software, 0);
+    let mut outputs = Vec::new();
+    for order in [[&genesis, &middle, &tip], [&genesis, &tip, &middle]] {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+            vault
+                .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
+                .unwrap();
+            for entry in order {
+                put_replay(&vault, entry, 1);
+            }
+            put_replay(&vault, &old, 1);
+            // An outsider's signed descendant is not a voucher for rollback.
+            let outsider = ed_key(182);
+            let forged =
+                set_tier_floor_entry(vault_id, &old, &outsider, 20, AuthorityTier::Software);
+            put_replay(&vault, &forged, 1);
+        }
+        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        let fold = vault.authority_fold().unwrap();
+        for entry in [&genesis, &middle, &tip] {
+            assert!(
+                fold.valid_entries
+                    .contains(&authority_entry_hash(entry).unwrap())
+            );
+        }
+        assert!(fold.issues.contains(&AuthorityFoldIssue::NonMonotonicSeq(
+            authority_entry_hash(&old).unwrap()
+        )));
+        outputs.push(fold);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+}

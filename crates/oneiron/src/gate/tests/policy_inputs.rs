@@ -313,6 +313,14 @@ fn foreign_door_clamps_live_claim_gate_and_widen_requires_allow() -> Result<()> 
         ],
     );
     put_policy_manifest_bytes(&vault, test_id(0x66), &manifest)?;
+    let other_owner =
+        vault.authenticate_owner(introducer, "principal:other", true, GateDecisionId::now())?;
+    assert!(matches!(
+        vault.request_foreign_agent_widen(&other_owner, foreign, AgentCeiling::Auto),
+        Err(Error::Gate(
+            crate::error::GateError::ConsentOwnerNotAuthenticated(_)
+        ))
+    ));
     assert!(vault.request_foreign_agent_widen(&owner, foreign, AgentCeiling::Auto)?);
     let txn = vault.store.env.read_txn()?;
     assert_eq!(

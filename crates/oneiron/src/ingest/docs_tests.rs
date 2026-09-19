@@ -128,6 +128,32 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
             .unwrap()["text"]
             .is_string()
     );
+    let previous: Vec<_> = receipt
+        .summary_refs
+        .iter()
+        .map(|reference| reader.expand_doc_ref(reference).map(|r| r.value))
+        .collect::<Result<_>>()?;
+    let mut edited = document;
+    edited.pages[0].text.insert_str(0, "Inserted preface.\n\n");
+    let next_request = EntityId::now();
+    vault.approve_once(
+        &owner,
+        vault
+            .docs_import_effect(&owner, next_request, &edited, ceiling)?
+            .digest(),
+    )?;
+    vault.ingest_docs_export(
+        &owner,
+        next_request,
+        &edited,
+        ceiling,
+        Some(&Summary),
+        Some(&Classifier),
+        4,
+    )?;
+    for (reference, expected) in receipt.summary_refs.iter().zip(previous) {
+        assert_eq!(reader.expand_doc_ref(reference)?.value, expected);
+    }
     Ok(())
 }
 
@@ -176,16 +202,22 @@ fn blob_birth_tree_reuses_unchanged_blocks_but_never_hides_case_edits() -> Resul
         .text
         .push_str("\n\n# Orbit\n\nOrbit is another section.");
     let changed = ingest(&doc)?;
+    let added_blocks: Vec<_> = docs_semantic_segments(&doc.pages[0].text)
+        .into_iter()
+        .skip(2)
+        .map(|s| s.block)
+        .collect();
     assert_eq!(
         changed.fingerprints[0].1,
         BlobBirthDecision::Changed {
             sections: vec!["2".into()],
-            blocks: vec!["2".into(), "3".into()]
+            blocks: added_blocks
         }
     );
     let after = vault.blob_fingerprint(&asset)?.unwrap();
-    assert_eq!(before.blocks["0"], after.blocks["0"]);
-    assert_eq!(before.blocks["1"], after.blocks["1"]);
+    for (key, value) in &before.blocks {
+        assert_eq!(Some(value), after.blocks.get(key));
+    }
     doc.pages[0].text = doc.pages[0].text.replace("\n", "\r\n");
     assert_eq!(
         ingest(&doc)?.fingerprints[0].1,

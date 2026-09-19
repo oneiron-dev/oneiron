@@ -45,6 +45,7 @@ mod ingest_observation;
 mod log_entry_op;
 mod observation_policy;
 mod op_apply;
+mod sequence_ancestry;
 mod sequence_observation;
 mod stale_roster;
 mod vault_api;

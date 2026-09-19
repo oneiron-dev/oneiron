@@ -287,6 +287,13 @@ fn fold_authority_log_once(
         }
     }
     let entry_ancestors = entry_ancestor_index(&by_hash);
+    let causal_floors =
+        super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
+    let context = FoldContext {
+        sequence_floors: causal_floors.as_ref(),
+        ..context
+    };
+
     let mut equivocation_groups =
         BTreeMap::<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>::new();
     let mut equivocation_by_hash = BTreeMap::<AuthorityEntryHash, (AuthorityKey, u64)>::new();

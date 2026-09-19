@@ -25,6 +25,26 @@ pub struct ScopedReadReceipt {
     pub replan_hint: Vec<String>,
 }
 
+/// Values and the narrowing receipt from one scoped read.
+///
+/// Borrowing the value leaves the receipt available. Consuming the wrapper as
+/// bare rows is not supported: projections must explicitly preserve the receipt.
+///
+/// ```compile_fail
+/// use oneiron::claim::ScopedReadResult;
+/// fn bare_rows(result: ScopedReadResult<Vec<u8>>) {
+///     for row in result {
+///         let _ = row;
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use oneiron::claim::ScopedReadResult;
+/// fn bare_rows(result: ScopedReadResult<Vec<u8>>) -> Vec<u8> {
+///     result.into_iter().collect()
+/// }
+/// ```
 #[must_use = "scoped results include a mandatory narrowing receipt"]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScopedReadResult<T> {
@@ -35,13 +55,6 @@ impl<T> std::ops::Deref for ScopedReadResult<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.value
-    }
-}
-impl<T> IntoIterator for ScopedReadResult<Vec<T>> {
-    type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.value.into_iter()
     }
 }
 

@@ -11,6 +11,7 @@ const PREFIX: &str = "policy-hold:v1:";
 pub struct HeldPolicyItem {
     pub queue_ref: String,
     pub row_ref: String,
+    /// Authenticated principal reference assigned by the policy, not a display label.
     pub human: String,
     pub content_hash: [u8; 32],
     pub policy_frontier: [u8; 32],
@@ -64,6 +65,15 @@ impl Vault {
             .find(|row| row.row_ref == *row_ref)
             .and_then(|row| row.human.clone())
             .ok_or(Error::Relay(RelayError::PolicyVerdictNotInForce))?;
+        // Reclassifying the same caller/content/frontier cannot erase a human ruling.
+        if self
+            .store
+            .vault_meta
+            .get(txn, queue_ref.as_bytes())?
+            .is_some()
+        {
+            return Ok(queue_ref);
+        }
         let item = HeldPolicyItem {
             queue_ref: queue_ref.clone(),
             row_ref: row_ref.clone(),
@@ -74,9 +84,16 @@ impl Vault {
             receipt_ref,
             resolution: None,
         };
-        // A re-classification is a new decision. Resetting to pending does not release content.
         let bytes =
             serde_json::to_vec(&item).map_err(|_| Error::CorruptedIndex("policy hold encoding"))?;
+        crate::store::check_queue_capacity(
+            &self.store.vault_meta,
+            txn,
+            PREFIX.as_bytes(),
+            queue_ref.as_bytes(),
+            bytes.len(),
+            self.config.map_size / 16,
+        )?;
         self.store
             .vault_meta
             .put(txn, queue_ref.as_bytes(), &bytes)?;
@@ -133,7 +150,12 @@ impl Vault {
             .ok_or(Error::CorruptedIndex("missing policy hold"))?;
         let mut item: HeldPolicyItem =
             serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("policy hold"))?;
-        if item.human != owner.actor().to_hex() || item.resolution.is_some() {
+        if item.human != owner.principal_ref() || item.resolution.is_some() {
+            return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
+        }
+        if crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?
+            != item.policy_frontier
+        {
             return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
         }
         item.resolution = Some(resolution);
@@ -143,7 +165,71 @@ impl Vault {
             &serde_json::to_vec(&item)
                 .map_err(|_| Error::CorruptedIndex("policy hold encoding"))?,
         )?;
+        self.store.append_gate_decision_in_txn(
+            &mut txn,
+            &crate::store::GateDecisionRecord {
+                version: 0,
+                decision_id: crate::store::GateDecisionId::now(),
+                created_at: crate::unix_seconds_now(),
+                outcome: match resolution {
+                    PolicyHoldResolution::Cleared => "allow",
+                    PolicyHoldResolution::Declined => "block",
+                }
+                .to_owned(),
+                reason_codes: vec![
+                    match resolution {
+                        PolicyHoldResolution::Cleared => "gate.policy_model.hold_cleared",
+                        PolicyHoldResolution::Declined => "gate.policy_model.hold_declined",
+                    }
+                    .to_owned(),
+                ],
+                receipt_reasons: Vec::new(),
+                system_notices: Vec::new(),
+                actor_class: "human".to_owned(),
+                actor_ref: Some(owner.actor().to_hex()),
+                content_kind: "policy_hold".to_owned(),
+                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+                claim_id: None,
+                grant_ref: Some(reference.to_owned()),
+                diff_handle: item.content_hash.to_vec(),
+                read_frontier_hash: item.policy_frontier,
+                redacted_at: None,
+            },
+        )?;
         txn.commit()?;
         Ok(())
+    }
+    /// Remove old resolved or policy-stale local holds. Gate ledger receipts remain.
+    /// Current unresolved holds are never silently discarded.
+    pub fn prune_policy_holds(
+        &self,
+        owner: &AuthenticatedOwner,
+        held_before: u64,
+        limit: usize,
+    ) -> Result<usize> {
+        self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let frontier =
+                crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
+            let mut keys = Vec::new();
+            for row in self.store.vault_meta.prefix_iter(txn, PREFIX.as_bytes())? {
+                if keys.len() >= limit {
+                    break;
+                }
+                let (key, bytes) = row?;
+                let item: HeldPolicyItem = serde_json::from_slice(&bytes)
+                    .map_err(|_| Error::CorruptedIndex("policy hold"))?;
+                if item.human == owner.principal_ref()
+                    && item.held_at < held_before
+                    && (item.resolution.is_some() || item.policy_frontier != frontier)
+                {
+                    keys.push(key.to_vec());
+                }
+            }
+            for key in &keys {
+                self.store.vault_meta.delete(txn, key)?;
+            }
+            Ok(keys.len())
+        })
     }
 }

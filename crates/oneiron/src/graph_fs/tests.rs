@@ -321,6 +321,7 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
     let expected_ids: Vec<_> = reader
         .search_text("pushdownneedle", 10, None)?
+        .value
         .into_iter()
         .map(|hit| hit.id)
         .collect();
@@ -337,6 +338,9 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
 
     assert_eq!(output.decision(), GraphFsCoreutilsDecision::Pushdown);
     assert_eq!(actual_ids, expected_ids);
+    let receipt = output.search_receipt().expect("indexed grep receipt");
+    assert_eq!(receipt.suppressed_count, 0);
+    assert_eq!(receipt.requested, receipt.applied);
     assert!(actual_ids.contains(&matching_claim));
     assert!(!actual_ids.contains(&other_claim));
     let telemetry = vault
@@ -542,5 +546,58 @@ fn find_newer_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
     }
     assert!(cursor.is_none(), "pagination must terminate");
     assert_eq!(emitted, format!("/claims/{}\n", claim.to_hex()));
+    Ok(())
+}
+
+#[test]
+fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let allowed_world = test_id(0x71);
+    let denied_world = test_id(0x72);
+    let subject = test_id(0x73);
+    put_entity(&vault, allowed_world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, denied_world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    let needle = "receiptedgrep";
+    let value = format!("{needle} {}", "a".repeat(100));
+    let visible = [test_id(0x74), test_id(0x75)];
+    let hidden = test_id(0x76);
+    for (id, world) in [
+        (visible[0], allowed_world),
+        (visible[1], allowed_world),
+        (hidden, denied_world),
+    ] {
+        put_claim_with_value(&vault, id, subject, Some(world), 10, &value)?;
+        vault.batch().text(&id, &[("body", &value)]).commit()?;
+    }
+    put_policy_manifest(
+        &vault,
+        test_id(0x91),
+        encode_policy_manifest(vec![core_read_world_grant("reader", allowed_world)]),
+    )?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
+    let expected = reader.search_text(needle, 10, None)?;
+    assert_eq!(expected.receipt.suppressed_count, 1);
+    let full = resolver(&reader, 4096).grep(needle, "/claims", true, None)?;
+    assert_eq!(full.search_receipt(), Some(&expected.receipt));
+    let text = std::str::from_utf8(full.bytes()).unwrap();
+    assert_eq!(text.lines().count(), 2);
+    assert!(!text.contains(&hidden.to_hex()));
+    let capped = resolver(&reader, 256).grep(needle, "/claims", true, None)?;
+    assert!(capped.next_cursor().is_some());
+    assert_eq!(
+        std::str::from_utf8(capped.bytes()).unwrap().lines().count(),
+        1
+    );
+    assert_eq!(capped.search_receipt(), Some(&expected.receipt));
+    let next = resolver(&reader, 256).grep(needle, "/claims", true, capped.next_cursor())?;
+    assert_eq!(next.search_receipt(), Some(&expected.receipt));
+    assert_eq!(
+        std::str::from_utf8(next.bytes()).unwrap().lines().count(),
+        1
+    );
+    let empty = resolver(&reader, 256).grep("nomatch", "/claims", true, None)?;
+    assert!(empty.bytes().is_empty());
+    assert_eq!(empty.search_receipt().unwrap().suppressed_count, 0);
     Ok(())
 }

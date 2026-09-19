@@ -83,6 +83,7 @@ fn scoped_read_core_read_world_scope_contains_actor_readable_claims() -> Result<
                 score: 0.8,
             },
         ])?
+        .value
         .into_iter()
         .map(|result| result.id)
         .collect();
@@ -210,6 +211,7 @@ fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<
                 score: 0.8,
             },
         ])?
+        .value
         .into_iter()
         .map(|result| result.id)
         .collect();
@@ -295,6 +297,7 @@ fn scoped_read_core_grant_preserves_claim_surfaceable_gate() -> Result<()> {
                 score: 0.9,
             },
         ])?
+        .value
         .into_iter()
         .map(|result| result.id)
         .collect();
@@ -343,6 +346,7 @@ fn scoped_read_search_filters_before_limit_truncation() -> Result<()> {
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let visible: Vec<_> = scoped_read
         .search_text("scopedslots", 1, None)?
+        .value
         .into_iter()
         .map(|hit| hit.id)
         .collect();

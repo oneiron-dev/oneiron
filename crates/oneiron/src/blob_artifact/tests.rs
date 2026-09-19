@@ -408,13 +408,24 @@ fn blob_birth_four_rungs_only_normalize_transport_and_are_purged() -> Result<()>
     };
     let first = append(b"# Page\n\nText")?;
     let transport = append(b"# Page\r\n\r\nText")?;
-    assert_eq!(transport.version, first.version);
+    assert_eq!(transport.version, first.version + 1);
+    assert_eq!(
+        vault.read_blob_artifact_version(&artifact, first.version)?,
+        Some(b"# Page\n\nText".to_vec())
+    );
+    assert_eq!(
+        vault.read_blob_artifact_version(&artifact, transport.version)?,
+        Some(b"# Page\r\n\r\nText".to_vec())
+    );
+    assert_eq!(append(b"# Page\r\n\r\nText")?, transport);
     let initial = vault.blob_fingerprint(&artifact)?.unwrap();
     let next = append(b"# Page\n\nText\n\n# Another\n\nMore")?;
-    assert_eq!(next.version, 2);
+    assert_eq!(next.version, 3);
     let changed = vault.blob_fingerprint(&artifact)?.unwrap();
-    assert_eq!(initial.blocks["1"], changed.blocks["1"]);
-    assert_eq!(append(b"# Page\n\nTEXT\n\n# Another\n\nMore")?.version, 3);
+    for (key, value) in &initial.blocks {
+        assert_eq!(Some(value), changed.blocks.get(key));
+    }
+    assert_eq!(append(b"# Page\n\nTEXT\n\n# Another\n\nMore")?.version, 4);
     vault.delete_entity(&artifact)?;
     assert!(vault.blob_fingerprint(&artifact)?.is_none());
     Ok(())

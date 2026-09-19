@@ -165,13 +165,7 @@ impl Vault {
         let fingerprint =
             crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
         let next_version = match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)? {
-            Some(head)
-                if head.content_hash == content_hash
-                    || matches!(
-                        fingerprint.decision,
-                        crate::ingest::BlobBirthDecision::Unchanged(_)
-                    ) =>
-            {
+            Some(head) if head.content_hash == content_hash => {
                 fingerprint.persist(&self.store, wtxn, artifact_id)?;
                 return Ok(head);
             }

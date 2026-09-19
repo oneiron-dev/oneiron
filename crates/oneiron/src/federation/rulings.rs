@@ -25,8 +25,12 @@ pub struct AdminRulingReceipt {
     pub previous_holder: Option<String>,
     pub previous_value: Option<Value>,
 }
-fn prefix(vault_id: u64) -> Vec<u8> {
-    format!("shared-ruling:v1:{vault_id:016x}:").into_bytes()
+const RULING_PREDICATE: &str = "federation.admin_ruling";
+pub(super) fn ruling_anchor_id(vault_id: u64) -> Result<EntityId> {
+    crate::codebase::entity_id_from_hash_material(
+        b"oneiron.shared-ruling.anchor.v1",
+        &[&vault_id.to_be_bytes()],
+    )
 }
 fn invalid() -> Error {
     Error::InvalidConfig("invalid shared-vault ruling".into())
@@ -123,13 +127,67 @@ impl Vault {
             previous_holder: previous.map(|p| p.holder.clone()),
             previous_value: previous.map(|p| p.value.clone()),
         };
-        let mut storage_key = prefix(vault_id);
-        storage_key.extend_from_slice(receipt.ruling.id.as_bytes());
-        self.store.vault_meta.put(
-            &mut txn,
-            &storage_key,
-            &serde_json::to_vec(&receipt).map_err(|_| invalid())?,
-        )?;
+        let anchor = ruling_anchor_id(vault_id)?;
+        if self.store.entities.get(&txn, anchor.as_bytes())?.is_none() {
+            self.batch_in()
+                .put(
+                    &anchor,
+                    crate::registry::ENTITY_TYPE_ASSET,
+                    crate::TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    b"Shared administrative ruling ledger",
+                )
+                .apply(&mut txn)?;
+        }
+        let id = EntityId::from_hex(&receipt.ruling.id)?;
+        let candidate = crate::write_envelope::ClaimCandidate::new(
+            RULING_PREDICATE,
+            crate::claim::ClaimSubject::Entity(anchor),
+            rmpv::decode::read_value(&mut std::io::Cursor::new(
+                rmp_serde::to_vec_named(&receipt).map_err(|_| invalid())?,
+            ))
+            .map_err(|_| invalid())?,
+            1.0,
+        );
+        let envelope = crate::write_envelope::WriteEnvelope::new(
+            crate::write_envelope::WriteActor::new(
+                holder.actor(),
+                crate::edge::EdgeActorClass::Human,
+            ),
+            crate::claim::ClaimSource::UserStated,
+            crate::write_envelope::WriteProvenance::new(rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("surface"),
+                    rmpv::Value::from("shared_admin_ruling"),
+                ),
+                (
+                    rmpv::Value::from("grant_ref"),
+                    rmpv::Value::from(receipt.ruling.grant_ref.as_str()),
+                ),
+            ]))?,
+            crate::claim::ClaimApprovalStatus::Auto,
+        );
+        self.batch_in()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope,
+                crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .apply_recording_gate_decisions(&mut txn)?;
+        if self
+            .get_claim_in_txn(&txn, &id)?
+            .is_none_or(|body| body.approval != crate::claim::ClaimApprovalStatus::Auto)
+        {
+            return Err(invalid());
+        }
         txn.commit()?;
         Ok(receipt)
     }
@@ -138,15 +196,49 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
     ) -> Result<Vec<AdminRulingReceipt>> {
-        self.store
-            .vault_meta
-            .prefix_iter(txn, &prefix(vault_id))?
-            .map(|row| {
-                let (_, raw) = row?;
-                serde_json::from_slice(&raw).map_err(|_| invalid())
-            })
-            .collect()
+        let anchor = ruling_anchor_id(vault_id)?;
+        let mut rows = Vec::new();
+        for id in self.claims_for_subject_in_txn(txn, &anchor)? {
+            let body = self.get_claim_in_txn(txn, &id)?.ok_or_else(invalid)?;
+            if body.predicate != RULING_PREDICATE
+                || body.approval != crate::claim::ClaimApprovalStatus::Auto
+            {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(&mut bytes, &body.value).map_err(|_| invalid())?;
+            let receipt: AdminRulingReceipt =
+                rmp_serde::from_slice(&bytes).map_err(|_| invalid())?;
+            let holder = EntityId::from_hex(&receipt.ruling.holder)?;
+            let actor_matches = body.evidence.as_ref().is_some_and(|evidence| {
+                let rmpv::Value::Map(fields) = evidence else { return false; };
+                fields.iter().any(|(key, value)| key.as_str() == Some("actor_entity_ref")
+                    && matches!(value, rmpv::Value::Binary(bytes) if bytes.as_slice() == holder.as_bytes()))
+            });
+            if receipt.ruling.id != id.to_hex()
+                || receipt.ruling.vault_id != vault_id
+                || body.subject != crate::claim::ClaimSubject::Entity(anchor)
+                || !actor_matches
+            {
+                return Err(invalid());
+            }
+            rows.push(receipt);
+        }
+        // Lamport order advances after every observed ruling; concurrent ties
+        // use the immutable id. Receipts project the same merged history on all replicas.
+        rows.sort_by(|a, b| {
+            (a.ruling.ledger_order, &a.ruling.id).cmp(&(b.ruling.ledger_order, &b.ruling.id))
+        });
+        let mut previous = std::collections::BTreeMap::<String, AdminRuling>::new();
+        for row in &mut rows {
+            let prior = previous.insert(row.ruling.key.clone(), row.ruling.clone());
+            row.previous_ruling = prior.as_ref().map(|r| r.id.clone());
+            row.previous_holder = prior.as_ref().map(|r| r.holder.clone());
+            row.previous_value = prior.map(|r| r.value);
+        }
+        Ok(rows)
     }
+
     pub fn admin_ruling_receipts(&self, vault_id: u64) -> Result<Vec<AdminRulingReceipt>> {
         let txn = self.store.env.read_txn()?;
         self.admin_ruling_receipts_in(&txn, vault_id)
