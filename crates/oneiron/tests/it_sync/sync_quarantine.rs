@@ -186,6 +186,8 @@ fn edge_provenance_claim_body_with(
         ),
         (rmpv::Value::from("val"), val),
         (rmpv::Value::from("conf"), rmpv::Value::F32(conf)),
+        (rmpv::Value::from("world"), rmpv::Value::from("base")),
+        (rmpv::Value::from("rel"), rmpv::Value::from("all")),
     ];
     if let Some(evid) = evid {
         entries.push((rmpv::Value::from("evid"), evid));
