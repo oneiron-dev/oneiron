@@ -488,11 +488,25 @@ pub(crate) fn record_turn_session_membership_in_txn(
         return Ok(None);
     };
     if let Some(existing) = turn_session_membership_in_txn(store, &*wtxn, turn)? {
+        let reverse = [
+            b"session_turns:v1:".as_slice(),
+            existing.as_bytes(),
+            turn.as_bytes(),
+        ]
+        .concat();
+        store.vault_meta.put(wtxn, &reverse, &[1])?;
         return Ok(Some(existing));
     }
     store
         .vault_meta
         .put(wtxn, &turn_session_membership_key(turn), session.as_bytes())?;
+    let reverse = [
+        b"session_turns:v1:".as_slice(),
+        session.as_bytes(),
+        turn.as_bytes(),
+    ]
+    .concat();
+    store.vault_meta.put(wtxn, &reverse, &[1])?;
     Ok(Some(session))
 }
 

@@ -976,7 +976,7 @@ fn blocks_discriminant_is_24() {
     assert_eq!(EdgeKind::try_from_u8(25), Some(EdgeKind::Fulfills));
     assert_eq!(EdgeKind::DischargedBy as u8, 26);
     assert_eq!(EdgeKind::try_from_u8(26), Some(EdgeKind::DischargedBy));
-    assert!(EdgeKind::try_from_u8(27).is_none());
+    assert!(EdgeKind::try_from_u8(31).is_none());
     assert!(EdgeKind::try_from_u8(u8::MAX).is_none());
 }
 

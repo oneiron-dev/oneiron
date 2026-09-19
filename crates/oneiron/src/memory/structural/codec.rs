@@ -32,6 +32,10 @@ pub(in crate::memory) fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
         "fulfills" => EdgeKind::Fulfills,
         "discharged_by" => EdgeKind::DischargedBy,
         "same_as" => EdgeKind::SameAs,
+        "parent" => EdgeKind::Parent,
+        "spawned_by" => EdgeKind::SpawnedBy,
+        "addressed_to" => EdgeKind::AddressedTo,
+        "replies_to" => EdgeKind::RepliesTo,
         _ => return None,
     };
     Some(kind)

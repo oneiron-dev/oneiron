@@ -38,6 +38,7 @@ pub(super) fn apply_edge(
     weight: f32,
     vad: Vad,
 ) -> Result<()> {
+    crate::conversation_dag::validate_local_membership(store, wtxn, src, kind, tgt)?;
     reject_if_existing_edge_is_provenanced(store, wtxn, src, kind, tgt)?;
     apply_edge_with_created_at(
         store,
@@ -89,6 +90,7 @@ pub(super) fn apply_public_edge_with_created_at(
     created_at: u64,
     vad: Vad,
 ) -> Result<()> {
+    crate::conversation_dag::validate_local_membership(store, wtxn, src, kind, tgt)?;
     reject_if_existing_edge_is_provenanced(store, wtxn, src, kind, tgt)?;
     apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, created_at, vad, None)
 }

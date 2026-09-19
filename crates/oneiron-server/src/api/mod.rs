@@ -84,6 +84,7 @@ mod campaign;
 mod companion;
 mod consumer_usage;
 mod context_pack;
+mod conversation_dag;
 mod conversations;
 mod core;
 mod discover;
@@ -130,6 +131,7 @@ pub(crate) use self::companion::*;
 pub(crate) use self::consumer_usage::*;
 pub(crate) use self::context_board::*;
 pub(crate) use self::context_pack::*;
+pub(crate) use self::conversation_dag::*;
 pub(crate) use self::conversations::*;
 pub(crate) use self::core::*;
 pub(crate) use self::discover::*;
@@ -182,6 +184,26 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/conversations/{conversation_id}/turns",
             post(create_core_conversation_turn),
         )
+        .route(
+            "/conversations/{conversation_id}/records",
+            post(append_core_record),
+        )
+        .route(
+            "/conversations/{conversation_id}/head",
+            post(move_core_head),
+        )
+        .route(
+            "/conversations/{conversation_id}/migrate-dag",
+            post(migrate_core_dag),
+        )
+        .route(
+            "/turns/{turn_id}/sub-sessions",
+            post(spawn_core_sub_session),
+        )
+        .route(
+            "/conversations/{conversation_id}/summaries",
+            post(mint_core_scope_summary),
+        )
         .route("/turns/annotate", post(annotate_turn_vad))
         .route("/surface-events", post(submit_core_surface_event))
         .route_layer(middleware::from_fn_with_state(
@@ -215,6 +237,17 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/conversations/{conversation_id}/turns",
             get(list_core_conversation_turns),
         )
+        .route("/conversations/{conversation_id}/dag", get(get_core_dag))
+        .route(
+            "/conversations/{conversation_id}/scope",
+            post(resolve_core_scope),
+        )
+        .route("/turns/{turn_id}/sub-sessions", get(list_core_sub_sessions))
+        .route(
+            "/summaries/{summary_id}/covers",
+            get(get_core_summary_covers),
+        )
+        .route("/claims/{claim_id}/drill", get(drill_core_header))
         .route("/turns/{turn_id}", get(get_core_turn))
         .route("/turns/annotate", get(read_turn_vad_annotation))
         .route(

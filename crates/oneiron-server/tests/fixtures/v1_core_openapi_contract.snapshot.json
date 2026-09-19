@@ -5501,6 +5501,14 @@
             "schema": {
               "$ref": "#/components/schemas/View"
             }
+          },
+          {
+            "in": "query",
+            "name": "with",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestSchema": null,

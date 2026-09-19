@@ -155,7 +155,13 @@ pub(super) fn walk_edges(
                 // the seed's own edge list; only the walk skips them.
                 if matches!(
                     edge.kind,
-                    EdgeKind::ChildOf | EdgeKind::AssignedTo | EdgeKind::BlockedBy
+                    EdgeKind::ChildOf
+                        | EdgeKind::AssignedTo
+                        | EdgeKind::BlockedBy
+                        | EdgeKind::Parent
+                        | EdgeKind::SpawnedBy
+                        | EdgeKind::AddressedTo
+                        | EdgeKind::RepliesTo
                 ) {
                     continue;
                 }

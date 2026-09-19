@@ -405,3 +405,22 @@ fn classification_matches(engine: EntityClassification, canon: &str) -> bool {
         EntityClassification::Maintenance => canon == "maintenance" || canon == "system",
     }
 }
+
+/// Conversation topology appends edge bytes without moving the entity ABI.
+#[test]
+fn conversation_dag_edge_byte_census() {
+    use oneiron::EdgeKind;
+    for (byte, kind) in [
+        (27, EdgeKind::Parent),
+        (28, EdgeKind::SpawnedBy),
+        (29, EdgeKind::AddressedTo),
+        (30, EdgeKind::RepliesTo),
+    ] {
+        assert_eq!(kind as u8, byte);
+        assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
+        assert_eq!(kind.default_weight(), None);
+    }
+    for byte in 31..=u8::MAX {
+        assert!(EdgeKind::try_from_u8(byte).is_none());
+    }
+}

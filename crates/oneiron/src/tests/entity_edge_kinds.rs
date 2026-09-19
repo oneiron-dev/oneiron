@@ -32,8 +32,8 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
     }
-    // The frontier: 27 and up stay unallocated (ONE-1541 took 25/26).
-    assert!(EdgeKind::try_from_u8(27).is_none());
+    // The frontier: 31 and up stay unallocated (CONV-01 took 27..=30).
+    assert!(EdgeKind::try_from_u8(31).is_none());
 }
 
 /// ONE-1541 done-means: appending `fulfills`/`discharged_by` must leave every
@@ -146,7 +146,7 @@ fn blocked_by_matches_structural_non_traversed_contract_row() -> Result<()> {
 #[test]
 fn edge_value_layout_round_trips_all_contract_edge_kinds() -> Result<()> {
     for (i, (kind, layout)) in CONTRACT_EDGE_VALUE_LAYOUTS.iter().copied().enumerate() {
-        let weight = 0.25 + (i as f32 * 0.03125);
+        let weight = 0.25 + (i as f32 * 0.015625);
         let created_at = 1_772_000_000 + i as u64;
         let vad = contract_vad(i);
         let encode_vad = match layout {
@@ -736,7 +736,7 @@ fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
 /// fails this test.
 #[test]
 fn default_weight_matches_contract_ppr_weight_literals() {
-    let expected: [(EdgeKind, Option<f32>); 21] = [
+    let expected: [(EdgeKind, Option<f32>); 31] = [
         (EdgeKind::AuthoredBy, Some(0.9)),
         (EdgeKind::ScopedTo, Some(0.7)),
         (EdgeKind::PartOf, Some(0.8)),
@@ -758,6 +758,16 @@ fn default_weight_matches_contract_ppr_weight_literals() {
         (EdgeKind::InWorld, Some(0.7)),
         (EdgeKind::SetIn, Some(0.7)),
         (EdgeKind::BlockedBy, None),
+        (EdgeKind::SameAs, None),
+        (EdgeKind::MergedInto, Some(0.3)),
+        (EdgeKind::SplitInto, Some(0.3)),
+        (EdgeKind::Blocks, None),
+        (EdgeKind::Fulfills, None),
+        (EdgeKind::DischargedBy, None),
+        (EdgeKind::Parent, None),
+        (EdgeKind::SpawnedBy, None),
+        (EdgeKind::AddressedTo, None),
+        (EdgeKind::RepliesTo, None),
     ];
     for (kind, weight) in expected {
         assert_eq!(
@@ -848,4 +858,69 @@ fn assert_no_entity_state_catches_leaked_forward_short_id_row() {
     wtxn.commit().unwrap();
 
     assert_no_entity_state(&vault, &id).unwrap();
+}
+
+#[test]
+fn conversation_edges_are_structural_door_only_and_non_traversed() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    for (byte, kind) in [
+        (27, EdgeKind::Parent),
+        (28, EdgeKind::SpawnedBy),
+        (29, EdgeKind::AddressedTo),
+        (30, EdgeKind::RepliesTo),
+    ] {
+        assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
+        assert_eq!(kind as u8, byte);
+        assert_eq!(kind.default_weight(), None);
+        assert_eq!(ppr::lambda_for_kind(kind), None);
+        let encoded = encode_edge_value(kind, 1.0, 7, Vad::NEUTRAL, None)?;
+        assert_eq!(encoded.len(), 12);
+        assert_eq!(
+            decode_edge_value_for_kind(kind, &encoded)?.layout,
+            EdgeValueLayout::Structural
+        );
+        assert!(matches!(
+            encode_edge_value(
+                kind,
+                1.0,
+                7,
+                Vad {
+                    valence: 0.5,
+                    arousal: 0.0,
+                    dominance: 0.0
+                },
+                None
+            ),
+            Err(Error::InvariantViolation(_))
+        ));
+        assert!(matches!(
+            encode_edge_value(
+                kind,
+                1.0,
+                7,
+                Vad::NEUTRAL,
+                Some(EdgeProvenanceFlags {
+                    confirmation_status: EdgeConfirmationStatus::Confirmed,
+                    actor_class: EdgeActorClass::Human
+                })
+            ),
+            Err(Error::InvariantViolation(_))
+        ));
+        assert_eq!(
+            vault
+                .put_edge(&EntityId::now(), kind, &EntityId::now(), 1.0)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ReservedEdgeKind
+        );
+        // Receive-side registry gates accept these bytes; topology readers
+        // subsequently prove membership/cardinality. No protocol bump needed.
+        edge::validate_public_edge_kind(kind)?;
+    }
+    for (byte, kind) in PINNED_EDGE_KIND_DISCRIMINANTS {
+        assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
+    }
+    assert_eq!(EdgeKind::try_from_u8(21), Some(EdgeKind::MergedInto));
+    assert_eq!(EdgeKind::try_from_u8(22), Some(EdgeKind::SplitInto));
+    Ok(())
 }
