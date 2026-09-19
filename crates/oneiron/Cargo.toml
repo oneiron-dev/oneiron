@@ -19,6 +19,9 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
+lopdf = { version = "=0.44.0", default-features = false }
+qrcode = { version = "=0.14.1", default-features = false }
 heed = { workspace = true }
 half = "2"
 uuid = { workspace = true }
@@ -190,6 +193,9 @@ test-hooks = []
 test-support = []
 
 [dev-dependencies]
+async-trait = "0.1"
+rcgen = "0.14"
+p256 = { workspace = true, features = ["pkcs8"] }
 # Self dev-dependency that turns on `test-support` for this crate's own tests
 # (the effect-spine oracle needs the unseeded-vault opening seam). Keeps
 # nextest / CI / verify.sh flag-free — no --features needed.

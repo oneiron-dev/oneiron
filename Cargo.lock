@@ -5973,6 +5973,7 @@ name = "oneiron"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "async-trait",
  "blake3",
  "chrono",
  "chrono-tz",
@@ -5995,15 +5996,19 @@ dependencies = [
  "kamadak-exif",
  "libc",
  "lindera",
+ "lopdf",
  "loro",
  "ocrs",
  "oneiron",
+ "oneiron-seal",
  "oneiron-vault-contract",
  "p256",
  "postcard",
  "proptest",
+ "qrcode",
  "rand 0.8.7",
  "rand_core 0.6.4",
+ "rcgen",
  "regex",
  "reqwest 0.12.28",
  "rmp-serde",
@@ -6208,6 +6213,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "blake3",
  "candle-core",
  "candle-nn",
@@ -7058,6 +7064,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"

@@ -115,6 +115,18 @@ pub(in crate::batch) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
+        if body.predicate.starts_with("esign.") {
+            if replicated {
+                return Err(Error::InvalidClaimBody(
+                    "esign events require the local authenticated organ",
+                ));
+            }
+            if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+                && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
+            {
+                return Err(Error::InvalidClaimBody("esign events are append-only"));
+            }
+        }
         crate::subject_model::validate_subject_model_claim_in_txn(store, wtxn, &body)?;
         crate::thread_passport::validate_thread_claim_in_txn(store, wtxn, &id, &body, replicated)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;

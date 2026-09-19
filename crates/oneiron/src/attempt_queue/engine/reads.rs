@@ -113,7 +113,7 @@ impl AttemptQueue<'_> {
     /// Reads an attempt by id inside a caller-owned write transaction.
     pub(crate) fn get_in_write_txn(
         &self,
-        wtxn: &heed::RwTxn<'_>,
+        wtxn: &heed::RoTxn<'_>,
         id: AttemptId,
     ) -> Result<Option<AttemptRecord>> {
         let Some(raw) = self.store.attempt_records.get(wtxn, id.as_bytes())? else {
