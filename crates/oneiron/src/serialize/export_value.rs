@@ -78,6 +78,9 @@ impl ExportBody {
             let mut exported = export_value(&value, "", entity_type, 0);
             if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 export_provenance_references(bytes, &mut exported);
+                if let Ok(body) = crate::claim::decode_claim_body(bytes, true) {
+                    super::export_actor_references::export_actor_references(&body, &mut exported);
+                }
             }
             return Self::MessagePack(exported);
         }

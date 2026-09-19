@@ -138,3 +138,6 @@ pub(super) const fn invalid(reason: &'static str) -> Error {
 
 #[cfg(test)]
 mod tests;
+
+mod archive_references;
+pub(crate) use archive_references::actor_archive_references;
