@@ -488,12 +488,12 @@ fn setup_payload_over_a_small_vault() -> McpSetupPayload {
 // `HostSelfDispatcher`/`GatedActorWrite` and enters the sandbox/REPL through
 // `EngineNativeExecutor`. Nothing here re-dispatches calls of its own.
 //
-// These arms observe the SEAM, not the wire. Under the host-free release
-// contract `execute_code` is registered on no endpoint and a direct call is
-// refused with `execute_code_unavailable`, so nothing below is reachable from a
-// client; the host is entered here directly, with a fixture provider this test
-// supplies. A production runtime, provider, and the engine's settlement door
-// belong to the named follow-on feature ticket.
+// These arms observe the SEAM, not the wire. A server that binds no verified
+// runtime registers `execute_code` on no endpoint and refuses a direct call with
+// `code_host_unbound`, so nothing below is reachable from a client on an
+// unconfigured server; the host is entered here directly, with a fixture
+// provider this test supplies. The production provider binding and the engine's
+// settlement door are covered separately, not by these seam arms.
 // ════════════════════════════════════════════════════════════════════════
 
 /// What the fixture sandbox/REPL runtime actually observed.

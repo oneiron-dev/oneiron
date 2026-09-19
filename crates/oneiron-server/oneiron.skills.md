@@ -83,11 +83,12 @@ await self.memory.put_claim(/* claim */); // first-party trap: gate-checked writ
 const projection = await self.context({ /* projection descriptor */ });
 ```
 
-`execute_code` is the code-mode entry a host supplies. This release registers it on
-no endpoint and refuses a direct call with `execute_code_unavailable`, so the
-dispatcher above is the code-mode surface. Do not install the HTTP client for this
-lane: the dispatcher already speaks the same wire, actor identity, and Gate that
-this pack documents.
+`execute_code` is the code-mode entry a host supplies. A server registers it only
+after binding a verified runtime, backend and budget lease; an unconfigured server
+lists it nowhere and refuses a direct call with `code_host_unbound` before any run
+is created. Either way the dispatcher above is the code-mode surface. Do not
+install the HTTP client for this lane: the dispatcher already speaks the same wire,
+actor identity, and Gate that this pack documents.
 
 ## Lane: thin-client
 

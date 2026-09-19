@@ -645,12 +645,11 @@ impl Vault {
             .collect()
     }
 
-    /// Whether `key` is currently unsafe for sweep compaction: registered in
-    /// an attached manager OR still retained by an outstanding orphaned
-    /// `Arc<LoadedWindow>` after deregistration. A live doc holds the full op
-    /// history in memory, and its next full-snapshot persist would rewrite
-    /// that history over a shallow-compacted `d:w:` row, so the sweep must
-    /// never compact while such a handle may persist.
+    /// Invalidate live document subscribers for `id` after a committed NOTE
+    /// write. Content-free and best effort: with no attached manager there is
+    /// no live document to refresh, and a poisoned attachment lock drops the
+    /// notification rather than failing an already committed write. Recipients
+    /// always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) fn notify_note_document(&self, id: crate::EntityId) {
         let manager = self
@@ -663,6 +662,10 @@ impl Vault {
         }
     }
 
+    /// Shallow-compact `id`'s document row during a sweep. Returns whether the
+    /// compaction ran: an attached manager decides for its own live handles,
+    /// and an attached-but-dropped manager defers rather than rewriting a row a
+    /// live document may still persist over.
     #[cfg(feature = "sync")]
     pub(crate) fn compact_document_for_sweep(
         &self,
@@ -687,6 +690,12 @@ impl Vault {
         }
     }
 
+    /// Whether `key` is currently unsafe for sweep compaction: registered in
+    /// an attached manager OR still retained by an outstanding orphaned
+    /// `Arc<LoadedWindow>` after deregistration. A live doc holds the full op
+    /// history in memory, and its next full-snapshot persist would rewrite
+    /// that history over a shallow-compacted `d:w:` row, so the sweep must
+    /// never compact while such a handle may persist.
     #[cfg(feature = "sync")]
     pub(crate) fn live_window_for_sweep(&self, key: &crate::sync::WindowKey) -> bool {
         let attached = self
