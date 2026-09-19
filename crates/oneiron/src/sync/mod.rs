@@ -26,6 +26,7 @@
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
+pub mod chunks;
 pub mod client;
 pub mod connection;
 #[cfg(test)]

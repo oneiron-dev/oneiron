@@ -525,6 +525,10 @@ impl Vault {
             // Every vault opens FULL; only an explicit ctl-driven shed parks
             // it, and only an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
+            conversation_presence: Default::default(),
+            message_streams: Default::default(),
+            #[cfg(feature = "sync")]
+            entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
@@ -535,6 +539,15 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        vault.lfs_chunk_parameters()?;
+        let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
+        while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
+        while vault.collect_lfs_garbage(32)? != 0 {}
+        vault.recover_message_streams().map_err(|error| {
+            crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
+                error.to_string(),
+            ))
+        })?;
         Ok(vault)
     }
 

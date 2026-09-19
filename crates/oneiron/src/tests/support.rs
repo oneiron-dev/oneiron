@@ -363,7 +363,11 @@ impl ContractEdgeLayout {
     }
 }
 
-pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 24] = [
+pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 28] = [
+    (EdgeKind::Parent, ContractEdgeLayout::Structural),
+    (EdgeKind::SpawnedBy, ContractEdgeLayout::Structural),
+    (EdgeKind::AddressedTo, ContractEdgeLayout::Structural),
+    (EdgeKind::RepliesTo, ContractEdgeLayout::Structural),
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -1393,7 +1397,13 @@ pub(super) fn lifecycle_fixture() -> Result<LifecycleFixture> {
     let machine = EntityId::now();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&person, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     vault.put_entity(
         &machine,
         ENTITY_TYPE_MACHINE,
@@ -1401,8 +1411,20 @@ pub(super) fn lifecycle_fixture() -> Result<LifecycleFixture> {
         1,
         b"machine",
     )?;
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
     let vad = Vad {
         valence: 0.25,
         arousal: 0.5,

@@ -28,9 +28,7 @@ use rmpv::Value;
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const ENTITY_TYPE_CODE_SYMBOL: u8 = 104;
-const ENTITY_TYPE_PERSON: u8 = 4;
-const ENTITY_TYPE_MACHINE: u8 = 102;
+use oneiron::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 
 /// The fixture's NOTE author, and the subject its takes are about. Both are
 /// ordinary PERSONs: `put_entity` still admits every non-NOTE type.
@@ -976,7 +974,7 @@ fn blocks_discriminant_is_24() {
     assert_eq!(EdgeKind::try_from_u8(25), Some(EdgeKind::Fulfills));
     assert_eq!(EdgeKind::DischargedBy as u8, 26);
     assert_eq!(EdgeKind::try_from_u8(26), Some(EdgeKind::DischargedBy));
-    assert!(EdgeKind::try_from_u8(27).is_none());
+    assert!(EdgeKind::try_from_u8(31).is_none());
     assert!(EdgeKind::try_from_u8(u8::MAX).is_none());
 }
 

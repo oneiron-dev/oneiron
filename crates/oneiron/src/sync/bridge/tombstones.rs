@@ -311,6 +311,16 @@ fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWor
         return false;
     }
 
+    loop {
+        match vault.collect_lfs_garbage(32) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(%error, "lfs deletion byte reclamation remains queued");
+                break;
+            }
+        }
+    }
     for (work, stage, err) in &failures {
         match stage {
             TombstoneFailureStage::Replay => tracing::error!(

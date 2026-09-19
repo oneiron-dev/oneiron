@@ -39,6 +39,9 @@ pub(crate) use self::entities::{
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
+    pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    #[cfg(feature = "sync")]
+    pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
@@ -64,6 +67,8 @@ pub struct Vault {
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
     /// outbound callback, no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
+    pub(crate) conversation_presence:
+        std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the
     /// production [`crate::sync::manager::WindowManager`], set by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`]. When a

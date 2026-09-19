@@ -211,7 +211,11 @@ fn seeded_entity_id(counter: u128) -> EntityId {
 // LOCAL `h:` sweep row; never-downgrade on receive; D16 in the same txn.
 // ═══════════════════════════════════════════════════════════════════════
 
-const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 25] = [
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 29] = [
+    (27, EdgeKind::Parent),
+    (28, EdgeKind::SpawnedBy),
+    (29, EdgeKind::AddressedTo),
+    (30, EdgeKind::RepliesTo),
     (0, EdgeKind::AuthoredBy),
     (1, EdgeKind::ScopedTo),
     (2, EdgeKind::PartOf),

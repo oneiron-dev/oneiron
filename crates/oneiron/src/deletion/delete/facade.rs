@@ -38,7 +38,9 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        self.delete_entity_with_reason_impl(id, reason, None)
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None)?;
+        while self.collect_lfs_garbage(32)? != 0 {}
+        Ok(outcome)
     }
 
     /// Facade delete seam carrying an owner gate evaluated before TXN1.
@@ -53,7 +55,9 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        self.delete_entity_with_reason_impl(id, reason, Some(gate))
+        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate))?;
+        while self.collect_lfs_garbage(32)? != 0 {}
+        Ok(outcome)
     }
 
     fn delete_entity_with_reason_impl(
@@ -62,6 +66,10 @@ impl Vault {
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
     ) -> Result<DeleteEntityOutcome> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
+        }
         if reason == DeleteReason::ArchivedByCleanup {
             return Err(Error::InvariantViolation(
                 "cleanup archives require the cleanup proposal/decision door",

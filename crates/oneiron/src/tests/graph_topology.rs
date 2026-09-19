@@ -708,11 +708,41 @@ fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
 
     vault
         .batch()
-        .put(&p1, 9, test_time_range(1, 1), 2, b"p1")
-        .put(&p2, 9, test_time_range(3, 3), 4, b"p2")
-        .put(&p3, 9, test_time_range(5, 5), 6, b"p3")
-        .put(&p4, 9, test_time_range(7, 7), 8, b"p4")
-        .put(&p5, 9, test_time_range(9, 9), 10, b"p5")
+        .put(
+            &p1,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(1, 1),
+            2,
+            b"p1",
+        )
+        .put(
+            &p2,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(3, 3),
+            4,
+            b"p2",
+        )
+        .put(
+            &p3,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(5, 5),
+            6,
+            b"p3",
+        )
+        .put(
+            &p4,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(7, 7),
+            8,
+            b"p4",
+        )
+        .put(
+            &p5,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(9, 9),
+            10,
+            b"p5",
+        )
         .edge(&p2, EdgeKind::PartOf, &p1, 1.0)
         .edge(&p3, EdgeKind::PartOf, &p2, 1.0)
         .edge(&p4, EdgeKind::PartOf, &p3, 1.0)

@@ -369,6 +369,8 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        #[cfg(feature = "sync")]
+        crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
         // ONE-1741 removed the verdict relocation that this hook also carried.
         //
@@ -394,6 +396,8 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool)> {
+        #[cfg(feature = "sync")]
+        crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {
@@ -403,6 +407,7 @@ impl Vault {
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
         crate::code_revision::delete_code_revision_lifecycle_in_txn(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+        crate::origin::lfs::delete_lfs_lifecycle_in_txn(&self.store, wtxn, id)?;
         let blob_cleanup =
             crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(&self.store, wtxn, id)?;
         if blob_cleanup.had_graph_mutation {
@@ -498,6 +503,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
         wtxn.commit()?;
+        while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
     }
 
@@ -518,6 +524,7 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
+        crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
         let decoded = decode_tombstone_value(raw_value);
         // Cleanup is local visibility, never a replicated deletion intent.
         // Accepting byte 5 here would irreversibly scrub a retained archive

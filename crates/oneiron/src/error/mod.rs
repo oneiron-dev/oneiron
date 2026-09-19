@@ -272,6 +272,10 @@ pub enum ErrorKind {
     VaultCleanupProposalNotFound,
     VaultCleanupWakeTriggerRejected,
     VaultRead,
+    InvalidConversationBody,
+    ConversationState,
+    ConversationDenied,
+    MessageStreamRecoveryFailed,
 }
 
 /// Crate error type.

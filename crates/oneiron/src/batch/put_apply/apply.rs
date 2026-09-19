@@ -60,6 +60,32 @@ pub(in crate::batch) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
+    crate::origin::lfs::guard_lfs_asset_put(store, wtxn, &id, data)?;
+    #[cfg(feature = "sync")]
+    crate::entity_doc::guard_record_put(store, wtxn, &id, data)?;
+    if store
+        .vault_meta
+        .get(
+            wtxn,
+            &[b"conversation_dag:record:v1:".as_slice(), id.as_bytes()].concat(),
+        )?
+        .is_some()
+        && let Some(raw) = store.entities.get(wtxn, id.as_bytes())?
+    {
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("DAG record header"))?;
+        if raw[ENTITY_METADATA_HEADER_LEN..] != *data
+            || header.occurred_start != occurred.start
+            || header.occurred_end != occurred.end
+        {
+            return Err(Error::Record(RecordError::ConversationState(
+                "DAG records are append-only",
+            )));
+        }
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
+        crate::conversation::validate_put_in_txn(store, wtxn, id, data, replicated)?;
+    }
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
     let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {

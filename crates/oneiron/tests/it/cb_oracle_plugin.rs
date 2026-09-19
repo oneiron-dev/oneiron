@@ -1041,12 +1041,24 @@ mod plugin_fixture {
                 end: now,
             };
             vault
-                .put_entity(&actor, 4, occurred, now, b"agent")
+                .put_entity(
+                    &actor,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    occurred,
+                    now,
+                    b"agent",
+                )
                 .expect("seed the proposing actor");
             // The claim subject for an UNINSTALLED package is the existing
             // hub/provider entity — never the unwritten skill row.
             vault
-                .put_entity(&hub_id, 4, occurred, now, b"crm hub")
+                .put_entity(
+                    &hub_id,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    occurred,
+                    now,
+                    b"crm hub",
+                )
                 .expect("seed the hub entity");
 
             let package = crm_package();
@@ -1583,7 +1595,7 @@ mod plugin_fixture {
             self.vault
                 .put_entity(
                     &evidence,
-                    4,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
                     TimeRange {
                         start: 1_500,
                         end: 1_500,

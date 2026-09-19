@@ -547,6 +547,18 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Index text in the same transaction as a typed record write.
+    pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
+        self.ops.push(BatchOp::Text {
+            id: *id,
+            fields: fields
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        });
+        self
+    }
+
     /// Applies all queued operations to the given write transaction without committing.
     ///
     /// Within [`Vault::with_write_txn`] or [`Vault::try_with_write_txn`], explicit
