@@ -275,7 +275,7 @@ fn producer_bound(
     let Some(stamp) = vault.store.vault_meta.get(txn, &producer_key(id))? else {
         return Ok(false);
     };
-    Ok(stamp == blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    Ok(stamp.as_ref() == blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
 }
 
 impl crate::memory::Memory<'_> {
