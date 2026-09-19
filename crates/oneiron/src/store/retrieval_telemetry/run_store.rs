@@ -133,6 +133,9 @@ impl Store {
                 "retrieval telemetry writes disabled",
             ));
         }
+        // Invalid caller state is not a storage failure. Session staging also
+        // validates in-transaction because it does not enter this outer door.
+        record.state.validate()?;
         #[cfg(test)]
         if test_hooks::take_fail_next_retrieval_run_write(&self.owner._registered_path.path) {
             self.retrieval_writes_disabled

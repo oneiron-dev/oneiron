@@ -237,3 +237,30 @@ fn pipeline_persists_one_shot_signals_and_verbatim_host_override() -> crate::Res
     );
     Ok(())
 }
+
+#[test]
+fn invalid_caller_state_does_not_disable_later_pipeline_telemetry() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let mut invalid = record(10);
+    invalid.state.top_score_norm = f32::NAN;
+    assert!(matches!(
+        vault.store.record_retrieval_run(&invalid),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    let bad_run = vault
+        .query()
+        .search_text("absent", 10)
+        .retrieval_state(invalid.state)
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    assert!(bad_run.run_id.is_none());
+    let good_run = vault
+        .query()
+        .search_text("absent", 10)
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let run_id = good_run.run_id.expect("valid state still persists");
+    assert!(vault.retrieval_run(run_id)?.is_some());
+    assert_eq!(vault.retrieval_runs(10)?.len(), 1);
+    Ok(())
+}
