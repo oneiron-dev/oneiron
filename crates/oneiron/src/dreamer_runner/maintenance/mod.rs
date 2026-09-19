@@ -82,3 +82,33 @@ fn load_row<T: serde::de::DeserializeOwned>(
 }
 
 pub mod digest;
+
+fn validate_owner_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &crate::consent::AuthenticatedOwner,
+) -> Result<()> {
+    let refused = || {
+        Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
+            "maintenance requires a live owner in this vault",
+        ))
+    };
+    let actor = owner.actor();
+    if vault.archive_tombstone_in_txn(txn, &actor)?.is_some()
+        || vault.entity_lifecycle_state_in_txn(txn, &actor)?
+            != crate::identity_topology::EntityLifecycleState::Active
+    {
+        return Err(refused());
+    }
+    let raw = vault
+        .store
+        .entities
+        .get(txn, actor.as_bytes())?
+        .ok_or_else(refused)?;
+    if crate::batch::EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+    {
+        return Err(refused());
+    }
+    Ok(())
+}

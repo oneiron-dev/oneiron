@@ -667,6 +667,9 @@ pub(in crate::batch) fn apply_put(
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
+    if let Some(body) = decoded_claim_body.as_ref() {
+        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+    }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(

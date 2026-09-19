@@ -46,7 +46,7 @@ struct DigestState {
 impl Vault {
     pub fn set_proactivity_cadence(
         &self,
-        _owner: &crate::consent::AuthenticatedOwner,
+        owner: &crate::consent::AuthenticatedOwner,
         row: &ProactivityCadence,
     ) -> Result<()> {
         if row.period_secs == 0 {
@@ -54,6 +54,7 @@ impl Vault {
         }
         let bytes = serde_json::to_vec(row).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
+            super::validate_owner_in_txn(self, txn, owner)?;
             self.store.vault_meta.put(txn, CADENCE_KEY, &bytes)?;
             Ok(())
         })
@@ -63,12 +64,13 @@ impl Vault {
     /// approved intent whose deadline is before the next cadence boundary.
     pub fn proactivity_digest(
         &self,
-        _owner: &crate::consent::AuthenticatedOwner,
+        owner: &crate::consent::AuthenticatedOwner,
         now: u64,
         urgent: Option<&UrgentDigestWake>,
     ) -> Result<Option<ProactivityDigest>> {
         let authority = self.dreamer_authority()?.entity_ref();
         self.with_write_txn(|txn| {
+            super::validate_owner_in_txn(self, txn, owner)?;
             let cadence: ProactivityCadence = match self.store.vault_meta.get(&*txn, CADENCE_KEY)? {
                 Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
                 None => serde_json::from_str(include_str!("digest_defaults.json"))
@@ -95,7 +97,14 @@ impl Vault {
                 {
                     self.get_claim_in_txn(&*txn, &wake.intent_ref)?
                         .is_some_and(|body| {
-                            body.approval == ClaimApprovalStatus::Approved
+                            body.predicate == "profile.intent"
+                                && body.subject == crate::ClaimSubject::Entity(owner.actor())
+                                && body.source == Some(ClaimSource::UserStated)
+                                && body
+                                    .value
+                                    .as_str()
+                                    .is_some_and(|text| !text.trim().is_empty())
+                                && body.approval == ClaimApprovalStatus::Approved
                                 && body.lifecycle == ClaimLifecycleStatus::Active
                                 && !body.stale
                         })
@@ -109,8 +118,12 @@ impl Vault {
                 return Ok(None);
             }
             let mut groups: BTreeMap<String, Vec<DigestProposal>> = BTreeMap::new();
-            for row in self.store.entities.iter(&*txn)? {
-                let (id, bytes) = row?;
+            for id in
+                crate::claim::pending_claim_ids_for_producer_in_txn(&self.store, txn, authority)?
+            {
+                let Some(bytes) = self.store.entities.get(txn, id.as_bytes())? else {
+                    continue;
+                };
                 let header = EntityMetadataHeader::parse(&bytes).ok_or_else(invalid)?;
                 if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
                     || bytes.len() == ENTITY_METADATA_HEADER_LEN
@@ -127,8 +140,6 @@ impl Vault {
                 {
                     continue;
                 }
-                let id_bytes: &[u8] = &id;
-                let id = EntityId::from_bytes(id_bytes.try_into().map_err(|_| invalid())?)?;
                 let revision = *blake3::hash(&bytes[ENTITY_METADATA_HEADER_LEN..]).as_bytes();
                 if state.seen.get(&id.to_hex()) == Some(&revision) {
                     continue;

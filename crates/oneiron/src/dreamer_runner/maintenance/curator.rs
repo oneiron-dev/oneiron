@@ -35,12 +35,13 @@ impl CuratorRubric {
 impl Vault {
     pub fn set_curator_rubric(
         &self,
-        _owner: &crate::consent::AuthenticatedOwner,
+        owner: &crate::consent::AuthenticatedOwner,
         rubric: &CuratorRubric,
     ) -> Result<()> {
         rubric.validate()?;
         let bytes = serde_json::to_vec(rubric).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
+            super::validate_owner_in_txn(self, txn, owner)?;
             self.store.vault_meta.put(txn, RUBRIC_KEY, &bytes)?;
             Ok(())
         })

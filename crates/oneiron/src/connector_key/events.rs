@@ -114,8 +114,10 @@ fn subscriptions(
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(EntityId, ConnectorSubscription)>> {
     let mut result = Vec::new();
-    for entry in store.entities.iter(txn)? {
-        let (id, raw) = entry?;
+    for id in crate::claim::claim_ids_for_predicate_in_txn(store, txn, PREDICATE)? {
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            continue;
+        };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
@@ -134,11 +136,7 @@ fn subscriptions(
                 ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
             )
         {
-            let raw_id: &[u8] = &id;
-            result.push((
-                EntityId::from_bytes(raw_id.try_into().map_err(|_| invalid())?)?,
-                row,
-            ));
+            result.push((id, row));
         }
     }
     Ok(result)

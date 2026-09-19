@@ -79,6 +79,22 @@ fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()>
         needed_before: 150,
         waiting_harms_intent: true,
     };
+    for change in 0..4 {
+        let mut unrelated = intent.clone();
+        match change {
+            0 => unrelated.predicate = "profile.hobby".into(),
+            1 => unrelated.subject = ClaimSubject::Entity(entity(0x32)),
+            2 => unrelated.source = Some(ClaimSource::Generated),
+            _ => unrelated.value = Value::Nil,
+        }
+        vault.put_claim(&intent_id, &unrelated, TimeRange { start: 1, end: 1 }, 1)?;
+        assert!(
+            vault
+                .proactivity_digest(&owner, 102, Some(&urgent))?
+                .is_none()
+        );
+    }
+    vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let breakthrough = vault
         .proactivity_digest(&owner, 102, Some(&urgent))?
         .unwrap();
