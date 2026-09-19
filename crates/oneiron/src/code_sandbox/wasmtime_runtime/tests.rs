@@ -494,13 +494,13 @@ fn native_quickjs_component_write_lands_through_gate() -> Result<()> {
     let (_dir, vault, actor, subject, claim) = gate_fixture()?;
     let input = serde_json::json!({
         "id": claim.to_hex(),
-        "subject": serde_json::to_string(&subject.to_hex()).unwrap(),
+        "subject": subject.to_hex(),
         "predicate": "profile.favorite_drink",
-        "value": "null",
+        "value": null,
         "confidence": 0.9
     });
     let script = format!(
-        "const input = {input}; input.value = JSON.stringify('blend-' + [1,2,3].reduce((a,b) => a+b,0)); \
+        "const input = {input}; input.value = 'blend-' + [1,2,3].reduce((a,b) => a+b,0); \
          const written = await self.memory.put_claim(input); finish(written.id);"
     );
     let mut host = DispatcherHost(GatedActorWrite::new(

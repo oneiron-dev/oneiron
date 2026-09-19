@@ -14,8 +14,9 @@ use crate::{
 use serde_json::json;
 use std::{
     fs, io,
+    os::fd::AsRawFd,
     os::unix::{
-        fs::{MetadataExt, PermissionsExt},
+        fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
         net::{UnixListener, UnixStream},
         process::CommandExt,
     },
@@ -36,13 +37,8 @@ pub(super) fn run(
     let (_jail_custody, jail_root, staged) = stage_images(config, vm, image, budget)?;
     // Firecracker's guest-initiated vsock connects to <uds_path>_<port>.
     // Bind BEFORE boot so there is no transport-ready race or permissive retry.
-    let endpoint = jail_root.join("vsock.sock_52");
-    let listener =
-        UnixListener::bind(&endpoint).map_err(|_| refused("vsock listener bind failed"))?;
-    fs::set_permissions(&endpoint, fs::Permissions::from_mode(0o600))
-        .map_err(|_| refused("vsock permissions failed"))?;
-    std::os::unix::fs::chown(&endpoint, Some(config.uid), Some(config.gid))
-        .map_err(|_| refused("vsock owner setup failed"))?;
+    let (_socket_directory, endpoint, listener) =
+        bind_guest_listener(&jail_root, config.uid, config.gid)?;
     let mut command = jailer_command(config, vm, budget);
     let child = command
         .spawn()
@@ -90,6 +86,32 @@ pub(super) fn run(
     // terminate it too. Never leave a guest running while collecting deltas.
     drop(custody);
     output
+}
+
+// Keep the directory descriptor alive until both the listener and watchdog are
+// finished. A /proc/self/fd path avoids sockaddr_un's small pathname limit,
+// without chdir (process-global), a public short-path alias, or a different jail.
+fn bind_guest_listener(
+    jail_root: &Path,
+    uid: u32,
+    gid: u32,
+) -> Result<(fs::File, std::path::PathBuf, UnixListener)> {
+    let directory = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(jail_root)
+        .map_err(|_| refused("vsock directory open failed"))?;
+    let endpoint = std::path::PathBuf::from(format!(
+        "/proc/self/fd/{}/vsock.sock_52",
+        directory.as_raw_fd()
+    ));
+    let listener =
+        UnixListener::bind(&endpoint).map_err(|_| refused("vsock listener bind failed"))?;
+    fs::set_permissions(&endpoint, fs::Permissions::from_mode(0o600))
+        .map_err(|_| refused("vsock permissions failed"))?;
+    std::os::unix::fs::chown(&endpoint, Some(uid), Some(gid))
+        .map_err(|_| refused("vsock owner setup failed"))?;
+    Ok((directory, endpoint, listener))
 }
 
 fn stage_images(
@@ -252,3 +274,7 @@ fn terminate(child: &Mutex<Option<Child>>) {
         let _ = child.wait();
     }
 }
+
+#[cfg(test)]
+#[path = "launch/tests.rs"]
+mod tests;

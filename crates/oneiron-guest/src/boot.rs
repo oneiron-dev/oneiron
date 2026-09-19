@@ -83,13 +83,7 @@ fn mount_system() -> Result<()> {
         libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC,
         None,
     )?;
-    mount(
-        Some(c"devtmpfs"),
-        c"/dev",
-        Some(c"devtmpfs"),
-        libc::MS_NOSUID | libc::MS_NOEXEC,
-        Some(c"mode=0755"),
-    )?;
+    mount_devices()?;
     mount(
         Some(c"tmpfs"),
         c"/run",
@@ -117,6 +111,32 @@ fn mount_system() -> Result<()> {
         Some(c"cgroup2"),
         libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC,
         None,
+    )
+}
+
+// CONFIG_DEVTMPFS_MOUNT kernels mount /dev before invoking PID 1. devtmpfs
+// refuses a second mount with EBUSY; harden that existing mount instead. Never
+// accept an unrelated filesystem at this privileged device mountpoint.
+fn mount_devices() -> Result<()> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo")?;
+    let mut flags = libc::MS_NOSUID | libc::MS_NOEXEC;
+    for line in mountinfo.lines() {
+        let Some((fields, filesystem)) = line.split_once(" - ") else {
+            return Err(Error::Runtime("invalid kernel mount table"));
+        };
+        if fields.split_whitespace().nth(4) == Some("/dev") {
+            if filesystem.split_whitespace().next() != Some("devtmpfs") {
+                return Err(Error::Runtime("unexpected device filesystem"));
+            }
+            flags |= libc::MS_REMOUNT;
+        }
+    }
+    mount(
+        Some(c"devtmpfs"),
+        c"/dev",
+        Some(c"devtmpfs"),
+        flags,
+        Some(c"mode=0755"),
     )
 }
 
