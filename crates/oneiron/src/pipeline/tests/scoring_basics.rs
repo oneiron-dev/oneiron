@@ -149,7 +149,7 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
     let (restored, _) = Vault::restore_checkpoint(
         &image,
         &dir.path().join("restored"),
-        crate::VaultConfig::device(),
+        embedding_test_config(),
         crate::recovery::checkpoint::RestoreReason::Restore,
         400,
     )?;
