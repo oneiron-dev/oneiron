@@ -23,8 +23,9 @@ use crate::server::SyncServer;
 
 use super::args::{ManagedArgs, ManagedError};
 use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
-use super::listener::{ManagedCtl, ServeListener, init_managed_tracing, signal_ready};
-use super::vault_gates::{open_managed_vault, read_managed_credentials};
+use super::listener::{ManagedCtl, init_managed_tracing};
+use super::vault_gates::open_managed_vault;
+use oneiron_vault_contract::host::{Host, HostLimits};
 
 /// Machine-readable tag on the refusals a frozen engine serves, so a client can
 /// match on it rather than parse prose.
@@ -252,10 +253,9 @@ impl ManagedState {
                 pid: std::process::id(),
                 contract_version: CONTRACT_VERSION,
             }),
-            CtlRequest::Shed { .. } => Err(ManagedError::CtlRequestRefused {
-                reason: "shed integration is deferred; managed ctl does not invoke engine shedding"
-                    .to_owned(),
-            }),
+            CtlRequest::Shed { cause, waited_secs } => {
+                super::shed::shed(self.server.vault(), cause, waited_secs)
+            }
             CtlRequest::PrepareReap => self.prepare_reap().await,
             CtlRequest::ReapAbort => {
                 self.unfreeze();
@@ -358,6 +358,9 @@ async fn refuse_frozen_writes(
         // answered for — this gate cannot refuse a frame it never sees.
         state.admit_sync_upgrade();
     }
+    if let Err(error) = state.server.vault().resume_from_slim_on_inbound() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
     next.run(request).await
 }
 
@@ -422,14 +425,24 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // frame is spent and the vault — including its sealed DEK MAC — has been
     // opened. Refusing here costs nothing and consumes nothing; `bind` below
     // is still the only adoption.
-    let http = ServeListener::for_managed(&managed)?;
+    let shutdown = ManagedShutdown::new();
+    let mut host =
+        super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
+    let http = host.listener()?;
 
     // The contract requires the credential frame to be read before the data
     // directory is opened, so a refused frame never touches storage.
-    let credentials = read_managed_credentials(managed.credentials_fd)?;
+    let credentials = oneiron_vault_contract::Credentials {
+        dek: host.secret("dek")?.as_slice().try_into()?,
+        token: host.secret("spawn_token")?.as_slice().try_into()?,
+    };
+    let mut vault_config = config.vault_config();
+    vault_config.failure_signals.deployment =
+        oneiron::config::failure_signals::DeploymentTier::Managed;
+    vault_config.failure_signals.training_opt_in = args.failure_signal_training.unwrap_or(false);
     let vault = Arc::new(open_managed_vault(
         &managed.data_dir,
-        config.vault_config(),
+        vault_config,
         &managed.vault_name,
         &credentials,
     )?);
@@ -455,13 +468,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // rather than at end of scope is what keeps the DEK out of memory for the
     // rest of the process lifetime.
     drop(credentials);
+    host.clear_secrets();
     let state = Arc::new(ManagedState::new(
         managed.vault_name.clone(),
         Arc::clone(&sync_server),
         ledger,
     ));
 
-    let shutdown = ManagedShutdown::new();
     spawn_sigterm_shutdown(shutdown.clone())?;
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
@@ -472,7 +485,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Both sockets are bound, the credentials are consumed, and the open gates
     // have passed. Only now is this process something the supervisor may route
     // traffic to.
-    signal_ready(managed.ready_fd)?;
+    host.ready()?;
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
 
     if let Err(error) = state.ledger().push_if_changed(&sync_server).await {
@@ -488,7 +501,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // listener closes the moment SIGTERM lands, and this resolves once the
     // requests already in the runtime have finished.
     let result = http.serve_until(app, shutdown.triggered()).await;
-
+    host.on_stop()?;
     let _ = ctl_task.await;
     // An interrupted reap must not outlive the process that started it.
     state.unfreeze();
@@ -569,17 +582,20 @@ mod shed_tests {
         let revision = state.ledger().rev();
         for cause in [ShedCause::LongOutboundWait, ShedCause::MemoryPressure] {
             for waited_secs in [0, 1] {
-                let error = state
+                let response = state
                     .handle_request(CtlRequest::Shed { cause, waited_secs })
-                    .await
-                    .unwrap_err();
-                let ManagedError::CtlRequestRefused { reason } = error else {
-                    panic!("expected typed ctl refusal, got {error:?}");
-                };
+                    .await;
                 if waited_secs == 0 {
-                    assert_eq!(reason, "shed requires a positive waited_secs");
+                    assert!(matches!(
+                        response,
+                        Err(ManagedError::CtlRequestRefused { .. })
+                    ));
                 } else {
-                    assert!(reason.contains("shed integration is deferred"));
+                    let response = response?;
+                    response.validate()?;
+                    assert!(
+                        matches!(response, CtlResponse::Slim { slim: false, status: oneiron_vault_contract::ShedStatus::Refused, blocker: Some(blocker), .. } if blocker.kind == "no_pending_outbound_step")
+                    );
                 }
                 assert!(!state.is_frozen());
                 assert!(state.observed_alarms().await.is_empty());

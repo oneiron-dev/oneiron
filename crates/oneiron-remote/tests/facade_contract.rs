@@ -93,7 +93,7 @@ fn boundary_caps_refuse_before_dispatch() {
     let error = client
         .recall(
             &oversized,
-            oneiron::memory::Effort::Standard,
+            oneiron::memory::Effort::Medium,
             &oneiron::memory::RecallScope::default(),
             10,
             None,

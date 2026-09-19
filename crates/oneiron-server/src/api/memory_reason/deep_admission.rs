@@ -102,7 +102,7 @@ pub(crate) fn admit_deep_retrieval(
     server: &SyncServer,
     effort: Effort,
 ) -> Result<Option<DeepAdmission>, ApiError> {
-    if effort != Effort::Deep {
+    if !effort.requires_rerank() {
         return Ok(None);
     }
     let host = server

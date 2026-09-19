@@ -133,7 +133,7 @@ fn deep_request(reason: bool) -> Request<Body> {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "launch", "depth": "deep"}),
+            json!({"query": "launch", "depth": "high"}),
         )
     } else {
         Request::builder()
@@ -184,7 +184,7 @@ async fn deep_reason_composition_errors_settle_retrieval_and_error_spend() {
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "deep", "tokenBudget": 19 }),
+                json!({ "query": "launch", "depth": "high", "tokenBudget": 19 }),
             ),
         )
         .await;

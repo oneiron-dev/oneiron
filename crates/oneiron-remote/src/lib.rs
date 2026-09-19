@@ -31,7 +31,7 @@
 //! It does not mint, split, parse, or validate authority. The `OF-452` slip
 //! crosses verbatim and every authority decision is the server's. It does not
 //! emulate a facade verb out of lower-level storage routes. It does not mint
-//! or simulate a retrieval lease, so `Effort::Deep` returns the engine's own
+//! or simulate a retrieval lease, so `Effort::High` returns the engine's own
 //! `LEASE_REQUIRED`.
 
 #![forbid(unsafe_code)]
@@ -120,7 +120,7 @@ pub fn parse_effort(value: &str) -> Result<Effort, MemoryError> {
     Effort::parse(value).ok_or_else(|| {
         crate::error::bad_request(
             format!("unknown recall effort {value:?}"),
-            &["Use one of: minimal, standard, deep."],
+            &["Use one of: light, medium, high, xhigh, max."],
         )
     })
 }
@@ -319,7 +319,7 @@ impl OneironClient {
     ///
     /// The lease argument the engine takes is `None` and is NOT a client
     /// input: no lease issuer exists, and a bearer slip is not one. An
-    /// `Effort::Deep` call therefore returns the engine's `LEASE_REQUIRED`
+    /// `Effort::High` call therefore returns the engine's `LEASE_REQUIRED`
     /// through both backends, spelled identically.
     pub fn recall(
         &self,

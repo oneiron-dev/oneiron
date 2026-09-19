@@ -47,6 +47,24 @@ pub enum Command {
     Token(TokenCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
+    /// Scaffold a self-host node from the shipped deployment templates.
+    #[command(subcommand)]
+    Host(HostCommand),
+}
+
+#[derive(Subcommand)]
+pub enum HostCommand {
+    Init(HostInitArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct HostInitArgs {
+    /// New output directory; existing nodes are never overwritten.
+    pub path: PathBuf,
+    /// Executable encryption provisioning hook. Receives the output directory
+    /// as its only argument, with no shell interpolation. A failure aborts init.
+    #[arg(long)]
+    pub encryption_hook: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -278,6 +296,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Mint(args)) => commands::token_mint(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
+        Command::Host(HostCommand::Init(args)) => commands::host_init(args),
     }
 }
 

@@ -105,7 +105,7 @@ fn raw_search_request(uri: &str) -> Request<Body> {
 async fn memory_reason_text_query_text_never_retargets_the_probe() {
     let backend = Arc::new(StubReasonBackend::answering("from evidence"));
     let (_dir, server) = memory_reason_server(Some(backend));
-    for depth in ["minimal", "standard", "deep"] {
+    for depth in ["light", "medium", "high"] {
         let uri = format!("/api/search/text?query=launch&depth={depth}&view=standard");
         let (status, original) = route_json(server.clone(), raw_search_request(&uri)).await;
         assert_eq!(status, StatusCode::OK, "{original:?}");
@@ -191,7 +191,7 @@ async fn memory_reason_deep_usage_accumulates_and_one_lease_reaches_all_stages()
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "deep", "tokenBudget": 17 }),
+                json!({ "query": "launch", "depth": "high", "tokenBudget": 17 }),
             ),
         )
         .await;
@@ -205,7 +205,7 @@ async fn memory_reason_deep_usage_accumulates_and_one_lease_reaches_all_stages()
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({ "query": "launch", "depth": "deep" }),
+            json!({ "query": "launch", "depth": "high" }),
         ),
     )
     .await;
@@ -244,7 +244,7 @@ async fn memory_reason_backend_errors_release_each_admitted_reservation() {
                 json_request(
                     "POST",
                     "/v1/companion/memory/reason",
-                    json!({ "query": "launch", "depth": "deep" }),
+                    json!({ "query": "launch", "depth": "high" }),
                 ),
             )
             .await;
@@ -339,7 +339,7 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         scoped.search_text("launch", 1, None).unwrap()[0].id,
         outside
     );
-    for depth in ["minimal", "standard", "deep"] {
+    for depth in ["light", "medium", "high"] {
         let (status, body) = route_json(
             server.clone(),
             json_request(
@@ -384,7 +384,7 @@ async fn memory_reason_budget_refusals_settle_actual_usage_and_stop_later_calls(
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "deep", "tokenBudget": budget }),
+                json!({ "query": "launch", "depth": "high", "tokenBudget": budget }),
             ),
         )
         .await;
@@ -403,7 +403,7 @@ async fn memory_reason_small_budget_does_not_call_a_host_at_model_free_tiers() {
     let guard = repair_guard(100, 17);
     let backend = Arc::new(RecordingReasonBackend::new(Some(FailingStage::Decompose)));
     let (_dir, server) = memory_reason_server_with_guard(Some(backend.clone()), guard.clone());
-    for depth in ["minimal", "standard"] {
+    for depth in ["light", "medium"] {
         let (status, body) = route_json(
             server.clone(),
             json_request(

@@ -63,7 +63,7 @@ pub(super) fn extend_depth_error_contract(value: &mut Value) {
 #[tokio::test]
 async fn retrieval_quality_depth_search_and_reason_keep_empty_minimal_healthy() {
     let (_dir, server) = test_server();
-    for depth in ["minimal", "standard"] {
+    for depth in ["light", "medium"] {
         let (status, reason) = route_json(
             server.clone(),
             json_request(
@@ -81,7 +81,7 @@ async fn retrieval_quality_depth_search_and_reason_keep_empty_minimal_healthy() 
         assert!(!reason["gaps"].as_array().unwrap().is_empty());
         assert_eq!(reason["confidence"], 0.0);
         assert_eq!(reason["tokensUsed"], 0);
-        assert_eq!(reason.get("reasoning").is_none(), depth == "minimal");
+        assert_eq!(reason.get("reasoning").is_none(), depth == "light");
         let (status, search) = route_json(
             server.clone(),
             Request::builder()
@@ -111,7 +111,7 @@ async fn retrieval_quality_depth_standard_projects_disabled_ppr_without_changing
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "standard"}),
+            json!({"query": "qualitydepth", "depth": "medium"}),
         ),
     )
     .await;
@@ -243,7 +243,7 @@ async fn retrieval_quality_depth_composition_fallback_keeps_report_and_actual_sp
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({"query": "qualitydepth", "depth": "deep", "format": "plaintext"}),
+                json!({"query": "qualitydepth", "depth": "high", "format": "plaintext"}),
             ),
         )
         .await;
@@ -283,7 +283,7 @@ async fn retrieval_quality_depth_unavailable_and_ungrounded_requests_still_refus
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "deep"}),
+            json!({"query": "qualitydepth", "depth": "high"}),
         ),
     )
     .await;
@@ -355,7 +355,7 @@ async fn retrieval_quality_depth_reason_requires_read_auth_before_admission() {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let body = json!({"query": "qualitydepth", "depth": "deep"});
+    let body = json!({"query": "qualitydepth", "depth": "high"});
     let (status, response) = route_json(
         server.clone(),
         json_request("POST", "/v1/companion/memory/reason", body.clone()),
@@ -410,7 +410,7 @@ async fn retrieval_quality_depth_budget_refusal_does_not_run_backend() {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "deep"}),
+            json!({"query": "qualitydepth", "depth": "high"}),
         ),
     )
     .await;

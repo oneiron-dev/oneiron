@@ -17,9 +17,8 @@ use crate::usage::UsageMode;
 /// - `max_update_payload` — ENFORCED at the WindowSync UPDATE chokepoint
 ///   (oversized updates close the connection before any state mutates).
 /// - `max_frame_size` — ENFORCED on the WebSocket frame size.
-/// - `max_messages_per_sec` — ENFORCED as a per-connection inbound message
-///   rate limit. Per-user limits still need per-user identity (Phase-1 auth is
-///   a single shared secret).
+/// - `max_messages_per_sec` — retained for configuration compatibility only.
+///   RC42 counters ask typed questions and never refuse calls for rate.
 /// - `max_windows_per_connection` — ENFORCED as a generous per-connection
 ///   distinct-window touch cap. The default is intentionally high enough for
 ///   legitimate historical-window tombstone sync; it stops fabricated-key
@@ -243,6 +242,8 @@ pub struct ServeConfig {
     pub embedder: Option<EmbedderConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
+    pub failure_signal_export: bool,
+    pub failure_signal_training: bool,
     /// Opaque host-managed KMS key reference. `Some` only for the hosted
     /// posture; self-host/local keeps no host reference at all. Never key
     /// material, and redacted in this struct's `Debug`.
@@ -290,6 +291,8 @@ impl Default for ServeConfig {
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
+            failure_signal_export: false,
+            failure_signal_training: false,
             hosted_kms_key_ref: None,
         }
     }
@@ -397,6 +400,15 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
+            deployment: if self.privacy_posture == HostingPrivacyPosture::Hosted {
+                oneiron::config::failure_signals::DeploymentTier::Managed
+            } else {
+                oneiron::config::failure_signals::DeploymentTier::SelfHost
+            },
+            export_opt_in: self.failure_signal_export,
+            training_opt_in: self.failure_signal_training,
+        };
         // An active embedder pins the vault's embedding space. The engine then
         // refuses any embedder whose `model_id` disagrees with what the vault
         // already holds, which is the door that keeps one vault to one space.

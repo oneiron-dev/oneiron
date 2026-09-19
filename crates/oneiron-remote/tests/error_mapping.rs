@@ -90,7 +90,7 @@ fn deep_recall_returns_lease_required() {
     let error = client
         .recall(
             "window seat",
-            Effort::Deep,
+            Effort::High,
             &RecallScope::default(),
             10,
             None,

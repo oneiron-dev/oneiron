@@ -60,8 +60,8 @@ pub(crate) struct VectorSearchQuery {
     /// `minimal` — one direct vector channel, exactly what this endpoint did
     /// before the dial existed.
     #[serde(default = "minimal_effort")]
-    #[schema(value_type = String, default = "minimal", example = "standard")]
-    #[param(value_type = String, default = "minimal", example = "standard")]
+    #[schema(value_type = String, default = "light", example = "medium")]
+    #[param(value_type = String, default = "light", example = "medium")]
     pub(crate) depth: Effort,
     /// The text this embedding was produced from. Optional at `minimal` and
     /// `standard`, which never read it, and REQUIRED at `deep`, whose
@@ -167,7 +167,7 @@ pub(crate) async fn search_vector(
     // carries no question, so a deep read over it would have to invent the
     // text it decomposes. Field-specific, and raised before the vault is
     // touched.
-    if params.depth == Effort::Deep && probe_text(params.query_text.as_deref()).is_none() {
+    if params.depth.requires_rerank() && probe_text(params.query_text.as_deref()).is_none() {
         return Err(ApiError::bad_request(
             "queryText is required when depth=deep on vector search",
             Some("queryText"),
@@ -225,8 +225,8 @@ pub(crate) struct TextSearchQuery {
     /// `minimal` — one direct BM25 channel, exactly what this endpoint did
     /// before the dial existed.
     #[serde(default = "minimal_effort")]
-    #[schema(value_type = String, default = "minimal", example = "standard")]
-    #[param(value_type = String, default = "minimal", example = "standard")]
+    #[schema(value_type = String, default = "light", example = "medium")]
+    #[param(value_type = String, default = "light", example = "medium")]
     pub(crate) depth: Effort,
 }
 
@@ -339,6 +339,7 @@ fn run_depth_search(
         return Ok(DepthSearchResult::default());
     }
     let request = DepthSearchRequest {
+        deadline: None,
         probe,
         effort,
         limit,
@@ -457,7 +458,7 @@ pub(crate) struct SemanticSearchRequest {
     /// Retrieval effort: `minimal`, `standard`, or `deep`. Omitted means
     /// `minimal`.
     #[serde(default = "minimal_effort")]
-    #[schema(value_type = String, default = "minimal", example = "standard")]
+    #[schema(value_type = String, default = "light", example = "medium")]
     pub(crate) depth: Effort,
 }
 

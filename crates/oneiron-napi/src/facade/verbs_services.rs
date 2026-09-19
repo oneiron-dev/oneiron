@@ -228,8 +228,8 @@ impl ActorScopedVault {
     }
 
     /// Effort-dialed retrieval into an S6 memory pack. `effort` is
-    /// `minimal` | `standard` | `deep`; no lease handle exists on this
-    /// surface yet (OF-131), so `deep` returns the typed `LEASE_REQUIRED`
+    /// `light` | `medium` | `high` | `xhigh` | `max`; no lease handle exists on this
+    /// surface yet, so paid effort returns the typed `LEASE_REQUIRED`
     /// error until the LLMB chain lands the issuer.
     #[napi]
     pub fn recall(
@@ -244,7 +244,7 @@ impl ActorScopedVault {
         let limit = crate::parse_search_limit(limit).map_err(boundary_error)?;
         let effort = Effort::parse(&effort).ok_or_else(|| {
             boundary_error(format!(
-                "unknown effort {effort:?}; use minimal, standard, or deep"
+                "unknown effort {effort:?}; use light, medium, high, xhigh, or max"
             ))
         })?;
         let scope = recall_scope_to_engine(scope);

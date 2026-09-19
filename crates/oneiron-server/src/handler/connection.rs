@@ -338,25 +338,9 @@ async fn handle_connection(
                 break;
             }
             Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => {
-                if !conn_state.record_inbound_message() {
-                    tracing::warn!(
-                        conn_id,
-                        max = server.config.max_messages_per_sec,
-                        "message rate limit exceeded by control frame — closing"
-                    );
-                    break;
-                }
                 continue;
             }
             Ok(WsMessage::Text(_)) => {
-                if !conn_state.record_inbound_message() {
-                    tracing::warn!(
-                        conn_id,
-                        max = server.config.max_messages_per_sec,
-                        "message rate limit exceeded — closing"
-                    );
-                    break;
-                }
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
@@ -365,15 +349,6 @@ async fn handle_connection(
                 break;
             }
         };
-
-        if !conn_state.record_inbound_message() {
-            tracing::warn!(
-                conn_id,
-                max = server.config.max_messages_per_sec,
-                "message rate limit exceeded — closing"
-            );
-            break;
-        }
 
         // Size check
         if data.len() > server.config.max_frame_size {
@@ -400,6 +375,13 @@ async fn handle_connection(
                         "credential revoked — refusing sync message and closing"
                     );
                     break;
+                }
+                if !matches!(&msg, SyncMessage::Rpc(_) | SyncMessage::Sub(_)) {
+                    let _ = server.wire_telemetry.record(
+                        &format!("sync:{:02x}", data[0]),
+                        "sync-owner",
+                        oneiron_vault_contract::now_ts(),
+                    );
                 }
                 let handle_result = match msg {
                     SyncMessage::Rpc(payload) => handle_app_message_with_connection(

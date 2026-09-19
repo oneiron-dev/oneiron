@@ -180,6 +180,11 @@ pub(super) fn handle_app_message_with_connection(
             return Ok(());
         }
         let auth = require_bound_app_auth(server, state)?;
+        let _ = server.wire_telemetry.record(
+            &request.method,
+            auth.principal_ref().unwrap_or(auth.principal()),
+            oneiron_vault_contract::now_ts(),
+        );
         let frames = if request.method == "ping" {
             vec![crate::livequery::ping_result(
                 request.request_id,
@@ -196,6 +201,11 @@ pub(super) fn handle_app_message_with_connection(
     } else {
         let auth = require_bound_app_auth(server, state)?;
         let request = crate::livequery::decode_sub(payload)?;
+        let _ = server.wire_telemetry.record(
+            "subscribe",
+            auth.principal_ref().unwrap_or(auth.principal()),
+            oneiron_vault_contract::now_ts(),
+        );
         let connection =
             connection.ok_or(ProtocolError::InvalidPayload("subscription owner missing"))?;
         for frame in connection.control(auth, request)? {

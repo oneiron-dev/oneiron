@@ -461,6 +461,8 @@ pub struct NapiRetrievalMeta {
     pub claims_returned: i64,
     /// Set when a leased deep call executed as standard.
     pub deep_pending: Option<bool>,
+    /// Retrieval ended before all requested stages completed.
+    pub partial: bool,
 }
 
 /// The S6 memory pack (`packVersion: 1`).

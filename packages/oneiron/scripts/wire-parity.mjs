@@ -53,7 +53,7 @@ if (mode === "write") {
 const recalled = memory.recall("window seat")
 const receipts = memory.receipts()
 const errors = {
-  deep: refusal(() => memory.recall("window seat", { effort: "deep" }), "LEASE_REQUIRED"),
+  deep: refusal(() => memory.recall("window seat", { effort: "high" }), "LEASE_REQUIRED"),
   rebind: refusal(() => memory.asActor("human:00000000000000000000000000000001"), "FORBIDDEN"),
 }
 for (const name of ["ONEIRON_WIRE_NO_CLASS_KEY", "ONEIRON_WIRE_NO_PRINCIPAL_KEY"]) {

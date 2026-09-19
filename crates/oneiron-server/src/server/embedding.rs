@@ -126,6 +126,9 @@ impl SyncServer {
                 ))?;
             let embedder: Arc<dyn QueryEmbedder> = slot.ensure_ready()?;
             let config = slot.config();
+            server
+                .vault()
+                .seed_indexed_idle_delay_ms(config.idle_interval_ms)?;
             // No remote rung: one embedder, its locality recorded truthfully,
             // and no third-party route to gate, so no egress predicate is wired.
             Ok(PendingEmbeddingReconciler::new(
@@ -159,6 +162,13 @@ impl SyncServer {
                         backoff = FIRST_BACKOFF;
                     }
                     if report.leased == 0 {
+                        let server = Arc::clone(self);
+                        let refreshed =
+                            tokio::task::spawn_blocking(move || server.refresh_indexed_idle())
+                                .await;
+                        if !matches!(refreshed, Ok(Ok(()))) {
+                            tracing::warn!("indexed revision idle refresh deferred");
+                        }
                         tokio::time::sleep(idle).await;
                         continue;
                     }
@@ -200,5 +210,70 @@ impl SyncServer {
             truncations,
             "embedding reconcile pass"
         );
+    }
+}
+
+struct IndexedProvider<'a> {
+    server: &'a SyncServer,
+    provider: Arc<dyn QueryEmbedder>,
+}
+impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider<'_> {
+    fn embed_revision(
+        &self,
+        input: &oneiron::memory::IndexedRevisionInput,
+    ) -> oneiron::Result<Vec<f32>> {
+        if self.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
+            return Err(oneiron::Error::InvalidConfig(
+                "indexed revisions require an on-device or owner-hosted embedder".into(),
+            ));
+        }
+        let payload = if self.server.vault().get_entity_type(&input.entity)?
+            == Some(oneiron::registry::ENTITY_TYPE_CLAIM)
+        {
+            oneiron::embed::PendingEmbeddingPayload::ClaimBody(input.body.clone())
+        } else {
+            oneiron::embed::PendingEmbeddingPayload::SummaryText(
+                input
+                    .fields
+                    .iter()
+                    .map(|(_, v)| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        };
+        let values = self
+            .provider
+            .embed(&[oneiron::embed::PendingEmbeddingInput {
+                entity_id: input.entity,
+                payload,
+                pending_embedding_token: input.source_revision_ref.0.to_vec(),
+            }])?;
+        let mut values = values.into_iter();
+        let value = values.next().ok_or(oneiron::Error::InvariantViolation(
+            "indexed provider returned no vector",
+        ))?;
+        if values.next().is_some() {
+            return Err(oneiron::Error::InvariantViolation(
+                "indexed provider returned extra vectors",
+            ));
+        }
+        Ok(value)
+    }
+}
+impl SyncServer {
+    fn refresh_indexed_idle(&self) -> oneiron::Result<()> {
+        let slot = self
+            .embedder
+            .as_ref()
+            .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
+        let provider = IndexedProvider {
+            server: self,
+            provider: slot.ensure_ready()?,
+        };
+        self.vault().refresh_indexed_at_idle(
+            oneiron_vault_contract::now_ts().saturating_mul(1000),
+            &provider,
+        )?;
+        Ok(())
     }
 }

@@ -339,7 +339,7 @@ async fn production_sub_errors_keep_engine_codes_and_scope_refusals_are_not_clos
         )
         .recall(
             "solar",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope {
                 world_ref: None,
                 facet: Some("zz999:ff".to_owned()),

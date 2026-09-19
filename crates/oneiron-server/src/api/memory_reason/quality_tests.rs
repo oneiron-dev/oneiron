@@ -33,7 +33,7 @@ fn retrieval_quality_memory_reason_projection_preserves_full_degraded_and_minima
             tokens_used: 8,
             ..Default::default()
         };
-        for effort in [Effort::Minimal, Effort::Standard, Effort::Deep] {
+        for effort in [Effort::Light, Effort::Medium, Effort::High] {
             let answered = AnsweredRead {
                 answer: "unchanged answer".to_owned(),
                 sources: vec!["source:ab".to_owned()],
@@ -49,7 +49,7 @@ fn retrieval_quality_memory_reason_projection_preserves_full_degraded_and_minima
                 response.confidence_adjustment,
                 quality.confidence_adjustment
             );
-            assert_eq!(response.reasoning.is_none(), effort == Effort::Minimal);
+            assert_eq!(response.reasoning.is_none(), effort == Effort::Light);
             let wire = serde_json::to_value(&response).unwrap();
             assert_eq!(wire["answer"], "unchanged answer");
             assert_eq!(wire["sources"], json!(["source:ab"]));
@@ -84,7 +84,7 @@ fn retrieval_quality_memory_reason_no_data_preserves_full_or_degraded_report() {
             ..Default::default()
         };
         let answered = answer_from(&request, "no data", 4000, &[], None).unwrap();
-        let response = reason_response(Effort::Standard, &retrieved, answered, 0);
+        let response = reason_response(Effort::Medium, &retrieved, answered, 0);
         assert!(response.sources.is_empty());
         assert_eq!(response.confidence, 0.0);
         assert_eq!(response.gaps.len(), 1);
