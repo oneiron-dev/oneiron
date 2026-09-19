@@ -212,6 +212,7 @@ pub(crate) async fn observe_http(
         .as_ref()
         .map(|a| a.principal_ref().unwrap_or(a.principal()))
         .unwrap_or("unauthenticated");
+    start_window_receipts(&server);
     let _ = server
         .wire_telemetry
         .record(&verb, actor, oneiron_vault_contract::now_ts());
@@ -221,6 +222,11 @@ pub(crate) async fn observe_http(
 mod tests;
 
 pub(crate) fn start_window_receipts(server: &Arc<crate::server::SyncServer>) {
+    // Router construction may happen before its runtime exists. The first
+    // runtime-backed request retries this start without losing the flush latch.
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
     if server
         .wire_telemetry
         .flusher_started
@@ -229,7 +235,7 @@ pub(crate) fn start_window_receipts(server: &Arc<crate::server::SyncServer>) {
         return;
     }
     let weak = Arc::downgrade(server);
-    tokio::spawn(async move {
+    runtime.spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             tick.tick().await;
