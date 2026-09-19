@@ -127,11 +127,12 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
             .iter()
             .any(|hit| hit.id == crate::test_util::entity(9))
     );
-    // A kind filter is a post-fusion relevance decision, not a category or
-    // authority predicate. Discoveries must not erase the memory accounting.
+    // With no channel widening, kind relevance is applied after fusion.
+    // Include all fixture postings (including skill lexical hints), so this
+    // observes category accounting rather than scoped-widening truncation.
     let filtered = vault
         .context_pack()
-        .search_text("channel", 20)
+        .search_text("channel", 128)
         .filter_types(&[ENTITY_TYPE_SKILL])
         .run()?;
     assert!(filtered.results.is_empty());

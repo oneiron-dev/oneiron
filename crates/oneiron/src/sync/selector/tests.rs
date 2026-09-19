@@ -4748,7 +4748,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
             .commit()
             .unwrap();
         let id = entity_id(0x41);
-        let facet = entity_id(0x43);
+        let facet = entity_id(0x44);
         vault
             .put_entity(
                 &id,

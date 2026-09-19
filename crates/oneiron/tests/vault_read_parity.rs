@@ -968,11 +968,12 @@ fn golden_wire_shapes() {
         serde_json::from_str(canonical_timeline).expect("timeline literal");
     assert_eq!(encode(&request), canonical_timeline);
 
-    // Unknown fields are ignored, exactly like the accepted route DTOs.
-    let tolerant: CoreQueryRequest =
-        serde_json::from_str(r#"{"query":"blue hallway","unknown":true}"#)
-            .expect("unknown fields are ignored");
-    assert_eq!(tolerant.query.as_deref(), Some("blue hallway"));
+    // Native requests are closed, matching the advertised tool schemas.
+    // The aliases/defaults above remain accepted, but undeclared fields do not.
+    assert!(
+        serde_json::from_str::<CoreQueryRequest>(r#"{"query":"blue hallway","unknown":true}"#)
+            .is_err()
+    );
 
     // The tagged request envelope carries the pinned wire op.
     let tagged = VaultReadRequest::MemoryTimeline(request);
