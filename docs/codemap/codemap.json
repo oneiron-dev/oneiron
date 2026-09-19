@@ -15728,7 +15728,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 13
      }
