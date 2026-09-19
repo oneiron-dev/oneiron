@@ -158,7 +158,14 @@ enum MockBehaviour {
     UnknownModel,
 }
 
+struct EmbeddingPause {
+    request: usize,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
 struct MockState {
+    pause: Mutex<Option<Arc<EmbeddingPause>>>,
     behaviour: Mutex<MockBehaviour>,
     requests: Mutex<Vec<Value>>,
 }
@@ -189,6 +196,7 @@ impl Drop for MockEndpoint {
 impl MockEndpoint {
     fn start(behaviour: MockBehaviour) -> Self {
         let state = Arc::new(MockState {
+            pause: Mutex::new(None),
             behaviour: Mutex::new(behaviour),
             requests: Mutex::new(Vec::new()),
         });
@@ -257,11 +265,16 @@ async fn mock_embeddings(
     State(state): State<Arc<MockState>>,
     axum::Json(body): axum::Json<Value>,
 ) -> Result<axum::Json<Value>, StatusCode> {
-    state
-        .requests
-        .lock()
-        .expect("mock requests lock")
-        .push(body.clone());
+    let request_number = {
+        let mut requests = state.requests.lock().expect("mock requests lock");
+        requests.push(body.clone());
+        requests.len()
+    };
+    let pause = state.pause.lock().expect("pause lock").clone();
+    if let Some(pause) = pause.filter(|pause| pause.request == request_number) {
+        pause.entered.notify_one();
+        pause.release.notified().await;
+    }
     if state.behaviour() == MockBehaviour::ServerError {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -904,4 +917,73 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
                 .all(|entry| entry.path().is_dir()),
         "a failed fetch leaves no artifact behind"
     );
+}
+
+#[test]
+fn busy_embedding_worker_publishes_due_staged_revisions_between_passes() {
+    let mock = MockEndpoint::start(MockBehaviour::Ok);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let mut config = endpoint_config(&mock.base);
+    config.batch_size = 1;
+    let slot = EmbedderSlot::from_config(&config).unwrap().unwrap();
+    slot.ensure_ready().unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let document = oneiron::EntityId::now();
+    let vector = mock_vector("staged revision", DIMS);
+    for content in ["original indexed text", "staged revised text"] {
+        let body = rmp_serde::to_vec_named(&json!({"content": content})).unwrap();
+        vault
+            .batch()
+            .put(
+                &document,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .text(&document, &[("content", content)])
+            .vector(&document, &vector)
+            .commit()
+            .unwrap();
+    }
+    let expected = vault.pin_entity_revision(&document).unwrap();
+    assert_ne!(vault.indexed_revision(&document).unwrap(), Some(expected));
+    let backlog = [
+        put_claim(&vault, 0xD1, "first pending"),
+        put_claim(&vault, 0xD2, "second pending"),
+    ];
+    let pause = Arc::new(EmbeddingPause {
+        request: mock.requests().len() + 2,
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    *mock.state.pause.lock().unwrap() = Some(pause.clone());
+    let server = Arc::new(
+        crate::server::SyncServer::new(vault.clone(), Default::default())
+            .unwrap()
+            .with_embedder(Some(slot)),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let worker = server.spawn_embedding_worker().unwrap();
+        let paused =
+            tokio::time::timeout(std::time::Duration::from_secs(10), pause.entered.notified())
+                .await;
+        // Read the public result while the second leased request is paused.
+        let indexed = vault.indexed_revision(&document).unwrap();
+        let pending = backlog
+            .iter()
+            .any(|id| vault.get_vector(id).unwrap().is_none());
+        pause.release.notify_one();
+        worker.abort();
+        let _ = worker.await;
+        assert!(paused.is_ok(), "worker must reach its second nonempty pass");
+        assert!(pending, "the global queue was not empty at publication");
+        assert_eq!(indexed, Some(expected));
+    });
+    runtime.shutdown_background();
 }

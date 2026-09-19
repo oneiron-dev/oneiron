@@ -286,6 +286,7 @@ pub(crate) fn recompute_habit_streak_in_txn(
     // Byte-idempotent: an unchanged child set stages no write at all, so the
     // metadata header cannot drift and a replay cannot churn the row.
     if rewritten != raw {
+        crate::vault::entity_revision::capture_entity_revision(store, wtxn, habit_id, &rewritten)?;
         store.entities.put(wtxn, habit_id.as_bytes(), &rewritten)?;
     }
     Ok(streak)

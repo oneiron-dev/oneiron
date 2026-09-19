@@ -64,6 +64,7 @@ fn sample_pack() -> ContextPack {
         retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([1; 16]),
                 short_id: "cl88".to_owned(),
                 content_hash: 0xf2,
@@ -74,6 +75,7 @@ fn sample_pack() -> ContextPack {
                 vector: None,
             },
             ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([2; 16]),
                 short_id: "tn17".to_owned(),
                 content_hash: 0xa1,
@@ -85,6 +87,7 @@ fn sample_pack() -> ContextPack {
             },
         ],
         neighbors: vec![ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([3; 16]),
             short_id: "pr05".to_owned(),
             content_hash: 0xb3,
@@ -185,6 +188,7 @@ fn claim_entity(seed: u8, predicate: &str, value: &str, score: f32) -> ContextEn
 
 fn claim_entity_with_value(seed: u8, predicate: &str, value: Value, score: f32) -> ContextEntity {
     ContextEntity {
+        source_revision_ref: None,
         id: EntityId::from_bytes_unchecked([seed; 16]),
         short_id: format!("cl{seed:02}"),
         content_hash: seed,
@@ -233,6 +237,7 @@ fn token_savings_regression_pack() -> ContextPack {
 
     for i in 0..10_u8 {
         pack.results.push(ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([20 + i; 16]),
                 short_id: format!("cl{i:02}"),
                 content_hash: 0x40 + i,
@@ -298,6 +303,7 @@ fn token_savings_regression_pack() -> ContextPack {
 
     for i in 0..15_u8 {
         pack.results.push(ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([0x90 + i; 16]),
                 short_id: format!("tn{i:02}"),
                 content_hash: 0x70 + i,
@@ -332,6 +338,7 @@ fn token_savings_regression_pack() -> ContextPack {
 
     for i in 0..3_u8 {
         pack.results.push(ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([100 + i; 16]),
                 short_id: format!("sm{i:02}"),
                 content_hash: 0xa0 + i,
@@ -449,7 +456,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
         ),
     ];
 
-    let text = encode_toon_section(&groups);
+    let text = encode_toon_section(&groups, &mut super::handles::Handles::default());
 
     assert_eq!(
         text,
@@ -474,7 +481,7 @@ fn toon_native_encoder_uses_list_form_for_arrays_of_empty_objects() {
         }],
     )];
 
-    let text = encode_toon_section(&groups);
+    let text = encode_toon_section(&groups, &mut super::handles::Handles::default());
 
     assert_eq!(
         text,
@@ -496,7 +503,7 @@ fn toon_native_encoder_replaces_values_beyond_max_depth_with_null() {
         }],
     )];
 
-    let text = encode_toon_section(&groups);
+    let text = encode_toon_section(&groups, &mut super::handles::Handles::default());
 
     assert!(
         text.contains("child: null"),
@@ -691,6 +698,7 @@ fn split_mode_uses_shared_budget_pool() {
 
     for i in 0..6_u8 {
         pack.results.push(ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([10 + i; 16]),
             short_id: format!("r{i}"),
             content_hash: i,
@@ -704,6 +712,7 @@ fn split_mode_uses_shared_budget_pool() {
             vector: None,
         });
         pack.neighbors.push(ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([30 + i; 16]),
             short_id: format!("n{i}"),
             content_hash: i,
@@ -806,6 +815,7 @@ fn max_field_chars_truncates_nested_json_strings() {
     let pack = ContextPack {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "js01".to_owned(),
             content_hash: 0x42,
@@ -895,6 +905,7 @@ fn short_id_serialization_uses_at_most_two_tokens_per_reference() {
     let pack = ContextPack {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "cl42".to_owned(),
             content_hash: 0x2a,
@@ -1296,6 +1307,7 @@ fn token_budget_zero_disables_budget_enforcement() {
     let mut pack = sample_pack();
     for i in 0..12_u8 {
         pack.results.push(ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([50 + i; 16]),
             short_id: format!("cl{i}"),
             content_hash: i,
@@ -1349,6 +1361,7 @@ fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
     let pack = ContextPack {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "cl42".to_owned(),
             content_hash: 0x42,
@@ -1440,6 +1453,7 @@ fn unknown_entity_types_share_single_other_group() {
         retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([18; 16]),
                 short_id: "u18".to_owned(),
                 content_hash: 0x18,
@@ -1453,6 +1467,7 @@ fn unknown_entity_types_share_single_other_group() {
                 vector: None,
             },
             ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([20; 16]),
                 short_id: "u20".to_owned(),
                 content_hash: 0x20,
@@ -1478,8 +1493,8 @@ fn unknown_entity_types_share_single_other_group() {
         .and_then(Value::as_array)
         .expect("other group");
     assert_eq!(other.len(), 2);
-    assert_eq!(other[0]["name"], "eighteen");
-    assert_eq!(other[1]["name"], "twenty");
+    assert_eq!(other[0]["name"], "eighteen (u18)");
+    assert_eq!(other[1]["name"], "twenty (u20)");
 }
 
 #[test]
@@ -1497,6 +1512,7 @@ fn yaml_quotes_unsafe_field_keys() {
     let pack = ContextPack {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([0x92; 16]),
             short_id: "mc01".to_owned(),
             content_hash: 0x01,
@@ -1524,6 +1540,7 @@ fn yaml_quotes_scalar_control_characters() {
     let pack = ContextPack {
             retrieval_quality: Default::default(),
             results: vec![ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([0x93; 16]),
                 short_id: "mc02".to_owned(),
                 content_hash: 0x02,
@@ -1622,6 +1639,7 @@ fn surplus_budget_redistributes_to_hungry_types() {
     pack.neighbors.clear();
 
     pack.results.push(ContextEntity {
+        source_revision_ref: None,
         id: EntityId::from_bytes_unchecked([99; 16]),
         short_id: "tn01".to_owned(),
         content_hash: 0x01,
@@ -1637,6 +1655,7 @@ fn surplus_budget_redistributes_to_hungry_types() {
 
     for i in 0..40_u8 {
         pack.results.push(ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([50 + i; 16]),
             short_id: format!("cl{i}"),
             content_hash: i,
@@ -1844,7 +1863,7 @@ fn productivity_field_profiles() {
         let parsed: Value =
             serde_json::from_slice(&serialize_pack(pack, &cfg_json)).expect("json parse");
         let first = &parsed["task_lists"][0];
-        assert_eq!(first["name"], "Sprint 42");
+        assert_eq!(first["name"], "Sprint 42 (tl01)");
         assert_eq!(first["goal"], "Ship the MVP");
         assert_eq!(first["status"], "active");
 
@@ -1933,6 +1952,7 @@ fn productivity_field_profiles() {
 
     for case in cases {
         let entity = ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([case.entity_type; 16]),
             short_id: case.short_id.to_owned(),
             content_hash: case.content_hash,
@@ -2099,6 +2119,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
         retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([0x64; 16]),
                 short_id: "cr01".to_owned(),
                 content_hash: 0xa1,
@@ -2109,6 +2130,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
                 vector: None,
             },
             ContextEntity {
+                source_revision_ref: None,
                 id: EntityId::from_bytes_unchecked([0x65; 16]),
                 short_id: "cr02".to_owned(),
                 content_hash: 0xa2,
@@ -2266,6 +2288,7 @@ fn federation_grant_member_ref_hex_projection_is_preserved() {
     let pack = ContextPack {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
             id: EntityId::from_bytes_unchecked([ENTITY_TYPE_FEDERATION_GRANT; 16]),
             short_id: String::new(),
             content_hash: 0,
@@ -2312,6 +2335,7 @@ fn test_due_date_timestamp_rendering() {
     fields.insert("dueDate".to_owned(), Value::Number(Number::from(due)));
 
     let entity = ContextEntity {
+        source_revision_ref: None,
         id: EntityId::from_bytes_unchecked([0x91; 16]),
         short_id: "tk02".to_owned(),
         content_hash: 0xcc,
@@ -2503,6 +2527,7 @@ fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
 
     let author = EntityId::from_bytes_unchecked([0x7a; 16]);
     let note_row = ContextEntity {
+        source_revision_ref: None,
         id: EntityId::from_bytes_unchecked([0x9e; 16]),
         short_id: "no01".to_owned(),
         content_hash: 0x11,
@@ -2643,4 +2668,98 @@ fn commitment_record_is_critical_and_promise_is_absent() {
             .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
         Some(absent_sibling.as_str())
     );
+}
+
+#[test]
+fn first_mention_uses_name_and_short_handle_then_bare_handles_in_each_format() {
+    let mut pack = sample_pack();
+    let person = &mut pack.neighbors[0];
+    person.short_id = "pr12".into();
+    let id = person.id.to_hex();
+    person.fields = Some(HashMap::from([
+        ("name".into(), Value::String("山田太郎".into())),
+        (
+            "identity_key".into(),
+            Value::String("person:internal:yamada".into()),
+        ),
+    ]));
+    pack.results[0].fields.as_mut().unwrap().insert(
+        "val".into(),
+        Value::String(format!("{id}, person:internal:yamada, {id}")),
+    );
+    for format in [
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Plaintext,
+    ] {
+        let rendered = String::from_utf8(serialize_pack(&pack, &config(format))).unwrap();
+        assert_eq!(
+            rendered.matches("山田太郎 (pr12)").count(),
+            1,
+            "{format:?}: {rendered}"
+        );
+        assert!(rendered.contains("pr12, pr12"), "{format:?}: {rendered}");
+        assert!(!rendered.contains(&id));
+        assert!(!rendered.contains("person:internal:yamada"));
+        assert!(!rendered.contains("identity_key"));
+        assert!(rendered.contains("pr12:b3"), "citation gate remains intact");
+    }
+}
+
+#[test]
+fn handle_rendering_does_not_restore_truncated_display_name() {
+    let mut pack = sample_pack();
+    pack.results.clear();
+    pack.neighbors[0].short_id = "pr12".into();
+    pack.neighbors[0].fields.as_mut().unwrap().insert(
+        "name".into(),
+        Value::String(format!("{}private-tail", "Alice ".repeat(200))),
+    );
+    let mut cfg = config(PackFormat::Json);
+    cfg.max_field_chars = 12;
+    cfg.budget = 0;
+    let rendered = String::from_utf8(serialize_pack(&pack, &cfg)).unwrap();
+    assert!(rendered.contains("pr12"));
+    assert!(!rendered.contains("private-tail"));
+}
+
+#[test]
+fn nested_identity_key_is_user_content_in_every_pack_format() {
+    let mut pack = sample_pack();
+    let fields = pack.results[0].fields.as_mut().unwrap();
+    fields.insert(
+        "identity_key".into(),
+        Value::String("engine-only-lookup".into()),
+    );
+    fields.insert(
+        "val".into(),
+        serde_json::json!({
+            "identity_key": "first-preserved-value",
+            "nested": [{"identity_key": "second-preserved-value"}]
+        }),
+    );
+    for format in [
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Plaintext,
+    ] {
+        let rendered = String::from_utf8(serialize_pack(&pack, &config(format))).unwrap();
+        assert!(rendered.contains("identity_key"), "{format:?}: {rendered}");
+        assert!(
+            rendered.contains("first-preserved-value"),
+            "{format:?}: {rendered}"
+        );
+        assert!(
+            rendered.contains("second-preserved-value"),
+            "{format:?}: {rendered}"
+        );
+        assert!(
+            !rendered.contains("engine-only-lookup"),
+            "{format:?}: {rendered}"
+        );
+    }
 }

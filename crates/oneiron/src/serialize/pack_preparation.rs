@@ -293,12 +293,19 @@ fn should_include_projected_field(entity_type: u8, key: &str, value: &Value) -> 
 
 fn format_short_id(entity: &ContextEntity) -> String {
     let short_id = if entity.short_id.is_empty() {
-        entity.id.to_hex()
+        "unresolved".to_owned()
     } else {
         entity.short_id.clone()
     };
 
-    format!("{}:{:02x}", short_id, entity.content_hash)
+    let reference = format!("{}:{:02x}", short_id, entity.content_hash);
+    match entity.source_revision_ref {
+        Some(revision) => format!(
+            "{reference}@{}",
+            crate::memory::RevisionRef(revision).to_hex()
+        ),
+        None => reference,
+    }
 }
 
 fn field_keys(entity_type: u8, profile: FieldProfile, map: &HashMap<String, Value>) -> Vec<String> {

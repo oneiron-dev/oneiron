@@ -4,7 +4,12 @@
 
 mod agents;
 mod frame;
+mod history;
 mod hydration;
+pub(crate) use history::validate_board_claim;
+pub use history::{
+    BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
+};
 mod memories;
 mod memories_projection;
 mod plugin;

@@ -6,6 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+oneiron-server = { path = "../oneiron-server" }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_bytes = "0.11"
 # ONE-331: `benches/materializer_mutex.rs` measures the Observer B
 # materialization path, and `oneiron::sync` is feature-gated
 # (`crates/oneiron/src/lib.rs`), so the harness has to ask for it.

@@ -47,7 +47,7 @@ mod detector_runner;
 mod diagnostic_codec;
 mod event;
 mod invariant_canonical;
-mod untrusted_text;
+pub(crate) mod untrusted_text;
 
 mod repair;
 

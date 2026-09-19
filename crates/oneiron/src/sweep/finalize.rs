@@ -11,7 +11,6 @@ use crate::deletion::{
     decode_hard_erase_sweep_seq, decode_redaction_audit_receipt, encode_hard_erase_sweep_job_value,
     validate_redaction_receipt_body,
 };
-#[cfg(all(feature = "sync", test))]
 use crate::entity_id::EntityId;
 #[cfg(all(feature = "sync", test))]
 use crate::error::SyncEngineContext;
@@ -144,6 +143,18 @@ pub(super) fn finalize_job(
             rewrites.push((id_bytes.to_vec(), rewritten));
         }
         for (id_bytes, rewritten) in &rewrites {
+            let id = EntityId::from_bytes(
+                id_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("redaction audit entity id"))?,
+            )?;
+            crate::vault::entity_revision::capture_entity_revision(
+                &vault.store,
+                wtxn,
+                &id,
+                rewritten,
+            )?;
             vault.store.entities.put(wtxn, id_bytes, rewritten)?;
             finalized += 1;
         }

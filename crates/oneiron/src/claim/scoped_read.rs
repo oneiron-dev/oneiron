@@ -16,6 +16,7 @@ use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
 mod retrieval_visibility;
+mod versions;
 
 /// Actor key bound to a scoped read lane over the `core:read` surface.
 ///
@@ -178,21 +179,7 @@ impl<'a> ScopedRead<'a> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
-            return Ok(Vec::new());
-        }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, true, false)?;
-        let results = self
-            .vault
-            .query()
-            .authority_filter(filter.clone())
-            .search_text(query, fetch_limit)
-            .limit(fetch_limit)
-            .run()?;
-        self.filter_search_results(results, limit, &filter, &policy)
+        Ok(self.search_text_revisioned(query, limit, requested)?.hits)
     }
 
     pub fn search_vector(
@@ -201,21 +188,7 @@ impl<'a> ScopedRead<'a> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
-            return Ok(Vec::new());
-        }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, false, true)?;
-        let results = self
-            .vault
-            .query()
-            .authority_filter(filter.clone())
-            .search_vector(query, fetch_limit)
-            .limit(fetch_limit)
-            .run()?;
-        self.filter_search_results(results, limit, &filter, &policy)
+        Ok(self.search_vector_revisioned(query, limit, requested)?.hits)
     }
 
     fn resolve_retrieval_filter(
@@ -472,7 +445,7 @@ impl<'a> ScopedRead<'a> {
         }
     }
 
-    fn is_claim_raw_readable_in(
+    pub(crate) fn is_claim_raw_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
@@ -539,7 +512,9 @@ impl<'a> ScopedRead<'a> {
         let mut kept = Vec::with_capacity(entities.len());
         let mut claims_suppressed = 0;
         for mut entity in entities {
-            if self.is_entity_readable_with_policy_in(rtxn, policy, &entity.id)? {
+            if self.is_entity_readable_with_policy_in(rtxn, policy, &entity.id)?
+                && self.context_entity_revision_is_readable_in(rtxn, policy, &entity)?
+            {
                 self.filter_context_entity_edges(rtxn, policy, &mut entity)?;
                 kept.push(entity);
             } else if entity.entity_type == ENTITY_TYPE_CLAIM {

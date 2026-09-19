@@ -128,7 +128,7 @@ fn escape_end(bytes: &[u8], start: usize) -> Option<usize> {
 /// it, so the only door back onto the wire for an already-canonical leaf is
 /// [`encode_stored_diagnostic_event_body`], which validates it instead of
 /// escaping it again. This function's one caller is the raw author door.
-pub(super) fn canonical_untrusted_detail(raw: &str) -> Result<String> {
+pub(crate) fn canonical_untrusted_detail(raw: &str) -> Result<String> {
     // Escaping never shrinks the UTF-8 byte length. Bound raw input before
     // allocating or scanning it, and retain the post-escape expansion bound.
     if raw.len() > MAX_UNTRUSTED_DETAIL_LEN {
@@ -139,7 +139,7 @@ pub(super) fn canonical_untrusted_detail(raw: &str) -> Result<String> {
     Ok(canonical)
 }
 
-pub(super) fn validate_untrusted_detail(text: &str) -> Result<()> {
+pub(crate) fn validate_untrusted_detail(text: &str) -> Result<()> {
     if text.is_empty() {
         return Err(invalid_diagnostic("untrusted_detail must not be empty"));
     }

@@ -107,6 +107,9 @@ impl EnvConfig {
         values.runtime = lookup_runtime_override(&mut lookup)?;
         values.embedder = lookup_embedder_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
+        values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
+        values.failure_signal_training =
+            lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_TRAINING")?;
         values.hosted_kms_key_ref = lookup("ONEIRON_HOSTED_KMS_KEY_REF");
 
         Ok(Self {
@@ -379,6 +382,8 @@ struct FileServeConfig {
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
+    failure_signal_export: Option<bool>,
+    failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
 }
 
@@ -418,6 +423,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             runtime: value.runtime,
             embedder: value.embedder,
             privacy_posture: value.privacy_posture,
+            failure_signal_export: value.failure_signal_export,
+            failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref,
         }
     }
@@ -458,6 +465,8 @@ struct PartialServeConfig {
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
+    failure_signal_export: Option<bool>,
+    failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
 }
 
@@ -627,6 +636,12 @@ impl PartialServeConfig {
                 .get_or_insert_with(EmbedderConfig::default)
                 .apply_override(value);
         }
+        if let Some(value) = self.failure_signal_export {
+            resolved.failure_signal_export = value;
+        }
+        if let Some(value) = self.failure_signal_training {
+            resolved.failure_signal_training = value;
+        }
         if let Some(value) = self.privacy_posture {
             resolved.privacy_posture = value;
         }
@@ -677,6 +692,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             runtime: runtime_override_from_args(value),
             embedder: embedder_override_from_args(value),
             privacy_posture: value.privacy_posture,
+            failure_signal_export: value.failure_signal_export,
+            failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
         }
     }

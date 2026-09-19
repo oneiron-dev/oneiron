@@ -109,7 +109,7 @@ async fn memory_reason_minimal_reports_no_reasoning_trace() {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({ "query": "launch date", "depth": "minimal" }),
+            json!({ "query": "launch date", "depth": "light" }),
         ),
     )
     .await;
@@ -137,7 +137,9 @@ async fn memory_reason_refuses_malformed_requests_field_by_field() {
             json!({ "query": "launch", "tokenBudget": 65_537 }),
             Some("tokenBudget"),
         ),
-        (json!({ "query": "launch", "depth": "high" }), None),
+        (json!({ "query": "launch", "depth": "deep" }), None),
+        (json!({ "query": "launch", "depth": "minimal" }), None),
+        (json!({ "query": "launch", "depth": "standard" }), None),
         (json!({ "query": "launch", "curiosity": 3 }), None),
     ] {
         let (status, body) = route_json(
@@ -180,7 +182,7 @@ async fn memory_reason_deep_without_a_backend_is_service_unavailable() {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({ "query": "launch date", "depth": "deep" }),
+            json!({ "query": "launch date", "depth": "max" }),
         ),
     )
     .await;
@@ -199,7 +201,7 @@ async fn memory_reason_deep_reports_decompose_rerank_and_compose_spend() {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({ "query": "launch date", "depth": "deep", "tokenBudget": 4096 }),
+            json!({ "query": "launch date", "depth": "max", "tokenBudget": 4096 }),
         ),
     )
     .await;
@@ -235,7 +237,7 @@ async fn memory_reason_refuses_an_answer_citing_evidence_it_never_retrieved() {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({ "query": "launch date", "depth": "deep" }),
+            json!({ "query": "launch date", "depth": "max" }),
         ),
     )
     .await;
@@ -269,8 +271,8 @@ async fn raw_search_depth_defaults_to_minimal_and_refuses_unknown_tiers() {
 
     for uri in [
         "/api/search/text?query=launch",
-        "/api/search/text?query=launch&depth=minimal",
-        "/api/search/text?query=launch&depth=standard",
+        "/api/search/text?query=launch&depth=light",
+        "/api/search/text?query=launch&depth=medium",
     ] {
         let (status, body) = route_json(
             server.clone(),
@@ -285,7 +287,9 @@ async fn raw_search_depth_defaults_to_minimal_and_refuses_unknown_tiers() {
     }
 
     for uri in [
-        "/api/search/text?query=launch&depth=high",
+        "/api/search/text?query=launch&depth=deep",
+        "/api/search/text?query=launch&depth=minimal",
+        "/api/search/text?query=launch&depth=standard",
         "/api/search/text?query=launch&depth=med",
         "/api/search/vector?query=0.1,0.2&depth=low",
     ] {
@@ -301,7 +305,7 @@ async fn raw_search_depth_defaults_to_minimal_and_refuses_unknown_tiers() {
         assert_eq!(
             status,
             StatusCode::BAD_REQUEST,
-            "the chat verb's low/med/high aliases are not this wire: {uri} -> {body:?}"
+            "retired or unknown effort values are not accepted: {uri} -> {body:?}"
         );
     }
 }
@@ -314,7 +318,7 @@ async fn raw_search_deep_needs_query_text_and_a_backend() {
         server.clone(),
         Request::builder()
             .method("GET")
-            .uri("/api/search/vector?query=0.1,0.2&depth=deep")
+            .uri("/api/search/vector?query=0.1,0.2&depth=max")
             .body(Body::empty())
             .expect("request"),
     )
@@ -331,7 +335,7 @@ async fn raw_search_deep_needs_query_text_and_a_backend() {
     // Full width, because this row is about the depth gate and must not trip
     // over the vault's own dimension check on the way to it.
     let probe = vec!["0.1"; oneiron::VaultConfig::device().dimensions].join(",");
-    for depth in ["minimal", "standard"] {
+    for depth in ["light", "medium"] {
         let (status, body) = route_json(
             server.clone(),
             Request::builder()
@@ -349,7 +353,7 @@ async fn raw_search_deep_needs_query_text_and_a_backend() {
         server,
         Request::builder()
             .method("GET")
-            .uri("/api/search/text?query=launch&depth=deep")
+            .uri("/api/search/text?query=launch&depth=max")
             .body(Body::empty())
             .expect("request"),
     )
@@ -367,7 +371,7 @@ async fn raw_search_deep_needs_query_text_and_a_backend() {
 #[test]
 fn generated_openapi_publishes_exactly_one_retrieval_depth_vocabulary() {
     let spec = generated_spec();
-    let expected = Value::from(vec!["minimal", "standard", "deep"]);
+    let expected = Value::from(vec!["light", "medium", "high", "xhigh", "max"]);
 
     assert_eq!(
         spec["components"]["schemas"]["RetrievalEffort"]["enum"],
@@ -490,7 +494,7 @@ async fn retrieval_quality_raw_empty_search_uses_completed_operation_not_hit_cou
             limit: 10,
             view: Some(View::Standard),
             count_mode: CountMode::Estimate,
-            depth: oneiron::Effort::Minimal,
+            depth: oneiron::Effort::Light,
         })),
     )
     .await
@@ -505,7 +509,7 @@ async fn retrieval_quality_raw_empty_search_uses_completed_operation_not_hit_cou
             limit: 10,
             view: Some(View::Standard),
             count_mode: CountMode::None,
-            depth: oneiron::Effort::Minimal,
+            depth: oneiron::Effort::Light,
             query_text: None,
         })),
     )

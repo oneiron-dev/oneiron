@@ -123,7 +123,7 @@ impl NativeClient {
         limit: Option<f64>,
         format: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
-        let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("standard"))
+        let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
         let scope = recall_scope_to_engine(scope);
         let limit = limit

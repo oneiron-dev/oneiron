@@ -178,14 +178,14 @@ class Oneiron:
         self,
         query: str,
         *,
-        effort: str = "standard",
+        effort: str = "medium",
         scope: dict[str, Any] | None = None,
         limit: int = 10,
         format: str | None = None,
     ) -> dict[str, Any]:
         """Recalls a memory pack.
 
-        ``effort="deep"`` is lease-gated and raises ``LEASE_REQUIRED`` until a
+        ``effort="high"`` is lease-gated and raises ``LEASE_REQUIRED`` until a
         lease-bearing constructor exists; this package neither mints nor
         simulates a lease. ``format`` takes the engine's exact tokens:
         ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.

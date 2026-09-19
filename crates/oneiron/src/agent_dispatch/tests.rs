@@ -2274,6 +2274,7 @@ fn spawn_context_descriptor_is_normalized_into_the_persisted_payload() -> Result
     assert_eq!(
         encode_agent_dispatch_input(&parent.input)?,
         encode_agent_dispatch_input(&AgentDispatchInput {
+            healer_case: None,
             context_spec: Some(canonical.clone()),
             ..parent.input.clone()
         })?,
@@ -2464,6 +2465,7 @@ fn schema_v1_rows_decode_absent_spawn_fields() -> Result<()> {
 
     // With the spawn fields present the round trip is exact.
     let rich = AgentDispatchInput {
+        healer_case: None,
         target: AgentDispatchTarget::Custom(target_id),
         definition,
         context_spec: Some(ContextSpec::excluded()),
@@ -2623,29 +2625,22 @@ fn configured_healer_is_child_of_failing_attempt() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (_agent, failing, case) = failing_case(&vault)?;
     let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
-    let queue = AttemptQueue::new(&vault);
-    let before = queue.list()?;
-
-    // CONTINGENT: with the seam absent the arm refuses, so the only honest
-    // assertion is that NO row was minted under the failing attempt at all.
-    let error = AgentDispatcher::new(&vault)
-        .dispatch_healer_slot(heal(
+    let HealerSlotOutcome::Dispatched(status) =
+        AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
             HealerSlot::AgentDef {
                 agent_def_ref: healer.to_hex(),
             },
-            case,
+            case.clone(),
             20,
-        ))
-        .expect_err("the configured arm is deferred with the reference-context seam");
-    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
-
-    assert_eq!(queue.list()?, before);
-    for row in queue.list()? {
-        let parent = decode_dreamer_attempt_payload(&row.payload)
-            .ok()
-            .and_then(|payload| payload.parent_attempt);
-        assert_ne!(parent, Some(failing), "no healer child was enqueued");
-    }
+        ))?
+    else {
+        panic!("healer dispatched");
+    };
+    let payload = decode_dreamer_attempt_payload(&status.attempt.payload)?;
+    assert_eq!(payload.parent_attempt, Some(failing));
+    assert_eq!(status.input.healer_case, Some(case));
+    assert_eq!(status.input.depth_remaining, Some(1));
+    assert_eq!(status.input.definition.ceiling, AgentCeiling::Proposed);
     Ok(())
 }
 
@@ -2654,49 +2649,26 @@ fn configured_healer_dedupe_is_case_scoped() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (_agent, failing, case) = failing_case(&vault)?;
     let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
-
-    // The dedupe a configured spawn would use is the deterministic case key,
-    // re-derivable from the failing attempt and distinct from the card key.
+    let slot = HealerSlot::AgentDef {
+        agent_def_ref: healer.to_hex(),
+    };
+    let dispatcher = AgentDispatcher::new(&vault);
+    let HealerSlotOutcome::Dispatched(first) =
+        dispatcher.dispatch_healer_slot(heal(slot.clone(), case.clone(), 20))?
+    else {
+        panic!("first dispatch");
+    };
+    let HealerSlotOutcome::Existing(second) =
+        dispatcher.dispatch_healer_slot(heal(slot, case, 21))?
+    else {
+        panic!("deduped dispatch");
+    };
+    assert_eq!(first.attempt.id, second.attempt.id);
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), 2);
     assert_eq!(
-        case.case_ref,
-        crate::failure_ladder::failure_case_ref(failing)
+        AttemptQueue::new(&vault).get(failing)?.unwrap().state,
+        AttemptState::Queued
     );
-    assert_ne!(
-        case.case_ref,
-        crate::failure_ladder::failure_card_ref(failing)
-    );
-
-    let queue = AttemptQueue::new(&vault);
-    let before = queue.list()?;
-    assert_eq!(before.len(), 1);
-    assert_eq!(before[0].id, failing);
-    let payload_before = decode_dreamer_attempt_payload(&before[0].payload)?;
-
-    AgentDispatcher::new(&vault)
-        .dispatch_healer_slot(heal(
-            HealerSlot::AgentDef {
-                agent_def_ref: healer.to_hex(),
-            },
-            case.clone(),
-            20,
-        ))
-        .expect_err("the configured arm is deferred with the reference-context seam");
-
-    // Refusal must neither enqueue a healer nor alter the failing attempt's
-    // routing or typed execution input to carry case material.
-    let after = queue.list()?;
-    assert_eq!(after.len(), before.len());
-    let row = queue.get(failing)?.expect("failing row remains queued");
-    assert_eq!(row.state, AttemptState::Queued);
-    assert_eq!(row.dedupe_key, before[0].dedupe_key);
-    assert_eq!(row.run_id, before[0].run_id);
-    assert_ne!(row.dedupe_key.as_deref(), Some(case.case_ref.as_str()));
-    assert_ne!(row.run_id.as_deref(), Some(case.case_ref.as_str()));
-    let payload_after = decode_dreamer_attempt_payload(&row.payload)?;
-    assert_eq!(payload_after.attempt_type, payload_before.attempt_type);
-    assert_eq!(payload_after.parent_attempt, payload_before.parent_attempt);
-    assert_eq!(payload_after.input, payload_before.input);
-    decode_agent_dispatch_input(&payload_after.input)?;
     Ok(())
 }
 
@@ -2705,46 +2677,22 @@ fn healer_context_is_reference_only() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (_agent, _failing, case) = failing_case(&vault)?;
     let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
-
-    // Every carried value is a lowercase-hex ref or a typed scalar. There is no
-    // inline prompt, transcript, repair patch, or operator note to smuggle.
-    for value in [
-        &case.case_ref,
-        &case.evidence_ref,
-        &case.pre_fail_checkpoint_ref,
-        &case.qa_thread_ref,
-        &case.scope.agent_ref,
-    ] {
-        assert_eq!(value.len(), 32, "{value} is not a 16-byte hex ref");
-        assert!(
-            value
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-            "{value} is not lowercase hex"
-        );
-    }
-
-    // CONTINGENT: and none of it reaches a queue row, because the arm refuses.
-    let payloads_before: Vec<Vec<u8>> = AttemptQueue::new(&vault)
-        .list()?
-        .into_iter()
-        .map(|row| row.payload)
-        .collect();
-    AgentDispatcher::new(&vault)
-        .dispatch_healer_slot(heal(
+    let HealerSlotOutcome::Dispatched(status) =
+        AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
             HealerSlot::AgentDef {
                 agent_def_ref: healer.to_hex(),
             },
-            case,
+            case.clone(),
             20,
-        ))
-        .expect_err("the configured arm is deferred with the reference-context seam");
-    let payloads_after: Vec<Vec<u8>> = AttemptQueue::new(&vault)
-        .list()?
-        .into_iter()
-        .map(|row| row.payload)
-        .collect();
-    assert_eq!(payloads_before, payloads_after);
+        ))?
+    else {
+        panic!("dispatch");
+    };
+    let encoded = encode_agent_dispatch_input(&status.input)?;
+    let decoded = decode_agent_dispatch_input(&encoded)?;
+    assert_eq!(decoded.healer_case, Some(case));
+    assert!(decoded.context_spec.is_none());
+    assert!(decoded.context_from.is_empty());
     Ok(())
 }
 
@@ -2803,15 +2751,41 @@ fn configured_healer_above_propose_only_is_rejected() -> Result<()> {
     // A propose-only healer clears the ceiling gate and stops only at the
     // deferred reference-context seam.
     let propose_healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
-    let error = dispatcher
-        .dispatch_healer_slot(heal(
-            HealerSlot::AgentDef {
-                agent_def_ref: propose_healer.to_hex(),
-            },
-            case,
-            20,
-        ))
-        .expect_err("the configured arm is deferred with the reference-context seam");
-    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+    let outcome = dispatcher.dispatch_healer_slot(heal(
+        HealerSlot::AgentDef {
+            agent_def_ref: propose_healer.to_hex(),
+        },
+        case,
+        20,
+    ))?;
+    assert!(matches!(outcome, HealerSlotOutcome::Dispatched(_)));
+    Ok(())
+}
+
+#[test]
+fn healer_activity_emits_three_signed_per_vault_receipts() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_, _, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
+        HealerSlot::AgentDef {
+            agent_def_ref: healer.to_hex(),
+        },
+        case.clone(),
+        20,
+    ))?;
+    vault.record_healer_review(&case.case_ref, 25, true)?;
+    let receipts = vault.emit_healer_oversight(30)?;
+    assert_eq!(receipts.len(), 3);
+    for receipt in &receipts {
+        assert!(receipt.verify(&receipts[0].signer));
+        assert_eq!(receipt.counts.proposed, 1);
+        assert_eq!(receipt.counts.reviewed, 1);
+        assert_eq!(receipt.counts.escalated, 1);
+        assert_eq!(receipt.counts.review_latency_secs, 5);
+        let mut tampered = receipt.clone();
+        tampered.counts.reviewed += 1;
+        assert!(!tampered.verify(&receipts[0].signer));
+    }
     Ok(())
 }

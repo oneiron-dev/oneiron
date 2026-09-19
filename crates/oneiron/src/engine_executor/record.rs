@@ -316,6 +316,7 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.speak" => Ok(SelfEffect::Speak),
         "self.think" => Ok(SelfEffect::Think),
         "self.express" => Ok(SelfEffect::Express),
+        "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }

@@ -129,6 +129,7 @@ fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> Contex
         id: crate::test_util::entity(seed),
         short_id: short_id.to_owned(),
         content_hash: seed,
+        source_revision_ref: None,
         entity_type,
         score,
         fields: None,
@@ -738,6 +739,7 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
         id,
         0.0,
         HydrateOptions {
+            read_mode: crate::vault::ReadMode::Indexed,
             hydrate_fields: true,
             include_edges: false,
             include_vectors: false,
@@ -1488,6 +1490,13 @@ fn status_suppressed_empty_reports_all_activated() -> Result<()> {
 
 #[test]
 fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()> {
+    struct NoWithdrawnEmbedding;
+    impl crate::memory::IndexedRevisionEmbedder for NoWithdrawnEmbedding {
+        fn embed_revision(&self, _: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
+            panic!("withdrawn claims must not be reindexed at idle");
+        }
+    }
+
     let (_dir, vault) = open_test_vault();
     let id = EntityId::from_bytes([0x43; 16])?;
     put_claim_text_entity(
@@ -1506,6 +1515,13 @@ fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()>
     assert_eq!(before.results[0].id, id);
 
     vault.retract_claim(&id, 2_000)?;
+
+    vault.set_indexed_idle_delay_ms(0)?;
+    let idle = vault.refresh_indexed_at_idle(
+        crate::unix_seconds_now().saturating_mul(1000),
+        &NoWithdrawnEmbedding,
+    )?;
+    assert!(idle.refreshed.is_empty());
 
     let after = vault
         .context_pack()
@@ -1795,6 +1811,7 @@ fn pack_validation_skips_world_partition_dropped_results() -> Result<()> {
 
     let pack = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
         .run()?;
 
@@ -1869,6 +1886,7 @@ fn pack_validation_rejects_missing_required_evidence() -> Result<()> {
 
     let err = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_text("missingevidenceneedle", 10)
         .run()
         .expect_err("provenance claim without actor-class evidence must fail pack validation");
@@ -2040,6 +2058,7 @@ fn pack_validation_rejects_impossible_time_ordering() -> Result<()> {
 
     let err = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_text("reversedtimeneedle", 10)
         .run()
         .expect_err("reversed entity envelope must fail pack validation");
@@ -3616,6 +3635,7 @@ fn n12_validate_pack_disclosure_fails_a_tampered_pack() -> Result<()> {
         id: marked,
         short_id: "tn_smuggled".to_owned(),
         content_hash: 0,
+        source_revision_ref: None,
         entity_type: ENTITY_TYPE_TURN,
         score: 1.0,
         fields: None,

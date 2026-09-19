@@ -1585,3 +1585,45 @@ fn feedback_module_owns_its_own_wire_and_domain_tokens() {
         format!("feedback-send:{}:consent:x", preview.digest())
     );
 }
+
+#[test]
+fn configured_destinations_keep_exact_preview_and_independent_consent() {
+    for channel in ["feedback_cloud", "feedback_collector", "feedback_github"] {
+        let (_dir, vault) = temp_vault();
+        let agent = entity(0xBA);
+        vault
+            .put_entity(
+                &agent,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                b"actor",
+            )
+            .unwrap();
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest_bytes(
+            &vault,
+            entity(0xBB),
+            &policy_manifest(actor.actor_ref.as_deref().unwrap(), channel, &["send"]),
+        )
+        .unwrap();
+        let route = FeedbackSendRoute::new(channel, "send", "https://example.test/feedback");
+        let preview = preview_of(full_bundle());
+        let approval = approved_for(&preview, &FeedbackApprovalScope::Send(route.clone()));
+        let context = send_context(route, actor);
+        let mut transport = RecordingTransport::default();
+        let sent = send_feedback(&vault, &preview, &context, &approval, &mut transport).unwrap();
+        assert_eq!(
+            sent.dispatch.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel
+        );
+        assert_eq!(transport.payloads, vec![preview.bytes.clone()]);
+        let mut other = context.clone();
+        other.route.target.push_str("/other");
+        assert!(matches!(
+            send_feedback(&vault, &preview, &other, &approval, &mut transport),
+            Err(FeedbackError::StalePreviewDigest { .. })
+        ));
+        assert_eq!(transport.payloads.len(), 1);
+    }
+}

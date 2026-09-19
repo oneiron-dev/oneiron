@@ -276,7 +276,24 @@ fn hard_erase_of_a_merge_head_cascades_to_its_redirect_shell() -> Result<()> {
     assert_eq!(vault.resolve_entity(&loser)?, vec![survivor]);
     assert!(!vault.get(&loser)?.expect("shell body").is_empty());
 
+    let author_pin = vault.pin_entity_revision(&event)?;
     let outcome = vault.delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)?;
+    assert!(matches!(
+        vault.get_raw_with_mode(
+            &event,
+            crate::vault::entity_revision::ReadMode::Pinned(author_pin)
+        ),
+        Err(Error::EntityNotFound)
+    ));
+    let scrubbed_pin = vault.pin_entity_revision(&event)?;
+    assert_ne!(author_pin, scrubbed_pin);
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &event,
+            crate::vault::entity_revision::ReadMode::Pinned(scrubbed_pin)
+        )?,
+        vault.get_raw_with_mode(&event, crate::vault::entity_revision::ReadMode::Live)?
+    );
     assert!(outcome.existed);
 
     // The leak r6 §9 names: neither the head nor its shell may still read.

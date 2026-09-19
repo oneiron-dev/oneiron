@@ -155,20 +155,23 @@ pub(super) fn canonical_witness_executor_turn(
     let turn_id = executor_speech_turn_id(run_ref, run_id)?;
     vault
         .memory(actor.entity_ref(), actor.actor_class())
-        .witness(&crate::memory::WitnessTurn {
-            conversation_ref: conversation_id.to_hex(),
-            turn_ref: Some(turn_id.to_hex()),
-            messages: vec![crate::memory::WitnessMessage {
-                id: Some(message_id.to_hex()),
-                author: crate::memory::WitnessAuthor::Companion,
-                message_type: kind.as_message_type().to_owned(),
-                content: text.to_owned(),
-                metadata: None,
-                is_visible: kind.is_visible(),
-                order,
-            }],
-            occurred_at,
-        })
+        .witness_host_executor(
+            &crate::memory::WitnessTurn {
+                conversation_ref: conversation_id.to_hex(),
+                turn_ref: Some(turn_id.to_hex()),
+                messages: vec![crate::memory::WitnessMessage {
+                    id: Some(message_id.to_hex()),
+                    author: crate::memory::WitnessAuthor::Companion,
+                    message_type: kind.as_message_type().to_owned(),
+                    content: text.to_owned(),
+                    metadata: None,
+                    is_visible: kind.is_visible(),
+                    order,
+                }],
+                occurred_at,
+            },
+            None,
+        )
         .map_err(|error| {
             error
                 .gate_denial_error()

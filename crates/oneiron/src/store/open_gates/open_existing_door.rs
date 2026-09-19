@@ -116,6 +116,7 @@ impl Store {
             kind_registry,
             off_record_sessions: OffRecordSessionRegistry::default(),
             retrieval_blend_tuning_lock: Mutex::new(()),
+            retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             diagnostics: Diagnostics::default(),
             #[cfg(feature = "sync")]

@@ -40,19 +40,17 @@ use oneiron::claim::ScopedRead;
 use oneiron::llm::BudgetLease;
 use oneiron::retrieval_depth::{
     BackendSpend, DeepSearchBackend, DepthSearchRequest, DepthSearchResult, RetrievalResult,
-    SearchProbe, SessionScope, short_ref_or_hex,
+    SearchProbe, SessionScope,
 };
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
-use oneiron::{Effort, EntityId, ScoredEntity};
+use oneiron::{Effort, EntityId};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
 use serde_json::{Map, Value};
 use utoipa::ToSchema;
 
-use super::{
-    json_payload, parse_entity_id_param, project_scoped_search_result, scoped_read_for_core_auth,
-};
+use super::{json_payload, parse_entity_id_param, scoped_read_for_core_auth};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::projection::View;
@@ -78,20 +76,25 @@ pub(crate) const MEMORY_REASON_MAX_TOKEN_BUDGET: usize = 65_536;
 
 /// The wire values `depth` accepts, derived from the engine enum so the
 /// contract cannot drift from the type it describes.
-pub(crate) const RETRIEVAL_EFFORT_VALUES: [Effort; 3] =
-    [Effort::Minimal, Effort::Standard, Effort::Deep];
+pub(crate) const RETRIEVAL_EFFORT_VALUES: [Effort; 5] = [
+    Effort::Light,
+    Effort::Medium,
+    Effort::High,
+    Effort::Xhigh,
+    Effort::Max,
+];
 
 /// Raw search omits `depth` into the CHEAPEST tier, on purpose: a caller that
 /// never heard of this parameter must keep paying what it paid before.
 pub(crate) const fn minimal_effort() -> Effort {
-    Effort::Minimal
+    Effort::Light
 }
 
 /// The reasoning read omits `depth` into `standard`: a question asked in prose
 /// wants graph context, and standard is still model-free and lease-free, so
 /// the default costs no tokens.
 pub(crate) const fn standard_effort() -> Effort {
-    Effort::Standard
+    Effort::Medium
 }
 
 /// Rendering for the extractive answer and the composer's format hint.
@@ -136,7 +139,7 @@ pub(crate) struct MemoryReasonSessionContext {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schema(example = json!({
     "query": "what did we decide about the launch date",
-    "depth": "standard",
+    "depth": "medium",
     "tokenBudget": 4000,
     "format": "markdown"
 }))]
@@ -146,7 +149,7 @@ pub(crate) struct MemoryReasonRequest {
     pub(crate) query: String,
     /// Retrieval effort. Omitted means `standard`.
     #[serde(default = "standard_effort")]
-    #[schema(value_type = String, default = "standard", example = "standard")]
+    #[schema(value_type = String, default = "medium", example = "medium")]
     pub(crate) depth: Effort,
     /// Evidence rows to retrieve. Omitted means `10`; must be at least 1.
     #[schema(example = 10)]
@@ -365,6 +368,7 @@ pub(crate) async fn companion_memory_reason(
 
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let depth_request = DepthSearchRequest {
+        deadline: None,
         probe: SearchProbe::Text {
             query: query.clone(),
         },
@@ -389,7 +393,7 @@ pub(crate) async fn companion_memory_reason(
             .ok_or_else(|| {
                 ApiError::bad_request("retrieval exceeded tokenBudget", Some("tokenBudget"))
             })?;
-        let evidence = collect_evidence(&server.vault, &scoped_read, retrieved.hits.clone())?;
+        let evidence = collect_evidence(&server.vault, &scoped_read, &retrieved)?;
         let answered = answer_from(&request, &query, remaining, &evidence, admission.as_ref())?;
         let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
         Ok(Json(reason_response(
@@ -481,7 +485,7 @@ fn parse_scope_ref(value: Option<&str>, field: &'static str) -> Result<Option<En
 /// query ran" — the tier name already says that, and an always-present field
 /// carrying no information is worse than an absent one.
 fn trace_for(effort: Effort, retrieved: &DepthSearchResult) -> Option<MemoryReasonTrace> {
-    if effort == Effort::Minimal {
+    if effort == Effort::Light {
         return None;
     }
     Some(MemoryReasonTrace {
@@ -499,23 +503,29 @@ fn trace_for(effort: Effort, retrieved: &DepthSearchResult) -> Option<MemoryReas
 fn collect_evidence(
     vault: &oneiron::Vault,
     scoped_read: &ScopedRead<'_>,
-    hits: Vec<ScoredEntity>,
+    retrieved: &DepthSearchResult,
 ) -> Result<Vec<MemoryReasonEvidence>, ApiError> {
-    let mut evidence = Vec::with_capacity(hits.len());
-    for hit in hits {
+    let mut evidence = Vec::with_capacity(retrieved.hits.len());
+    for hit in &retrieved.hits {
         let id = hit.id;
-        let projected =
-            project_scoped_search_result(scoped_read, hit, View::Full).map_err(|error| {
-                tracing::error!(error = %error, "memory reason projection failed");
-                ApiError::internal_server_error("memory reason projection failed")
-            })?;
-        let Some(Value::Object(fields)) = projected else {
+        let Some(&revision) = retrieved.revisions.get(&id) else {
             continue;
         };
-        let short_id = short_ref_or_hex(vault, &id).map_err(|error| {
-            tracing::error!(error = %error, "memory reason short id lookup failed");
-            ApiError::internal_server_error("memory reason projection failed")
-        })?;
+        let mode = oneiron::memory::ReadMode::Pinned(revision);
+        let Some((kind, learned_at, body)) = scoped_read
+            .get_entity_parts_with_mode(&id, mode)
+            .map_err(|_| ApiError::internal_server_error("memory reason projection failed"))?
+        else {
+            continue;
+        };
+        let Value::Object(fields) =
+            crate::projection::project_entity_parts(&id, kind, learned_at, &body, View::Full)
+        else {
+            continue;
+        };
+        let short_id = vault
+            .pinned_short_ref_with_mode(&id, mode)
+            .map_err(|_| ApiError::internal_server_error("memory citation pin failed"))?;
         evidence.push(MemoryReasonEvidence {
             kind: string_field(&fields, "kind").unwrap_or_else(|| "UNKNOWN".to_owned()),
             text: evidence_text(&fields),

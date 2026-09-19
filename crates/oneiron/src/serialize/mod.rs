@@ -7,6 +7,7 @@
 
 mod field_profile_table;
 mod group_labels;
+mod handles;
 mod item_budget;
 mod json_format;
 mod markdown_plaintext_format;

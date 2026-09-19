@@ -12,6 +12,9 @@
 //! conformance before moving the pin.
 
 mod ctl;
+/// Shared lifecycle and host-specific adapters.
+pub mod host;
+pub mod host_adapters;
 mod ledger;
 mod limits;
 mod secrets;

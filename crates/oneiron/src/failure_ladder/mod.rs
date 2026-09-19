@@ -22,6 +22,7 @@ mod blocked_reports;
 mod classify;
 mod ladder;
 mod lineage;
+pub mod oversight;
 mod scope;
 mod transitions;
 

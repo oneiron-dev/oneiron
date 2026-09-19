@@ -24,6 +24,7 @@ mod attenuation;
 mod codec;
 mod context;
 mod dispatch;
+mod healer_context;
 mod kill;
 mod types;
 

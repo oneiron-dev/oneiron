@@ -29,6 +29,10 @@ use crate::skills_pack::{self, OutputMode};
 /// serves — no endpoint, no authority model, and no response interpretation is
 /// added here.
 mod api;
+mod host_init;
+#[cfg(test)]
+mod host_runtime_tests;
+pub use self::host_init::host_init;
 
 pub use self::api::api;
 
@@ -468,6 +472,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
+    use oneiron_vault_contract::host::{Host, HostLimits};
+
     tracing::info!(
         vault_path = %config.vault_path.display(),
         dimensions = config.dimensions,
@@ -541,14 +547,23 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let managed::BoundServeListener::Tcp(listener) = listener else {
         anyhow::bail!("unmanaged serve requires a TCP listener");
     };
+    let mut host = oneiron_vault_contract::host_adapters::InProcessHost::new(
+        listener.into_std()?,
+        HostLimits::unbounded(),
+        || Ok(()),
+        || Ok(()),
+    );
+    let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let embedding_handle = sync_server.spawn_embedding_worker();
     let app = build_app(sync_server).layer(cors_layer);
+    host.ready()?;
     let result = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await;
+    host.on_stop()?;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
     if let Some(handle) = embedding_handle {

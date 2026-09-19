@@ -471,12 +471,11 @@ pub struct BlobVersionView {
 /// Retrieval effort dial. Closed vocabulary: there is no escape hatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum Effort {
-    /// Lexical retrieval only.
-    Minimal,
-    /// Lexical plus graph expansion and hydration.
-    Standard,
-    /// Budget-gated deep retrieval; the boundary never mints the budget.
-    Deep,
+    Light,
+    Medium,
+    High,
+    Xhigh,
+    Max,
 }
 
 /// Recall scoping: narrowing only; unset means the directory floor.
@@ -542,6 +541,8 @@ pub struct RetrievalMeta {
     pub claims_returned: u64,
     /// Set when a budgeted deep call executed at standard effort.
     pub deep_pending: Option<bool>,
+    /// Retrieval ended before all requested stages completed.
+    pub partial: bool,
 }
 
 /// The versioned memory pack returned by `recall`.

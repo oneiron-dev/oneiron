@@ -131,7 +131,7 @@ impl Read {
                 let p: Recall = params(value)?;
                 Self::Recall {
                     query: p.query,
-                    effort: p.effort.unwrap_or(Effort::Standard),
+                    effort: p.effort.unwrap_or(Effort::Medium),
                     scope: p.scope.unwrap_or_default(),
                     limit: facade_limit(p.limit, 10)?,
                     format: p.format,

@@ -165,6 +165,7 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
 
 /// Builds the HTTP API routes.
 pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
+    crate::wire_telemetry::start_window_receipts(&server);
     let idempotency = IdempotencyLayerState::new(server.clone());
     let legacy_mutation_routes = Router::new()
         // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
@@ -329,6 +330,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             get(get_usage_rollup),
         )
         .merge(legacy_mutation_routes)
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            crate::wire_telemetry::observe_http,
+        ))
         .with_state(server)
 }
 
@@ -352,7 +357,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "rate_limit": {
                     "api_enforced": false,
-                    "websocket_enforced": true,
+                    "websocket_enforced": false,
                     "max_messages_per_sec": 64,
                     "max_windows_per_connection": 8,
                     "max_frame_size_bytes": 1048576,

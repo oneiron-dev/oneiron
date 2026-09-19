@@ -67,6 +67,12 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             Value::from(u64::from(depth_remaining)),
         ));
     }
+    if let Some(case) = &input.healer_case {
+        super::healer_context::validate(case)?;
+        let bytes = rmp_serde::to_vec_named(case)
+            .map_err(|_| Error::InvalidConfig("healer case encode".into()))?;
+        entries.push((Value::from("healer_case"), Value::Binary(bytes)));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -89,6 +95,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut context_spec = None;
     let mut context_from = Vec::new();
     let mut depth_remaining = None;
+    let mut healer_case = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -203,6 +210,17 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     })?);
                 }
             }
+            "healer_case" => {
+                let Value::Binary(bytes) = value else {
+                    return Err(Error::InvalidConfig(
+                        "healer case must be named msgpack".into(),
+                    ));
+                };
+                let case = rmp_serde::from_slice(bytes)
+                    .map_err(|_| Error::InvalidConfig("invalid healer case".into()))?;
+                super::healer_context::validate(&case)?;
+                healer_case = Some(case);
+            }
             KEY_DEPTH_REMAINING => {
                 let depth = value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
@@ -264,6 +282,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     };
 
     Ok(AgentDispatchInput {
+        healer_case,
         target,
         definition,
         context_spec,

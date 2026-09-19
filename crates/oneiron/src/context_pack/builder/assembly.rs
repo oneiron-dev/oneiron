@@ -191,6 +191,7 @@ impl<'a> ContextPackBuilder<'a> {
             let surfaced_candidate_count = scored.len();
 
             let result_options = HydrateOptions {
+                read_mode: self.read_mode,
                 hydrate_fields: self.hydrate,
                 include_edges: hydrate_result_edges,
                 include_vectors: self.include_vectors,
@@ -200,12 +201,19 @@ impl<'a> ContextPackBuilder<'a> {
             };
             let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
+                let mut options = result_options;
+                if options.read_mode == crate::vault::ReadMode::Indexed {
+                    let Some(revision) = pipeline_output.revisions.get(&entry.id) else {
+                        continue;
+                    };
+                    options.read_mode = crate::vault::ReadMode::Pinned(*revision);
+                }
                 let Some(entity) = hydrate_entity(
                     self.vault,
                     &rtxn,
                     entry.id,
                     entry.score,
-                    result_options,
+                    options,
                     &mut claims_suppressed,
                 )?
                 else {
@@ -292,6 +300,7 @@ impl<'a> ContextPackBuilder<'a> {
                 )?;
             }
             let neighbor_options = HydrateOptions {
+                read_mode: self.read_mode,
                 hydrate_fields: self.hydrate,
                 include_edges: self.include_edges,
                 include_vectors: self.include_vectors,

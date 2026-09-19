@@ -94,6 +94,8 @@ pub enum ExecutorUtterance {
     Think,
     /// Non-verbal expression accompanying a turn.
     Express,
+    /// Host-selected, hidden receipt for the report-blocked effect.
+    ReportBlocked,
 }
 
 impl ExecutorUtterance {
@@ -104,6 +106,7 @@ impl ExecutorUtterance {
             Self::Speak => "executor.speak",
             Self::Think => "executor.think",
             Self::Express => "executor.express",
+            Self::ReportBlocked => crate::code_run::blocked::BLOCKED_REPORT_MESSAGE_TYPE,
         }
     }
 
@@ -116,7 +119,7 @@ impl ExecutorUtterance {
     pub const fn is_visible(self) -> bool {
         match self {
             Self::Speak | Self::Express => true,
-            Self::Think => false,
+            Self::Think | Self::ReportBlocked => false,
         }
     }
 }

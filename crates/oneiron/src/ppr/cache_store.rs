@@ -11,7 +11,7 @@ use crate::pipeline::ScoredEntity;
 use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Store};
 
 use super::query::DeferredPprCacheWrite;
-use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry};
+use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
 
 pub(super) const SEED_HASH_LEN: usize = 16;
 #[cfg(test)]
@@ -20,8 +20,8 @@ pub(super) const CACHE_HEADER_LEN: usize = 17;
 pub(super) const CACHE_STALE_OFFSET: usize = 16;
 const CACHE_ENTRY_LEN: usize = 20;
 pub(super) const CACHE_STATE_MAGIC: &[u8; 4] = b"FPRS";
-const CACHE_STATE_VERSION: u8 = 1;
-const CACHE_STATE_PREFIX_LEN: usize = 21;
+const CACHE_STATE_VERSION: u8 = 2;
+const CACHE_STATE_PREFIX_LEN: usize = 29;
 const CACHE_FRONTIER_ENTRY_LEN: usize = ENTITY_ID_LEN + 8;
 pub(super) const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
 #[cfg(test)]
@@ -46,7 +46,8 @@ pub(super) const MAX_PPR_DEPTH: u32 = 10;
 /// byte. v4 = ONE-1236 lexical query hint side claims are skipped during
 /// `ClaimOf` traversal so synthetic hint records do not consume transition
 /// mass. v5 = stored-edge VAD salience, with both alphas in cache identity.
-pub(super) const PPR_FORMULA_VERSION: u32 = 5;
+/// v6 = deterministic Forward-Push rounds with retained below-threshold residual.
+pub(super) const PPR_FORMULA_VERSION: u32 = 6;
 pub(crate) const MAX_PPR_SEEDS: usize = 256;
 /// Recency-tiered `ppr_cache` serve TTL (ARCH-0019 "PPR cache TTL" table /
 /// ARCH-0014 "TTL strategy"; ONE-1116 pinned decision).
@@ -146,13 +147,7 @@ fn write_ppr_cache(
     graph_version: u64,
     state: &PprCacheState,
 ) -> Result<()> {
-    {
-        let rtxn = store.env.read_txn()?;
-        if read_graph_version(store, &rtxn)? != graph_version {
-            return Ok(());
-        }
-    }
-
+    // The version check in store_cache_entry is atomic with the cache write.
     let mut wtxn = store.env.write_txn()?;
     if store_cache_entry(
         store,
@@ -353,10 +348,12 @@ fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &Entity
 
     for seed_hash in hashes {
         let Some(raw) = store.ppr_cache().get(&*wtxn, &seed_hash)? else {
+            delete_dep_rows_for_seed_hash(store, wtxn, &seed_hash)?;
             continue;
         };
         if raw.len() < CACHE_HEADER_LEN {
             store.ppr_cache().delete(wtxn, &seed_hash)?;
+            delete_dep_rows_for_seed_hash(store, wtxn, &seed_hash)?;
             continue;
         }
         let mut patched = raw.to_vec();
@@ -409,9 +406,14 @@ pub(super) fn store_cache_entry(
         return Ok(false);
     }
 
+    let replacing = store.ppr_cache().get(&*wtxn, seed_hash)?.is_some();
     let encoded = encode_cache_value_with_state(computed_at, graph_version, 0, state)?;
     store.ppr_cache().put(wtxn, seed_hash, &encoded)?;
-    delete_dep_rows_for_seed_hash(store, wtxn, seed_hash)?;
+    // Cache rows and dependencies are inserted/deleted atomically. An absent
+    // row cannot own dependencies, so fresh inserts need no full-table scan.
+    if replacing {
+        delete_dep_rows_for_seed_hash(store, wtxn, seed_hash)?;
+    }
 
     for dependency in &state.dependencies {
         let dep_key = encode_dep_key(dependency, seed_hash);
@@ -508,13 +510,14 @@ fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
 
     let (chunks, rem) = payload.as_chunks::<CACHE_ENTRY_LEN>();
     debug_assert!(rem.is_empty());
+    let mut seen = HashSet::new();
     chunks
         .iter()
         .map(|&[id_bytes @ .., s0, s1, s2, s3]| {
             let id = EntityId::from_bytes(id_bytes)
                 .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?;
             let score = f32::from_le_bytes([s0, s1, s2, s3]);
-            if !score.is_finite() {
+            if !score.is_finite() || score < 0.0 || !seen.insert(id) {
                 return Err(Error::CorruptedIndex("ppr cache scores"));
             }
             Ok(ScoredEntity { id, score })
@@ -524,7 +527,7 @@ fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
 fn is_state_cache_payload(payload: &[u8]) -> bool {
     // Legacy score-only rows are exactly `[EntityId | f32] * n`, so their
     // payload length is always a multiple of `CACHE_ENTRY_LEN`. Current state
-    // rows start with `FPRS` but have a 21-byte prefix, making that shape
+    // rows start with `FPRS` but have a 29-byte prefix, making that shape
     // impossible; use both checks so a legacy EntityId may safely begin with
     // the state magic bytes.
     payload.starts_with(CACHE_STATE_MAGIC) && !payload.len().is_multiple_of(CACHE_ENTRY_LEN)
@@ -545,6 +548,15 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
     let frontier_count = decode_u32(&payload[13..17], "ppr cache state")? as usize;
     let dependency_count = decode_u32(&payload[17..21], "ppr cache state")? as usize;
 
+    let residual_count = decode_u32(&payload[21..25], "ppr cache residual")? as usize;
+    let push_threshold = f32::from_le_bytes(payload[25..29].try_into().expect("checked prefix"));
+    if push_threshold.to_bits() != SCORE_EPSILON.to_bits() || completed_depth > MAX_PPR_DEPTH {
+        return Err(Error::CorruptedIndex("ppr cache residual"));
+    }
+    let residual_bytes = residual_count
+        .checked_mul(CACHE_FRONTIER_ENTRY_LEN)
+        .ok_or(Error::CorruptedIndex("ppr cache residual"))?;
+
     let score_bytes = score_count
         .checked_mul(CACHE_ENTRY_LEN)
         .ok_or(Error::CorruptedIndex("ppr cache state"))?;
@@ -558,6 +570,7 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
         .checked_add(score_bytes)
         .and_then(|len| len.checked_add(frontier_bytes))
         .and_then(|len| len.checked_add(dependency_bytes))
+        .and_then(|len| len.checked_add(residual_bytes))
         .ok_or(Error::CorruptedIndex("ppr cache state"))?;
     if payload.len() != expected_len {
         return Err(Error::CorruptedIndex("ppr cache state"));
@@ -565,10 +578,12 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
 
     let scores_start = CACHE_STATE_PREFIX_LEN;
     let frontier_start = scores_start + score_bytes;
-    let dependency_start = frontier_start + frontier_bytes;
+    let residual_start = frontier_start + frontier_bytes;
+    let dependency_start = residual_start + residual_bytes;
 
     let scores = decode_legacy_cache_scores(&payload[scores_start..frontier_start])?;
     let mut frontier = Vec::with_capacity(frontier_count);
+    let mut frontier_keys = HashSet::new();
     for chunk in payload[frontier_start..dependency_start].chunks_exact(CACHE_FRONTIER_ENTRY_LEN) {
         let id = EntityId::from_bytes(
             chunk[..ENTITY_ID_LEN]
@@ -583,7 +598,11 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("ppr cache state"))?,
         );
-        if !score.is_finite() {
+        if !score.is_finite()
+            || score < 0.0
+            || structural_hops > 2
+            || !frontier_keys.insert((id, structural_hops))
+        {
             return Err(Error::CorruptedIndex("ppr cache state"));
         }
         frontier.push(PprFrontierEntry {
@@ -593,6 +612,12 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
         });
     }
 
+    let residual = frontier.split_off(frontier_count);
+    if frontier.iter().any(|entry| entry.score <= push_threshold)
+        || residual.iter().any(|entry| entry.score > push_threshold)
+    {
+        return Err(Error::CorruptedIndex("ppr cache residual"));
+    }
     let mut dependencies = Vec::with_capacity(dependency_count);
     for chunk in payload[dependency_start..].chunks_exact(ENTITY_ID_LEN) {
         dependencies.push(
@@ -607,6 +632,8 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
 
     Ok(PprCacheState {
         completed_depth,
+        residual,
+        push_threshold,
         scores,
         frontier,
         dependencies,
@@ -642,11 +669,16 @@ pub(super) fn encode_cache_value_with_state(
     let dependency_count = u32::try_from(state.dependencies.len())
         .map_err(|_| Error::CorruptedIndex("ppr cache state"))?;
 
+    let residual_count = u32::try_from(state.residual.len())
+        .map_err(|_| Error::CorruptedIndex("ppr cache residual"))?;
+    if state.push_threshold.to_bits() != SCORE_EPSILON.to_bits() {
+        return Err(Error::CorruptedIndex("ppr cache residual"));
+    }
     let mut value = Vec::with_capacity(
         CACHE_HEADER_LEN
             + CACHE_STATE_PREFIX_LEN
             + state.scores.len() * CACHE_ENTRY_LEN
-            + state.frontier.len() * CACHE_FRONTIER_ENTRY_LEN
+            + (state.frontier.len() + state.residual.len()) * CACHE_FRONTIER_ENTRY_LEN
             + state.dependencies.len() * ENTITY_ID_LEN,
     );
     value.extend_from_slice(&computed_at.to_le_bytes());
@@ -658,11 +690,16 @@ pub(super) fn encode_cache_value_with_state(
     value.extend_from_slice(&score_count.to_le_bytes());
     value.extend_from_slice(&frontier_count.to_le_bytes());
     value.extend_from_slice(&dependency_count.to_le_bytes());
+    value.extend_from_slice(&residual_count.to_le_bytes());
+    value.extend_from_slice(&state.push_threshold.to_le_bytes());
     for scored in &state.scores {
+        if !scored.score.is_finite() || scored.score < 0.0 {
+            return Err(Error::CorruptedIndex("ppr cache scores"));
+        }
         value.extend_from_slice(scored.id.as_bytes());
         value.extend_from_slice(&scored.score.to_le_bytes());
     }
-    for entry in &state.frontier {
+    for entry in state.frontier.iter().chain(&state.residual) {
         value.extend_from_slice(entry.id.as_bytes());
         value.extend_from_slice(&entry.structural_hops.to_le_bytes());
         value.extend_from_slice(&entry.score.to_le_bytes());

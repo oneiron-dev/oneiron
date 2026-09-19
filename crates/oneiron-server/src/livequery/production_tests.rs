@@ -224,7 +224,7 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
     memory
         .recall(
             "solar",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -270,7 +270,7 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
                 memory
                     .recall(
                         "solar",
-                        Effort::Standard,
+                        Effort::Medium,
                         &RecallScope::default(),
                         10,
                         None,
@@ -368,11 +368,11 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
     let cases = [
         (
             "recall",
-            json!({"query":"solar","effort":"deep"}),
+            json!({"query":"solar","effort":"high"}),
             memory
                 .recall(
                     "solar",
-                    Effort::Deep,
+                    Effort::High,
                     &RecallScope::default(),
                     10,
                     None,
@@ -439,7 +439,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
     let expected = memory
         .recall(
             "solar",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope::default(),
             100,
             None,
@@ -460,7 +460,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
     let expected_error = memory
         .recall(
             "solar",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope {
                 world_ref: None,
                 facet: missing_facet.facet.clone(),
@@ -632,7 +632,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
     let old = memory
         .recall(
             "viewneedle",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope::default(),
             1000,
             None,

@@ -171,7 +171,10 @@ fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOu
 fn records_failed_effect(effect: SelfEffect) -> bool {
     matches!(
         effect,
-        SelfEffect::MemoryPutClaim | SelfEffect::MemorySupersedeClaim | SelfEffect::MemoryPutEdge
+        SelfEffect::MemoryPutClaim
+            | SelfEffect::MemorySupersedeClaim
+            | SelfEffect::MemoryPutEdge
+            | SelfEffect::ReportBlocked
     ) || effect.is_speech()
 }
 
@@ -185,6 +188,7 @@ pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "self.speak",
     "self.think",
     "self.express",
+    "self.report_blocked",
 ];
 
 pub(super) fn executor_boundary_contract() -> EngineExecutorResult<SandboxBoundaryContract> {

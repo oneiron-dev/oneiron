@@ -29,6 +29,7 @@ pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
   function speak(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
   function think(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
   function express(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
+  function report_blocked(input: { category: "tool" | "permission" | "context" | "environment"; detail: string }): Promise<{ receipt: string }>;
 }
 
 declare namespace oneiron {
@@ -259,6 +260,9 @@ impl SandboxLinkedImport {
             (SandboxImportClass::WriteTrap, "self.memory.put_edge") => {
                 Some(SelfEffect::MemoryPutEdge)
             }
+            (SandboxImportClass::WriteTrap, "self.report_blocked") => {
+                Some(SelfEffect::ReportBlocked)
+            }
             _ => None,
         }
     }
@@ -305,6 +309,9 @@ const SELF_THINK_IMPORT: SandboxLinkedImport =
 const SELF_EXPRESS_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.express", SandboxImportClass::Speech);
 
+const SELF_REPORT_BLOCKED_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.report_blocked", SandboxImportClass::WriteTrap);
+
 const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     READ_FILE_IMPORT,
     CREDENTIAL_CALL_IMPORT,
@@ -326,6 +333,7 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     SELF_SPEAK_IMPORT,
     SELF_THINK_IMPORT,
     SELF_EXPRESS_IMPORT,
+    SELF_REPORT_BLOCKED_IMPORT,
 ];
 
 /// Link-time contract for one guest tier.

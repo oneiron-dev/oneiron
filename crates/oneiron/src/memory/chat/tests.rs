@@ -221,9 +221,13 @@ fn seeded_pair(seed: u8, one: &str, two: &str) -> (tempfile::TempDir, crate::Vau
 fn recalled_short_ids(memory: &Memory<'_>, query: &str) -> Vec<String> {
     let scope = RecallScope::default();
     let pack = memory
-        .recall(query, Effort::Minimal, &scope, 10, None, None)
+        .recall(query, Effort::Light, &scope, 10, None, None)
         .expect("recall");
-    pack_short_ids(&pack)
+    pack.items
+        .iter()
+        .filter(|item| item.value_text.contains(query))
+        .map(|item| item.short_id.clone())
+        .collect()
 }
 
 /// Recall scope over the whole vault: the ordinary shape most tests use.
@@ -234,58 +238,30 @@ fn whole_vault() -> ChatScope {
 // ── the depth dial ──────────────────────────────────────────────────────
 
 #[test]
-fn chat_depth_parses_canonical_values_and_low_med_high_aliases() {
+fn chat_depth_uses_the_same_five_efforts_on_parse_and_wire() {
     for (token, depth) in [
-        ("minimal", ChatDepth::Minimal),
-        ("low", ChatDepth::Minimal),
-        ("standard", ChatDepth::Standard),
-        ("med", ChatDepth::Standard),
-        ("deep", ChatDepth::Deep),
-        ("high", ChatDepth::Deep),
+        ("light", ChatDepth::Light),
+        ("medium", ChatDepth::Medium),
+        ("high", ChatDepth::High),
+        ("xhigh", ChatDepth::Xhigh),
+        ("max", ChatDepth::Max),
     ] {
-        assert_eq!(ChatDepth::parse(token), Some(depth), "parses {token:?}");
-    }
-
-    // Aliases are input only: the canonical form is what comes back out, and
-    // it is exactly the one effort enum's own string.
-    for depth in [ChatDepth::Minimal, ChatDepth::Standard, ChatDepth::Deep] {
-        assert_eq!(depth.as_str(), depth.effort().as_str());
-        assert_eq!(ChatDepth::parse(depth.as_str()), Some(depth));
-    }
-
-    // The mapping is onto the ONE effort enum, not a second tier ladder.
-    assert_eq!(ChatDepth::Minimal.effort(), Effort::Minimal);
-    assert_eq!(ChatDepth::Standard.effort(), Effort::Standard);
-    assert_eq!(ChatDepth::Deep.effort(), Effort::Deep);
-
-    // Exact match: no trimming, no case folding, no invented synonyms.
-    for token in [
-        "", " ", "Minimal", "MINIMAL", " low", "low ", "medium", "Med", "HIGH", "deeper", "none",
-    ] {
-        assert_eq!(ChatDepth::parse(token), None, "rejects {token:?}");
-    }
-}
-
-#[test]
-fn chat_depth_serializes_canonically_and_rejects_aliases_on_the_wire() {
-    for (depth, json) in [
-        (ChatDepth::Minimal, "\"minimal\""),
-        (ChatDepth::Standard, "\"standard\""),
-        (ChatDepth::Deep, "\"deep\""),
-    ] {
-        assert_eq!(serde_json::to_string(&depth).expect("serialize"), json);
+        assert_eq!(ChatDepth::parse(token), Some(depth));
+        assert_eq!(depth.effort(), depth);
         assert_eq!(
-            serde_json::from_str::<ChatDepth>(json).expect("deserialize"),
+            serde_json::to_value(depth).unwrap(),
+            serde_json::json!(token)
+        );
+        assert_eq!(
+            serde_json::from_value::<ChatDepth>(serde_json::json!(token)).unwrap(),
             depth
         );
     }
-
-    // The aliases never become a second wire vocabulary.
-    for json in ["\"low\"", "\"med\"", "\"high\""] {
-        assert!(
-            serde_json::from_str::<ChatDepth>(json).is_err(),
-            "{json} is a parse alias, not a wire value"
-        );
+    for rejected in [
+        "minimal", "standard", "deep", "low", "med", "HIGH", " high ",
+    ] {
+        assert_eq!(ChatDepth::parse(rejected), None);
+        assert!(serde_json::from_value::<ChatDepth>(serde_json::json!(rejected)).is_err());
     }
 }
 
@@ -301,7 +277,7 @@ fn chat_minimal_is_zero_model_extractive_and_never_calls_the_composer() {
     let response = memory
         .chat(
             "kiln",
-            ChatDepth::Minimal,
+            ChatDepth::Light,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -315,7 +291,7 @@ fn chat_minimal_is_zero_model_extractive_and_never_calls_the_composer() {
     assert_eq!(composer.calls(), 0, "minimal is zero-model");
     let answered = expect_answered(response);
     assert_eq!(answered.tokens_used, 0);
-    assert_eq!(answered.depth, ChatDepth::Minimal);
+    assert_eq!(answered.depth, ChatDepth::Light);
     assert!(answered.gaps.is_empty());
     // No format was requested, so the pack is typed only.
     assert!(answered.retrieval.rendered.is_none());
@@ -336,7 +312,7 @@ fn chat_minimal_is_zero_model_extractive_and_never_calls_the_composer() {
     let response = memory
         .chat(
             "kiln",
-            ChatDepth::Minimal,
+            ChatDepth::Light,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -364,7 +340,7 @@ fn chat_minimal_on_an_empty_pack_abstains_with_insufficient_evidence() {
     let response = memory
         .chat(
             "nothing in this vault matches",
-            ChatDepth::Minimal,
+            ChatDepth::Light,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 5,
@@ -398,7 +374,7 @@ fn chat_standard_invokes_the_composer_exactly_once_after_retrieval() {
     let response = memory
         .chat(
             "aurora",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -411,16 +387,16 @@ fn chat_standard_invokes_the_composer_exactly_once_after_retrieval() {
 
     assert_eq!(composer.calls(), 1);
     let answered = expect_answered(response);
-    assert_eq!(answered.answer, "composed standard answer");
+    assert_eq!(answered.answer, "composed medium answer");
     assert_eq!(answered.tokens_used, 42);
-    assert_eq!(answered.depth, ChatDepth::Standard);
+    assert_eq!(answered.depth, ChatDepth::Medium);
     assert!(answered.retrieval.retrieval_meta.deep_pending.is_none());
     assert!(!answered.source_short_ids.is_empty());
 
     let seen = composer.seen();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].question, "aurora");
-    assert_eq!(seen[0].depth, ChatDepth::Standard);
+    assert_eq!(seen[0].depth, ChatDepth::Medium);
     assert_eq!(seen[0].lease, None);
     // The composer saw the retrieval, so it ran after it.
     assert_eq!(seen[0].items, answered.retrieval.items.len());
@@ -429,6 +405,20 @@ fn chat_standard_invokes_the_composer_exactly_once_after_retrieval() {
 
 #[test]
 fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
+    struct FixedReranker;
+    impl crate::rerank::Reranker for FixedReranker {
+        fn id(&self) -> &str {
+            "chat-fixture"
+        }
+        fn rerank(
+            &self,
+            _: &str,
+            candidates: &[crate::rerank::RerankCandidate<'_>],
+        ) -> crate::Result<Vec<f32>> {
+            Ok(candidates.iter().map(|c| c.score).collect())
+        }
+    }
+
     let (_dir, vault, actor) = seeded_vault(0x44, "the ridge trail washed out in the spring melt");
     let memory = facade_for(&vault, actor);
     let composer = CountingComposer::default();
@@ -438,7 +428,7 @@ fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
     let err = memory
         .chat(
             "ridge trail",
-            ChatDepth::Deep,
+            ChatDepth::High,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -451,11 +441,12 @@ fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
     assert_eq!(err.code, MEMORY_CODE_LEASE_REQUIRED);
     assert_eq!(composer.calls(), 0);
 
+    let ranker = FixedReranker;
     let lease = BudgetLease::for_test("chat-deep");
     let response = memory
-        .chat(
+        .chat_with_execution(
             "ridge trail",
-            ChatDepth::Deep,
+            ChatDepth::High,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -463,22 +454,26 @@ fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
                 lease: Some(&lease),
                 composer: Some(&composer),
             },
+            &crate::retrieval_depth::RecallExecution {
+                reranker: Some(&ranker),
+                ..Default::default()
+            },
         )
-        .expect("leased deep chat");
+        .expect("leased high chat");
 
     assert_eq!(composer.calls(), 1);
     let answered = expect_answered(response);
-    assert_eq!(answered.depth, ChatDepth::Deep);
-    assert_eq!(answered.answer, "composed deep answer");
+    assert_eq!(answered.depth, ChatDepth::High);
+    assert_eq!(answered.answer, "composed high answer");
     assert_eq!(answered.tokens_used, 42);
-    // Honest propagation: the core still executed the standard body.
+    // A paid tier finishes its actual rerank stage, never a pending stand-in.
     let meta = &answered.retrieval.retrieval_meta;
-    assert_eq!(meta.deep_pending, Some(true));
+    assert_eq!(meta.deep_pending, None);
 
     let seen = composer.seen();
     assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0].depth, ChatDepth::Deep);
-    assert_eq!(seen[0].deep_pending, Some(true));
+    assert_eq!(seen[0].depth, ChatDepth::High);
+    assert_eq!(seen[0].deep_pending, None);
     assert_eq!(seen[0].lease.as_deref(), Some("chat-deep"));
 }
 
@@ -492,7 +487,7 @@ fn chat_requires_a_composer_before_any_retrieval_at_standard_and_deep() {
     let err = memory
         .chat(
             "harbour bell",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -503,7 +498,6 @@ fn chat_requires_a_composer_before_any_retrieval_at_standard_and_deep() {
         )
         .expect_err("standard without a composer");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(err.message.contains("standard"));
     assert!(err.suggestions.iter().any(|s| s.contains("ChatComposer")));
 
     // Deep without EITHER a composer or a lease refuses on the composer: the
@@ -511,7 +505,7 @@ fn chat_requires_a_composer_before_any_retrieval_at_standard_and_deep() {
     let err = memory
         .chat(
             "harbour bell",
-            ChatDepth::Deep,
+            ChatDepth::High,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -522,7 +516,6 @@ fn chat_requires_a_composer_before_any_retrieval_at_standard_and_deep() {
         )
         .expect_err("deep without a composer");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(err.message.contains("deep"));
 }
 
 #[test]
@@ -535,7 +528,7 @@ fn chat_rejects_a_blank_question_and_a_zero_limit() {
         let err = memory
             .chat(
                 question,
-                ChatDepth::Deep,
+                ChatDepth::High,
                 ChatOptions {
                     scope: whole_vault(),
                     limit: 0,
@@ -554,7 +547,7 @@ fn chat_rejects_a_blank_question_and_a_zero_limit() {
     let err = memory
         .chat(
             "orchard",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 0,
@@ -578,7 +571,7 @@ fn chat_answer_carries_the_whole_memory_pack() {
     let response = memory
         .chat(
             "lighthouse",
-            ChatDepth::Minimal,
+            ChatDepth::Light,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -591,7 +584,7 @@ fn chat_answer_carries_the_whole_memory_pack() {
 
     let json = serde_json::to_value(&response).expect("serialize");
     assert_eq!(json["outcome"], "answered");
-    assert_eq!(json["depth"], "minimal");
+    assert_eq!(json["depth"], "light");
     assert_eq!(json["tokensUsed"], 0_u32);
     assert!(json["sourceShortIds"].is_array());
     assert!(json["gaps"].is_array());
@@ -620,7 +613,7 @@ fn chat_answers_cite_short_ids_that_hydrate_back_out_of_the_pack() {
     let response = memory
         .chat(
             "ferry",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -661,7 +654,7 @@ fn chat_abstains_without_fabrication_when_the_citations_do_not_hold() {
         let response = memory
             .chat(
                 "printing press",
-                ChatDepth::Standard,
+                ChatDepth::Medium,
                 ChatOptions {
                     scope: whole_vault(),
                     limit: 10,
@@ -707,7 +700,7 @@ fn chat_citations_dedupe_preserving_first_appearance() {
     let response = memory
         .chat(
             "tide",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: vec![first.clone(), second.clone()],
@@ -733,7 +726,7 @@ fn chat_a_declining_composer_is_a_typed_abstention_not_an_error() {
     let response = memory
         .chat(
             "archive",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: whole_vault(),
                 limit: 10,
@@ -778,7 +771,7 @@ fn chat_document_scope_reads_only_the_named_ids_and_cannot_leak() {
     let response = memory
         .chat(
             "what happened at the observatory?",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: vec![document.clone(), document.clone()],
@@ -810,7 +803,7 @@ fn chat_document_scope_reads_only_the_named_ids_and_cannot_leak() {
     let response = memory
         .chat(
             "what happened at the observatory?",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: vec![document],
@@ -841,7 +834,7 @@ fn chat_document_scope_without_a_resolving_document_abstains() {
     let response = memory
         .chat(
             "cellar",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: vec!["ms97:a1".to_owned(), "ms97:a1".to_owned()],
@@ -867,7 +860,7 @@ fn chat_document_scope_without_a_resolving_document_abstains() {
     let response = memory
         .chat(
             "cellar",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: Vec::new(),
@@ -893,7 +886,7 @@ fn chat_document_scope_without_a_resolving_document_abstains() {
     let err = memory
         .chat(
             "cellar",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: vec!["not a ref".to_owned()],
@@ -923,7 +916,7 @@ fn chat_document_scope_bounds_the_read_and_refuses_an_unknown_format() {
     let response = memory
         .chat(
             "aqueduct",
-            ChatDepth::Minimal,
+            ChatDepth::Light,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: documents.clone(),
@@ -947,7 +940,7 @@ fn chat_document_scope_bounds_the_read_and_refuses_an_unknown_format() {
     let err = memory
         .chat(
             "aqueduct",
-            ChatDepth::Minimal,
+            ChatDepth::Light,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: documents,
@@ -987,7 +980,7 @@ fn chat_document_scope_renders_the_requested_format_over_only_the_named_ids() {
         let response = memory
             .chat(
                 "what happened to the telescope?",
-                ChatDepth::Minimal,
+                ChatDepth::Light,
                 ChatOptions {
                     scope: ChatScope::Documents {
                         source_short_ids: vec![document.clone()],
@@ -1028,7 +1021,7 @@ fn chat_document_scope_renders_the_requested_format_over_only_the_named_ids() {
     let response = memory
         .chat(
             "what happened to the telescope?",
-            ChatDepth::Minimal,
+            ChatDepth::Light,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: vec![document],
@@ -1062,7 +1055,7 @@ fn chat_document_scope_cites_the_named_ids_with_the_rendered_pack_present() {
     let response = memory
         .chat(
             "what was replaced at the weather station?",
-            ChatDepth::Standard,
+            ChatDepth::Medium,
             ChatOptions {
                 scope: ChatScope::Documents {
                     source_short_ids: vec![document.clone()],
@@ -1079,7 +1072,7 @@ fn chat_document_scope_cites_the_named_ids_with_the_rendered_pack_present() {
     let answered = expect_answered(response);
     // With a composer in play the rendering is evidence, not the answer, and
     // the citations are checked against that same rendered pack.
-    assert_eq!(answered.answer, "composed standard answer");
+    assert_eq!(answered.answer, "composed medium answer");
     assert_eq!(answered.source_short_ids, vec![document.clone()]);
     assert!(answered.gaps.is_empty());
     let rendered = answered.retrieval.rendered.as_deref().expect("json");

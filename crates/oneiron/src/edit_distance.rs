@@ -26,8 +26,8 @@
 //!
 //! # Feature split
 //!
-//! Loro is an optional dependency (`pub mod sync` is `#[cfg(feature =
-//! "sync")]`; the napi/ffi/driver builds have no sync). Everything in this
+//! Loro also backs featureless entity revisions and board history; only the
+//! replication protocol is feature-gated. Everything in this
 //! module root is UNCONDITIONAL — the types, the retention rows, the
 //! registration door — because the downstream ED ladder (delta, myers,
 //! attribution, miner, graduation, escalation, routing, publisher, reservoir)

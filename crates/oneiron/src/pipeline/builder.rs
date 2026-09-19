@@ -1,3 +1,6 @@
+#[path = "builder_effort.rs"]
+mod effort;
+
 use std::collections::HashMap;
 
 use crate::Vault;
@@ -69,6 +72,9 @@ pub struct PipelineBuilder<'a> {
     pub(super) temporal_now: Option<u64>,
     pub(super) telemetry_action: RetrievalAction,
     pub(super) capture_retrieval_trace: bool,
+    pub(super) retrieval_state: Option<crate::store::RetrievalState>,
+    pub(super) retrieval_turn: Option<crate::store::RetrievalTurn>,
+    pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
@@ -119,6 +125,9 @@ impl<'a> PipelineBuilder<'a> {
             temporal_now: None,
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
+            retrieval_state: None,
+            retrieval_turn: None,
+            deadline: None,
             rerank: None,
             hyde: None,
             access_factor_overrides: None,
@@ -164,6 +173,16 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     /// Enables opt-in per-stage retrieval trace capture for this run.
+    /// Supplies the pre-decision bus for iterative or offline replay callers.
+    pub fn retrieval_state(mut self, state: crate::store::RetrievalState) -> Self {
+        self.retrieval_state = Some(state);
+        self
+    }
+    pub fn retrieval_turn(mut self, turn: crate::store::RetrievalTurn) -> Self {
+        self.retrieval_turn = Some(turn);
+        self
+    }
+
     pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
         self.capture_retrieval_trace = enabled;
         self

@@ -7,13 +7,18 @@ use super::pack_entry::PreparedEntity;
 use super::types::{GroupKey, TOON_MAX_DEPTH};
 use super::yaml_format::write_indent;
 
-pub(super) fn encode_toon_section(groups: &[(GroupKey, Vec<PreparedEntity>)]) -> String {
+pub(super) fn encode_toon_section(
+    groups: &[(GroupKey, Vec<PreparedEntity>)],
+    handles: &mut super::handles::Handles,
+) -> String {
     if groups.is_empty() {
         return String::new();
     }
 
     let mut out = String::new();
-    write_toon_object(&mut out, &section_object(groups, false), 0);
+    let mut value = Value::Object(section_object(groups, false));
+    handles.value(&mut value);
+    write_toon_object(&mut out, value.as_object().expect("section map"), 0);
     out
 }
 

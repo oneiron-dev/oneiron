@@ -64,6 +64,7 @@ impl PipelineBuilder<'_> {
         // validation at the top of run_for_pack still applies.)
         if let Some((reranker, options)) = self.rerank.as_ref()
             && options.top_n.min(scores.len()) > 0
+            && !self.deadline_reached()
         {
             let query = inputs.rerank_query.unwrap_or_default();
             let block_len = options.top_n.min(scores.len());

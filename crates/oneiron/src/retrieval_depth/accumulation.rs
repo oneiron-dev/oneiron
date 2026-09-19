@@ -9,11 +9,13 @@ pub(super) struct DepthAccumulator {
     pub(super) order: Vec<EntityId>,
     /// Best engine score seen for each id, across channels.
     scores: HashMap<EntityId, f32>,
+    revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     signals: Vec<String>,
     pub(super) queries_run: Vec<String>,
     candidates_scanned: u64,
     pub(super) tokens_used: u64,
     backend_used: bool,
+    pub(super) partial: bool,
     pub(super) retrieval_diagnostics: RetrievalDiagnostics,
 }
 
@@ -28,6 +30,24 @@ impl DepthAccumulator {
         if !self.retrieval_diagnostics.succeeded.contains(&signal) {
             self.retrieval_diagnostics.succeeded.push(signal);
         }
+    }
+
+    pub(super) fn merge_revisioned(
+        &mut self,
+        hits: Vec<ScoredEntity>,
+        revisions: HashMap<EntityId, crate::vault::RevisionRef>,
+    ) {
+        let admitted = hits
+            .into_iter()
+            .filter(|hit| {
+                let Some(revision) = revisions.get(&hit.id) else {
+                    return false;
+                };
+                // Never combine a newer frontier's score with an earlier body.
+                *self.revisions.entry(hit.id).or_insert(*revision) == *revision
+            })
+            .collect();
+        self.merge(admitted);
     }
 
     pub(super) fn merge(&mut self, hits: Vec<ScoredEntity>) {
@@ -95,7 +115,13 @@ impl DepthAccumulator {
     ) -> Result<Vec<Option<crate::claim::ClaimBody>>> {
         let mut bodies = Vec::with_capacity(self.order.len());
         for id in &self.order {
-            let decoded = match scoped.get_entity_parts(id)? {
+            let Some(revision) = self.revisions.get(id) else {
+                bodies.push(None);
+                continue;
+            };
+            let decoded = match scoped
+                .get_entity_parts_with_mode(id, crate::vault::ReadMode::Pinned(*revision))?
+            {
                 Some((ENTITY_TYPE_CLAIM, _, body)) => Some(decode_claim_body(&body, true)?),
                 _ => None,
             };
@@ -124,17 +150,25 @@ impl DepthAccumulator {
     /// Reorders the ranking by backend score, highest first, keeping the
     /// engine's own order among ties. Engine scores are untouched.
     pub(super) fn reorder_by(&mut self, backend_scores: &[f32]) {
-        let mut ranked: Vec<(usize, EntityId)> = self.order.iter().copied().enumerate().collect();
+        let mut ranked: Vec<(usize, EntityId)> = self.order[..backend_scores.len()]
+            .iter()
+            .copied()
+            .enumerate()
+            .collect();
         ranked.sort_by(|left, right| {
             backend_scores[right.0]
                 .total_cmp(&backend_scores[left.0])
                 .then_with(|| left.0.cmp(&right.0))
         });
-        self.order = ranked.into_iter().map(|(_, id)| id).collect();
+        // Keep entity-bound engine scores: this lane has no pre-decay ladder.
+        // Moving a neighbor's already-decayed score would resurrect expired claims.
+        for (position, (_, id)) in ranked.into_iter().enumerate() {
+            self.order[position] = id;
+        }
     }
 
     pub(super) fn finish(self, limit: usize) -> DepthSearchResult {
-        let hits = self
+        let hits: Vec<_> = self
             .order
             .iter()
             .take(limit)
@@ -144,8 +178,18 @@ impl DepthAccumulator {
             })
             .collect();
         let retrieval_quality = classify_retrieval_quality(&self.retrieval_diagnostics);
+        let revisions = hits
+            .iter()
+            .filter_map(|hit| {
+                self.revisions
+                    .get(&hit.id)
+                    .map(|revision| (hit.id, *revision))
+            })
+            .collect();
         DepthSearchResult {
             hits,
+            revisions,
+            partial: self.partial,
             queries_run: self.queries_run,
             signals_used: self.signals,
             candidates_scanned: self.candidates_scanned,
