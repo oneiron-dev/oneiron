@@ -122,14 +122,17 @@ fn memory_archives_keep_history_as_records_not_new_entity_types() {
     ];
     for (source, fixture) in fixtures {
         let imported = parse(source, fixture);
-        assert_eq!(imported.normalized.records.len(), 2);
+        assert_eq!(imported.normalized.records.len(), if source == "mem0" { 3 } else { 2 });
         let texts: BTreeSet<_> = imported
             .normalized
             .records
             .iter()
             .map(|r| r.text.as_str())
             .collect();
-        assert_eq!(texts, BTreeSet::from(["old", "new"]));
+        let expected = if source == "mem0" { BTreeSet::from(["earlier", "old", "new"]) }
+            else { BTreeSet::from(["old", "new"]) };
+        assert_eq!(texts, expected);
+        assert!(imported.messages.iter().all(|message| message.platform_source == source));
         assert!(imported.normalized.entities.is_empty());
         assert!(imported.normalized.claims.is_empty());
     }

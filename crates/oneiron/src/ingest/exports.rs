@@ -241,6 +241,20 @@ impl IngestSource for ExportSource {
                             )?;
                             if let Some(history) = memory.get("history").and_then(Value::as_array) {
                                 for revision in history {
+                                    if let Some(old) = revision.get("old_memory").and_then(Value::as_str)
+                                        && !old.trim().is_empty()
+                                        && Some(old) != revision.get("new_memory").and_then(Value::as_str)
+                                    {
+                                        let mut previous = revision.clone();
+                                        let fields = previous.as_object_mut().ok_or_else(|| self.bad("history"))?;
+                                        fields.insert("text".into(), Value::from(old));
+                                        let revision_id = self.id(revision, "id").map_or_else(
+                                            || blake3::hash(&serde_json::to_vec(revision).expect("JSON encodes")).to_hex().to_string(),
+                                            str::to_owned,
+                                        );
+                                        fields.insert("id".into(), Value::from(format!("{revision_id}:before")));
+                                        self.push(&mut out, &previous, self.id(memory, "id").unwrap_or("memory"), recorded_at)?;
+                                    }
                                     self.push(
                                         &mut out,
                                         revision,
