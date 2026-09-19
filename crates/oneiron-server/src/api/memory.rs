@@ -457,7 +457,19 @@ pub(crate) fn core_memory_timeline_response(
         .filter_map(|(id, body)| body.map(|body| (id, body)))
         .collect();
     let mut records = Vec::with_capacity(timeline.records.len());
-    if !parts.contains_key(&timeline.anchor) {
+    let deleted_anchor_visible = timeline.records.iter().any(|record| {
+        record.id == timeline.anchor
+            && record.state == oneiron::MemoryTimelineRecordState::Deleted
+            && !narrowing.applied.deny_all
+            && record.entity_type.is_some_and(|kind| {
+                narrowing
+                    .applied
+                    .entity_types
+                    .as_ref()
+                    .is_none_or(|types| types.contains(&kind))
+            })
+    });
+    if !parts.contains_key(&timeline.anchor) && !deleted_anchor_visible {
         narrowing.add_suppressed(parts.len());
         return Ok(CoreMemoryTimelineResponse {
             narrowing,

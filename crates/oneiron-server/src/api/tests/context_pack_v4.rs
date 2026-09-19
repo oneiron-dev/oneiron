@@ -13,6 +13,7 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
     let turn_a = seeded_test_entity_id(0x0012_6301);
     let turn_b = seeded_test_entity_id(0x0012_6302);
     let summary = seeded_test_entity_id(0x0012_6303);
+    let space = seeded_test_entity_id(0x0012_6304);
     let body_a = rmp_serde::to_vec_named(&json!({
         "txt": "eiri v4 needle alpha",
         "spkr": "user",
@@ -26,7 +27,8 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
     }))
     .expect("encode turn body");
     let summary_body = rmp_serde::to_vec_named(&json!({
-        "txt": "eiri v4 needle summary"
+        "txt": "eiri v4 needle summary",
+        "rel": space.to_hex()
     }))
     .expect("encode summary body");
 
@@ -78,6 +80,23 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
         "eiri-session-api@example.com",
     );
     seed_disclosure_scope(&server, principal_id, vec![turn_a, turn_b, summary]);
+    // Disclosure is not an access grant. This delegated reader gets only the
+    // summary's declared relationship space, not arbitrary unscoped summaries.
+    server
+        .vault
+        .create_access_grant(
+            &seeded_test_entity_id(0x0012_6305),
+            &oneiron::access_grant::AccessGrant {
+                principal_ref: principal_id,
+                scope: oneiron::access_grant::AccessGrantScope::Summaries { space_ref: space },
+                capability: oneiron::access_grant::AccessGrantCapability::SummariesRead,
+                status: oneiron::access_grant::AccessGrantStatus::Active,
+                created_at: 1,
+                revoked_at: None,
+                expires_at: None,
+            },
+        )
+        .expect("grant the summary scope");
 
     let persona_ref = seeded_test_entity_id(0x1324_0001).to_hex();
     let request = json!({

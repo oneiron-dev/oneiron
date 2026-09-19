@@ -42,7 +42,7 @@ impl ScopedRead<'_> {
         let (filter, policy) = {
             let txn = self.vault.store.env.read_txn()?;
             let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-            if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, anchor)? {
+            if !self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)? {
                 let suppressed =
                     usize::from(self.entities().get(&txn, anchor.as_bytes())?.is_some());
                 return Ok(ScopedReadResult {
@@ -58,14 +58,8 @@ impl ScopedRead<'_> {
         let mut timeline = self.vault.memory_timeline(anchor)?;
         let txn = self.vault.store.env.read_txn()?;
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-        let anchor_allowed = self
-            .is_entity_retrievable_with_policy_in(&txn, &policy, &filter, anchor)?
-            && self.is_entity_retrievable_with_policy_in(
-                &txn,
-                &fresh_policy,
-                &fresh_filter,
-                anchor,
-            )?;
+        let anchor_allowed = self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
+            && self.timeline_anchor_allowed_in(&txn, &fresh_policy, &fresh_filter, anchor)?;
         let mut suppressed = 0;
         let mut kept = Vec::new();
         for record in timeline.records {
@@ -90,6 +84,46 @@ impl ScopedRead<'_> {
             value: timeline,
             receipt,
         })
+    }
+
+    fn timeline_anchor_allowed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+    ) -> Result<bool> {
+        if self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)? {
+            return Ok(true);
+        }
+        // A timeline reports deletion metadata, unlike a content search.
+        // Erased claims and relationship content cannot prove their read scope.
+        let Some(raw) = self.entities().get(txn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        Ok(!filter.deny_all
+            && self
+                .vault
+                .store
+                .validate_entity_type(header.entity_type)
+                .is_ok()
+            && filter
+                .entity_types
+                .as_ref()
+                .is_none_or(|types| types.contains(&header.entity_type))
+            && header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+            && !(self.actor_key.enforce_access_grants
+                && matches!(
+                    header.entity_type,
+                    crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
+                ))
+            && raw.len() == ENTITY_METADATA_HEADER_LEN
+            && self
+                .vault
+                .store
+                .entity_deletion_present_in_txn(txn, id, header.learned_at)?)
     }
 
     fn timeline_record_allowed_in(

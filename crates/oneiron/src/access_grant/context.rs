@@ -199,6 +199,9 @@ mod tests {
             expires_at: Some(u64::MAX),
         };
         vault.create_access_grant(&grant_ref, &grant)?;
+        let context = vault.access_context(principal)?;
+        assert!(!context.allows(ENTITY_TYPE_MESSAGE, None, false));
+        assert!(!context.allows(ENTITY_TYPE_SUMMARY, None, false));
         let reader = vault.scoped_read(
             ScopedReadActorKey::new("reader")
                 .unwrap()

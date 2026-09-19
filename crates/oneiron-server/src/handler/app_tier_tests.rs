@@ -197,7 +197,7 @@ async fn verified_class_reaches_production_rpc_and_scope_refusal_stays_typed() {
 }
 
 #[test]
-fn legacy_hello_and_selector_semantics_survive_single_bump() {
+fn legacy_hello_and_authenticated_selector_modes_remain_distinct() {
     use oneiron::sync::transport::TAG_PROTOCOL_HELLO;
     for version in [
         protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
@@ -209,7 +209,13 @@ fn legacy_hello_and_selector_semantics_survive_single_bump() {
             Ok(version)
         );
     }
-    let mut selector = state(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION);
+    let mut retired_selector = state(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION);
+    assert!(
+        retired_selector
+            .bind_window_sync_mode(WindowSyncMode::Selector)
+            .is_err()
+    );
+    let mut selector = state(protocol::PROTOCOL_VERSION);
     selector
         .bind_window_sync_mode(WindowSyncMode::Selector)
         .unwrap();

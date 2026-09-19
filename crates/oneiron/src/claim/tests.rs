@@ -3994,6 +3994,7 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
     let base_targets: Vec<EntityId> = vault
         .scoped_read(actor_key.clone())
         .edges_out(&a)?
+        .value
         .expect("readable")
         .into_iter()
         .map(|edge| edge.target)
@@ -4004,6 +4005,7 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
     let mut session_targets: Vec<EntityId> = vault
         .scoped_read_in_session(actor_key, &view)
         .edges_out(&a)?
+        .value
         .expect("readable")
         .into_iter()
         .map(|edge| edge.target)

@@ -2345,17 +2345,22 @@ fn protocol_hello_validation_literals() {
         Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
     );
     assert_eq!(
-        validate_protocol_hello(&[3, 8]),
+        validate_protocol_hello(&[3, 9]),
         Ok(protocol::PROTOCOL_VERSION)
     );
 
+    assert_eq!(
+        validate_protocol_hello(&[3, 7]),
+        Ok(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION)
+    );
     let cases: &[(&str, &[u8])] = &[
         ("v1_peer", &[3, 1]),
         ("old_full_window_v2_peer", &[3, 2]),
         ("old_selector_v3_peer", &[3, 3]),
         ("old_full_window_v4_peer", &[3, 4]),
         ("old_selector_v5_peer", &[3, 5]),
-        ("future_version", &[3, 9]),
+        ("retired_v8", &[3, 8]),
+        ("future_version", &[3, 10]),
         ("zero_version", &[3, 0]),
         ("wrong_tag", &[2, 7]),
         ("empty", &[]),

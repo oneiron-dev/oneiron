@@ -479,7 +479,7 @@ fn structured_success_parity() {
 // ─── 2. Denial is absence ────────────────────────────────────────────────────
 
 #[test]
-fn scope_denial_is_indistinguishable_from_absence() {
+fn scope_denial_preserves_not_found_and_reports_withholding() {
     let fixture = Fixture::new();
     let in_process = fixture.in_process();
     let wire = fixture.wire();
@@ -503,8 +503,24 @@ fn scope_denial_is_indistinguishable_from_absence() {
             format!("engine:{:?}:NOT_FOUND", VaultReadMethod::Hydrate)
         );
     }
-    assert_eq!(denied_direct, missing_direct);
-    assert_eq!(denied_wire, missing_wire);
+    assert_eq!(denied_direct, denied_wire);
+    assert_eq!(missing_direct, missing_wire);
+    // Both adapters keep NOT_FOUND; mandatory receipts distinguish policy
+    // exclusions from refs which never resolved, without returning row data.
+    for (error, expected) in [(&denied_direct, 1), (&missing_direct, 0)] {
+        let VaultReadError::Engine {
+            narrowing: Some(receipt),
+            ..
+        } = error
+        else {
+            panic!("every resolved read needs a narrowing receipt")
+        };
+        assert_eq!(receipt.suppressed_count, expected);
+        assert_eq!(
+            receipt.replan_hint.contains(&"row_authority".to_owned()),
+            expected > 0
+        );
+    }
 
     let batch = |reference: &str| CoreBatchShortIdHydrateRequest {
         refs: vec![reference.to_owned()],
@@ -763,7 +779,7 @@ fn cloud_structured_read_contract() {
 
 #[test]
 fn in_process_is_not_privileged() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::with_claim_learned_at(u64::MAX);
     let wire = fixture.wire();
     // Wire FIRST, in-process second: proximity to `Vault` is never authority.
     let wire_hydrate = wire.hydrate(hydrate_request(&fixture.admitted_ref));

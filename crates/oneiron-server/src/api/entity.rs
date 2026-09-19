@@ -16,7 +16,6 @@ use axum::response::IntoResponse;
 use axum::response::Json;
 use axum::response::Response;
 use serde::Serialize;
-use serde_json::Value;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -162,6 +161,7 @@ fn attach_read_receipt(
 #[cfg(test)]
 mod credential_tests {
     use super::*;
+    use serde_json::Value;
     #[test]
     fn raw_entity_transport_filters_credentials_and_preserves_safe_bytes() {
         assert_eq!(
@@ -183,6 +183,60 @@ mod credential_tests {
             };
             assert_eq!(got["safe"], "kept");
             assert_eq!(got["nested"]["password"], "[redacted]");
+        }
+    }
+    #[tokio::test]
+    async fn edge_transport_keeps_its_array_and_receipts_missing_and_live_sources() {
+        let (_dir, server) = crate::api::tests::test_server();
+        let id = oneiron::EntityId::from_bytes([0x31; 16]).unwrap();
+        for present in [false, true] {
+            if present {
+                server
+                    .vault
+                    .put_entity(
+                        &id,
+                        oneiron::registry::ENTITY_TYPE_PERSON,
+                        oneiron::TimeRange { start: 1, end: 1 },
+                        1,
+                        b"source",
+                    )
+                    .unwrap();
+            }
+            let response = get_edges(
+                HeaderMap::new(),
+                State(server.clone()),
+                Path(id.to_hex()),
+                Ok(Query(ViewQuery {
+                    view: Some(View::Full),
+                })),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                response.status(),
+                if present {
+                    StatusCode::OK
+                } else {
+                    StatusCode::NOT_FOUND
+                }
+            );
+            let receipt: Value = serde_json::from_str(
+                response.headers()["x-oneiron-read-receipt"]
+                    .to_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(receipt["suppressed_count"], 0);
+            assert!(receipt["applied"].is_object());
+            if present {
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&body).unwrap(),
+                    serde_json::json!([])
+                );
+            }
         }
     }
 }
