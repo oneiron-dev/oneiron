@@ -118,7 +118,7 @@ impl Vault {
                 .vault_meta
                 .put(txn, &install_key(&source.manifest.name), &bytes)?;
             crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
-            Ok(PackInstallDisposition::Installed(receipt))
+            Ok(PackInstallDisposition::Installed(Box::new(receipt)))
         })
     }
     pub fn installed_pack(&self, name: &str) -> Result<Option<PackInstallReceipt>> {

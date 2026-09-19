@@ -144,73 +144,15 @@ pub(super) fn apply_ops_with_origin(
                 allow_reserved_predicate,
                 hub_sync_imported,
             } => {
-                // Replay/import resolves GLOBAL identity before local-byte validation.
-                // Foreign byte and generation never select the destination kind.
-                if allow_maintenance
-                    && allow_reserved_predicate
-                    && crate::registry::zone_of(entity_type)
-                        == crate::registry::TypeByteZone::PackHandle
-                {
-                    let source =
-                        crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(&data)?;
-                    let (local_handle, local_envelope) =
-                        store.remap_pack_instance_in_txn(wtxn, &source)?;
-                    entity_type = local_handle;
-                    data = local_envelope.to_bytes()?;
-                }
-                if hub_sync_imported
-                    && (entity_type != ENTITY_TYPE_SKILL
-                        || allow_maintenance
-                        || allow_reserved_predicate)
-                {
-                    return Err(Error::InvariantViolation(
-                        "hub-sync imported flag is only valid for a local SKILL Put",
-                    ));
-                }
-                // Public writes reject engine-authored system kinds via
-                // the public entity-type gate; the sync rematerialization path
-                // sets `allow_maintenance` so REDACTION_AUDIT receipts
-                // survive CRDT→LMDB replay (registry-only entity-type validation
-                // still rejects genuinely unknown type bytes).
-                if allow_maintenance
-                    && allow_reserved_predicate
-                    && matches!(
-                        entity_type,
-                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-                            | ENTITY_TYPE_ACCESS_GRANT
-                            | ENTITY_TYPE_OUTBOUND_GRANT
-                    )
-                {
-                    return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-                        entity_type,
-                    )));
-                }
-                // ONE-1865 arm-pending seal (SECRET-01, ONE-1919): the custody
-                // record is the secret VALUE's home, so a replicated carry of
-                // byte 77 would materialize a peer-supplied plaintext
-                // `value_bytes` straight into LMDB. `Vault::register_secret`
-                // is the ONE write path and it uses the engine-internal shape
-                // (`allow_maintenance` WITHOUT `allow_reserved_predicate`);
-                // the both-flags shape here is exclusively the CRDT replay
-                // door (`window::forward_rematerialize` → `put_replicated`),
-                // which must never admit the byte. The custody module owns the
-                // rejection constructor so one grep audits the whole seal.
-                if allow_maintenance
-                    && allow_reserved_predicate
-                    && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                {
-                    return Err(crate::secret_custody::reject_secret_custody_byte());
-                }
-                if crate::registry::zone_of(entity_type)
-                    == crate::registry::TypeByteZone::PackHandle
-                {
-                    store.validate_pack_handle_in_txn(wtxn, entity_type)?;
-                    store.validate_pack_instance_in_txn(wtxn, entity_type, &data)?;
-                } else if allow_maintenance {
-                    store.validate_entity_type(entity_type)?;
-                } else {
-                    store.validate_public_entity_type(entity_type)?;
-                }
+                (entity_type, data) = validate_put_type(
+                    store,
+                    wtxn,
+                    entity_type,
+                    data,
+                    allow_maintenance,
+                    allow_reserved_predicate,
+                    hub_sync_imported,
+                )?;
                 let preflight_decision_id = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
                     && !allow_reserved_predicate
                 {
@@ -698,4 +640,77 @@ pub(super) fn apply_ops_with_origin(
     }
 
     Ok(())
+}
+
+/// Resolves pack handles and enforces the public/maintenance put-type boundary.
+fn validate_put_type(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    mut entity_type: u8,
+    mut data: Vec<u8>,
+    allow_maintenance: bool,
+    allow_reserved_predicate: bool,
+    hub_sync_imported: bool,
+) -> Result<(u8, Vec<u8>)> {
+    // Replay/import resolves GLOBAL identity before local-byte validation.
+    // Foreign byte and generation never select the destination kind.
+    if allow_maintenance
+        && allow_reserved_predicate
+        && crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle
+    {
+        let source = crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(&data)?;
+        let (local_handle, local_envelope) = store.remap_pack_instance_in_txn(wtxn, &source)?;
+        entity_type = local_handle;
+        data = local_envelope.to_bytes()?;
+    }
+    if hub_sync_imported
+        && (entity_type != ENTITY_TYPE_SKILL || allow_maintenance || allow_reserved_predicate)
+    {
+        return Err(Error::InvariantViolation(
+            "hub-sync imported flag is only valid for a local SKILL Put",
+        ));
+    }
+    // Public writes reject engine-authored system kinds via
+    // the public entity-type gate; the sync rematerialization path
+    // sets `allow_maintenance` so REDACTION_AUDIT receipts
+    // survive CRDT→LMDB replay (registry-only entity-type validation
+    // still rejects genuinely unknown type bytes).
+    if allow_maintenance
+        && allow_reserved_predicate
+        && matches!(
+            entity_type,
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST
+                | ENTITY_TYPE_ACCESS_GRANT
+                | ENTITY_TYPE_OUTBOUND_GRANT
+        )
+    {
+        return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            entity_type,
+        )));
+    }
+    // ONE-1865 arm-pending seal (SECRET-01, ONE-1919): the custody
+    // record is the secret VALUE's home, so a replicated carry of
+    // byte 77 would materialize a peer-supplied plaintext
+    // `value_bytes` straight into LMDB. `Vault::register_secret`
+    // is the ONE write path and it uses the engine-internal shape
+    // (`allow_maintenance` WITHOUT `allow_reserved_predicate`);
+    // the both-flags shape here is exclusively the CRDT replay
+    // door (`window::forward_rematerialize` → `put_replicated`),
+    // which must never admit the byte. The custody module owns the
+    // rejection constructor so one grep audits the whole seal.
+    if allow_maintenance
+        && allow_reserved_predicate
+        && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+    {
+        return Err(crate::secret_custody::reject_secret_custody_byte());
+    }
+    if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+        store.validate_pack_handle_in_txn(wtxn, entity_type)?;
+        store.validate_pack_instance_in_txn(wtxn, entity_type, &data)?;
+    } else if allow_maintenance {
+        store.validate_entity_type(entity_type)?;
+    } else {
+        store.validate_public_entity_type(entity_type)?;
+    }
+    Ok((entity_type, data))
 }

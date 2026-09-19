@@ -2569,7 +2569,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {

@@ -79,5 +79,5 @@ pub struct PackInstallReceipt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackInstallDisposition {
     PendingConsent,
-    Installed(PackInstallReceipt),
+    Installed(Box<PackInstallReceipt>),
 }

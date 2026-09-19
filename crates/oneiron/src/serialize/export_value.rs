@@ -65,8 +65,7 @@ impl ExportBody {
             match crate::skill_hub::decode_source_carrier(bytes) {
                 Ok(Some((holder, package))) => {
                     return super::ExportHubSource::from_package(&holder, &package)
-                        .map(|source| Self::HubSource(Box::new(source)))
-                        .unwrap_or(Self::Nulled);
+                        .map_or(Self::Nulled, |source| Self::HubSource(Box::new(source)));
                 }
                 Err(_) => return Self::Nulled,
                 Ok(None) => {}

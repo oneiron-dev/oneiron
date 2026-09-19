@@ -159,6 +159,10 @@ pub(crate) fn birth_source_exportable(
     txn: &heed::RoTxn<'_>,
     bytes: &[u8],
 ) -> Result<bool> {
+    #[derive(Deserialize)]
+    struct Ref {
+        entity_id: String,
+    }
     let Some(source) = decode_birth_source(bytes)? else {
         return Ok(true);
     };
@@ -181,10 +185,6 @@ pub(crate) fn birth_source_exportable(
         .iter()
         .find(|file| file.path == "skills.json")
         .ok_or_else(|| invalid("skill facet"))?;
-    #[derive(Deserialize)]
-    struct Ref {
-        entity_id: String,
-    }
     let skills: Vec<Ref> =
         serde_json::from_slice(&skills.content).map_err(|_| invalid("skill facet"))?;
     for skill in skills {
@@ -256,16 +256,16 @@ mod tests;
 /// The fixed canonical prefix also covers a truncated historical payload.
 #[cfg(feature = "sync")]
 pub(crate) fn birth_source_holder(bytes: &[u8]) -> Option<EntityId> {
+    #[derive(Deserialize)]
+    struct Holder {
+        format: String,
+        child_id: String,
+    }
     const PREFIX: &[u8] = b"{\"format\":\"oneiron.agent-birth-source.v1\",\"child_id\":\"";
     if let Some(rest) = bytes.strip_prefix(PREFIX)
         && rest.get(32) == Some(&b'"')
     {
         return EntityId::from_hex(std::str::from_utf8(rest.get(..32)?).ok()?).ok();
-    }
-    #[derive(Deserialize)]
-    struct Holder {
-        format: String,
-        child_id: String,
     }
     let holder: Holder = serde_json::from_slice(bytes).ok()?;
     (holder.format == FORMAT)

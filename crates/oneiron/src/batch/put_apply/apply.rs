@@ -6,13 +6,12 @@ use heed::RwTxn;
 
 use super::{
     AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
-    StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
-    check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, index_thread_claim_subject,
-    lexical_query_hint_claim_id, parse_entity_metadata, plan_short_id_update,
-    reject_overlay_member_base_write, stage_entity_body_row, stage_entity_index_rows,
-    stage_optimizer_birth_marker_row, validate_companion_register_put,
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, StagedClaimGateOutcome, apply_short_id_plan,
+    authority_observation_secs_for_write, check_authority_log_store_key,
+    delete_short_id_rows_for_id, evict_authority_log_store_key_squatter,
+    index_thread_claim_subject, lexical_query_hint_claim_id, parse_entity_metadata,
+    plan_short_id_update, reject_overlay_member_base_write, stage_entity_body_row,
+    stage_entity_index_rows, stage_optimizer_birth_marker_row, validate_companion_register_put,
     validate_local_agent_definition_create, validate_local_skill_create,
     validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
     validate_task_checkin_immutable,
@@ -610,29 +609,15 @@ pub(in crate::batch) fn apply_put(
             crate::bm25::deindex_text(store, wtxn, &id)?;
         }
 
-        if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-            let old_long_interval_key = Store::encode_temporal_key(old_occurred.end, &id);
-            store
-                .temporal_long_intervals
-                .delete(wtxn, &old_long_interval_key)?;
-        }
-
-        if old_occurred.start != occurred.start {
-            let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
-            store.temporal_occurred_start.delete(wtxn, &old_start_key)?;
-        }
-
-        let old_is_range = old_occurred.start != old_occurred.end;
-        let new_is_range = occurred.start != occurred.end;
-        if old_is_range && (!new_is_range || old_occurred.end != occurred.end) {
-            let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
-            store.temporal_occurred_end.delete(wtxn, &old_end_key)?;
-        }
-
-        if old_learned != learned_at {
-            let old_learned_key = Store::encode_temporal_key(old_learned, &id);
-            store.temporal_learned.delete(wtxn, &old_learned_key)?;
-        }
+        super::put_staging::remove_prior_temporal_index_rows(
+            store,
+            wtxn,
+            &id,
+            old_occurred,
+            old_learned,
+            occurred,
+            learned_at,
+        )?;
     } else if entity_type == ENTITY_TYPE_AGENT_DEF && !replicated {
         // ONE-1890 mirror of the SKILL create gate below, one entity type
         // over: LOCAL creates only, so genuine creates are gated and updates
