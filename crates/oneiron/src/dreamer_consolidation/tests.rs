@@ -2484,9 +2484,7 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     assert!(matches!(
         execution,
-        DreamerAttemptExecution::Completed {
-            completed_units: 0
-        }
+        DreamerAttemptExecution::Completed { completed_units: 0 }
     ));
 
     // The sink received the decoded candidates…
@@ -2506,22 +2504,45 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
     Ok(())
 }
 
-
 #[test]
 fn injected_ner_shadow_reports_mentions_without_landing_claims_or_turn_changes() -> Result<()> {
     use crate::llm::tagger::*;
     struct Ner(EntityId);
     impl OneironerTagger for Ner {
-        fn model(&self) -> crate::ModelId { crate::ModelId::new("test/ner-checkpoint@1").expect("model") }
+        fn model(&self) -> crate::ModelId {
+            crate::ModelId::new("test/ner-checkpoint@1").expect("model")
+        }
         fn tag(&self, text: &str) -> Result<RetrievalTags> {
-            assert_eq!(text,"Ada works here");
-            Ok(RetrievalTags { mentions: vec![MentionTag { start:0,end:3,entity:self.0,weight:1.0 }], ppr_seeds:vec![PprSeed {entity:self.0,weight:1.0}], affect:[0.0;3],coreference:vec![] })
+            assert_eq!(text, "Ada works here");
+            Ok(RetrievalTags {
+                mentions: vec![MentionTag {
+                    start: 0,
+                    end: 3,
+                    entity: self.0,
+                    weight: 1.0,
+                }],
+                ppr_seeds: vec![PprSeed {
+                    entity: self.0,
+                    weight: 1.0,
+                }],
+                affect: [0.0; 3],
+                coreference: vec![],
+            })
         }
     }
-    let (_dir,vault)=open_vault();let conversation=seed_session(&vault,0x27,1);let turn=seed_turn(&vault,&conversation,"user","Ada works here",10);
-    let before=vault.get_raw(&turn)?;let claims=claim_predicates_in_store(&vault)?;
-    let report=shadow_tag_turn(&vault,turn,&Ner(conversation),&[conversation])?;
-    assert_eq!(report.common,vec![conversation]);assert!(report.tag_only.is_empty());assert_eq!(report.tags.mentions.len(),1);
-    let roundtrip: RetrievalTags=serde_json::from_slice(&serde_json::to_vec(&report.tags).expect("encode")).expect("decode");assert_eq!(roundtrip,report.tags);
-    assert_eq!(vault.get_raw(&turn)?,before);assert_eq!(claim_predicates_in_store(&vault)?,claims);Ok(())
+    let (_dir, vault) = open_vault();
+    let conversation = seed_session(&vault, 0x27, 1);
+    let turn = seed_turn(&vault, &conversation, "user", "Ada works here", 10);
+    let before = vault.get_raw(&turn)?;
+    let claims = claim_predicates_in_store(&vault)?;
+    let report = shadow_tag_turn(&vault, turn, &Ner(conversation), &[conversation])?;
+    assert_eq!(report.common, vec![conversation]);
+    assert!(report.tag_only.is_empty());
+    assert_eq!(report.tags.mentions.len(), 1);
+    let roundtrip: RetrievalTags =
+        serde_json::from_slice(&serde_json::to_vec(&report.tags).expect("encode")).expect("decode");
+    assert_eq!(roundtrip, report.tags);
+    assert_eq!(vault.get_raw(&turn)?, before);
+    assert_eq!(claim_predicates_in_store(&vault)?, claims);
+    Ok(())
 }

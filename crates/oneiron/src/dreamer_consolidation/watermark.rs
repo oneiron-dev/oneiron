@@ -700,6 +700,10 @@ pub(super) fn read_turn_facts_in_txn(
 
 /// Read-only turn text for the retrieval tagger's shadow path.
 pub(crate) fn turn_text_for_shadow(vault: &Vault, id: &EntityId) -> Result<String> {
-    if vault.get_entity_type(id)? != Some(ENTITY_TYPE_TURN) { return Err(invalid_consolidation("shadow tag input must be a turn")); }
-    read_turn_facts(vault, id)?.text.ok_or_else(|| invalid_consolidation("turn has no text"))
+    if vault.get_entity_type(id)? != Some(ENTITY_TYPE_TURN) {
+        return Err(invalid_consolidation("shadow tag input must be a turn"));
+    }
+    read_turn_facts(vault, id)?
+        .text
+        .ok_or_else(|| invalid_consolidation("turn has no text"))
 }

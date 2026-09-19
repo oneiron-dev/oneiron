@@ -1176,15 +1176,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/types.rs` | src | s | 5 struct · 3 enum · 4 fn · 1 const | BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold | Public budget DTOs and the exhaustion policy |
 | `src/llm/bus.rs` | src | s | 2 struct · 1 trait · 5 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
 | `src/llm/call.rs` | src | s | 6 struct · 6 enum · 11 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +4 | Per-call description: envelope, pin admission, role defaults, tier precedence, response format, and locality |
-| `src/llm/catalog.rs` | src | s | 2 struct · 2 enum · 3 fn | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
+| `src/llm/catalog.rs` | src | s | 2 struct · 2 enum · 4 fn | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
 | `src/llm/defaults.rs` | src | s | 1 struct · 2 fn · 1 const | PurposeDefault | Central purpose policy |
+| `src/llm/entity_refs.rs` | src | s | 5 crate-vis | — | Validated entity-reference wire encoding for model policy DTOs |
 | `src/llm/error.rs` | src | s | 1 struct · 4 enum | BudgetDenied, FatalLlmError, LlmError, RetryableLlmError, UnsupportedCapability | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 3 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |
 | `src/llm/image.rs` | src | s | 5 struct · 1 trait · 2 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
 | `src/llm/image/tests.rs` | test | s | — | — | — |
 | `src/llm/manifest.rs` | src | s | 4 struct · 5 enum · 10 fn · 1 const · 2 crate-vis | CalibratedVerdict, ConfidenceBand, ModelBinding, ModelManifest, ModelRole, ModelSlot, VerdictBasis, VerdictBinding +1 | Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors |
 | `src/llm/manifest/tests.rs` | test | s | — | — | — |
-| `src/llm/mod.rs` | src | s | 5 mod · 15 re-export · 4 crate-vis | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 5 mod · 15 re-export · 5 crate-vis | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 5 fn · 4 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
 | `src/llm/protocol.rs` | src | s | 7 struct · 5 enum · 4 fn · 1 crate-vis | ContentPart, FinishReason, ImageContent, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest +4 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/registry.rs` | src | s | 5 struct · 1 enum · 10 fn · 1 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot | Vault-persisted, priced model catalogs |

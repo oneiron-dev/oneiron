@@ -190,7 +190,9 @@ where
     }
 
     fn check_login_placement(&self, user_login: bool) -> ByoaResult<()> {
-        if user_login && self.vault.config.privacy.posture == crate::config::HostingPrivacyPosture::Hosted {
+        if user_login
+            && self.vault.config.privacy.posture == crate::config::HostingPrivacyPosture::Hosted
+        {
             return Err(ByoaError::CloudLoginRefused);
         }
         Ok(())

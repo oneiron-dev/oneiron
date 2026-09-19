@@ -5,7 +5,7 @@ use super::{
 };
 use futures_core::Stream;
 use oneiron::llm::StreamAssembly;
-use oneiron::{FatalLlmError, LlmResult, LlmStreamEvent, LlmUsage};
+use oneiron::{FatalLlmError, FinishReason, LlmResult, LlmStreamEvent, LlmUsage};
 use serde_json::Value as JsonValue;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -24,6 +24,7 @@ pub struct OpenAiCompatStreamAccumulator {
     assembly: StreamAssembly,
     tools: BTreeMap<u64, ToolHeader>,
     usage: Option<LlmUsage>,
+    pending_finish: Option<FinishReason>,
 }
 
 impl OpenAiCompatStreamAccumulator {
@@ -45,7 +46,11 @@ impl OpenAiCompatStreamAccumulator {
             .and_then(JsonValue::as_array)
             .and_then(|v| v.first())
         else {
-            return Ok(events);
+            return if self.usage.is_some() {
+                self.finish_eof()
+            } else {
+                Ok(events)
+            };
         };
         if choice
             .get("index")
@@ -96,12 +101,21 @@ impl OpenAiCompatStreamAccumulator {
             }
         }
         if let Some(finish) = choice.get("finish_reason").and_then(JsonValue::as_str) {
-            events.extend(self.assembly.finish(
-                self.usage.clone().unwrap_or_else(LlmUsage::zero),
-                openai_finish_reason(finish),
-            )?);
+            self.pending_finish = Some(openai_finish_reason(finish));
+            if self.usage.is_some() {
+                events.extend(self.finish_eof()?);
+            }
         }
         Ok(events)
+    }
+
+    pub fn finish_eof(&mut self) -> LlmResult<Vec<LlmStreamEvent>> {
+        match self.pending_finish.take() {
+            Some(reason) => self
+                .assembly
+                .finish(self.usage.clone().unwrap_or_else(LlmUsage::zero), reason),
+            None => Ok(Vec::new()),
+        }
     }
 
     #[must_use]
@@ -156,7 +170,11 @@ impl Stream for OpenAiCompatLlmStream<'_> {
                     ))));
                 }
                 Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error.into()))),
-                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(None) => match this.accumulator.finish_eof() {
+                    Ok(events) if events.is_empty() => return Poll::Ready(None),
+                    Ok(events) => this.pending.extend(events.into_iter().map(Ok)),
+                    Err(error) => return Poll::Ready(Some(Err(error))),
+                },
                 Poll::Pending => return Poll::Pending,
             }
         }

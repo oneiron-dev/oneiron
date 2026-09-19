@@ -39,6 +39,7 @@
 mod caps;
 mod embedded;
 mod error;
+pub mod llm;
 mod remote;
 
 use std::fmt;

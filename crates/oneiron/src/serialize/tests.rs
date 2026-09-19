@@ -2645,18 +2645,38 @@ fn commitment_record_is_critical_and_promise_is_absent() {
     );
 }
 
-
 #[test]
 fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation() {
-    for (format,source,field) in [(PackFormat::OpenaiCompat,"openai-compat","messages"),(PackFormat::AnthropicMessages,"anthropic-messages","messages"),(PackFormat::Gemini,"gemini","contents")] {
-        let mut pack=sample_pack();
-        pack.results[1].fields.as_mut().unwrap().insert("txt".into(),serde_json::json!("ghp_0123456789abcdefghijklmnopqrstuvwxyz"));
-        let wire=serialize_pack(&pack,&config(format));let text=String::from_utf8(wire).unwrap();
+    for (format, source, field) in [
+        (PackFormat::OpenaiCompat, "openai-compat", "messages"),
+        (
+            PackFormat::AnthropicMessages,
+            "anthropic-messages",
+            "messages",
+        ),
+        (PackFormat::Gemini, "gemini", "contents"),
+    ] {
+        let mut pack = sample_pack();
+        pack.results[1].fields.as_mut().unwrap().insert(
+            "txt".into(),
+            serde_json::json!("ghp_0123456789abcdefghijklmnopqrstuvwxyz"),
+        );
+        let wire = serialize_pack(&pack, &config(format));
+        let text = String::from_utf8(wire).unwrap();
         assert!(!text.contains("ghp_"));
-        let value:Value=serde_json::from_str(&text).unwrap();assert_eq!(value["secrets_nulled"],serde_json::json!(true));
-        assert!(value[field].as_array().is_some_and(|v|!v.is_empty()));
-        let normalized=crate::ingest::INGEST_SOURCE_REGISTRY.normalize(source,&text).unwrap();assert!(!normalized.records.is_empty());
-        let mut small=config(format);small.max_field_chars=10;
-        assert!(!String::from_utf8(serialize_pack(&pack,&small)).unwrap().contains("ghp_"));
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["secrets_nulled"], serde_json::json!(true));
+        assert!(value[field].as_array().is_some_and(|v| !v.is_empty()));
+        let normalized = crate::ingest::INGEST_SOURCE_REGISTRY
+            .normalize(source, &text)
+            .unwrap();
+        assert!(!normalized.records.is_empty());
+        let mut small = config(format);
+        small.max_field_chars = 10;
+        assert!(
+            !String::from_utf8(serialize_pack(&pack, &small))
+                .unwrap()
+                .contains("ghp_")
+        );
     }
 }

@@ -30,7 +30,14 @@ pub fn build_openai_chat_request(
     }
     body.insert(
         "model".to_owned(),
-        JsonValue::String(catalog.metadata.get("wire_model").and_then(JsonValue::as_str).unwrap_or_else(|| request.model.name()).to_owned()),
+        JsonValue::String(
+            catalog
+                .metadata
+                .get("wire_model")
+                .and_then(JsonValue::as_str)
+                .unwrap_or_else(|| request.model.name())
+                .to_owned(),
+        ),
     );
     body.insert(
         "messages".to_owned(),
@@ -43,6 +50,9 @@ pub fn build_openai_chat_request(
         ),
     );
     body.insert("stream".to_owned(), JsonValue::Bool(stream));
+    if stream {
+        body.insert("stream_options".into(), json!({"include_usage":true}));
+    }
 
     if !request.tools.is_empty() {
         body.insert(

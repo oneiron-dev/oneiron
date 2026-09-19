@@ -60,7 +60,16 @@ pub(super) async fn generate(
         armed: true,
     };
     for attempt in 1..=3 {
-        let mut response = super::execute::generate_with_retry(backend, &wire, lease).await?;
+        let mut response = match super::execute::generate_with_retry(backend, &wire, lease).await {
+            Ok(response) => response,
+            Err(source) => {
+                spend.armed = false;
+                return Err(DurableStepError::SpentLlm {
+                    source,
+                    usage: spend.usage.clone(),
+                });
+            }
+        };
         add_usage(&mut spend.usage, &response.usage);
         let text: String = response
             .message

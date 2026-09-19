@@ -1,7 +1,7 @@
 //! Shared fixtures for the supervisor test suites.
 use std::time::Duration;
 
-use super::{config::*, factory::*, pass::*, run::*, shutdown::*};
+use super::{config::*, factory::*};
 #[cfg(all(unix, feature = "voice"))]
 use crate::tick::PushTick;
 use crate::tick::{Tick, TickSource};

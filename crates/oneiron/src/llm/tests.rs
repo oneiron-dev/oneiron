@@ -1000,7 +1000,9 @@ fn timed_out_auto_checker_keeps_capacity_until_host_finishes_and_reuses_worker()
         match clone.check(&candidate.borrowed()) {
             AutoCheckOutcome::Allow => break,
             AutoCheckOutcome::Unavailable => std::thread::yield_now(),
-            AutoCheckOutcome::Hold { .. } | AutoCheckOutcome::Verdict(_) => panic!("host should allow later work"),
+            AutoCheckOutcome::Hold { .. } | AutoCheckOutcome::Verdict(_) => {
+                panic!("host should allow later work")
+            }
         }
     }
     assert_eq!(host.calls.load(Ordering::Relaxed), 2);

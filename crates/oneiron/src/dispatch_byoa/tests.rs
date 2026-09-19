@@ -150,7 +150,7 @@ fn endpoint_connector_round_trips_and_resolves_a_backend() {
     let spec = endpoint_spec();
 
     let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
-            user_login: false,
+        user_login: false,
         schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
         connector: ByoaConnectorSpec::Endpoint(spec.clone()),
         parent_attempt: None,
@@ -227,7 +227,7 @@ fn no_connector_surface_can_carry_a_raw_credential() {
     let connector = ByoaConnectorSpec::Endpoint(endpoint_spec());
 
     let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
-            user_login: false,
+        user_login: false,
         schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
         connector: connector.clone(),
         parent_attempt: None,
@@ -286,7 +286,7 @@ fn no_connector_surface_can_carry_a_raw_credential() {
 fn mcp_attach_round_trips_and_a2a_has_no_variant() {
     let spec = attach_spec();
     let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
-            user_login: false,
+        user_login: false,
         schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
         connector: ByoaConnectorSpec::ProtocolAttach(spec.clone()),
         parent_attempt: None,
@@ -325,7 +325,7 @@ fn cli_sandbox_runs_foreign_tier_and_refuses_a_command_line() {
 
     let spec = cli_spec();
     let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
-            user_login: false,
+        user_login: false,
         schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
         connector: ByoaConnectorSpec::CliSandbox(spec.clone()),
         parent_attempt: None,
@@ -759,7 +759,7 @@ fn dispatch_is_advisory_deduped_and_carries_its_lineage() {
     let parent = AttemptId::now();
 
     let request = || DispatchByoa {
-            user_login: false,
+        user_login: false,
         connector: ByoaConnectorSpec::Endpoint(endpoint_spec()),
         task_ref: Some(EntityId::from_bytes([5_u8; 16]).expect("task ref")),
         parent_attempt_id: Some(parent),
@@ -796,7 +796,7 @@ fn dispatch_is_advisory_deduped_and_carries_its_lineage() {
 #[test]
 fn a_payload_from_an_unknown_schema_version_is_refused() {
     let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
-            user_login: false,
+        user_login: false,
         schema_version: BYOA_CONNECTOR_SCHEMA_VERSION + 1,
         connector: ByoaConnectorSpec::Endpoint(endpoint_spec()),
         parent_attempt: None,
@@ -907,7 +907,7 @@ fn endpoint_credentials_and_malformed_authorities_are_refused_at_every_door() {
         assert!(
             dispatcher
                 .dispatch(DispatchByoa {
-            user_login: false,
+                    user_login: false,
                     connector: payload.connector,
                     task_ref: None,
                     parent_attempt_id: None,
@@ -937,7 +937,7 @@ fn dedupe_reports_the_persisted_connector_not_the_losing_request() {
     let (_dir, vault) = open_vault();
     let mut dispatcher = dispatcher(&vault);
     let request = |connector| DispatchByoa {
-            user_login: false,
+        user_login: false,
         connector,
         task_ref: None,
         parent_attempt_id: None,
@@ -1864,33 +1864,97 @@ fn old_exhaust_without_retained_fence_is_still_readable() {
 
 mod successor;
 
-
 #[test]
 fn provider_registry_and_named_sandboxes_land_only_one_exhaust_each() {
     struct NamedGuest;
     impl ByoaCliExecutor for NamedGuest {
-        fn run(&mut self, spec: &CliSandboxSpec, _: &CheckoutLeaseAct, boundary: SandboxBoundaryContract, _: ExecutionBudget, _: &mut dyn FnMut(&str,u64)->ByoaResult<ByoaEgressLease>) -> ByoaResult<ByoaExhaust> {
-            assert!(matches!(spec.program.as_str(), "claude" | "codex" | "opencode"));
-            assert_eq!(spec.argv.last().map(String::as_str), Some("propose a correction"));
+        fn run(
+            &mut self,
+            spec: &CliSandboxSpec,
+            _: &CheckoutLeaseAct,
+            boundary: SandboxBoundaryContract,
+            _: ExecutionBudget,
+            _: &mut dyn FnMut(&str, u64) -> ByoaResult<ByoaEgressLease>,
+        ) -> ByoaResult<ByoaExhaust> {
+            assert!(matches!(
+                spec.program.as_str(),
+                "claude" | "codex" | "opencode"
+            ));
+            assert_eq!(
+                spec.argv.last().map(String::as_str),
+                Some("propose a correction")
+            );
             assert_eq!(boundary.tier(), SandboxGuestTier::Foreign);
-            Ok(ByoaExhaust { stdout: br#"{"proposal":"correction"}"#.to_vec(), ..ByoaExhaust::default() })
+            Ok(ByoaExhaust {
+                stdout: br#"{"proposal":"correction"}"#.to_vec(),
+                ..ByoaExhaust::default()
+            })
         }
     }
     let mut registry = ProviderAdapterRegistry::standard();
-    assert!(matches!(registry.register(Arc::new(CodexRunner)), Err(ByoaError::DuplicateProvider(_))));
-    assert!(matches!(registry.resolve("missing"), Err(ByoaError::UnknownProvider(_))));
-    for name in ["claude-code","codex","opencode"] {
-        let (_dir, vault) = open_vault(); let mut dispatcher = dispatcher(&vault);
-        let input = DreamerProviderInput { task: "propose a correction".into(), checkout_id: cli_spec().checkout_id, egress_profile_ref: "test".into(), credential_handles: vec![handle(HANDLE)] };
-        let connector = registry.resolve(name).expect("runner").connector(input).expect("spec");
+    assert!(matches!(
+        registry.register(Arc::new(CodexRunner)),
+        Err(ByoaError::DuplicateProvider(_))
+    ));
+    assert!(matches!(
+        registry.resolve("missing"),
+        Err(ByoaError::UnknownProvider(_))
+    ));
+    for name in ["claude-code", "codex", "opencode"] {
+        let (_dir, vault) = open_vault();
+        let mut dispatcher = dispatcher(&vault);
+        let input = DreamerProviderInput {
+            task: "propose a correction".into(),
+            checkout_id: cli_spec().checkout_id,
+            egress_profile_ref: "test".into(),
+            credential_handles: vec![handle(HANDLE)],
+        };
+        let connector = registry
+            .resolve(name)
+            .expect("runner")
+            .connector(input)
+            .expect("spec");
         let attempt = dispatch_and_claim(&vault, &mut dispatcher, connector, "worker");
-        let mut checkouts = CheckoutLeaseService::new(&vault, CheckoutFacts, CheckoutPulse::default());
-        checkouts.claim(crate::checkout::CheckoutClaimRequest { checkout_id: cli_spec().checkout_id, task_ref: EntityId::from_bytes([5;16]).expect("task"), repo_ref: crate::codebase::RepoRef::parse("github:owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("repo"), holder_ref: "worker".into(), task_class: crate::checkout::CheckoutTaskClass::Build, ttl_secs: Some(100), now: 25 }).expect("checkout");
-        let exhaust = dispatcher.execute_cli(&execution_fence(&attempt), ExecutionBudget::new(30,128,8), &checkouts, &mut NamedGuest, 30).expect("sandbox");
-        let mut capture = capture_request(&attempt, ByoaTerminalDisposition::Completed); capture.exhaust = exhaust;
-        let receipt = dispatcher.capture_terminal_exhaust(capture.clone()).expect("land exhaust");
-        dispatcher.capture_terminal_exhaust(capture).expect("idempotent");
-        assert_eq!(vault.blob_artifact_versions(&receipt.artifact_id).expect("versions").len(), 1);
+        let mut checkouts =
+            CheckoutLeaseService::new(&vault, CheckoutFacts, CheckoutPulse::default());
+        checkouts
+            .claim(crate::checkout::CheckoutClaimRequest {
+                checkout_id: cli_spec().checkout_id,
+                task_ref: EntityId::from_bytes([5; 16]).expect("task"),
+                repo_ref: crate::codebase::RepoRef::parse(
+                    "github:owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                )
+                .expect("repo"),
+                holder_ref: "worker".into(),
+                task_class: crate::checkout::CheckoutTaskClass::Build,
+                ttl_secs: Some(100),
+                now: 25,
+            })
+            .expect("checkout");
+        let exhaust = dispatcher
+            .execute_cli(
+                &execution_fence(&attempt),
+                ExecutionBudget::new(30, 128, 8),
+                &checkouts,
+                &mut NamedGuest,
+                30,
+            )
+            .expect("sandbox");
+        let mut capture = capture_request(&attempt, ByoaTerminalDisposition::Completed);
+        capture.exhaust = exhaust;
+        let receipt = dispatcher
+            .capture_terminal_exhaust(capture.clone())
+            .expect("land exhaust");
+        dispatcher
+            .capture_terminal_exhaust(capture)
+            .expect("idempotent");
+        assert_eq!(
+            vault
+                .blob_artifact_versions(&receipt.artifact_id)
+                .expect("versions")
+                .len(),
+            1
+        );
         assert_eq!(receipt.artifact_version, 1);
     }
 }
@@ -1898,10 +1962,29 @@ fn provider_registry_and_named_sandboxes_land_only_one_exhaust_each() {
 #[test]
 fn user_login_is_refused_before_cloud_dispatch_but_allowed_locally() {
     let mut config = VaultConfig::device();
-    config.privacy = crate::config::VaultPrivacyConfig { posture: crate::config::HostingPrivacyPosture::Hosted, data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms { key_ref: "test-kms".into() } };
+    config.privacy = crate::config::VaultPrivacyConfig {
+        posture: crate::config::HostingPrivacyPosture::Hosted,
+        data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
+            key_ref: "test-kms".into(),
+        },
+    };
     let (_cloud_dir, cloud) = crate::test_util::open_test_vault_with(config);
     let (_local_dir, local) = open_vault();
-    let request = || DispatchByoa { user_login: true, connector: ByoaConnectorSpec::CliSandbox(cli_spec()), task_ref: None, parent_attempt_id: None, run_id: None, dedupe_key: None, now: 10 };
-    assert!(matches!(dispatcher(&cloud).dispatch(request()), Err(ByoaError::CloudLoginRefused)));
-    assert!(matches!(dispatcher(&local).dispatch(request()), Ok(ByoaDispatchOutcome::Dispatched(_))));
+    let request = || DispatchByoa {
+        user_login: true,
+        connector: ByoaConnectorSpec::CliSandbox(cli_spec()),
+        task_ref: None,
+        parent_attempt_id: None,
+        run_id: None,
+        dedupe_key: None,
+        now: 10,
+    };
+    assert!(matches!(
+        dispatcher(&cloud).dispatch(request()),
+        Err(ByoaError::CloudLoginRefused)
+    ));
+    assert!(matches!(
+        dispatcher(&local).dispatch(request()),
+        Ok(ByoaDispatchOutcome::Dispatched(_))
+    ));
 }

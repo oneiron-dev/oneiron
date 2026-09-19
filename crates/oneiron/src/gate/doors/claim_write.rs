@@ -332,9 +332,14 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             };
             // The concrete wrapper is required at every injection boundary:
             // one capacity-bounded consult, with panic and timeout isolation.
-            let outcome = auto_checker.map_or(AutoCheckOutcome::Unavailable, |checker| checker.check(&candidate));
-            let (outcome, verdict_note) = crate::llm::manifest::apply_verdict_floor(verdict_binding, outcome);
-            if let Some(note) = verdict_note.and_then(checker_hold_receipt_reason) { checker_receipt_reasons.push(note); }
+            let outcome = auto_checker.map_or(AutoCheckOutcome::Unavailable, |checker| {
+                checker.check(&candidate)
+            });
+            let (outcome, verdict_note) =
+                crate::llm::manifest::apply_verdict_floor(verdict_binding, outcome);
+            if let Some(note) = verdict_note.and_then(checker_hold_receipt_reason) {
+                checker_receipt_reasons.push(note);
+            }
             match outcome {
                 AutoCheckOutcome::Allow => {}
                 AutoCheckOutcome::Verdict(_) => unreachable!("floor consumes calibrated outcomes"),

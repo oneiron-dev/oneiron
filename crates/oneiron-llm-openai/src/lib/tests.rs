@@ -199,6 +199,7 @@ fn interleaved_reasoning_and_tools_reconstruct_executable_message() {
     let mut stream = OpenAiCompatStreamAccumulator::new();
     let mut events = stream.push_chunk(json!({"choices":[{"delta":{"reasoning_content":"plan", "content":"look", "tool_calls":[{"index":0,"id":"call-1","function":{"name":"double","arguments":"{\"n\":"}}]}}]})).unwrap();
     events.extend(stream.push_chunk(json!({"choices":[{"delta":{"content":" up", "tool_calls":[{"index":0,"function":{"arguments":"4}"}}]},"finish_reason":"tool_calls"}]})).unwrap());
+    events.extend(stream.finish_eof().unwrap());
     let start = events.iter().position(|e| matches!(e, LlmStreamEvent::ToolCallStart { part_id, call_id, .. } if part_id == "tool-0" && call_id == "call-1")).unwrap();
     let end = events.iter().position(|e| matches!(e, LlmStreamEvent::ToolCallEnd { part_id, input, .. } if part_id == "tool-0" && input == &json!({"n":4}))).unwrap();
     assert!(start < end);
@@ -247,11 +248,30 @@ fn malformed_tool_json_is_rejected_only_at_end_and_cancel_never_executes_it() {
     stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"f","arguments":"{"}}]}}]})).unwrap();
     let mut cancelled = stream.clone();
     assert!(matches!(
-        stream.push_chunk(json!({"choices":[{"finish_reason":"tool_calls"}]})),
+        stream.push_chunk(json!({"choices":[{"finish_reason":"tool_calls"}],"usage":{}})),
         Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
     ));
     let events = cancelled.abort_with_usage(LlmUsage::zero());
     assert!(
         matches!(&events[0], LlmStreamEvent::Done { message, finish_reason: FinishReason::Cancelled, .. } if message.content.is_empty())
+    );
+}
+
+#[test]
+fn terminal_waits_for_trailing_usage_chunk() {
+    let mut stream = OpenAiCompatStreamAccumulator::new();
+    let events = stream
+        .push_chunk(json!({"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}))
+        .unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, LlmStreamEvent::Done { .. }))
+    );
+    let terminal = stream
+        .push_chunk(json!({"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}))
+        .unwrap();
+    assert!(
+        matches!(terminal.last(),Some(LlmStreamEvent::Done{usage,..})if usage.input.total==7 && usage.output.total==3)
     );
 }

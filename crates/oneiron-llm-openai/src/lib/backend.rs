@@ -19,7 +19,9 @@ pub struct OpenAiCompatConfig {
 
 impl OpenAiCompatConfig {
     pub fn from_registry(vault: &oneiron::Vault) -> oneiron::Result<Self> {
-        Ok(Self::with_models(vault.model_catalog_entries(oneiron::llm::registry::ModelWireFormat::OpenaiCompat)?))
+        Ok(Self::with_models(vault.model_catalog_entries(
+            oneiron::llm::registry::ModelWireFormat::OpenaiCompat,
+        )?))
     }
 
     #[cfg(test)]

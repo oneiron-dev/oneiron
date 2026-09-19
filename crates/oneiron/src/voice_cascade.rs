@@ -58,8 +58,8 @@ mod cancellation;
 mod protocol;
 mod retrieval;
 mod safeguard;
-pub mod soniox;
 mod session;
+pub mod soniox;
 
 pub mod tts_spikes;
 #[cfg(unix)]

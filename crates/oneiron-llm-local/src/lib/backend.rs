@@ -42,13 +42,21 @@ where
 
     pub fn from_registry(runtime: R, vault: &oneiron::Vault) -> oneiron::Result<Self> {
         let metadata = runtime.metadata().catalog_entry();
-        let row = vault.model_registry_row(&metadata.model)?.ok_or_else(|| oneiron::Error::InvalidConfig("local model is not registered".into()))?;
-        if row.wire != oneiron::llm::registry::ModelWireFormat::Local || row.catalog.locality != metadata.locality {
-            return Err(oneiron::Error::InvalidConfig("local registry wire/locality mismatch".into()));
+        let row = vault
+            .model_registry_row(&metadata.model)?
+            .ok_or_else(|| oneiron::Error::InvalidConfig("local model is not registered".into()))?;
+        if row.wire != oneiron::llm::registry::ModelWireFormat::Local
+            || row.catalog.locality != metadata.locality
+        {
+            return Err(oneiron::Error::InvalidConfig(
+                "local registry wire/locality mismatch".into(),
+            ));
         }
         let mut catalog = row.catalog;
         catalog.capabilities.retain(|c| metadata.supports(c));
-        catalog.context_window_tokens = catalog.context_window_tokens.min(metadata.context_window_tokens);
+        catalog.context_window_tokens = catalog
+            .context_window_tokens
+            .min(metadata.context_window_tokens);
         Ok(Self { runtime, catalog })
     }
 

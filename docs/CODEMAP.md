@@ -13,16 +13,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1504 | 536 | 2 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1505 | 536 | 2 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 70 | 12 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-llm-anthropic](codemap/oneiron-llm-anthropic.md) | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 6 | 1 | 0 |
+| [oneiron-llm-gemini](codemap/oneiron-llm-gemini.md) | Gemini wire adapter | 4 | 1 | 0 |
 | [oneiron-llm-local](codemap/oneiron-llm-local.md) | Local in-process adapter for Oneiron's `LlmBackend` seam | 7 | 1 | 0 |
 | [oneiron-llm-openai](codemap/oneiron-llm-openai.md) | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 6 | 1 | 0 |
+| [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 1 | 1 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | — | 18 | 1 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 2 | 0 | 0 |
-| [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 6 | 7 | 0 |
+| [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 7 | 7 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 31 | 9 | 0 |
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 185 | 71 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 5 | 1 | 0 |
@@ -135,7 +137,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `linear_sync` | dir | 5 | m | — | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `linkedin_connector` | dir | 5 | m | — | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
 | `linkedin_lead_preload` | file+dir | 5 | m | yes | Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload |
-| `llm` | dir | 47 | m | yes | Engine-facing LLM invocation seam |
+| `llm` | dir | 48 | m | yes | Engine-facing LLM invocation seam |
 | `m8_forward_oracle` | dir | 6 | m | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `maintain` | dir | 7 | m | — | — |
 | `memory` | dir | 49 | m | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
@@ -242,6 +244,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `lib` | dir | 7 | m | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
 
+## oneiron-llm-gemini
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `stream` | file | 1 | s | Gemini typed stream decoding |
+| `tests` | file | 1 | — | — |
+| `transport` | file | 1 | s | Lease-bearing host transport; no SDK, retries, or call policy |
+| `wire` | file | 1 | s | Gemini generateContent request and response mapping plus status taxonomy |
+
 ## oneiron-llm-local
 
 | module | layout | files | largest src bucket | purpose |
@@ -253,6 +264,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `lib` | dir | 7 | m | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
+
+## oneiron-llm-own-server
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `tests` | file | 1 | — | — |
 
 ## oneiron-napi
 
@@ -276,6 +293,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `caps` | file | 1 | s | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
 | `embedded` | file | 1 | m | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `error` | file | 1 | s | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
+| `llm` | file | 1 | s | Own-server raw LLM transport over the SDK's single authenticated HTTP client |
 | `remote` | file | 1 | m | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 
 ## oneiron-seal

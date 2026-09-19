@@ -35,7 +35,10 @@
 //! points at the last exhaust it produced.
 
 mod provider;
-pub use provider::{ClaudeCodeRunner, CodexRunner, OpenCodeRunner, DreamerProviderAdapter, DreamerProviderInput, ProviderAdapterRegistry};
+pub use provider::{
+    ClaudeCodeRunner, CodexRunner, DreamerProviderAdapter, DreamerProviderInput, OpenCodeRunner,
+    ProviderAdapterRegistry,
+};
 mod connector;
 mod dispatcher;
 mod error;

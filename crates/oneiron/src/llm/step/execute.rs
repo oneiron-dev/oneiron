@@ -175,6 +175,12 @@ pub async fn call_as_step_with_fallbacks(
         }
         None => super::schema::generate(backend, &request, &admission.lease, guard).await,
     };
+    let (generated, failed_usage) = match generated {
+        Err(DurableStepError::SpentLlm { source, usage }) => {
+            (Err(DurableStepError::Llm(source)), usage)
+        }
+        result => (result, super::LlmUsage::zero()),
+    };
     let response = match generated {
         Ok(response) => response,
         Err(DurableStepError::Llm(LlmError::Fatal(error)))
@@ -184,15 +190,18 @@ pub async fn call_as_step_with_fallbacks(
                 unreachable!()
             };
             match fallbacks.run(fallback, &request, &error) {
-                Ok(response) => response,
+                Ok(mut response) => {
+                    response.usage = failed_usage.clone();
+                    response
+                }
                 Err(error) => {
-                    let _ = guard.abort(&admission.lease);
+                    settle_failed_usage(guard, &admission.lease, &failed_usage);
                     return Err(error.into());
                 }
             }
         }
         Err(error) => {
-            let _ = guard.abort(&admission.lease);
+            settle_failed_usage(guard, &admission.lease, &failed_usage);
             return Err(error);
         }
     };
@@ -227,6 +236,14 @@ pub async fn call_as_step_with_fallbacks(
         memoized: false,
         legibility: step_legibility(ctx, guard),
     })
+}
+
+fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &super::LlmUsage) {
+    if usage.input.total > 0 || usage.output.total > 0 {
+        let _ = guard.settle_per_call(lease, usage);
+    } else {
+        let _ = guard.abort(lease);
+    }
 }
 
 /// The wake-pass legibility envelope for this step's outcome: Some inside

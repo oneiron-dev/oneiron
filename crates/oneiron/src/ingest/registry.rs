@@ -226,17 +226,48 @@ static ICS_FEED_SOURCE: crate::calendar::ingest::IcsFeedSource =
 
 static IMAGE_SOURCE: image::ImageIngestSource = image::ImageIngestSource::new();
 
-static OPENAI_SOURCE: super::provider::ProviderSource = super::provider::ProviderSource(super::provider::ProviderWire::Openai);
-static ANTHROPIC_SOURCE: super::provider::ProviderSource = super::provider::ProviderSource(super::provider::ProviderWire::Anthropic);
-static GEMINI_SOURCE: super::provider::ProviderSource = super::provider::ProviderSource(super::provider::ProviderWire::Gemini);
+static OPENAI_SOURCE: super::provider::ProviderSource =
+    super::provider::ProviderSource(super::provider::ProviderWire::Openai);
+static ANTHROPIC_SOURCE: super::provider::ProviderSource =
+    super::provider::ProviderSource(super::provider::ProviderWire::Anthropic);
+static GEMINI_SOURCE: super::provider::ProviderSource =
+    super::provider::ProviderSource(super::provider::ProviderWire::Gemini);
 
-const fn provider_config(source_id: &'static str, format: IngestSourceFormat) -> IngestSourceConfig {
-    IngestSourceConfig { source_id, label: source_id, format, adapter_skill: Some(IngestAdapterSkillRef { skill_id: source_id, version: "1" }), writes_claims:false, trust_ceiling:IngestTrustCeiling {claim_source:ClaimSource::Imported,max_auto_sensitivity:None,receipted:false,warned:false},default_admission:ClaimApprovalStatus::Proposed }
+const fn provider_config(
+    source_id: &'static str,
+    format: IngestSourceFormat,
+) -> IngestSourceConfig {
+    IngestSourceConfig {
+        source_id,
+        label: source_id,
+        format,
+        adapter_skill: Some(IngestAdapterSkillRef {
+            skill_id: source_id,
+            version: "1",
+        }),
+        writes_claims: false,
+        trust_ceiling: IngestTrustCeiling {
+            claim_source: ClaimSource::Imported,
+            max_auto_sensitivity: None,
+            receipted: false,
+            warned: false,
+        },
+        default_admission: ClaimApprovalStatus::Proposed,
+    }
 }
 static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 8] = [
-    IngestSourceRegistration::new(provider_config("openai-compat",IngestSourceFormat::OpenaiCompat), &OPENAI_SOURCE),
-    IngestSourceRegistration::new(provider_config("anthropic-messages",IngestSourceFormat::AnthropicMessages), &ANTHROPIC_SOURCE),
-    IngestSourceRegistration::new(provider_config("gemini",IngestSourceFormat::Gemini), &GEMINI_SOURCE),
+    IngestSourceRegistration::new(
+        provider_config("openai-compat", IngestSourceFormat::OpenaiCompat),
+        &OPENAI_SOURCE,
+    ),
+    IngestSourceRegistration::new(
+        provider_config("anthropic-messages", IngestSourceFormat::AnthropicMessages),
+        &ANTHROPIC_SOURCE,
+    ),
+    IngestSourceRegistration::new(
+        provider_config("gemini", IngestSourceFormat::Gemini),
+        &GEMINI_SOURCE,
+    ),
     IngestSourceRegistration::new(
         IngestSourceConfig {
             source_id: image::IMAGE_SOURCE_ID,

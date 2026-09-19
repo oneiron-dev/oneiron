@@ -147,6 +147,11 @@ pub type DurableStepResult<T> = std::result::Result<T, DurableStepError>;
 /// Typed failure surface of the durable-step layer.
 #[derive(Debug, thiserror::Error)]
 pub enum DurableStepError {
+    #[error("LLM failure after spent corrective attempts: {source}")]
+    SpentLlm {
+        source: LlmError,
+        usage: super::super::LlmUsage,
+    },
     #[error("JSON schema validation failed after {attempts} attempts: {errors:?}")]
     SchemaValidation { attempts: u8, errors: Vec<String> },
     #[error(transparent)]

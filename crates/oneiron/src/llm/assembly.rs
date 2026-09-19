@@ -234,7 +234,8 @@ impl StreamAssembly {
             if matches!(
                 self.pending.get(&id),
                 Some(PendingPart::Text(_) | PendingPart::Reasoning { .. })
-            ) && let Ok(event) = self.end(&id) {
+            ) && let Ok(event) = self.end(&id)
+            {
                 events.push(event);
             }
         }

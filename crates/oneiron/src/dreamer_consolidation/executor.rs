@@ -241,7 +241,10 @@ impl ConsolidationExecutor<'_> {
             now_ms: ctx.now_ms,
         };
         let mut request = self.extraction_request(&partition, &transcript);
-        ctx.vault.bind_model_role(crate::llm::manifest::ModelRole::ExtractionTeacher, &mut request)?;
+        ctx.vault.bind_model_role(
+            crate::llm::manifest::ModelRole::ExtractionTeacher,
+            &mut request,
+        )?;
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await?;
         let (response, spent) = match outcome {
             StepOutcome::Finished { response, .. } => {
@@ -312,7 +315,10 @@ impl ConsolidationExecutor<'_> {
                 .map(|index| &candidates[*index])
                 .collect();
             let mut request = self.merge_request(&conflict.identity, &members)?;
-            ctx.vault.bind_model_role(crate::llm::manifest::ModelRole::GenerativeReasoner, &mut request)?;
+            ctx.vault.bind_model_role(
+                crate::llm::manifest::ModelRole::GenerativeReasoner,
+                &mut request,
+            )?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,

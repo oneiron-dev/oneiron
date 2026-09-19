@@ -15008,7 +15008,7 @@
      "purpose": "Capability catalog: flags, entries with supports/require, costs, and reasoning effort",
      "surface": {
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -15024,6 +15024,16 @@
       "const": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/entity_refs.rs",
+     "purpose": "Validated entity-reference wire encoding for model policy DTOs",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -15127,7 +15137,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 5,
       "re-export": 15
      }
@@ -25783,7 +25793,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26310,7 +26320,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1504,
+   "source_files": 1505,
    "test_files": 536
   },
   "oneiron-bench": {
@@ -27685,6 +27695,108 @@
    "source_files": 6,
    "test_files": 1
   },
+  "oneiron-llm-gemini": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeminiBackend"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Gemini wire adapter",
+     "surface": {
+      "fn": 1,
+      "re-export": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeminiAccumulator"
+     ],
+     "path": "src/stream.rs",
+     "purpose": "Gemini typed stream decoding",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeminiFrame",
+      "GeminiHttpRequest",
+      "GeminiHttpResponse",
+      "GeminiTransport"
+     ],
+     "path": "src/transport.rs",
+     "purpose": "Lease-bearing host transport; no SDK, retries, or call policy",
+     "surface": {
+      "enum": 1,
+      "struct": 2,
+      "trait": 1,
+      "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire.rs",
+     "purpose": "Gemini generateContent request and response mapping plus status taxonomy",
+     "surface": {
+      "fn": 3
+     }
+    }
+   ],
+   "modules": {
+    "stream": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Gemini typed stream decoding"
+    },
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "—"
+    },
+    "transport": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Lease-bearing host transport; no SDK, retries, or call policy"
+    },
+    "wire": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Gemini generateContent request and response mapping plus status taxonomy"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Gemini wire adapter",
+   "source_files": 4,
+   "test_files": 1
+  },
   "oneiron-llm-local": {
    "files": [
     {
@@ -27848,7 +27960,7 @@
      "path": "src/lib/stream.rs",
      "purpose": "OpenAI chunk decoding with correlated text, reasoning, and tool fragments",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -27903,6 +28015,45 @@
    "over_bar": 0,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
    "source_files": 6,
+   "test_files": 1
+  },
+  "oneiron-llm-own-server": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnServerBackend"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Own-server LlmBackend",
+     "surface": {
+      "fn": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "—"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Own-server LlmBackend",
+   "source_files": 1,
    "test_files": 1
   },
   "oneiron-napi": {
@@ -28287,8 +28438,24 @@
      "surface": {
       "const": 3,
       "fn": 15,
+      "mod": 1,
       "re-export": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnServerTransport",
+      "RemoteLlmClient"
+     ],
+     "path": "src/llm.rs",
+     "purpose": "Own-server raw LLM transport over the SDK's single authenticated HTTP client",
+     "surface": {
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -28298,7 +28465,7 @@
      "path": "src/remote.rs",
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -28380,6 +28547,13 @@
      "layout": "file",
      "purpose": "The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7)"
     },
+    "llm": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Own-server raw LLM transport over the SDK's single authenticated HTTP client"
+    },
     "remote": {
      "files": 1,
      "impl_vault": false,
@@ -28390,7 +28564,7 @@
    },
    "over_bar": 0,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 7
   },
   "oneiron-seal": {

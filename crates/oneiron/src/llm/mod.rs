@@ -19,6 +19,7 @@ mod defaults;
 mod streaming_tests;
 pub use defaults::{PURPOSE_DEFAULTS, PurposeDefault};
 mod catalog;
+pub(crate) mod entity_refs;
 mod error;
 mod fallback;
 pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
@@ -27,10 +28,10 @@ pub mod manifest;
 mod model_id;
 mod protocol;
 pub mod registry;
-pub mod score_scraper;
-pub mod tagger;
 mod safeguard;
+pub mod score_scraper;
 mod step;
+pub mod tagger;
 
 pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,

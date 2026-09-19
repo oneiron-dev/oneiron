@@ -1254,21 +1254,48 @@ fn non_dreamer_paths_pass_none() -> Result<()> {
     Ok(())
 }
 
-
 #[test]
 fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Result<()> {
     use crate::llm::manifest::*;
-    use crate::llm::{ModelId, ModelTierRef, ModelLocality};
+    use crate::llm::{ModelId, ModelLocality, ModelTierRef};
     for mode in [VerdictMode::Enforce, VerdictMode::Shadow] {
         let (_dir, vault) = checker_vault(None)?;
         let model = ModelId::new("test/verdict@1").expect("model");
         vault.set_model_manifest(&ModelManifest {
             version: 2,
-            roles: MODEL_ROLES.into_iter().map(|role| (role, ModelBinding { model: model.clone(), slot: ModelSlot::Llm, tier: ModelTierRef("test".into()) })).collect(),
-            routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer].into_iter().map(|slot| (slot, ModelLocality::OnDevice)).collect(),
-            verdict: Some(VerdictBinding { model: model.clone(), slot: ModelSlot::Llm, floor: ConfidenceBand::High, mode }),
+            roles: MODEL_ROLES
+                .into_iter()
+                .map(|role| {
+                    (
+                        role,
+                        ModelBinding {
+                            model: model.clone(),
+                            slot: ModelSlot::Llm,
+                            tier: ModelTierRef("test".into()),
+                        },
+                    )
+                })
+                .collect(),
+            routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+                .into_iter()
+                .map(|slot| (slot, ModelLocality::OnDevice))
+                .collect(),
+            verdict: Some(VerdictBinding {
+                model: model.clone(),
+                slot: ModelSlot::Llm,
+                floor: ConfidenceBand::High,
+                mode,
+            }),
         })?;
-        let checker = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Verdict(CalibratedVerdict { model, allow: true, confidence_millionths: 700_000, band: ConfidenceBand::Medium, basis: VerdictBasis::CalibratedModel })));
+        let checker = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Verdict(
+            CalibratedVerdict {
+                model,
+                allow: true,
+                confidence_millionths: 700_000,
+                band: ConfidenceBand::Medium,
+                basis: VerdictBasis::CalibratedModel,
+            },
+        )));
         let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
         let id = test_id(0x33);
         let result = attempt_checked_candidate_write(&vault, &id, &body, Some(&checker));
@@ -1276,12 +1303,21 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
             VerdictMode::Enforce => {
                 assert!(result.is_err());
                 assert!(vault.get_claim(&id)?.is_none());
-                assert!(decision_rows(&vault)?.iter().any(|(reasons, _)| reasons.contains(&"gate.pending.checker".to_owned())));
+                assert!(
+                    decision_rows(&vault)?
+                        .iter()
+                        .any(|(reasons, _)| reasons.contains(&"gate.pending.checker".to_owned()))
+                );
             }
             VerdictMode::Shadow => {
                 result?;
-                assert_eq!(vault.get_claim(&id)?.expect("landed").approval, ClaimApprovalStatus::Auto);
-                assert!(decision_rows(&vault)?.iter().any(|(_, receipts)| receipts.contains(&"checker_verdict_shadow_hold".to_owned())));
+                assert_eq!(
+                    vault.get_claim(&id)?.expect("landed").approval,
+                    ClaimApprovalStatus::Auto
+                );
+                assert!(decision_rows(&vault)?.iter().any(|(_, receipts)| {
+                    receipts.contains(&"checker_verdict_shadow_hold".to_owned())
+                }));
             }
         }
     }

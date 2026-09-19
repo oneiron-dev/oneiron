@@ -164,6 +164,47 @@ impl RemoteClient {
         })
     }
 
+    pub(crate) fn llm_post(
+        &self,
+        stream: bool,
+        request: &oneiron::LlmRequest,
+        lease: &oneiron::BudgetLease,
+    ) -> Result<reqwest::blocking::Response, oneiron::LlmError> {
+        let path = if stream {
+            "v1/llm/stream"
+        } else {
+            "v1/llm/generate"
+        };
+        let url = self
+            .base_url
+            .join(path)
+            .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
+        let bytes =
+            serialize_request(request).map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
+        self.agent
+            .post(url)
+            .header(AUTHORIZATION, self.authorization.clone())
+            .header(CONTENT_TYPE, "application/json")
+            .header(
+                ACCEPT,
+                if stream {
+                    "application/x-ndjson"
+                } else {
+                    "application/json"
+                },
+            )
+            .header("x-oneiron-budget-lease", lease.id())
+            .body(bytes)
+            .send()
+            .map_err(|e| {
+                if e.is_timeout() {
+                    oneiron::RetryableLlmError::Timeout.into()
+                } else {
+                    oneiron::RetryableLlmError::StreamCut.into()
+                }
+            })
+    }
+
     /// Joins the canonical verb path onto the normalized origin.
     ///
     /// Built through `Url::join` against a base whose path always ends in `/`,

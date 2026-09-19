@@ -1,6 +1,6 @@
 //! Generation-owned budget reservation. All stop/drop paths release it exactly once.
-use std::sync::Arc;
 use crate::llm::{BudgetGuard, BudgetLease, LlmUsage};
+use std::sync::Arc;
 
 pub(super) struct GenerationBudget {
     pub(super) guard: Arc<BudgetGuard>,
