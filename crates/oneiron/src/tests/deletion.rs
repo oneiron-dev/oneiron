@@ -519,34 +519,19 @@ fn delete_missing_id_is_strict_noop_for_every_reason() -> Result<()> {
 #[test]
 fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
-    for attempt in 0..3 {
-        let id = EntityId::now();
-        vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+        crate::hnsw::hnsw_deindex(&vault.store, wtxn, &id)?;
+        vault.store.vectors.delete(wtxn, id.as_bytes())?;
+        Ok(())
+    })?;
 
-        let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
-            crate::hnsw::hnsw_deindex(&vault.store, wtxn, &id)?;
-            vault.store.vectors.delete(wtxn, id.as_bytes())?;
-            Ok(())
-        })?;
-
-        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
-            // Scheduling miss: the deleter probed after the commit and took
-            // the strict-noop path. Verify it wrote nothing, then retry.
-            assert_eq!(outcome, DeleteEntityOutcome::missing());
-            assert_no_erasure_audit_artifacts(&vault)?;
-            assert!(
-                attempt < 2,
-                "raced branch was never constructed in 3 attempts"
-            );
-            continue;
-        };
-
-        // gdpr_delete pinned wire byte = 3.
-        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
-        return Ok(());
-    }
-    unreachable!("the attempt loop either returns or panics");
+    let dt_marker = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))?
+        .expect("the scope probe must precede the raced erase");
+    // gdpr_delete pinned wire byte = 3.
+    assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)
 }
 
 /// ONE-1149 headerful RACED-TO-NOTHING leg: a hard delete whose entity (and
@@ -558,41 +543,28 @@ fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<(
 fn headerful_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let learned_at = 1_772_000_000;
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &id,
+            1,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"raced-away-before-purge",
+        )
+        .commit()?;
 
-    for attempt in 0..3 {
-        let id = EntityId::now();
-        vault
-            .batch()
-            .put(
-                &id,
-                1,
-                test_time_range(learned_at, learned_at),
-                learned_at,
-                b"raced-away-before-purge",
-            )
-            .commit()?;
+    let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
+        // Erase the FULL delete scope the way a racing hard delete would.
+        crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+        Ok(())
+    })?;
 
-        let outcome = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
-            // Erase the FULL delete scope the way a racing hard delete would.
-            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
-            Ok(())
-        })?;
-
-        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
-            assert_eq!(outcome, DeleteEntityOutcome::missing());
-            assert_no_erasure_audit_artifacts(&vault)?;
-            assert!(
-                attempt < 2,
-                "raced branch was never constructed in 3 attempts"
-            );
-            continue;
-        };
-
-        // user_hard_delete pinned wire byte = 2.
-        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 2)?;
-        return Ok(());
-    }
-    unreachable!("the attempt loop either returns or panics");
+    let dt_marker = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))?
+        .expect("the header read must precede the raced erase");
+    // user_hard_delete pinned wire byte = 2.
+    assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 2)
 }
 
 /// ONE-1149 false-NEGATIVE guard (delete-safety): the headerful delete's

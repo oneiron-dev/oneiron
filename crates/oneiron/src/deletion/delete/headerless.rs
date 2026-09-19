@@ -10,7 +10,8 @@ use crate::unix_seconds_now;
 use super::super::gate::{GatedDeletion, reverify_deletion_authority_when_unpublished};
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
-    DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_delete_rendezvous,
+    DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_after_delete_probe,
+    signal_delete_rendezvous,
 };
 use super::super::sweep_queue::HardEraseSweepExtras;
 use super::super::tombstone::{
@@ -34,6 +35,9 @@ impl Vault {
                 return Ok(DeleteEntityOutcome::missing());
             }
         }
+        // Order the raced-delete fixture after a positive scope probe, before
+        // any write lock. This rendezvous is a no-op in non-test builds.
+        signal_after_delete_probe(self);
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
         // above says there is something to erase.
         let request_uuid = Uuid::now_v7();
