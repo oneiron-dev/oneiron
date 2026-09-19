@@ -89,3 +89,6 @@ pub(crate) use support::{
     facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_deletion_authority_in_txn,
 };
 pub(crate) use witness::sole_edge_target;
+
+#[cfg(test)]
+mod room_write_tests;

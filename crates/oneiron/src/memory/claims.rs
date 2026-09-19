@@ -546,6 +546,10 @@ impl Memory<'_> {
                 end: occurred_at,
             };
             self.vault.with_write_txn(|wtxn| {
+                if let Err(error) = self.verify_write_scope_in_txn(wtxn) {
+                    *publication_refusal.borrow_mut() = Some(error);
+                    return Err(Error::InvalidClaimBody("room write membership refused"));
+                }
                 if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
                     && let Err(error) = self.verify_public_booking_writer_in_txn(wtxn)
                 {

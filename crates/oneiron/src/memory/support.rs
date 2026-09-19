@@ -154,7 +154,7 @@ pub(super) fn verify_actor_binding_in_txn(
 /// widens pending, and refuses while any of them is load-bearing. Unlike the
 /// lost-sidecar case this clears itself: one write-path fold records the
 /// observation and the delay runs from there.
-pub(super) fn verify_owner_actor_binding_in_txn(
+pub(crate) fn verify_owner_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
@@ -387,6 +387,7 @@ pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
+    room_write_scope: Option<EntityId>,
 }
 
 impl Vault {
@@ -404,6 +405,7 @@ impl Vault {
             vault: self,
             actor,
             actor_class,
+            room_write_scope: None,
         }
     }
 }
@@ -425,12 +427,31 @@ impl Memory<'_> {
         self.actor_class
     }
 
+    /// A narrowed write facade used only while dispatching rooms.*. Its
+    /// membership is checked inside the transaction that commits the write.
+    pub(crate) fn in_room(&self, room: EntityId) -> Memory<'_> {
+        Memory {
+            vault: self.vault,
+            actor: self.actor,
+            actor_class: self.actor_class,
+            room_write_scope: Some(room),
+        }
+    }
+
+    pub(super) fn verify_write_scope_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        if let Some(room) = self.room_write_scope {
+            crate::context_board::require_room_member_in_txn(self, txn, room)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn with_verified_actor_write_txn<T>(
         &self,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
         self.vault.try_with_write_txn(|wtxn| {
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+            self.verify_write_scope_in_txn(wtxn)?;
             write(wtxn)
         })
     }

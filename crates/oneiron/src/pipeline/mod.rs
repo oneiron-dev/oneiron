@@ -13,6 +13,7 @@ mod support;
 mod trace;
 mod types;
 mod world_authority;
+pub(crate) use world_authority::resolve_world_authority;
 
 pub use self::builder::PipelineBuilder;
 pub use self::types::{

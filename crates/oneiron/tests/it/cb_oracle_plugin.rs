@@ -1498,6 +1498,7 @@ mod plugin_fixture {
             };
             let legend = BoardLegend::canonical();
             let frame = BoardFrame {
+                changes: None,
                 header: &header,
                 legend: &legend,
                 sections: &sections,

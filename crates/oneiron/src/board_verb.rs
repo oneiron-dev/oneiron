@@ -100,6 +100,7 @@ pub fn render_current_keyframe(
     let legend = BoardLegend::canonical();
     render_board_block(
         &BoardFrame {
+            changes: None,
             header,
             legend: &legend,
             sections,

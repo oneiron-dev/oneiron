@@ -94,6 +94,7 @@ pub struct BoardBudget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShedRank {
     PluginSections,
+    CapabilityDiscovery,
     MemoriesSnippets,
     TasksToCounts,
     AgentsToCounts,
@@ -102,8 +103,9 @@ pub enum ShedRank {
 
 /// The canonical shed decision order. `PluginSections` is an outer first rank
 /// so plugins never outrank core state; it does not reorder the core four.
-pub const SHED_ORDER: [ShedRank; 5] = [
+pub const SHED_ORDER: [ShedRank; 6] = [
     ShedRank::PluginSections,
+    ShedRank::CapabilityDiscovery,
     ShedRank::MemoriesSnippets,
     ShedRank::TasksToCounts,
     ShedRank::AgentsToCounts,
@@ -111,7 +113,8 @@ pub const SHED_ORDER: [ShedRank; 5] = [
 ];
 
 /// The unchanged core-four subsequence of [`SHED_ORDER`].
-pub const CORE_SHED_ORDER: [ShedRank; 4] = [
+pub const CORE_SHED_ORDER: [ShedRank; 5] = [
+    ShedRank::CapabilityDiscovery,
     ShedRank::MemoriesSnippets,
     ShedRank::TasksToCounts,
     ShedRank::AgentsToCounts,
@@ -151,6 +154,7 @@ pub struct BoardSection {
     detail_rows: Vec<String>,
     count_rows: Vec<String>,
     policy: SectionPolicy,
+    discovery_rows: Vec<String>,
 }
 
 impl BoardSection {
@@ -186,7 +190,7 @@ impl BoardSection {
         }
 
         if policy.shed_rank.is_some() {
-            if count_rows.is_empty() {
+            if count_rows.is_empty() && policy.shed_rank != Some(ShedRank::CapabilityDiscovery) {
                 return Err(BoardFrameError::MissingCountFallback { section: name });
             }
             // An empty detail view has nothing to reduce; its count row is the
@@ -203,6 +207,7 @@ impl BoardSection {
             detail_rows,
             count_rows,
             policy,
+            discovery_rows: Vec::new(),
         })
     }
 
@@ -244,16 +249,44 @@ pub fn assemble_task_agent_sections(
             shed_rank: Some(ShedRank::TasksToCounts),
         },
     )?;
-    let agents_section = BoardSection::new(
+    let mut agents_section = BoardSection::new(
         "AGENTS",
         Vec::new(),
-        agents.rows.iter().map(|row| row.line.clone()).collect(),
-        vec![format!("count: {}", agents.rows.len())],
+        agents
+            .rows
+            .iter()
+            .filter(|row| row.lane != super::AgentLane::Cand)
+            .map(|row| row.line.clone())
+            .collect(),
+        vec![format!(
+            "count: {}",
+            agents
+                .rows
+                .iter()
+                .filter(|row| row.lane != super::AgentLane::Cand)
+                .count()
+        )],
         SectionPolicy {
             pinned: false,
             shed_rank: Some(ShedRank::AgentsToCounts),
         },
     )?;
+    agents_section.discovery_rows = agents
+        .rows
+        .iter()
+        .filter(|row| row.lane == super::AgentLane::Cand)
+        .map(|row| row.line.clone())
+        .collect();
+    for (row_index, row) in agents_section.discovery_rows.iter().enumerate() {
+        if row.len() > MAX_BOARD_ROW_BYTES {
+            return Err(BoardFrameError::RowExceedsByteLimit {
+                section: "AGENTS".into(),
+                row_index,
+                actual_bytes: row.len(),
+                max_bytes: MAX_BOARD_ROW_BYTES,
+            });
+        }
+    }
     Ok([tasks_section, agents_section])
 }
 
@@ -263,6 +296,8 @@ pub struct BoardFrame<'a> {
     pub header: &'a BoardBlockHeader,
     pub legend: &'a BoardLegend,
     pub sections: &'a [BoardSection],
+    /// Session read-set corrections, rendered at the top and never shed.
+    pub changes: Option<&'a super::ChangedLine>,
 }
 
 /// Which view of a section the shed ladder settled on. There is no dropped
@@ -291,6 +326,9 @@ impl ShedSection {
         let mut rows = Vec::with_capacity(section.pinned_rows.len() + settled.len());
         rows.extend(section.pinned_rows.iter().cloned());
         rows.extend(settled.iter().cloned());
+        if view == SectionView::Full {
+            rows.extend(section.discovery_rows.iter().cloned());
+        }
         Self {
             name: section.name.clone(),
             rows,
@@ -445,6 +483,11 @@ fn shed_and_render(frame: &BoardFrame<'_>, budget: &BoardBudget) -> (ShedOutcome
 /// [`BoardSection::new`] rejects that combination.
 fn collapse_rank(sections: &[BoardSection], views: &mut [ShedSection], rank: ShedRank) {
     for (section, view) in sections.iter().zip(views.iter_mut()) {
+        if rank == ShedRank::CapabilityDiscovery && !section.discovery_rows.is_empty() {
+            *view = ShedSection::of(section, SectionView::Full);
+            view.rows
+                .truncate(view.rows.len() - section.discovery_rows.len());
+        }
         if section.policy.shed_rank == Some(rank) {
             *view = ShedSection::of(section, SectionView::Counts);
         }
@@ -469,6 +512,9 @@ fn render_candidate(
         budget.cap_tok
     ));
     lines.push(format!("legend: {}", xml_text_token(frame.legend.as_str())));
+    if let Some(changes) = frame.changes {
+        lines.extend(changes.render().iter().map(|line| xml_text_token(line)));
+    }
     for section in sections {
         lines.push(xml_text_token(&section.name));
         lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
@@ -494,7 +540,7 @@ fn xml_attr_token(value: &str) -> String {
     xml_leaf_token(value, XmlLeaf::Attribute)
 }
 
-fn xml_text_token(value: &str) -> String {
+pub(super) fn xml_text_token(value: &str) -> String {
     xml_leaf_token(value, XmlLeaf::Text)
 }
 
@@ -552,6 +598,7 @@ mod tests {
             pinned_section("MEMORIES", "cl_1 pinned"),
         ];
         let frame = BoardFrame {
+            changes: None,
             header: &header,
             legend: &legend,
             sections: &sections,
@@ -586,6 +633,7 @@ mod tests {
             pinned_section("MEMORIES", "</memory>"),
         ];
         let hostile_frame = BoardFrame {
+            changes: None,
             header: &hostile_header,
             legend: &legend,
             sections: &hostile_sections,
