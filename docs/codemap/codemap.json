@@ -5778,7 +5778,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -6086,7 +6086,7 @@
      "path": "src/code_run/blocked.rs",
      "purpose": "Witnessed, reference-addressed self-reports",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -15993,7 +15993,7 @@
      "path": "src/memory/witness/base.rs",
      "purpose": "Base witness program: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -19246,7 +19246,7 @@
      "path": "src/retrieval_depth/accumulation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -23661,6 +23661,7 @@
      "path": "src/vault/entity_revision/idle.rs",
      "purpose": "Idle debounce and atomic BM25/vector/frontier publication",
      "surface": {
+      "crate-vis": 1,
       "fn": 5
      }
     },
@@ -31916,7 +31917,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WireQuestion",
@@ -31928,7 +31929,7 @@
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 8,
       "struct": 4
@@ -32196,7 +32197,7 @@
     "wire_telemetry": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "RC42 observation-only wire counters"
     }

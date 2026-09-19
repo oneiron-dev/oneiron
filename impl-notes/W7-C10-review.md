@@ -223,3 +223,39 @@ All earlier findings remain in this ledger. No full runtime or full-gate pass is
 The five latest repairs and corrected telemetry expectation await candidate-bound validation. No newly repaired finding is marked proved before its runtime result.
 
 Pre-runtime checks for these repairs: formatting passed; code-map regeneration reported no changed artifacts; ratchet stayed `2 / 98 / 91 / 33`; root surface stayed 701; all seven fleet-receipt fixture tests passed. These fixtures validate rejection/comparison logic, not new measured benchmark throughput.
+
+
+## Codex review 5257041165 at 1f1ab564 — next repair candidate
+
+Complete own-PR REST comments/reviews/inline comments and GraphQL threads were
+refreshed before applying these repairs. The refreshed snapshot has 12 issue
+comments, 45 reviews, 73 inline comments, and 34 complete review threads, with no
+new or edited findings after the nine below. Raw receipts remain under the ticket's
+`review-recovery/` directory. Earlier internal and bot dispositions remain intact.
+
+| Inline ID | Decision and repair |
+| --- | --- |
+| 4054244647 | Valid. Capture indexed revisions in each ranking transaction, carry them through depth fusion, reranking, recall, pack hydration and HTTP evidence projection. Never replace a missing pin with the latest frontier. Later channels cannot mix a new revision's score with an old body. Tests publish an edit inside the host reranker and after the depth result returns. |
+| 4054244650 | Valid. Wire receipt/question keys bind both window boundaries, preserving distinct durations with the same start. Restart and duration-change fixtures cover both rows. Pre-GA v2 keys have no compatibility decoder. |
+| 4054244651 | Valid. Persisted retrieval-run decoding validates state and maps invalid state to typed corruption, before either read door returns it. |
+| 4054244654 | Valid. Managed prepare-reap freezes and drains the shared telemetry writer under its mutex. Existing WebSockets, HTTP observation, periodic flush, thresholds, and Drop cannot write while frozen. Reap-abort resumes observation; shutdown does not thaw a quiescent process. |
+| 4054244656 | Valid. Keep top-level engine identity-key stripping but preserve nested user-owned `identity_key` data in every serializer. |
+| 4054244659 | Valid. Entity input/vector refusals produce typed per-revision failed receipts and allow independent candidates to publish. Storage/provider-wide failures still abort. The server checks provider locality before starting the pass. |
+| 4054244660 | Valid. Add required `partial` to TypeScript and Python public retrieval metadata types. Runtime DTO bytes do not change. |
+| 4054244663 | Valid. Every feedback queue decode binds the embedded id to its durable queue key. Corrupt rows fail before digest, close, replay or dedup can mutate another item. |
+| 4054244665 | Valid. Report-blocked uses a host-owned witness envelope type, not ordinary thought content. Public witness doors reject that reserved type; only crate-private executor routes admit it, including session promotion. Actual thought-dispatch and public-witness spoof tests accompany the genuine effect replay test. |
+
+No new finding is skipped. Qodo's historical zero-finding result and CodeRabbit's
+disabled/skipped review are not substitutes for validation of this candidate.
+
+Guarded portable r2 at `1f1ab564` finished with rc101 before running tests. It
+exposed misplaced connector-key fixture assertions (`old_pin`/`old_raw` were in
+a different test). The assertions now sit with their lifecycle fixture setup.
+The raw failure and original candidate remain archived; none of its eight tests
+or later planned stages is claimed green. Validation of the repairs is pending.
+
+Type-only validation for 4054244660 passed on the repaired bytes: TypeScript 5.9.3
+compiled the public consumer through `check:retrieval-types`; the MacBook Python
+3.12 review environment passed the runtime-evaluated TypedDict contract (1/1).
+Source hashes and raw command output are in `latest-nine-type-checks/`. This is
+not a native Rust or full Python vault-suite pass.

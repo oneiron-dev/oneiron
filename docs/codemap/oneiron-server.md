@@ -269,7 +269,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 3 fn | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
 | `src/voice_host/tests.rs` | test | m | — | — | Source-only proofs with a manually released backend |
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
-| `src/wire_telemetry.rs` | src | s | 4 struct · 1 enum · 8 fn · 2 crate-vis | WireQuestion, WireQuestionKind, WireTelemetry, WireThresholds, WireWindowReceipt | RC42 observation-only wire counters |
+| `src/wire_telemetry.rs` | src | m | 4 struct · 1 enum · 8 fn · 5 crate-vis | WireQuestion, WireQuestionKind, WireTelemetry, WireThresholds, WireWindowReceipt | RC42 observation-only wire counters |
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
 | `tests/it/booking_agent_api.rs` | test | XL | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |

@@ -314,7 +314,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `skills_pack` | file | 1 | s | — |
 | `usage` | dir | 8 | m | — |
 | `voice_host` | dir | 6 | m | Private voice request adapter, not an audio/provider scheduler |
-| `wire_telemetry` | file+dir | 2 | s | RC42 observation-only wire counters |
+| `wire_telemetry` | file+dir | 2 | m | RC42 observation-only wire counters |
 
 ## oneiron-uniffi
 
