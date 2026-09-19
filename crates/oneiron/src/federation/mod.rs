@@ -7,6 +7,7 @@
 
 mod codec;
 mod coreference;
+pub mod derivation;
 mod grant;
 mod guest;
 mod pact_scope;

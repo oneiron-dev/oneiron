@@ -320,6 +320,31 @@ impl Vault {
         Ok(keys)
     }
 
+    /// Stream host-owned rows while retaining the caller's write snapshot.
+    /// Used to rebuild derived host indexes without losing concurrent meter facts.
+    #[doc(hidden)]
+    #[cfg(feature = "sync")]
+    pub fn sync_state_visit_prefix_in_write_txn<E>(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        prefix: &str,
+        mut visit: impl FnMut(&str, &[u8]) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E>
+    where
+        E: From<Error>,
+    {
+        for row in self
+            .store
+            .sync_state
+            .prefix_iter(txn, prefix)
+            .map_err(Error::from)?
+        {
+            let (key, value) = row.map_err(Error::from)?;
+            visit(&key, &value)?;
+        }
+        Ok(())
+    }
+
     /// Lists `sync_queue` rows with the given key prefix for sync
     /// integration tests and diagnostics (e.g. the `h:{seq:8BE}` hard-erase
     /// sweep family a replayed remote hard tombstone must enqueue).

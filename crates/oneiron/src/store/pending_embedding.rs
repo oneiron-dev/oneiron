@@ -49,9 +49,34 @@ impl Store {
         token
     }
 
-    fn pending_marker_is_current(marker: &[u8], epoch: u64, claim_body: &[u8]) -> bool {
-        marker == Self::pending_embedding_marker_token(epoch, claim_body)
-            || (marker.len() == PENDING_EMBEDDING_MARKER_TOKEN_LEN
+    fn scoped_embedding_token(
+        epoch: u64,
+        body: &[u8],
+        owner: Option<crate::federation::derivation::DerivationOwner>,
+    ) -> [u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN] {
+        let Some(owner) = owner else {
+            return Self::pending_embedding_marker_token(epoch, body);
+        };
+        let digest = crate::federation::derivation::sealed_digest(
+            owner,
+            crate::federation::derivation::DerivationKind::Embedding,
+            &epoch.to_be_bytes(),
+            body,
+        );
+        let mut token = [0; PENDING_EMBEDDING_MARKER_TOKEN_LEN];
+        token[0] = 3;
+        token[1..].copy_from_slice(&digest);
+        token
+    }
+    fn pending_marker_is_current(
+        marker: &[u8],
+        epoch: u64,
+        claim_body: &[u8],
+        owner: Option<crate::federation::derivation::DerivationOwner>,
+    ) -> bool {
+        marker == Self::scoped_embedding_token(epoch, claim_body, owner)
+            || (owner.is_none()
+                && marker.len() == PENDING_EMBEDDING_MARKER_TOKEN_LEN
                 && marker[0] == 1
                 && marker == Self::legacy_pending_embedding_marker_token(claim_body))
     }
@@ -64,7 +89,8 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let key = Self::pending_embedding_marker_key(id);
         let epoch = crate::hnsw::read_embedding_model_epoch(self, &*wtxn)?;
-        let token = Self::pending_embedding_marker_token(epoch, claim_body);
+        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
+        let token = Self::scoped_embedding_token(epoch, claim_body, owner);
         self.sync_state.put(wtxn, key.as_str(), token.as_slice())?;
         Ok(token.to_vec())
     }
@@ -103,9 +129,10 @@ impl Store {
             return Ok(None);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, rtxn)?;
+        let owner = crate::federation::derivation::owner_in_txn(self, rtxn)?;
         Ok(self
             .embeddable_body_from_record(&record)
-            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body))
+            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body, owner))
             .map(|_| marker.to_vec()))
     }
 
@@ -123,9 +150,10 @@ impl Store {
             return Ok(None);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
             .embeddable_body_from_record(&record)
-            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body))
+            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body, owner))
             .map(|_| marker.to_vec()))
     }
 
@@ -142,9 +170,10 @@ impl Store {
             return Ok(false);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
             .embeddable_body_from_record(&record)
-            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body)))
+            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body, owner)))
     }
 
     pub(crate) fn pending_embedding_matches_in_txn(
@@ -164,9 +193,10 @@ impl Store {
             return Ok(false);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
             .embeddable_body_from_record(&record)
-            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body)))
+            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body, owner)))
     }
 
     /// The embeddable body of a base record, or `None` when the row carries no

@@ -510,6 +510,10 @@ impl PipelineBuilder<'_> {
             let pending_vectors = pending_vectors_for_scores(&self.vault.store, &rtxn, &scores)?;
             let retrieval_trace = if capture_retrieval_trace {
                 Some(self.assemble_retrieval_trace(TraceInputs {
+                    derivation_owner: crate::federation::derivation::owner_in_txn(
+                        &self.vault.store,
+                        &rtxn,
+                    )?,
                     scores: &scores,
                     trace_channels: acc.trace_channels,
                     trace_ranked_lists: &acc.trace_ranked_lists,

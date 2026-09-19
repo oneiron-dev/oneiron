@@ -60,7 +60,7 @@ pub(in crate::batch) fn stage_entity_body_row(
 /// `occurred`/`learned_at` are the WITNESSING write's own stamps — never
 /// restamped here — so a promoted row lands in the month window it belongs to
 /// (ARCH-0052 D4).
-pub(in crate::batch) fn stage_entity_index_rows(
+pub(crate) fn stage_entity_index_rows(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
