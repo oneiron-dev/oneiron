@@ -3,7 +3,11 @@ use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_
 use crate::{EdgeActorClass, EdgeKind, ErrorKind, TimeRange, VaultConfig};
 fn fixture() -> (tempfile::TempDir, Vault, WriteActor, EntityId, EntityId) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let config = VaultConfig {
+        embedding_model: Some("test/model@v1".to_owned()),
+        ..VaultConfig::default()
+    };
+    let vault = Vault::open(dir.path(), config).unwrap();
     let alice = EntityId::now();
     let bob = EntityId::now();
     for id in [alice, bob] {

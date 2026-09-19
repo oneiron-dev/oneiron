@@ -205,7 +205,7 @@ pub(crate) mod tests {
     pub(crate) fn eval004_record_json(id: &str, timestamp: u64, text: &str) -> serde_json::Value {
         serde_json::json!({
             "id": id,
-            "entityType": 8,
+            "entityType": oneiron::registry::ENTITY_TYPE_SUMMARY,
             "occurred": {
                 "start": timestamp,
                 "end": timestamp
@@ -358,7 +358,7 @@ pub(crate) mod tests {
             .map(|(idx, id)| ContextEntityReport {
                 id: (*id).to_owned(),
                 short_id: format!("g{idx}"),
-                entity_type: 8,
+                entity_type: oneiron::registry::ENTITY_TYPE_SUMMARY,
                 score: 1.0,
             })
             .collect();
