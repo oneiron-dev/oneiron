@@ -425,3 +425,19 @@ fixture needed the existing `get_raw_with_mode` API. Only those two names are
 corrected. No production code, assertion or generated navigation fact changes.
 The same ten focused cases and required full lanes remain pending. The fresh
 complete pre-correction PR corpus has no new finding or changed bot body.
+
+
+### R9: nine focused passes; managed HTTP fixture configuration corrected
+
+Run `0a975dc4-77d2-4266-b5c8-acc385398ae5` at `d74492f5` compiled both crates and
+ran ten tests: nine passed, one failed, 8799 skipped. All five inline findings'
+regressions and all four context-pack fallout tests passed. The HTTP test's body
+stream was dropped before extraction: its shared ctl fixture used
+`SyncServerConfig::default()` (`allow_unauthenticated: false`) instead of the
+managed contract's supervisor-authenticated configuration. The fixture now derives
+its config through `ManagedArgs::serve_config`, exactly like managed startup.
+No production authentication behavior or test assertion changed.
+
+The successor reruns only the HTTP regression before required full lanes. The nine
+unchanged passing cases retain their proof. Full R9 lanes were unrun; neither the
+HTTP repair nor the overall gate is claimed green yet.
