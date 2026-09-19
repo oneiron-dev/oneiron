@@ -270,3 +270,74 @@ fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
         expected[1..]
     );
 }
+
+#[test]
+fn checkpoint_omits_ingest_counters_but_preserves_quota_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Vault::open(dir.path().join("source"), VaultConfig::device()).unwrap();
+    let baseline = dir.path().join("baseline");
+    source.snapshot_checkpoint(&baseline, 100).unwrap();
+    let mut config = Vec::new();
+    config.extend_from_slice(&4_u32.to_le_bytes());
+    config.extend_from_slice(&60_u64.to_le_bytes());
+    source
+        .with_write_txn(|txn| {
+            source
+                .store
+                .sync_queue
+                .put(txn, b"m:maintenance_ingest_quota_config:v1", &config)?;
+            Ok(())
+        })
+        .unwrap();
+    let configured = dir.path().join("configured");
+    source.snapshot_checkpoint(&configured, 100).unwrap();
+    assert_ne!(
+        std::fs::read(&baseline).unwrap(),
+        std::fs::read(&configured).unwrap()
+    );
+    let mut key = b"m:maintenance_ingest_quota:v1:".to_vec();
+    key.extend_from_slice(&[7; 32]);
+    let mut count = Vec::new();
+    count.extend_from_slice(&60_u64.to_le_bytes());
+    count.extend_from_slice(&4_u32.to_le_bytes());
+    source
+        .with_write_txn(|txn| {
+            source.store.sync_queue.put(txn, &key, &count)?;
+            Ok(())
+        })
+        .unwrap();
+    let counted = dir.path().join("counted");
+    source.snapshot_checkpoint(&counted, 100).unwrap();
+    assert_eq!(
+        std::fs::read(&configured).unwrap(),
+        std::fs::read(&counted).unwrap()
+    );
+}
+
+#[test]
+fn checkpoint_refuses_unreconstructable_explicit_vectors_before_creating_image() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = VaultConfig::device();
+    config.dimensions = 4;
+    config.embedding_model = Some("test/model@v1".into());
+    let source = Vault::open(dir.path().join("source"), config).unwrap();
+    let id = EntityId::now();
+    source
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    let vector = vec![1.0, 0.0, 0.0, 0.0];
+    source.put_vector(&id, &vector).unwrap();
+    let checkpoint = dir.path().join("checkpoint");
+    assert!(matches!(
+        source.snapshot_checkpoint(&checkpoint, 100),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(!checkpoint.exists());
+    assert_eq!(source.get_vector(&id).unwrap(), Some(vector));
+}

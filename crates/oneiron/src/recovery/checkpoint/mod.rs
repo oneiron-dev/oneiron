@@ -51,6 +51,30 @@ impl Vault {
     /// Create-new output only. Checkpoint id hashes the entire canonical image.
     pub fn snapshot_checkpoint(&self, path: &Path, created_at: u64) -> Result<String> {
         let txn = self.store.env.read_txn()?;
+        // Only claim/summary bodies have a canonical re-embedding path today.
+        // Diagnostics are deliberately runtime-only. Other explicit vectors must
+        // not silently disappear.
+        for row in self.store.vectors.iter(&txn)? {
+            let (id, _) = row?;
+            let entity_type = self
+                .store
+                .entities
+                .get(&txn, &id)?
+                .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+                .map(|header| header.entity_type);
+            if !matches!(
+                entity_type,
+                Some(
+                    crate::registry::ENTITY_TYPE_CLAIM
+                        | crate::registry::ENTITY_TYPE_SUMMARY
+                        | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+                )
+            ) {
+                return Err(Error::InvalidConfig(
+                    "checkpoint vector lacks a canonical re-embedding source".into(),
+                ));
+            }
+        }
         // A pre-witness index is not silently restored as an empty search surface.
         for row in self.store.text_forward.iter(&txn)? {
             let (id, _) = row?;

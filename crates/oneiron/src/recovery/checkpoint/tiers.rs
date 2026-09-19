@@ -27,7 +27,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"booking:anti_abuse:v1:cache\0",
                 b"gate_pending:critical_confirm_expiry_cursor:v1",
                 b"gate_pending:critical_confirm_list_cursor:v1",
-                b"healer:count:",
                 b"outbound:authorized_recovery_lease:v1",
             ]
             .iter()
@@ -118,7 +117,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
             }
         }
         "sync_queue" => {
-            if key.starts_with(b"e:") {
+            if key.starts_with(b"m:maintenance_ingest_quota:v1:") {
+                Runtime
+            } else if key.starts_with(b"e:") {
                 Derived
             } else {
                 Canonical
