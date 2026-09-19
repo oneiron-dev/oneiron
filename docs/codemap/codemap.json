@@ -15419,6 +15419,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/tagger/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -25793,7 +25801,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26321,7 +26329,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1505,
-   "test_files": 536
+   "test_files": 537
   },
   "oneiron-bench": {
    "files": [
@@ -27319,7 +27327,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/supervisor/tests/mod.rs",
@@ -27886,7 +27894,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/lib/tests.rs",
@@ -27965,7 +27973,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/lib/tests.rs",
@@ -28040,6 +28048,14 @@
      "path": "src/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/remote_transport.rs",
+     "purpose": "Own-server conformance through the shipped HTTP transport, not a trait-only fake",
+     "surface": {}
     }
    ],
    "modules": {
@@ -28054,7 +28070,7 @@
    "over_bar": 0,
    "purpose": "Own-server LlmBackend",
    "source_files": 1,
-   "test_files": 1
+   "test_files": 2
   },
   "oneiron-napi": {
    "files": [

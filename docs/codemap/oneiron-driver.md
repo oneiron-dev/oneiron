@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/mod.rs` | src | s | 4 re-export | — | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
 | `src/supervisor/pass.rs` | src | s | 4 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |
-| `src/supervisor/tests/mod.rs` | test | s | 12 crate-vis | — | Shared fixtures for the supervisor test suites |
+| `src/supervisor/tests/mod.rs` | test | m | 12 crate-vis | — | Shared fixtures for the supervisor test suites |
 | `src/supervisor/tests/voice.rs` | test | m | — | — | — |
 | `src/tick/hybrid.rs` | src | s | 1 struct · 1 fn | HybridTick | Hybrid tick: biased deadline-versus-push select with deadline priority and session-hint sidecar delegation |
 | `src/tick/mod.rs` | src | s | 1 type · 4 re-export · 2 crate-vis | — | Tick sources: what wakes the supervisor (ONE-1684) |

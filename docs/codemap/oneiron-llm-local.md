@@ -18,4 +18,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/mod.rs` | src | s | 4 re-export | — | Local in-process adapter for Oneiron's `LlmBackend` seam |
 | `src/lib/output.rs` | src | s | 1 struct · 1 enum · 4 fn | LocalGeneration, LocalOutputPart | Runtime output parts and the in-progress generation envelope |
 | `src/lib/stream.rs` | src | s | 2 crate-vis | — | Output-part fan-out into LlmStreamEvent sequences with abort and drop handling |
-| `src/lib/tests.rs` | test | s | — | — | Fixture runtime plus request-validation and event-stream behavior tests |
+| `src/lib/tests.rs` | test | m | — | — | Fixture runtime plus request-validation and event-stream behavior tests |
