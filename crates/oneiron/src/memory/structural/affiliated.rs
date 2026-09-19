@@ -51,7 +51,7 @@ impl Memory<'_> {
     /// staged, so a refused take leaves no orphan NOTE or edge.
     ///
     /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: the
-    /// NOTE id is a fresh [`EntityId::now`], never caller-supplied.
+    /// The vault's injected ID source mints the NOTE id; callers do not choose it.
     pub fn author_take(
         &self,
         target: TakeTarget,
