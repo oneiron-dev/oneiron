@@ -53,10 +53,6 @@ def run(args):
         output = args.output / "roundtrip.docx"
         pdf = args.output / "roundtrip.pdf"
         command = ["/usr/bin/perl", "-e", "alarm 120; exec @ARGV", "/usr/bin/osascript", str(args.script), str(args.input), str(output), str(pdf)]
-        action = getattr(args, "revision_action", None)
-        text_output = args.output / "resolved.txt"
-        if action:
-            command.extend([action, str(text_output)])
         process = subprocess.run(command, capture_output=True, text=True, timeout=130)
         (args.output / "driver.log").write_text(process.stdout + process.stderr)
         if process.returncode != 0:
@@ -68,10 +64,6 @@ def run(args):
         release = True
         receipt.update({"app_version": version, "revisions": int(revisions), "comments": int(comments), "paragraphs": int(paragraphs), "initial_documents": int(initial), "final_documents": int(final), "repair_requested": False,
                         "output_sha256": preflight(output), "pdf_sha256": digest(pdf), "status": "completed"})
-        if action:
-            if int(revisions) != 0:
-                raise RuntimeError("Word left unresolved revisions")
-            receipt.update(revision_action=action, resolved_text_sha256=digest(text_output), resolved_text=text_output.read_text())
     except subprocess.TimeoutExpired:
         receipt["status"] = "timed-out"
         raise
@@ -92,6 +84,5 @@ if __name__ == "__main__":
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--script", required=True, type=Path)
-    parser.add_argument("--revision-action", choices=("accept", "reject"))
     parser.add_argument("--lock", type=Path, default=Path("/Users/olety/w7-oracle/lock"))
     run(parser.parse_args())

@@ -1,33 +1,29 @@
 on run argv
     set inputPath to item 1 of argv
-    set outputPath to item 2 of argv
-    set pdfPath to item 3 of argv
-    set revisionAction to item 4 of argv
-    set textPath to item 5 of argv
+    set revisionAction to item 2 of argv
+    set textPath to item 3 of argv
     if revisionAction is not "accept" and revisionAction is not "reject" then error "Invalid revision action"
     tell application "Microsoft Word"
-        log "Word inventory"
         set initialCount to count of documents
         set originalAlerts to display alerts
         set display alerts to alerts none
         set ownedDocument to missing value
         try
-            log "Word opening verified input"
             open file name inputPath confirm conversions false read only false add to recent files false repair false showing repairs false
-            log "Word input opened"
             set ownedDocument to active document
             set appVersion to version
+            set beforeCount to count of revisions of ownedDocument
             repeat while (count of revisions of ownedDocument) > 0
-                set beforeCount to count of revisions of ownedDocument
+                set previousCount to count of revisions of ownedDocument
                 if revisionAction is "accept" then
                     accept revision 1 of ownedDocument
                 else
                     reject revision 1 of ownedDocument
                 end if
-                if (count of revisions of ownedDocument) is not less than beforeCount then error "Word revision operation made no progress"
+                if (count of revisions of ownedDocument) is not less than previousCount then error "Word revision operation made no progress"
             end repeat
             set revisionCount to count of revisions of ownedDocument
-            if revisionCount is not 0 then error "Word did not resolve every revision"
+            set paragraphCount to count of paragraphs of ownedDocument
             set resolvedText to content of text object of ownedDocument
             set outputFile to open for access POSIX file textPath with write permission
             try
@@ -38,21 +34,13 @@ on run argv
                 close access outputFile
                 error textError number textNumber
             end try
-            set commentCount to count of word comments of ownedDocument
-            set paragraphCount to count of paragraphs of ownedDocument
-            set show revisions of ownedDocument to true
-            log "Word saving native roundtrip"
-            save as ownedDocument file name outputPath file format format document default add to recent files false
-            set ownedDocument to active document
-            log "Word exporting PDF"
-            save as ownedDocument file name pdfPath file format format PDF add to recent files false
             close ownedDocument saving no
             set ownedDocument to missing value
             set display alerts to originalAlerts
             set finalCount to count of documents
             if finalCount is not initialCount then error "Word document count changed"
             if finalCount is 0 then quit
-            return appVersion & tab & revisionCount & tab & commentCount & tab & paragraphCount & tab & initialCount & tab & finalCount
+            return appVersion & tab & beforeCount & tab & revisionCount & tab & paragraphCount & tab & initialCount & tab & finalCount
         on error errorText number errorNumber
             if ownedDocument is not missing value then
                 try

@@ -1088,7 +1088,7 @@
       "rate": 0.9284833538840938
     },
     "formualizer_unchanged": {
-      "passed": 746,
+      "passed": 754,
       "total": 811,
       "by_function": {
         "ABS": {
@@ -1284,7 +1284,7 @@
           "total": 1
         },
         "DATE": {
-          "passed": 0,
+          "passed": 3,
           "total": 3
         },
         "DATEDIF": {
@@ -1292,7 +1292,7 @@
           "total": 5
         },
         "DATEVALUE": {
-          "passed": 0,
+          "passed": 1,
           "total": 1
         },
         "DAVERAGE": {
@@ -2032,11 +2032,11 @@
           "total": 4
         },
         "TIME": {
-          "passed": 0,
+          "passed": 3,
           "total": 3
         },
         "TIMEVALUE": {
-          "passed": 0,
+          "passed": 1,
           "total": 1
         },
         "TOCOL": {
@@ -2172,7 +2172,7 @@
           "total": 6
         }
       },
-      "rate": 0.9198520345252774
+      "rate": 0.9297163995067818
     }
   },
   "exclusions": {
@@ -3149,54 +3149,6 @@
         }
       },
       {
-        "id": "DATE_basic",
-        "classification": "value",
-        "excel": 45366.0,
-        "actual": {
-          "id": "DATE_basic",
-          "function": "DATE",
-          "status": "ok",
-          "value": "2024-03-15",
-          "matches_upstream": false
-        }
-      },
-      {
-        "id": "DATE_month_rollover_above_12",
-        "classification": "value",
-        "excel": 45658.0,
-        "actual": {
-          "id": "DATE_month_rollover_above_12",
-          "function": "DATE",
-          "status": "ok",
-          "value": "2025-01-01",
-          "matches_upstream": false
-        }
-      },
-      {
-        "id": "DATE_month_rollback_below_1",
-        "classification": "value",
-        "excel": 39327.0,
-        "actual": {
-          "id": "DATE_month_rollback_below_1",
-          "function": "DATE",
-          "status": "ok",
-          "value": "2007-09-02",
-          "matches_upstream": false
-        }
-      },
-      {
-        "id": "DATEVALUE_iso",
-        "classification": "value",
-        "excel": 46224.0,
-        "actual": {
-          "id": "DATEVALUE_iso",
-          "function": "DATEVALUE",
-          "status": "ok",
-          "value": "2026-07-21",
-          "matches_upstream": false
-        }
-      },
-      {
         "id": "DAYS_doc_example_text_dates",
         "classification": "value",
         "excel": 42.0,
@@ -3718,54 +3670,6 @@
         }
       },
       {
-        "id": "TIME_basic",
-        "classification": "value",
-        "excel": 0.5625,
-        "actual": {
-          "id": "TIME_basic",
-          "function": "TIME",
-          "status": "ok",
-          "value": "13:30:00",
-          "matches_upstream": false
-        }
-      },
-      {
-        "id": "TIME_hour_wraps_modulo_24",
-        "classification": "value",
-        "excel": 0.04166666666666674,
-        "actual": {
-          "id": "TIME_hour_wraps_modulo_24",
-          "function": "TIME",
-          "status": "ok",
-          "value": "01:00:00",
-          "matches_upstream": false
-        }
-      },
-      {
-        "id": "TIME_doc_example_27_hours",
-        "classification": "value",
-        "excel": 0.125,
-        "actual": {
-          "id": "TIME_doc_example_27_hours",
-          "function": "TIME",
-          "status": "ok",
-          "value": "03:00:00",
-          "matches_upstream": false
-        }
-      },
-      {
-        "id": "TIMEVALUE_6am",
-        "classification": "value",
-        "excel": 0.25,
-        "actual": {
-          "id": "TIMEVALUE_6am",
-          "function": "TIMEVALUE",
-          "status": "ok",
-          "value": "06:00:00",
-          "matches_upstream": false
-        }
-      },
-      {
         "id": "TRIM_tab_not_removed",
         "classification": "value",
         "excel": "\tHello",
@@ -3895,12 +3799,12 @@
   },
   "excel_version": "16.112.4",
   "libreoffice_version": "LibreOffice 25.8.2.2 d401f2107ccab8f924a8e2df40f573aab7605b6f",
-  "formualizer_version": "formualizer-workbook/0.9.3",
+  "formualizer_version": "formualizer-workbook 0.9.3 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5",
   "corpus_sha256": "d4740551ddcae1828c8e1c59784a5594a9bb0802423271148e225589acbab8bd",
   "input_sha256": {
     "goldens.json": "dc15998545a4c84fb47da336057e9e6b64a6854d72f8bd682ac2bdaa0e1b2b1f",
     "libreoffice-25.8.2.2.json": "63e4c3e78a2f713d50c1edc5f8a4140298dcbef462e77ff63794f492c3284e59",
-    "formualizer-0.9.3-unchanged.json": "13257f4c3811c91c881219c9c213c508f586264a79e444259f021d0e87167bd4"
+    "formualizer-0.9.3-unchanged.json": "83eebc84d9894ff317c85c1d69c2f99160af03a53038190aa350dbc967fceec7"
   },
-  "at_or_above_libreoffice": false
+  "at_or_above_libreoffice": true
 }

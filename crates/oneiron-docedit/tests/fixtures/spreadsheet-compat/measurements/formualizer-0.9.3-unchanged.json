@@ -1,5 +1,5 @@
 {
-  "engine_stamp": "formualizer-workbook/0.9.3",
+  "engine_stamp": "formualizer-workbook 0.9.3 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5",
   "corpus_sha256": "d4740551ddcae1828c8e1c59784a5594a9bb0802423271148e225589acbab8bd",
   "cases": {
     "ABS_cell_reference_negative": {
@@ -1082,29 +1082,29 @@
       "id": "DATEVALUE_iso",
       "function": "DATEVALUE",
       "status": "ok",
-      "value": "2026-07-21",
-      "matches_upstream": false
+      "value": 46224.0,
+      "matches_upstream": true
     },
     "DATE_basic": {
       "id": "DATE_basic",
       "function": "DATE",
       "status": "ok",
-      "value": "2024-03-15",
-      "matches_upstream": false
+      "value": 45366.0,
+      "matches_upstream": true
     },
     "DATE_month_rollback_below_1": {
       "id": "DATE_month_rollback_below_1",
       "function": "DATE",
       "status": "ok",
-      "value": "2007-09-02",
-      "matches_upstream": false
+      "value": 39327.0,
+      "matches_upstream": true
     },
     "DATE_month_rollover_above_12": {
       "id": "DATE_month_rollover_above_12",
       "function": "DATE",
       "status": "ok",
-      "value": "2025-01-01",
-      "matches_upstream": false
+      "value": 45658.0,
+      "matches_upstream": true
     },
     "DAVERAGE_matching_criteria": {
       "id": "DAVERAGE_matching_criteria",
@@ -3458,7 +3458,7 @@
       "id": "NOW_exists_and_plausible",
       "function": "NOW",
       "status": "probe",
-      "value": "2026-01-01 00:00:00"
+      "value": 46023.0
     },
     "NOW_on_or_after_today": {
       "id": "NOW_on_or_after_today",
@@ -5222,29 +5222,29 @@
       "id": "TIMEVALUE_6am",
       "function": "TIMEVALUE",
       "status": "ok",
-      "value": "06:00:00",
-      "matches_upstream": false
+      "value": 0.25,
+      "matches_upstream": true
     },
     "TIME_basic": {
       "id": "TIME_basic",
       "function": "TIME",
       "status": "ok",
-      "value": "13:30:00",
-      "matches_upstream": false
+      "value": 0.5625,
+      "matches_upstream": true
     },
     "TIME_doc_example_27_hours": {
       "id": "TIME_doc_example_27_hours",
       "function": "TIME",
       "status": "ok",
-      "value": "03:00:00",
-      "matches_upstream": false
+      "value": 0.125,
+      "matches_upstream": true
     },
     "TIME_hour_wraps_modulo_24": {
       "id": "TIME_hour_wraps_modulo_24",
       "function": "TIME",
       "status": "ok",
-      "value": "01:00:00",
-      "matches_upstream": false
+      "value": 0.041666666666666664,
+      "matches_upstream": true
     },
     "TOCOL_flatten_by_row": {
       "id": "TOCOL_flatten_by_row",
@@ -5262,7 +5262,7 @@
       "id": "TODAY_exists_and_plausible",
       "function": "TODAY",
       "status": "probe",
-      "value": "2026-01-01"
+      "value": 46023.0
     },
     "TODAY_self_difference_is_deterministic": {
       "id": "TODAY_self_difference_is_deterministic",
