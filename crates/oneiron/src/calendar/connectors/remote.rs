@@ -277,6 +277,7 @@ pub(super) fn parse_remote_object(
 /// The canonical content hash of a rendered VEVENT, read back through the same
 /// parser the pull side uses so a local write and its echo hash identically.
 pub(super) fn ics_content_hash(ics: &[u8], uid: &str) -> Result<[u8; 32], CalendarError> {
+    use sha2::{Digest, Sha256};
     let feed = parse_ics_feed(ics)?;
     if feed.events.is_empty() || feed.events.iter().any(|event| event.uid != uid) {
         return Err(CalendarError::IcsParse {
@@ -286,7 +287,6 @@ pub(super) fn ics_content_hash(ics: &[u8], uid: &str) -> Result<[u8; 32], Calend
     if feed.events.len() == 1 {
         return Ok(feed.events[0].content_hash);
     }
-    use sha2::{Digest, Sha256};
     let mut hashes: Vec<_> = feed
         .events
         .iter()

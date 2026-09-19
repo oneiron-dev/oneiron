@@ -120,7 +120,7 @@ pub(super) fn render(
                     has_rrule = true;
                 }
                 PREDICATE_CALENDAR_SERIES_MASTER => {
-                    master_rrule = Some(decode_series_master_value(&body.value)?.rrule)
+                    master_rrule = Some(decode_series_master_value(&body.value)?.rrule);
                 }
                 PREDICATE_CALENDAR_SERIES_EXCEPTION => {
                     let value = decode_series_exception_value(&body.value)?;

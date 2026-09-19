@@ -18,8 +18,10 @@ pub struct ParsedCalendarProperties {
 pub(super) fn parse(
     component: &icalendar::parser::Component<'_>,
 ) -> Result<ParsedCalendarProperties, CalendarError> {
-    let mut properties = ParsedCalendarProperties::default();
-    properties.recurrence_id_utc = super::optional_datetime_prop(component, "RECURRENCE-ID")?;
+    let mut properties = ParsedCalendarProperties {
+        recurrence_id_utc: super::optional_datetime_prop(component, "RECURRENCE-ID")?,
+        ..ParsedCalendarProperties::default()
+    };
     if component.find_prop("RECURRENCE-ID").is_some() && properties.recurrence_id_utc.is_none() {
         return Err(ics_parse(
             "recurrence exception requires a UTC instant or explicit TZID",

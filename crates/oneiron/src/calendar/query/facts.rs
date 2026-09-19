@@ -241,10 +241,10 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
                     replace_when_lower(&mut status, claim_id, LaneFact::Withheld);
                 }
                 Some(crate::calendar::claims::PREDICATE_CALENDAR_SERIES_MASTER) => {
-                    series_withheld = true
+                    series_withheld = true;
                 }
                 Some(crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION) => {
-                    exception_withheld = true
+                    exception_withheld = true;
                 }
                 _ => {}
             }
@@ -270,19 +270,15 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
                     uids.push(passport.uid);
                 }
             }
-            crate::calendar::claims::PREDICATE_CALENDAR_SERIES_MASTER => {
-                if series.is_none() {
-                    series = Some(crate::calendar::claims::decode_series_master_value(
-                        &body.value,
-                    )?);
-                }
+            crate::calendar::claims::PREDICATE_CALENDAR_SERIES_MASTER if series.is_none() => {
+                series = Some(crate::calendar::claims::decode_series_master_value(
+                    &body.value,
+                )?);
             }
-            crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION => {
-                if exception.is_none() {
-                    exception = Some(crate::calendar::claims::decode_series_exception_value(
-                        &body.value,
-                    )?);
-                }
+            crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION if exception.is_none() => {
+                exception = Some(crate::calendar::claims::decode_series_exception_value(
+                    &body.value,
+                )?);
             }
             _ => {}
         }

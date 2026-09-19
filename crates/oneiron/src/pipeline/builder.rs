@@ -130,7 +130,6 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     /// Selects stated, concluded, or all claims after admission and before truncation.
-    #[must_use]
     pub fn made_by(mut self, predicate: crate::provenance::made_by::MadeByPredicate) -> Self {
         self.made_by = predicate;
         self
