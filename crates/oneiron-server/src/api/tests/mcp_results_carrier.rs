@@ -427,9 +427,13 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
     let payload = frame["kind"]["payload"]
         .as_array()
         .expect("the continuation delta carries rows");
-    assert_eq!(payload.len(), 1);
-    assert_eq!(payload[0]["key"], Value::from("TASKS:continuation"));
-    assert_eq!(payload[0]["line"], Value::from("queued after page one"));
+    assert_eq!(payload[0]["key"], "changed");
+    assert_eq!(payload[0]["line"], "");
+    let task = payload
+        .iter()
+        .find(|row| row["key"] == "TASKS:continuation")
+        .expect("the pending task row survives the session rider");
+    assert_eq!(task["line"], "queued after page one");
 
     {
         let mut registry = server.mcp_registry.lock().await;
@@ -505,16 +509,15 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
         Value::from("delta"),
         "result two carries the same-epoch delta: {second:?}"
     );
-    assert_eq!(
-        second_frame["kind"]["payload"][0]["key"],
-        Value::from("TASKS:0"),
-        "{second:?}"
-    );
-    assert_eq!(
-        second_frame["kind"]["payload"][0]["line"],
-        Value::from("queued"),
-        "{second:?}"
-    );
+    let rows = second_frame["kind"]["payload"]
+        .as_array()
+        .expect("delta rows");
+    assert_eq!(rows[0]["key"], "changed");
+    let task = rows
+        .iter()
+        .find(|row| row["key"] == "TASKS:0")
+        .expect("the pending task row survives the session rider");
+    assert_eq!(task["line"], "queued");
 
     // And the call after THAT carries none: nothing is replayed.
     let (_, third) = route_json(server.clone(), check("carrier-3a")).await;

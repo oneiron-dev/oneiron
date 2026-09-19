@@ -139,12 +139,16 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "ask the vault owner to bind a sandbox/REPL provider, or use the tool-first endpoint",
         ],
         MCP_EXECUTE_CODE_UNAVAILABLE_CODE => &[
-            "this release does not ship execute_code; no run was created and none can be resumed",
+            "this server has no verified execute_code runtime; no run was created",
             "call setup_oneiron for the verb grammar and run the verbs on the tool-first endpoint",
         ],
         MCP_PAGE_CURSOR_INVALID_CODE => &[
             "page cursors are bound to one connector, tool, argument set, and board snapshot",
             "re-request page one with the same arguments and follow its fresh cursor",
+        ],
+        "code_run_busy" => &[
+            "this run is still active; no second worker was started",
+            "retry later with the SAME run_ref and task",
         ],
         "code_run_binding_failed" | "code_run_failed" => &[
             "retry with the SAME run_ref to re-enter the durable run",

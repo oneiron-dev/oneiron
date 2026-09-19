@@ -11,12 +11,17 @@ mod codec;
 mod endpoint_args;
 mod endpoint_schema;
 mod exec_host;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod quickjs_provider;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub use self::quickjs_provider::McpQuickJsProvider;
 mod paging;
 mod registry;
 mod results;
 mod schema_parts;
 mod schema_tools;
 mod surface;
+pub(crate) use self::surface::setup_instructions_for;
 mod tool_catalog;
 mod validate;
 mod validators;

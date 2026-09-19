@@ -383,17 +383,33 @@ pub(crate) fn search_response(
     view: View,
     page_limit: usize,
 ) -> Result<Vec<Value>, ApiError> {
+    search_response_with_observations(scoped_read, results, view, page_limit, None)
+}
+
+pub(crate) fn search_response_with_observations(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    results: Vec<oneiron::ScoredEntity>,
+    view: View,
+    page_limit: usize,
+    observations: Option<&mut oneiron::context_board::SessionReadSet>,
+) -> Result<Vec<Value>, ApiError> {
+    let mut staged = observations.as_deref().cloned();
     let mut response = Vec::with_capacity(results.len().min(page_limit));
     for result in results {
-        match project_scoped_search_result(scoped_read, result, view) {
-            Ok(Some(value)) if response.len() < page_limit => response.push(value),
-            Ok(Some(_)) => continue,
+        if response.len() >= page_limit {
+            break;
+        }
+        match project_scoped_search_result_observed(scoped_read, result, view, staged.as_mut()) {
+            Ok(Some(value)) => response.push(value),
             Ok(None) => continue,
             Err(e) => {
                 tracing::error!(error = %e, "search projection failed");
                 return Err(ApiError::internal_server_error("search projection failed"));
             }
         }
+    }
+    if let (Some(target), Some(staged)) = (observations, staged) {
+        *target = staged;
     }
     Ok(response)
 }
@@ -403,12 +419,23 @@ pub(crate) fn project_scoped_search_result(
     result: oneiron::ScoredEntity,
     view: View,
 ) -> oneiron::Result<Option<Value>> {
+    project_scoped_search_result_observed(scoped_read, result, view, None)
+}
+
+fn project_scoped_search_result_observed(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    result: oneiron::ScoredEntity,
+    view: View,
+    observations: Option<&mut oneiron::context_board::SessionReadSet>,
+) -> oneiron::Result<Option<Value>> {
     let id_hex = result.id.to_hex();
     match view {
-        View::Standard => Ok(Some(json!({
-            "id": id_hex,
-            "score": result.score,
-        }))),
+        View::Standard => {
+            if let Some(observations) = observations {
+                observations.observe_rows(scoped_read, &[result.id])?;
+            }
+            Ok(Some(json!({ "id": id_hex, "score": result.score })))
+        }
         View::Summary | View::Full => {
             let Some((entity_type, learned_at, body)) = scoped_read.get_entity_parts(&result.id)?
             else {
@@ -416,6 +443,15 @@ pub(crate) fn project_scoped_search_result(
             };
             let mut value =
                 projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view);
+            if let Some(observations) = observations {
+                observations.observe_snapshot(
+                    scoped_read,
+                    result.id,
+                    entity_type,
+                    &body,
+                    matches!(view, View::Full),
+                )?;
+            }
             if matches!(view, View::Full)
                 && let Value::Object(object) = &mut value
             {

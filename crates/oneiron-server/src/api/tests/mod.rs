@@ -15,6 +15,7 @@ mod mcp_source_gate;
 
 mod auth_idempotency;
 mod billing_usage;
+mod board_host_events;
 mod companion;
 mod context_pack_disclosure;
 mod context_pack_v4;
@@ -22,6 +23,8 @@ mod contract_snapshots;
 mod core_memory_conversations;
 mod mcp_memory;
 mod mcp_paging_cursors;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod mcp_quickjs;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
@@ -332,6 +335,7 @@ pub(super) fn seeded_test_entity_id(counter: u128) -> oneiron::EntityId {
 
 pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPack {
     oneiron::ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: (0..result_count)

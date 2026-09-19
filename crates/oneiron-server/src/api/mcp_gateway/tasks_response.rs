@@ -216,13 +216,14 @@ pub(crate) async fn execute_mcp_generated_verb(
                     (output, source, carrier, Some(epoch))
                 }
                 crate::mcp::McpVerbFamily::Memory => {
-                    let output = super::memory_response::execute(server, &args, actor)?;
+                    let (output, capabilities) =
+                        super::memory_response::execute(server, &args, actor).await?;
                     // One native response, with its own bounded query/batch
                     // semantics. Do not invent an MCP cursor over nested DTOs.
                     (
                         output,
                         crate::mcp::McpPageSource::complete(1),
-                        McpCarrierPolicy::Drain,
+                        McpCarrierPolicy::DrainWithCapabilities(capabilities),
                         None,
                     )
                 }

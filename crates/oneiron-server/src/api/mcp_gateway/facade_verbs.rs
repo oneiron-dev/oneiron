@@ -222,8 +222,9 @@ pub(crate) fn execute_mcp_read(
     }
     if let Some(short_ref) = args.target.short_ref.as_deref() {
         let (short_id, content_hash) = parse_short_ref(short_ref).map_err(mcp_api_error)?;
-        let item = hydrate_short_id_response(&scoped_read, short_id, content_hash, View::Full)
-            .map_err(mcp_api_error)?;
+        let item =
+            hydrate_short_id_response(&scoped_read, short_id, content_hash, View::Full, None)
+                .map_err(mcp_api_error)?;
         return Ok(json!({
             "content": [mcp_text_content(if item.is_some() { "short ref found" } else { "short ref not found" })],
             "structuredContent": {

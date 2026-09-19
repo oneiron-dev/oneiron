@@ -189,6 +189,9 @@ pub(crate) struct CoreContextPackEvidence {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
+    /// Separately budgeted turn-local capability discoveries.
+    #[schema(value_type = Vec<Object>)]
+    pub(crate) capabilities: Vec<oneiron::context_board::CapabilityHit>,
     /// Content-addressed, score-free subject evidence, before the read-time delta.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
@@ -235,7 +238,7 @@ pub(crate) struct CoreContextPackResponse {
 }
 
 pub(crate) async fn run_context_pack_builder(
-    vault: &oneiron::Vault,
+    server: &crate::server::SyncServer,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
@@ -250,6 +253,7 @@ pub(crate) async fn run_context_pack_builder(
     ),
     ApiError,
 > {
+    let vault = &server.vault;
     let subjects: Vec<_> = memories
         .as_ref()
         .and_then(|request| request.companion.as_ref())
@@ -296,13 +300,15 @@ pub(crate) async fn run_context_pack_builder(
                 )
             });
             let cursor = advance_memories_cursor(
-                vault,
+                server,
                 &request.session_scope_id,
                 &request.session_id,
                 &pack,
                 &evidence,
+                scoped_read,
             )
-            .await;
+            .await
+            .map_err(|error| core_engine_error("context-pack observations failed", error))?;
             (section, Some(cursor))
         }
         None => (None, None),
@@ -363,6 +369,7 @@ pub(crate) fn core_context_pack_response(
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        capabilities: pack.capabilities,
         l2_base: pack.l2_base,
         quality: Some(pack.retrieval_quality.quality),
         degradation: (!pack.retrieval_quality.degradation.is_empty())
@@ -557,5 +564,21 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
         oneiron::RetrievalSignal::Rerank => "rerank",
         oneiron::RetrievalSignal::Hyde => "hyde",
         oneiron::RetrievalSignal::HydeRetry => "hyde_retry",
+    }
+}
+
+impl CoreContextPackResponse {
+    pub(super) fn observe_rows(
+        &self,
+        read: &oneiron::claim::ScopedRead<'_>,
+        session: &mut oneiron::context_board::SessionReadSet,
+    ) -> oneiron::Result<()> {
+        let ids = self
+            .results
+            .iter()
+            .chain(&self.neighbors)
+            .map(|row| oneiron::EntityId::from_hex(&row.id))
+            .collect::<oneiron::Result<Vec<_>>>()?;
+        session.observe_rows(read, &ids)
     }
 }

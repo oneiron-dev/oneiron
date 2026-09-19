@@ -144,8 +144,9 @@ pub(crate) async fn run_context_pack(
         builder = builder.disclosure_context(ctx.clone());
     }
 
+    let track_plain_pack = memories.is_none();
     let (mut response, memories, cursor) = run_context_pack_builder(
-        &server.vault,
+        server,
         &scoped_read,
         builder,
         projection,
@@ -158,6 +159,18 @@ pub(crate) async fn run_context_pack(
         disclosure,
     )
     .await?;
+    if track_plain_pack {
+        let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
+        if let Some(mut observed) =
+            super::super::session_read_set(server, caller, req.session_id.as_deref()).await?
+        {
+            let mut staged = observed.clone();
+            response
+                .observe_rows(&scoped_read, &mut staged)
+                .map_err(|error| core_engine_error("context-pack observations failed", error))?;
+            *observed = staged;
+        }
+    }
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     Ok((response, memories, cursor))
 }

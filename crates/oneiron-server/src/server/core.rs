@@ -26,10 +26,12 @@ use crate::usage::UsageLedger;
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 
-/// Broadcast payload: (conn_id, encoded_message).
-/// conn_id 0 = local/bridge writes (broadcast to all devices).
-/// conn_id >= 1 = specific connection (echo suppression skips sender).
-pub(crate) type BroadcastPayload = (u32, Vec<u8>);
+/// Internal fan-out. Recovery notices never become wire frames.
+#[derive(Debug, Clone)]
+pub(crate) enum BroadcastPayload {
+    Frame(u32, Vec<u8>),
+    Resync { missed: u64 },
+}
 
 /// Core sync server state shared across all connections.
 pub struct SyncServer {
@@ -60,6 +62,10 @@ pub struct SyncServer {
     pub(crate) usage_ledger: UsageLedger,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
+    /// Vault-owned production code host. No request can replace it.
+    pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// Actor/session read observations share the server lifetime, never a process global.
+    pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -176,9 +182,39 @@ impl SyncServer {
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             config,
             mcp_registry,
+            mcp_code_host: None,
+            memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             deep_retrieval: None,
             embedder: None,
         })
+    }
+
+    /// Bind a readiness-verified QuickJS provider before exposing this vault's
+    /// routes. Missing components or providers keep execute_code unadvertised.
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    #[must_use]
+    pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+        self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
+            Arc::new(provider),
+        )));
+        self
+    }
+
+    pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
+        self.mcp_code_host
+            .as_ref()
+            .filter(|host| host.production_runtime_available())
+    }
+
+    pub(crate) fn mcp_surface(
+        &self,
+        mode: crate::mcp::McpSurfaceMode,
+    ) -> crate::mcp::McpRegisteredSurface {
+        crate::mcp::McpRegisteredSurface::register_with_execution(
+            mode,
+            self.code_execution_host().is_some(),
+        )
+        .expect("every exported verb projects onto an executable tool")
     }
 
     /// Attaches the ONE-207 deep-retrieval host.

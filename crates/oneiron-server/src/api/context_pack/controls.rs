@@ -233,6 +233,9 @@ pub(crate) struct CoreInterlocutorStamp {
     "view": "full"
 }))]
 pub(crate) struct CoreContextPackRequest {
+    /// Optional actor-bound read-session id; omission uses the active session.
+    #[serde(default)]
+    pub(super) session_id: Option<String>,
     /// Optional BM25 text query.
     #[serde(default)]
     #[schema(example = "blue hallway")]

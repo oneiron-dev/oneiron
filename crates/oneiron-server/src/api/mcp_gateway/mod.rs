@@ -1,5 +1,6 @@
 mod actor_dispatch;
 mod admission;
+mod board_observations;
 mod board_setup;
 mod envelope;
 mod exec_board_verbs;

@@ -13,19 +13,9 @@ use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 
-/// `execute_code`: ONE durable REPL run, through the INJECTED host.
-///
-/// UNREACHABLE FROM THE WIRE in this release (ONE-1704 B1/B2). `execute_code`
-/// is registered on neither endpoint and a direct call is refused at
-/// [`mcp_execute_code_unavailable`] before this body could be entered, so no run
-/// is created and the `resume` handle below never reaches a caller. The body is
-/// kept as the private adapter over the injected host seam — the same shape M1
-/// left the retired plain-verb adapters in — and NOT as a second catalog.
-///
-/// The gateway evaluates nothing and owns no dispatch loop. The bound host
-/// constructs `HostSelfDispatcher`/`GatedActorWrite` and enters the existing
-/// sandbox/REPL provider through `EngineNativeExecutor`, which owns every step,
-/// replay row, and terminal marker. With no host bound this fails CLOSED.
+/// One durable REPL run under the authenticated connector actor. This door
+/// becomes wire-reachable only after the host verifies its QuickJS component.
+/// The engine owns all bridge calls, replay checkpoints and terminal markers.
 pub(crate) async fn execute_mcp_execute_code(
     server: &Arc<SyncServer>,
     args: crate::mcp::McpExecuteCodeToolArgs,
@@ -37,7 +27,8 @@ pub(crate) async fn execute_mcp_execute_code(
         ));
     }
 
-    let host = crate::mcp::mcp_code_execution_host()
+    let host = server
+        .code_execution_host()
         .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
     let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
     let outcome = host
@@ -112,7 +103,8 @@ pub(crate) async fn execute_mcp_execute_code(
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
     let code = match error {
-        crate::mcp::McpCodeExecutionError::HostUnbound => -32020,
+        crate::mcp::McpCodeExecutionError::HostUnbound
+        | crate::mcp::McpCodeExecutionError::RunBusy => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_) => -32603,
     };
@@ -423,6 +415,20 @@ pub(super) async fn execute_mcp_board_verb(
     }
     .map_err(mcp_board_verb_error)?;
 
+    let output = match output {
+        oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            oneiron::board_verb::BoardVerbOutput::Frame(
+                board
+                    .changes
+                    .ride(Some(frame))
+                    .expect("rider preserves an existing frame"),
+            )
+        }
+        other => other,
+    };
+    // The present board producer serves TASKS, presence and loaded metadata.
+    // None are new CLAIM/SKILL/AGENT_DEF body observations. An expansion has no
+    // typed entity mapping, so its renderer strings are never parsed for ids.
     let value = mcp_board_verb_output_value(&output);
     let page_source = mcp_board_verb_page_source(args.tool.binding, &value, omissions);
     // A verb that just minted a fresh keyframe returns it as the RESULT; the

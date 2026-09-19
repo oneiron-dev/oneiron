@@ -9,8 +9,11 @@
 mod app_tier;
 mod conn_state;
 mod connection;
+mod documents;
 mod ephemeral;
 mod hello;
+#[cfg(test)]
+mod note_socket_tests;
 mod transport;
 mod window_sync;
 

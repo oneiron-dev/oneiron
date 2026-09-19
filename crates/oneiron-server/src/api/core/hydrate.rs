@@ -45,6 +45,9 @@ pub(crate) struct CoreHydrateRequest {
     #[serde(default)]
     #[schema(example = "full")]
     view: Option<View>,
+    /// Session receiving this body. Defaults to the caller's current board session.
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 /// Short-id hydrate status.
@@ -152,6 +155,9 @@ pub(crate) struct CoreBatchShortIdHydrateRequest {
     #[serde(default)]
     #[schema(example = "full")]
     view: Option<View>,
+    /// Session receiving this body. Defaults to the caller's current board session.
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 /// Batch short-id hydrate response.
@@ -233,8 +239,16 @@ pub(crate) async fn core_hydrate(
     let content_hash_hex = format!("{content_hash:02x}");
     let view = req.view.unwrap_or(View::Full);
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
-    let Some(response) =
-        hydrate_short_id_response(&scoped_read, short_id.clone(), content_hash, view)?
+    let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
+    let mut observations =
+        super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
+    let Some(response) = hydrate_short_id_response(
+        &scoped_read,
+        short_id.clone(),
+        content_hash,
+        view,
+        observations.as_deref_mut(),
+    )?
     else {
         return Err(ApiError::not_found(
             "short_id",
@@ -279,11 +293,21 @@ pub(crate) async fn core_batch_short_id_hydrate(
 
     let view = req.view.unwrap_or(View::Full);
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
+    let mut observations =
+        super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
+    let mut staged_observations = observations.as_deref().cloned();
     let mut results = Vec::with_capacity(req.refs.len());
     for reference in req.refs {
         let item = match parse_short_ref(&reference) {
             Ok((short_id, content_hash)) => {
-                match hydrate_short_id_response(&scoped_read, short_id, content_hash, view)? {
+                match hydrate_short_id_response(
+                    &scoped_read,
+                    short_id,
+                    content_hash,
+                    view,
+                    staged_observations.as_mut(),
+                )? {
                     Some(result) => CoreBatchShortIdHydrateItem {
                         reference,
                         outcome: match result.status {
@@ -322,6 +346,9 @@ pub(crate) async fn core_batch_short_id_hydrate(
         results.push(item);
     }
 
+    if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
+        *target = staged;
+    }
     Ok(Json(CoreBatchShortIdHydrateResponse { results }))
 }
 
@@ -330,6 +357,7 @@ pub(crate) fn hydrate_short_id_response(
     short_id: String,
     content_hash: u8,
     view: View,
+    observations: Option<&mut oneiron::context_board::SessionReadSet>,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
     let content_hash_hex = format!("{content_hash:02x}");
     let result = scoped_read
@@ -362,6 +390,17 @@ pub(crate) fn hydrate_short_id_response(
         }));
     };
 
+    if let Some(observations) = observations {
+        observations
+            .observe_snapshot(
+                scoped_read,
+                id,
+                entity_type,
+                &body,
+                matches!(view, View::Full),
+            )
+            .map_err(|error| core_engine_error("session body observation failed", error))?;
+    }
     let item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
     Ok(Some(CoreHydrateResponse {
         status: CoreHydrateStatus::Live,

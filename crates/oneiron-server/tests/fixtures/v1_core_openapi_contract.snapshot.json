@@ -1826,8 +1826,20 @@
       },
       "ContextBoardResponse": {
         "properties": {
+          "agents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "budget": {
             "$ref": "#/components/schemas/ContextBoardBudget"
+          },
+          "changed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "cursor": {
             "$ref": "#/components/schemas/ContextBoardMemoriesCursor"
@@ -1861,6 +1873,12 @@
           "session": {
             "$ref": "#/components/schemas/ContextBoardSession"
           },
+          "skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "unprocessed": {
             "items": {
               "$ref": "#/components/schemas/ContextBoardUnprocessedItem"
@@ -1873,7 +1891,10 @@
           "notifications",
           "unprocessed",
           "budget",
-          "cursor"
+          "cursor",
+          "changed",
+          "skills",
+          "agents"
         ],
         "type": "object"
       },
@@ -2565,6 +2586,12 @@
       },
       "CoreContextPackResponse": {
         "properties": {
+          "capabilities": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
           "confidenceAdjustment": {
             "format": "float",
             "type": [
@@ -2645,7 +2672,8 @@
           "neighbors",
           "stats",
           "state",
-          "evidence"
+          "evidence",
+          "capabilities"
         ],
         "type": "object"
       },

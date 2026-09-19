@@ -101,6 +101,7 @@
     },
     "response": {
       "body": {
+        "capabilities": [],
         "confidenceAdjustment": -0.35,
         "evidence": {
           "result_ids": [
@@ -202,11 +203,13 @@
     },
     "response": {
       "body": {
+        "agents": [],
         "budget": {
           "tokens_limit": 0,
           "tokens_remaining": 0,
           "tokens_used": 0
         },
+        "changed": [],
         "cursor": {
           "last_result_ids": [],
           "last_retrieval_run_id": "<retrieval-run-id>",
@@ -248,6 +251,7 @@
         },
         "notifications": [],
         "pack": {
+          "capabilities": [],
           "confidenceAdjustment": -0.35,
           "disclosure": {
             "clamped_out": 1,
@@ -320,6 +324,9 @@
           },
           "last_activity": 1782357635
         },
+        "skills": [
+          "loaded: "
+        ],
         "unprocessed": []
       },
       "status": 200

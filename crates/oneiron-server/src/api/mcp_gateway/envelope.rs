@@ -254,14 +254,14 @@ pub(crate) async fn handle_mcp_request(
             let _actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
             Ok(json!({
                 "surfaceMode": mode.as_str(),
-                "tools": crate::mcp::registered_surface(mode).listing(),
+                "tools": server.mcp_surface(mode).listing(),
             }))
         }
         "tools/call" => {
             let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
-                let args = mcp_validated_call_args(mode, params, raw_arguments)?;
+                let args = mcp_validated_call_args(server, mode, params, raw_arguments)?;
                 ensure_mcp_actor_matches(&args, &actor)?;
                 mcp_admit_scoped_call(server, &args, &actor)?;
                 execute_mcp_tool(server, args, &actor).await
