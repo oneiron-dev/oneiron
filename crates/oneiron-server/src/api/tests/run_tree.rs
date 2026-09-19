@@ -5,17 +5,10 @@ use super::*;
 #[tokio::test]
 async fn v1_core_run_tree_reads_attempt_queue_rows() {
     let dir = tempfile::tempdir().expect("temp vault dir");
-    let clock = oneiron::ports::ManualClock::new(10);
-    let vault = Arc::new(
-        oneiron::Vault::open(
-            dir.path(),
-            oneiron::VaultConfig {
-                store_clock: clock.bundle(),
-                ..oneiron::VaultConfig::device()
-            },
-        )
-        .expect("vault"),
-    );
+    let clock = oneiron::store::ports::ManualClock::new(10);
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).expect("vault"));
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(
         SyncServer::new(

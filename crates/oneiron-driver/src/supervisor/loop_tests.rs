@@ -369,15 +369,10 @@ async fn budget_exhausted_with_due_deadline_does_not_busy_loop() {
     // drain; zero-progress BudgetExhausted backs off so a permanently
     // un-admittable grant cannot hot-loop either.
     let dir = tempfile::tempdir().expect("tempdir");
-    let clock = oneiron::ports::ManualClock::new(10);
-    let vault = oneiron::Vault::open(
-        dir.path(),
-        oneiron::VaultConfig {
-            store_clock: clock.bundle(),
-            ..oneiron::VaultConfig::device()
-        },
-    )
-    .expect("vault");
+    let clock = oneiron::store::ports::ManualClock::new(10);
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = oneiron::Vault::open(dir.path(), config).expect("vault");
     let attempt_a = enqueue_micro(&vault, "due-a", 10);
     clock.set(11);
     let attempt_b = enqueue_micro(&vault, "due-b", 11);

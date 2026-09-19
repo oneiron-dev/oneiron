@@ -66,7 +66,7 @@ fn movable_clock(now_ms: u64) -> (Arc<AtomicU64>, NowMillis) {
 
 struct TimedVault {
     vault: Vault,
-    clock: Arc<oneiron::ports::ManualClock>,
+    clock: Arc<oneiron::store::ports::ManualClock>,
 }
 impl std::ops::Deref for TimedVault {
     type Target = Vault;
@@ -76,11 +76,9 @@ impl std::ops::Deref for TimedVault {
 }
 fn open_vault() -> (tempfile::TempDir, TimedVault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let clock = oneiron::ports::ManualClock::new(0);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::device()
-    };
+    let clock = oneiron::store::ports::ManualClock::new(0);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config).expect("vault");
     (dir, TimedVault { vault, clock })
 }

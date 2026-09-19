@@ -27,20 +27,18 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 
 // The driver and vault use the same clock, in their respective ms/sec units.
 struct RecordedDriverClock(NowMillis);
-impl oneiron::ports::Clock for RecordedDriverClock {
+impl oneiron::store::ports::Clock for RecordedDriverClock {
     fn now_recorded_at(&self) -> u64 {
         (self.0)() / 1_000
     }
 }
 fn open_vault_with_clock(clock: NowMillis) -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let config = VaultConfig {
-        store_clock: oneiron::ports::StoreClock::new(
-            Arc::new(RecordedDriverClock(clock)),
-            oneiron::ports::ManualClock::new(0),
-        ),
-        ..VaultConfig::device()
-    };
+    let mut config = VaultConfig::device();
+    config.store_clock = oneiron::store::ports::StoreClock::new(
+        Arc::new(RecordedDriverClock(clock)),
+        oneiron::store::ports::ManualClock::new(0),
+    );
     let vault = Vault::open(dir.path(), config).expect("vault");
     (dir, vault)
 }
