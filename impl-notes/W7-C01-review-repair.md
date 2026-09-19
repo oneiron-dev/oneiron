@@ -174,7 +174,35 @@ Visible-neighbor expansion, filtering and SLIM source-vector counting are
 unchanged. The existing corruption regression and typed-error assertions are
 retained without weakening or duplicating them. No canon-page change is needed.
 
-Validation results for this repair are recorded below after completion.
+Validation completed on source commit `332831bd`, with the source hash
+unchanged through both builds:
+
+- `cargo nextest run -p oneiron --lib --features sync,test-hooks -E <five-test filter> --test-threads=3 --no-fail-fast`: **5 passed, 0 failed, 7,081 skipped**.
+- `cargo nextest run -p oneiron --lib --no-default-features -E <same filter> --test-threads=3 --no-fail-fast`: **5 passed, 0 failed, 6,578 skipped**.
+
+The exact filter selects the unchanged corruption regression,
+`search_vector_empty_graph_and_dimension_validation`,
+`diary_note_is_actor_private_across_reads_recall_and_pack_neighbors`,
+`hnsw_dropped_marker_is_not_empty_corpus`, and
+`hnsw_lazy_search_matches_persisted_discipline_with_fast_dims`.
+Both core library test targets compiled successfully. The standard wrapper
+selected Arch with ticket-owned `target/`, at most three Cargo jobs and three
+test threads. Both durable jobs reached terminal exit 0; partial logs and
+in-flight systemd `Result=success` fields were not used as pass evidence.
+
+Pinned native rustfmt on the changed file, `scripts/codemap/check.sh`
+(2,558 files; 16 artifacts current), and `git diff --check` passed.
+These are scoped core-crate regression results, not a rerun of the complete
+six-crate or full-workspace gate. Earlier unchanged green results remain valid.
+No failing test was removed, disabled or weakened. No source outside `oneiron`
+changed for this repair.
+
+A final complete PR934 refresh still had 11 comments, two reviews and 23
+complete inline threads at the same published head, with no new or edited
+findings. The initial process-bound test command ended before compilation;
+it produced no test result. The replacement durable jobs above supply the
+terminal evidence. Publication and remaining factory stages remain separate.
+
 Raw refreshed reviews, IDs/head bindings, the intake ledger, exact failure,
 commands and logs are in
 `/home/lexi/w7-build/tickets/W7-C01/recovery-fix-tests-after-review/`.
