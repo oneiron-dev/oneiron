@@ -412,6 +412,7 @@ pub fn conflict_open_marker_id(
         ]),
         conflict.identity.world,
         conflict.identity.facet,
+        conflict.identity.topic.as_deref(),
     )
 }
 
@@ -432,7 +433,7 @@ fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
 
 /// Derives a [`PromotionCandidate`]'s write-once claim id DETERMINISTICALLY
 /// from its identity (owning attempt, subject, predicate, canonical value, world,
-/// facet).
+/// facet, question topic).
 ///
 /// `EntityId::now()` mints a fresh id on every call, so under the wake
 /// driver's at-least-once re-execution (a crash after `sink.accept` but before
@@ -447,6 +448,7 @@ pub(super) fn deterministic_claim_id(
     value: &Value,
     world: Option<EntityId>,
     facet: Option<EntityId>,
+    topic: Option<&[u8]>,
 ) -> EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(DREAMER_CLAIM_ID_HASH_DOMAIN);
@@ -464,6 +466,11 @@ pub(super) fn deterministic_claim_id(
     hasher.update(&[u8::from(facet.is_some())]);
     if let Some(facet) = facet {
         hasher.update(facet.as_bytes());
+    }
+    hasher.update(&[u8::from(topic.is_some())]);
+    if let Some(topic) = topic {
+        hasher.update(&(topic.len() as u64).to_le_bytes());
+        hasher.update(topic);
     }
     let digest = hasher.finalize();
     let mut raw = [0_u8; 16];

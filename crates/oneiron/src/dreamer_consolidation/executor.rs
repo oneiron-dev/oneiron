@@ -74,8 +74,7 @@ impl ConsolidationExecutor<'_> {
              Respond with JSON: {\"candidates\": [{\"subject\": \"<32-hex entity id>\", \
              \"predicate\": \"<dotted.predicate>\", \"value\": <json>, \"confidence\": <0..1>, \
              \"evidence_turn_refs\": [\"<32-hex turn id>\"]}]}. Only claims stated by the \
-             user or assistant; never invent evidence refs. For set-valued claims include \"topic_key\": the question (which food, topic, goal, or promise+recipient), \
-             never the answer. Preserve the same topic_key when an answer changes.";
+             user or assistant; never invent evidence refs.";
         LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
@@ -154,14 +153,6 @@ impl ConsolidationExecutor<'_> {
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or(0.5) as f32;
             let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
-            let claim_id = deterministic_claim_id(
-                attempt_id,
-                subject,
-                predicate,
-                &value,
-                partition.world_ref,
-                partition.facet_ref,
-            );
             let evidence_turn_refs: Vec<EntityId> = item
                 .get("evidence_turn_refs")
                 .and_then(|value| value.as_array())
@@ -190,6 +181,16 @@ impl ConsolidationExecutor<'_> {
             if !scope.is_empty() {
                 candidate = candidate.with_scope(Value::Map(scope));
             }
+            let facts = candidate_facts(&candidate)?;
+            let claim_id = deterministic_claim_id(
+                attempt_id,
+                subject,
+                predicate,
+                &facts.value,
+                partition.world_ref,
+                partition.facet_ref,
+                facts.topic.as_deref(),
+            );
             candidates.push(PromotionCandidate {
                 claim_id,
                 candidate,
@@ -543,6 +544,7 @@ fn merged_candidate(
         &value,
         conflict.identity.world,
         conflict.identity.facet,
+        conflict.identity.topic.as_deref(),
     );
     let mut candidate = ClaimCandidate::new(
         conflict.identity.predicate.clone(),

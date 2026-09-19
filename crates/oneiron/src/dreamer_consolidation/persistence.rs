@@ -175,6 +175,7 @@ pub fn close_persistent_conflict(
         &Value::Binary(open.as_bytes().to_vec()),
         body.world,
         None,
+        None,
     );
     let meet = source_meet(
         ClaimSource::Generated,

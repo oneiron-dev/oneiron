@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: ['crates/oneiron/**', 'crates/oneiron-android/**', 'Cargo.lock', '.github/workflows/android-embedded.yml']
+    paths: ['crates/oneiron/**', 'crates/oneiron-android/**', 'crates/heed/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', '.github/workflows/android-embedded.yml']
   workflow_dispatch:
 env:
   CARGO_TERM_COLOR: always
@@ -25,6 +25,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Enforce runner cache budget
+        run: scripts/ci/cap-target-cache.sh
       - name: Android aarch64 toolchain
         run: |
           sdkmanager 'ndk;27.2.12479018' 'platforms;android-35' 'build-tools;35.0.0'
