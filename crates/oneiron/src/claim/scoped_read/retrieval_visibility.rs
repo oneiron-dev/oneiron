@@ -53,6 +53,9 @@ impl<'vault> ScopedRead<'vault> {
         {
             return Ok(false);
         }
+        if !self.audience_readable_in(txn, id)? {
+            return Ok(false);
+        }
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Ok(true);
         }

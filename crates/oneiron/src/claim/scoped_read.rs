@@ -72,6 +72,8 @@ pub struct ScopedRead<'a> {
     vault: &'a crate::vault::Vault,
     actor_key: ScopedReadActorKey,
     policy: Mutex<Option<PolicyManifestResolution>>,
+    audience: Option<Vec<EntityId>>,
+    audience_cache: Mutex<crate::conversation::AudienceCache>,
     /// Session composition (ONE-1728 §7). `None` on the canonical handle,
     /// which therefore reads base only exactly as before; `Some` when the
     /// read was opened through a live session handle, in which case entity
@@ -88,6 +90,8 @@ impl crate::vault::Vault {
             vault: self,
             actor_key,
             policy: Mutex::new(None),
+            audience: None,
+            audience_cache: Mutex::new(Default::default()),
             session_view: None,
         }
     }
@@ -110,12 +114,44 @@ impl crate::vault::Vault {
             vault: self,
             actor_key,
             policy: Mutex::new(None),
+            audience: None,
+            audience_cache: Mutex::new(Default::default()),
             session_view: Some(view),
         }
     }
 }
 
 impl<'a> ScopedRead<'a> {
+    /// Conjoin every read with the all-of-audience rule. An explicit empty
+    /// audience refuses audience-scoped records rather than widening to speaker-only reads.
+    #[must_use]
+    pub fn for_audience(mut self, audience: &[EntityId]) -> Self {
+        let mut ids = audience.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        self.audience = Some(ids);
+        self
+    }
+
+    /// Number of immutable room ledger snapshots loaded by this read handle.
+    pub fn audience_ledger_reads(&self) -> Result<usize> {
+        Ok(self
+            .audience_cache
+            .lock()
+            .map_err(|_| Error::InvariantViolation("audience cache lock"))?
+            .ledger_reads())
+    }
+
+    fn audience_readable_in(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        let Some(audience) = &self.audience else {
+            return Ok(true);
+        };
+        self.audience_cache
+            .lock()
+            .map_err(|_| Error::InvariantViolation("audience cache lock"))?
+            .readable(self.vault, txn, *id, audience)
+    }
+
     #[must_use]
     pub fn vault(&self) -> &'a crate::Vault {
         self.vault
@@ -297,7 +333,20 @@ impl<'a> ScopedRead<'a> {
         if self.vault.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
             return Ok(None);
         }
+        #[cfg(feature = "sync")]
+        let resolved_body = crate::entity_doc::resolve_record_body(
+            &self.vault.store,
+            &rtxn,
+            id,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        #[cfg(feature = "sync")]
+        let body = resolved_body.as_slice();
+        #[cfg(not(feature = "sync"))]
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if !self.audience_readable_in(&rtxn, id)? {
+            return Ok(None);
+        }
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Ok(Some((header.entity_type, header.learned_at, body.to_vec())));
         }
@@ -315,6 +364,9 @@ impl<'a> ScopedRead<'a> {
         let Some(result) = self.vault.hydrate_short_id(short_id, content_hash)? else {
             return Ok(None);
         };
+        if result.body.is_some() && !self.is_entity_readable(&result.id)? {
+            return Ok(None);
+        }
         if result.body.is_none() {
             if result.deletion.is_some() {
                 return Ok(Some(result));
@@ -380,7 +432,10 @@ impl<'a> ScopedRead<'a> {
         let rtxn = self.vault.store.env.read_txn()?;
         let policy = self.policy_manifest_in(&rtxn)?;
         let diagnostics = policy.diagnostics();
-        if !diagnostics.loaded_manifest_forces_fail_closed() && !policy.has_scoped_read_grants() {
+        if self.audience.is_none()
+            && !diagnostics.loaded_manifest_forces_fail_closed()
+            && !policy.has_scoped_read_grants()
+        {
             return Ok(requested);
         }
         drop(rtxn);
@@ -465,6 +520,9 @@ impl<'a> ScopedRead<'a> {
         if self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some() {
             return Ok(false);
         }
+        if !self.audience_readable_in(rtxn, id)? {
+            return Ok(false);
+        }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {
@@ -518,7 +576,7 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         body: &ClaimBody,
     ) -> Result<bool> {
-        if !claim_surfaceable(body) {
+        if !claim_surfaceable(body) || !self.audience_readable_in(rtxn, id)? {
             return Ok(false);
         }
         let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
@@ -647,7 +705,7 @@ impl<'a> ScopedRead<'a> {
                 (_, Some(ENTITY_TYPE_CLAIM)) => {
                     self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
                 }
-                (_, Some(_)) => true,
+                (_, Some(_)) => self.audience_readable_in(&rtxn, &record.id)?,
                 (_, None) => false,
             };
             if readable {

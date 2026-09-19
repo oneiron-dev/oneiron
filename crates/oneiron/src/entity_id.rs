@@ -66,6 +66,25 @@ impl EntityId {
     }
 }
 
+// Entity references have one wire spelling. Deserialization always re-enters
+// the sentinel-rejecting public constructor.
+impl serde::Serialize for EntityId {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+impl<'de> serde::Deserialize<'de> for EntityId {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::from_hex(&value).map_err(serde::de::Error::custom)
+    }
+}
+
 /// First leading byte reserved for received foreign world ids.
 ///
 /// Locally authored WORLD ids remain outside this range. Keeping the foreign

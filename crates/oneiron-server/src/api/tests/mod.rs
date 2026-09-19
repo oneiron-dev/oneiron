@@ -19,6 +19,7 @@ mod companion;
 mod context_pack_disclosure;
 mod context_pack_v4;
 mod contract_snapshots;
+mod conversation_rooms;
 mod core_memory_conversations;
 mod mcp_paging_cursors;
 mod mcp_results_carrier;

@@ -78,7 +78,31 @@ pub(crate) struct CoreCreateTurnRequest {
     text: Option<Vec<CoreTextField>>,
 }
 
-/// List conversation entities.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConversationListQuery {
+    #[serde(default = "super::default_limit")]
+    limit: usize,
+    #[serde(default)]
+    after: Option<String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default, rename = "countMode", alias = "count_mode")]
+    count_mode: CountMode,
+    #[serde(default)]
+    kind: Option<oneiron::conversation::ConversationKind>,
+    #[serde(default)]
+    external_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateConversationRequest {
+    #[serde(flatten)]
+    entity: CoreCreateEntityRequest,
+    #[serde(default)]
+    actor: Option<oneiron::EntityId>,
+}
+
+/// List conversation entities, optionally filtered by effective kind and external id.
 #[utoipa::path(
     get,
     path = "/v1/core/conversations",
@@ -94,11 +118,64 @@ pub(crate) struct CoreCreateTurnRequest {
 pub(crate) async fn list_core_conversations(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    query: Result<Query<CoreListQuery>, QueryRejection>,
+    query: Result<Query<ConversationListQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
-    let params = query_params(query)?;
-    core_list_entities_by_type(&server.vault, ENTITY_TYPE_CONVERSATION, params)
+    let query = query_params(query)?;
+    let params = CoreListQuery {
+        limit: query.limit,
+        after: query.after,
+        view: query.view,
+        count_mode: query.count_mode,
+    };
+    if query.kind.is_none() && query.external_id.is_none() {
+        return core_list_entities_by_type(&server.vault, ENTITY_TYPE_CONVERSATION, params);
+    }
+    let after = params
+        .after
+        .as_deref()
+        .map(|v| parse_entity_id_param(v, "after"))
+        .transpose()?;
+    let (ids, next) = server
+        .vault
+        .conversations_page(
+            query.kind,
+            query.external_id.as_deref(),
+            after.as_ref(),
+            core_list_limit(params.limit),
+        )
+        .map_err(|e| core_engine_error("conversation list failed", e))?;
+    let items = project_entity_ids(&server.vault, ids, params.view.unwrap_or(View::Summary))?;
+    let meta = match params.count_mode {
+        CountMode::None => ResponseMeta::none(),
+        CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
+        CountMode::Exact => {
+            let mut cursor = None;
+            let mut count = 0;
+            loop {
+                let (page, next) = server
+                    .vault
+                    .conversations_page(
+                        query.kind,
+                        query.external_id.as_deref(),
+                        cursor.as_ref(),
+                        1000,
+                    )
+                    .map_err(|e| core_engine_error("conversation count failed", e))?;
+                count += page.len() as u64;
+                cursor = next;
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            ResponseMeta::new(count, CountMode::Exact)
+        }
+    };
+    Ok(Json(PaginatedResponse::new(
+        items,
+        next.map(|id| id.to_hex()),
+        meta,
+    )))
 }
 
 /// Create a conversation entity.
@@ -117,10 +194,31 @@ pub(crate) async fn list_core_conversations(
 pub(crate) async fn create_core_conversation(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CoreCreateEntityRequest>, JsonRejection>,
+    payload: Result<Json<CreateConversationRequest>, JsonRejection>,
 ) -> Result<Json<CoreEntityWriteResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
-    let req = json_payload(payload)?;
+    let request = json_payload(payload)?;
+    let req = request.entity;
+    let body: oneiron::conversation::ConversationBody = serde_json::from_value(req.body.clone())
+        .map_err(|_| {
+            crate::error::ApiError::bad_request("invalid conversation body", Some("body"))
+        })?;
+    if !body.member_ids.is_empty() {
+        let actor = super::conversation_members::actor(&auth, request.actor)?;
+        let id = parse_optional_entity_id(req.id.as_deref(), "id")?;
+        let timestamps =
+            core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
+        server
+            .vault
+            .create_conversation(id, &body, actor, timestamps.occurred.start)
+            .map_err(|e| core_engine_error("conversation create failed", e))?;
+        let item = project_core_entity(&server.vault, &id, View::Full)?.0;
+        return Ok(Json(CoreEntityWriteResponse {
+            id: id.to_hex(),
+            entity_type: ENTITY_TYPE_CONVERSATION,
+            item,
+        }));
+    }
     write_core_entity(
         &server.vault,
         CoreEntityWriteInput {
