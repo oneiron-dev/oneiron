@@ -179,12 +179,13 @@ impl crate::Vault {
         ] {
             for entity in entities {
                 let mut row = memory_row(entity, source);
+                // These bytes and labels belong to the already-authorized
+                // snapshot and its engine-issued ref. A new vault read could
+                // substitute a changed private claim after the read gate.
                 if entity.entity_type == ENTITY_TYPE_CLAIM
-                    && let Some(body) = self.get_claim(&entity.id)?
+                    && let Some(value) = entity.fields.as_ref().and_then(|fields| fields.get("val"))
                 {
-                    row.claim_source = body.source;
-                    row.world = body.world.map(|id| id.to_hex());
-                    let mut value = crate::companion::companion_value_to_json(&body.value);
+                    let mut value = value.clone();
                     crate::batch::export::redact_credentials(&mut value);
                     row.snippet = Some(value.to_string());
                 }
@@ -274,5 +275,44 @@ mod tests {
         );
         assert_eq!(pinned.rows.len(), 1);
         assert_eq!(pinned.rows[0].tier, MemoryTier::Pinned);
+    }
+    #[test]
+    fn memories_render_the_authorized_snapshot_without_refetching_claim_bytes() -> crate::Result<()>
+    {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let mut pack = vault.context_pack().run()?;
+        pack.results = vec![ContextEntity {
+            id: crate::test_util::entity(0x71),
+            short_id: "cl1".into(),
+            content_hash: 0xab,
+            entity_type: ENTITY_TYPE_CLAIM,
+            score: 1.0,
+            edges: None,
+            vector: None,
+            fields: Some(std::collections::HashMap::from([
+                ("src".into(), serde_json::json!("user_stated")),
+                ("val".into(), serde_json::json!("authorized snapshot")),
+            ])),
+        }];
+        // The authorized packet can outlive a rewrite/deletion. It must never
+        // combine its old short-ref hash with a new unguarded body read.
+        let section = vault.project_memories_section(
+            &pack,
+            MemoriesBudget::new(1, 0, 0, 0, 0, 0),
+            None,
+            None,
+            &std::collections::BTreeSet::new(),
+        )?;
+        assert_eq!(
+            section.rows[0].claim_source,
+            Some(crate::claim::ClaimSource::UserStated)
+        );
+        assert_eq!(
+            section.rows[0].snippet.as_deref(),
+            Some("\"authorized snapshot\"")
+        );
+        assert_eq!(section.rows[0].content_hash, "ab");
+        Ok(())
     }
 }

@@ -703,3 +703,75 @@ fn context_pack_evidence_omits_run_id_without_finalized_telemetry() {
     assert!(evidence.result_ids.is_empty());
     assert!(evidence.scores.is_empty());
 }
+
+#[tokio::test]
+async fn pinned_memories_bypass_query_scope_but_not_audience_disclosure() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x1742_0001);
+    let pinned = seeded_test_entity_id(0x1742_0002);
+    let contact = seeded_test_entity_id(0x1742_0003);
+    let bytes = rmp_serde::to_vec_named(&json!({"name":"pin needle"})).unwrap();
+    server
+        .vault
+        .batch()
+        .put(
+            &pinned,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &bytes,
+        )
+        .text(&pinned, &[("name", "pin needle")])
+        .commit()
+        .unwrap();
+    let pack = server
+        .vault
+        .context_pack()
+        .search_text("pin needle", 10)
+        .run()
+        .unwrap();
+    let row = pack.results.iter().find(|row| row.id == pinned).unwrap();
+    let reference = format!("{}:{:02x}", row.short_id, row.content_hash);
+    seed_counterparty_contact(&server, principal, contact, "pin-reader@example.com");
+    seed_disclosure_scope(&server, principal, Vec::new());
+    let request = json!({
+        "retrieval": {"query":"unrelated empty query", "limit":1},
+        "memories": {"shared_total":0, "pinned_refs":[reference]},
+        "session": {"session_id":principal.to_hex()}
+    });
+    let read = || {
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read",
+            &principal.to_hex(),
+            Some(&request),
+        )
+    };
+    let (status, denied) = route_json(server.clone(), read()).await;
+    assert_eq!(status, StatusCode::OK, "{denied}");
+    assert!(denied["memories"]["rows"].as_array().unwrap().is_empty());
+    assert_eq!(denied["pack"]["pin_narrowing"][0]["suppressed_count"], 1);
+    assert!(
+        !denied["rendered_memories"]
+            .as_str()
+            .unwrap()
+            .contains(&reference)
+    );
+    seed_disclosure_scope(&server, principal, vec![pinned]);
+    let (status, allowed) = route_json(server, read()).await;
+    assert_eq!(status, StatusCode::OK, "{allowed}");
+    assert!(allowed["pack"]["results"].as_array().unwrap().is_empty());
+    assert_eq!(allowed["memories"]["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(allowed["memories"]["rows"][0]["tier"], "pinned");
+    assert_eq!(allowed["pack"]["pin_narrowing"][0]["suppressed_count"], 0);
+    assert!(
+        allowed["rendered_memories"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("{reference} trust=unknown tier=PINNED"))
+    );
+}

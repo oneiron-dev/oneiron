@@ -270,31 +270,40 @@ pub(crate) async fn run_context_pack_builder(
             core_engine_error("core context-pack scoped read failed", error)
         })?;
     apply_context_pack_response_limits(&mut pack.value, response_limits);
+    let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
+    // Board provenance/snippets consume the same authorized snapshot, before
+    // the requested JSON profile removes source fields for the separate pack.
+    let projected_memories = memories
+        .as_ref()
+        .and_then(|request| {
+            request.memory_board_budget.map(|budget| {
+                vault.project_memories_section(
+                    &pack.value,
+                    budget,
+                    request.companion.clone(),
+                    assembly.clone(),
+                    &BTreeSet::new(),
+                )
+            })
+        })
+        .transpose()
+        .map_err(|error| core_engine_error("memory provenance projection failed", error))?;
     let pack = pack.finish_projected_json(&projection);
     let run_id = pack.run_id;
     let pack = pack.value;
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
-    let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
     let mut pin_narrowing = Vec::new();
     let (section, cursor) = match memories.as_ref() {
         Some(request) => {
-            let mut section = request
-                .memory_board_budget
-                .map(|budget| {
-                    vault.project_memories_section(
-                        &pack,
-                        budget,
-                        request.companion.clone(),
-                        assembly.clone(),
-                        &BTreeSet::new(),
-                    )
-                })
-                .transpose()
-                .map_err(|error| core_engine_error("memory provenance projection failed", error))?;
+            let mut section = projected_memories;
             if let Some(section) = &mut section {
                 pin_narrowing = section
-                    .include_pinned_refs(scoped_read, &request.pinned_refs)
+                    .include_pinned_refs_with_disclosure(
+                        scoped_read,
+                        &request.pinned_refs,
+                        disclosure.as_ref(),
+                    )
                     .map_err(|error| core_engine_error("memory pin read failed", error))?;
             }
             let cursor = advance_memories_cursor(

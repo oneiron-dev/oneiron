@@ -12,6 +12,17 @@ impl MemoriesSection {
         reader: &ScopedRead<'_>,
         references: &[String],
     ) -> Result<Vec<ScopedReadReceipt>> {
+        self.include_pinned_refs_with_disclosure(reader, references, None)
+    }
+
+    /// Board callers apply their audience disclosure clamp as well as the
+    /// actor's read ceiling. Pins bypass query relevance, never either authority.
+    pub fn include_pinned_refs_with_disclosure(
+        &mut self,
+        reader: &ScopedRead<'_>,
+        references: &[String],
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+    ) -> Result<Vec<ScopedReadReceipt>> {
         let mut receipts = Vec::with_capacity(references.len());
         let mut pins = std::collections::BTreeSet::<EntityId>::new();
         for reference in references {
@@ -29,12 +40,17 @@ impl MemoriesSection {
             let hash = u8::from_str_radix(hash, 16)
                 .map_err(|_| crate::Error::InvalidConfig("invalid memory pin hash".into()))?;
             let hydrated = reader.hydrate_short_id(short_id, hash)?;
-            receipts.push(hydrated.receipt);
+            let mut receipt = hydrated.receipt;
             let Some(hydrated) = hydrated.value else {
+                receipts.push(receipt);
                 continue;
             };
-            let Some(body) = hydrated.body else { continue };
+            let Some(body) = hydrated.body else {
+                receipts.push(receipt);
+                continue;
+            };
             if !pins.insert(hydrated.id) {
+                receipts.push(receipt);
                 continue;
             }
             let claim = if hydrated.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
@@ -42,6 +58,21 @@ impl MemoriesSection {
             } else {
                 None
             };
+            if let Some(disclosure) = disclosure {
+                let txn = reader.vault().store.env.read_txn()?;
+                if !disclosure.admits(
+                    &reader.vault().store,
+                    &txn,
+                    &hydrated.id,
+                    hydrated.entity_type,
+                    claim.as_ref(),
+                )? {
+                    receipt.add_suppressed(1);
+                    receipts.push(receipt);
+                    continue;
+                }
+            }
+            receipts.push(receipt);
             let mut row = MemoryRow {
                 row_index: 0,
                 slot: memory_slot(hydrated.entity_type),

@@ -8458,7 +8458,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/memories_projection.rs",
@@ -8475,7 +8475,7 @@
      "path": "src/context_board/memory_pins.rs",
      "purpose": "Explicit memory pins bypass query relevance and render shedding, never read authority",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
