@@ -32,7 +32,7 @@ impl<'a> PipelineBuilder<'a> {
                     now,
                     0,
                     now,
-                    super::types::DEFAULT_SIGMA_SECS,
+                    crate::pipeline::types::DEFAULT_SIGMA_SECS,
                     limit,
                 )
             } else {

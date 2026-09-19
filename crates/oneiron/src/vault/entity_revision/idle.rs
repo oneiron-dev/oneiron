@@ -189,7 +189,6 @@ impl Vault {
                     .load(std::sync::atomic::Ordering::Acquire),
                 false,
                 false,
-                false,
             )?;
             if wrote_vector && generated_vector {
                 self.store

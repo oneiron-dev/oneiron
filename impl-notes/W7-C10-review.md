@@ -110,3 +110,18 @@ No provider error or clean result was inferred from either status.
   proportional to the host-authorized identity roster seen in a window. This is a
   stated exact-accounting tradeoff, not a claim of constant memory. A future
   disk-backed exact counter is a separate design; no lossy cap is introduced here.
+
+
+### First native validation result
+
+MacBook validation at `637ebe1c` reached the scoped compile and returned 101:
+`builder_effort.rs` named the sigma constant through the wrong parent module;
+the idle publisher supplied one extra boolean to `apply_ops`. Both call sites
+are corrected directly. No test pass was inferred from this failed compile.
+The full macOS test stage uses the exact seven known benchmark exclusions from
+`.github/workflows/ci.yml`; these unchanged platform cases remain Linux coverage,
+not passing macOS evidence. All changed benchmark tests still run.
+
+The complete bot surfaces were refreshed again before these corrections. No new
+findings appeared. Qodo replies `4053503849` and `4053504033` explicitly confirm
+the telemetry decisions as intentional. Codex remains Running, not failed.
