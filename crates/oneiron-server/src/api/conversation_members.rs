@@ -41,9 +41,9 @@ pub(super) fn actor(auth: &CoreAuth, requested: Option<EntityId>) -> Result<Writ
             ));
         }
     };
-    let class = match auth.actor_class().unwrap_or("human") {
-        "human" => EdgeActorClass::Human,
-        "agent" => EdgeActorClass::Agent,
+    let class = match auth.actor_class().or_else(|| auth.is_owner_grade().then_some("human")) {
+        Some("human") => EdgeActorClass::Human,
+        Some("agent") => EdgeActorClass::Agent,
         _ => return Err(ApiError::forbidden_scope("human_or_agent")),
     };
     Ok(WriteActor::new(id, class))
