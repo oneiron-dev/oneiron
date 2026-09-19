@@ -410,7 +410,7 @@ fn deleted_owners_cannot_reconstruct_retained_turns() {
             );
             assert!(
                 vault
-                    .get_with_mode(&turn, crate::vault::ReadMode::Live)
+                    .get_raw_with_mode(&turn, crate::vault::ReadMode::Live)
                     .unwrap()
                     .is_some()
             );

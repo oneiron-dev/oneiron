@@ -413,3 +413,15 @@ These six repairs and four fixture corrections are not yet validated. The
 successor runs the ten focused regression cases, then required full lanes. Native
 Python vault proof remains pending the documented Mac semaphore admission issue;
 older build/collection/no-vault/type-check receipts are not a waiver.
+
+
+### R8 preparation passed; two fixture compilation corrections
+
+The six repairs were committed in eight small commits through `9d627643`.
+Formatting, code-map generation, ratchet and the root-surface pin passed. The
+focused run stopped during test compilation (rc101), before any test ran:
+`TimeRange` needed a crate qualification in the recall fixture, and the board
+fixture needed the existing `get_raw_with_mode` API. Only those two names are
+corrected. No production code, assertion or generated navigation fact changes.
+The same ten focused cases and required full lanes remain pending. The fresh
+complete pre-correction PR corpus has no new finding or changed bot body.

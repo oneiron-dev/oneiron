@@ -729,7 +729,7 @@ fn recall_sparse_reports_completed_vector_execution_in_both_paths() {
         .put_entity(
             &facet,
             crate::registry::ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
+            crate::TimeRange { start: 1, end: 1 },
             1,
             b"facet",
         )
