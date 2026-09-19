@@ -1491,6 +1491,7 @@ fn merge_campaign_arm_report_rejects_invalid_struct_literal_split() {
     // A hand-built literal: the type has no private field to hide behind,
     // so the refusal has to come from validation.
     let forged = CampaignSplitReport {
+        authoring_strategy: base.authoring_strategy,
         arm: base.arm,
         split: base.split,
         dataset: base.dataset,
@@ -2277,11 +2278,36 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
         SplitFixture::passed(0.90, 0.80),
         0.05,
     ));
-    let pin = AuthoringStrategyPin {
-        strategy_id: "tournament-authoring".into(),
-        revision: "candidate-1".into(),
-        config_sha256: "a".repeat(64),
-    };
+    let pin = report.tournament.held_out.authoring_strategy.clone();
+    let mut relabelled = test_config();
+    relabelled.budget.as_mut().unwrap().budget_id = "different-budget".into();
+    relabelled.splits.search.revision = "different-search-revision".into();
+    assert_eq!(
+        AuthoringStrategyPin::from_campaign(&relabelled).unwrap(),
+        pin
+    );
+    for foreign in [
+        AuthoringStrategyPin {
+            strategy_id: "unrelated".into(),
+            ..pin.clone()
+        },
+        AuthoringStrategyPin {
+            revision: "unrelated".into(),
+            ..pin.clone()
+        },
+        AuthoringStrategyPin {
+            config_sha256: "a".repeat(64),
+            ..pin.clone()
+        },
+    ] {
+        assert!(
+            measure_once(&vault, &report, foreign, || panic!(
+                "mismatched strategy must not call the referee"
+            ))
+            .is_err()
+        );
+    }
+    assert_eq!(default_strategy(&vault)?, None);
     let failed = measure_once(&vault, &report, pin.clone(), || {
         SealedRefereeMeasurement::from_referee_scores(0.4, 0.5, "CompanionMem@sealed-v1")
     })?;
@@ -2293,11 +2319,33 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
         ))
         .is_err()
     );
-    let winner = AuthoringStrategyPin {
-        revision: "candidate-2".into(),
-        ..pin
-    };
-    let receipt = measure_once(&vault, &report, winner.clone(), || {
+    // A genuinely different evaluated configuration earns a different shot.
+    let mut config = test_config();
+    config.tournament.max_rounds_k = 1;
+    let baseline = arm_report(
+        &config,
+        CampaignExecutableArm::SinglePass,
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.20, 0.60),
+    );
+    let contender = arm_report(
+        &config,
+        CampaignExecutableArm::Tournament,
+        SplitFixture::passed(0.90, 0.80),
+        SplitFixture::passed(0.90, 0.80),
+    );
+    let decision =
+        build_campaign_held_out_decision(&baseline, &contender, 0.05, held_out_anchor(&config))
+            .unwrap();
+    let winning_report =
+        compare_campaign(AttemptId::now(), &config, baseline, contender, decision).unwrap();
+    let winner = winning_report
+        .tournament
+        .held_out
+        .authoring_strategy
+        .clone();
+    assert_ne!(winner, pin);
+    let receipt = measure_once(&vault, &winning_report, winner.clone(), || {
         SealedRefereeMeasurement::from_referee_scores(0.6, 0.5, "CompanionMem@sealed-v1")
     })?;
     assert!(receipt.became_default);
@@ -2309,4 +2357,31 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
     reward["sealed_referee_score"] = serde_json::json!(0.99);
     assert!(serde_json::from_value::<CampaignComparisonReport>(reward).is_err());
     Ok(())
+}
+
+#[test]
+fn promotion_reports_reject_mixed_or_relabelled_configuration_pins() {
+    let fixture = held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.05,
+    );
+    let mut config = fixture.config.clone();
+    config.tournament.max_rounds_k = 1;
+    assert!(
+        compare_campaign(
+            AttemptId::now(),
+            &config,
+            fixture.single_pass.clone(),
+            fixture.tournament.clone(),
+            fixture.decision.clone()
+        )
+        .is_err()
+    );
+    let mut report = compare(&fixture);
+    report.tournament.held_out.authoring_strategy.config_sha256 = "f".repeat(64);
+    assert!(report.validate().is_err());
+    assert!(
+        merge_campaign_arm_report(report.tournament.search, report.tournament.held_out).is_err()
+    );
 }

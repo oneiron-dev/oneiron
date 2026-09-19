@@ -16,6 +16,29 @@ pub struct AuthoringStrategyPin {
     pub config_sha256: String,
 }
 impl AuthoringStrategyPin {
+    /// Pins the validated authoring behavior used to evaluate this strategy.
+    /// Dataset, budget and verdict settings cannot mint a new sealed shot.
+    pub fn from_campaign(config: &super::CampaignConfig) -> super::CampaignResult<Self> {
+        config.validate()?;
+        let bytes = serde_json::to_vec(&(&config.arms, &config.corpus, &config.tournament))
+            .map_err(|_| super::CampaignError::ReportMismatch {
+                reason: "campaign configuration cannot be serialized",
+            })?;
+        Ok(Self {
+            strategy_id: config.campaign_id.clone(),
+            revision: format!("schema-{}", config.schema_version),
+            config_sha256: format!("{:x}", Sha256::digest(bytes)),
+        })
+    }
+
+    pub(super) fn validate(&self) -> super::CampaignResult<()> {
+        self.key()
+            .map(|_| ())
+            .map_err(|_| super::CampaignError::ReportMismatch {
+                reason: "authoring strategy must be content-pinned",
+            })
+    }
+
     fn key(&self) -> Result<Vec<u8>> {
         if self.strategy_id.is_empty()
             || self.revision.is_empty()
@@ -85,6 +108,11 @@ pub fn measure_once(
         .map_err(|_| invalid("campaign comparison is invalid"))?;
     if campaign.verdict.verdict != ExperimentVerdict::Keep {
         return Err(invalid("only a KEEP winner can become a BEAM candidate"));
+    }
+    if strategy != campaign.tournament.held_out.authoring_strategy {
+        return Err(invalid(
+            "BEAM candidate differs from the campaign KEEP winner",
+        ));
     }
     let key = strategy.key()?;
     vault.with_write_txn(|txn| {
