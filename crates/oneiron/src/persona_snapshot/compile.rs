@@ -324,14 +324,13 @@ impl crate::Vault {
             ),
         );
 
-        // Key relationships from the companion register, honoring the
-        // portable-export law (Portable classification, never SharedVault
-        // scope — matching `export.rs::companion_record_exportable`).
+        // A portable card has no shared-vault destination and discloses only
+        // Public relationships, independently of the audience's claim scope.
         let register = self.companion_register()?;
         let mut related: BTreeMap<EntityId, (Option<String>, String)> = BTreeMap::new();
         for (key, record) in register.iter() {
             if record.kind() != CompanionRecordKind::Relationship
-                || record.sensitivity > crate::federation::Sensitivity::Private
+                || record.sensitivity > crate::federation::Sensitivity::Public
                 || matches!(record.scope, CompanionScope::SharedVault { .. })
             {
                 continue;
