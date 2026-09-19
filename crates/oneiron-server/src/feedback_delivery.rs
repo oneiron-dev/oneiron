@@ -133,10 +133,17 @@ impl FeedbackTransport for HttpFeedbackTransport {
             Ok(reference) => OutboundExecutionOutcome::delivered_to_channel(reference),
             Err(error) => {
                 let mut outcome = OutboundExecutionOutcome::failed(error.to_string());
-                if matches!(
-                    error,
-                    FeedbackDeliveryError::Network | FeedbackDeliveryError::Http(_)
-                ) {
+                // A client rejection proves non-delivery, except timeouts and
+                // operation conflicts: either can follow an accepted send.
+                // Network, redirect and server failures remain indeterminate.
+                let possible_delivery = match error {
+                    FeedbackDeliveryError::Network => true,
+                    FeedbackDeliveryError::Http(status) => {
+                        !(400..500).contains(&status) || matches!(status, 408 | 409)
+                    }
+                    _ => false,
+                };
+                if possible_delivery {
                     outcome = outcome.with_possible_delivery();
                 }
                 self.last_error = Some(error);

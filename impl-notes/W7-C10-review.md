@@ -79,3 +79,34 @@ Generated code maps were regenerated, C15 document connection state was retained
 and the merge rehearsal returned success. Scoped and full native validation are
 queued under the existing C10 target lock and one existing MacBook slot. A pending
 job is not passing evidence; terminal results will be appended here.
+
+
+## Qodo refresh at d5215429 — 2026-09-19 14:49 UTC
+
+Complete REST pages and GraphQL threads were refreshed before further fixes.
+Review `5256053552`, summary comment `5742778055`, and all three inline comments
+are retained with raw head IDs. The review object cites b4e0d63d; the finding
+links and inline objects cite d5215429 (a documentation-only descendant).
+All three thread-comment pages and the thread list report no next page.
+Codex still reports Running; CodeRabbit still explicitly skips automatic review.
+No provider error or clean result was inferred from either status.
+
+- Q1 / inline `4053486714`: valid. Feedback HTTP client rejections must not all
+  become ambiguous delivery. Return definite failure for deterministic 4xx;
+  preserve ambiguity for network failures, server failures, and 408/409 where
+  timeout or duplicate-operation conflict does not prove absence of a side effect.
+  Pin the transport outcome's delivery flag with real loopback responses.
+- Q2 / inline `4053486709`: not applied. `wire_telemetry` is a deliberate public
+  host-observation API, like the other host-composition modules: the host can set
+  RC42 thresholds and read typed window receipts/questions from its vault without
+  a tenant HTTP endpoint. Repository call sites are not the complete set of users
+  of this exported Rust surface. Narrowing the module would remove that supported
+  host door, not repair a demonstrated runtime error.
+- Q3 / inline `4053486712`: overflow-bucket recommendation not applied. OF-520
+  explicitly requires correct per-actor counters/receipts, including the 50k-agent
+  acceptance fixture. Aggregation silently loses those counts and changes per-actor
+  threshold detection. Keys come from authenticated principal bindings (failed
+  authentication uses one fixed bucket), not arbitrary request headers. Memory is
+  proportional to the host-authorized identity roster seen in a window. This is a
+  stated exact-accounting tradeoff, not a claim of constant memory. A future
+  disk-backed exact counter is a separate design; no lossy cap is introduced here.

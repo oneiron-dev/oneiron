@@ -145,3 +145,42 @@ fn transports_deliver_exact_bytes_and_fail_typed_without_redirecting() {
     );
     worker.join().unwrap();
 }
+
+#[test]
+fn rejected_requests_are_definite_failures_but_indeterminate_responses_are_not() {
+    for (status, possible_delivery) in [
+        (400, false),
+        (401, false),
+        (403, false),
+        (404, false),
+        (422, false),
+        (429, false),
+        (408, true),
+        (409, true),
+        (503, true),
+    ] {
+        let (url, worker) = endpoint(status);
+        let mut transport = HttpFeedbackTransport::new(
+            FeedbackDeliveryConfig {
+                destination: FeedbackDestination::Collector,
+                endpoint: url.clone(),
+            },
+            None,
+        )
+        .unwrap();
+        let outcome = call(&mut transport, b"approved", &url);
+        assert_eq!(
+            outcome.kind,
+            oneiron::outbound::OutboundExecutionOutcomeKind::Failed
+        );
+        assert_eq!(
+            outcome.delivery_may_have_occurred, possible_delivery,
+            "HTTP {status}"
+        );
+        assert_eq!(
+            transport.last_error(),
+            Some(&FeedbackDeliveryError::Http(status))
+        );
+        assert_eq!(worker.join().unwrap(), b"approved");
+    }
+}
