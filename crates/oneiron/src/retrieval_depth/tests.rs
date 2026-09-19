@@ -904,3 +904,71 @@ fn pipeline_deadline_skips_rerank_after_admitted_text_and_keeps_best_pack() -> T
     assert!(expired.was_cut_short());
     Ok(())
 }
+
+#[test]
+fn depth_deadline_returns_nonempty_admitted_partial_before_expansion() -> TestResult {
+    use std::sync::Arc;
+    let (_dir, vault, anchor, sibling, neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER)?);
+    let deadline = Arc::new(RetrievalDeadline::at(
+        std::time::Instant::now() + std::time::Duration::from_secs(60),
+    ));
+    let cut = deadline.clone();
+    *vault.test_hooks().after_retrieval_text.lock().unwrap() = Some(Box::new(move || cut.cancel()));
+    let mut request = text_request("launch", Effort::Medium);
+    request.deadline = Some(&deadline);
+    let result = scoped.search_with_effort(&request)?;
+    assert!(result.partial);
+    assert!(deadline.was_cut_short());
+    assert!(hit_ids(&result).contains(&anchor));
+    assert!(hit_ids(&result).contains(&sibling));
+    assert!(!hit_ids(&result).contains(&neighbor));
+    assert!(!result.signals_used.contains(&"ppr".into()));
+    assert_eq!(result.tokens_used, 0);
+    Ok(())
+}
+
+#[test]
+fn high_xhigh_max_have_distinct_depth_and_decomposition_results() -> TestResult {
+    let (_dir, vault, anchor, _, _) = seeded_vault();
+    let extra = [entity(0x61), entity(0x62)];
+    for (id, word) in extra.iter().zip(["xhighonly", "maxonly"]) {
+        vault
+            .batch()
+            .put(id, ENTITY_TYPE_PERSON, range(1), 1, b"body")
+            .text(id, &[("body", word)])
+            .commit()?;
+    }
+    let chain: Vec<_> = (0x71..=0x7a).map(entity).collect();
+    let mut previous = anchor;
+    for id in &chain {
+        vault
+            .batch()
+            .put(id, ENTITY_TYPE_PERSON, range(1), 1, b"body")
+            .edge(&previous, crate::EdgeKind::Mentions, id, 1.0)
+            .commit()?;
+        previous = *id;
+    }
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER)?);
+    let lease = minted_lease();
+    for (effort, rounds, reach) in [
+        (Effort::High, 0, 2),
+        (Effort::Xhigh, 1, 4),
+        (Effort::Max, 2, 10),
+    ] {
+        let backend = ScriptedBackend::new(vec![vec!["xhighonly".into()], vec!["maxonly".into()]]);
+        let mut request = hosted_request("date", effort, Some(&lease), Some(&backend));
+        request.limit = 100;
+        let result = scoped.search_with_effort(&request)?;
+        let ids = hit_ids(&result);
+        assert_eq!(ids.contains(&extra[0]), rounds >= 1, "{effort:?}");
+        assert_eq!(ids.contains(&extra[1]), rounds >= 2, "{effort:?}");
+        assert!(ids.contains(&chain[reach - 1]), "{effort:?}");
+        if reach < chain.len() {
+            assert!(!ids.contains(&chain[reach]), "{effort:?}");
+        }
+        assert_eq!(backend.calls().decompose, rounds);
+        assert!(!result.partial);
+    }
+    Ok(())
+}

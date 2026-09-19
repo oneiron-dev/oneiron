@@ -27,7 +27,14 @@ impl<'a> PipelineBuilder<'a> {
         // turn every lexical query into "return the entire vault since birth".
         if self.temporal_search.is_none() {
             self = if effort == Effort::Max {
-                self.search_temporal_bitemporal(now, now, 0, now, now.max(1), limit)
+                self.search_temporal_bitemporal(
+                    now,
+                    now,
+                    0,
+                    now,
+                    super::types::DEFAULT_SIGMA_SECS,
+                    limit,
+                )
             } else {
                 self.search_temporal(now, now, limit)
             };

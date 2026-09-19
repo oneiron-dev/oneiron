@@ -322,6 +322,21 @@ impl PipelineBuilder<'_> {
             }
         }
 
+        // The in-transaction hash covers the candidate snapshot. Only now are
+        // HyDE assessment/retry boundaries settled, so bind the final stop state
+        // once, immediately before persisting the trace.
+        if self
+            .deadline
+            .is_some_and(crate::retrieval_depth::RetrievalDeadline::was_cut_short)
+            && let Some(trace) = retrieval_trace.as_mut()
+        {
+            use sha2::{Digest, Sha256};
+            let mut hash = Sha256::new();
+            hash.update(b"oneiron.retrieval_trace.partial.v1");
+            hash.update(trace.fork_hash);
+            trace.fork_hash = hash.finalize().into();
+        }
+
         let score_breakdown = telemetry_score_breakdown(
             &scores,
             &signal_components,

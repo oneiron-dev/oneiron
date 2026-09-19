@@ -203,6 +203,20 @@ impl PipelineBuilder<'_> {
                 &mut claim_gate,
             )?;
 
+            #[cfg(test)]
+            if text_channel_index.is_some() {
+                let hook = self
+                    .vault
+                    .test_hooks()
+                    .after_retrieval_text
+                    .lock()
+                    .expect("retrieval text hook")
+                    .take();
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
+
             if let Some(codes) = &self.phonetic_search
                 && !self.deadline_reached()
             {

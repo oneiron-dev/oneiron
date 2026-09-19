@@ -627,3 +627,93 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
     assert_eq!(hits.len(), 5, "bounded by limit, not the full edge set");
     assert!(hits.iter().all(|hit| hit.direction == "out"));
 }
+
+#[test]
+fn recall_raw_deadline_cuts_graph_expansion_but_keeps_direct_hits() {
+    use crate::retrieval_depth::{RecallExecution, RetrievalDeadline};
+    use std::sync::Arc;
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let facade = facade_for(&vault, actor);
+    let anchor = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".into(),
+            body: serde_json::json!({"name": "deadlineanchor"}),
+            text_fields: Some(vec![TextIndexField {
+                field: "name".into(),
+                value: "deadlineanchor".into(),
+            }]),
+            edges: None,
+            occurred_at: 1,
+            learned_at: None,
+        })
+        .unwrap();
+    let neighbor = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".into(),
+            body: serde_json::json!({"name": "graphneighbor"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 1,
+            learned_at: None,
+        })
+        .unwrap();
+    let anchor_id = EntityId::from_hex(&anchor.id_hex).unwrap();
+    let neighbor_id = EntityId::from_hex(&neighbor.id_hex).unwrap();
+    vault
+        .batch()
+        .edge(&anchor_id, crate::EdgeKind::Mentions, &neighbor_id, 1.0)
+        .commit()
+        .unwrap();
+    let complete = facade
+        .recall(
+            "deadlineanchor",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(
+        complete
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("graphneighbor"))
+    );
+    let deadline = Arc::new(RetrievalDeadline::at(
+        std::time::Instant::now() + std::time::Duration::from_secs(60),
+    ));
+    let cut = deadline.clone();
+    *vault.test_hooks().after_retrieval_text.lock().unwrap() = Some(Box::new(move || cut.cancel()));
+    let partial = facade
+        .recall_with_execution(
+            "deadlineanchor",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+            &RecallExecution {
+                deadline: Some(&deadline),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(partial.retrieval_meta.partial);
+    assert!(deadline.was_cut_short());
+    assert!(
+        partial
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("deadlineanchor"))
+    );
+    assert!(
+        !partial
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("graphneighbor"))
+    );
+}
