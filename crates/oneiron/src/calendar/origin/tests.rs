@@ -215,3 +215,18 @@ fn legacy_reads_default_but_originless_calendar_overwrite_refuses() {
     );
     assert_eq!(vault.get(&event).unwrap().unwrap(), body);
 }
+
+#[test]
+fn calendar_fields_without_origin_refuse_and_conflicting_origins_fail_closed() {
+    let (_dir,vault,actor)=fixture();
+    for field in ["evidenceTurnIds","sourceFrontiers","rrule","calendarName","importSource","externalId"] {
+        let id=EntityId::now();
+        let bytes=encode(&Value::Map(vec![(Value::from("name"),Value::from("event")),(Value::from(field),Value::from("value"))])).unwrap();
+        assert!(matches!(vault.put_entity(&id,ENTITY_TYPE_EVENT,time(),1,&bytes),Err(Error::InvalidClaimBody(_))));
+        assert!(vault.get(&id).unwrap().is_none());
+    }
+    let event=vault.create_native_calendar_event(&input(),time(),actor).unwrap();
+    let conflicting=ClaimBody::new(PREDICATE_CALENDAR_ORIGIN,ClaimSubject::Entity(event),Value::from("imported"),1.0,ClaimApprovalStatus::Auto,ClaimLifecycleStatus::Active);
+    vault.put_claim(&EntityId::now(),&conflicting,time(),1).unwrap();
+    assert!(matches!(vault.calendar_event_origin(event),Err(Error::InvalidClaimBody(_))));
+}

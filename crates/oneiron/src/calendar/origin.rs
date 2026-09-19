@@ -75,7 +75,7 @@ impl CalendarEventInput {
         }
         Ok(origin)
     }
-    fn encode(&self) -> Result<Vec<u8>> {
+    pub(in crate::calendar) fn encode(&self) -> Result<Vec<u8>> {
         let origin = self.validate()?;
         let mut fields = vec![
             (Value::from("name"), Value::from(self.name.as_str())),
@@ -154,6 +154,9 @@ pub(crate) fn live_origin(
                 .as_str()
                 .and_then(CalendarOrigin::parse)
                 .ok_or(invalid("calendar origin value"))?;
+            if chosen.is_some_and(|(_, existing)| existing != origin) {
+                return Err(invalid("conflicting live calendar origins"));
+            }
             if chosen.is_none_or(|(old, _)| id < old) {
                 chosen = Some((id, origin));
             }
@@ -171,58 +174,76 @@ impl Vault {
         occurred: TimeRange,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
-        let origin = input.validate()?;
+        input.validate()?;
         if occurred.start > occurred.end {
             return Err(invalid("calendar time is reversed").into());
         }
-        let body = input.encode()?;
         let event = EntityId::now();
         let at = crate::unix_seconds_now();
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
-                for evidence in &input.evidence_turn_ids {
-                    if self.get_entity_type_in_txn(txn, evidence)? != Some(ENTITY_TYPE_TURN) {
-                        return Err(invalid("calendar evidence must be a live TURN").into());
-                    }
-                }
-                let stub = encode(&Value::Map(vec![(
-                    Value::from("name"),
-                    Value::from(input.name.as_str()),
-                )]))?;
-                self.batch_in()
-                    .put(&event, ENTITY_TYPE_EVENT, occurred, at, &stub)
-                    .apply(txn)?;
-                let mut claim = ClaimBody::new(
-                    PREDICATE_CALENDAR_ORIGIN,
-                    ClaimSubject::Entity(event),
-                    Value::from(origin.as_str()),
-                    1.0,
-                    ClaimApprovalStatus::Auto,
-                    ClaimLifecycleStatus::Active,
-                );
-                // Recorded projector fact, not a user-authored assertion about origin.
-                claim.evidence = Some(Value::Map(vec![
-                    (Value::from("kind"), Value::from("calendar_projector")),
-                    (Value::from("write_class"), Value::from("recorded")),
-                    (
-                        Value::from("actor"),
-                        Value::from(actor.entity_ref().to_hex()),
-                    ),
-                ]));
-                self.put_reserved_claim_in_txn(txn, &EntityId::now(), &claim, occurred, at)?;
-                self.batch_in()
-                    .put(&event, ENTITY_TYPE_EVENT, occurred, at, &body)
-                    .apply(txn)?;
-                for evidence in &input.evidence_turn_ids {
-                    self.batch_in()
-                        .edge(&event, EdgeKind::DerivedFrom, evidence, 1.0)
-                        .apply(txn)?;
-                }
-                if live_origin(&self.store, txn, event)? != Some(origin) {
-                    return Err(invalid("calendar EVENT requires live calendar.origin").into());
-                }
+                self.stage_calendar_event(txn, input, occurred, actor, event, at)?;
                 Ok(event)
             })
+    }
+    /// Trusted projectors use this inside their existing admission transaction.
+    pub(in crate::calendar) fn stage_calendar_event(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: &CalendarEventInput,
+        occurred: TimeRange,
+        actor: WriteActor,
+        event: EntityId,
+        at: u64,
+    ) -> Result<()> {
+        let origin = input.validate()?;
+        let body = input.encode()?;
+        let actor_kind = self
+            .get_entity_type_in_txn(txn, &actor.entity_ref())?
+            .ok_or(Error::EntityNotFound)?;
+        crate::provenance::validate_actor_class(actor_kind, actor.actor_class())?;
+        for evidence in &input.evidence_turn_ids {
+            if self.get_entity_type_in_txn(txn, evidence)? != Some(ENTITY_TYPE_TURN) {
+                return Err(invalid("calendar evidence must be a live TURN"));
+            }
+        }
+        let stub = encode(&Value::Map(vec![(
+            Value::from("name"),
+            Value::from(input.name.as_str()),
+        )]))?;
+        self.batch_in()
+            .put(&event, ENTITY_TYPE_EVENT, occurred, at, &stub)
+            .apply(txn)?;
+        let mut claim = ClaimBody::new(
+            PREDICATE_CALENDAR_ORIGIN,
+            ClaimSubject::Entity(event),
+            Value::from(origin.as_str()),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        // Recorded projector fact, not a user-authored assertion about origin.
+        claim.evidence = Some(Value::Map(vec![
+            (Value::from("kind"), Value::from("calendar_projector")),
+            (Value::from("write_class"), Value::from("recorded")),
+            (
+                Value::from("actor"),
+                Value::from(actor.entity_ref().to_hex()),
+            ),
+        ]));
+        self.put_reserved_claim_in_txn(txn, &EntityId::now(), &claim, occurred, at)?;
+        self.batch_in()
+            .put(&event, ENTITY_TYPE_EVENT, occurred, at, &body)
+            .apply(txn)?;
+        for evidence in &input.evidence_turn_ids {
+            self.batch_in()
+                .edge(&event, EdgeKind::DerivedFrom, evidence, 1.0)
+                .apply(txn)?;
+        }
+        if live_origin(&self.store, txn, event)? != Some(origin) {
+            return Err(invalid("calendar EVENT requires live calendar.origin"));
+        }
+        Ok(())
     }
     pub fn create_native_calendar_event(
         &self,
@@ -332,6 +353,10 @@ pub(crate) fn validate_event_write(
             ));
         }
     } else if !replicated {
+        if ["evidenceTurnIds", "sourceFrontiers", "rrule", "calendarName", "importSource", "externalId"]
+            .iter().any(|field| get(field).is_some()) {
+            return Err(invalid("calendar EVENT fields require origin"));
+        }
         let prefix = crate::vault::edge_kind_prefix(&event, EdgeKind::ClaimOf);
         for entry in store.edges_in.prefix_iter(txn, &prefix)? {
             let (key, _) = entry?;

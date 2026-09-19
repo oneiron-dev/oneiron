@@ -5,9 +5,9 @@ use super::{derive_entity_id, ingest};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
-    CalendarStatus, CalendarStatusBasis, CalendarTimeKind, PREDICATE_CALENDAR_ORIGIN,
-    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
-    decode_status_value, decode_time_kind_value,
+    CalendarStatus, CalendarStatusBasis, CalendarTimeKind, PREDICATE_CALENDAR_PASSPORT,
+    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, decode_status_value,
+    decode_time_kind_value,
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
@@ -20,6 +20,7 @@ use crate::entity_id::EntityId;
 use crate::ingest::{
     ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
 };
+use crate::ports::EntityStore;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -68,7 +69,6 @@ impl PollAdmission<'_> {
             PassportDecision::CreateEvent => {
                 let event_ref = self.mint_event(event)?;
                 index_passport_uid(self.vault, &event.uid, &event_ref)?;
-                self.admit_origin(event_ref, event)?;
                 self.admit_time_kind(event_ref, event)?;
                 self.admit_fresh_passport(event_ref, event)?;
                 self.apply_imported_cancel(event_ref, event)?;
@@ -142,30 +142,92 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    /// Mints the EVENT entity: structural write only, occurred from the
-    /// parsed times, `name` from SUMMARY with a UID fallback.
-    fn mint_event(&self, event: &ParsedVEvent) -> Result<EntityId, CalendarError> {
-        let event_ref = EntityId::now();
-        let occurred = self.event_occurred(event);
-        let body = encode_event_body(event_name(event))?;
-        self.vault
-            .put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, self.now, &body)?;
-        Ok(event_ref)
+    /// Birth and recorded import provenance commit together. Screening still
+    /// happens before admission; origin is a projector fact, not a proposed
+    /// semantic claim that can disappear from the live EVENT projection.
+    fn mint_event(&mut self, event: &ParsedVEvent) -> Result<EntityId, CalendarError> {
+        let body = screen_body(event);
+        let screened =
+            screen_then_claim(self.safeguard_enabled, self.screener, &body, |request| {
+                let token = verdict_token(&request.verdict);
+                let actor = ensure_ics_import_actor(self.vault, self.now)?;
+                let id = EntityId::now();
+                let input = crate::calendar::origin::CalendarEventInput {
+                    origin: Some(CalendarOrigin::Imported),
+                    name: event_name(event).to_owned(),
+                    import_source: Some(self.source_record_id(event)),
+                    external_id: Some(event.uid.clone()),
+                    calendar_name: Some(self.config.system.clone()),
+                    ..Default::default()
+                };
+                let admitted = self.vault.with_write_txn(|txn| {
+                    self.vault.stage_calendar_event(
+                        txn,
+                        &input,
+                        self.event_occurred(event),
+                        WriteActor::new(actor, crate::EdgeActorClass::System),
+                        id,
+                        self.now,
+                    )?;
+                    Ok(id)
+                });
+                Ok((admitted, token))
+            })?;
+        let (admitted, token) = screened.value;
+        self.verdict_fold.record(token);
+        Ok(admitted?)
     }
 
-    /// Re-mints the EVENT's structural row from a drifted VEVENT: the id is
-    /// stable, occurred and `name` follow the new head. Without this the
-    /// update verdict would move only the passport while the event kept
-    /// stale content — the drift detector's whole point.
+    /// Drift changes the EVENT's time/name without erasing its origin or
+    /// extraction/import fields. Imported provenance follows this feed version;
+    /// a native EVENT with an attached passport remains native.
     fn rewrite_event(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
-        let occurred = self.event_occurred(event);
-        let body = encode_event_body(event_name(event))?;
-        self.vault
-            .put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, self.now, &body)?;
+        self.vault.with_write_txn(|txn| {
+            let origin = crate::calendar::origin::live_origin(&self.vault.store, txn, event_ref)?
+                .ok_or(crate::Error::InvalidClaimBody(
+                "calendar EVENT requires live calendar.origin",
+            ))?;
+            let row = self
+                .vault
+                .port_entity_get(txn, &event_ref)?
+                .ok_or(crate::Error::EntityNotFound)?;
+            let raw = row.body;
+            let mut value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
+                .map_err(|_| crate::Error::InvalidClaimBody("calendar EVENT body"))?;
+            let rmpv::Value::Map(fields) = &mut value else {
+                return Err(crate::Error::InvalidClaimBody("calendar EVENT body"));
+            };
+            let mut replace = |name: &str, value: rmpv::Value| {
+                fields.retain(|(key, _)| key.as_str() != Some(name));
+                fields.push((rmpv::Value::from(name), value));
+            };
+            replace("name", rmpv::Value::from(event_name(event)));
+            replace("origin", rmpv::Value::from(origin.as_str()));
+            if origin == CalendarOrigin::Imported {
+                replace(
+                    "importSource",
+                    rmpv::Value::from(self.source_record_id(event)),
+                );
+                replace("externalId", rmpv::Value::from(event.uid.as_str()));
+            }
+            let mut body = Vec::new();
+            rmpv::encode::write_value(&mut body, &value)
+                .map_err(|_| crate::Error::InvalidClaimBody("calendar EVENT body encode"))?;
+            self.vault
+                .batch_in()
+                .put(
+                    &event_ref,
+                    ENTITY_TYPE_EVENT,
+                    self.event_occurred(event),
+                    self.now,
+                    &body,
+                )
+                .apply(txn)
+        })?;
         Ok(())
     }
 
@@ -183,23 +245,6 @@ impl PollAdmission<'_> {
                 end: self.now,
             },
         }
-    }
-
-    fn admit_origin(
-        &mut self,
-        event_ref: EntityId,
-        event: &ParsedVEvent,
-    ) -> Result<(), CalendarError> {
-        let body = screen_body(event);
-        let source_record_id = self.source_record_id(event);
-        self.admit_screened(
-            event_ref,
-            &body,
-            &source_record_id,
-            PREDICATE_CALENDAR_ORIGIN,
-            rmpv::Value::from(CalendarOrigin::Imported.as_str()),
-        )?;
-        Ok(())
     }
 
     /// Admits the event's `calendar.time` kind claim, superseding the prior
@@ -465,17 +510,6 @@ fn event_name(event: &ParsedVEvent) -> &str {
         .unwrap_or(event.uid.as_str())
 }
 
-/// The EVENT body row: a MessagePack map carrying only the name.
-fn encode_event_body(name: &str) -> Result<Vec<u8>, CalendarError> {
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
-    )
-    .map_err(|_| ingest("event body did not encode"))?;
-    Ok(body)
-}
-
 /// Admits one typed-value claim through the Gate-backed imported-evidence
 /// door and returns the new claim id. The write actor is the adapter's own
 /// MACHINE entity, ensured on first use.
@@ -653,11 +687,37 @@ mod tests {
             .expect("event exists");
         assert_eq!(before.occurred_start, 1_786_024_800);
         assert_eq!(before.occurred_end, 1_786_028_400);
+        assert_eq!(
+            vault.calendar_event_origin(event).unwrap(),
+            CalendarOrigin::Imported
+        );
+        let bytes = vault.get(&event).unwrap().unwrap();
+        let body = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes)).unwrap();
+        let field = |key: &str| {
+            body.as_map()
+                .unwrap()
+                .iter()
+                .find(|(k, _)| k.as_str() == Some(key))
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(field("origin"), Some(rmpv::Value::from("imported")));
+        assert_eq!(field("externalId"), Some(rmpv::Value::from("uid-oc@x")));
+        assert!(
+            field("importSource")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("uid-oc@x")
+        );
 
         let drifted = BodyFetcher {
             body: one_event_feed("20260807T090000Z", "20260807T093000Z"),
         };
         run_ics_feed_poll(&vault, &drifted, &config, 1_800_000_100, 7).expect("drift poll");
+        assert_eq!(
+            vault.calendar_event_origin(event).unwrap(),
+            CalendarOrigin::Imported
+        );
         let after = vault
             .read_entity_header(&event)
             .expect("header")
