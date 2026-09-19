@@ -169,3 +169,24 @@ This schema is deliberately distinct from a fleet receipt and cannot set a fleet
 CI floor. It does not start agent sockets or claim fleet throughput. Use it to
 verify the cache-miss scaling acceptance without repeating the unrelated socket
 load at every graph size. A non-sublinear result is reported honestly, not masked.
+
+## Keeping a long profile alive across a writer round
+
+`python3 scripts/fleet-observe.py --receipt process.json -- <bench command>`
+records the measured process's exit/signal, wall/CPU time and peak resident bytes.
+Its process receipt is not a throughput receipt. `--detach --log profile.log`
+also creates an admission file and a separate POSIX session. This is useful for
+remote macOS jobs, but **setsid and reparenting do not escape a Linux cgroup**.
+A factory that cleans up the seat's session scope can still remove those local
+processes before their terminal receipt is written.
+
+For a local Linux profile that must outlive its seat, launch the observer as a
+new transient user unit (`systemd-run --user --collect`), not under the seat's
+session scope. Verify the unit's `ControlGroup` differs from the seat's before
+claiming custody. Do not install or restart a service, add a runtime kill clock,
+change shared host settings, or kill another unit. Keep the process-local FD
+limit and all data/log/output paths explicit. Store runtime data under the
+assigned worktree's `target/fleet-*` directories, which the source-sync wrapper
+excludes. This prevents live LMDB files or pending receipts from being copied or
+deleted during source sync. Compile activity during a measurement must still be
+reported as host load, not silently treated as an isolated performance sample.
