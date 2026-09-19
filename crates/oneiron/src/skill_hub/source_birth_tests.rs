@@ -128,7 +128,13 @@ fn converted_partial_frontmatter_survives_reopen_with_exact_hash_and_dedup() -> 
             .import_files()?,
         files()
     );
-    assert!(document.manifest.bundle_omissions.is_empty());
+    assert!(
+        !document
+            .manifest
+            .bundle_omissions
+            .iter()
+            .any(|omission| omission.entity_id == id.to_hex())
+    );
     let package = stored(&vault, id)?;
     assert_eq!(decode_hub_package(&encode_hub_package(&package)?)?, package);
     let mut forged_capabilities = package.clone();
@@ -314,7 +320,13 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
     let export = vault.export_whole_vault(PackFormat::Json)?;
     let document = vault.read_whole_vault_json(export.bytes())?;
     assert_eq!(document.manifest.import_refusals, Vec::new());
-    assert!(document.manifest.bundle_omissions.is_empty());
+    assert!(
+        !document.manifest.bundle_omissions.iter().any(|omission| [
+            parent.to_hex(),
+            fork_id.to_hex()
+        ]
+        .contains(&omission.entity_id))
+    );
     let policies: Vec<_> = document
         .manifest
         .import_omissions

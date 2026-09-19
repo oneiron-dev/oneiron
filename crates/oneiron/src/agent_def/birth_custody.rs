@@ -75,6 +75,9 @@ pub(crate) fn stage_birth_custody_put(
         store
             .vault_meta
             .put(txn, &key(OWNED, &child), id.as_bytes())?;
+        store
+            .vault_meta
+            .put(txn, &key(BINDING, id), child.as_bytes())?;
     }
     if kind != ENTITY_TYPE_AGENT_DEF && store.vault_meta.get(txn, &key(OWNED, id))?.is_some() {
         retire_birth_source_holder_in_txn(store, txn, id)?;
