@@ -200,11 +200,13 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
             serde_json::Value::String(source.as_str().to_owned()),
         );
     }
-    if body.world.is_some() {
-        // On-disk `world` is a 16-byte binary id (ONE-1117); the generic
-        // projection renders binary as null, and so does this one — same as
-        // `subj` below. Only present when the claim carries a world scope.
-        out.insert("world".to_owned(), serde_json::Value::Null);
+    if let Some(world) = body.world {
+        // Keep the validated world identity in this authorized snapshot.
+        // Board fences must not depend on optional edges or a later vault read.
+        out.insert(
+            "world".to_owned(),
+            serde_json::Value::String(world.to_hex()),
+        );
     }
     if body.rel.is_some() {
         // On-disk `rel` is MessagePack binary and renders as JSON null.
