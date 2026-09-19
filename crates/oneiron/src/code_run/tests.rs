@@ -2838,15 +2838,16 @@ fn observed_lineage_does_not_touch_the_memory_write_fixture() -> Result<()> {
 fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_first_party_actor(&vault);
-    install_self_memory_allow_policy(&vault, actor)?;
     let owner = seed_person(&vault, 0xB7);
-    let memory = vault.memory(owner, EdgeActorClass::Human);
+    // Admit the owner's setup through the real gate before testing another actor.
+    install_self_memory_allow_policy(&vault, owner)?;
+    let memory = vault.memory(owner, EdgeActorClass::Agent);
     let put = crate::memory::KeyValuePut {
         namespace: vec!["private".into()],
         key: "k".into(),
         request_id: "one".into(),
         value: serde_json::json!({"n":1}),
-        source: "user_stated".into(),
+        source: "generated".into(),
     };
     let address = crate::memory::KeyValueAddress {
         namespace: put.namespace.clone(),
@@ -2855,6 +2856,7 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
     let original = memory.key_value_put(&put).unwrap();
     let id = EntityId::from_hex(&original.item.revision)?;
     let before = vault.get_raw(&id)?.unwrap();
+    install_self_memory_allow_policy(&vault, actor)?;
     let session = vault.off_record_session_vault().enter(
         "keyed-write-guard",
         crate::off_record::OffRecordBackendClass::Local,
@@ -2939,6 +2941,7 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
         assert!(replay.replayed);
         assert_eq!(replay.item, original.item);
     }
+    install_self_memory_allow_policy(&vault, owner)?;
     let replacement = memory
         .key_value_put(&crate::memory::KeyValuePut {
             request_id: "two".into(),
