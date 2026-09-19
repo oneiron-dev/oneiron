@@ -6,6 +6,61 @@ agents. Each agent has a distinct persisted PERSON principal, a signed v2 token
 with `actor_class=agent`, and one real v8 app-tier WebSocket. No mock server or
 in-memory transport stands in for a held connection.
 
+## First measured fleet baseline (2026-09-19)
+
+MacBook M4 Max, 16 logical CPUs, macOS kernel 27.0.0, optimized opt-3 binary.
+Cinema worktree storage; 20,000 distinct authenticated actors, 4 listeners,
+64 in-flight operations, 4 runtime threads, 1 write/recall round per actor.
+This was a shared Wave host, not an isolated CPU-capacity experiment.
+
+| Phase | Completed | Throughput/s | p99 ms |
+|---|---:|---:|---:|
+| ppr_full | 100 | 13.440 | 234.767 |
+| ppr_prepare | 100 | 16.745 | 212.334 |
+| ppr_resume | 100 | 13.148 | 135.658 |
+| recall_0 | 20,000 | 22.096 | 8,187.406 |
+| socket_open | 20,000 | 18,725.396 | 14.832 |
+| socket_probe_after | 20,000 | 117,658.969 | 1.180 |
+| socket_probe_before | 20,000 | 115,877.485 | 0.667 |
+| write_0 | 20,000 | 16.835 | 8,898.897 |
+
+All 20,000 writes were checked against stored MESSAGE text. All 20,000 recalls
+contained their corresponding committed message. Both socket probes passed,
+with the same 20,000 connections retained for 2,094.427 seconds. The observer
+reported exit 0, 2,172.800 seconds total wall time and 5,594,202,112 peak resident
+bytes. Setup and post-write content verification are not in the phase timings.
+
+The 100 cold/resume PPR pairs produced identical IDs and score bits. However,
+resume achieved only **0.9783x** fresh throughput (0.5480x including preparation).
+That is **not** a demonstrated speedup and does not yet qualify this receipt as
+an approved CI floor. The lower resume p99 does not erase the mean slowdown.
+
+Source receipts: [fleet](evidence/W7-C10/fleet-macbook-before.json),
+[process](evidence/W7-C10/fleet-macbook-before-process.json). The binary BLAKE3 is
+`a455c0908e1c91b6c1b3fb9fb1bcfe811a44f5ffbc2bd3d0de717ead3dcdabd7`.
+The mirror has no Git metadata; its null revision/dirty fields are retained, not
+replaced with an inferred source revision. This artifact includes the telemetry
+scalar repair, before the later cache-insert optimization and cfg-only cleanup.
+
+The first durable Arch attempt ended with a 120-second operation deadline error
+after 2,003.913 seconds. Its failed receipt does not expose the failing phase or
+successful partial counts, so no throughput is inferred. It is retained as
+[failed evidence](evidence/W7-C10/fleet-arch-timeout.json) with its
+[process outcome](evidence/W7-C10/fleet-arch-timeout-process.json). The next attempt
+keeps 20,000 agents and all assertions, with an explicit 600-second operation
+deadline. This changes the profile budget, not host settings or storage durability.
+
+### RC42 threshold comparison
+
+The current manifest defaults are 50,000,000 calls per verb and 1,000,000 per
+actor in a 60-second window. The measured aggregate witness and recall rates
+extrapolate to about 1,010 and 1,326 calls/minute respectively. The verb default
+is over 37,000 times the larger rate. Even the 18,725/s connection/auth-bind
+burst extrapolates to about 1.124 million/minute, over 44 times below that default.
+These are observations under this workload, not predicted future capacity.
+The per-actor default remains far above this one-write/one-recall profile.
+Manifest edits still take effect without restart and never refuse a call.
+
 ## Workload and measurement boundaries
 
 - One vault and one `SyncServer::new` + `build_app` loopback server share the
