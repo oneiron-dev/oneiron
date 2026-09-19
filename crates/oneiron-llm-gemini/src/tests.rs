@@ -276,3 +276,52 @@ fn signature_metadata_does_not_hide_unsupported_content() {
     let mut accumulator = GeminiAccumulator::default();
     assert!(accumulator.push(json!({"candidates":[{"content":{"parts":[{"thoughtSignature":"sig","inlineData":{}}]}}]})).is_err());
 }
+
+#[test]
+fn interleaved_parts_keep_provider_order_across_chunks() {
+    let first = json!({"candidates":[{"content":{"parts":[
+        {"text":"A"},
+        {"functionCall":{"id":"call-1","name":"f","args":{}}},
+        {"text":"B"}
+    ]}}]});
+    let mut accumulator = GeminiAccumulator::default();
+    let mut events = accumulator.push(first).unwrap();
+    events.extend(
+        accumulator
+            .push(json!({"candidates":[{"content":{"parts":[
+        {"text":"C"}
+    ]},"finishReason":"STOP"}]}))
+            .unwrap(),
+    );
+    let Some(LlmStreamEvent::Done { message, .. }) = events.last() else {
+        panic!("missing terminal");
+    };
+    assert_eq!(
+        message.content,
+        vec![
+            ContentPart::Text { text: "A".into() },
+            ContentPart::ToolCall {
+                call_id: "call-1".into(),
+                name: "f".into(),
+                input: json!({})
+            },
+            ContentPart::Text { text: "B".into() },
+            ContentPart::Text { text: "C".into() },
+        ]
+    );
+    let starts: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            LlmStreamEvent::TextStart { part_id } => Some(part_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 3);
+    assert_eq!(
+        starts
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        3
+    );
+}

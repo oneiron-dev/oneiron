@@ -16,6 +16,7 @@ pub(super) struct GeminiAccumulator {
     assembly: StreamAssembly,
     usage: Option<LlmUsage>,
     tool_seq: usize,
+    part_seq: usize,
 }
 impl GeminiAccumulator {
     pub(super) fn push(&mut self, chunk: Value) -> LlmResult<Vec<LlmStreamEvent>> {
@@ -52,11 +53,15 @@ impl GeminiAccumulator {
             .and_then(Value::as_array)
         {
             for part in parts {
+                // Chunk-local indices restart at zero. Use a stream-wide identity
+                // for every provider part so interleaved content keeps its order.
+                let part_id = format!("part-{}", self.part_seq);
+                self.part_seq += 1;
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
                     if part.get("thought").and_then(Value::as_bool) == Some(true) {
                         events.extend(
                             self.assembly.reasoning(
-                                "reasoning-0",
+                                &part_id,
                                 text,
                                 part.get("thoughtSignature")
                                     .and_then(Value::as_str)
@@ -64,7 +69,7 @@ impl GeminiAccumulator {
                             )?,
                         );
                     } else {
-                        events.extend(self.assembly.text("text-0", text)?);
+                        events.extend(self.assembly.text(&part_id, text)?);
                     }
                 } else if let Some(call) = part.get("functionCall") {
                     let name = call
