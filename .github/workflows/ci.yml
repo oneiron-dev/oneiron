@@ -153,13 +153,6 @@ jobs:
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
           "$HOME/ci/tools/bin/sccache" --version
-      - name: Restore shared compiler artifacts
-        uses: actions/cache@v4
-        with:
-          path: ~/ci/sccache
-          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -276,13 +269,6 @@ jobs:
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
           "$HOME/ci/tools/bin/sccache" --version
-      - name: Restore shared compiler artifacts
-        uses: actions/cache@v4
-        with:
-          path: ~/ci/sccache
-          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -374,13 +360,6 @@ jobs:
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
           "$HOME/ci/tools/bin/sccache" --version
-      - name: Restore shared compiler artifacts
-        uses: actions/cache@v4
-        with:
-          path: ~/ci/sccache
-          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -435,13 +414,6 @@ jobs:
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
           "$HOME/ci/tools/bin/sccache" --version
-      - name: Restore shared compiler artifacts
-        uses: actions/cache@v4
-        with:
-          path: ~/ci/sccache
-          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -459,14 +431,21 @@ jobs:
 
   mutation-audit:
     name: Mutation audit
+    permissions:
+      contents: read
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 180
     needs: changes
-    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch')
+    if: >-
+      always()
+      && vars.CI_PAUSED != 'true'
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success')
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
+          persist-credentials: false
           fetch-depth: 0
       - name: Shared compiler cache (sccache 0.15.0)
         run: |
@@ -475,13 +454,6 @@ jobs:
           echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
           "$HOME/ci/tools/bin/sccache" --version
-      - name: Restore shared compiler artifacts
-        uses: actions/cache@v4
-        with:
-          path: ~/ci/sccache
-          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Pinned mutant runner
         run: |
           cargo install --locked cargo-mutants@27.1.0 --root "$HOME/ci/tools"
