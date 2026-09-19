@@ -4,6 +4,21 @@ use oneiron_remote::llm::{OwnServerTransport, RemoteLlmClient};
 use std::collections::BTreeMap;
 
 struct Backend;
+fn backend_error(model: &ModelId) -> Option<FatalLlmError> {
+    match model.name() {
+        "fail" => Some(FatalLlmError::Auth),
+        "filtered" => Some(FatalLlmError::ContentFiltered),
+        "empty" => Some(FatalLlmError::EmptyResponse),
+        "unsupported" => Some(FatalLlmError::Unsupported(
+            oneiron::llm::UnsupportedCapability {
+                capability: LlmCapability::JsonResponse,
+                model: Some(model.clone()),
+                reason: Some("fixture capability".into()),
+            },
+        )),
+        _ => None,
+    }
+}
 fn response() -> LlmResponse {
     LlmResponse {
         message: LlmMessage {
@@ -30,16 +45,16 @@ fn response() -> LlmResponse {
 impl LlmBackend for Backend {
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            if request.model.name() == "fail" {
-                Err(FatalLlmError::Auth.into())
+            if let Some(error) = backend_error(&request.model) {
+                Err(error.into())
             } else {
                 Ok(response())
             }
         })
     }
     fn stream<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
-        if request.model.name() == "fail" {
-            return Err(FatalLlmError::Auth.into());
+        if let Some(error) = backend_error(&request.model) {
+            return Err(error.into());
         }
         let response = response();
         Ok(LlmStream::new(futures_util::stream::iter(vec![
@@ -81,7 +96,7 @@ fn request() -> LlmRequest {
     }
 }
 fn seed_models(vault: &Vault) {
-    for name in ["model", "fail"] {
+    for name in ["model", "fail", "filtered", "empty", "unsupported"] {
         vault
             .put_model_registry_row(&oneiron::llm::registry::ModelRegistryRow {
                 version: 1,
@@ -144,6 +159,12 @@ async fn own_server_transport_reaches_authenticated_server_and_settles_local_bud
         assert!(matches!(runtime.block_on(client.generate(bad.clone(), &lease)), Err(LlmError::Fatal(FatalLlmError::Auth))));
         let mut failed = client.stream(bad, &lease).unwrap();
         assert!(matches!(runtime.block_on(failed.next()), Some(Err(LlmError::Fatal(FatalLlmError::Auth)))));
+        for name in ["filtered", "empty", "unsupported"] {
+            let mut typed = request();
+            typed.model = ModelId::new(format!("own/{name}@1")).unwrap();
+            let expected = backend_error(&typed.model).unwrap();
+            assert_eq!(runtime.block_on(client.generate(typed, &lease)), Err(expected.into()));
+        }
         let denied = RemoteLlmClient::connect(&origin, "wrong").unwrap();
         assert!(matches!(runtime.block_on(denied.generate(request(), &lease)), Err(LlmError::Fatal(FatalLlmError::Auth))));
         let scoped_token = crate::auth::mint_core_token_v2("fixture-owner", "scope=core:write");
@@ -151,7 +172,7 @@ async fn own_server_transport_reaches_authenticated_server_and_settles_local_bud
         assert!(matches!(runtime.block_on(scoped.generate(request(), &lease)), Err(LlmError::Fatal(FatalLlmError::Auth))));
         guard.abort(&lease).unwrap();
     }).await.unwrap();
-    assert_eq!(budget.read().used_units, 20);
+    assert_eq!(budget.read().used_units, 50);
     assert_eq!(budget.read().reserved_units, 0);
     serving.abort();
 }
@@ -279,5 +300,77 @@ async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_
         }
         assert_eq!(budget.read().reserved_units, 0);
         assert_eq!(budget.read().used_units, 10);
+    }
+}
+
+#[tokio::test]
+async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
+    use tower::ServiceExt;
+    struct MissingUsage;
+    impl LlmBackend for MissingUsage {
+        fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+            Box::pin(async {
+                let mut answer = response();
+                answer.usage = LlmUsage::zero();
+                Ok(answer)
+            })
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            let answer = response();
+            Ok(LlmStream::new(futures_util::stream::iter(vec![Ok(
+                LlmStreamEvent::Done {
+                    message: answer.message,
+                    usage: LlmUsage::zero(),
+                    finish_reason: answer.finish_reason,
+                },
+            )])))
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    seed_models(&vault);
+    let budget =
+        BudgetGuard::with_reserve_units("missing-usage", 20, 10, BudgetExhaustionPolicy::Suspend);
+    let server = SyncServer::new(
+        vault,
+        crate::config::SyncServerConfig {
+            auth_secret: Some("owner".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_llm_backend(Arc::new(MissingUsage), budget.clone());
+    let router = crate::api::api_routes(Arc::new(server));
+    for (index, verb) in ["generate", "stream", "generate"].into_iter().enumerate() {
+        let reply = router
+            .clone()
+            .oneshot(
+                axum::http::Request::post(format!("/v1/llm/{verb}"))
+                    .header("authorization", "Bearer owner")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request()).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if index == 2 {
+            assert_eq!(reply.status(), StatusCode::PAYMENT_REQUIRED);
+        } else {
+            assert_eq!(reply.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(reply.into_body(), 65_536)
+                .await
+                .unwrap();
+            if verb == "generate" {
+                let terminal: LlmResponse = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(terminal.message, response().message);
+            } else {
+                assert!(matches!(
+                    serde_json::from_slice::<LlmStreamEvent>(&bytes).unwrap(),
+                    LlmStreamEvent::Done { .. }
+                ));
+            }
+        }
+        assert_eq!(budget.read().used_units, 10 * ((index + 1).min(2) as u64));
+        assert_eq!(budget.read().reserved_units, 0);
     }
 }

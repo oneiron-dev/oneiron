@@ -23,7 +23,7 @@ fn refusal(status: StatusCode, code: &str) -> Response {
 }
 fn failure(error: LlmError) -> Response {
     use oneiron::{FatalLlmError, RetryableLlmError};
-    let (status, code) = match error {
+    let (status, code) = match &error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
         LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::UNAUTHORIZED, "auth"),
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
@@ -33,12 +33,27 @@ fn failure(error: LlmError) -> Response {
         LlmError::Retryable(RetryableLlmError::Timeout) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
-    refusal(status, code)
+    (
+        status,
+        Json(serde_json::json!({"error":{"code":code,"llm":error}})),
+    )
+        .into_response()
 }
 struct Reservation {
     guard: BudgetGuard,
     lease: BudgetLease,
     started: bool,
+}
+impl Reservation {
+    fn settle_terminal(&self, usage: &oneiron::LlmUsage) -> Result<(), oneiron::llm::BudgetDenied> {
+        // Providers can omit usage even after producing content. Zero totals are
+        // not proof of a free call; retain the same conservative charge as drop.
+        if usage.input.total == 0 && usage.output.total == 0 {
+            self.guard.settle_reserved(&self.lease).map(|_| ())
+        } else {
+            self.guard.settle_per_call(&self.lease, usage).map(|_| ())
+        }
+    }
 }
 impl Drop for Reservation {
     fn drop(&mut self) {
@@ -98,10 +113,7 @@ async fn generate(
     reservation.started = true;
     match backend.generate(request, &reservation.lease).await {
         Ok(response) => {
-            if let Err(e) = reservation
-                .guard
-                .settle_per_call(&reservation.lease, &response.usage)
-            {
+            if let Err(e) = reservation.settle_terminal(&response.usage) {
                 return failure(e.into());
             }
             Json(response).into_response()
@@ -150,7 +162,7 @@ async fn stream(
                 }
             };
             let done = if let LlmStreamEvent::Done { usage, .. } = &event {
-                if let Err(error) = reservation.guard.settle_per_call(&reservation.lease, usage) {
+                if let Err(error) = reservation.settle_terminal(usage) {
                     send_error(&send, error.into()).await;
                     return;
                 }

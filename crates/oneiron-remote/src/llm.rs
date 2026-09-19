@@ -29,6 +29,10 @@ impl RemoteLlmClient {
 }
 /// Typed server failures; no retries or budget policy live in this transport.
 pub fn classify_status(status: u16, body: &serde_json::Value) -> LlmError {
+    if let Some(error) = body.pointer("/error/llm") {
+        return serde_json::from_value(error.clone())
+            .unwrap_or_else(|_| FatalLlmError::InvalidRequest.into());
+    }
     if body
         .pointer("/error/code")
         .and_then(serde_json::Value::as_str)
