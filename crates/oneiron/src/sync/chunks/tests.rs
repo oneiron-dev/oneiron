@@ -140,3 +140,88 @@ fn reply_corruption_and_replay_after_delete_never_publish() {
     }
     assert!(b.lfs_object(oid).unwrap().is_none());
 }
+
+#[test]
+fn manifest_and_want_requests_enforce_grant_scope_and_asset_family() -> Result<()> {
+    use crate::error::{SyncError, SyncProtocolValidation, SyncSelectorValidation};
+    use crate::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, SelectorRange,
+        encode_federation_grant_body,
+    };
+    use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, TypeByteFamily};
+    use crate::sync::selector::SyncSelectorWorld;
+
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let body = b"grant-scoped chunk bytes";
+    let oid = LfsOid::digest(body);
+    vault.put_lfs_object(oid, body, time(), time().start)?;
+    let manifest = vault.lfs_manifest(oid)?.expect("manifest");
+    let principal = EntityId::now();
+    let grant_id = EntityId::now();
+    let scope = FederationGrantScope::vault(7);
+    let grant = FederationGrant::new(
+        scope,
+        principal,
+        FederationGrantRole::Viewer,
+        FederationGrantPreset::ReadOnly,
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            time(),
+            time().start,
+            &encode_federation_grant_body(&grant)?,
+        )
+        .commit()?;
+    let mut selector = SyncSelector::new(
+        grant_id,
+        principal,
+        SyncSelectorWorld::All,
+        vec![],
+        vec![SelectorRange::Family(TypeByteFamily::Content)],
+    );
+    for want in [None, Some(vec![manifest.chunks[0].hash])] {
+        selector.bands = vec![SelectorRange::Family(TypeByteFamily::Content)];
+        let mut request = ChunkSyncRequest {
+            oid: *oid.as_bytes(),
+            selector: encode_sync_selector(&selector)?,
+            have: vec![],
+            want,
+        };
+        let allowed =
+            serve_chunk_request(&vault, principal, scope, &encode_chunk_request(&request)?)?;
+        match decode::<ChunkSyncResponse>(&allowed)? {
+            ChunkSyncResponse::Manifest(bytes) => {
+                assert!(request.want.is_none());
+                assert_eq!(bytes, manifest.encode()?);
+            }
+            ChunkSyncResponse::Chunks(chunks) => {
+                assert!(request.want.is_some());
+                assert_eq!(chunks, vec![(manifest.chunks[0].hash, body.to_vec())]);
+            }
+        }
+        assert!(matches!(
+            serve_chunk_request(
+                &vault,
+                principal,
+                FederationGrantScope::vault(8),
+                &encode_chunk_request(&request)?,
+            ),
+            Err(Error::Sync(SyncError::SyncProtocolError {
+                context: SyncProtocolValidation::Selector {
+                    reason: SyncSelectorValidation::GrantScopeMismatch
+                }
+            }))
+        ));
+        // This is a valid, principal-bound selector, but not for this asset.
+        selector.bands = vec![SelectorRange::Family(TypeByteFamily::People)];
+        request.selector = encode_sync_selector(&selector)?;
+        assert!(matches!(
+            serve_chunk_request(&vault, principal, scope, &encode_chunk_request(&request)?),
+            Err(Error::Artifact(ArtifactError::InvalidLfsObject(_)))
+        ));
+    }
+    Ok(())
+}
