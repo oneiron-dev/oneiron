@@ -493,7 +493,7 @@ fn message_stream_continuation_uses_same_document_and_crash_retains_committed_ba
         vault.entities_by_type(ENTITY_TYPE_MESSAGE).unwrap(),
         vec![message]
     );
-    let mut sibling = turn.clone();
+    let mut sibling = turn;
     sibling.messages[0].id = Some(EntityId::now().to_hex());
     sibling.messages[0].order = 1;
     sibling.messages[0].content = "next sibling".to_owned();

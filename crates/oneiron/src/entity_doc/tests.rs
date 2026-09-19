@@ -364,7 +364,7 @@ fn multiple_writer_forks_keep_distinct_durable_bases_and_merge_stale_edits() -> 
     let first_req = edit_request(&vault, id, writer, " first")?;
     let first = vault.open_text_proposal(
         &first_id,
-        &[first_req.clone()],
+        std::slice::from_ref(&first_req),
         &DocAuthorization::ProposeOnly,
         10,
     )?;

@@ -231,7 +231,7 @@ fn streamed_2_3_gb_generated_fixture_has_bounded_chunks() {
     let after: BTreeSet<_> = edited_manifest.chunks.iter().map(|c| c.hash).collect();
     let changed = after.difference(&before).count();
     assert!((1..=8).contains(&changed));
-    assert!(!after.intersection(&before).collect::<Vec<_>>().is_empty());
+    assert!(after.intersection(&before).next().is_some());
     // Exactly the new manifest plus changed chunks; the repeated original
     // model chunks remain the same stored ASSETs, not rewritten copies.
     assert_eq!(
