@@ -318,17 +318,19 @@ fn eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault() {
     let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
 
-    let result = run_outcome_ingest(&eval_argv(
-        "outcome-ingest",
-        tempdir.path(),
-        &VaultConfig::device(),
-        &[
-            "--rewards".to_owned(),
-            rewards_path.display().to_string(),
-            "--key".to_owned(),
-            "beam.reward".to_owned(),
-        ],
-    )[1..]);
+    let result = run_outcome_ingest(
+        &eval_argv(
+            "outcome-ingest",
+            tempdir.path(),
+            &VaultConfig::device(),
+            &[
+                "--rewards".to_owned(),
+                rewards_path.display().to_string(),
+                "--key".to_owned(),
+                "beam.reward".to_owned(),
+            ],
+        )[1..],
+    );
 
     let applied = assert_existing_only_result(result);
     let vault = open_vault(tempdir.path());
@@ -401,19 +403,21 @@ fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
     let before = vault.retrieval_blend_weight_table().expect("table");
     drop(vault);
 
-    let result = run_tune(&eval_argv(
-        "tune",
-        tempdir.path(),
-        &VaultConfig::device(),
-        &owned(&[
-            "--max-runs",
-            "8",
-            "--learning-rate",
-            "0.10",
-            "--min-reward-count",
-            "1",
-        ]),
-    )[1..]);
+    let result = run_tune(
+        &eval_argv(
+            "tune",
+            tempdir.path(),
+            &VaultConfig::device(),
+            &owned(&[
+                "--max-runs",
+                "8",
+                "--learning-rate",
+                "0.10",
+                "--min-reward-count",
+                "1",
+            ]),
+        )[1..],
+    );
 
     let applied = assert_existing_only_result(result);
     let vault = open_vault(tempdir.path());
@@ -443,12 +447,14 @@ fn eval_tune_honors_the_max_runs_bound() {
     let before = vault.retrieval_blend_weight_table().expect("table");
     drop(vault);
 
-    let result = run_tune(&eval_argv(
-        "tune",
-        tempdir.path(),
-        &VaultConfig::device(),
-        &owned(&["--max-runs", "1"]),
-    )[1..]);
+    let result = run_tune(
+        &eval_argv(
+            "tune",
+            tempdir.path(),
+            &VaultConfig::device(),
+            &owned(&["--max-runs", "1"]),
+        )[1..],
+    );
 
     let applied = assert_existing_only_result(result);
     let vault = open_vault(tempdir.path());
@@ -589,17 +595,19 @@ fn eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config() {
     let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
 
-    let result = run_outcome_ingest(&eval_argv(
-        "outcome-ingest",
-        tempdir.path(),
-        &non_device_vault_config(),
-        &[
-            "--rewards".to_owned(),
-            rewards_path.display().to_string(),
-            "--key".to_owned(),
-            "beam.reward".to_owned(),
-        ],
-    )[1..]);
+    let result = run_outcome_ingest(
+        &eval_argv(
+            "outcome-ingest",
+            tempdir.path(),
+            &non_device_vault_config(),
+            &[
+                "--rewards".to_owned(),
+                rewards_path.display().to_string(),
+                "--key".to_owned(),
+                "beam.reward".to_owned(),
+            ],
+        )[1..],
+    );
 
     let applied = assert_existing_only_result(result);
     let vault = open_vault_with(tempdir.path(), non_device_vault_config());
@@ -628,19 +636,21 @@ fn eval_tune_opens_a_non_device_vault_through_the_explicit_config() {
     let before = vault.retrieval_blend_weight_table().expect("table");
     drop(vault);
 
-    let result = run_tune(&eval_argv(
-        "tune",
-        tempdir.path(),
-        &non_device_vault_config(),
-        &owned(&[
-            "--max-runs",
-            "8",
-            "--learning-rate",
-            "0.10",
-            "--min-reward-count",
-            "1",
-        ]),
-    )[1..]);
+    let result = run_tune(
+        &eval_argv(
+            "tune",
+            tempdir.path(),
+            &non_device_vault_config(),
+            &owned(&[
+                "--max-runs",
+                "8",
+                "--learning-rate",
+                "0.10",
+                "--min-reward-count",
+                "1",
+            ]),
+        )[1..],
+    );
 
     let applied = assert_existing_only_result(result);
     let vault = open_vault_with(tempdir.path(), non_device_vault_config());
@@ -910,25 +920,23 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
     wrong_argv.extend_from_slice(&reward_flags);
     let refused = run(&wrong_argv);
 
-    let ingest = run_outcome_ingest(&eval_argv(
-        "outcome-ingest",
-        &vault_path,
-        &config,
-        &reward_flags,
-    )[1..]);
-    let tune = run_tune(&eval_argv(
-        "tune",
-        &vault_path,
-        &config,
-        &owned(&[
-            "--max-runs",
-            "8",
-            "--learning-rate",
-            "0.10",
-            "--min-reward-count",
-            "1",
-        ]),
-    )[1..]);
+    let ingest =
+        run_outcome_ingest(&eval_argv("outcome-ingest", &vault_path, &config, &reward_flags)[1..]);
+    let tune = run_tune(
+        &eval_argv(
+            "tune",
+            &vault_path,
+            &config,
+            &owned(&[
+                "--max-runs",
+                "8",
+                "--learning-rate",
+                "0.10",
+                "--min-reward-count",
+                "1",
+            ]),
+        )[1..],
+    );
 
     assert!(matches!(refused, ExitCode::FAILURE));
     let applied = assert_existing_only_result(ingest);
@@ -1049,7 +1057,11 @@ fn eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index() {
     // No text is seeded, so the empty-index rewrite branch is the reachable one.
     let vault = open_vault_with(&vault_path, config.clone());
     assert!(
-        vault.doctor().expect("doctor").analyzer_manifest_hash.is_some(),
+        vault
+            .doctor()
+            .expect("doctor")
+            .analyzer_manifest_hash
+            .is_some(),
         "the fixture stamps an analyzer manifest"
     );
     drop(vault);
@@ -1072,5 +1084,8 @@ fn eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index() {
     assert!(matches!(exit, ExitCode::FAILURE));
     // Do not use a create-capable reopen to inspect an empty text index: that
     // door could repair the manifest and hide a write by the refused command.
-    assert_eq!(std::fs::read(&data_path).expect("persisted vault bytes"), before);
+    assert_eq!(
+        std::fs::read(&data_path).expect("persisted vault bytes"),
+        before
+    );
 }
