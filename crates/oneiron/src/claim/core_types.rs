@@ -563,6 +563,7 @@ pub(crate) fn validate_claim_body_and_decode(
     // predicate-agnostic, so it must not sit behind a predicate-specific
     // branch that only some claims enter.
     validate_claim_source_lineage(&body)?;
+    super::supersession_provenance::validate(&body)?;
     if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
         validate_edge_provenance_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_LEXICAL_QUERY_HINT {

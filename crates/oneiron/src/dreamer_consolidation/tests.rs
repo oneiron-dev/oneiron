@@ -23,6 +23,7 @@ use crate::{
 
 use super::*;
 
+mod contradictions;
 mod person_extraction;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
@@ -1841,9 +1842,13 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
     };
     block_on_ready(executor.execute(&admitted, &mut ctx))?;
 
-    // Contradictions never land silently: nothing sinks, the gap row exists
-    // (a re-upsert of the same identity refreshes rather than creates).
-    assert!(sink.accepted.is_empty());
+    // Contradictions land only as a conflict.open marker, not as a belief.
+    assert_eq!(sink.accepted.len(), 1);
+    assert_eq!(
+        sink.accepted[0].candidate.predicate(),
+        crate::claim::PREDICATE_CONFLICT_OPEN
+    );
+    assert!(sink.accepted[0].supersedes.is_none());
     let probe = ReflectionGap {
         kind: ReflectionGapKind::ContradictionLeftStanding,
         subject,

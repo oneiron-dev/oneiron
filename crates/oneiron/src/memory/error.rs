@@ -200,6 +200,11 @@ impl From<Error> for MemoryError {
             };
         }
         match err.kind() {
+            ErrorKind::OffRecordTalkOnly => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["This session cannot retain this action. Start a separate on-record session."],
+            ),
             ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => Self::new(
                 MEMORY_CODE_NOT_FOUND,
                 message,

@@ -4,9 +4,7 @@
 //! concern per file under this directory.
 
 use super::outbound::*;
-use super::tests::{
-    claim_input, facade_for, open_vault, put_person, short_id_part, test_time, witness_message,
-};
+use super::tests::{claim_input, facade_for, open_vault, put_person, test_time, witness_message};
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, EdgeKind};

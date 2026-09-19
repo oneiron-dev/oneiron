@@ -391,10 +391,20 @@ fn facade_stale_upsert_rolls_back_new_claim() {
     let winner_short_ref = std::cell::RefCell::new(String::new());
     let err = facade
         .claim_upsert_with_pre_txn_hook(&replacement, || {
-            let receipt = facade_for(&vault, actor)
+            facade_for(&vault, actor)
                 .claim_upsert(&winner)
                 .expect("the concurrent revision wins the race");
-            *winner_short_ref.borrow_mut() = receipt.claim_short_id;
+            let body = vault.get_claim(&winner_id).unwrap().unwrap();
+            vault
+                .approve_inbox_member_with_edit_at(
+                    &winner_id,
+                    &crate::claim::encode_claim_body(&body).unwrap(),
+                    crate::unix_seconds_now(),
+                )
+                .expect("owner confirms concurrent winner");
+            *winner_short_ref.borrow_mut() = facade_for(&vault, actor)
+                .short_ref_or_hex(&winner_id)
+                .unwrap();
         })
         .expect_err("the advisory prior moved before the transaction");
 
@@ -461,7 +471,17 @@ fn facade_stale_retract_exposes_invalid_state_and_successor() {
     replacement.id = Some(replacement_id.to_hex());
     let replacement_receipt = facade
         .claim_upsert(&replacement)
-        .expect("replacement supersedes the first");
+        .expect("replacement is proposed");
+    assert_eq!(replacement_receipt.approval, "proposed");
+    let body = vault.get_claim(&replacement_id).unwrap().unwrap();
+    vault
+        .approve_inbox_member_with_edit_at(
+            &replacement_id,
+            &crate::claim::encode_claim_body(&body).unwrap(),
+            crate::unix_seconds_now(),
+        )
+        .expect("owner confirms replacement");
+    let replacement_short_ref = facade.short_ref_or_hex(&replacement_id).unwrap();
 
     // By hex id: the prior's short ref rotated its content-hash suffix when
     // the supersession rewrote its body, and a client holding the pre-close
@@ -472,7 +492,7 @@ fn facade_stale_retract_exposes_invalid_state_and_successor() {
     assert_eq!(err.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         err.successor_short_id.as_deref(),
-        Some(replacement_receipt.claim_short_id.as_str())
+        Some(replacement_short_ref.as_str())
     );
 
     // Never retargeted, never silently no-opped: the successor stays live and

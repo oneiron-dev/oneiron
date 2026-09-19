@@ -33,7 +33,7 @@ impl<'vault> ScopedRead<'vault> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<bool> {
-        if filter.deny_all {
+        if filter.deny_all || !self.is_entity_readable_with_policy_in(txn, policy, id)? {
             return Ok(false);
         }
         let Some(raw) = self.entities().get(txn, id.as_bytes())? else {

@@ -220,7 +220,13 @@ fn classify_member(
         classes.push(InboxExceptionClass::PluginInstall);
     }
 
-    let verb_class = if member.body.predicate == PREDICATE_CONFLICT_OPEN {
+    let verb_class = if member.body.predicate == PREDICATE_CONFLICT_OPEN
+        || member
+            .pending
+            .reason_codes
+            .iter()
+            .any(|code| code == "gate.pending.contradiction_closure")
+    {
         classes.push(InboxExceptionClass::Conflict);
         VERB_CLASS_CONFLICT
     } else {

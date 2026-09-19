@@ -25,11 +25,10 @@
 //!   source/lineage relationship is structurally inspectable — and the
 //!   central `validate_claim_source_lineage` guard can compare the two on
 //!   every write door;
-//! * the approval REQUEST is `Auto` for every candidate. There are no
-//!   approval queues on this path: a write the gate does not grant Auto is
-//!   rolled back and reported as a per-candidate REJECTION, never converted
-//!   into a pending approval item. `PromotionOutcome.pended` is therefore
-//!   structurally empty here.
+//! * ordinary creates request `Auto` and roll back on refusal. Destructive
+//!   replacements share the deferred closure gate with memory upserts: held
+//!   replacements and conflict markers persist Proposed. Only a granted closure
+//!   writes the edge and its runner-owned provenance companion.
 //!
 //! The actor axis is untouched: the Dreamer stays visible as the writing
 //! actor in the envelope/provenance while the epistemic source describes the
@@ -74,11 +73,8 @@ pub struct DreamerRunContext {
 pub struct PromotionOutcome {
     /// Landed with `Auto` approval (gate-granted).
     pub landed: Vec<EntityId>,
-    /// STRUCTURALLY EMPTY since ONE-1710 (ARCH-0067 §7: "no approval
-    /// queues"). The field survives for callers that pattern-match the
-    /// outcome, but consolidation never routes a candidate here: a write the
-    /// gate declines to grant Auto is rolled back and lands in `rejected`,
-    /// so no owner-review row is ever minted behind the Dreamer's back.
+    /// Destructive replacements and conflict markers retained as Proposed.
+    /// Ordinary create refusals still go to `rejected`.
     pub pended: Vec<EntityId>,
     /// Not written (typed reason per candidate); the loop continues.
     pub rejected: Vec<(EntityId, String)>,
@@ -131,12 +127,13 @@ pub fn promote_consolidated_claims_with_checker(
 
     for candidate in candidates {
         let claim_id = candidate.claim_id;
-        match promote_one(vault, run, candidate, checker) {
+        match promote_one(vault, run, candidate, checker, false) {
             // `promote_one` rolls back anything the gate did not grant Auto,
             // so the non-Auto arm is unreachable defence-in-depth: it stays a
             // REJECTION rather than silently minting the approval queue row
             // ONE-1710 removed.
             Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(claim_id),
+            Ok(ClaimApprovalStatus::Proposed) => outcome.pended.push(claim_id),
             Ok(other) => outcome.rejected.push((
                 claim_id,
                 format!(
@@ -159,7 +156,9 @@ fn promote_one(
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
     checker: Option<&BoundedAutoChecker>,
+    force_proposed: bool,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
+    let retry = candidate.clone();
     // 1. Evidence admission (GATE-11 write-path consumption): drop refs
     // resolving to evidence-inadmissible CLAIM entities and refs that do
     // not resolve at all; zero survivors is a typed rejection.
@@ -216,7 +215,7 @@ fn promote_one(
         }
         _ => SourceLineage::of(ClaimSource::Generated),
     };
-    let envelope = WriteEnvelope::with_lineage(
+    let mut envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
         WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain))
@@ -226,6 +225,34 @@ fn promote_one(
         ClaimApprovalStatus::Auto,
         lineage,
     );
+
+    let is_conflict_marker =
+        candidate.candidate.predicate() == crate::claim::PREDICATE_CONFLICT_OPEN;
+    let held = if let Some(old) = candidate.supersedes.as_ref() {
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| error.to_string())?;
+        vault
+            .supersession_requires_confirmation_in_txn(
+                &txn,
+                old,
+                &candidate.candidate.clone().into_claim_body(&envelope),
+            )
+            .map_err(|error| error.to_string())?
+    } else {
+        false
+    };
+    if held || is_conflict_marker || force_proposed {
+        envelope = WriteEnvelope::with_lineage(
+            envelope.actor(),
+            source,
+            envelope.provenance().clone(),
+            ClaimApprovalStatus::Proposed,
+            envelope.lineage().clone(),
+        );
+    }
 
     // Surviving evidence + the typed chain + the computed meet ride the
     // candidate's structured evidence payload: the envelope evidence map's
@@ -267,7 +294,13 @@ fn promote_one(
     // GATE-007 (Generated over UserStated) surfaces here per-candidate.
     let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
         if let Some(old_id) = candidate.supersedes.as_ref() {
-            vault.supersede_claim_in_txn(wtxn, &candidate.claim_id, old_id, run.now_ms)?;
+            vault.stage_claim_supersession_in_txn(
+                wtxn,
+                &candidate.claim_id,
+                old_id,
+                &envelope,
+                run.now_ms,
+            )?;
         }
         // No approval queues (§4/§9): failures during phase-2 apply, supersession,
         // or this in-transaction presence/Auto-approval check roll back the claim,
@@ -281,7 +314,10 @@ fn promote_one(
                 .ok_or(Error::InvalidClaimBody(
                     "consolidation claim is missing inside its own write transaction",
                 ))?;
-        if landed.approval != ClaimApprovalStatus::Auto {
+        if landed.approval != ClaimApprovalStatus::Auto
+            && candidate.supersedes.is_none()
+            && !is_conflict_marker
+        {
             return Err(Error::InvalidClaimBody(
                 "consolidation write was not granted Auto; no approval queue is created",
             ));
@@ -316,6 +352,12 @@ fn promote_one(
         })
     };
     if let Err(error) = write {
+        if !force_proposed
+            && retry.supersedes.is_some()
+            && error.kind() == crate::ErrorKind::GateWriteRejected
+        {
+            return promote_one(vault, run, retry, checker, true);
+        }
         return Err(format!("gated write rejected: {error}"));
     }
 

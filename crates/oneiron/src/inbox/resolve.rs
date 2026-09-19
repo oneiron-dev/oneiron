@@ -217,36 +217,46 @@ impl Vault {
         now: u64,
     ) -> Result<InboxAmendedApproval> {
         let (approval, vad_claim_id) = self.with_write_txn(|wtxn| {
-            let accepted = accept_member_with_amendment_in_txn(
-                self,
-                wtxn,
-                claim_id,
-                None,
-                now,
-                Some(amended_body),
-            )?
-            .ok_or(Error::EntityNotFound)?;
-            let mut receipt = gate_decision_receipt(&accepted.record);
-            // The Δ rides the same attach pass every receipt query uses, so
-            // the door's own return and a later query cannot disagree about
-            // it — and it rides it INSIDE the write txn, which is what keeps
-            // the returned Result honest. Enriching after the commit meant a
-            // read failure reported Err on a consent decision that had
-            // already landed; here the same failure rolls it back.
-            attach_amendment_deltas(self, wtxn, std::slice::from_mut(&mut receipt))?;
-            Ok((
-                InboxAmendedApproval {
-                    claim_id: claim_id.to_hex(),
-                    receipt,
-                    delta: accepted.delta,
-                },
-                accepted.vad_claim_id,
-            ))
+            self.approve_inbox_member_with_edit_in_txn(wtxn, claim_id, amended_body, now)
         })?;
         if let Some(claim_id) = vad_claim_id {
             self.consolidate_claim_vad_now(&claim_id, now)?;
         }
         Ok(approval)
+    }
+
+    pub(crate) fn approve_inbox_member_with_edit_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim_id: &EntityId,
+        amended_body: &[u8],
+        now: u64,
+    ) -> Result<(InboxAmendedApproval, Option<EntityId>)> {
+        let accepted = accept_member_with_amendment_in_txn(
+            self,
+            wtxn,
+            claim_id,
+            None,
+            now,
+            Some(amended_body),
+        )?
+        .ok_or(Error::EntityNotFound)?;
+        let mut receipt = gate_decision_receipt(&accepted.record);
+        // The Δ rides the same attach pass every receipt query uses, so
+        // the door's own return and a later query cannot disagree about
+        // it — and it rides it INSIDE the write txn, which is what keeps
+        // the returned Result honest. Enriching after the commit meant a
+        // read failure reported Err on a consent decision that had
+        // already landed; here the same failure rolls it back.
+        attach_amendment_deltas(self, wtxn, std::slice::from_mut(&mut receipt))?;
+        Ok((
+            InboxAmendedApproval {
+                claim_id: claim_id.to_hex(),
+                receipt,
+                delta: accepted.delta,
+            },
+            accepted.vad_claim_id,
+        ))
     }
 
     /// RS3 door: reopens the group behind a bundle receipt reference
@@ -391,6 +401,8 @@ fn accept_member_with_amendment_in_txn(
             true,
         )?;
     }
+
+    vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
 
     // The gated rewrite may already have redeemed and removed the tray row;
     // the delete is idempotent either way.

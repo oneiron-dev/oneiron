@@ -339,17 +339,24 @@ pub fn detect_conflicts(
 
     let mut conflicts = Vec::new();
     for (identity, members) in groups {
-        let prior = prior_heads.iter().find(|prior| {
-            claim_consolidatable(&prior.body) && prior_matches_identity(&prior.body, &identity)
-        });
+        let priors: Vec<_> = prior_heads
+            .iter()
+            .filter(|prior| {
+                claim_consolidatable(&prior.body) && prior_matches_identity(&prior.body, &identity)
+            })
+            .collect();
+        let prior = if priors.len() == 1 {
+            priors.first().copied()
+        } else {
+            None
+        };
         let mut values: BTreeSet<&[u8]> =
             members.iter().map(|(_, bytes)| bytes.as_slice()).collect();
-        let mut prior_value = None;
-        if let Some(prior) = prior {
-            let bytes = canonical_value_bytes(&prior.body.value)?;
-            prior_value = Some(bytes);
-        }
-        if let Some(bytes) = &prior_value {
+        let prior_values = priors
+            .iter()
+            .map(|prior| canonical_value_bytes(&prior.body.value))
+            .collect::<Result<Vec<_>>>()?;
+        for bytes in &prior_values {
             values.insert(bytes.as_slice());
         }
         if values.len() > 1 {
@@ -386,7 +393,7 @@ pub fn conflict_open_marker_id(
     )
 }
 
-fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> bool {
+pub(super) fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> bool {
     let ClaimSubject::Entity(subject) = body.subject else {
         return false;
     };

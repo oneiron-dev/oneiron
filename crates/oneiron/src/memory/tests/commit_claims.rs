@@ -209,16 +209,25 @@ fn claim_upsert_supersedes_prior_single_cardinality() {
     second_input.occurred_at = Some(200);
     let second = facade.claim_upsert(&second_input).expect("second revision");
 
+    assert!(second.superseded_short_id.is_none());
+    assert_eq!(second.approval, "proposed");
+    let new_id = facade.resolve_ref(&second.claim_short_id).expect("new id");
+    let old_id = facade.resolve_ref(&first.claim_short_id).expect("old id");
     assert_eq!(
-        second.superseded_short_id.as_deref().map(short_id_part),
-        Some(short_id_part(&first.claim_short_id)),
-        "second revision supersedes the first"
+        vault.get_claim(&old_id).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Active
     );
+    let proposed = vault.get_claim(&new_id).unwrap().unwrap();
+    vault
+        .approve_inbox_member_with_edit_at(
+            &new_id,
+            &crate::claim::encode_claim_body(&proposed).unwrap(),
+            201,
+        )
+        .expect("owner confirms replacement");
 
     // Prior claim stays readable with lifecycle superseded.
-    let history = facade
-        .claim_history(&second.claim_short_id)
-        .expect("history");
+    let history = facade.claim_history(&new_id.to_hex()).expect("history");
     assert_eq!(history.len(), 2);
     assert_eq!(history[0].lifecycle, "superseded");
     assert_eq!(history[0].value, serde_json::json!("Ada"));
@@ -270,14 +279,8 @@ fn multi_cardinality_supersede_matches_on_question_id() {
     let re_answer_a = facade
         .claim_upsert(&answer("q-a", "3", 102))
         .expect("re-answer a");
-    assert_eq!(
-        re_answer_a
-            .superseded_short_id
-            .as_deref()
-            .map(short_id_part),
-        Some(short_id_part(&answer_a.claim_short_id)),
-        "re-answer supersedes the same question's prior claim"
-    );
+    assert!(re_answer_a.superseded_short_id.is_none());
+    assert_eq!(re_answer_a.approval, "proposed");
 
     // B's claim is untouched.
     let claims = facade
@@ -288,7 +291,11 @@ fn multi_cardinality_supersede_matches_on_question_id() {
             limit: 10,
         })
         .expect("list");
-    assert_eq!(claims.len(), 2, "one active claim per question id");
+    assert_eq!(
+        claims.len(),
+        3,
+        "a proposed replacement does not close either question"
+    );
 }
 
 #[test]

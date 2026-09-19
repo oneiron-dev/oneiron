@@ -212,7 +212,16 @@ fn public_booking_publication_is_durable_and_retraction_does_not_revive_old_allo
     let mut updated = publication();
     updated.owner_display = "Updated owner".to_owned();
     let receipt = owner.claim_upsert(&input(updated.clone())).expect("update");
-    assert!(receipt.superseded_short_id.is_some());
+    assert!(receipt.superseded_short_id.is_none());
+    assert_eq!(receipt.approval, "proposed");
+    assert!(
+        load_public_booking_page(&vault, id(1), 150)
+            .expect("held")
+            .is_none()
+    );
+    owner
+        .confirm_booking_publication(&receipt.claim_short_id, 150)
+        .expect("confirm owner revision");
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("reopen");
     assert_eq!(

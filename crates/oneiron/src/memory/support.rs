@@ -326,7 +326,9 @@ pub(super) fn decode_body_json(bytes: &[u8]) -> Option<serde_json::Value> {
     if !cursor.is_empty() {
         return None;
     }
-    Some(companion_value_to_json(&value))
+    let mut value = companion_value_to_json(&value);
+    crate::batch::export::redact_credentials(&mut value);
+    Some(value)
 }
 
 pub(crate) fn facade_provenance(verb: &str) -> Value {

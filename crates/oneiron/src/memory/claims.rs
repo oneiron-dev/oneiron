@@ -535,7 +535,7 @@ impl Memory<'_> {
             if let Some(scope) = scope_rmpv.clone() {
                 candidate = candidate.with_scope(scope);
             }
-            let envelope = WriteEnvelope::new(
+            let mut envelope = WriteEnvelope::new(
                 WriteActor::new(self.actor, self.actor_class),
                 source,
                 WriteProvenance::new(facade_provenance("commit"))?,
@@ -570,6 +570,30 @@ impl Memory<'_> {
                         )?;
                     }
                 }
+                if let Some(old_id) = prior {
+                    let policy = crate::gate::resolve_policy_manifest(&self.vault.store, wtxn)?;
+                    let old = self
+                        .vault
+                        .require_named_claim_target_active_in(wtxn, &old_id)?;
+                    let probe = candidate.clone().into_claim_body(&envelope);
+                    if !policy.is_single_valued_predicate(&input.predicate)
+                        || crate::claim::claim_source_widens_beyond(
+                            old.source.unwrap_or(ClaimSource::UserStated),
+                            source,
+                        )
+                        || self
+                            .vault
+                            .supersession_requires_confirmation_in_txn(wtxn, &old_id, &probe)?
+                    {
+                        envelope = WriteEnvelope::new(
+                            envelope.actor(),
+                            source,
+                            envelope.provenance().clone(),
+                            ClaimApprovalStatus::Proposed,
+                        );
+                    }
+                }
+                let closure_envelope = envelope.clone();
                 apply_ops_with_gate_mode(
                     &self.vault.store,
                     &self.vault.config,
@@ -587,8 +611,13 @@ impl Memory<'_> {
                     ApplyOpsGateMode::new(true, true),
                 )?;
                 if let Some(old_id) = prior {
-                    self.vault
-                        .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at)?;
+                    self.vault.stage_claim_supersession_in_txn(
+                        wtxn,
+                        &id,
+                        &old_id,
+                        &closure_envelope,
+                        learned_at,
+                    )?;
                 }
                 if publication_write {
                     crate::booking::publication::index_publication_in_txn(
@@ -621,7 +650,15 @@ impl Memory<'_> {
         }
 
         let superseded_short_id = match prior {
-            Some(old_id) => Some(self.short_ref_or_hex(&old_id)?),
+            Some(old_id)
+                if self
+                    .vault
+                    .get_claim(&old_id)?
+                    .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Superseded) =>
+            {
+                Some(self.short_ref_or_hex(&old_id)?)
+            }
+            Some(_) => None,
             None => None,
         };
         let final_approval = self.vault.get_claim(&id)?.map_or_else(
@@ -655,6 +692,11 @@ impl Memory<'_> {
             None
         };
         let new_scope = input.scope.clone();
+        let world = input
+            .world_ref
+            .as_deref()
+            .map(|world| self.resolve_ref(world))
+            .transpose()?;
         let ids = self.vault.claims_for_subject(subject)?;
         let mut best: Option<EntityId> = None;
         for id in ids {
@@ -664,7 +706,14 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
-            if body.lifecycle != ClaimLifecycleStatus::Active || body.predicate != input.predicate {
+            if body.lifecycle != ClaimLifecycleStatus::Active
+                || !matches!(
+                    body.approval,
+                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                )
+                || body.predicate != input.predicate
+                || body.world != world
+            {
                 continue;
             }
             let prior_scope = body.scope.as_ref().map(companion_value_to_json);

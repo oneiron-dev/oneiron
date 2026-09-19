@@ -371,30 +371,32 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
 
     let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![superseding, clean])?;
 
-    // GATE-007 surfaced per-candidate; nothing written for the rejected one
-    // (the one-wtxn contract rolled the claim back with the supersession).
-    assert_eq!(outcome.rejected.len(), 1);
-    assert_eq!(outcome.rejected[0].0, superseding_id);
-    assert!(vault.get_claim(&superseding_id)?.is_none(), "rolled back");
-    let superseding_receipts = vault
-        .store
-        .gate_decisions(1_000)?
-        .into_iter()
-        .filter(|decision| decision.claim_id == Some(*superseding_id.as_bytes()))
-        .count();
+    assert!(outcome.rejected.is_empty());
+    assert_eq!(outcome.pended, vec![superseding_id]);
     assert_eq!(
-        superseding_receipts, 0,
-        "failed supersession must roll back its same-transaction gate decision"
+        vault.get_claim(&superseding_id)?.expect("staged").approval,
+        ClaimApprovalStatus::Proposed
     );
-    let superseding_consents = vault
-        .store
-        .pending_gate_consents(1_000)?
-        .into_iter()
-        .filter(|consent| consent.claim_id == *superseding_id.as_bytes())
-        .count();
-    assert_eq!(
-        superseding_consents, 0,
-        "failed supersession must roll back its same-transaction pending consent"
+    assert!(
+        vault
+            .store
+            .pending_gate_consents(1_000)?
+            .iter()
+            .any(|pending| pending.claim_id == *superseding_id.as_bytes())
+    );
+    assert!(
+        vault
+            .claims_for_subject(&fixture.subject)?
+            .into_iter()
+            .any(|id| vault
+                .get_claim(&id)
+                .expect("read")
+                .is_some_and(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN))
+    );
+    assert!(
+        vault
+            .supersede_claim(&superseding_id, &head, fixture.run.now_ms)
+            .is_err()
     );
 
     // The UserStated head is untouched and the other candidate landed.
@@ -404,7 +406,6 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Active
     );
     assert_eq!(outcome.landed, vec![clean_id]);
-    assert!(outcome.pended.is_empty());
     Ok(())
 }
 
@@ -508,6 +509,30 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
         new_head.source,
         Some(ClaimSource::ToolOutput),
         "an otherwise-Generated candidate stays source-bounded by the head it supersedes"
+    );
+    let companions: Vec<_> = vault
+        .claims_for_subject(&clean_id)?
+        .into_iter()
+        .filter_map(|id| {
+            vault
+                .get_claim(&id)
+                .transpose()
+                .map(|result| result.map(|body| (id, body)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (_, companion) = companions
+        .iter()
+        .find(|(_, body)| body.predicate == "core.supersession.provenance")
+        .expect("runner companion");
+    assert_eq!(
+        claim_evidence_taint(companion),
+        Some(ClaimSource::ToolOutput)
+    );
+    let mut forged = companion.clone();
+    forged.scope = None;
+    assert!(
+        crate::claim::validate_claim_body_bytes(&crate::claim::encode_claim_body(&forged)?, false)
+            .is_err()
     );
     let old_head = vault.get_claim(&head_id)?.expect("old head");
     assert_eq!(

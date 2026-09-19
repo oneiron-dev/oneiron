@@ -1,3 +1,4 @@
+use super::judge_codec::{entity_id_from_hex, json_to_rmpv, rmpv_to_json};
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
@@ -286,7 +287,12 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
     ) -> DurableStepResult<PartitionRun> {
-        let conflicts = detect_conflicts(&candidates, &[])?;
+        let priors = super::judge_context::prior_heads(ctx.vault, &candidates)?;
+        let conflicts = detect_conflicts(&candidates, &priors)?;
+        let policy = {
+            let txn = ctx.vault.store.env.read_txn().map_err(crate::Error::from)?;
+            crate::gate::resolve_policy_manifest(&ctx.vault.store, &txn)?
+        };
         if conflicts.is_empty() {
             return Ok(PartitionRun::Completed {
                 candidates,
@@ -305,7 +311,35 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|index| &candidates[*index])
                 .collect();
-            let request = self.merge_request(&conflict.identity, &members)?;
+            if priors
+                .iter()
+                .filter(|prior| {
+                    super::conflict::prior_matches_identity(&prior.body, &conflict.identity)
+                })
+                .count()
+                > 1
+            {
+                dropped.extend(conflict.candidate_indexes.iter().copied());
+                escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
+                merged.push(super::judge_context::open_marker(
+                    conflict,
+                    &members,
+                    step_identity.0,
+                    ctx.now_ms,
+                ));
+                continue;
+            }
+            let prior = priors
+                .iter()
+                .find(|prior| Some(prior.claim_id) == conflict.prior_head);
+            if super::judge_context::fast_path(&policy, conflict, &members, prior) {
+                let mut candidate = (*members[0]).clone();
+                candidate.supersedes = conflict.prior_head;
+                dropped.extend(conflict.candidate_indexes.iter().copied());
+                merged.push(candidate);
+                continue;
+            }
+            let request = self.merge_request(&conflict.identity, &members, prior)?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,
@@ -316,9 +350,9 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
-            let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await?;
+            let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
             let response = match outcome {
-                StepOutcome::Finished { response, .. } => {
+                Ok(StepOutcome::Finished { response, .. }) => {
                     spent = spent.saturating_add(
                         response
                             .usage
@@ -328,7 +362,7 @@ impl ConsolidationExecutor<'_> {
                     );
                     response
                 }
-                StepOutcome::Trapped(_) => {
+                Ok(StepOutcome::Trapped(_)) => {
                     // Suspended mid-merge: the attempt is parked. STOP and surface
                     // the trap. Writing a contradiction gap here would fabricate
                     // a `ContradictionLeftStanding` for a merge that never
@@ -337,9 +371,24 @@ impl ConsolidationExecutor<'_> {
                     // this merge re-runs to a real resolution.
                     return Ok(PartitionRun::Trapped);
                 }
+                Err(
+                    crate::llm::DurableStepError::Llm(_)
+                    | crate::llm::DurableStepError::FallbackDemanded { .. },
+                ) => {
+                    dropped.extend(conflict.candidate_indexes.iter().copied());
+                    escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
+                    merged.push(super::judge_context::open_marker(
+                        conflict,
+                        &members,
+                        step_identity.0,
+                        ctx.now_ms,
+                    ));
+                    continue;
+                }
+                Err(error) => return Err(error),
             };
 
-            match decode_merge_resolution(&response)? {
+            match decode_merge_resolution(&response).unwrap_or(MergeResolution::Escalate) {
                 MergeResolution::Accumulate => {} // keep every member
                 MergeResolution::Merge { value } => {
                     dropped.extend(conflict.candidate_indexes.iter().copied());
@@ -354,6 +403,12 @@ impl ConsolidationExecutor<'_> {
                 MergeResolution::Escalate => {
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
+                    merged.push(super::judge_context::open_marker(
+                        conflict,
+                        &members,
+                        step_identity.0,
+                        ctx.now_ms,
+                    ));
                 }
             }
         }
@@ -378,6 +433,7 @@ impl ConsolidationExecutor<'_> {
         &self,
         identity: &ConflictIdentity,
         members: &[&PromotionCandidate],
+        prior: Option<&super::conflict::PriorHead>,
     ) -> Result<LlmRequest> {
         let mut lines = String::new();
         for member in members {
@@ -386,6 +442,15 @@ impl ConsolidationExecutor<'_> {
                 "- value: {}\n",
                 serde_json::to_string(&rmpv_to_json(&facts.value)).unwrap_or_default()
             ));
+        }
+        if let Some(prior) = prior {
+            lines.push_str(
+                &serde_json::json!({"prior_head": prior.claim_id.to_hex(),
+                "source": prior.body.source.map(|source| source.as_str()),
+                "value": rmpv_to_json(&prior.body.value)})
+                .to_string(),
+            );
+            lines.push('\n');
         }
         let system = "Conflicting values were extracted for one claim identity. Respond \
              with JSON: {\"resolution\": \"merge\"|\"accumulate\"|\"escalate\", \
@@ -547,34 +612,6 @@ fn contradiction_gap(
     }
 }
 
-fn rmpv_to_json(value: &Value) -> serde_json::Value {
-    match value {
-        Value::Nil => serde_json::Value::Null,
-        Value::Boolean(flag) => serde_json::Value::Bool(*flag),
-        Value::Integer(number) => number
-            .as_u64()
-            .map(serde_json::Value::from)
-            .or_else(|| number.as_i64().map(serde_json::Value::from))
-            .unwrap_or(serde_json::Value::Null),
-        Value::F32(number) => serde_json::Value::from(f64::from(*number)),
-        Value::F64(number) => serde_json::Value::from(*number),
-        Value::String(text) => text
-            .as_str()
-            .map_or(serde_json::Value::Null, serde_json::Value::from),
-        Value::Array(items) => serde_json::Value::Array(items.iter().map(rmpv_to_json).collect()),
-        Value::Map(entries) => serde_json::Value::Object(
-            entries
-                .iter()
-                .filter_map(|(key, value)| {
-                    key.as_str()
-                        .map(|key| (key.to_owned(), rmpv_to_json(value)))
-                })
-                .collect(),
-        ),
-        _ => serde_json::Value::Null,
-    }
-}
-
 fn attempt_id_for_steps(
     attempt_id: crate::attempt_queue::AttemptId,
     run_id: Option<&String>,
@@ -680,52 +717,5 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 reason: other.to_string(),
             }),
         }
-    }
-}
-
-fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
-    let hex = hex.trim();
-    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut raw = [0_u8; 16];
-    for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(chunk[0])?;
-        let low = hex_nibble(chunk[1])?;
-        raw[index] = (high << 4) | low;
-    }
-    EntityId::from_bytes(raw).ok()
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn json_to_rmpv(value: &serde_json::Value) -> Value {
-    match value {
-        serde_json::Value::Null => Value::Nil,
-        serde_json::Value::Bool(flag) => Value::from(*flag),
-        serde_json::Value::Number(number) => {
-            if let Some(unsigned) = number.as_u64() {
-                Value::from(unsigned)
-            } else if let Some(signed) = number.as_i64() {
-                Value::from(signed)
-            } else {
-                Value::from(number.as_f64().unwrap_or(0.0))
-            }
-        }
-        serde_json::Value::String(text) => Value::from(text.as_str()),
-        serde_json::Value::Array(items) => Value::Array(items.iter().map(json_to_rmpv).collect()),
-        serde_json::Value::Object(entries) => Value::Map(
-            entries
-                .iter()
-                .map(|(key, value)| (Value::from(key.as_str()), json_to_rmpv(value)))
-                .collect(),
-        ),
     }
 }
