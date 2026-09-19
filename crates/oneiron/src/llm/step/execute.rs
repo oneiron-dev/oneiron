@@ -1,4 +1,4 @@
-//! Durable step execution: memo/admission/deadline orchestration plus deadline-race, retry, and lease-settle helpers.
+//! Durable step execution: memo/admission/deadline orchestration with retry and lease settlement.
 
 use super::super::{
     BudgetDenied, BudgetGuard, CallClass, LlmBackend, LlmError, LlmRequest, LlmResponse, LlmResult,
@@ -13,10 +13,7 @@ use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
     DurableStepResult, StepOutcome, StepProgression,
 };
-use crate::dreamer_wake::{
-    BudgetLegibilityEnvelope, DREAMER_HARD_CUT_PARK_OWNER, DREAMER_HARD_CUT_PARK_REASON,
-    WakePassDeadline, current_legibility,
-};
+use crate::dreamer_wake::{BudgetLegibilityEnvelope, current_legibility};
 use crate::error::Error;
 use std::future::Future;
 use std::pin::Pin;
@@ -129,34 +126,9 @@ pub async fn call_as_step(
         Err(denied) => return Err(LlmError::from(denied).into()),
     };
 
-    // Mid-step preemption (ONE-1305, G1): inside a wake pass the in-flight
-    // generate future races the deadline; on loss the lease aborts (actual
-    // spend settled) and the attempt parks at the hard cut.
-    let generated = match ctx.deadline {
-        Some(deadline) => {
-            match race_deadline(
-                generate_with_retry(backend, &request, &admission.lease),
-                deadline,
-            )
-            .await
-            {
-                DeadlineRace::Completed(result) => result,
-                DeadlineRace::DeadlineExpired => {
-                    let _ = guard.abort(&admission.lease);
-                    let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-                    store.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
-                        attempt_id: ctx.attempt_id,
-                        reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                        park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
-                        now: ctx.now_s(),
-                    })?;
-                    step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
-                    return Err(DurableStepError::DeadlineHardCut);
-                }
-            }
-        }
-        None => generate_with_retry(backend, &request, &admission.lease).await,
-    };
+    // The wake-pass ceiling gates admission, not an already admitted call.
+    // Keep the lease alive through retries and settle absolute terminal usage.
+    let generated = generate_with_retry(backend, &request, &admission.lease).await;
     let response = match generated {
         Ok(response) => response,
         Err(error) => {
@@ -205,55 +177,6 @@ fn step_legibility(
 ) -> Option<BudgetLegibilityEnvelope> {
     ctx.deadline
         .map(|deadline| current_legibility(&guard.read(), deadline))
-}
-
-enum DeadlineRace<T> {
-    Completed(T),
-    DeadlineExpired,
-}
-
-/// Upper bound between deadline re-checks while racing an in-flight call:
-/// bounds how far past the ceiling a hung provider can run, and lets
-/// injected test clocks advance while the timer sleeps real time.
-const DEADLINE_RACE_RECHECK_MS: u64 = 50;
-
-/// Races a future against the wake-pass deadline: checks expiry FIRST, then
-/// polls the future, re-arming a bounded timer until one side wins.
-///
-/// The expiry-before-poll order is load-bearing: a call whose deadline
-/// passed while the racer slept loses even if its response arrived in the
-/// meantime — a hard-cut pass must never record a new `Finished` step.
-async fn race_deadline<F: Future>(
-    future: F,
-    deadline: &WakePassDeadline,
-) -> DeadlineRace<F::Output> {
-    let mut future = std::pin::pin!(future);
-    let mut timer: Option<Pin<Box<SleepFuture>>> = None;
-    std::future::poll_fn(move |cx| {
-        if deadline.expired() {
-            return Poll::Ready(DeadlineRace::DeadlineExpired);
-        }
-        if let Poll::Ready(output) = future.as_mut().poll(cx) {
-            return Poll::Ready(DeadlineRace::Completed(output));
-        }
-        loop {
-            let armed = timer.get_or_insert_with(|| {
-                Box::pin(sleep_ms(
-                    deadline.remaining_ms().clamp(1, DEADLINE_RACE_RECHECK_MS),
-                ))
-            });
-            match armed.as_mut().poll(cx) {
-                Poll::Ready(()) => {
-                    if deadline.expired() {
-                        return Poll::Ready(DeadlineRace::DeadlineExpired);
-                    }
-                    timer = None;
-                }
-                Poll::Pending => return Poll::Pending,
-            }
-        }
-    })
-    .await
 }
 
 fn step_call_failure(request: &LlmRequest, error: LlmError) -> DurableStepError {
