@@ -122,11 +122,15 @@ fn wave_plan_attempt_lands_idempotent_tasks_and_dispatch_reads_live_blockers() -
 }
 
 #[derive(Clone)]
-struct Tracker(Rc<RefCell<Vec<LinearIssueChange>>>);
+struct Tracker {
+    changes: Rc<RefCell<Vec<LinearIssueChange>>>,
+    cursors: Rc<RefCell<Vec<Option<String>>>>,
+}
 impl LinearChangeSource for Tracker {
-    fn changes_since(&mut self, _: Option<&str>) -> LinearSyncResult<LinearChangePage> {
+    fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
+        self.cursors.borrow_mut().push(cursor.map(str::to_owned));
         Ok(LinearChangePage {
-            changes: std::mem::take(&mut *self.0.borrow_mut()),
+            changes: std::mem::take(&mut *self.changes.borrow_mut()),
             next_cursor: Some("next".into()),
         })
     }
@@ -185,7 +189,10 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
         .expect("create")
         .task_ref
         .unwrap();
-    let tracker = Tracker(Rc::new(RefCell::new(Vec::new())));
+    let tracker = Tracker {
+        changes: Rc::new(RefCell::new(Vec::new())),
+        cursors: Rc::new(RefCell::new(Vec::new())),
+    };
     let mut adapter = LinearSyncAdapter::new(
         VaultLinearTaskStore::new(&vault),
         tracker.clone(),
@@ -194,6 +201,8 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
     let (pushed, _) = adapter.synchronize(100)?;
     assert_eq!(pushed.len(), 1);
     assert_eq!(pushed[0].status, LinearMirrorStatus::Linked);
+    assert!(adapter.tasks().dirty_tasks()?.is_empty());
+    assert_eq!(*tracker.cursors.borrow(), vec![None]);
     let original = adapter.tasks().task_snapshot(task)?;
     let link = adapter.tasks().link(task)?.unwrap();
     assert_eq!(
@@ -202,7 +211,7 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
     );
     let mut new_fields = original.fields.clone();
     new_fields.description = Some("tracker description".into());
-    tracker.0.borrow_mut().push(LinearIssueChange {
+    tracker.changes.borrow_mut().push(LinearIssueChange {
         event_id: "inbound-edit".into(),
         issue: link.issue.clone(),
         updated_at_ms: 3000,
@@ -239,5 +248,19 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     assert_eq!(VaultLinearTaskStore::new(&vault).link(task)?, before_close);
+    let mut reopened = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        tracker.clone(),
+        tracker.clone(),
+    );
+    let (pushed, _) = reopened.synchronize(104)?;
+    assert_eq!(pushed.len(), 1);
+    assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
+    assert!(reopened.tasks().dirty_tasks()?.is_empty());
+    assert_eq!(
+        *tracker.cursors.borrow(),
+        vec![None, Some("next".into()), Some("next".into())]
+    );
+    assert!(reopened.synchronize(105)?.0.is_empty());
     Ok(())
 }

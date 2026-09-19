@@ -679,3 +679,58 @@ fn resumed_signature_preview_uses_the_ceremony_rate_budget() -> Result<()> {
     }));
     Ok(())
 }
+
+#[test]
+fn signing_field_save_survives_reopen_without_rotating_the_bearer() -> Result<()> {
+    let (dir, vault, id, doc, owner) = ceremony_setup()?;
+    let tokens = vault.issue_esign_capabilities(&owner, id)?;
+    let command = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: doc.recipients.len(),
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    let sent = vault
+        .dispatch_esign(
+            send_request(id, owner.actor(), command.verb, "resume-send"),
+            &command,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        sent.outcome,
+        crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+    );
+    let field = &doc.fields[0].id;
+    let SigningOutcome::Page(saved) = vault.execute_signing_action(
+        &tokens[0].1,
+        &SigningAction::SaveField {
+            field: field.clone(),
+            value: FieldValue::Text("forged-date".into()),
+        },
+        Some("192.0.2.1".into()),
+        Some("ceremony-test".into()),
+    )?
+    else {
+        panic!("field save returns the resumable page")
+    };
+    let date = chrono::DateTime::from_timestamp(saved.values[field].at as i64, 0)
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    assert_eq!(saved.values[field].value, FieldValue::Text(date));
+    let audit = vault.esign_audit(id)?;
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    let resumed =
+        reopened.execute_signing_action(&tokens[0].1, &SigningAction::Load, None, None)?;
+    assert_eq!(resumed, SigningOutcome::Page(saved));
+    assert_eq!(reopened.esign_audit(id)?, audit);
+    assert_eq!(
+        reopened.execute_signing_action(&tokens[1].1, &SigningAction::Load, None, None)?,
+        SigningOutcome::NotYourTurn
+    );
+    assert_eq!(reopened.esign_audit(id)?, audit);
+    Ok(())
+}
