@@ -4,8 +4,8 @@
 
 use futures_util::{SinkExt, StreamExt};
 use oneiron::sync::transport::{
-    APP_TIER_PROTOCOL_VERSION_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, TAG_PROTOCOL_HELLO,
-    TAG_RPC, TAG_SUB, TAG_VERSION_VECTOR,
+    APP_TIER_PROTOCOL_VERSION_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    TAG_PROTOCOL_HELLO, TAG_RPC, TAG_SUB, TAG_VERSION_VECTOR,
 };
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde::{Deserialize, Serialize};
@@ -185,7 +185,7 @@ async fn old_version_syncs_but_app_tag_closes_4007_before_json_decode() {
 async fn rpc_and_sub_without_bind_close_4008() {
     let fixture = fixture().await;
     for tag in [TAG_RPC, TAG_SUB] {
-        let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
+        let mut socket = connect(&fixture, PROTOCOL_VERSION).await;
         send(
             &mut socket,
             tag,
@@ -209,7 +209,7 @@ async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
         "v2.scope=core:read.bad",
         &unknown,
     ] {
-        let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
+        let mut socket = connect(&fixture, PROTOCOL_VERSION).await;
         send(
             &mut socket,
             TAG_RPC,
@@ -218,7 +218,7 @@ async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
         .await;
         assert_eq!(close_code(&mut socket).await, 4008);
     }
-    let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
+    let mut socket = connect(&fixture, PROTOCOL_VERSION).await;
     send(
         &mut socket,
         TAG_RPC,

@@ -605,8 +605,17 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
     value[4..12].copy_from_slice(&1_u64.to_le_bytes());
     vault
         .with_write_txn(|wtxn| {
+            let raw = vault
+                .store
+                .entities
+                .get(wtxn, center.as_bytes())?
+                .expect("readable person fixture")
+                .to_vec();
             for i in 0..edge_count {
                 let target = seeded_bulk_id(0xE1, i);
+                // Neighbor visibility requires a real readable destination;
+                // dangling edges are not a substitute for a high-degree graph.
+                vault.store.entities.put(wtxn, target.as_bytes(), &raw)?;
                 let key = Store::encode_edge_key(&center, EdgeKind::BelongsTo, &target);
                 vault.store.edges_out.put(wtxn, &key, &value)?;
             }
