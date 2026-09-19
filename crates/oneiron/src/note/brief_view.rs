@@ -2,7 +2,7 @@
 
 use super::document::invalid;
 use super::{NoteKind, NoteSpanResolution};
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, ScopedRead};
+use crate::claim::{ClaimLifecycleStatus, ScopedRead, decode_claim_body};
 use crate::lens::{
     InstrumentAtoms, InstrumentView, LensAtom, LensRenderFrame, LensText, LensTextSpan,
     TextBlockAtom, render_instrument,
@@ -87,10 +87,18 @@ impl Vault {
         let document = self.note_document(id)?;
         let mut citations = Vec::new();
         for pin in &document.pins {
-            let allowed = visible.is_none_or(|ids| ids.contains(&pin.claim))
-                && frame.scoped_body(read, &pin.claim)?.is_some()
-                && frame.scoped_body(read, &pin.document)?.is_some();
-            if !allowed {
+            let admitted = if visible.is_none_or(|ids| ids.contains(&pin.claim)) {
+                frame.scoped_body(read, &pin.claim)?
+            } else {
+                None
+            };
+            let live = match admitted {
+                Some(body) if frame.scoped_body(read, &pin.document)?.is_some() => {
+                    Some(decode_claim_body(&body, true)?)
+                }
+                _ => None,
+            };
+            let Some(live) = live else {
                 // A redacted reference reveals neither current lifecycle nor
                 // whether hidden evidence was edited or erased.
                 citations.push(BriefCitationView {
@@ -103,32 +111,23 @@ impl Vault {
                     quote: None,
                 });
                 continue;
-            }
-            let live = self.get_claim(&pin.claim)?;
+            };
             let resolved = self.resolve_note_pin(pin);
             let drifted = !matches!(&resolved, Ok(NoteSpanResolution::Mapped { .. }));
             let source_moved = self
                 .note_document(pin.document)
                 .is_ok_and(|doc| doc.frontier != pin.frontier);
-            let stale = source_moved
-                || live
-                    .as_ref()
-                    .is_none_or(|claim| claim.lifecycle != ClaimLifecycleStatus::Active);
-            let (confidence, lifecycle) = if allowed {
-                live.as_ref().map_or((None, None), |body: &ClaimBody| {
-                    (Some(body.confidence), Some(body.lifecycle))
-                })
-            } else {
-                (None, None)
-            };
+            // Use the exact body returned by ScopedRead. A second raw ledger
+            // read could disclose metadata from a later, no-longer-readable row.
+            let stale = source_moved || live.lifecycle != ClaimLifecycleStatus::Active;
             citations.push(BriefCitationView {
                 claim: pin.claim,
                 stale,
                 drifted,
-                redacted: !allowed,
-                confidence,
-                lifecycle,
-                quote: allowed.then(|| pin.quote_text.clone()),
+                redacted: false,
+                confidence: Some(live.confidence),
+                lifecycle: Some(live.lifecycle),
+                quote: Some(pin.quote_text.clone()),
             });
         }
         // Authored markdown is a text atom, not trusted HTML. Splitting by line

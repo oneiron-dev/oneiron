@@ -14,19 +14,21 @@ pub(crate) fn live_body_in_txn<'b>(
     entity_type: u8,
     body: &'b [u8],
 ) -> Result<Cow<'b, [u8]>> {
+    if entity_type != crate::registry::ENTITY_TYPE_NOTE || body.is_empty() {
+        return Ok(Cow::Borrowed(body));
+    }
+    let note = super::decode_note_body(body)?;
     #[cfg(feature = "sync")]
-    if entity_type == crate::registry::ENTITY_TYPE_NOTE
-        && !body.is_empty()
-        && let Some(snapshot) = store
-            .sync_state
-            .get(txn, &super::document_store::key(*id))?
+    if let Some(snapshot) = store
+        .sync_state
+        .get(txn, &super::document_store::key(*id))?
     {
-        let mut note = super::decode_note_body(body)?;
+        let mut note = note;
         let doc = super::document::NoteDocument::load(*id, &snapshot)?;
         note.markdown = doc.view()?.markdown;
         return super::encode_note_body(&note).map(Cow::Owned);
     }
     #[cfg(not(feature = "sync"))]
-    let _ = (store, txn, id, entity_type);
+    let _ = (store, txn, id, note);
     Ok(Cow::Borrowed(body))
 }

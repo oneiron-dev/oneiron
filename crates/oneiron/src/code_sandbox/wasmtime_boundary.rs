@@ -159,7 +159,7 @@ fn link<H: bindings::GuestImports + 'static>(
             "self.memory.search" => unary!(root, wit, memory_search, SearchInput),
             "self.memory.put_claim" => unary!(root, wit, memory_put_claim, ClaimInput),
             "self.memory.supersede_claim" => {
-                unary!(root, wit, memory_supersede_claim, SupersedeInput)
+                unary!(root, wit, memory_supersede_claim, SupersedeInput);
             }
             "self.memory.put_edge" => unary!(root, wit, memory_put_edge, EdgeInput),
             "self.ask_human" => unary!(root, wit, ask_human, PromptInput),

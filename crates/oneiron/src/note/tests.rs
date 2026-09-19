@@ -142,3 +142,45 @@ fn decode_rejects_every_abi_deviation() {
         );
     }
 }
+
+#[test]
+fn live_note_projection_validates_birth_abi_in_every_feature_mode() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let txn = vault.store.env.read_txn().unwrap();
+    let id = actor(0x6a);
+    let valid = encode_note_body(&take("valid birth")).unwrap();
+    assert_eq!(
+        live_body_in_txn(
+            &vault.store,
+            &txn,
+            &id,
+            crate::registry::ENTITY_TYPE_NOTE,
+            &valid
+        )
+        .unwrap()
+        .as_ref(),
+        valid.as_slice(),
+    );
+    assert!(matches!(
+        live_body_in_txn(
+            &vault.store,
+            &txn,
+            &id,
+            crate::registry::ENTITY_TYPE_NOTE,
+            &[0xff]
+        ),
+        Err(Error::Record(RecordError::InvalidNoteBody(_)))
+    ));
+    assert_eq!(
+        live_body_in_txn(
+            &vault.store,
+            &txn,
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            &[0xff]
+        )
+        .unwrap()
+        .as_ref(),
+        &[0xff],
+    );
+}

@@ -64,10 +64,10 @@ impl Memory<'_> {
             if neighbor.direction != "in" {
                 continue;
             }
-            if let Some(entity) = self.get_entity(&neighbor.short_id)? {
-                if entity.kind == "MESSAGE" {
-                    messages.push(entity);
-                }
+            if let Some(entity) = self.get_entity(&neighbor.short_id)?
+                && entity.kind == "MESSAGE"
+            {
+                messages.push(entity);
             }
         }
         messages.sort_by(|a, b| (a.occurred_start, &a.id_hex).cmp(&(b.occurred_start, &b.id_hex)));
@@ -206,7 +206,7 @@ impl Memory<'_> {
                                 &[],
                             ));
                         }
-                    })
+                    });
                 }
                 ("room.posture.bar", Some(bar)) => {
                     let bar = match bar {
