@@ -795,7 +795,10 @@ fn federated_selector_member_response_enters_admission_once() {
             .into_result()
             .expect("ordinary full-window update encodes");
 
-    client
+    // Own-device replay uses its unbound connection; a bound federation lane
+    // must never treat a later UPDATE as trust-blind.
+    let (mut ordinary_client, _) = test_client(&manager);
+    ordinary_client
         .handle_server_message(&ordinary_response)
         .expect("ordinary full-window update should remain trust-blind after selector import");
 
@@ -2473,20 +2476,29 @@ fn malformed_federation_update_is_not_queued_and_streak_reaches_the_next_decisio
     ));
     assert!(!client.replay_deferred_federation_update().unwrap());
     let remote = server_window_doc();
-    let id = EntityId::now();
-    remote
-        .get_map("entities")
-        .insert(
-            id.to_hex().as_str(),
-            entity_blob(
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"person",
+    // Derive enough work from this fixture's actual seeded vault size. With
+    // no failure this is within baseline; one structural failure defers it.
+    let size = {
+        let txn = manager.vault().store.env.read_txn().unwrap();
+        manager.vault().store.entities.len(&txn).unwrap()
+    };
+    let work = (((size + 1) as f64).sqrt() / 2.0).floor() as usize + 1;
+    let ids: Vec<_> = (0..work).map(|_| EntityId::now()).collect();
+    for id in &ids {
+        remote
+            .get_map("entities")
+            .insert(
+                id.to_hex().as_str(),
+                entity_blob(
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"person",
+                )
+                .as_slice(),
             )
-            .as_slice(),
-        )
-        .unwrap();
+            .unwrap();
+    }
     remote.commit();
     client
         .import_federated_window_update(
@@ -2499,9 +2511,15 @@ fn malformed_federation_update_is_not_queued_and_streak_reaches_the_next_decisio
         panic!("expected durable defer")
     };
     assert_eq!(inputs.streak, 1);
-    assert!(manager.vault().get_raw(&id).unwrap().is_none());
+    assert!(
+        ids.iter()
+            .all(|id| manager.vault().get_raw(id).unwrap().is_none())
+    );
     assert!(client.replay_deferred_federation_update().unwrap());
-    assert!(manager.vault().get_raw(&id).unwrap().is_some());
+    assert!(
+        ids.iter()
+            .all(|id| manager.vault().get_raw(id).unwrap().is_some())
+    );
 }
 
 #[test]
