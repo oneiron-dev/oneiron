@@ -517,11 +517,7 @@ fn search_summary_and_full_project_the_revision_that_produced_the_hit() {
     }
     let scoped = vault
         .scoped_read(oneiron::claim::ScopedReadActorKey::new("test-reader").expect("actor key"));
-    let hits = scoped
-        .query()
-        .search_text("searchanchor", 10)
-        .run()
-        .unwrap();
+    let hits = vault.query().search_text("searchanchor", 10).run().unwrap();
     assert_eq!(hits.len(), 1);
     for view in [View::Summary, View::Full] {
         let response = search_response(&scoped, hits.clone(), view, 10).unwrap();
