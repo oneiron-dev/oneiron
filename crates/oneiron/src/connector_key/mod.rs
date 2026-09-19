@@ -16,6 +16,7 @@ mod codec;
 mod lifecycle;
 mod meter;
 mod record;
+mod slate;
 mod txn;
 
 #[cfg(test)]
@@ -92,3 +93,8 @@ use crate::error::{Error, Result};
 use crate::llm::{BudgetSignalDeliveryChannel, BudgetThreshold};
 #[cfg(test)]
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
+
+pub use slate::{
+    ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateOwnerOverride,
+    SlateRow, SlateToolManifest, draft_connector_slate,
+};
