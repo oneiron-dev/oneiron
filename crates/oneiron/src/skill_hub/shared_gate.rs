@@ -55,7 +55,7 @@ pub struct SharedSkillMergeReceipt {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SharedSkillMergeDisposition {
     PendingConsent,
-    Ruled(SharedSkillMergeReceipt),
+    Ruled(Box<SharedSkillMergeReceipt>),
 }
 struct MergeSnapshot {
     delta: SharedSkillDelta,
@@ -168,7 +168,7 @@ impl Vault {
                 &serde_json::to_vec(&receipt)
                     .map_err(|_| invalid("merge receipt encode failed"))?,
             )?;
-            Ok(SharedSkillMergeDisposition::Ruled(receipt))
+            Ok(SharedSkillMergeDisposition::Ruled(Box::new(receipt)))
         })
     }
     pub fn shared_skill_merge_receipt(
@@ -210,10 +210,12 @@ impl Vault {
         if base.lifecycle_status != SkillLifecycle::Active
             || record.lifecycle_status != SkillLifecycle::Candidate
             || crate::skill_optimize::skill_body_binding_digest(&base)? != delta.base_binding
-            || base.governance_tier.is_some_and(|tier| tier.is_protected())
+            || base
+                .governance_tier
+                .is_some_and(crate::skill::SkillGovernanceTier::is_protected)
             || record
                 .governance_tier
-                .is_some_and(|tier| tier.is_protected())
+                .is_some_and(crate::skill::SkillGovernanceTier::is_protected)
             || record.approval_status == crate::claim::ClaimApprovalStatus::Rejected
             || package.content_hash()?.to_hex() != delta.content_hash
             || record.content_hash != Some(package.content_hash()?)

@@ -165,13 +165,13 @@ impl Memory<'_> {
                 )
                 .into());
             }
-            if !crate::batch::authenticated_claim_author_in_txn(
+            if crate::batch::authenticated_claim_author_in_txn(
                 &self.vault.store,
                 txn,
                 &proposal,
                 &next,
             )?
-            .is_some_and(|writer| writer.entity_ref() == self.actor)
+            .is_none_or(|writer| writer.entity_ref() != self.actor)
             {
                 return Err(authority_denied("proposal must be authored by the questioner").into());
             }

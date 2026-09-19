@@ -294,7 +294,6 @@ pub fn agent_dispatch_payload_agent_id(payload: &DreamerAttemptPayload) -> Optio
 /// Derives the dispatched agent's write actor: the AGENT_DEF row id, class
 /// `Agent`. This is the identity the gate's live ceiling resolver and
 /// `actor_ceilings` rows key on.
-#[must_use]
 pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
     Ok(WriteActor::new(
         input.target.agent_definition_ref()?,

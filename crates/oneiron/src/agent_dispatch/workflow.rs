@@ -79,7 +79,7 @@ impl AgentDispatcher<'_> {
                 self.dispatchable_definition_in_txn(txn, &AgentDispatchTarget::Custom(*step))?;
             match approved_parent {
                 Some(parent) => {
-                    parent.resolve_child(self, &input, &spawn, live.scope.to_world_scope())?
+                    parent.resolve_child(self, &input, &spawn, live.scope.to_world_scope())?;
                 }
                 None => {
                     self.resolve_dispatch_context(
@@ -92,20 +92,20 @@ impl AgentDispatcher<'_> {
                 }
             }
         }
-        if let Some(key) = input.dedupe_key.as_deref() {
-            if let Some(bytes) = self.vault.store.vault_meta.get(txn, &dedupe_key(key))? {
-                let root = crate::attempt_queue::AttemptId::from_bytes(&bytes)?;
-                let row = AttemptQueue::new(self.vault)
-                    .get_in_write_txn(txn, root)?
-                    .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
-                let record = self.read_workflow(txn, &row)?;
-                if record.intent != intent {
-                    return Err(invalid("workflow dedupe key names a different intent"));
-                }
-                return Ok(AgentDispatchOutcome::WorkflowExisting(Box::new(
-                    self.workflow_status_from(row, &record)?,
-                )));
+        if let Some(key) = input.dedupe_key.as_deref()
+            && let Some(bytes) = self.vault.store.vault_meta.get(txn, &dedupe_key(key))?
+        {
+            let root = crate::attempt_queue::AttemptId::from_bytes(&bytes)?;
+            let row = AttemptQueue::new(self.vault)
+                .get_in_write_txn(txn, root)?
+                .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
+            let record = self.read_workflow(txn, &row)?;
+            if record.intent != intent {
+                return Err(invalid("workflow dedupe key names a different intent"));
             }
+            return Ok(AgentDispatchOutcome::WorkflowExisting(Box::new(
+                self.workflow_status_from(row, &record)?,
+            )));
         }
         let mut steps = Vec::with_capacity(definition.steps.len());
         let mut first = None;

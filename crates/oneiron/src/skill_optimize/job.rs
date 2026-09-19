@@ -149,7 +149,7 @@ fn run_skill_optimize_bound(
     let brief = optimize_brief_bound_at(
         vault,
         &candidate,
-        owner.map(|owner| owner.entity_ref()),
+        owner.map(crate::write_envelope::WriteActor::entity_ref),
         learned_at,
     )?;
     let (desc, rationale) = match author.draft(&brief)? {

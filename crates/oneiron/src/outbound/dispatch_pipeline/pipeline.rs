@@ -100,35 +100,11 @@ impl OutboundDispatchPipeline {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
             read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)?
         };
-        let invalid_replay = || {
-            OutboundDispatchError::Chokepoint(IntentLedgerError::InvalidRecord(
-                "outbound dispatch replay does not match its admitted binding",
-            ))
-        };
-        request.channel_identity_ref = if let Some(record) = replay.as_ref() {
-            let frozen: serde_json::Value =
-                serde_json::from_slice(record.payload()).map_err(|_| invalid_replay())?;
-            let sender = match frozen.get("channel_identity_ref") {
-                Some(serde_json::Value::Null) => None,
-                Some(serde_json::Value::String(value)) => {
-                    Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
-                }
-                _ => return Err(invalid_replay()),
-            };
-            if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
-                return Err(invalid_replay());
-            }
-            sender
-        } else {
-            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-            enrich_dispatch_channel_identity(
-                &vault.store,
-                &rtxn,
-                &request.intent.channel,
-                request.actor.actor_entity_ref.as_ref(),
-                request.channel_identity_ref,
-            )?
-        };
+        request.channel_identity_ref = resolve_dispatch_sender(
+            vault,
+            &request,
+            replay.as_ref().map(|record| record.payload()),
+        )?;
         let space_posting = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             vault.outbound_space_posting_in_txn(
@@ -137,10 +113,9 @@ impl OutboundDispatchPipeline {
                 &request.intent.target,
             )?
         };
-        let policy_risk = if space_posting
-            .as_ref()
-            .is_some_and(|posting| posting.policy_risk())
-        {
+        let policy_risk = if space_posting.as_ref().is_some_and(
+            crate::channel_identity_autonomy::posting_dispatch::FrozenSpacePosting::policy_risk,
+        ) {
             ExternalEffectPolicyRisk::HoldToProposal
         } else {
             outbound_dispatch_policy_risk(request.gate, verb_contract)
@@ -634,5 +609,43 @@ impl OutboundDispatchPipeline {
             effector_budget,
             budget_ladder_events,
         })
+    }
+}
+
+fn invalid_replay() -> OutboundDispatchError {
+    OutboundDispatchError::Chokepoint(IntentLedgerError::InvalidRecord(
+        "outbound dispatch replay does not match its admitted binding",
+    ))
+}
+
+fn resolve_dispatch_sender(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    replay_payload: Option<&[u8]>,
+) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
+    if let Some(payload) = replay_payload {
+        let frozen: serde_json::Value =
+            serde_json::from_slice(payload).map_err(|_| invalid_replay())?;
+        let sender = match frozen.get("channel_identity_ref") {
+            Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(value)) => {
+                Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
+            }
+            _ => return Err(invalid_replay()),
+        };
+        if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
+            return Err(invalid_replay());
+        }
+        Ok(sender)
+    } else {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        enrich_dispatch_channel_identity(
+            &vault.store,
+            &txn,
+            &request.intent.channel,
+            request.actor.actor_entity_ref.as_ref(),
+            request.channel_identity_ref,
+        )
+        .map_err(Into::into)
     }
 }

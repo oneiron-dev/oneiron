@@ -36,7 +36,7 @@ pub struct HubAdmissionReceipt {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HubAdmissionDisposition {
     PendingConsent,
-    Ruled(HubAdmissionReceipt),
+    Ruled(Box<HubAdmissionReceipt>),
 }
 impl Vault {
     /// The human answer, bound to the ask shown. A stale ask mints no consent.
@@ -121,7 +121,7 @@ impl Vault {
                 &serde_json::to_vec(&receipt)
                     .map_err(|_| invalid("admission receipt encode failed"))?,
             )?;
-            Ok(HubAdmissionDisposition::Ruled(receipt))
+            Ok(HubAdmissionDisposition::Ruled(Box::new(receipt)))
         })
     }
     pub(super) fn activate_scored_hub_record_in_txn(

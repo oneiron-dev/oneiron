@@ -684,26 +684,7 @@ pub(in crate::batch) fn apply_put(
     }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if let Some(record) = new_skill_record.as_ref() {
-        crate::skill_hub::maintain_skill_content_hash_index_for_put(
-            store,
-            wtxn,
-            &id,
-            previous_skill_record
-                .as_ref()
-                .and_then(|previous| previous.content_hash),
-            record.content_hash,
-        )?;
-        // ONE-1447: the reverse "which skills cite this message" index, kept at
-        // the same chokepoint as the content-hash index so every road that can
-        // land a SKILL body — typed doors, hub import, sync remat — maintains
-        // it without a call site of its own.
-        crate::skill_convert::maintain_skill_source_index_for_put(
-            store,
-            wtxn,
-            &id,
-            previous_skill_record.as_ref(),
-            record,
-        )?;
+        maintain_skill_indices(store, wtxn, &id, previous_skill_record.as_ref(), record)?;
     }
     if let Some(body) = decoded_claim_body.as_ref() {
         // Thread readers reuse ClaimOf, not a private unsynchronized cache.
@@ -759,4 +740,22 @@ pub(in crate::batch) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
+}
+
+fn maintain_skill_indices(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    previous: Option<&crate::skill::SkillRecord>,
+    record: &crate::skill::SkillRecord,
+) -> crate::error::Result<()> {
+    crate::skill_hub::maintain_skill_content_hash_index_for_put(
+        store,
+        txn,
+        id,
+        previous.and_then(|previous| previous.content_hash),
+        record.content_hash,
+    )?;
+    // Keep both indices at the same materialization door for every write path.
+    crate::skill_convert::maintain_skill_source_index_for_put(store, txn, id, previous, record)
 }

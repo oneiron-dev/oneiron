@@ -64,14 +64,6 @@ pub(crate) fn read_hub_git(root: &Path, args: &[&str], limit: usize) -> Result<V
 }
 
 pub(super) fn configure(command: &mut Command, root: &Path) -> Result<()> {
-    command
-        .env("HOME", root)
-        .env("XDG_CONFIG_HOME", root)
-        .env("GIT_LFS_SKIP_SMUDGE", "1")
-        .env("GIT_NO_REPLACE_OBJECTS", "1")
-        .env("GIT_PROTOCOL_FROM_USER", "0")
-        .env("GIT_ALLOW_PROTOCOL", "https:http:file")
-        .env("GIT_NO_LAZY_FETCH", "0");
     // Append to the normal closed GitWire policy, never replace its hook/credential rules.
     const POLICY: &[(&str, &str)] = &[
         ("protocol.https.allow", "always"),
@@ -91,6 +83,14 @@ pub(super) fn configure(command: &mut Command, root: &Path) -> Result<()> {
         ("core.deltaBaseCacheLimit", "16m"),
         ("fetch.unpackLimit", "1"),
     ];
+    command
+        .env("HOME", root)
+        .env("XDG_CONFIG_HOME", root)
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_PROTOCOL_FROM_USER", "0")
+        .env("GIT_ALLOW_PROTOCOL", "https:http:file")
+        .env("GIT_NO_LAZY_FETCH", "0");
     let offset = super::GIT_WIRE_CONFIG_POLICY.len();
     command.env("GIT_CONFIG_COUNT", (offset + POLICY.len()).to_string());
     for (i, (key, value)) in POLICY.iter().enumerate() {

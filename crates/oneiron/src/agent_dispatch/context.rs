@@ -130,7 +130,7 @@ impl AgentDispatcher<'_> {
                 }
                 return Err(super::widen_record::invalid("context ancestor is missing"));
             };
-            if super::workflow_record::is_wrapper(&record)? {
+            if super::workflow_record::is_wrapper(&record) {
                 cursor = self.workflow_authority_parent(Some(id))?;
                 continue;
             }

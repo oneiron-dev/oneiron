@@ -74,15 +74,15 @@ pub(super) fn dedupe_key(key: &str) -> Vec<u8> {
     result.extend_from_slice(blake3::hash(key.as_bytes()).as_bytes());
     result
 }
-pub(super) fn is_wrapper(row: &AttemptRecord) -> Result<bool> {
+pub(super) fn is_wrapper(row: &AttemptRecord) -> bool {
     if row.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
-        return Ok(false);
+        return false;
     }
-    Ok(decode_dreamer_attempt_payload(&row.payload)
-        .is_ok_and(|payload| payload.attempt_type == WORKFLOW_ATTEMPT_TYPE))
+    decode_dreamer_attempt_payload(&row.payload)
+        .is_ok_and(|payload| payload.attempt_type == WORKFLOW_ATTEMPT_TYPE)
 }
 pub(super) fn reject_wrapper_parent(row: &AttemptRecord) -> Result<()> {
-    if is_wrapper(row)? {
+    if is_wrapper(row) {
         return Err(invalid("an inert workflow cannot directly spawn an agent"));
     }
     Ok(())
@@ -134,7 +134,7 @@ impl super::AgentDispatcher<'_> {
         let Some(row) = queue.get(id)? else {
             return Err(invalid("workflow authority parent is missing"));
         };
-        if !is_wrapper(&row)? {
+        if !is_wrapper(&row) {
             return Ok(parent);
         }
         let txn = self.vault.store.env.read_txn()?;

@@ -38,7 +38,7 @@ impl<'a> HostSelfDispatcher<'a> {
         {
             return Err(invalid());
         }
-        let run_ref = status.attempt.run_id.clone().unwrap_or_else(|| {
+        let run_ref = status.attempt.run_id.unwrap_or_else(|| {
             format!(
                 "agent:{}",
                 crate::entity_id::bytes_to_hex_lower(parent.as_bytes())

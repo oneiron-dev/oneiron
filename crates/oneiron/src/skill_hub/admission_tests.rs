@@ -190,7 +190,7 @@ fn every_hub_tier_requires_human_consent_before_replay_and_activation() -> Resul
                 .lifecycle_status,
             SkillLifecycle::Active
         );
-        assert_eq!(fixture.vault.hub_admission_receipt(&id)?, Some(receipt));
+        assert_eq!(fixture.vault.hub_admission_receipt(&id)?, Some(*receipt));
     }
     Ok(())
 }
@@ -470,7 +470,7 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
         );
         assert_eq!(
             company.vault.shared_skill_merge_receipt(&id)?,
-            Some(receipt)
+            Some(*receipt)
         );
     }
     Ok(())

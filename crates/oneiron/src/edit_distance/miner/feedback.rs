@@ -88,9 +88,10 @@ pub(crate) fn record_inbox_learning_in_txn(
     } else {
         None
     };
-    let scope = crate::actor_claims::edit_cost_scope_name(reviewed.scope.as_ref())
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("claim:{}:{:?}", reviewed.predicate, reviewed.subject));
+    let scope = crate::actor_claims::edit_cost_scope_name(reviewed.scope.as_ref()).map_or_else(
+        || format!("claim:{}:{:?}", reviewed.predicate, reviewed.subject),
+        str::to_owned,
+    );
     let row = PrincipalDecision {
         v: 1,
         receipt: receipt.clone(),

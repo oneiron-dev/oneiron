@@ -61,7 +61,7 @@ impl Vault {
             }
             if current
                 .governance_tier
-                .is_some_and(|tier| tier.is_protected())
+                .is_some_and(crate::skill::SkillGovernanceTier::is_protected)
             {
                 return Err(invalid("protected shared skill cannot merge automatically"));
             }

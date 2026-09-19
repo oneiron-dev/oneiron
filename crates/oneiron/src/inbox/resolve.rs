@@ -458,15 +458,7 @@ fn accept_member_with_amendment_in_txn(
         // was checked above. Rebind only its content, inside the same txn;
         // the gate still evaluates the edited body under the live policy.
         // An unbound caller cannot relabel a generated proposal's consent.
-        let edited = crate::claim::decode_claim_body(&approved, true)?;
-        let (diff_handle, read_frontier_hash) =
-            crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &edited)?;
-        let mut redemption = pending.clone();
-        redemption.diff_handle = diff_handle;
-        redemption.read_frontier_hash = read_frontier_hash;
-        vault
-            .store
-            .put_pending_gate_consent_in_txn(wtxn, &redemption)?;
+        rebind_amended_consent(vault, wtxn, &pending, &approved)?;
     }
     if amended_approval || reviewed.approval != ClaimApprovalStatus::Approved {
         apply_ops(
@@ -665,4 +657,21 @@ fn require_preference_decider(
         ));
     }
     Ok(())
+}
+
+fn rebind_amended_consent(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pending: &crate::store::PendingGateConsentRecord,
+    approved: &[u8],
+) -> Result<()> {
+    let edited = crate::claim::decode_claim_body(approved, true)?;
+    let (diff_handle, read_frontier_hash) =
+        crate::gate::claim_consent_binding_parts(&vault.store, txn, &edited)?;
+    let mut redemption = pending.clone();
+    redemption.diff_handle = diff_handle;
+    redemption.read_frontier_hash = read_frontier_hash;
+    vault
+        .store
+        .put_pending_gate_consent_in_txn(txn, &redemption)
 }

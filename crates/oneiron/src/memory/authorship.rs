@@ -129,7 +129,7 @@ pub(crate) fn require_claim_self_grant_in_txn(
     verb: &str,
 ) -> Result<()> {
     let author = crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, &target, body)?
-        .map(|author| author.entity_ref());
+        .map(crate::write_envelope::WriteActor::entity_ref);
     require_authorship_in_txn(vault, txn, actor, target, author, verb)
 }
 
