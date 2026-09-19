@@ -107,6 +107,24 @@ impl WholeVaultDocument {
         if actual.len() != self.derivation_envelopes.len() || actual != expected {
             return Err(invalid("derivation index disagrees with claim evidence"));
         }
+        for envelope in &self.derivation_envelopes {
+            let row = self
+                .claims
+                .iter()
+                .find(|row| row.id == envelope.id)
+                .ok_or_else(|| invalid("derivation claim is absent"))?;
+            let expected = super::receipt_sources::task_receipt_refs_from_body(&row.body);
+            let mut actual = BTreeSet::new();
+            for receipt in &envelope.receipts {
+                receipt.validate()?;
+                if !actual.insert(receipt.receipt_id().to_owned()) {
+                    return Err(invalid("duplicate receipt source"));
+                }
+            }
+            if actual != expected {
+                return Err(invalid("receipt source set disagrees with citations"));
+            }
+        }
         // Built-in registrations are descriptors, not installable code. Unknown
         // descriptors must not be silently ignored as if their adapter exists.
         let known: BTreeMap<_, _> = crate::ingest::INGEST_SOURCE_REGISTRY

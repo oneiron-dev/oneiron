@@ -2450,8 +2450,8 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 7
+      "crate-vis": 2,
+      "re-export": 8
      }
     },
     {
@@ -2462,6 +2462,29 @@
      "purpose": "Ordered archive restore through MODEL and edge-provenance owning doors",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/export/receipt_source_tests.rs",
+     "purpose": "Readable task trace sources are data, never local receipt authority",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExportReceiptSource",
+      "ReceiptSourceOmission"
+     ],
+     "path": "src/batch/export/receipt_sources.rs",
+     "purpose": "Actual cited pack receipts in an archive",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 2
      }
     },
     {
@@ -19658,7 +19681,7 @@
      "path": "src/receipt/ledgers.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -19669,7 +19692,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 8
      }
     },
@@ -26616,7 +26639,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 71,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27773,8 +27796,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1598,
-   "test_files": 575
+   "source_files": 1599,
+   "test_files": 576
   },
   "oneiron-bench": {
    "files": [

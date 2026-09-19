@@ -73,6 +73,10 @@ pub(crate) fn serialize_vault_snapshot(
                 .push(ExportDerivationEnvelope {
                     id: raw.id.to_hex(),
                     evidence: evidence.clone(),
+                    receipts: crate::batch::export::receipt_sources_for_body(
+                        &body,
+                        &snapshot.task_receipts,
+                    )?,
                 });
         }
         let entity = ExportEntity {

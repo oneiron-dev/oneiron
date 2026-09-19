@@ -175,6 +175,9 @@ pub struct ExportAdapterDescriptor {
 pub struct ExportDerivationEnvelope {
     pub id: String,
     pub evidence: ExportValue,
+    /// Actual cited task receipts, or explicit source omissions. Archive data
+    /// only: these cannot stamp terminal attempts in the receiving vault.
+    pub receipts: Vec<super::ExportReceiptSource>,
 }
 
 #[derive(Debug, Clone)]

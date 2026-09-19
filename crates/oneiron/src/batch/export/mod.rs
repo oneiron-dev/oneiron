@@ -57,3 +57,11 @@ mod bundle_validation;
 pub use bundle_types::*;
 #[cfg(test)]
 mod bundle_tests;
+
+mod receipt_sources;
+pub use receipt_sources::{ExportReceiptSource, ReceiptSourceOmission};
+
+pub(crate) use receipt_sources::receipt_sources_for_body;
+
+#[cfg(test)]
+mod receipt_source_tests;

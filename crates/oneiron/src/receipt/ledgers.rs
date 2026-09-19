@@ -424,3 +424,32 @@ pub fn outbound_intent_receipt(
         fields,
     }
 }
+
+/// Read actual terminal evidence on the caller's consistent archive snapshot.
+/// This accessor provides data, never a way to install a foreign receipt.
+pub(crate) fn attempt_pack_receipt_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    receipt_id: &str,
+) -> Result<Option<ReceiptRecord>> {
+    let Some(suffix) = receipt_id.strip_prefix(ATTEMPT_PACK_RECEIPT_ID_PREFIX) else {
+        return Ok(None);
+    };
+    let Ok(id) = EntityId::from_hex(suffix) else {
+        return Ok(None);
+    };
+    if id.to_hex() != suffix {
+        return Ok(None);
+    }
+    let Some(raw) = store
+        .vault_meta
+        .get(txn, &attempt_pack_receipt_key(receipt_id))?
+    else {
+        return Ok(None);
+    };
+    let receipt = decode_attempt_pack_receipt(&raw)?;
+    if receipt.receipt_id != receipt_id {
+        return Err(Error::CorruptedIndex("attempt receipt key/body identity"));
+    }
+    Ok(Some(receipt))
+}

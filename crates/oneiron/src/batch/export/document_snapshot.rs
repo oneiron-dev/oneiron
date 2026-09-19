@@ -24,6 +24,7 @@ pub(crate) struct ExportSnapshot {
     pub(crate) skill_packages: BTreeMap<EntityId, crate::skill_hub::HubPackage>,
     pub(crate) agent_fork_hashes: BTreeMap<EntityId, String>,
     pub(crate) pack_sources: BTreeMap<EntityId, crate::skill_hub::pack_catalog::PackSource>,
+    pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
 }
 
 pub(crate) struct ExportSnapshotEntity {
@@ -47,6 +48,7 @@ impl Vault {
         let mut included = BTreeSet::new();
         let mut skill_packages = BTreeMap::new();
         let mut agent_fork_hashes = BTreeMap::new();
+        let mut task_receipts = BTreeMap::new();
         for entry in self.store.entities.iter(&rtxn)? {
             let (key, raw) = entry?;
             let id = crate::entity_id::parse_entity_id(&key, "whole-vault entity id")?;
@@ -91,17 +93,32 @@ impl Vault {
             {
                 agent_fork_hashes.insert(id, hash.to_hex());
             }
+            let tainted =
+                !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, &rtxn, &id)?
+                    .is_empty();
+            if !tainted
+                && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && let Ok(claim) =
+                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+            {
+                for receipt_id in super::receipt_sources::task_receipt_refs(&claim) {
+                    if !task_receipts.contains_key(&receipt_id)
+                        && let Some(receipt) = crate::receipt::attempt_pack_receipt_in_txn(
+                            &self.store,
+                            &rtxn,
+                            &receipt_id,
+                        )?
+                    {
+                        task_receipts.insert(receipt_id, receipt);
+                    }
+                }
+            }
             included.insert(id);
             entities.push(ExportSnapshotEntity {
                 id,
                 header,
                 body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
-                tainted: !crate::secret_rotation::exhaust_taint_refs_in_txn(
-                    &self.store,
-                    &rtxn,
-                    &id,
-                )?
-                .is_empty(),
+                tainted,
             });
         }
         let mut edges = Vec::new();
@@ -151,6 +168,7 @@ impl Vault {
                 skill_packages,
                 agent_fork_hashes,
                 pack_sources,
+                task_receipts,
             },
             format,
         )

@@ -111,3 +111,5 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) use ledgers::attempt_pack_receipt_page;
+
+pub(crate) use ledgers::attempt_pack_receipt_in_txn;
