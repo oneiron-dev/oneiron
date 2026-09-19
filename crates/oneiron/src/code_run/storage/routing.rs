@@ -343,7 +343,7 @@ impl<'a> ExecutorStorage<'a> {
         self.witness_executor_utterance(
             run_ref,
             run_id,
-            ExecutorUtterance::Think,
+            ExecutorUtterance::ReportBlocked,
             &receipt.content()?,
             call.occurred_at,
             call.order,

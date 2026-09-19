@@ -94,6 +94,7 @@ impl Memory<'_> {
         summary: Option<&str>,
         host_turn_ref: Option<EntityId>,
     ) -> MemoryResult<WitnessReceipt> {
+        super::validate_witness_origin(turn, host_turn_ref.is_some())?;
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
         }
@@ -121,7 +122,11 @@ impl Memory<'_> {
             if let Some(host_turn_ref) = host_turn_ref {
                 base_turn.turn_ref = Some(host_turn_ref.to_hex());
             }
-            return self.witness_with_route(&base_turn, Some(&route));
+            return if host_turn_ref.is_some() {
+                self.witness_host_executor(&base_turn, Some(&route))
+            } else {
+                self.witness_with_route(&base_turn, Some(&route))
+            };
         }
 
         let occurred = TimeRange {

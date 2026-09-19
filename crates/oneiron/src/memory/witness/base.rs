@@ -84,6 +84,25 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<WitnessReceipt> {
+        self.witness_authorized(turn, session_route, false, before_txn)
+    }
+
+    pub(crate) fn witness_host_executor(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_authorized(turn, session_route, true, || {})
+    }
+
+    fn witness_authorized(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+        host_executor: bool,
+        before_txn: impl FnOnce(),
+    ) -> MemoryResult<WitnessReceipt> {
+        super::validate_witness_origin(turn, host_executor)?;
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
         }

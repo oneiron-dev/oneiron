@@ -157,13 +157,13 @@ fn policy_with(agent_ref: EntityId, limit: u16, mode: FailureEscalationMode) -> 
     }
 }
 
-/// A durable ONE-1686 witness MESSAGE row, standing in for a `report_blocked`
-/// receipt until 1686 lands its own receipt kind.
+/// A canonical report-blocked receipt fixture. Actual dispatch and refusal
+/// of guest-created receipts are covered by the code-run boundary tests.
 fn put_receipt_message(vault: &Vault, seed: u8, order: u32) -> Result<EntityId> {
     let id = test_id(seed);
     let body = crate::gate::canonical_witness_message_body_for_test(
         "companion",
-        "executor.think",
+        crate::code_run::blocked::BLOCKED_REPORT_MESSAGE_TYPE,
         &crate::code_run::blocked::BlockedReceipt::new(
             crate::code_run::blocked::BlockedCategory::Tool,
             "blocked report",

@@ -4,6 +4,8 @@
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
+pub(crate) const BLOCKED_REPORT_MESSAGE_TYPE: &str = "executor.report_blocked";
+
 const PREFIX: &str = "oneiron:report_blocked:v1:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,7 +108,7 @@ pub fn read_blocked_receipt(vault: &Vault, id: &EntityId) -> Result<Option<Block
             .map(|(_, v)| v)
     };
     if field("author").and_then(rmpv::Value::as_str) != Some("companion")
-        || field("type").and_then(rmpv::Value::as_str) != Some("executor.think")
+        || field("type").and_then(rmpv::Value::as_str) != Some(BLOCKED_REPORT_MESSAGE_TYPE)
     {
         return Ok(None);
     }
