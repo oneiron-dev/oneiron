@@ -149,6 +149,21 @@ impl<'a> AgentDispatcher<'a> {
             }
         };
 
+        // Resolve resource lineage before any fork is registered. Missing or
+        // non-dispatch parents carry deny-all, never an implicit global grant.
+        let scope = match requested_parent {
+            None => spawn.scope.clone(),
+            Some(parent) => {
+                let parent_scope = self
+                    .parent_dispatch_input_in_txn(wtxn, parent)?
+                    .and_then(|input| input.scope)
+                    .unwrap_or_default();
+                Some(
+                    parent_scope
+                        .attenuate(spawn.scope.clone().unwrap_or_else(|| parent_scope.clone()))?,
+                )
+            }
+        };
         let requested_definition = self.dispatchable_definition(&input.target)?;
 
         // 2. AUTHORITY BOUND. Both sides read the LIVE stored rows; the frozen
@@ -178,6 +193,7 @@ impl<'a> AgentDispatcher<'a> {
             context_spec: spawn.context_spec,
             context_from: spawn.context_from,
             depth_remaining,
+            scope,
         };
         let encoded = encode_agent_dispatch_input(&dispatch_input)?;
         let outcome = self.runner.enqueue_with_task_ref_in_txn(
@@ -219,6 +235,7 @@ impl<'a> AgentDispatcher<'a> {
                 if status.input.context_spec != dispatch_input.context_spec
                     || status.input.context_from != dispatch_input.context_from
                     || status.input.depth_remaining != dispatch_input.depth_remaining
+                    || status.input.scope != dispatch_input.scope
                 {
                     return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "existing dedupe row carries a different spawn context",

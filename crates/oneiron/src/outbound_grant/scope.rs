@@ -7,12 +7,12 @@ use super::codec::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::genui::GrantMintIntentScope;
+use crate::outbound_consent::tool_call::ToolGrantDataClass;
 use crate::outbound_consent::{DataClass, ScopedMcpGrantRef};
 
-// Append-only: `page_ref` is the tenth key and sits inside the optional range
-// `decode_scope` validates, so every row written before it decodes unchanged
-// and no existing scope's encoded bytes move.
-pub(super) const SCOPE_KEYS: [&str; 10] = [
+// The optional vocabulary is kind-specific: scoped MCP requires an explicit
+// tool-data-class set. Blind and booking scopes cannot carry that authority.
+pub(super) const SCOPE_KEYS: [&str; 11] = [
     "kind",
     "contact_ref",
     "verb_class",
@@ -23,6 +23,7 @@ pub(super) const SCOPE_KEYS: [&str; 10] = [
     "data_class_ceiling",
     "endpoint_allowlist",
     "page_ref",
+    "tool_data_classes",
 ];
 
 pub(super) const SCOPE_KIND_CONTACT: &str = "contact";
@@ -69,6 +70,7 @@ pub enum StandingOutboundGrantScope {
         server: String,
         tool: String,
         data_class_ceiling: DataClass,
+        tool_data_classes: Vec<ToolGrantDataClass>,
         endpoint_allowlist: Vec<String>,
     },
     /// Bounded booking-page authority: `calendar.invite` for bookings that a
@@ -94,6 +96,7 @@ pub struct ScopedMcpGrantMintIntent {
     pub server: String,
     pub tool: String,
     pub data_class_ceiling: DataClass,
+    pub tool_data_classes: Vec<ToolGrantDataClass>,
     pub endpoint_allowlist: Vec<String>,
 }
 
@@ -160,11 +163,13 @@ impl StandingOutboundGrantScope {
                 server,
                 tool,
                 data_class_ceiling,
+                tool_data_classes,
                 endpoint_allowlist,
             } => Some(ScopedMcpGrantRef {
                 server,
                 tool,
                 data_class_ceiling: *data_class_ceiling,
+                tool_data_classes,
                 endpoint_allowlist,
             }),
             _ => None,
@@ -226,6 +231,7 @@ pub(super) fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
             server,
             tool,
             data_class_ceiling,
+            tool_data_classes,
             endpoint_allowlist,
         } => {
             // Stored-form == authority-form: the scoped server must ALREADY be
@@ -237,6 +243,11 @@ pub(super) fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
             }
             canonical_non_empty_str(tool)?;
             if !data_class_ceiling.is_grantable() || endpoint_allowlist.is_empty() {
+                return Err(invalid_grant());
+            }
+            // Canonical class ordering; an explicit independent header class
+            // never implies permission for normal arguments.
+            if !ToolGrantDataClass::valid_grant_set(tool_data_classes) {
                 return Err(invalid_grant());
             }
             for endpoint in endpoint_allowlist {

@@ -288,6 +288,11 @@ impl Memory<'_> {
             None => None,
         };
         let id = self.resolve_ref(entity_ref)?;
+        if self.vault.get_entity_type(&id)? == Some(crate::registry::ENTITY_TYPE_NOTE)
+            && self.entity_view(&id)?.is_none()
+        {
+            return Ok(Vec::new());
+        }
         let mut hits = Vec::new();
         // Push kind/min_weight/limit into the LMDB prefix walk per direction
         // so a high-degree node stops after `limit` matches instead of
@@ -306,6 +311,12 @@ impl Memory<'_> {
                 remaining,
             )?;
             for edge in edges {
+                if self.vault.get_entity_type(&edge.target)?
+                    == Some(crate::registry::ENTITY_TYPE_NOTE)
+                    && self.entity_view(&edge.target)?.is_none()
+                {
+                    continue;
+                }
                 let kind = self
                     .vault
                     .get_entity_type(&edge.target)?
@@ -328,6 +339,15 @@ impl Memory<'_> {
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or_else(|| MemoryError::from(Error::CorruptedIndex("entity header")))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            self.verified_actor_class()?;
+            if !crate::note::note_body_readable(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                Some(&self.actor),
+            ) {
+                return Ok(None);
+            }
+        }
         let body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
         Ok(Some(EntityView {
             id_hex: id.to_hex(),

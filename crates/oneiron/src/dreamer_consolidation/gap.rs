@@ -168,9 +168,9 @@ pub fn scan_reflection_gaps(
     Ok(gaps)
 }
 
-fn gap_row_key(hash: &[u8; 32]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_PRIVATE_GAP_PREFIX.len() + 32);
-    key.extend_from_slice(DREAMER_PRIVATE_GAP_PREFIX);
+fn gap_row_key(prefix: &[u8], hash: &[u8; 32]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(prefix.len() + 32);
+    key.extend_from_slice(prefix);
     key.extend_from_slice(hash);
     key
 }
@@ -184,13 +184,62 @@ pub fn upsert_gap_queue(
     gaps: Vec<ReflectionGap>,
     now: u64,
 ) -> Result<GapQueueDelta> {
+    upsert_gap_projection(vault, gaps, now, DREAMER_PRIVATE_GAP_PREFIX)
+}
+
+/// A real private projection namespace. Partition identity includes the world
+/// and facet, so a branch can neither refresh nor decay a different branch.
+pub(super) fn branch_gap_projection(
+    partition: &super::partition::ConsolidationPartitionKey,
+    scope: &crate::llm::Scope,
+) -> crate::llm::ScopeResource {
+    crate::llm::ScopeResource::Projection {
+        key: format!(
+            "dreamer:gap-branch:v1:{}:{}:{}:",
+            crate::entity_id::bytes_to_hex_lower(&partition.partition_hash()),
+            scope
+                .relationship
+                .map_or_else(|| "none".to_owned(), |id| id.to_hex()),
+            scope
+                .project
+                .map_or_else(|| "none".to_owned(), |id| id.to_hex())
+        ),
+    }
+}
+
+pub(super) fn upsert_branch_gap_queue(
+    vault: &Vault,
+    scope: &crate::llm::Scope,
+    partition: &super::partition::ConsolidationPartitionKey,
+    gaps: Vec<ReflectionGap>,
+    now: u64,
+) -> Result<GapQueueDelta> {
+    let resource = branch_gap_projection(partition, scope);
+    if !scope.allows_write(&resource)
+        || scope.world != partition.world_ref
+        || scope.facet != partition.facet_ref
+    {
+        return Err(invalid_consolidation("branch gap projection write refused"));
+    }
+    let crate::llm::ScopeResource::Projection { key } = resource else {
+        unreachable!("branch gap identity is a projection");
+    };
+    upsert_gap_projection(vault, gaps, now, key.as_bytes())
+}
+
+fn upsert_gap_projection(
+    vault: &Vault,
+    gaps: Vec<ReflectionGap>,
+    now: u64,
+    prefix: &[u8],
+) -> Result<GapQueueDelta> {
     let mut delta = GapQueueDelta::default();
     let mut observed: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut wtxn = vault.store.env.write_txn()?;
 
     for gap in gaps {
         let hash = gap_hash(gap.kind, &gap.subject, "");
-        let key = gap_row_key(&hash);
+        let key = gap_row_key(prefix, &hash);
         observed.insert(key.clone());
         match vault.store.vault_meta.get(&wtxn, &key)? {
             Some(raw) => {
@@ -224,11 +273,7 @@ pub fn upsert_gap_queue(
     // Decay pass over stored gaps that were NOT re-observed this round.
     let stale: Vec<(Vec<u8>, ReflectionGap)> = {
         let mut stale = Vec::new();
-        for row in vault
-            .store
-            .vault_meta
-            .prefix_iter(&wtxn, DREAMER_PRIVATE_GAP_PREFIX)?
-        {
+        for row in vault.store.vault_meta.prefix_iter(&wtxn, prefix)? {
             let (key, raw) = row?;
             if observed.contains(key.as_ref()) {
                 continue;

@@ -417,10 +417,10 @@ impl HeldOutReplayScorer for UnreachableScorer {
 /// cycle is the stored ROW, and that outlives any lease.
 fn enqueue_attempt(vault: &Vault, run: Option<&str>, now: u64) -> AttemptId {
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(attempt) = queue
-        .enqueue(EnqueueAttempt {
-            kind: "skill-opt.wake".to_owned(),
-            payload: Vec::new(),
+    let EnqueueDreamerAttemptOutcome::Enqueued(status) = DreamerRunnerStore::new(vault)
+        .enqueue_skill_optimize(EnqueueDreamerSkillOptimizeAttempt {
+            input: Value::Nil,
+            parent_attempt: None,
             dedupe_key: None,
             run_id: run.map(str::to_owned),
             now,
@@ -429,6 +429,7 @@ fn enqueue_attempt(vault: &Vault, run: Option<&str>, now: u64) -> AttemptId {
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
+    let attempt = status.attempt;
     let ClaimOutcome::Claimed(leased) = queue
         .claim(ClaimAttempt {
             lease_owner: "skill-opt-wake".to_owned(),

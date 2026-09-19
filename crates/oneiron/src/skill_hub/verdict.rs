@@ -190,7 +190,7 @@ impl Vault {
         Ok(claim_id)
     }
 
-    fn ingest_skill_scan_verdict_in_txn(
+    pub(super) fn ingest_skill_scan_verdict_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         entity: &EntityId,

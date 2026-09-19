@@ -165,7 +165,7 @@ pub(super) fn check_external_effect_policy_with_budget(
     policy: &PolicyManifestResolution,
     admit_for_execution: bool,
 ) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
-    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None)?;
+    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None, None)?;
     let mut charge = None;
     let mut exhausted = false;
     if governance.outcome() == GateOutcome::Allow
