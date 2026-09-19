@@ -67,3 +67,5 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 #[cfg(test)]
 use serde_json::Value;
+
+pub mod native_mail;
