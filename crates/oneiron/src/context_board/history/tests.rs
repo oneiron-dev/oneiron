@@ -204,3 +204,117 @@ fn board_refuses_claims_withdrawn_before_recording_or_after_the_turn() {
         Err(BoardHistoryError::UnknownTurn(_))
     ));
 }
+
+#[test]
+fn index_only_is_disjoint_from_every_persisted_family() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let owner = put(&vault, ENTITY_TYPE_PERSON, "owner");
+    let document = put(&vault, ENTITY_TYPE_ASSET_TEXT, "index only");
+    let turn = put(&vault, ENTITY_TYPE_TURN, "first");
+    for family in 0..5 {
+        let mut selection = BoardSelection {
+            index_only: BTreeSet::from([document]),
+            ..Default::default()
+        };
+        match family {
+            0 => {
+                selection.allowed.insert(document);
+            }
+            1 => {
+                selection.allowed.insert(document);
+                selection.default_on.insert(document);
+            }
+            2 => {
+                selection.allowed.insert(document);
+                selection.active.insert(document);
+            }
+            3 => {
+                selection.pinned.insert(document);
+            }
+            _ => {
+                selection.top_snippet.insert(document);
+            }
+        }
+        assert!(matches!(
+            vault.record_board_turn(
+                &BoardTurn {
+                    turn,
+                    owner,
+                    at: 1,
+                    selection
+                },
+                1
+            ),
+            Err(BoardHistoryError::InvalidSelection(_))
+        ));
+        assert!(matches!(
+            vault.reconstruct_board(&turn),
+            Err(BoardHistoryError::UnknownTurn(_))
+        ));
+    }
+}
+
+#[test]
+fn board_claim_frontier_is_authenticated_without_rewriting_unchanged_families() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let owner = put(&vault, ENTITY_TYPE_PERSON, "owner");
+    let document = put(&vault, ENTITY_TYPE_ASSET_TEXT, "pinned");
+    let first = put(&vault, ENTITY_TYPE_TURN, "first");
+    let second = put(&vault, ENTITY_TYPE_TURN, "second");
+    let selection = BoardSelection {
+        pinned: BTreeSet::from([document]),
+        ..Default::default()
+    };
+    let receipt = vault
+        .record_board_turn(
+            &BoardTurn {
+                turn: first,
+                owner,
+                at: 1,
+                selection: selection.clone(),
+            },
+            10,
+        )
+        .unwrap();
+    let unchanged = vault
+        .record_board_turn(
+            &BoardTurn {
+                turn: second,
+                owner,
+                at: 2,
+                selection: selection.clone(),
+            },
+            11,
+        )
+        .unwrap();
+    assert!(unchanged.changed_claims.is_empty());
+    assert_eq!(
+        vault.reconstruct_board(&second).unwrap().selection,
+        selection
+    );
+    let id = receipt.changed_claims[0];
+    let mut body = vault.get_claim(&id).unwrap().unwrap();
+    body.value = super::claims::value(&selection.pinned, crate::vault::RevisionRef([0xFF; 16]));
+    let mut txn = vault.store.env.write_txn().unwrap();
+    vault
+        .put_reserved_claim_in_txn(
+            &mut txn,
+            &id,
+            &body,
+            TimeRange {
+                start: 1,
+                end: u64::MAX,
+            },
+            10,
+        )
+        .unwrap();
+    txn.commit().unwrap();
+    for turn in [first, second] {
+        assert!(matches!(
+            vault.reconstruct_board(&turn),
+            Err(BoardHistoryError::MissingFrontier)
+        ));
+    }
+}

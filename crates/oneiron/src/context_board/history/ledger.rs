@@ -19,6 +19,7 @@ type Result<T> = std::result::Result<T, BoardHistoryError>;
 const DOC: &[u8] = b"board_history:doc:";
 const TURN: &[u8] = b"board_history:turn:";
 const LAST: &[u8] = b"board_history:last:";
+const CLAIM_FRONTIER: &[u8] = b"board_history:claim_frontier:";
 const HORIZON: &[u8] = b"board_history:horizon:";
 
 fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
@@ -74,6 +75,18 @@ fn claim(
     }
     let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     validate_board_claim(&body)?;
+    let (_, writing_frontier) = decode_value(&body.value)?;
+    // Unchanged families reuse earlier claims. Authenticate each claim's
+    // writing frontier at every read/write door, not the requesting turn.
+    if vault
+        .store
+        .vault_meta
+        .get(txn, &key(CLAIM_FRONTIER, id))?
+        .as_deref()
+        != Some(writing_frontier.0.as_slice())
+    {
+        return Err(BoardHistoryError::MissingFrontier);
+    }
     Ok((body, header))
 }
 
@@ -102,8 +115,9 @@ fn validate_selection(selection: &BoardSelection) -> Result<()> {
             "active and default_on must be subsets of allowed",
         ));
     }
-    if !selection.pinned.is_disjoint(&selection.index_only)
-        || !selection.top_snippet.is_disjoint(&selection.index_only)
+    if sets(selection)
+        .into_iter()
+        .any(|persisted| !persisted.is_disjoint(&selection.index_only))
     {
         return Err(BoardHistoryError::InvalidSelection(
             "index-only activations cannot be persistent",
@@ -257,6 +271,9 @@ impl Vault {
                 },
                 learned_at,
             )?;
+            self.store
+                .vault_meta
+                .put(&mut txn, &key(CLAIM_FRONTIER, &id), &anchor_ref.0)?;
             changed_claims.push(id);
         }
         let anchor = TurnAnchor {
@@ -327,11 +344,8 @@ impl Vault {
             let items = match map_bytes(&doc, "claims", predicate)? {
                 None => Default::default(),
                 Some(raw) => {
-                    let (body, header) = claim(
-                        self,
-                        &txn,
-                        &id_from(raw.get(..16).ok_or(BoardHistoryError::MissingFrontier)?)?,
-                    )?;
+                    let id = id_from(raw.get(..16).ok_or(BoardHistoryError::MissingFrontier)?)?;
+                    let (body, header) = claim(self, &txn, &id)?;
                     let items = decode_value(&body.value)?.0;
                     if raw.get(16..) != Some(selection_hash(&items).as_slice()) {
                         return Err(BoardHistoryError::MissingFrontier);
