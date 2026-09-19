@@ -1,8 +1,7 @@
 //! Exact covers, gated merge atomicity and revision-bound late results.
 
-#[path = "../conversation_dag/tests/support.rs"]
-mod support;
 use super::*;
+use crate::conversation_dag::fixtures as support;
 use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::{EdgeKind, EntityId, ErrorKind};

@@ -231,20 +231,19 @@ fn scoped_text_port_gates_candidates_before_limit_on_both_backends() -> Result<(
         }
         let rank = crate::config::Bm25RankProfile::default().to_bm25_config()?;
         let mut scope = |entity: &crate::EntityId| Ok(*entity == id(81));
-        let rows = p.port_retrieval_text_scoped(
-            &txn,
-            TextQuery {
-                query: "asteroid",
-                limit: 1,
-                rank: &rank,
-                filter_all: true,
-                matches_scope: &mut scope,
-            },
-        )?;
-        assert_eq!(
-            rows.iter().map(|row| row.id).collect::<Vec<_>>(),
-            vec![id(81)]
-        );
+        for (limit, expected) in [(0, Vec::new()), (1, vec![id(81)])] {
+            let rows = p.port_retrieval_text_scoped(
+                &txn,
+                TextQuery {
+                    query: "asteroid",
+                    limit,
+                    rank: &rank,
+                    filter_all: true,
+                    matches_scope: &mut scope,
+                },
+            )?;
+            assert_eq!(rows.iter().map(|row| row.id).collect::<Vec<_>>(), expected);
+        }
         Ok(())
     }
     let (_temp, vault, memory, _clock) = fixtures();

@@ -291,7 +291,7 @@ impl ChangeLogStore for Memory {
         entity: &EntityId,
         limit: usize,
     ) -> Result<Vec<ChangeLogRecord>> {
-        memory_changes(txn, |r| r.entity == *entity, limit)
+        Ok(memory_changes(txn, |r| r.entity == *entity, limit))
     }
     fn port_changelog_list_by_actor(
         &self,
@@ -299,14 +299,14 @@ impl ChangeLogStore for Memory {
         actor: &EntityId,
         limit: usize,
     ) -> Result<Vec<ChangeLogRecord>> {
-        memory_changes(txn, |r| r.actor_principal == *actor, limit)
+        Ok(memory_changes(txn, |r| r.actor_principal == *actor, limit))
     }
 }
 fn memory_changes(
     txn: &Snapshot,
     predicate: impl Fn(&ChangeLogRecord) -> bool,
     limit: usize,
-) -> Result<Vec<ChangeLogRecord>> {
+) -> Vec<ChangeLogRecord> {
     let mut rows = txn
         .changes
         .values()
@@ -315,7 +315,7 @@ fn memory_changes(
         .collect::<Vec<_>>();
     rows.sort_by_key(|r| (r.recorded_at, r.id));
     rows.truncate(limit.min(100_000));
-    Ok(rows)
+    rows
 }
 impl BlobStore for Memory {
     fn port_blob_put(

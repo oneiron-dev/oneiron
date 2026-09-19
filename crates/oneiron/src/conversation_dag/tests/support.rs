@@ -2,11 +2,11 @@ use crate::conversation_dag::{AppendRecord, ScopePath, ScopeSelector};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
-pub(super) fn body(text: &str) -> Vec<u8> {
+pub(crate) fn body(text: &str) -> Vec<u8> {
     rmp_serde::to_vec_named(&serde_json::json!({"txt": text})).unwrap()
 }
 
-pub(super) fn fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor) {
+pub(crate) fn fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
@@ -33,15 +33,15 @@ pub(super) fn fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor) {
     (dir, vault, conv, actor)
 }
 
-pub(super) fn grant(vault: &Vault, actor: WriteActor, allow: bool) {
+pub(crate) fn grant(vault: &Vault, actor: WriteActor, allow: bool) {
     crate::conversation_dag::test_support::put_dag_test_policy(vault, actor, allow).unwrap();
 }
 
-pub(super) fn time(at: u64) -> TimeRange {
+pub(crate) fn time(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
-pub(super) fn input(
+pub(crate) fn input(
     conv: EntityId,
     parent: Option<EntityId>,
     advance: bool,
@@ -61,7 +61,7 @@ pub(super) fn input(
     }
 }
 
-pub(super) fn scope(conv: EntityId, path: ScopePath, include_forks: bool) -> ScopeSelector {
+pub(crate) fn scope(conv: EntityId, path: ScopePath, include_forks: bool) -> ScopeSelector {
     ScopeSelector {
         conversation: conv,
         session: None,

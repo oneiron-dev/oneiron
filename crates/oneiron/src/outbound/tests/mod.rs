@@ -59,8 +59,10 @@ impl TimedVault {
 fn temp_vault() -> (tempfile::TempDir, TimedVault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let clock = crate::ports::ManualClock::new(0);
-    let mut config = VaultConfig::default();
-    config.store_clock = clock.bundle();
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
     let vault = Vault::open(tmp.path(), config).expect("open vault");
     (tmp, TimedVault { vault, clock })
 }

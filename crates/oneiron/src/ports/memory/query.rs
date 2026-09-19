@@ -277,7 +277,11 @@ impl RetrievalIndexRead for Memory {
         codes: &[String],
     ) -> Result<Vec<ScoredEntity>> {
         let mut counts = BTreeMap::<EntityId, usize>::new();
-        for code in codes.iter().collect::<BTreeSet<_>>() {
+        let mut distinct_codes = BTreeSet::new();
+        for code in codes {
+            if !distinct_codes.insert(code) {
+                continue;
+            }
             if let Some(ids) = txn.phonetic.get(code) {
                 for id in ids {
                     *counts.entry(*id).or_default() += 1;
@@ -302,6 +306,9 @@ impl RetrievalIndexExecution for Memory {
         txn: &Snapshot,
         query: TextQuery<'_>,
     ) -> Result<Vec<ScoredEntity>> {
+        if query.limit == 0 {
+            return Ok(Vec::new());
+        }
         let mut rows = Vec::new();
         for row in self.port_retrieval_text_search(txn, query.query, usize::MAX)? {
             if !query.filter_all || (query.matches_scope)(&row.id)? {

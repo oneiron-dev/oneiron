@@ -333,6 +333,7 @@ fn calendar_bridge_dtos_mirror_the_engine_surface() {
         blocks_time: true,
     };
     let bridged = calendar_event_from_engine(engine.clone()).expect("event crosses");
+    assert_eq!(bridged.origin, "native");
     assert_eq!(bridged.event_ref, engine.event_ref);
     assert_eq!(bridged.name, engine.name);
     assert_eq!(bridged.start_utc, Some(1_000));
@@ -348,6 +349,7 @@ fn calendar_bridge_dtos_mirror_the_engine_surface() {
         ..engine
     })
     .expect("unanchored event crosses");
+    assert_eq!(unanchored.origin, "dreamer");
     assert_eq!(unanchored.start_utc, None);
     assert_eq!(unanchored.end_utc, None);
 

@@ -23,6 +23,10 @@ pub use types::{
 pub(crate) use writes::append_in_txn;
 
 #[cfg(test)]
+#[path = "tests/support.rs"]
+pub(crate) mod fixtures;
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]

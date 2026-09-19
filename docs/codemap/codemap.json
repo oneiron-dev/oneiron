@@ -9017,7 +9017,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 1,
       "re-export": 2
      }
