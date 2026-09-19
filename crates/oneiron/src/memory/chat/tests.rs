@@ -405,6 +405,20 @@ fn chat_standard_invokes_the_composer_exactly_once_after_retrieval() {
 
 #[test]
 fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
+    struct FixedReranker;
+    impl crate::rerank::Reranker for FixedReranker {
+        fn id(&self) -> &str {
+            "chat-fixture"
+        }
+        fn rerank(
+            &self,
+            _: &str,
+            candidates: &[crate::rerank::RerankCandidate<'_>],
+        ) -> crate::Result<Vec<f32>> {
+            Ok(candidates.iter().map(|c| c.score).collect())
+        }
+    }
+
     let (_dir, vault, actor) = seeded_vault(0x44, "the ridge trail washed out in the spring melt");
     let memory = facade_for(&vault, actor);
     let composer = CountingComposer::default();
@@ -427,19 +441,6 @@ fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
     assert_eq!(err.code, MEMORY_CODE_LEASE_REQUIRED);
     assert_eq!(composer.calls(), 0);
 
-    struct FixedReranker;
-    impl crate::rerank::Reranker for FixedReranker {
-        fn id(&self) -> &str {
-            "chat-fixture"
-        }
-        fn rerank(
-            &self,
-            _: &str,
-            candidates: &[crate::rerank::RerankCandidate<'_>],
-        ) -> crate::Result<Vec<f32>> {
-            Ok(candidates.iter().map(|c| c.score).collect())
-        }
-    }
     let ranker = FixedReranker;
     let lease = BudgetLease::for_test("chat-deep");
     let response = memory

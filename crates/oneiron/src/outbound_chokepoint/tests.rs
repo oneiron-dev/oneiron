@@ -435,6 +435,23 @@ fn recovery_leaves_uncharted_and_unregistered_keys_unchanged() {
 
 #[test]
 fn provider_reply_resumes_slim_and_first_query_rebuilds_lazily() -> crate::Result<()> {
+    struct Reply<'a>(&'a Vault);
+    impl OutboundTransport for Reply<'_> {
+        fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
+            let outcome = self
+                .0
+                .shed_rebuildable_heap(crate::ShedCause::LongOutboundWait, 2, 20)
+                .unwrap();
+            let crate::ShedOutcome::Entered { residue, dropped } = outcome else {
+                panic!("entered slim");
+            };
+            assert_eq!(Some(&residue.step.intent_id), call.intent_id());
+            assert!(dropped.ppr_cache_rows > 0);
+            assert_eq!(self.0.residency(), crate::VaultResidency::Slim);
+            OutboundSendOutcome::Acked
+        }
+    }
+
     let (_dir, vault) = temp_vault();
     let key = entity(0xDB);
     register_key(&vault, &key, "files");
@@ -452,22 +469,6 @@ fn provider_reply_resumes_slim_and_first_query_rebuilds_lazily() -> crate::Resul
     }
     vault.put_edge(&a, crate::EdgeKind::Mentions, &b, 0.8)?;
     let before = vault.query().search_ppr(&[a], 2).run()?;
-    struct Reply<'a>(&'a Vault);
-    impl OutboundTransport for Reply<'_> {
-        fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
-            let outcome = self
-                .0
-                .shed_rebuildable_heap(crate::ShedCause::LongOutboundWait, 2, 20)
-                .unwrap();
-            let crate::ShedOutcome::Entered { residue, dropped } = outcome else {
-                panic!("entered slim");
-            };
-            assert_eq!(Some(&residue.step.intent_id), call.intent_id());
-            assert!(dropped.ppr_cache_rows > 0);
-            assert_eq!(self.0.residency(), crate::VaultResidency::Slim);
-            OutboundSendOutcome::Acked
-        }
-    }
     let authority = OutboundBindingAuthority::from_secret([0xAC; 32]);
     let result = send_pending(&vault, &authority, record, 30, false, &mut Reply(&vault))
         .map_err(|_| crate::Error::InvariantViolation("provider reply"))?;

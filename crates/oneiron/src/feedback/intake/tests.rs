@@ -10,7 +10,7 @@ fn duplicates_queue_once_and_digest_retains_source_entities() -> Result<()> {
     let bundle = FeedbackBundle::new(FeedbackCategory::Bug, "1.0", FeedbackPlatform::current())
         .with_user_note("recall omitted the recent note");
     let a = encode_feedback_bundle(&bundle).unwrap();
-    let mut variant = bundle.clone();
+    let mut variant = bundle;
     variant.user_note = Some("recent note missing from recall".into());
     let b = encode_feedback_bundle(&variant).unwrap();
     let dial = FeedbackDedup::new(0.9)?;

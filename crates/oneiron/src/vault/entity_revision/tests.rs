@@ -275,6 +275,13 @@ fn pinned_claim_does_not_bypass_current_scoped_admission() {
 
 #[test]
 fn phonetic_codes_advance_with_the_idle_indexed_revision() {
+    struct Embed;
+    impl IndexedRevisionEmbedder for Embed {
+        fn embed_revision(&self, _: &IndexedRevisionInput) -> Result<Vec<f32>> {
+            Ok(vec![1.0, 0.0, 0.0, 0.0])
+        }
+    }
+
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
     let id = EntityId::now();
@@ -294,12 +301,6 @@ fn phonetic_codes_advance_with_the_idle_indexed_revision() {
     };
     assert_eq!(search("OLD"), vec![id]);
     assert!(search("NEW").is_empty());
-    struct Embed;
-    impl IndexedRevisionEmbedder for Embed {
-        fn embed_revision(&self, _: &IndexedRevisionInput) -> Result<Vec<f32>> {
-            Ok(vec![1.0, 0.0, 0.0, 0.0])
-        }
-    }
     vault.set_indexed_idle_delay_ms(0).unwrap();
     vault
         .refresh_indexed_at_idle(crate::unix_seconds_now().saturating_mul(1000), &Embed)

@@ -1490,6 +1490,13 @@ fn status_suppressed_empty_reports_all_activated() -> Result<()> {
 
 #[test]
 fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()> {
+    struct NoWithdrawnEmbedding;
+    impl crate::memory::IndexedRevisionEmbedder for NoWithdrawnEmbedding {
+        fn embed_revision(&self, _: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
+            panic!("withdrawn claims must not be reindexed at idle");
+        }
+    }
+
     let (_dir, vault) = open_test_vault();
     let id = EntityId::from_bytes([0x43; 16])?;
     put_claim_text_entity(
@@ -1509,12 +1516,6 @@ fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()>
 
     vault.retract_claim(&id, 2_000)?;
 
-    struct NoWithdrawnEmbedding;
-    impl crate::memory::IndexedRevisionEmbedder for NoWithdrawnEmbedding {
-        fn embed_revision(&self, _: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
-            panic!("withdrawn claims must not be reindexed at idle");
-        }
-    }
     vault.set_indexed_idle_delay_ms(0)?;
     let idle = vault.refresh_indexed_at_idle(
         crate::unix_seconds_now().saturating_mul(1000),

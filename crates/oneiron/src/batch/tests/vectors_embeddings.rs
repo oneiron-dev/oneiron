@@ -211,6 +211,18 @@ fn unrelated_vector_fill_does_not_invalidate_pending_tokens() -> Result<()> {
 
 #[test]
 fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<()> {
+    struct IdleFill {
+        claim: EntityId,
+        body: Vec<u8>,
+    }
+    impl crate::memory::IndexedRevisionEmbedder for IdleFill {
+        fn embed_revision(&self, input: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
+            assert_eq!(input.entity, self.claim);
+            assert_eq!(input.body, self.body);
+            Ok(vec![0.0, 1.0, 0.0, 0.0])
+        }
+    }
+
     let (_dir, vault) = open_test_vault();
     let claim = EntityId::now();
     commit_claim_candidate_with_value(&vault, claim, "Alice")?;
@@ -252,17 +264,6 @@ fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<
         vault.get_vector(&claim)?.as_deref(),
         Some([1.0, 0.0, 0.0, 0.0].as_slice())
     );
-    struct IdleFill {
-        claim: EntityId,
-        body: Vec<u8>,
-    }
-    impl crate::memory::IndexedRevisionEmbedder for IdleFill {
-        fn embed_revision(&self, input: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
-            assert_eq!(input.entity, self.claim);
-            assert_eq!(input.body, self.body);
-            Ok(vec![0.0, 1.0, 0.0, 0.0])
-        }
-    }
     vault.set_indexed_idle_delay_ms(0)?;
     let idle = IdleFill {
         claim,

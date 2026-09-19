@@ -850,7 +850,7 @@ fn expired_deadline_returns_honest_empty_partial_without_backend() -> TestResult
 }
 
 #[test]
-fn high_rejects_nonfinite_reranker_without_losing_spend() -> TestResult {
+fn high_rejects_nonfinite_reranker_without_losing_spend() {
     let (_dir, vault, _, _, _) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("fixture actor"));
     let lease = minted_lease();
@@ -861,12 +861,10 @@ fn high_rejects_nonfinite_reranker_without_losing_spend() -> TestResult {
     let error = scoped.search_with_effort(&request).unwrap_err();
     assert!(matches!(error.error, Error::InvalidConfig(_)));
     assert_eq!(error.tokens_used, 9);
-    Ok(())
 }
 
 #[test]
 fn pipeline_deadline_skips_rerank_after_admitted_text_and_keeps_best_pack() -> TestResult {
-    let (_dir, vault, anchor, _, _) = seeded_vault();
     struct MustNotRerank;
     impl crate::rerank::Reranker for MustNotRerank {
         fn id(&self) -> &str {
@@ -876,6 +874,8 @@ fn pipeline_deadline_skips_rerank_after_admitted_text_and_keeps_best_pack() -> T
             panic!("deadline skipped rerank")
         }
     }
+
+    let (_dir, vault, anchor, _, _) = seeded_vault();
     let deadline = RetrievalDeadline::after(std::time::Duration::from_secs(60));
     let filter = |_: &crate::store::Store, _: &heed::RoTxn<'_>, id: &EntityId| {
         deadline.cancel();
