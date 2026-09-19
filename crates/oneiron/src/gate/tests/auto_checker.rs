@@ -1261,17 +1261,13 @@ fn native_checker_observes_structural_streak_outage_neutrality_and_success_reset
     let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
     let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
     let mut invalid = body.clone();
-    invalid.value = Value::from("placeholder output");
+    invalid.evidence = None;
     let checker = Arc::new(RecordingAutoChecker::allow());
     let bounded_checker = BoundedAutoChecker::new(checker.clone());
     let error =
         attempt_checked_candidate_write(&vault, &test_id(0x60), &invalid, Some(&bounded_checker))
             .expect_err("structural refusal");
-    assert_gate_rejected(
-        error,
-        "deny",
-        &["gate.deny.dreamer_precommit.degenerate_output"],
-    );
+    assert_gate_rejected(error, "deny", &["gate.deny.dreamer_precommit.no_evidence"]);
     // A checker outage is not structural evidence against the writer.
     let unavailable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Unavailable));
     let error = attempt_checked_candidate_write(&vault, &test_id(0x61), &body, Some(&unavailable))
