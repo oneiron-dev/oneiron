@@ -372,3 +372,29 @@ fn hard_delete_marker_blocks_soft_shell_recreation_without_quarantining_manifest
     assert!(!invalid_artifact_path(&path, 1).exists());
     Ok(())
 }
+
+#[test]
+fn canonical_capture_preserves_absent_roots_and_refuses_nonmap_carriers() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let window = LoroDoc::new();
+    let before = window.get_deep_value();
+    let snapshot = capture_canonical_window(&vault, "2026-09", &window)?;
+    assert!(snapshot.entity_blobs.is_empty());
+    assert_eq!(window.get_deep_value(), before);
+
+    window
+        .get_text("entities")
+        .insert(0, "not a carrier map")
+        .unwrap();
+    window.commit();
+    let before = window.get_deep_value();
+    assert!(matches!(
+        capture_canonical_window(&vault, "2026-09", &window),
+        Err(crate::Error::Artifact(
+            ArtifactError::InvalidRecoveryArtifact(_)
+        ))
+    ));
+    assert_eq!(window.get_deep_value(), before);
+    Ok(())
+}

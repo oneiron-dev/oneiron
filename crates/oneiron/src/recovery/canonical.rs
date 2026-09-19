@@ -396,8 +396,20 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
 
 pub(super) fn binary_rows(doc: &LoroDoc, name: &str) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut rows = BTreeMap::new();
+    let LoroValue::Map(containers) = doc.get_value() else {
+        return Err(invalid("window root"));
+    };
+    // Looking up a root by name creates it in Loro, even without an op. Readers
+    // must inspect the existing root IDs so validation cannot change the document.
+    let map = match containers.get(name) {
+        None => return Ok(rows),
+        Some(LoroValue::Container(id)) => doc
+            .try_get_map(id)
+            .ok_or(invalid("nonmap Layer-1 carrier"))?,
+        Some(_) => return Err(invalid("nonmap Layer-1 carrier")),
+    };
     let mut failed = false;
-    doc.get_map(name).for_each(|key, value| match value {
+    map.for_each(|key, value| match value {
         ValueOrContainer::Value(LoroValue::Binary(value)) => {
             rows.insert(key.to_owned(), value.to_vec());
         }

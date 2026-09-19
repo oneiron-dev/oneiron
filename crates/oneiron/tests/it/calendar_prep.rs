@@ -138,6 +138,17 @@ fn put_event(vault: &Vault, seed: u8, start: u64, end: u64) -> EntityId {
             &text_body("name", "quarterly review"),
         )
         .expect("put event");
+    let origin = claim_id(seed, 0xFE);
+    if vault.get_claim(&origin).expect("origin lookup").is_none() {
+        put_claim(
+            vault,
+            origin,
+            "calendar.origin",
+            id,
+            Value::from("native"),
+            PLANNED_AT,
+        );
+    }
     id
 }
 

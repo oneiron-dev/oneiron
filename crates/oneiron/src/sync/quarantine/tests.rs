@@ -369,7 +369,14 @@ fn rm_marker_round_trip_purge_failure_then_drain() {
     let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
     assert_eq!(report.still_pending, vec![WINDOW.to_string()]);
     assert!(report.drained.is_empty());
-    assert!(vault.get(&id).unwrap().is_some());
+    assert!(
+        vault.get_raw(&id).unwrap().is_some(),
+        "failed purge retains its row"
+    );
+    assert!(
+        vault.get(&id).unwrap().is_none(),
+        "durable deletion hides retained payload"
+    );
 
     // Healthy drain: purge succeeds, marker cleared only now.
     let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
@@ -378,6 +385,10 @@ fn rm_marker_round_trip_purge_failure_then_drain() {
     assert!(
         vault.get(&id).unwrap().is_none(),
         "drain must complete the purge"
+    );
+    assert!(
+        vault.get_raw(&id).unwrap().is_none(),
+        "healthy drain removes the retained row"
     );
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
