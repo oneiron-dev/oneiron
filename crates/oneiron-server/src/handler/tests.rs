@@ -1118,11 +1118,12 @@ async fn selector_connection_rejects_full_window_bypass() {
 }
 
 #[tokio::test]
-async fn selector_protocol_rejects_first_message_full_window_sync() {
+async fn legacy_selector_protocol_rejects_first_message_full_window_sync() {
     let (_dir, server) = test_server();
     let key = "2026-10";
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    conn_state.protocol_version = protocol::LEGACY_SELECTOR_PROTOCOL_VERSION;
 
     let result = handle_window_sync(
         &server,
@@ -1138,8 +1139,35 @@ async fn selector_protocol_rejects_first_message_full_window_sync() {
     assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
     assert!(
         direct_rx.try_recv().is_err(),
-        "selector-capable connections must not receive full-window data"
+        "legacy selector connections must not receive full-window data"
     );
+}
+
+#[tokio::test]
+async fn current_protocol_accepts_first_message_full_window_sync() {
+    let (_dir, server) = test_server();
+    let key = "2026-10";
+    let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_state = test_selector_conn_state();
+
+    handle_window_sync(
+        &server,
+        1,
+        key,
+        window_sub_tags::VV_REQUEST,
+        &VersionVector::new().encode(),
+        &direct_tx,
+        &mut conn_state,
+    )
+    .await
+    .unwrap();
+
+    for expected in [window_sub_tags::UPDATE, window_sub_tags::VV_RESPONSE] {
+        let (window, sub_tag, _) = expect_window_sync(&direct_rx.try_recv().unwrap());
+        assert_eq!(window, key);
+        assert_eq!(sub_tag, expected);
+    }
+    assert!(direct_rx.try_recv().is_err());
 }
 
 #[tokio::test]
@@ -2408,12 +2436,15 @@ async fn a_session_without_a_jti_is_unaffected_by_an_unreadable_registry() {
 
 #[test]
 fn protocol_hello_validation_literals() {
-    // Contract literals: FED-005 scoped lease keys reject old v2/v3 peers
-    // before root `leases` payloads flow, while the current full-window
-    // and selector-capable versions stay distinct for broadcast filtering.
+    // Contract literals: v6 is full-window-only, v7 is selector-only, and v9
+    // supports both modes plus entity documents. v8 is not negotiated.
     assert_eq!(
         validate_protocol_hello(&[3, 6]),
         Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
+    );
+    assert_eq!(
+        validate_protocol_hello(&[3, 7]),
+        Ok(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION)
     );
     assert_eq!(
         validate_protocol_hello(&[3, 9]),
@@ -2426,7 +2457,8 @@ fn protocol_hello_validation_literals() {
         ("old_selector_v3_peer", &[3, 3]),
         ("old_full_window_v4_peer", &[3, 4]),
         ("old_selector_v5_peer", &[3, 5]),
-        ("future_version", &[3, 9]),
+        ("retired_app_version", &[3, 8]),
+        ("future_version", &[3, 10]),
         ("zero_version", &[3, 0]),
         ("wrong_tag", &[2, 7]),
         ("empty", &[]),
