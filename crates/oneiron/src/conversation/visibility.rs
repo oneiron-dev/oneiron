@@ -44,7 +44,13 @@ impl AudienceCache {
         };
         let h =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("audience header"))?;
-        if let Some(room) = room_for_record_in(vault, txn, id)? {
+        let room = match room_for_record_in(vault, txn, id) {
+            Ok(room) => room,
+            // Missing ancestry denies this candidate, not unrelated query hits.
+            Err(Error::EntityNotFound) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if let Some(room) = room {
             if audience.is_empty() {
                 return Ok(false);
             }

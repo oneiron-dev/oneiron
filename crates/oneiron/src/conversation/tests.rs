@@ -747,3 +747,96 @@ fn membership_rows_without_their_revision_never_grant_audience_reads() {
         ));
     }
 }
+
+#[test]
+fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
+    let (_dir, vault, actor, room, _) = fixture();
+    vault
+        .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
+        .unwrap();
+    let mut good = record(room, actor, 2);
+    good.body = serde_json::json!({"txt":"needle healthy record"});
+    vault.append_record(&good).unwrap();
+    let mut hidden = Vec::new();
+    for missing_room in [true, false] {
+        let broken_room = EntityId::now();
+        vault
+            .create_conversation(
+                broken_room,
+                &ConversationBody {
+                    member_ids: vec![actor.entity_ref()],
+                    ..Default::default()
+                },
+                actor,
+                1,
+            )
+            .unwrap();
+        let parent = record(broken_room, actor, 2);
+        vault.append_record(&parent).unwrap();
+        let mut child = record(broken_room, actor, 3);
+        child.body = serde_json::json!({"txt":"needle broken ancestor"});
+        vault.append_record(&child).unwrap();
+        assert!(
+            vault
+                .record_visible_to(child.id, actor.entity_ref())
+                .unwrap()
+        );
+        // Model incomplete replay: retain ChildOf/Parent, remove its target row.
+        let missing = if missing_room { broken_room } else { parent.id };
+        vault
+            .with_write_txn(|txn| {
+                vault.store.entities.delete(txn, missing.as_bytes())?;
+                Ok(())
+            })
+            .unwrap();
+        hidden.push(child.id);
+    }
+    let claim = EntityId::now();
+    let mut body = crate::ClaimBody::new(
+        "preference.food",
+        crate::ClaimSubject::Entity(EntityId::now()),
+        rmpv::Value::from("needle missing subject"),
+        1.0,
+        crate::ClaimApprovalStatus::Auto,
+        crate::ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(crate::ClaimSource::Observed);
+    vault
+        .batch()
+        .put_replicated(
+            &claim,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &crate::claim::encode_claim_body(&body).unwrap(),
+        )
+        .text(&claim, &[("body", "needle missing subject")])
+        .commit()
+        .unwrap();
+    hidden.push(claim);
+    let read = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap())
+        .for_audience(&[actor.entity_ref()]);
+    for id in hidden {
+        assert!(read.get(&id).unwrap().is_none());
+    }
+    assert_eq!(
+        read.search_text("needle", 20, None)
+            .unwrap()
+            .iter()
+            .map(|hit| hit.id)
+            .collect::<Vec<_>>(),
+        vec![good.id],
+    );
+    let mut pack = vault
+        .context_pack()
+        .search_text("needle", 20)
+        .hydrate(true)
+        .run()
+        .unwrap();
+    read.filter_context_pack(&mut pack).unwrap();
+    assert_eq!(
+        pack.results.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![good.id]
+    );
+}
