@@ -368,6 +368,15 @@ fn no_pe_markers_or_embed_job_rows_for_session_content() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let mut session = seam::SessionVault::enter(&vault, "oracle-embed").expect("enter session");
     session.bind_actor()?;
+    let pe_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .sync_state
+            .prefix_iter(&rtxn, "pe:")?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .len()
+    };
     let attempts_before = seam::attempt_row_counts(&vault)?;
     // No summary: the smallest witness program that still drives the session
     // write path, so nothing about this assertion rides on a second Text op.
@@ -398,7 +407,7 @@ fn no_pe_markers_or_embed_job_rows_for_session_content() -> Result<()> {
     }
     drop(rtxn);
     assert_eq!(
-        pe_rows, 0,
+        pe_rows, pe_before,
         "no pe: pending-embedding marker for session content, INCLUDING the \
          staged CLAIM — the one op class base would have marked"
     );

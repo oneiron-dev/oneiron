@@ -436,6 +436,7 @@ fn day_shard_date_round_trips() {
 #[test]
 fn ls_claims_by_time_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let initial_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
     let subject = test_id(0x72);
     let old_claim = test_id(0x73);
     let new_claim = test_id(0x74);
@@ -485,7 +486,11 @@ fn ls_claims_by_time_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
         cursor = next_cursor;
     }
     assert!(cursor.is_none(), "pagination must terminate");
-    let lines: Vec<_> = emitted.lines().map(str::to_owned).collect();
+    let lines: Vec<_> = emitted
+        .lines()
+        .filter(|line| !initial_claims.iter().any(|id| id.to_hex() == *line))
+        .map(str::to_owned)
+        .collect();
     assert_eq!(lines, vec![new_claim.to_hex(), old_claim.to_hex()]);
     Ok(())
 }

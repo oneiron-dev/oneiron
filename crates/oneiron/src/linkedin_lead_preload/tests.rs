@@ -173,6 +173,7 @@ fn linkedin_external_ids_are_opaque_and_resolver_revalidates() -> TestResult {
 #[test]
 fn linkedin_resolver_concurrent_invocations_create_once() -> TestResult {
     let (_temp, vault, _) = setup();
+    let initial_claims = vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?;
     let barrier = std::sync::Barrier::new(2);
     let (left, right) = std::thread::scope(|scope| {
         let resolve = || {
@@ -189,7 +190,10 @@ fn linkedin_resolver_concurrent_invocations_create_once() -> TestResult {
     let (left, right) = (left?, right?);
     assert_eq!(left.0, right.0);
     assert_ne!(left.1, right.1);
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?, 0);
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?,
+        initial_claims
+    );
     Ok(())
 }
 
@@ -241,6 +245,16 @@ fn linkedin_preload_second_run_creates_nothing() -> TestResult {
 fn linkedin_preload_partial_prior_state_converges_without_duplicates() -> TestResult {
     let (_temp, vault, actor) = setup();
     let (_clean_temp, clean, clean_actor) = setup();
+    let before = graph(&vault);
+    let clean_before = graph(&clean);
+    let delta = |mut state: Graph, base: Graph| {
+        state.entities.retain(|row| !base.entities.contains(row));
+        state.edges.retain(|row| !base.edges.contains(row));
+        state
+            .active_claims
+            .retain(|row| !base.active_claims.contains(row));
+        state
+    };
     let company = resolve_linkedin_entity(&vault, key(false, 1))?.0;
     let person = resolve_linkedin_entity(&vault, key(true, 1))?.0;
     resolve_employment(&vault, person, company, &key(true, 1), actor)?;
@@ -268,7 +282,10 @@ fn linkedin_preload_partial_prior_state_converges_without_duplicates() -> TestRe
         }
     );
     apply_linkedin_lead_corpus(&clean, fixture(), clean_actor)?;
-    assert_eq!(graph(&vault), graph(&clean));
+    assert_eq!(
+        delta(graph(&vault), before),
+        delta(graph(&clean), clean_before)
+    );
     Ok(())
 }
 
@@ -305,6 +322,7 @@ fn linkedin_preload_creates_no_counterparty_contact_rows() -> TestResult {
 #[test]
 fn linkedin_preload_facts_use_imported_evidence_admission() -> TestResult {
     let (_temp, vault, actor) = setup();
+    let initial_claims = vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?;
     let mut corpus = fixture();
     corpus.contacts[0].display_name = "  Synthetic Person \t".into();
     let before = unix_seconds_now();
@@ -372,7 +390,10 @@ fn linkedin_preload_facts_use_imported_evidence_admission() -> TestResult {
             }
         }
     }
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?, 18);
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?,
+        initial_claims + 18
+    );
     Ok(())
 }
 
@@ -539,6 +560,7 @@ fn linkedin_preload_gate_failure_and_claim_id_collision_do_not_bypass_admission(
     ));
     assert_eq!(vault.get_raw(&claim_id)?, occupied);
     let (_other_temp, other, other_actor) = setup();
+    let initial_claims = other.count_entities_by_type(ENTITY_TYPE_CLAIM)?;
     crate::test_util::put_policy_manifest_bytes(
         &other,
         EntityId::from_bytes([0x33; 16])?,
@@ -550,7 +572,10 @@ fn linkedin_preload_gate_failure_and_claim_id_collision_do_not_bypass_admission(
             GateError::GateWriteRejected { .. }
         )))
     ));
-    assert_eq!(other.count_entities_by_type(ENTITY_TYPE_CLAIM)?, 0);
+    assert_eq!(
+        other.count_entities_by_type(ENTITY_TYPE_CLAIM)?,
+        initial_claims
+    );
     assert_eq!(
         other.get_entity_type(&id(&key(false, 1)))?,
         Some(ENTITY_TYPE_ORG)

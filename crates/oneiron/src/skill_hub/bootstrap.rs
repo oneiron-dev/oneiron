@@ -87,6 +87,14 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         return Ok(());
     }
     drop(rtxn);
+    // A malformed policy must remain readable for owner repair. Do not turn
+    // first-run imports into an open failure or bypass its fail-closed gate.
+    if crate::gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn()?)?
+        .diagnostics()
+        .loaded_manifest_forces_fail_closed()
+    {
+        return Ok(());
+    }
     let mut wtxn = vault.store.env.write_txn()?;
     if vault.store.vault_meta.get(&wtxn, SEED_KEY)?.is_some() {
         return Ok(());

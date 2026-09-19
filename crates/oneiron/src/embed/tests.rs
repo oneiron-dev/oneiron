@@ -75,19 +75,8 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
     config.embedding_model = Some("test/embedder@v1".to_owned());
-    let vault = Vault::open(dir.path(), config).expect("open vault");
-    clear_default_policy_manifest_for_test(&vault);
+    let vault = Vault::open_unseeded_for_test(dir.path(), config).expect("open vault");
     (dir, Arc::new(vault))
-}
-
-fn clear_default_policy_manifest_for_test(vault: &Vault) {
-    let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
-    vault
-        .with_write_txn(|wtxn| {
-            crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
-            Ok(())
-        })
-        .expect("clear default policy manifest");
 }
 
 fn entity_id(byte: u8) -> EntityId {

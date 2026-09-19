@@ -557,10 +557,12 @@ mod cb_t {
     /// ack/cancel; `tasks.create` mints TASK entities and the ENGINE decides
     /// realizing jobs — the agent never touches the JobQueue.
     #[test]
-    fn tasks_verb_family_is_exactly_five_and_never_exposes_jobqueue() {
+    fn tasks_verb_family_includes_step_waits_and_never_exposes_jobqueue() {
         let surface = arm_tasks_verb_surface();
         for required in [
             "tasks.ack",
+            "tasks.ask",
+            "tasks.wait",
             "tasks.cancel",
             "tasks.check",
             "tasks.create",
@@ -583,9 +585,9 @@ mod cb_t {
         configured_rate_limit: usize,
         /// Own-agent creates attempted inside one window.
         burst_creates_attempted: usize,
-        /// Burst creates that took direct effect (must equal the limit).
+        /// Burst creates that took direct effect (must equal all attempts).
         burst_creates_effected: usize,
-        /// Burst overflow falling closed to proposals.
+        /// Proposals created only because the accounting threshold was exceeded.
         burst_overflow_proposals: usize,
     }
 
@@ -649,11 +651,10 @@ mod cb_t {
         }
     }
 
-    /// ONE-1696 AC verbatim: "`tasks.create(spec)` — … Own-agent: free in
-    /// allowed-set, rate-limited; foreign: propose-only" (F8/G2). Burst
-    /// overflow fails closed to Proposed (08 §4 own-agent lane).
+    /// OF-520 supersedes the old rate-refusal rule: own-agent creation is
+    /// counted, never refused for rate. Foreign authority remains propose-only.
     #[test]
-    fn foreign_tasks_create_is_propose_only_own_burst_fails_closed() {
+    fn foreign_tasks_create_is_propose_only_own_burst_is_count_only() {
         let outcome = arm_create_authority();
         assert_eq!(outcome.foreign_create_direct_effects, 0);
         assert_eq!(outcome.foreign_create_proposals, 1);
@@ -661,9 +662,9 @@ mod cb_t {
         assert_eq!(outcome.burst_creates_attempted, 12);
         assert_eq!(
             outcome.burst_creates_effected,
-            outcome.configured_rate_limit
+            outcome.burst_creates_attempted
         );
-        assert_eq!(outcome.burst_overflow_proposals, 2);
+        assert_eq!(outcome.burst_overflow_proposals, 0);
     }
 
     /// Cancel semantics across the auto-approval ladder.

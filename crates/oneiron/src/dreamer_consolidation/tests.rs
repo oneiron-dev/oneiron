@@ -1441,6 +1441,7 @@ impl ConsolidationSink for CapturingSink {
 #[test]
 fn no_fabricated_belief_writes() -> Result<()> {
     let (_dir, vault) = open_vault();
+    let before = vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
     let store = DreamerRunnerStore::new(&vault);
     let scope = DreamerConsolidationScope::Micro;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
@@ -1511,7 +1512,15 @@ fn no_fabricated_belief_writes() -> Result<()> {
 
     // …and the module wrote ZERO belief claims itself: the only claims in
     // the store are the step layer's dreamer.step runtime records.
-    let predicates = claim_predicates_in_store(&vault)?;
+    let predicates = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .map(|id| {
+            let bytes = vault.get(&id)?.ok_or(crate::Error::EntityNotFound)?;
+            Ok(crate::claim::decode_claim_body(&bytes, true)?.predicate)
+        })
+        .collect::<Result<Vec<_>>>()?;
     assert!(
         predicates
             .iter()
@@ -2388,37 +2397,4 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
         "re-running the same merge mints the SAME write-once claim id"
     );
     Ok(())
-}
-
-/// Count of type-0 CLAIM entities in the vault — test seam for the
-/// no-fabricated-writes invariant.
-#[cfg(test)]
-pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
-    let claim_ids: Vec<EntityId> = {
-        let rtxn = vault.store.env.read_txn()?;
-        let mut ids = Vec::new();
-        for row in vault.store.entities.iter(&rtxn)? {
-            let (key, raw) = row?;
-            let Some(header) = EntityMetadataHeader::parse(&raw) else {
-                continue;
-            };
-            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-                continue;
-            }
-            let Ok(id_bytes) = <[u8; 16]>::try_from(key.as_ref()) else {
-                continue;
-            };
-            if let Ok(id) = EntityId::from_bytes(id_bytes) {
-                ids.push(id);
-            }
-        }
-        ids
-    };
-    let mut predicates = Vec::new();
-    for id in claim_ids {
-        if let Some(body) = vault.get_claim(&id)? {
-            predicates.push(body.predicate);
-        }
-    }
-    Ok(predicates)
 }

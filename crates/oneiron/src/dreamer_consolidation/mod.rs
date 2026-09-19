@@ -53,8 +53,6 @@ pub use watermark::*;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::batch::EntityMetadataHeader;
-#[cfg(test)]
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 #[cfg(test)]
 use crate::dreamer_runner::{
