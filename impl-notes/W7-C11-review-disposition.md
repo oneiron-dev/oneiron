@@ -49,20 +49,51 @@ build fanout was launched.
   regeneration-completion caller:** host-projector API by recorded design; these
   port contracts do not promise an autonomous regeneration worker.
 
-## Validation
+## Latest internal review — S13
 
-Pending for the current source. Earlier 9,154-test factory pass remains evidence
-for its head, not a pass for these edits. First focused compile found two edit
-mistakes (one removed borrow and a nested scoped-read helper caller); both were
-fixed. Current focused test uses the installed dispatcher, MacBook exclusion,
-normal Mini/Arch capacity guards, target `/home/lexi/w7-build/target/W7-C11`, two
-compiler jobs and four test threads. No gate result or factory state is edited.
+Source: `tickets/W7-C11/logs/review-opus-2.jsonl`, completed
+2026-09-19T22:34:52Z, source c82d8809 with cb39cbb0 notes. No new review root was
+created by this repair seat. Its nine allegations are all **skipped as invalid**:
 
-The first calendar integration run passed 105 tests. The featureless core run
-passed 6,601 tests and exposed one malformed test fixture, with four pre-existing
-ignores. `c82d8809` fixes that fixture using the semantic edge codec; the stricter
-production reader stays intact. All 20 scoped-read tests then passed featureless,
-and core all-target featureless Clippy exited 0. All-features Clippy and the
-mandatory six-package run are still pending in the same serial chain. The
-refreshed all-state C11 PR lookup again returned no PR. These partial results are
-not a full validation pass.
+| S13 finding | Existing implementation / reason |
+|---|---|
+| 1: Missing notes | This committed `impl-notes/W7-C11.md` has all 24 per-step entries. |
+| 2: Missing NOTE system | `note.rs`, `note/kinds.rs`, `note/documents.rs`, `note/verbs.rs`, `note/proposals.rs`; authored and replay kind guards already exist. |
+| 3: Calendar is DTO-only | `calendar/origin.rs` validates and stages live origins; batch write guard, imported connector fix b3a4678b and 105 passing calendar tests refute it. |
+| 4: Missing canonical recovery | `recovery/canonical.rs`, `recovery/document.rs`, `recovery/ladder.rs`, `recovery/quarantine.rs` implement these doors. |
+| 5: Missing DAG vault methods | `conversation_dag/writes.rs:263,268` implements append/move; `scopes.rs:174` resolves scope; `migration.rs:129` migrates; `scope_summary/doors.rs:187,279` implements spawn and mint/land. The completed server build and tests call these engine methods. |
+| 6: Criticality fields never populated | `pipeline/criticality.rs` and context-pack hydration resolve the policy; `serialize/pack_preparation.rs:292,300` updates count/overflow; `serialize/token_budget.rs` enforces budgets and emits the warning. Existing criticality tests assert the values. |
+| 7: Missing conflicts/ranking | `dreamer_consolidation/conflict.rs`, `dreamer_consolidation/tests/persistent_conflicts.rs`, `context_pack/source_ranking.json`. |
+| 8: Missing port traits/adapters | `ports/query.rs:11,52` defines EntityStoreRead/EdgeStoreRead; `ports/lmdb_query.rs` and `ports/memory/query.rs` implement the storage readers. Full compilation and conformance tests completed. |
+| 9: Missing MESSAGE streaming | `message_stream/mod.rs`, `policy.rs`, `receipts.rs`, `types.rs`, `tests.rs` implement all five verbs and receipts. |
+
+S13-1..4/6..9 duplicate the already-refuted partial-diff inference in F-OPUS-1.
+S13-5 adds the DAG assertion, refuted above. No implementation was removed or
+replaced to satisfy these false omissions. The S1–S12 source roots and valid
+Grok-finding fixes remain intact.
+
+## Validation — actual results, not event status
+
+`impl-notes/W7-C11-review-validation.json` binds the evidence to source c82d8809
+and the factory-tested cb39cbb0 notes-only successor. All saved Rust hashes match.
+Calendar integration passed 105 tests. The fixed featureless scoped-read suite
+passed 20. Both core all-target Clippy lanes (featureless/all-features) exited 0.
+
+The review chain itself ended **101**, not green: its final six-package command
+passed 9,154 and failed one scheduling-sensitive deletion fixture, with 21
+pre-existing ignores. It could not construct a race within three attempts. That
+test file is unchanged by this repair; no production invariant assertion fired.
+The failure is retained and no flake fix is claimed.
+
+The already-owned, normal factory tests-after-review then exited **0** at
+2026-09-19T22:33:39.731Z on the same source: **9,155 passed, zero failed or filtered,
+21 identical pre-existing ignores**. The formerly failing deletion test passed.
+This later factory run, not the failed review-chain command or old 9,154 receipt,
+is the final six-package evidence. No additional run was launched, no source was
+mutated during factory custody, and no factory state or guard was changed.
+
+Final paginated all-state C11 PR lookup again returned `[[]]`. No actual C11
+external review surface or posting target exists; no unrelated GitHub post was
+made. Provider quota was not an issue. Android NDK/API36.1 and earlier native
+proofs remain separately scoped. No full workspace verify.sh or new Android/Node
+runtime result is claimed.
