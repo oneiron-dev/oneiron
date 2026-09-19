@@ -2,6 +2,8 @@
 use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::{EntityId, Error, Result};
+type EntityParts = (u8, u64, Vec<u8>);
+
 impl ScopedRead<'_> {
     pub fn get(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<u8>>>> {
         let result = self.get_entity_parts_with_receipt(id, None)?;
@@ -12,7 +14,7 @@ impl ScopedRead<'_> {
     }
 
     /// Internal body lookup. Consumer projections must use the receipted door.
-    pub(crate) fn get_entity_parts(&self, id: &EntityId) -> Result<Option<(u8, u64, Vec<u8>)>> {
+    pub(crate) fn get_entity_parts(&self, id: &EntityId) -> Result<Option<EntityParts>> {
         Ok(self.get_entity_parts_with_receipt(id, None)?.value)
     }
 
@@ -22,7 +24,7 @@ impl ScopedRead<'_> {
         &self,
         id: &EntityId,
         requested: Option<&RetrievalFilter>,
-    ) -> Result<ScopedReadResult<Option<(u8, u64, Vec<u8>)>>> {
+    ) -> Result<ScopedReadResult<Option<EntityParts>>> {
         let result = self.get_entities_parts_with_receipt(&[*id], requested)?;
         Ok(ScopedReadResult {
             value: result.value.into_iter().next().flatten(),
@@ -35,7 +37,7 @@ impl ScopedRead<'_> {
         &self,
         ids: &[EntityId],
         requested: Option<&RetrievalFilter>,
-    ) -> Result<ScopedReadResult<Vec<Option<(u8, u64, Vec<u8>)>>>> {
+    ) -> Result<ScopedReadResult<Vec<Option<EntityParts>>>> {
         let txn = self.vault.store.env.read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(ids.len());

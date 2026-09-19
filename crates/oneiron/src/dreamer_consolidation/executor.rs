@@ -446,7 +446,7 @@ impl ConsolidationExecutor<'_> {
         if let Some(prior) = prior {
             lines.push_str(
                 &serde_json::json!({"prior_head": prior.claim_id.to_hex(),
-                "source": prior.body.source.map(|source| source.as_str()),
+                "source": prior.body.source.map(crate::claim::ClaimSource::as_str),
                 "value": rmpv_to_json(&prior.body.value)})
                 .to_string(),
             );

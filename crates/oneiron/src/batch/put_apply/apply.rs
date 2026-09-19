@@ -693,28 +693,14 @@ pub(in crate::batch) fn apply_put(
         crate::llm::index_dreamer_step_claim_for_put(store, wtxn, &id, body, learned_at)?;
     }
     if let Some(key) = authority_first_seen_key {
-        let observed_secs =
-            authority_observation_secs_for_write(store, wtxn, crate::unix_seconds_now())?;
-        if store.sync_state.get(wtxn, key.as_str())?.is_none() {
-            let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
-            store.sync_state.put(wtxn, key.as_str(), &first_seen)?;
-        }
-        if let (Some(entry), Some(hash)) = (
+        observe_authority_put(
+            store,
+            wtxn,
+            &key,
             authority_entry_observation.as_ref(),
             authority_entry_hash_pin.as_ref(),
-        ) {
-            let first_observation = crate::authority::record_authority_sequence_observation_in_txn(
-                store, wtxn, entry, hash,
-            )?;
-            if replicated && first_observation {
-                crate::authority::observe_authority_replay_in_txn(
-                    store,
-                    wtxn,
-                    &entry.signer.public_key,
-                    observed_secs,
-                )?;
-            }
-        }
+            replicated,
+        )?;
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
@@ -751,4 +737,35 @@ pub(in crate::batch) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
+}
+
+/// Keep first observation, signer maximum and replay advisory in the same put transaction.
+fn observe_authority_put(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    key: &str,
+    entry: Option<&crate::authority::AuthorityLogEntry>,
+    hash: Option<&crate::authority::AuthorityEntryHash>,
+    replicated: bool,
+) -> Result<()> {
+    let observed_secs =
+        authority_observation_secs_for_write(store, wtxn, crate::unix_seconds_now())?;
+    if store.sync_state.get(wtxn, key)?.is_none() {
+        let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
+        store.sync_state.put(wtxn, key, &first_seen)?;
+    }
+    if let (Some(entry), Some(hash)) = (entry, hash) {
+        let first_observation = crate::authority::record_authority_sequence_observation_in_txn(
+            store, wtxn, entry, hash,
+        )?;
+        if replicated && first_observation {
+            crate::authority::observe_authority_replay_in_txn(
+                store,
+                wtxn,
+                &entry.signer.public_key,
+                observed_secs,
+            )?;
+        }
+    }
+    Ok(())
 }

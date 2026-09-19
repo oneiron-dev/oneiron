@@ -68,10 +68,10 @@ pub(crate) fn context_entity_matches_read_snapshot(
             }
         }
     }
-    if let Some(vector) = &entity.vector {
-        if read_vector(vault, txn, &entity.id)?.as_ref() != Some(vector) {
-            return Ok(false);
-        }
+    if let Some(vector) = &entity.vector
+        && read_vector(vault, txn, &entity.id)?.as_ref() != Some(vector)
+    {
+        return Ok(false);
     }
     Ok(true)
 }

@@ -111,7 +111,7 @@ pub(super) fn write_companion(
         txn,
         companion_id(new, old, PREDICATE),
         body,
-        ClaimCandidate::new(PREDICATE, ClaimSubject::Entity(*new), value.clone(), 1.0)
+        ClaimCandidate::new(PREDICATE, ClaimSubject::Entity(*new), value, 1.0)
             .with_evidence(Value::Map(vec![(
                 Value::from("refs"),
                 Value::Array(vec![

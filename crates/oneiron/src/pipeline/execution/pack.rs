@@ -219,7 +219,7 @@ impl PipelineBuilder<'_> {
 
         if !self
             .session
-            .is_some_and(|session| session.discards_writes())
+            .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
         {
             crate::ppr::flush_deferred_ppr_cache_writes(
                 &self.vault.store,
@@ -277,7 +277,7 @@ impl PipelineBuilder<'_> {
                 )?;
                 if !self
                     .session
-                    .is_some_and(|session| session.discards_writes())
+                    .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
                 {
                     crate::ppr::flush_deferred_ppr_cache_writes(
                         &self.vault.store,
@@ -381,7 +381,7 @@ impl PipelineBuilder<'_> {
             Ok(())
                 if self
                     .session
-                    .is_some_and(|session| session.discards_writes()) =>
+                    .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes) =>
             {
                 None
             }

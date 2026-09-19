@@ -140,6 +140,10 @@ impl Vault {
 
     /// One exact approve-once covers the entire batch and its explicit derivation ceiling.
     /// Classifier is off by default (`None`); it produces an annotation, never a wall or edit.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "owner proof, request binding, export, consent ceiling, optional derived-model ports and commit time are distinct admission inputs"
+    )]
     pub fn ingest_docs_export(
         &self,
         owner: &AuthenticatedOwner,
@@ -380,8 +384,7 @@ impl Vault {
             if let BatchOp::Put {
                 id, entity_type, ..
             } = op
-            {
-                if self
+                && self
                     .store
                     .entities
                     .get(&txn, id.as_bytes())?
@@ -389,9 +392,8 @@ impl Vault {
                         crate::batch::EntityMetadataHeader::parse(&raw)
                             .is_none_or(|header| header.entity_type != *entity_type)
                     })
-                {
-                    return Err(invalid("docs extraction id occupied by another kind"));
-                }
+            {
+                return Err(invalid("docs extraction id occupied by another kind"));
             }
         }
         apply_ops(
