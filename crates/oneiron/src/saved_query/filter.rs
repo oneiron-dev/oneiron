@@ -17,6 +17,8 @@ use super::support::{edge_kind_from_name, invalid, parse_entity_ref, validate_bo
 /// as an unknown-variant error that a permissive reader might later widen.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterAst {
+    /// Membership in the shared tasks-by-owner index.
+    TaskOwner { owner: EntityId },
     /// Conjunction. An empty term list is vacuously true.
     All {
         /// Conjuncts.
@@ -190,6 +192,13 @@ pub fn parse_filter_ast(raw: &Value) -> Result<FilterAst> {
         }),
         "claim" => parse_claim_term(object),
         "edge_exists" => parse_edge_exists_term(object),
+        "task_owner" => Ok(FilterAst::TaskOwner {
+            owner: parse_entity_ref(
+                object
+                    .get("owner")
+                    .ok_or_else(|| invalid("task_owner requires owner"))?,
+            )?,
+        }),
         other => Err(Error::InvalidConfig(format!(
             "saved query filter operator {other:?} is not a per-entity-decidable operator"
         ))),
@@ -256,6 +265,7 @@ fn parse_edge_exists_term(object: &JsonMap<String, Value>) -> Result<FilterAst> 
 /// unbounded text.
 pub fn validate_per_entity_decidable(ast: &FilterAst) -> Result<()> {
     match ast {
+        FilterAst::TaskOwner { .. } => Ok(()),
         FilterAst::All { terms } | FilterAst::Any { terms } => {
             terms.iter().try_for_each(validate_per_entity_decidable)
         }
@@ -325,6 +335,9 @@ fn collect_filter_dependencies(
     edge_kinds: &mut BTreeSet<String>,
 ) {
     match ast {
+        FilterAst::TaskOwner { .. } => {
+            edge_kinds.insert("task_owner".to_owned());
+        }
         FilterAst::All { terms } | FilterAst::Any { terms } => {
             for term in terms {
                 collect_filter_dependencies(term, predicates, edge_kinds);
@@ -342,6 +355,10 @@ fn collect_filter_dependencies(
 
 pub(super) fn evaluate_filter(ast: &FilterAst, evidence: &RelevantEvidence) -> bool {
     match ast {
+        FilterAst::TaskOwner { owner } => evidence
+            .edge_targets
+            .iter()
+            .any(|(kind, target)| kind == "task_owner" && target == owner),
         FilterAst::All { terms } => terms.iter().all(|term| evaluate_filter(term, evidence)),
         FilterAst::Any { terms } => terms.iter().any(|term| evaluate_filter(term, evidence)),
         FilterAst::Not { term } => !evaluate_filter(term, evidence),

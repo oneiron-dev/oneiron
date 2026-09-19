@@ -61,3 +61,8 @@ pub(crate) use create_validation::{
 pub(crate) use rate_limit::task_create_owner;
 
 pub(crate) use create_validation::completed_task_at_in_txn;
+
+mod owner_index;
+pub(crate) use owner_index::index_owner_fact;
+#[cfg(test)]
+mod owner_index_tests;

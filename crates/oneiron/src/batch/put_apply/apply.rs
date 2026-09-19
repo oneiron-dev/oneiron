@@ -671,6 +671,9 @@ pub(in crate::batch) fn apply_put(
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    if entity_type == ENTITY_TYPE_TASK {
+        crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
+    }
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
             store,
