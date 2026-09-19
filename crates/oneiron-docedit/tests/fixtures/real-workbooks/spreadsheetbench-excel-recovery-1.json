@@ -1,0 +1,19 @@
+{
+  "status": "custody-restored",
+  "foreign_workbooks_touched": false,
+  "owned_workbook_closed_without_saving": true,
+  "final_workbooks": 0,
+  "identity_unchanged": {
+    "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+    "script_sha256": "4a3227fad8f78b5b3e485c7c5c427d4dc7bc930f459f436b334f79dcf0401e56",
+    "driver_sha256": "4457f4f2c42a49e13d1211917c4907b0b9f96b11efd0c470788965ff77ed3832"
+  },
+  "completed_rows_reused": 1364,
+  "timeout_row_preserved": {
+    "sha256": "1aff968ec2eefca4363a38a622ad90e463a0ec98176ffdba71a47f29a86d3901",
+    "path": "all_data_912_v0.1/spreadsheet/353-19/1_353-19_answer.xlsx",
+    "status": "timed-out",
+    "exit_code": -14
+  },
+  "finished_at": 1789820639.382397
+}

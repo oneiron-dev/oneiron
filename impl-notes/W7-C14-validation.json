@@ -260,5 +260,64 @@
       "adapter": "oneiron-xlsx-formula 0.1.0+formualizer.0.9.3",
       "precision_fallback": false
     }
+  },
+  "native_blank_inline_repair": {
+    "session_tests": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "test",
+        "--locked",
+        "-p",
+        "oneiron-xlsx-formula",
+        "--test",
+        "session"
+      ],
+      "exit_code": 0
+    },
+    "clippy": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron-xlsx-formula",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0
+    },
+    "fmt": {
+      "command": [
+        "cargo",
+        "--config",
+        "env.TMPDIR.value=\"target/w7-tmp\"",
+        "--config",
+        "env.TMPDIR.relative=true",
+        "--config",
+        "env.TMPDIR.force=true",
+        "fmt",
+        "-p",
+        "oneiron-xlsx-formula",
+        "--check"
+      ],
+      "exit_code": 0
+    },
+    "test_summary": "19 passed, 0 failed",
+    "measurement_status": "A separate Mac executable must pass the blank-cell probe before repaired-candidate corpus runs start."
   }
 }
