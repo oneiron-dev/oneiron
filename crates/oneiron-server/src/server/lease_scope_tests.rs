@@ -283,7 +283,7 @@ async fn granted_world_is_read_locally_but_never_by_a_cross_vault_lease() {
 }
 
 #[tokio::test]
-async fn lease_registration_returns_lossless_header_ready_vault_id() {
+async fn lease_json_round_trips_large_vault_and_client_ids_through_rotation() {
     use axum::{
         body::{Body, to_bytes},
         http::{Request, StatusCode},
@@ -302,24 +302,27 @@ async fn lease_registration_returns_lossless_header_ready_vault_id() {
         )
         .unwrap(),
     );
+    let client_id = 0xfedc_ba98_7654_3211;
+    let next_client_id = 0xfedc_ba98_7654_3212;
     let key = SigningKey::from_bytes(&[51; 32]);
+    let post = |path: &str, body: serde_json::Value| {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("authorization", "Bearer owner-secret")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    };
     let body = serde_json::json!({
-        "client_id": 22,
+        "client_id": format!("{client_id:016x}"),
         "pubkey": hex(&key.verifying_key().to_bytes()),
-        "proof": hex(&proof(22, &key)),
+        "proof": hex(&proof(client_id, &key)),
     });
     let app = crate::build_app(server.clone());
     let response = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/lease/register")
-                .header("authorization", "Bearer owner-secret")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&body).unwrap()))
-                .unwrap(),
-        )
+        .oneshot(post("/api/lease/register", body))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -328,7 +331,51 @@ async fn lease_registration_returns_lossless_header_ready_vault_id() {
     assert_eq!(body["granted"], true);
     let scope = body["vault_id"].as_str().expect("opaque scope is a string");
     assert_eq!(scope, "fedcba9876543210");
-    let mut binding = headers(vault_id, 22, &key);
+    let mut binding = headers(vault_id, client_id, &key);
     binding.insert("x-oneiron-vault", scope.parse().unwrap());
     assert!(server.require_vault_binding(&binding).is_ok());
+
+    let next_key = SigningKey::from_bytes(&[52; 32]);
+    let rotation = serde_json::json!({
+        "client_id": format!("{next_client_id:016x}"),
+        "old_client_id": format!("{client_id:016x}"),
+        "pubkey": hex(&next_key.verifying_key().to_bytes()),
+        "proof": hex(&proof(next_client_id, &next_key)),
+    });
+    let mut numeric = rotation.clone();
+    numeric["old_client_id"] = serde_json::json!(client_id);
+    assert_eq!(
+        app.clone()
+            .oneshot(post("/api/lease/rotate", numeric))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let mut malformed = rotation.clone();
+    malformed["client_id"] = serde_json::json!("FEDCBA9876543212");
+    assert_eq!(
+        app.clone()
+            .oneshot(post("/api/lease/rotate", malformed))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert!(server.require_vault_binding(&binding).is_ok());
+    let response = app
+        .oneshot(post("/api/lease/rotate", rotation))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["granted"], true);
+    assert_eq!(body["vault_id"], "fedcba9876543210");
+    assert!(server.require_vault_binding(&binding).is_err());
+    assert!(
+        server
+            .require_vault_binding(&headers(vault_id, next_client_id, &next_key))
+            .is_ok()
+    );
 }
