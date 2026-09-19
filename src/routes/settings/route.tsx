@@ -1,7 +1,9 @@
 import { Link, Outlet, createFileRoute, useLocation, useNavigate } from '@tanstack/react-router'
 import * as React from 'react'
 import { Ground } from '~/components/safelight/Ground'
-import { useCuePress, useGlobalKeys, useSound, useTheme } from '~/components/safelight/hooks'
+import { Palette, ShortcutSheet } from '~/components/safelight/Palette'
+import { useCommandKey, useCuePress, useGlobalKeys, useHoldKey, useSound, useTheme } from '~/components/safelight/hooks'
+import { DEFAULT_APP_ROUTE, lastAppRoute } from '~/runtime/settings-nav'
 import chassisCss from '~/styles/chassis.css?url'
 import settingsCss from '~/styles/settings-area.css?url'
 import { EscLayers, VAULT_NAME, type EscLayer } from './-shared'
@@ -43,17 +45,6 @@ const NAV: { label: string; rows: { to: string; name: string }[] }[] = [
   },
 ]
 
-const APP_ROUTE_KEY = 'oneiron-app-route'
-function lastAppRoute() {
-  try {
-    const v = sessionStorage.getItem(APP_ROUTE_KEY)
-    if (v && v.startsWith('/app')) return v
-  } catch {
-    /* private mode */
-  }
-  return '/app/inbox'
-}
-
 function BackArrow() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -70,21 +61,36 @@ function SettingsLayout() {
   const navRef = React.useRef<HTMLElement>(null)
   const layers = React.useRef(new Set<EscLayer>())
 
-  const goRecall = React.useCallback(() => navigate({ to: '/app/recall' }), [navigate])
+  const [returnTo, setReturnTo] = React.useState(DEFAULT_APP_ROUTE)
+  React.useEffect(() => setReturnTo(lastAppRoute()), [])
+  const [pal, setPal] = React.useState(false)
+  const togglePal = React.useCallback(() => setPal((v) => !v), [])
+  const openPal = React.useCallback(() => setPal(true), [])
+  const closePal = React.useCallback(() => setPal(false), [])
+  const keysShown = useHoldKey('Meta', 600)
+
+  React.useEffect(() => {
+    addEventListener('oneiron:palette', openPal)
+    return () => removeEventListener('oneiron:palette', openPal)
+  }, [openPal])
   const back = React.useCallback(() => {
-    navigate({ href: lastAppRoute() } as never)
+    navigate({ href: lastAppRoute() })
   }, [navigate])
 
   useCuePress()
-  /* t / m: theme + sound; / opens recall. no tuner here; [ is inert. */
-  useGlobalKeys({ t: cycleTheme, m: toggleMute, '/': goRecall })
+  useCommandKey('k', togglePal)
+  /* Same search card and keys as the app; no tuner or rail here. */
+  useGlobalKeys({ t: cycleTheme, m: toggleMute, '/': openPal })
 
   /* the esc ladder (spec §2): text field → blur, keep the text; something
      open → close it; nothing open → back to app. the agent line closes
      its own panel first. */
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
+      /* Use the open state, not only the DOM: the palette may already be
+         closing in another listener on this same key event. */
+      if (pal) return
       const el = document.activeElement as HTMLElement | null
       if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) {
         el.blur()
@@ -106,11 +112,12 @@ function SettingsLayout() {
     }
     addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)
-  }, [back])
+  }, [back, pal])
 
   /* keyboard in the snav: ↑/↓ walk the rows (labels are not rows), → into
      the page's first control; ← from the page returns to the snav */
   const onNavKey = (e: React.KeyboardEvent) => {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
     const rows = Array.from(navRef.current?.querySelectorAll<HTMLElement>('a[data-row]') ?? [])
     const i = rows.indexOf(document.activeElement as HTMLElement)
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -126,7 +133,7 @@ function SettingsLayout() {
     }
   }
   const onPaneKey = (e: React.KeyboardEvent) => {
-    if (e.key !== 'ArrowLeft') return
+    if (e.key !== 'ArrowLeft' || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
     const t = e.target as HTMLElement
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return
     if (t.closest('table, [role="group"]')) return
@@ -144,9 +151,10 @@ function SettingsLayout() {
           <a
             className="back"
             data-row
-            href="/app/inbox"
+            href={returnTo}
             title="back to where you were · esc"
             onClick={(e) => {
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
               e.preventDefault()
               back()
             }}
@@ -184,6 +192,8 @@ function SettingsLayout() {
         </div>
       </div>
       <Ground />
+      <Palette open={pal} onClose={closePal} />
+      <ShortcutSheet shown={keysShown && !pal} includeRail={false} />
     </EscLayers.Provider>
   )
 }
