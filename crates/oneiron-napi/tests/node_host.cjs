@@ -16,7 +16,8 @@ try {
   const payload = Buffer.from("native host payload")
   assert.equal(vault.getEntity(id), null)
   assert.equal(vault.entityExists(id), false)
-  vault.putEntity(id, 1, 1, 1, 1, payload)
+  // ENTITY_TYPE_PERSON is 4 in the current registry.
+  vault.putEntity(id, 4, 1, 1, 1, payload)
   const stored = vault.getEntity(id)
   assert.ok(Buffer.isBuffer(stored))
   assert.ok(stored.includes(payload))
