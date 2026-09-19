@@ -9,7 +9,10 @@ use oneiron::{
     BudgetLease, ContentPart, FinishReason, LlmBackend, LlmGenerateFuture, LlmInputUsage,
     LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamResult, LlmUsage,
 };
-struct FixtureBackend;
+#[derive(Default)]
+struct FixtureBackend {
+    answer_inputs: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+}
 impl LlmBackend for FixtureBackend {
     fn generate<'a>(
         &'a self,
@@ -31,6 +34,7 @@ impl LlmBackend for FixtureBackend {
                 assert_eq!(fields.as_object().unwrap().len(), 2);
                 assert!(fields.get("gold").is_none());
                 assert!(fields.get("arm").is_none());
+                self.answer_inputs.lock().unwrap().push(fields);
             }
             Ok(LlmResponse {
                 message: LlmMessage {
@@ -60,17 +64,12 @@ impl LlmBackend for FixtureBackend {
 #[test]
 fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
     let dir = tempfile::tempdir().unwrap();
-    let mut corpus: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../fixtures/beam_128k_contract.run.jsonl"
-    ))
-    .unwrap();
+    let mut corpus: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
     corpus["corpus"][0]["metadata"]["stated_claim_predicate"] = serde_json::json!("status.fixture");
-    corpus["gold"]["labels"]["wedge_bucket"] = serde_json::json!("temporal");
     std::fs::write(dir.path().join("run.jsonl"), corpus.to_string()).unwrap();
-    let mut manifest: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../fixtures/beam_128k_contract.run.json"
-    ))
-    .unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
     manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
     let manifest_path = dir.path().join("run.json");
     std::fs::write(&manifest_path, manifest.to_string()).unwrap();
@@ -160,7 +159,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
         chroma: None,
     };
     let session = ModelSession::with_backend(
-        Box::new(FixtureBackend),
+        Box::new(FixtureBackend::default()),
         prices,
         &[backbone, cheap, judge_model],
         1_000_000,
@@ -216,8 +215,101 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
 
 #[test]
 fn shipped_measured_plan_pins_answerer_judge_and_example_prices() {
-    let plan: ModelRunPlan =
-        serde_json::from_str(include_str!("../../../fixtures/beam_measure.example.json")).unwrap();
+    let plan = shipped_plan();
     plan.validate().unwrap();
     assert_eq!(plan.host.prices.revision, "example-not-current-tariff");
+    let session = fixture_session(&plan, FixtureBackend::default());
+    let report = run_with_session(&plan, &session).unwrap();
+    assert_eq!(report.rows.len(), 8);
+    assert!(report.rows.iter().all(|row| {
+        row.scoring.beam.as_ref().unwrap().wedge_buckets[&WedgeBucket::KnowledgeUpdate].is_some()
+    }));
+}
+
+fn shipped_plan() -> ModelRunPlan {
+    let mut plan: ModelRunPlan =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.example.json")).unwrap();
+    plan.retrieval_manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(&plan.retrieval_manifest);
+    plan
+}
+
+fn fixture_session(plan: &ModelRunPlan, backend: FixtureBackend) -> ModelSession {
+    let models: Vec<_> = plan
+        .answerers
+        .iter()
+        .map(|arm| arm.model.clone())
+        .chain(std::iter::once(plan.judge.model.clone()))
+        .collect();
+    ModelSession::with_backend(
+        Box::new(backend),
+        plan.host.prices.clone(),
+        &models,
+        plan.host.token_budget,
+    )
+    .unwrap()
+}
+
+#[test]
+fn measured_chroma_and_deterministic_arms_keep_cards_citations_and_gold_isolation() {
+    let mut plan = shipped_plan();
+    let mock = crate::beam::chroma::tests::support::MockChroma::start(plan.efforts.len());
+    plan.chroma = Some(crate::beam::chroma::ChromaConfig {
+        endpoint: mock.endpoint.clone(),
+        retrieval_k: 5,
+        card_id: "vanilla-rag".into(),
+    });
+    plan.answerers.push(AnswererArm {
+        arm: ArmKind::VanillaRag,
+        model: plan.answerers[0].model.clone(),
+        cheap_chat: false,
+    });
+    let backend = FixtureBackend::default();
+    let inputs = backend.answer_inputs.clone();
+    let session = fixture_session(&plan, backend);
+    let report = run_with_session(&plan, &session).unwrap();
+    let requests = mock.finish();
+    for arm in [ArmKind::Deterministic, ArmKind::VanillaRag] {
+        assert_eq!(
+            report.rows.iter().filter(|row| row.arm == arm).count(),
+            plan.efforts.len()
+        );
+    }
+    assert_eq!(report.chroma_card_id.as_deref(), Some("vanilla-rag"));
+    assert!(
+        report
+            .retrieval_cards
+            .contains_key("deterministic-context-pack")
+    );
+    assert!(report.retrieval_cards.contains_key("vanilla-rag"));
+    assert!(!report.citations.appendix.is_empty());
+    let corpus: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    let expected_context = format!("{}\n", corpus["corpus"][0]["text"].as_str().unwrap());
+    assert_eq!(
+        inputs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|input| input["context"] == expected_context)
+            .count(),
+        plan.efforts.len()
+    );
+    assert!(requests.iter().all(|(_, body)| body.get("gold").is_none()));
+    assert_eq!(
+        requests[1].1["documents"],
+        serde_json::json!([corpus["corpus"][0]["text"], corpus["corpus"][1]["text"]])
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(url, _)| url.contains("/query"))
+            .count(),
+        plan.efforts.len()
+    );
+    let wire = serde_json::to_value(report).unwrap();
+    assert_eq!(wire["chroma_card_id"], "vanilla-rag");
+    assert!(wire["retrieval_cards"]["deterministic-context-pack"].is_object());
+    assert!(wire["citations"]["appendix"].is_array());
 }

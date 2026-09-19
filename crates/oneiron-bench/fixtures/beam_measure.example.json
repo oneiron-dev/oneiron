@@ -1,5 +1,5 @@
 {
-  "retrieval_manifest": "beam_128k_contract.run.json",
+  "retrieval_manifest": "beam_measure.run.json",
   "temporal_now": 1800000000,
   "host": {
     "endpoint": "http://127.0.0.1:8080/v1/chat/completions",

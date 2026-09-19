@@ -77,6 +77,8 @@ pub(super) struct AblationUnavailable {
 }
 #[derive(Debug, Serialize)]
 pub(super) struct MeasuredReport {
+    /// Retrieval-manifest cards, separate from the measured answerer/judge pins.
+    pub retrieval_cards: BTreeMap<String, super::model::CompetitorCardConfig>,
     pub scorer: super::report_model::ScorerReport,
     pub execution_contract: &'static str,
     pub answerers: Vec<AnswererArm>,
@@ -246,6 +248,17 @@ pub(super) fn run_with_session(
     let mut manifest = parse_manifest_json(&std::fs::read_to_string(&plan.retrieval_manifest)?)?;
     resolve_manifest_paths(&mut manifest, &plan.retrieval_manifest);
     manifest.outputs = None;
+    if let Some(chroma) = &plan.chroma {
+        if !manifest
+            .competitors
+            .iter()
+            .any(|row| row.arm == ArmKind::VanillaRag && row.competitor_id == chroma.card_id)
+        {
+            return Err(refusal(
+                "Chroma card id must name the manifest vanilla-RAG competitor",
+            ));
+        }
+    }
     if manifest.case_ids.len() != plan.amortized_question_count {
         return Err(refusal(
             "offline denominator must equal the fixed dataset question count",
@@ -530,6 +543,16 @@ pub(super) fn run_with_session(
         cost_usd: 0.0,
     };
     Ok(MeasuredReport {
+        retrieval_cards: manifest
+            .competitors
+            .iter()
+            .map(|row| {
+                (
+                    row.competitor_id.clone(),
+                    row.card.clone().expect("validated competitor card"),
+                )
+            })
+            .collect(),
         scorer: super::scorer::BeamScorer::metadata(&FixedBeamScorer),
         execution_contract: "response_format=text; tools=none; provider_options=none",
         ablation_rows,

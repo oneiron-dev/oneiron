@@ -122,4 +122,4 @@ fn refusal(reason: &str) -> BeamError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
