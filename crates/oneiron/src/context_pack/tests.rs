@@ -140,6 +140,7 @@ fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> Contex
 #[test]
 fn memories_section_serializes_rows_in_stable_slot_order() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
@@ -238,6 +239,7 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
 #[test]
 fn memories_section_routes_asset_rows_by_ref_without_local_downgrade() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![

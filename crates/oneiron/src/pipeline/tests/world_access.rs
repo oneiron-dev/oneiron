@@ -601,7 +601,7 @@ fn world_set_scope_keeps_codebase_semantics_without_consulting_authority() -> Re
 
     let before = world_access_ids(
         &world_access_query(&vault, WORLD_ACCESS_NOW)
-            .world(WorldScope::WorldSet(scope_key))
+            .world(WorldScope::CodebaseSet(scope_key))
             .run()?,
     );
     WorldAccessRowSpec::owner_grant(
@@ -613,7 +613,7 @@ fn world_set_scope_keeps_codebase_semantics_without_consulting_authority() -> Re
     .put(&vault)?;
     let after = world_access_ids(
         &world_access_query(&vault, WORLD_ACCESS_NOW)
-            .world(WorldScope::WorldSet(scope_key))
+            .world(WorldScope::CodebaseSet(scope_key))
             .run()?,
     );
 
@@ -1011,7 +1011,7 @@ fn malformed_older_active_default_fails_closed_until_superseded() -> Result<()> 
                 &mut scores,
                 &vault.store,
                 &rtxn,
-                WorldScope::ActiveSet,
+                &WorldScope::ActiveSet,
                 None,
             ),
             Err(Error::InvalidConfig(_))

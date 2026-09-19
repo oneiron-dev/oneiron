@@ -25,6 +25,7 @@ use super::types::{
     ScoredEntity, TemporalSearchConfig, WorldAuthoritySet, WorldScope,
 };
 
+#[derive(Clone)]
 #[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     pub(super) vault: &'a Vault,
@@ -54,7 +55,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) world_scope: WorldScope,
     /// The per-turn ActiveSet selection (ONE-1420). A SIDECAR rather than a
     /// payload on [`WorldScope::ActiveSet`], because the selection is in-memory
-    /// turn state that is never stored, while `WorldScope` is a `Copy` scope
+    /// turn state that is never stored, separate from the selected scope
     /// token shared with the context pack and the agent-scope mapping. `None`
     /// under every other scope: [`PipelineBuilder::world`] clears it, so a
     /// stale selection can never leak into another scope's run.

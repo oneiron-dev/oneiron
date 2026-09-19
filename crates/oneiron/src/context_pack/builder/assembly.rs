@@ -196,6 +196,32 @@ impl<'a> ContextPackBuilder<'a> {
                 }
                 scored = kept;
             }
+            let mut capabilities = Vec::new();
+            for entry in pipeline_output.capabilities {
+                if clamp.is_some_and(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
+                    && !disclosure_admits_candidate(
+                        &self.vault.store,
+                        &rtxn,
+                        clamp.expect("checked"),
+                        &entry.id,
+                        &claim_bodies,
+                    )?
+                {
+                    continue;
+                }
+                if self
+                    .vault
+                    .archive_tombstone_in_txn(&rtxn, &entry.id)?
+                    .is_some()
+                {
+                    continue;
+                }
+                if let Some(hit) =
+                    crate::pipeline::capability_hit(&self.vault.store, &rtxn, entry.id)?
+                {
+                    capabilities.push(hit);
+                }
+            }
             let surfaced_candidate_count = scored.len();
 
             let result_options = HydrateOptions {
@@ -384,7 +410,10 @@ impl<'a> ContextPackBuilder<'a> {
                 results.retain(|entity| ids.binary_search(&entity.id).is_err());
                 neighbors.retain(|entity| ids.binary_search(&entity.id).is_err());
             }
-            let pack_is_empty = results.is_empty() && neighbors.is_empty() && l2_base.is_none();
+            let pack_is_empty = results.is_empty()
+                && neighbors.is_empty()
+                && l2_base.is_none()
+                && capabilities.is_empty();
             let candidates_considered = if pack_is_empty {
                 total_in_scope
             } else {
@@ -413,6 +442,7 @@ impl<'a> ContextPackBuilder<'a> {
 
             Ok(ContextPackRun {
                 pack: ContextPack {
+                    capabilities,
                     l2_base,
                     retrieval_quality,
                     results,

@@ -183,6 +183,7 @@ fn project_empty_context(empty: &EmptyContext) -> CoreContextPackEmpty {
 /// local serializable projection. No facade helper is involved.
 pub(super) fn project_context_pack(pack: &ContextPack) -> CoreContextPackProjection {
     CoreContextPackProjection {
+        capabilities: pack.capabilities.clone(),
         results: pack.results.iter().map(project_context_entity).collect(),
         neighbors: pack.neighbors.iter().map(project_context_entity).collect(),
         stats: project_pack_stats(&pack.stats),

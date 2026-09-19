@@ -29,6 +29,15 @@ pub struct ChangedLine {
 }
 
 impl SessionReadSet {
+    pub(super) fn require_capacity(&self, id: &str) -> crate::Result<()> {
+        if self.rows.len() >= 4096 && !self.rows.contains_key(id) {
+            return Err(crate::Error::IndexOverflow(
+                "context board session read set",
+            ));
+        }
+        Ok(())
+    }
+
     /// Called only for rows actually served after budget shedding, or a get()
     /// body actually appended to the log. A new observation replaces the old.
     pub fn served(&mut self, id: impl Into<String>, lifecycle: ServedLifecycle) {

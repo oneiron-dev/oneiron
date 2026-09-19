@@ -172,7 +172,7 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) project_id_filter: Option<&'a str>,
     pub(super) facet_filter: Option<(EntityId, FacetMode)>,
     pub(super) relationship_filter: Option<(EntityId, RelMode)>,
-    pub(super) world_scope: WorldScope,
+    pub(super) world_scope: &'a WorldScope,
     /// The turn's resolved [`WorldScope::ActiveSet`] membership, resolved ONCE
     /// per run under the run's read transaction and borrowed by every
     /// per-candidate check. `None` for every other scope.
@@ -216,6 +216,7 @@ pub(super) struct ClaimStatusGateCache {
 pub(crate) struct PipelineOutput {
     pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
+    pub(crate) capabilities: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(crate) claims_suppressed: usize,
@@ -310,11 +311,10 @@ pub enum RelMode {
 /// [`PipelineBuilder::world`]; the default is [`WorldScope::All`].
 ///
 /// A claim's world is the `world` key in its body — an absent key is base
-/// reality (the elide-the-default pattern). Non-claim entities have no world
-/// and are treated as base for the `Base` / `World` scopes. `WorldSet` is the
-/// repo-world scope key: it keeps only entities explicitly indexed as members
-/// of that codebase scope.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// reality (the elide-the-default pattern). Non-claim entities belong to base
+/// reality. `WorldSet` selects ordinary world ids and explicitly includes or
+/// excludes base; `CodebaseSet` selects repository-indexed entity membership.
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum WorldScope {
     /// Span every world — base-reality claims plus every fictional / dream
@@ -330,7 +330,10 @@ pub enum WorldScope {
     /// Entities explicitly indexed under this codebase scope key. This is the
     /// repository-backed world-set clamp and does not include base reality by
     /// default.
-    WorldSet(CodebaseScopeKey),
+    CodebaseSet(CodebaseScopeKey),
+    /// Explicit ordinary world ids, with a separately selected base-reality member.
+    /// This is a narrowing read filter, never a replacement for principal authority.
+    WorldSet(WorldAuthoritySet),
     /// The claim-backed per-turn ActiveSet (ONE-1420): reads are restricted to
     /// the base/world members the turn selected, and the selection itself must
     /// sit inside the owner-granted ALLOWED-SET.
@@ -426,6 +429,11 @@ impl WorldAuthoritySet {
     #[must_use]
     pub fn worlds(&self) -> &BTreeSet<EntityId> {
         &self.worlds
+    }
+
+    /// Membership of an ordinary claim world, or base reality for non-claims.
+    pub(crate) fn admits(&self, world: Option<EntityId>) -> bool {
+        world.map_or(self.include_base, |world| self.worlds.contains(&world))
     }
 
     /// Whether every member of `self` is also a member of `allowed`.

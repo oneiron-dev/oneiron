@@ -4,6 +4,9 @@
 
 mod agents;
 mod capabilities;
+mod observations;
+#[cfg(test)]
+mod observations_tests;
 mod read_set;
 mod room;
 #[cfg(test)]

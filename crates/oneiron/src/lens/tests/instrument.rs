@@ -117,7 +117,7 @@ fn arbitrary_utf8_and_golden_closed_atoms_never_inject_markup() -> crate::Result
 }
 
 #[test]
-fn lenses_read_only_their_own_world_set() -> crate::Result<()> {
+fn lenses_read_only_their_own_codebase_set() -> crate::Result<()> {
     use crate::codebase::{CodebaseSnapshot, RepoRef};
     let (_dir, vault) = test_vault();
     let a = test_entity_id(81);
@@ -140,8 +140,8 @@ fn lenses_read_only_their_own_world_set() -> crate::Result<()> {
         scope_keys.push(snapshot.scope_key);
     }
     let read = vault.scoped_read(actor_key("viewer"));
-    let fa = frame("viewer").with_world_set(scope_keys[0]);
-    let fb = frame("viewer").with_world_set(scope_keys[1]);
+    let fa = frame("viewer").with_codebase_scope(scope_keys[0]);
+    let fb = frame("viewer").with_codebase_scope(scope_keys[1]);
     assert!(fa.scoped_body(&read, &a)?.is_some());
     assert!(fa.scoped_body(&read, &b)?.is_none());
     assert!(fb.scoped_body(&read, &a)?.is_none());
@@ -157,5 +157,95 @@ fn lenses_read_only_their_own_world_set() -> crate::Result<()> {
             .html
             .contains("&lt;script&gt;")
     );
+    Ok(())
+}
+
+#[test]
+fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate::Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::pipeline::{WorldAuthoritySet, WorldScope};
+    let (_dir, vault) = test_vault();
+    let subject = test_entity_id(90);
+    let world_a = test_entity_id(91);
+    let world_b = test_entity_id(92);
+    let a = test_entity_id(93);
+    let b = test_entity_id(94);
+    let base = test_entity_id(95);
+    put_person(&vault, &subject)?;
+    for (id, world) in [(a, Some(world_a)), (b, Some(world_b)), (base, None)] {
+        let mut body = ClaimBody::new(
+            "profile.likes",
+            ClaimSubject::Entity(subject),
+            rmpv::Value::from("tea"),
+            0.75,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        body.world = world;
+        vault.put_claim(&id, &body, crate::TimeRange { start: 1, end: 1 }, 2)?;
+    }
+    let set_a = WorldAuthoritySet::new(false, [world_a])?;
+    let set_b = WorldAuthoritySet::new(true, [world_b])?;
+    let read = vault.scoped_read(actor_key("viewer"));
+    let mut fa = frame("viewer").with_world_set(set_a.clone());
+    let fb = frame("viewer").with_world_set(set_b.clone());
+    for (id, in_a, in_b) in [
+        (a, true, false),
+        (b, false, true),
+        (base, false, true),
+        (subject, false, true),
+    ] {
+        assert_eq!(fa.scoped_body(&read, &id)?.is_some(), in_a);
+        assert_eq!(fb.scoped_body(&read, &id)?.is_some(), in_b);
+    }
+    assert!(
+        fa.mint_backing_ref(
+            &read,
+            handle("other-world"),
+            LensHandleRole::ClaimSet,
+            backing_target_for(&vault, &b, LensBackingTargetKind::Claim)?,
+        )
+        .is_err()
+    );
+    let token = fa.mint_backing_ref(
+        &read,
+        handle("own-world"),
+        LensHandleRole::ClaimSet,
+        backing_target_for(&vault, &a, LensBackingTargetKind::Claim)?,
+    )?;
+    assert_eq!(
+        fa.resolve_backing_ref_token(&read, &token)?
+            .target()
+            .entity_id(),
+        &a
+    );
+    let runtime = LensExecutionRuntime::link(vec![
+        LensHostImport::ScopedRead,
+        LensHostImport::ResolveBackingRef,
+        LensHostImport::EmitAtom,
+    ])?;
+    assert!(
+        runtime
+            .run(b"[]", &fa, &read)?
+            .html
+            .contains("data-instrument")
+    );
+    let empty = frame("viewer").with_world_set(WorldAuthoritySet::default());
+    for id in [a, b, base, subject] {
+        assert!(empty.scoped_body(&read, &id)?.is_none());
+    }
+    // The ordinary retrieval door uses the same world-id membership, not codebase keys.
+    for (worlds, expected) in [(set_a, vec![a]), (set_b, vec![b, base])] {
+        let results = vault
+            .query()
+            .search_temporal(0, 10, 10)
+            .filter_types(&[crate::registry::ENTITY_TYPE_CLAIM])
+            .world(WorldScope::WorldSet(worlds))
+            .limit(10)
+            .run()?;
+        let mut ids: Vec<_> = results.into_iter().map(|r| r.id).collect();
+        ids.sort();
+        assert_eq!(ids, expected);
+    }
     Ok(())
 }

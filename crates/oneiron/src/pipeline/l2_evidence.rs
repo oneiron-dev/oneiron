@@ -26,7 +26,7 @@ impl PipelineBuilder<'_> {
         let authority = super::world_authority::resolve_active_world_authority(
             store,
             txn,
-            self.world_scope,
+            &self.world_scope,
             self.active_world_selection.as_ref(),
             self.execution_actor,
             now,

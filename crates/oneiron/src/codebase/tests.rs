@@ -1430,7 +1430,7 @@ fn codebase_scope_key_clamps_world_set_retrieval() -> Result<()> {
     let scoped = vault
         .query()
         .search_text("scopeneedle", 10)
-        .world(WorldScope::WorldSet(ingest.snapshot.scope_key))
+        .world(WorldScope::CodebaseSet(ingest.snapshot.scope_key))
         .run()?;
     assert_eq!(scoped.len(), 2);
     assert!(scoped.iter().any(|hit| hit.id == ingest.code_artifact_id));

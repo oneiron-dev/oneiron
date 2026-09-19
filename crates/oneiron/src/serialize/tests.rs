@@ -61,6 +61,7 @@ fn sample_pack() -> ContextPack {
     );
 
     ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
@@ -202,6 +203,7 @@ fn claim_entity_with_value(seed: u8, predicate: &str, value: Value, score: f32) 
 
 fn pack_with_results(results: Vec<ContextEntity>) -> ContextPack {
     ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results,
@@ -213,6 +215,7 @@ fn pack_with_results(results: Vec<ContextEntity>) -> ContextPack {
 
 fn token_savings_regression_pack() -> ContextPack {
     let mut pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: Vec::new(),
@@ -685,6 +688,7 @@ fn serialized_pack_stats_stamp_tokenizer_and_row_tokens() {
 #[test]
 fn split_mode_uses_shared_budget_pool() {
     let mut pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: Vec::new(),
@@ -808,6 +812,7 @@ fn field_profile_changes_output() {
 #[test]
 fn max_field_chars_truncates_nested_json_strings() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
@@ -898,6 +903,7 @@ fn serialization_token_savings_regressions() {
 #[test]
 fn short_id_serialization_uses_at_most_two_tokens_per_reference() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
@@ -1353,6 +1359,7 @@ fn json_budget_below_mandatory_envelope_emits_minimal_over_budget_payload() {
 fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
     let overlong = "overlong claim value".to_owned();
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
@@ -1444,6 +1451,7 @@ fn plaintext_escapes_pipes() {
 #[test]
 fn unknown_entity_types_share_single_other_group() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
@@ -1503,6 +1511,7 @@ fn yaml_stats_are_emitted_as_comments() {
 #[test]
 fn yaml_quotes_unsafe_field_keys() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
@@ -1531,7 +1540,8 @@ fn yaml_quotes_unsafe_field_keys() {
 #[test]
 fn yaml_quotes_scalar_control_characters() {
     let pack = ContextPack {
-            l2_base: None,
+            capabilities: Vec::new(),
+        l2_base: None,
             retrieval_quality: Default::default(),
             results: vec![ContextEntity {
                 id: EntityId::from_bytes_unchecked([0x93; 16]),
@@ -1726,6 +1736,7 @@ fn empty_stats() -> PackStats {
 
 fn empty_pack_with_reason(reason: EmptyReason) -> ContextPack {
     ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![],
@@ -1954,6 +1965,7 @@ fn productivity_field_profiles() {
             vector: None,
         };
         let pack = ContextPack {
+            capabilities: Vec::new(),
             l2_base: None,
             retrieval_quality: Default::default(),
             results: vec![entity],
@@ -2108,6 +2120,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
         ),
     ]);
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
@@ -2277,6 +2290,7 @@ fn federation_grant_member_ref_hex_projection_is_preserved() {
         ("preset".to_owned(), Value::String("admin".to_owned())),
     ]);
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
@@ -2337,6 +2351,7 @@ fn test_due_date_timestamp_rendering() {
     };
 
     let pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![entity],

@@ -242,13 +242,22 @@ impl PipelineBuilder<'_> {
                         &mut retry_prefix_probe_claim_gate,
                     )
                 };
-                let mut results = crate::bm25::search_text_scoped_with_recency(
+                let retry_search = if self.candidate_filter.is_some() {
+                    crate::bm25::search_text_filtered_with_recency
+                } else {
+                    crate::bm25::search_text_scoped_with_recency
+                };
+                let mut results = retry_search(
                     &self.vault.store,
                     rtxn,
                     &self.vault.analyzer,
                     inputs.bm25_config,
                     query,
-                    retry_text_channel_limit,
+                    if self.candidate_filter.is_some() {
+                        retry_channel_limit(*limit)
+                    } else {
+                        retry_text_channel_limit
+                    },
                     crate::bm25::Bm25SearchOptions {
                         recency: None,
                         exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,

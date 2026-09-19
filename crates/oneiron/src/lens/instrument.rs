@@ -140,7 +140,7 @@ impl LensExecutionRuntime {
     ) -> Result<InstrumentView> {
         if !matches!(
             frame.world_scope(),
-            crate::pipeline::WorldScope::WorldSet(_)
+            crate::pipeline::WorldScope::WorldSet(_) | crate::pipeline::WorldScope::CodebaseSet(_)
         ) {
             return Err(Error::InvalidConfig(
                 "lens execution requires a WorldSet frame".into(),

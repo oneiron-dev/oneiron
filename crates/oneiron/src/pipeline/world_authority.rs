@@ -46,7 +46,7 @@ fn require_active_world_selection(
 pub(super) fn resolve_active_world_authority(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    scope: WorldScope,
+    scope: &WorldScope,
     selection: Option<&ActiveWorldSelection>,
     execution_actor: Option<WriteActor>,
     at: u64,

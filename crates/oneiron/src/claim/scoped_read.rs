@@ -2,6 +2,8 @@
 //! admission/filtering surface that layers `crate::gate` scoped-read grants on
 //! top of the claim surfaceability gate.
 
+mod lifecycle;
+
 use std::{collections::HashSet, sync::Mutex};
 
 use super::*;
@@ -439,6 +441,17 @@ impl<'a> ScopedRead<'a> {
                 pack.l2_base = None;
             }
         }
+        let had_capabilities = !pack.capabilities.is_empty();
+        let mut capabilities = Vec::new();
+        for hit in std::mem::take(&mut pack.capabilities) {
+            if self.is_entity_readable_with_policy_in(&rtxn, &policy, &hit.id)?
+                && let Some(current) =
+                    crate::pipeline::capability_hit(&self.vault.store, &rtxn, hit.id)?
+            {
+                capabilities.push(current);
+            }
+        }
+        pack.capabilities = capabilities;
         let previous_count = pack.results.len() + pack.neighbors.len();
         let (results, result_suppressed) =
             self.filter_context_entities(&rtxn, &policy, std::mem::take(&mut pack.results))?;
@@ -454,7 +467,8 @@ impl<'a> ScopedRead<'a> {
         pack.stats.claims_suppressed +=
             result_suppressed + neighbor_suppressed + reachability_suppressed;
 
-        if previous_count > 0
+        if (previous_count > 0 || had_capabilities)
+            && pack.capabilities.is_empty()
             && pack.results.is_empty()
             && pack.neighbors.is_empty()
             && pack.l2_base.is_none()

@@ -74,7 +74,7 @@ fn active_set_rejects_missing_principal_and_forged_agent() -> Result<()> {
         vault
             .query()
             .search_vector(&FACET_QUERY, 10)
-            .world(WorldScope::WorldSet([0x7B; CODEBASE_SCOPE_KEY_LEN]))
+            .world(WorldScope::CodebaseSet([0x7B; CODEBASE_SCOPE_KEY_LEN]))
             .run()?
             .is_empty()
     );
@@ -341,7 +341,7 @@ fn postfusion_world_filter_uses_resolved_authority_without_a_second_scan() -> Re
         &mut scores,
         &vault.store,
         &rtxn,
-        WorldScope::ActiveSet,
+        &WorldScope::ActiveSet,
         Some(&resolved.active_set),
     )?;
     assert_eq!(world_access_ids(&scores), HashSet::from([fixture.claim_w]));
@@ -351,7 +351,7 @@ fn postfusion_world_filter_uses_resolved_authority_without_a_second_scan() -> Re
             &mut scores,
             &vault.store,
             &rtxn,
-            WorldScope::ActiveSet,
+            &WorldScope::ActiveSet,
             None
         ),
         Err(Error::InvalidConfig(_))

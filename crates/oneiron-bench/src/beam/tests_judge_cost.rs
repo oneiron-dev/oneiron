@@ -89,6 +89,7 @@ pub(crate) mod tests {
         };
         let pack = BudgetedContextPack {
             raw: ContextPack {
+                capabilities: Vec::new(),
                 l2_base: None,
                 retrieval_quality: Default::default(),
                 results: Vec::new(),

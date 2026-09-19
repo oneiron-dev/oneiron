@@ -1,6 +1,8 @@
 mod authority;
 mod blend;
 mod budget;
+mod capabilities;
+pub(crate) use capabilities::capability_hit;
 mod builder;
 mod channels;
 mod corpus_filter;

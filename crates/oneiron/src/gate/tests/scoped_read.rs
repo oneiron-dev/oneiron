@@ -715,6 +715,7 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
         vector: None,
     };
     let mut pack = ContextPack {
+        capabilities: Vec::new(),
         l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![

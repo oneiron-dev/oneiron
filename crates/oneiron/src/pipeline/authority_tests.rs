@@ -659,7 +659,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 project_id_filter: None,
                 facet_filter: None,
                 relationship_filter: None,
-                world_scope: WorldScope::All,
+                world_scope: &WorldScope::All,
                 world_active_set: None,
                 corpus_scope: &crate::corpus::CorpusScope::All,
             };

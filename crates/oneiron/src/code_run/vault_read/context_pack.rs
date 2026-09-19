@@ -302,6 +302,9 @@ pub struct CoreContextPackEmpty {
 /// Field-for-field local projection of the public `ContextPack`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreContextPackProjection {
+    /// Turn-local capability discoveries, independent of memory rows.
+    #[serde(default)]
+    pub capabilities: Vec<crate::context_board::CapabilityHit>,
     /// Primary results.
     pub results: Vec<CoreContextPackEntityRecord>,
     /// Edge-walk neighbors.

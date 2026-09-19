@@ -37,6 +37,7 @@ impl PipelineBuilder<'_> {
                 // No channel ran: an authority refusal is not a cache failure.
                 retrieval_quality: Default::default(),
                 scores: Vec::new(),
+                capabilities: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
@@ -189,6 +190,7 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
                 scores: Vec::new(),
+                capabilities: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
@@ -202,6 +204,7 @@ impl PipelineBuilder<'_> {
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
         let mut scores = attempt.scores;
+        let mut capabilities = attempt.capabilities;
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
@@ -271,6 +274,7 @@ impl PipelineBuilder<'_> {
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 scores = retry.scores;
+                capabilities = retry.capabilities;
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
                 cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
@@ -385,6 +389,7 @@ impl PipelineBuilder<'_> {
         Ok(PipelineOutput {
             retrieval_quality,
             scores,
+            capabilities,
             claim_bodies,
             pending_vectors,
             claims_suppressed,

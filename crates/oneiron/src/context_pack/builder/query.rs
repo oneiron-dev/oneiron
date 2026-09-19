@@ -345,7 +345,7 @@ impl<'a> ContextPackBuilder<'a> {
     /// additionally groups surviving claims by world (base section first). For
     /// [`WorldScope::Base`] / [`WorldScope::World`] the pack stays flat.
     pub fn world(mut self, scope: WorldScope) -> Self {
-        self.pipeline = self.pipeline.world(scope);
+        self.pipeline = self.pipeline.world(scope.clone());
         self.world_scope = scope;
         self
     }

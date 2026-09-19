@@ -31,11 +31,23 @@ pub fn project_memories_section(
     rows.extend(
         pack.results
             .iter()
+            .filter(|entity| {
+                !matches!(
+                    entity.entity_type,
+                    crate::registry::ENTITY_TYPE_SKILL | crate::registry::ENTITY_TYPE_AGENT_DEF
+                )
+            })
             .map(|entity| memory_row(entity, MemorySource::Result)),
     );
     rows.extend(
         pack.neighbors
             .iter()
+            .filter(|entity| {
+                !matches!(
+                    entity.entity_type,
+                    crate::registry::ENTITY_TYPE_SKILL | crate::registry::ENTITY_TYPE_AGENT_DEF
+                )
+            })
             .map(|entity| memory_row(entity, MemorySource::Neighbor)),
     );
 

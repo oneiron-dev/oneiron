@@ -73,7 +73,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_relationship_filter(&mut hasher, builder.relationship_filter);
     fork_hash_world_scope(
         &mut hasher,
-        builder.world_scope,
+        &builder.world_scope,
         builder.active_world_selection.as_ref(),
         evidence.world_authority,
     );
@@ -342,7 +342,7 @@ fn fork_hash_relationship_filter(hasher: &mut Sha256, filter: Option<(EntityId, 
 /// when the candidate set is unchanged. Sets and claim ids use canonical order.
 fn fork_hash_world_scope(
     hasher: &mut Sha256,
-    scope: WorldScope,
+    scope: &WorldScope,
     selection: Option<&ActiveWorldSelection>,
     authority: Option<&ResolvedWorldAuthority>,
 ) {
@@ -353,9 +353,13 @@ fn fork_hash_world_scope(
             fork_hash_str(hasher, "world");
             fork_hash_raw_bytes(hasher, id.as_bytes());
         }
-        WorldScope::WorldSet(scope_key) => {
+        WorldScope::CodebaseSet(scope_key) => {
+            fork_hash_str(hasher, "codebase_set");
+            fork_hash_raw_bytes(hasher, scope_key);
+        }
+        WorldScope::WorldSet(worlds) => {
             fork_hash_str(hasher, "world_set");
-            fork_hash_raw_bytes(hasher, &scope_key);
+            fork_hash_world_authority_set(hasher, worlds);
         }
         WorldScope::ActiveSet => {
             fork_hash_str(hasher, "active_set");

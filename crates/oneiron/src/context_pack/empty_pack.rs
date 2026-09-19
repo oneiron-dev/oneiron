@@ -92,7 +92,11 @@ pub(super) fn projected_context_pack_empty_reason(
 /// [`ContextPack::empty`]: crate::ContextPack::empty
 /// [`UnfinalizedContextPack::finish_projected_json`]: crate::context_pack::UnfinalizedContextPack::finish_projected_json
 pub fn refresh_projected_empty_context(pack: &mut ContextPack) {
-    if !pack.results.is_empty() || !pack.neighbors.is_empty() || pack.l2_base.is_some() {
+    if !pack.results.is_empty()
+        || !pack.neighbors.is_empty()
+        || pack.l2_base.is_some()
+        || !pack.capabilities.is_empty()
+    {
         pack.empty = None;
         return;
     }

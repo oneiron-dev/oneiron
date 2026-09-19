@@ -18,6 +18,8 @@ mod validation;
 mod world_partition;
 
 #[cfg(test)]
+mod capability_tests;
+#[cfg(test)]
 mod tests;
 
 pub use builder::{ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack};
