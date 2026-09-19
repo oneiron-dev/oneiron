@@ -105,3 +105,14 @@ This completion child ran no Cargo, formatter, or host installs under the
 parent-owned build-target boundary. The integration packet and exact test filters
 are in `.w7/render-completion.md`. Parent must record compile/test results before
 claiming this source change green; prior unchanged-byte green evidence is retained.
+
+### Integrated runtime validation
+
+The parent completed native compilation and runtime checks after integration.
+All 15 selected parsed-PDF renderer tests and all 3 HTML/template tests pass.
+The same invocation passed native preparation-to-PAdES sealing and the public
+HTTP geometry fixture with a 4 MiB valid input, above the small ceremony JSON
+limit. Shared field layout, prior-revision/ObjStm admission, appearance flattening,
+page transforms, certificate/trail coverage and typed unsafe-input refusals are
+exercised by these real PDF fixtures. No Office/browser/font service was installed.
+The source-only child notes above are historical, not the final validation state.
