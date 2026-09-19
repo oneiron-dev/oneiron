@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1576 | 567 | 2 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1582 | 569 | 2 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 70 | 12 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
@@ -128,7 +128,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `identity_reputation` | file+dir | 2 | m | — | ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4) |
 | `identity_topology` | dir | 18 | m | yes | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
 | `inbox` | dir | 5 | m | yes | OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue |
-| `ingest` | dir | 24 | m | — | Ingest source registry and source-local normalization |
+| `ingest` | dir | 27 | m | — | Ingest source registry and source-local normalization |
 | `interlocutor` | file+dir | 2 | m | yes | Interlocutor resolution substrate (OF-365 ILD-1) |
 | `lens` | dir | 32 | m | — | Closed generated-lens atom vocabulary |
 | `limits` | file | 1 | s | — | — |
@@ -181,7 +181,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `skill` | dir | 9 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
 | `skill_attribution` | dir | 9 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `skill_convert` | dir | 7 | m | yes | Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry… |
-| `skill_hub` | dir | 33 | m | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
+| `skill_hub` | dir | 38 | m | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `skill_optimize` | dir | 13 | m | — | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Dreamer maintenance job that keeps skill… |
 | `skill_reliability` | dir | 9 | m | — | ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load… |
 | `skill_scan` | file+dir | 2 | m | — | Deterministic static skill scanning and the activation risk consult |

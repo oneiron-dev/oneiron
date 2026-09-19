@@ -10,6 +10,8 @@ mod artifact;
 mod cleanup;
 mod command;
 mod error;
+mod evaluation;
+mod metrics;
 mod packing;
 mod producer;
 mod provenance;
@@ -20,6 +22,8 @@ pub use artifact::{AuthorizedMeetingImport, ProducedMeetingTranscript};
 pub use cleanup::validate_cleanup;
 pub use command::{CommandAudioConfig, CommandMeetingAudioHost};
 pub use error::{AudioError, AudioResult};
+pub use evaluation::{CohortFile, CohortManifest, E1Arm, E1SelectionReceipt, WerCountsSerde};
+pub use metrics::{E3Score, WerCounts, aggregate_wer, e3_score, wer_counts};
 pub use packing::pack_speech;
 pub use producer::produce_meeting_transcript;
 pub use types::{

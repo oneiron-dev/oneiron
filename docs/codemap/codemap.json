@@ -14570,11 +14570,42 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CohortFile",
+      "CohortManifest",
+      "E1Arm",
+      "E1SelectionReceipt",
+      "WerCountsSerde"
+     ],
+     "path": "src/ingest/meeting_audio/evaluation.rs",
+     "purpose": "Strict E1 selection-receipt and evaluation-cohort schemas",
+     "surface": {
+      "fn": 5,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "E3Score",
+      "WerCounts"
+     ],
+     "path": "src/ingest/meeting_audio/metrics.rs",
+     "purpose": "Offline WER and labelled-cohort E3 scoring",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/ingest/meeting_audio/mod.rs",
      "purpose": "Boundary-preserving batch meeting-audio producer for the existing ingest adapter",
      "surface": {
-      "re-export": 8
+      "re-export": 10
      }
     },
     {
@@ -14622,6 +14653,14 @@
      "notable": [],
      "path": "src/ingest/meeting_audio/tests/algorithms.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/tests/evaluation.rs",
+     "purpose": "Fixture scorer checks only: no audio, model, or corpus runs here",
      "surface": {}
     },
     {
@@ -21676,6 +21715,54 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/skill_hub/pack_catalog/admission.rs",
+     "purpose": "Human-gated installation of exact pack source; requested powers stay inert",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/admission_tests.rs",
+     "purpose": "Caller-visible pack admission, re-consent, runtime and transaction laws",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackInstallAsk",
+      "PackInstallDisposition",
+      "PackInstallReceipt",
+      "PackQualification",
+      "PackQualifier",
+      "PackRuntimeRecipe"
+     ],
+     "path": "src/skill_hub/pack_catalog/admission_types.rs",
+     "purpose": "Source-bound qualification, owner asks, and inert installation receipts",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
+     "purpose": "Pack skills pass the existing archive scanner/Candidate door in the install transaction",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill_hub/pack_catalog/codec.rs",
      "purpose": "Canonical source-bearing ASSET envelopes: immutable content, not authority",
      "surface": {
@@ -21717,7 +21804,17 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 2,
-      "re-export": 2
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/schema.rs",
+     "purpose": "Runtime kind descriptors are exact source files, never caller-supplied hashes",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -26873,7 +26970,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 24,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27244,7 +27341,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 33,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27449,8 +27546,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1576,
-   "test_files": 567
+   "source_files": 1582,
+   "test_files": 569
   },
   "oneiron-bench": {
    "files": [

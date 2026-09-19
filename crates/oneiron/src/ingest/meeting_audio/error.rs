@@ -37,6 +37,10 @@ pub enum AudioError {
     BulkConsentRequired,
     #[error("bulk import receipt does not bind this artifact")]
     BulkConsentMismatch,
+    #[error("invalid E1 selection receipt")]
+    InvalidEvaluationReceipt,
+    #[error("invalid evaluation cohort manifest")]
+    InvalidCohortManifest,
     #[error("host stage {stage} failed: {code}")]
     Host { stage: String, code: String },
     #[error("artifact serialization failed")]
