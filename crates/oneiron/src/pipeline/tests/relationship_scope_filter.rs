@@ -209,6 +209,7 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
             (rmpv::Value::from("val"), rmpv::Value::from("value")),
             (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
         ];
+        fields.push((rmpv::Value::from("world"), rmpv::Value::from("base")));
         if let Some(relationship) = relationship {
             fields.push((rmpv::Value::from("rel"), relationship));
         }
@@ -233,7 +234,7 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
         .expect("decode encoded relationship claim body");
     assert!(matches!(
         encoded_value,
-        rmpv::Value::Map(entries) if entries.iter().all(|(key, _)| key.as_str() != Some("rel"))
+        rmpv::Value::Map(entries) if entries.iter().any(|(key, value)| key.as_str() == Some("rel") && value.as_str() == Some("all"))
     ));
 
     let relationship = entity_id(0xD8);
@@ -249,6 +250,7 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
         Some(relationship)
     );
     for invalid in [
+        body_with_relationship(None),
         body_with_relationship(Some(rmpv::Value::Binary(vec![0xD8; 15]))),
         body_with_relationship(Some(rmpv::Value::from("relationship"))),
         body_with_relationship(Some(rmpv::Value::Binary(vec![0; 16]))),

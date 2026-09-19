@@ -268,6 +268,7 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
             "world".into(),
             rmpv::Value::Binary(world_id.as_bytes().to_vec()),
         ),
+        ("rel".into(), "all".into()),
         (
             "subj".into(),
             rmpv::Value::Binary(subject.as_bytes().to_vec()),
@@ -612,6 +613,16 @@ fn claim_negative_matrix_rejects_typed_and_writes_nothing() -> Result<()> {
         (
             "missing conf",
             rmpv_map_bytes(&entries_without(&base, "conf")),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "missing world",
+            rmpv_map_bytes(&entries_without(&base, "world")),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "missing rel",
+            rmpv_map_bytes(&entries_without(&base, "rel")),
             ErrorKind::InvalidClaimBody,
         ),
         (
