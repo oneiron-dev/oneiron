@@ -2724,3 +2724,42 @@ fn handle_rendering_does_not_restore_truncated_display_name() {
     assert!(rendered.contains("pr12"));
     assert!(!rendered.contains("private-tail"));
 }
+
+#[test]
+fn nested_identity_key_is_user_content_in_every_pack_format() {
+    let mut pack = sample_pack();
+    let fields = pack.results[0].fields.as_mut().unwrap();
+    fields.insert(
+        "identity_key".into(),
+        Value::String("engine-only-lookup".into()),
+    );
+    fields.insert(
+        "val".into(),
+        serde_json::json!({
+            "identity_key": "first-preserved-value",
+            "nested": [{"identity_key": "second-preserved-value"}]
+        }),
+    );
+    for format in [
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Plaintext,
+    ] {
+        let rendered = String::from_utf8(serialize_pack(&pack, &config(format))).unwrap();
+        assert!(rendered.contains("identity_key"), "{format:?}: {rendered}");
+        assert!(
+            rendered.contains("first-preserved-value"),
+            "{format:?}: {rendered}"
+        );
+        assert!(
+            rendered.contains("second-preserved-value"),
+            "{format:?}: {rendered}"
+        );
+        assert!(
+            !rendered.contains("engine-only-lookup"),
+            "{format:?}: {rendered}"
+        );
+    }
+}

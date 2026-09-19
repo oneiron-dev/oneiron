@@ -120,7 +120,6 @@ impl Handles {
                 }
             }
             Value::Object(map) => {
-                map.remove("identity_key");
                 for (key, value) in map {
                     if key != "stats" {
                         self.value(value);
