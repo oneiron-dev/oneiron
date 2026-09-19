@@ -74,6 +74,19 @@ fn quorum_checkpoint_roundtrip_matches_replay_and_rejects_tampering() {
     let mut bad = checkpoint.clone();
     bad.signatures[0].signature[0] ^= 1;
     assert!(vault.verify_authority_checkpoint(&bad).is_err());
+    // A quorum authenticates bytes, not their truth. Even a freshly signed
+    // summary must agree with the independently replayed authority roster.
+    let mut bad_summary = checkpoint.clone();
+    bad_summary.roster.clear();
+    let transcript = authority_checkpoint_transcript(&bad_summary).unwrap();
+    for signature in &mut bad_summary.signatures {
+        signature.signature = if signature.public_key == root_key {
+            root.sign(&transcript).to_bytes().to_vec()
+        } else {
+            peer.sign(&transcript).to_bytes().to_vec()
+        };
+    }
+    assert!(vault.verify_authority_checkpoint(&bad_summary).is_err());
     let mut bad = checkpoint;
     bad.parent_hashes = vec![[0xAA; 32]];
     let transcript = authority_checkpoint_transcript(&bad).unwrap();

@@ -898,3 +898,70 @@ async fn mcp_first_attestation_without_a_prior_has_no_lifecycle_target() {
         Value::from("proposed")
     );
 }
+
+/// ONE-2280: relationship scope crosses MCP argument validation and the write
+/// gate, and invalid references cannot leave a claim or Gate receipt behind.
+#[tokio::test]
+async fn mcp_edit_relationship_scope_persists_and_invalid_refs_are_atomic() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0x2280_0001);
+    let relationship = seeded_test_entity_id(0x2280_0002);
+    let unknown = seeded_test_entity_id(0x2280_0003);
+    let credential = "relationship-mcp-credential";
+    register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    server
+        .vault
+        .put_entity(
+            &relationship,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .unwrap();
+
+    let args = |rel: oneiron::EntityId, key: &str| {
+        let mut args = mcp_propose_claim_args(actor, actor, key);
+        args["predicate"] = json!("profile.nickname");
+        args["value"] = json!("Ada");
+        args["relationship"] = json!(rel.to_hex());
+        args["scope"] = json!({"sensitivity": "public"});
+        args
+    };
+    let (_, body) = mcp_legacy_adapter_json(
+        server.clone(),
+        mcp_call_request(
+            credential,
+            "rel-ok",
+            "oneiron.edit",
+            args(relationship, "rel-ok"),
+        ),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body:?}");
+    let id =
+        oneiron::EntityId::from_hex(body["result"]["structuredContent"]["id"].as_str().unwrap())
+            .unwrap();
+    let stored = server.vault.get_claim(&id).unwrap().unwrap();
+    assert_eq!(stored.rel, Some(relationship));
+    assert_eq!(stored.predicate, "profile.nickname");
+
+    let claims = server
+        .vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+        .unwrap();
+    let decisions = server.vault.gate_decisions(100).unwrap();
+    for (invalid, key) in [(unknown, "rel-unknown"), (actor, "rel-wrong-kind")] {
+        let error = mcp_edit_error(&server, credential, args(invalid, key)).await;
+        assert_eq!(error["code"], json!(-32603));
+        assert_eq!(error["data"]["kind"], json!("engine_error"));
+        assert_eq!(
+            server
+                .vault
+                .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+                .unwrap(),
+            claims,
+        );
+        assert_eq!(server.vault.gate_decisions(100).unwrap(), decisions);
+    }
+}
