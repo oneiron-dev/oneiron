@@ -148,13 +148,26 @@ impl Vault {
                     end: row.occurred_end,
                 };
                 match row.entity_type {
-                    ENTITY_TYPE_CLAIM => self.put_claim_in_txn(
-                        &mut wtxn,
-                        &id,
-                        &decode_claim_body(&body, false)?,
-                        occurred,
-                        row.learned_at,
-                    )?,
+                    ENTITY_TYPE_CLAIM => {
+                        let claim = decode_import_claim(&body)?;
+                        if crate::subject_model::is_subject_model_predicate(&claim.predicate) {
+                            self.restore_subject_claim_in_txn(
+                                &mut wtxn,
+                                &id,
+                                &claim,
+                                occurred,
+                                row.learned_at,
+                            )?;
+                        } else {
+                            self.put_claim_in_txn(
+                                &mut wtxn,
+                                &id,
+                                &claim,
+                                occurred,
+                                row.learned_at,
+                            )?;
+                        }
+                    }
                     ENTITY_TYPE_SKILL => {
                         let record = crate::skill::decode_skill_record(&body)?;
                         let bundle = skill_bundles
@@ -305,7 +318,7 @@ fn imported_body(row: &ExportEntity, models: &BTreeMap<EntityId, EntityId>) -> R
     let bytes = row.body.to_bytes()?;
     match row.entity_type {
         ENTITY_TYPE_CLAIM => {
-            let mut body = decode_claim_body(&bytes, false)?;
+            let mut body = decode_import_claim(&bytes)?;
             match &mut body.subject {
                 ClaimSubject::Entity(id) => *id = models.get(id).copied().unwrap_or(*id),
                 ClaimSubject::Edge { source, target, .. } => {
@@ -344,10 +357,17 @@ fn imported_body(row: &ExportEntity, models: &BTreeMap<EntityId, EntityId>) -> R
 
 fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
     Ok(match entity_type {
-        ENTITY_TYPE_CLAIM => match decode_claim_body(bytes, false)?.subject {
-            ClaimSubject::Entity(id) => vec![id],
-            ClaimSubject::Edge { source, target, .. } => vec![source, target],
-        },
+        ENTITY_TYPE_CLAIM => {
+            let body = decode_import_claim(bytes)?;
+            let mut refs = match body.subject {
+                ClaimSubject::Entity(id) => vec![id],
+                ClaimSubject::Edge { source, target, .. } => vec![source, target],
+            };
+            if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
+                refs.push(crate::subject_model::validate_actor_subject_claim_structure(&body)?.1);
+            }
+            refs
+        }
         ENTITY_TYPE_SKILL => crate::skill::decode_skill_record(bytes)?
             .forked_from
             .into_iter()
@@ -419,4 +439,13 @@ pub(super) fn import_edge(
         .batch_in()
         .edge_with_created_at_and_vad(&source, kind, &target, edge.weight, edge.created_at, vad)
         .apply(wtxn)
+}
+
+fn decode_import_claim(bytes: &[u8]) -> Result<crate::claim::ClaimBody> {
+    let body = decode_claim_body(bytes, true)?;
+    if crate::subject_model::is_subject_model_predicate(&body.predicate) {
+        crate::subject_model::imported_subject_body(&body)
+    } else {
+        decode_claim_body(bytes, false)
+    }
 }

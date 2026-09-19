@@ -2223,7 +2223,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/bundle_validation.rs",
@@ -23034,9 +23034,24 @@
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 12,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SubjectRestoreReview"
+     ],
+     "path": "src/subject_model/archive.rs",
+     "purpose": "Inert subject-fact restore and explicit current-owner activation",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -23063,6 +23078,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/subject_model/tests/anchor_session_admission.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/subject_model/tests/archive.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -27536,7 +27559,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…"
     },
     "subject_model": {
-     "files": 13,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -27692,8 +27715,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1592,
-   "test_files": 573
+   "source_files": 1593,
+   "test_files": 574
   },
   "oneiron-bench": {
    "files": [

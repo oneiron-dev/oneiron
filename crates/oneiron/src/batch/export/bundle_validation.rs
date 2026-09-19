@@ -99,6 +99,8 @@ impl WholeVaultDocument {
                 Some(ImportRefusalReason::OwningEntityAdapterRequired)
             } else if row.entity_type == ENTITY_TYPE_CLAIM
                 && crate::claim::decode_claim_body(&row.body.to_bytes()?, false).is_err()
+                && !crate::claim::decode_claim_body(&row.body.to_bytes()?, true)
+                    .is_ok_and(|body| crate::subject_model::imported_subject_body(&body).is_ok())
             {
                 Some(ImportRefusalReason::OwningClaimAdapterRequired)
             } else {
