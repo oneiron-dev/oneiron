@@ -1275,20 +1275,20 @@ fn featureless_open_refuses_existing_entity_document_planes() -> Result<()> {
     txn.commit()?;
     drop(vault);
 
-    assert_matches!(
+    assert!(matches!(
         Vault::open(tmp.path(), test_config()),
         Err(Error::InvalidConfig(_))
-    );
+    ));
     // Strict existing-root preflight is available only on the reference host.
     // Other hosts refuse earlier with UnsupportedPlatform.
     #[cfg(target_os = "linux")]
-    assert_matches!(
+    assert!(matches!(
         Vault::open_existing(tmp.path(), test_config()),
         Err(Error::InvalidConfig(_))
-    );
-    assert_matches!(
+    ));
+    assert!(matches!(
         Vault::open_owned(tmp.path(), test_config()),
         Err(Error::InvalidConfig(_))
-    );
+    ));
     Ok(())
 }
