@@ -28,7 +28,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 186 | 73 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 5 | 1 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 8 | 1 | 0 |
-| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process xlsx formula evaluation behind the docedit recalc seam | 14 | 2 | 0 |
+| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process xlsx formula evaluation behind the docedit recalc seam | 15 | 2 | 0 |
 
 ## oneiron
 

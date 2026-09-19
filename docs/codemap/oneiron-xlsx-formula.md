@@ -13,6 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `examples/recalculate_native.rs` | src | s | — | — | Emit retained native XLSX bytes for one-time application-oracle checks |
 | `src/bin/measure.rs` | src | s | — | — | Step-19 measurement executable: unchanged formualizer over `cases.json` |
+| `src/bin/recalc_native.rs` | src | s | — | — | Measure the shipped retained XLSX adapter without a precision fallback |
 | `src/cache.rs` | src | s | 3 crate-vis | — | Typed formula caches as checked byte patches, preserving unmodelled XML |
 | `src/context.rs` | src | s | 1 crate-vis | — | Keep ambient context out of the deterministic production recalc path |
 | `src/engine.rs` | src | s | 1 struct · 1 fn · 6 const · 1 re-export · 3 crate-vis | FormualizerEngine | Storage-independent recalc seam over the pinned upstream engine |

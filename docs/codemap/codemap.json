@@ -32911,6 +32911,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/bin/recalc_native.rs",
+     "purpose": "Measure the shipped retained XLSX adapter without a precision fallback",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/cache.rs",
      "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML",
      "surface": {
@@ -33152,7 +33160,7 @@
    },
    "over_bar": 0,
    "purpose": "In-process xlsx formula evaluation behind the docedit recalc seam",
-   "source_files": 14,
+   "source_files": 15,
    "test_files": 2
   }
  }

@@ -621,3 +621,53 @@ fn native_xlsx_session_settles_once_with_bound_engine_stamp() -> oneiron::Result
     ));
     Ok(())
 }
+
+#[test]
+fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
+    use std::process::Command;
+
+    let directory = tempfile::tempdir().expect("measurement directory");
+    let input = directory.path().join("input.xlsx");
+    let output = directory.path().join("output.xlsx");
+    let bytes = fixture(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>Input!A1*2</f><v>0</v></c>"#,
+        false,
+    );
+    std::fs::write(&input, &bytes).expect("input");
+    let command = Command::new(env!("CARGO_BIN_EXE_recalc_native"))
+        .args([&input, &output])
+        .output()
+        .expect("native measurement CLI");
+    assert!(command.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&command.stdout).expect("engine report");
+    assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
+    assert_eq!(report["engine"]["version"], "0.1.0+formualizer.0.9.3");
+    assert_eq!(report["formulas"], 1);
+    assert_eq!(report["precision_fallback"], false);
+    let result = std::fs::read(&output).expect("native output");
+    assert!(part_text(&result, OUTPUT).contains("<v>4</v>"));
+    assert_eq!(std::fs::read(&input).expect("unchanged input"), bytes);
+
+    assert!(
+        !Command::new(env!("CARGO_BIN_EXE_recalc_native"))
+            .args([&input, &output])
+            .output()
+            .expect("existing output refusal")
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(&output).expect("unchanged output"), result);
+    std::fs::remove_file(&output).expect("owned output cleanup");
+    std::fs::write(&input, fixture("", r#"<c r="A1"><f>NOW()</f></c>"#, false))
+        .expect("context-dependent input");
+    assert!(
+        !Command::new(env!("CARGO_BIN_EXE_recalc_native"))
+            .args([&input, &output])
+            .output()
+            .expect("precision fallback refusal")
+            .status
+            .success()
+    );
+    assert!(!output.exists());
+}
