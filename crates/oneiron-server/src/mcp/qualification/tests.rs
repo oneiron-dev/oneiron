@@ -8,6 +8,10 @@ enum Fault {
     Headers,
     ResultType,
     Key,
+    HiddenWrite,
+    MissingWriteTrace,
+    DuplicateWriteTrace,
+    ConstantEffect,
     Quote,
     Claim,
     Scope,
@@ -59,7 +63,7 @@ impl QualificationConnection for Connection {
             } else {
                 "record".into()
             }]),
-            writes: true,
+            writes: self.fault != Fault::HiddenWrite,
         }])
     }
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
@@ -79,6 +83,11 @@ impl QualificationConnection for Connection {
         let mut writes = Vec::new();
         if request.arguments["write"] == true {
             let key = request.arguments["idempotency_key"].as_str().unwrap();
+            let key = if self.fault == Fault::ConstantEffect {
+                key.trim_end_matches("-distinct")
+            } else {
+                key
+            };
             let mut effects = self.effects.borrow_mut();
             let prior = effects.contains_key(key);
             if !prior || self.fault == Fault::Replay {
@@ -88,6 +97,7 @@ impl QualificationConnection for Connection {
                 disposition = ProbeDisposition::Timeout;
             }
             writes.push(ProbeWrite {
+                reference: key.into(),
                 predicate: if self.fault == Fault::Scope {
                     "private.secret".into()
                 } else {
@@ -113,6 +123,12 @@ impl QualificationConnection for Connection {
         if self.fault != Fault::Foreign {
             kinds.push(ProbeTraceKind::Quarantine);
         }
+        if !writes.is_empty() && self.fault != Fault::MissingWriteTrace {
+            kinds.push(ProbeTraceKind::Write);
+            if self.fault == Fault::DuplicateWriteTrace {
+                kinds.push(ProbeTraceKind::Write);
+            }
+        }
         kinds.push(ProbeTraceKind::End);
         let mut trace: Vec<_> = kinds
             .into_iter()
@@ -120,7 +136,9 @@ impl QualificationConnection for Connection {
             .map(|(i, kind)| ProbeTraceEvent {
                 sequence: i as u64,
                 request_id: request.id.clone(),
-                reference: Some(if kind == ProbeTraceKind::Retrieval {
+                reference: Some(if kind == ProbeTraceKind::Write {
+                    writes[0].reference.clone()
+                } else if kind == ProbeTraceKind::Retrieval {
                     "turn".into()
                 } else {
                     "foreign".into()
@@ -216,7 +234,7 @@ fn independent_connections_grounding_and_retries_qualify_one_effect_per_key() {
     );
     assert_eq!(
         serde_json::from_slice::<Value>(&stub.effect_state().unwrap()).unwrap(),
-        json!({"write-key":1,"timeout-key":1})
+        json!({"write-key":1,"timeout-key":1,"write-key-distinct":1,"timeout-key-distinct":1})
     );
 }
 #[test]
@@ -226,6 +244,13 @@ fn probes_refuse_each_broken_connector_contract() {
         (Fault::Headers, QualificationFailure::HeaderMismatch),
         (Fault::ResultType, QualificationFailure::ResultType),
         (Fault::Key, QualificationFailure::IdempotencyArgument),
+        (
+            Fault::HiddenWrite,
+            QualificationFailure::IdempotencyArgument,
+        ),
+        (Fault::MissingWriteTrace, QualificationFailure::Trace),
+        (Fault::DuplicateWriteTrace, QualificationFailure::Trace),
+        (Fault::ConstantEffect, QualificationFailure::Replay),
         (Fault::Quote, QualificationFailure::Grounding),
         (Fault::Claim, QualificationFailure::Grounding),
         (Fault::Scope, QualificationFailure::Scope),

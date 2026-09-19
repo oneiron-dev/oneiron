@@ -27,6 +27,7 @@ pub struct ProbeCitation {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeWrite {
+    pub reference: String,
     pub predicate: String,
     pub citations: Vec<ProbeCitation>,
 }
@@ -177,6 +178,19 @@ pub fn qualify_connector(
         exercised.insert(a.result_type);
     }
     for (case, allow_timeout) in [(&plan.write, false), (&plan.timeout_retry, true)] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == case.call.name)
+            .ok_or(QualificationFailure::IncompletePlan)?;
+        if !tool.writes
+            || tool
+                .input_schema
+                .pointer("/properties/idempotency_key/type")
+                .and_then(Value::as_str)
+                != Some("string")
+        {
+            return Err(QualificationFailure::IdempotencyArgument);
+        }
         let key = case
             .call
             .arguments
@@ -220,6 +234,17 @@ pub fn qualify_connector(
             || settled.result != replay.result
             || settled.disposition != replay.disposition
         {
+            return Err(QualificationFailure::Replay);
+        }
+        // A constant-effect connector must not pass as idempotent: a new key
+        // must admit a distinct effect, with all other arguments unchanged.
+        retry.call.id.push_str("-distinct");
+        retry.call.arguments["idempotency_key"] = Value::String(format!("{key}-distinct"));
+        probe(&mut *first, &retry, &tools, &plan.limits, oracle)?;
+        retry.call.id.push_str("-retry");
+        probe(&mut *second, &retry, &tools, &plan.limits, oracle)?;
+        calls += 2;
+        if connector.effect_state()? == after {
             return Err(QualificationFailure::Replay);
         }
         exercised.insert(replay.result_type);
@@ -279,6 +304,9 @@ fn probe(
     }
     if !tool.result_types.contains(&reply.result_type) {
         return Err(QualificationFailure::ResultType);
+    }
+    if !tool.writes && !reply.writes.is_empty() {
+        return Err(QualificationFailure::IdempotencyArgument);
     }
     validate_grounding(&reply, case, oracle)?;
     validate_trace(&reply, &case.call.id)?;
@@ -384,7 +412,14 @@ fn validate_trace(reply: &ProbeReply, request_id: &str) -> Result<(), Qualificat
             return Err(QualificationFailure::Trace);
         }
         if event.kind == ProbeTraceKind::Write {
-            executed.insert(event.reference.clone().ok_or(QualificationFailure::Trace)?);
+            let reference = event
+                .reference
+                .clone()
+                .filter(|value| !value.is_empty())
+                .ok_or(QualificationFailure::Trace)?;
+            if !executed.insert(reference) {
+                return Err(QualificationFailure::Trace);
+            }
         }
         if event.kind == ProbeTraceKind::Retrieval {
             retrieved.insert(event.reference.clone().ok_or(QualificationFailure::Trace)?);
@@ -409,6 +444,14 @@ fn validate_trace(reply: &ProbeReply, request_id: &str) -> Result<(), Qualificat
     }
     if foreign != quarantined || !foreign.is_disjoint(&executed) {
         return Err(QualificationFailure::ForeignAsk);
+    }
+    let reported: BTreeSet<_> = reply
+        .writes
+        .iter()
+        .map(|write| write.reference.clone())
+        .collect();
+    if reported.len() != reply.writes.len() || reported.contains("") || reported != executed {
+        return Err(QualificationFailure::Trace);
     }
     if reply.retrieval_refs.iter().any(|r| !retrieved.contains(r)) {
         return Err(QualificationFailure::Trace);
