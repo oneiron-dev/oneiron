@@ -176,7 +176,9 @@ def build_rootfs(args):
         shutil.copyfile(source, dest)
     entries = [stage, *sorted(stage.rglob("*"))]
     for path in entries:
-        path.chmod(0o755 if path.is_dir() or path.name == "oneiron-guest" else 0o644)
+        # Every staged file is an ELF. In particular, the kernel opens the
+        # PT_INTERP loader with MAY_EXEC; mode 0644 would prevent PID-1 exec.
+        path.chmod(0o755)
         os.utime(path, (args.epoch, args.epoch))
     inventory = {str(path.relative_to(stage)): sha256(path) for path in entries if path.is_file()}
     seed = hashlib.sha256(json.dumps(inventory, sort_keys=True).encode()).hexdigest()

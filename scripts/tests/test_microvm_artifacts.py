@@ -95,12 +95,16 @@ class ArtifactRecipeTests(unittest.TestCase):
             root = pathlib.Path(name)
             agent = root / "agent"
             agent.write_bytes(b"fixture binary, not native execution")
-            args = argparse.Namespace(agent=agent, sha256=build.sha256(agent), library=[],
+            loader = root / "loader"
+            loader.write_bytes(b"fixture interpreter")
+            args = argparse.Namespace(agent=agent, sha256=build.sha256(agent),
+                                      library=[f"lib64/ld-linux-x86-64.so.2={loader}"],
                                       output=root / "image", epoch=1_700_000_000, size_mib=32)
             with patch.object(build, "validate_libraries"), patch.object(build, "run", return_value="") as runner:
                 build.build_rootfs(args)
             self.assertEqual((args.output / "tree/sbin/oneiron-guest").read_bytes(), agent.read_bytes())
             self.assertTrue((args.output / "tree/tmp").is_dir())
+            self.assertEqual((args.output / "tree/lib64/ld-linux-x86-64.so.2").stat().st_mode & 0o777, 0o755)
             receipt = json.loads((args.output / "rootfs-receipt.json").read_text())
             self.assertEqual(receipt["rootfs_sha256"], build.sha256(args.output / "rootfs.ext4"))
             self.assertEqual(receipt["files"]["sbin/oneiron-guest"], args.sha256)
