@@ -94,19 +94,14 @@ fn validate_owner_in_txn(
         ))
     };
     let actor = owner.actor();
-    if vault.archive_tombstone_in_txn(txn, &actor)?.is_some()
-        || vault.entity_lifecycle_state_in_txn(txn, &actor)?
-            != crate::identity_topology::EntityLifecycleState::Active
-    {
-        return Err(refused());
-    }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, actor.as_bytes())?
-        .ok_or_else(refused)?;
-    if crate::batch::EntityMetadataHeader::parse(&raw)
-        .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, &actor)?,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            ..
+        }
+    ) || vault.entity_lifecycle_state_in_txn(txn, &actor)?
+        != crate::identity_topology::EntityLifecycleState::Active
     {
         return Err(refused());
     }

@@ -744,6 +744,19 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         .filter_context_pack(&mut owner_pack)
         .expect("archived pack");
     assert!(owner_pack.results.is_empty());
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .store
+                .sync_state
+                .delete(txn, &format!("ac:{}", owner.to_hex()))?;
+            Ok(())
+        })
+        .expect("remove archive fixture");
+    vault
+        .delete_entity_with_reason(&owner, crate::deletion::DeleteReason::UserDelete)
+        .expect("soft delete owner");
+    assert!(owner_read.get(&id).expect("deleted author read").is_none());
 }
 
 #[test]

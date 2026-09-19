@@ -500,7 +500,7 @@ impl<'a> ScopedRead<'a> {
         let Ok(actor) = EntityId::from_hex(self.actor_key.actor_ref()) else {
             return Ok(false);
         };
-        if actor != body.author_ref || self.vault.archive_tombstone_in_txn(txn, &actor)?.is_some() {
+        if actor != body.author_ref {
             return Ok(false);
         }
         let Some(class) = self.actor_key.actor_class().and_then(|class| match class {
@@ -511,13 +511,12 @@ impl<'a> ScopedRead<'a> {
         }) else {
             return Ok(false);
         };
-        let Some(raw) = self.entities().get(txn, actor.as_bytes())? else {
+        let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+            crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &actor)?
+        else {
             return Ok(false);
         };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            return Ok(false);
-        };
-        Ok(crate::provenance::validate_actor_class(header.entity_type, class).is_ok())
+        Ok(crate::provenance::validate_actor_class(entity_type, class).is_ok())
     }
 
     fn is_claim_raw_readable_in(

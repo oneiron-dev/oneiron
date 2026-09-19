@@ -227,5 +227,14 @@ fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
         Ok(())
     })?;
     refuse(&other)?;
+    other.with_write_txn(|txn| {
+        other
+            .store
+            .sync_state
+            .delete(txn, &format!("ac:{}", actor.to_hex()))?;
+        Ok(())
+    })?;
+    other.delete_entity_with_reason(&actor, crate::deletion::DeleteReason::UserDelete)?;
+    refuse(&other)?;
     Ok(())
 }
