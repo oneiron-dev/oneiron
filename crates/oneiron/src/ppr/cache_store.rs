@@ -147,13 +147,7 @@ fn write_ppr_cache(
     graph_version: u64,
     state: &PprCacheState,
 ) -> Result<()> {
-    {
-        let rtxn = store.env.read_txn()?;
-        if read_graph_version(store, &rtxn)? != graph_version {
-            return Ok(());
-        }
-    }
-
+    // The version check in store_cache_entry is atomic with the cache write.
     let mut wtxn = store.env.write_txn()?;
     if store_cache_entry(
         store,
@@ -354,10 +348,12 @@ fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &Entity
 
     for seed_hash in hashes {
         let Some(raw) = store.ppr_cache().get(&*wtxn, &seed_hash)? else {
+            delete_dep_rows_for_seed_hash(store, wtxn, &seed_hash)?;
             continue;
         };
         if raw.len() < CACHE_HEADER_LEN {
             store.ppr_cache().delete(wtxn, &seed_hash)?;
+            delete_dep_rows_for_seed_hash(store, wtxn, &seed_hash)?;
             continue;
         }
         let mut patched = raw.to_vec();
@@ -410,9 +406,14 @@ pub(super) fn store_cache_entry(
         return Ok(false);
     }
 
+    let replacing = store.ppr_cache().get(&*wtxn, seed_hash)?.is_some();
     let encoded = encode_cache_value_with_state(computed_at, graph_version, 0, state)?;
     store.ppr_cache().put(wtxn, seed_hash, &encoded)?;
-    delete_dep_rows_for_seed_hash(store, wtxn, seed_hash)?;
+    // Cache rows and dependencies are inserted/deleted atomically. An absent
+    // row cannot own dependencies, so fresh inserts need no full-table scan.
+    if replacing {
+        delete_dep_rows_for_seed_hash(store, wtxn, seed_hash)?;
+    }
 
     for dependency in &state.dependencies {
         let dep_key = encode_dep_key(dependency, seed_hash);

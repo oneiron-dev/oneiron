@@ -22340,7 +22340,7 @@
      "path": "src/sync/quarantine/mod.rs",
      "purpose": "Quarantine sink (`x:` family) + needs-rematerialization (`rm:`) retry markers — no silent drops on the sync…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 4
      }
     },

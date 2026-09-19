@@ -1580,6 +1580,82 @@ fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()
 }
 
 #[test]
+fn fresh_cache_inserts_keep_each_seeds_dependencies() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
+    let seeds = [entity(81), entity(82)];
+    let hashes = seeds.map(|seed| hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform));
+    let version = graph_version(&vault)?;
+    for (seed, hash) in seeds.iter().zip(&hashes) {
+        let state = PprCacheState {
+            residual: Vec::new(),
+            push_threshold: super::walk::SCORE_EPSILON,
+            completed_depth: 3,
+            scores: vec![ScoredEntity {
+                id: *seed,
+                score: 1.0,
+            }],
+            frontier: Vec::new(),
+            dependencies: vec![*seed],
+        };
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(store_cache_entry(
+            &vault.store,
+            &mut wtxn,
+            hash,
+            crate::unix_seconds_now(),
+            version,
+            &state,
+        )?);
+        wtxn.commit()?;
+    }
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 2);
+    assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
+    for (seed, hash) in seeds.iter().zip(&hashes) {
+        assert!(dep_exists(&vault, *seed, hash)?);
+    }
+    assert!(!dep_exists(&vault, seeds[0], &hashes[1])?);
+    assert!(!dep_exists(&vault, seeds[1], &hashes[0])?);
+    Ok(())
+}
+
+#[test]
+fn invalidation_removes_all_dependencies_of_a_malformed_cache_row() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
+    let seed = entity(81);
+    let other = entity(82);
+    let hash = hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform);
+    let version = graph_version(&vault)?;
+    let state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
+        completed_depth: 3,
+        scores: vec![ScoredEntity {
+            id: seed,
+            score: 1.0,
+        }],
+        frontier: Vec::new(),
+        dependencies: vec![seed, other],
+    };
+    let mut wtxn = vault.store.env.write_txn()?;
+    assert!(store_cache_entry(
+        &vault.store,
+        &mut wtxn,
+        &hash,
+        crate::unix_seconds_now(),
+        version,
+        &state,
+    )?);
+    vault.store.ppr_cache.put(&mut wtxn, &hash, b"broken")?;
+    super::cache_store::invalidate_ppr_for_delete(&vault.store, &mut wtxn, &seed, &[])?;
+    wtxn.commit()?;
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
+    assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
+    Ok(())
+}
+
+#[test]
 fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
     let temp_dir = tempdir()?;
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
