@@ -41,7 +41,10 @@ Do not post C10 changes to C08. Preserve this result with the raw API receipts.
 - D5: unconditional Loro is required for featureless exact read/history; correct obsolete rationale.
 - D6: retain PPR cache version change to prevent old layout reuse; pre-GA, no migration burden.
   State that current receipts do not demonstrate universal speedup including preparation.
-- D7: reject unsupported persisted push thresholds; generated rows always use SCORE_EPSILON.
+- D7: no threshold restriction added. `residual_survives_codec_and_only_pushes_above_stored_threshold`
+  deliberately tests non-default persisted thresholds and lowering them for deeper work.
+  Cache state is local-derived, not peer input; forcing SCORE_EPSILON would remove a tested
+  residual contract rather than repair a demonstrated production defect.
 - D8: residual cardinality remains bounded by visited graph state, not a new arbitrary truncation
   that would break exact resume. Larger cache rows are a stated storage tradeoff.
 - D9: fleet floor is an opt-in CI workflow, not a PR gate; state accurately.

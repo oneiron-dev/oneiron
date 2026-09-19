@@ -17693,6 +17693,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/pipeline/tests/effort.rs",
+     "purpose": "Observable stage-preset and temporal-window laws",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -23531,7 +23539,7 @@
      "path": "src/vault/entity_revision/idle.rs",
      "purpose": "Idle debounce and atomic BM25/vector/frontier publication",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -23541,8 +23549,18 @@
      "path": "src/vault/entity_revision/mod.rs",
      "purpose": "Per-entity Loro history, exact reads, and idle-only index publication",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/pending_index.rs",
+     "purpose": "Caller-supplied index inputs retained until atomic idle publication",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -25934,7 +25952,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 44,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26298,7 +26316,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26363,8 +26381,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1512,
-   "test_files": 537
+   "source_files": 1513,
+   "test_files": 538
   },
   "oneiron-bench": {
    "files": [
@@ -29471,7 +29489,7 @@
      "path": "src/api/core/hydrate.rs",
      "purpose": "Hydrate and short-id hydrate DTOs, routes, and mappers",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {

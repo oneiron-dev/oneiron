@@ -357,7 +357,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "rate_limit": {
                     "api_enforced": false,
-                    "websocket_enforced": true,
+                    "websocket_enforced": false,
                     "max_messages_per_sec": 64,
                     "max_windows_per_connection": 8,
                     "max_frame_size_bytes": 1048576,

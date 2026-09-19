@@ -11,7 +11,8 @@ use std::sync::Arc;
 use zeroize::Zeroizing;
 
 /// Hosts mount this on their private control-plane listener. No route is added
-/// to the tenant's memory API, and pepper provisioning stays with Host::secret.
+/// to the tenant's memory API. The host supplies the pepper to `ControlKeys::new`;
+/// this router does not provision secrets or choose a deployment listener.
 pub fn router(keys: Arc<ControlKeys>) -> Router {
     Router::new()
         .route("/verify", post(verify))

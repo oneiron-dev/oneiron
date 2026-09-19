@@ -1410,6 +1410,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/scoped_channels.rs` | src | s | 4 crate-vis | — | — |
 | `src/pipeline/support.rs` | src | s | 12 crate-vis | — | — |
 | `src/pipeline/tests/community_quality.rs` | test | m | — | — | PPR VAD threading, community diversification, and retrieval-quality grading |
+| `src/pipeline/tests/effort.rs` | test | s | — | — | Observable stage-preset and temporal-window laws |
 | `src/pipeline/tests/facet_status_world.rs` | test | L | — | — | Facet filter, claim-status gate, and world-scope visibility pins |
 | `src/pipeline/tests/mod.rs` | test | m | 7 crate-vis | — | — |
 | `src/pipeline/tests/relationship_scope_filter.rs` | test | L | — | — | Relationship-scope filter, demotion, and facet/world conjunction |
@@ -1904,8 +1905,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/edges.rs` | src | m | 13 fn · 7 crate-vis | — | Vault edge writes, adjacency queries and graph traversal |
 | `src/vault/entities.rs` | src | m | 1 struct · 17 fn · 12 crate-vis | HydratedShortId | Vault entity, vector, short-id and type-index reads and writes |
 | `src/vault/entity_revision/citations.rs` | src | s | 6 fn | — | Revision-pinned short references and Loro cursor citations |
-| `src/vault/entity_revision/idle.rs` | src | s | 4 fn | — | Idle debounce and atomic BM25/vector/frontier publication |
-| `src/vault/entity_revision/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
+| `src/vault/entity_revision/idle.rs` | src | s | 5 fn | — | Idle debounce and atomic BM25/vector/frontier publication |
+| `src/vault/entity_revision/mod.rs` | src | s | 1 re-export · 3 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
+| `src/vault/entity_revision/pending_index.rs` | src | s | 4 crate-vis | — | Caller-supplied index inputs retained until atomic idle publication |
 | `src/vault/entity_revision/phonetic.rs` | src | s | 3 crate-vis | — | Host-derived phonetic codes publish with the same indexed text frontier |
 | `src/vault/entity_revision/storage.rs` | src | m | 2 fn · 21 crate-vis | — | Transactional revision ledger |
 | `src/vault/entity_revision/tests.rs` | test | m | — | — | Acceptance laws exercise the existing put/index/read engines, not a side store |
