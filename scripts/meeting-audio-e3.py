@@ -207,16 +207,16 @@ def capture(args):
             started = time.monotonic()
             output, body = host.dispatch(operation, pcm, {})
             receipt = output["provenance"]
+            model_id, model_files_sha256 = native.model_identity(stage)
             if (body or receipt["input_sha256"] != checksum(pcm) or receipt["execution"] != "measured"
-                    or receipt["model_id"] != native.profile[stage]["model_id"]
+                    or receipt["model_id"] != model_id
                     or not nonblank(receipt["invocation_id"]) or receipt["invocation_id"] in invocations):
                 raise bridge.Refusal("InvalidNativeRunReceipt")
             invocations.add(receipt["invocation_id"])
             tracks = output[field]
-            spec = native.profile[stage]
             record["arms"][arm] = {"tracks": tracks, "tracks_sha256": checksum(encoded(tracks)),
-                "provenance": output["provenance"], "model_id": spec["model_id"],
-                "model_files_sha256": checksum(encoded(spec["files"])), "runtime_sha256": checksum(encoded(capabilities)), "elapsed_seconds": time.monotonic() - started}
+                "provenance": output["provenance"], "model_id": model_id,
+                "model_files_sha256": model_files_sha256, "runtime_sha256": checksum(encoded(capabilities)), "elapsed_seconds": time.monotonic() - started}
             with (args.output / "events.jsonl").open("ab") as events:
                 events.write(encoded({"event": "completed", "file_id": entry["file_id"], "arm": arm,
                     "tracks_sha256": record["arms"][arm]["tracks_sha256"]}) + b"\n")

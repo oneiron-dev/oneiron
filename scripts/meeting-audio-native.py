@@ -103,10 +103,16 @@ def package_version(name):
         return None
 
 
+def runtime_source_hashes():
+    return {name: sha256(Path(__file__).with_name(name).read_bytes()) for name in
+            ["meeting_audio_runtime.py", "meeting_audio_process.py", "meeting_audio_ctc.py"]}
+
+
 def provenance(model, body, **details):
     return {
         "invocation_id": str(uuid.uuid4()), "model_id": model,
-        "input_sha256": sha256(body), "execution": "measured", **details,
+        "input_sha256": sha256(body), "execution": "measured",
+        "runtime_components_sha256": runtime_source_hashes(), **details,
     }
 
 
@@ -134,6 +140,10 @@ class NativeHost:
         runtime = self.runtime()
         ports = {"alignment": "transcribe_pack", "diarization": "community1_exclusive_full_file", "cleanup": "cleanup_turns"}
         available = {stage: runtime is not None and runtime.available(stage) for stage in ports}
+        alignment_languages = sorted(runtime.alignment_models()) if runtime is not None else []
+        pack_languages = [language for language in alignment_languages if language != "Ukrainian"]
+        # A timing-only UK worker does not make the Qwen ASR artifact lane ready.
+        available["alignment"] = available["alignment"] and bool(pack_languages)
         asr_ready = runtime is not None and runtime.available("asr")
         if asr_ready and Path(runtime.profile["asr"]["snapshot"]) != self.model_snapshot:
             raise Refusal("AsrSnapshotBindingMismatch")
@@ -149,11 +159,14 @@ class NativeHost:
             "operations": ["decode", "silero_vad", "transcribe_text"] + [port for stage, port in ports.items() if available[stage]]
                           + (["moss_e3_full_file"] if runtime is not None and runtime.available("moss") else []),
             "artifact_capable": all(available.values()) and asr_ready and decoder_ready,
+            "alignment_languages": alignment_languages,
+            "transcribe_pack_languages": pack_languages,
             "missing": [missing[stage] for stage in ports if not available[stage]]
                        + ([] if runtime is None or asr_ready else ["pinned_asr_model"])
                        + ([] if runtime is None or decoder_ready else ["decoder"]),
             "runtime_profile_sha256": self.runtime_profile_sha256,
             "runtime_helper_sha256": sha256(Path(__file__).with_name("meeting_audio_runtime.py").read_bytes()),
+            "runtime_components_sha256": runtime_source_hashes(),
             "e1_e3_evidence": False,
             "python_executable": sys.executable,
             "python_version": sys.version.split()[0],
@@ -234,6 +247,11 @@ class NativeHost:
                 or any(not isinstance(s, str) or not s.strip() for s in glossary)
                 or language is not None and (not isinstance(language, str) or not language.strip())):
             raise Refusal("InvalidAsrOptions")
+        # This pinned Qwen ASR family does not declare Ukrainian support.
+        # A Ukrainian timing backend is not permission to relabel its ASR arm.
+        if language is not None and (language.casefold() in {"uk", "ukr", "ukrainian"}
+                                     or language.casefold().startswith("uk-")):
+            raise Refusal("AsrLanguageUnsupported")
         return glossary, language
 
     def transcribe_text(self, body, options):
@@ -298,9 +316,10 @@ class NativeHost:
             language = runtime.alignment_language(options["language_hint"])
             text, _ = self.transcribe_text(body, options)
             words = runtime.align(self.pcm(body), text["text"], language, (len(body) // 2 + 15) // 16)
-            return {"words": words, "aligner_model": runtime.profile["alignment"]["model_id"],
+            return {"words": words, "aligner_model": runtime.alignment_model(language),
                     "provenance": provenance(ASR_MODEL, body, runtime_profile_sha256=self.runtime_profile_sha256,
-                                             runtime_helper_sha256=sha256(Path(__file__).with_name("meeting_audio_runtime.py").read_bytes()))}, b""
+                                             runtime_helper_sha256=sha256(Path(__file__).with_name("meeting_audio_runtime.py").read_bytes()),
+                                             alignment_runtime=runtime.last_alignment_provenance)}, b""
         if options:
             raise Refusal("UnexpectedOptions")
         if operation == "capabilities":
@@ -317,7 +336,8 @@ class NativeHost:
                 raise Refusal("Community1Unavailable")
             tracks = runtime.diarize(self.pcm(body), (len(body) // 2 + 15) // 16)
             return {"exclusive_tracks": tracks, "provenance": provenance(COMMUNITY_MODEL, body,
-                    runtime_profile_sha256=self.runtime_profile_sha256, full_file_samples=len(body) // 2)}, b""
+                    runtime_profile_sha256=self.runtime_profile_sha256, full_file_samples=len(body) // 2,
+                    diarization_runtime=runtime.last_diarization_provenance)}, b""
         if operation == "moss_e3_full_file":
             runtime = self.runtime()
             if runtime is None:

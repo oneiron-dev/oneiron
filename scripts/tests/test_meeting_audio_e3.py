@@ -71,6 +71,8 @@ class E3Tests(unittest.TestCase):
                         "invocation_id": "synthetic-" + operation, "model_id": "fixture-" + next(row[2] for row in e3.ARMS.values() if row[0] == operation)}}, b""
         fixture_profile = SimpleNamespace(profile={stage: {"model_id": "fixture-" + stage, "files": {"fixture": "b" * 64}}
             for _op, _field, stage in e3.ARMS.values()})
+        fixture_profile.model_identity = lambda stage: (fixture_profile.profile[stage]["model_id"],
+            e3.checksum(e3.encoded(fixture_profile.profile[stage]["files"])))
         with patch.object(e3, "ProcessPorts", FixtureHost), patch.object(e3.runtime, "LocalRuntime", return_value=fixture_profile):
             result = e3.capture(args)
         self.assertEqual(calls, ["decode", "community1_exclusive_full_file", "moss_e3_full_file"])

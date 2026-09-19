@@ -95,6 +95,27 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(runtime.RuntimeRefusal):
                 runtime.milliseconds(timestamp, 500)
 
+    def test_ukrainian_timing_is_explicit_and_is_not_russian_asr(self):
+        self.configure("uk_alignment", runtime.UK_ALIGNER)
+        loaded = self.load()
+        with patch.object(runtime, "version", return_value="fixture"):
+            self.assertEqual(loaded.alignment_models(), {"Ukrainian": runtime.UK_ALIGNER})
+            self.assertEqual(loaded.alignment_model("uk"), runtime.UK_ALIGNER)
+            self.assertEqual(loaded.alignment_language("uk"), "Ukrainian")
+        bridge_spec = importlib.util.spec_from_file_location("audio_bridge", MODULE.with_name("meeting-audio-native.py"))
+        bridge = importlib.util.module_from_spec(bridge_spec)
+        bridge_spec.loader.exec_module(bridge)
+        host = bridge.NativeHost(self.root, Path("/missing-ffmpeg"), self.snapshot)
+        with patch.object(host, "runtime", return_value=loaded), patch.object(runtime, "version", return_value="fixture"):
+            capabilities = host.capabilities()
+        self.assertEqual(capabilities["alignment_languages"], ["Ukrainian"])
+        self.assertEqual(capabilities["transcribe_pack_languages"], [])
+        self.assertNotIn("transcribe_pack", capabilities["operations"])
+        self.assertFalse(capabilities["artifact_capable"])
+        for language in ["uk", "uk-UA", "Ukrainian"]:
+            with self.assertRaisesRegex(bridge.Refusal, "AsrLanguageUnsupported"):
+                bridge.NativeHost.validate_asr_options({"model_id": runtime.ASR, "glossary": [], "language_hint": language})
+
     def test_qwen_documented_api_is_local_and_word_times_are_not_asr_chunk_times(self):
         self.configure("alignment", runtime.ALIGNER)
         loaded = self.load()
@@ -110,7 +131,7 @@ class RuntimeTests(unittest.TestCase):
         with patch.object(runtime, "version", return_value="fixture"), patch.dict("sys.modules", modules):
             words = loaded.align([0.0] * 1600, "hi", "en", 100)
         self.assertEqual(words[0]["start_ms"], 20)
-        self.assertEqual(calls[0], (str(self.snapshot), {"dtype": "fixture-f32", "device_map": "cpu"}))
+        self.assertEqual(calls[0], (str(self.snapshot), {"dtype": "fixture-f32", "device_map": "cpu", "local_files_only": True}))
         self.assertEqual(calls[1]["language"], "English")
         self.assertEqual(calls[1]["audio"][1], 16000)
 
@@ -167,6 +188,42 @@ class RuntimeTests(unittest.TestCase):
         instructions.write_text("changed")
         with self.assertRaisesRegex(runtime.RuntimeRefusal, "CleanupInstructionsDigestMismatch"):
             loaded.instructions(self.profile["cleanup"])
+
+    def test_split_ports_bind_language_audio_model_and_full_file_without_local_provider_import(self):
+        from types import SimpleNamespace
+        process = runtime.process_module()
+        descriptor = {"backend": "process", "interpreter": "/fixture/python", "python_version": "fixture",
+            "script": "/fixture/meeting-audio-worker.py", "profile": "/fixture/profile.json",
+            "profile_sha256": "a" * 64, "code_sha256": {name: "b" * 64 for name in process.CODE_FILES},
+            "timeout_seconds": 10}
+        self.profile.update(alignment=descriptor, diarization=descriptor)
+        loaded = self.load()
+        body, calls = b"\0\0" * 1600, []
+        def invoke(spec, stage, operation, data, options, error, parse):
+            calls.append((stage, operation, data, options))
+            if operation == "capabilities":
+                return {"available": True, "stage": stage, "model_execution": False,
+                    "models_by_language": {"English": runtime.ALIGNER} if stage == "alignment" else {},
+                    "model_id": runtime.COMMUNITY, "model_files_sha256": "c" * 64}
+            model = runtime.ALIGNER if stage == "alignment" else runtime.COMMUNITY
+            proof = {"model_id": model, "input_sha256": runtime.digest(data), "execution": "measured",
+                     "invocation_id": "synthetic-unit-not-native-proof", "language": "English",
+                     "transcript_sha256": runtime.digest(b"hi"), "full_file_samples": 1600}
+            return {"runtime_binding": {"fixture": True}, "provenance": proof, "aligner_model": model,
+                "words": [{"text": "hi", "start_ms": 0, "end_ms": 100, "confidence": None}],
+                "exclusive_tracks": [{"start_ms": 0, "end_ms": 100, "speaker_cluster": "A"}]}
+        fake = SimpleNamespace(check_files=lambda *args: None, call=invoke)
+        with patch.object(runtime, "process_module", return_value=fake), patch.object(runtime, "process_pcm", return_value=body):
+            words = loaded.align([0.0] * 1600, "hi", "en", 100)
+            tracks = loaded.diarize([0.0] * 1600, 100)
+        self.assertEqual(words[0]["text"], "hi")
+        self.assertEqual(tracks[0]["speaker_cluster"], "A")
+        self.assertEqual([call[:2] for call in calls], [("alignment", "capabilities"), ("alignment", "align_words"),
+            ("diarization", "capabilities"), ("diarization", "diarize_full_file")])
+        self.assertEqual(calls[1][3], {"transcript": "hi", "language": "English"})
+        self.assertEqual(calls[3][2], body)
+        self.assertIsNotNone(loaded.last_alignment_provenance)
+        self.assertIsNotNone(loaded.last_diarization_provenance)
 
     def test_moss_is_one_global_decode_and_never_invents_word_timestamps(self):
         self.configure("moss", runtime.MOSS)

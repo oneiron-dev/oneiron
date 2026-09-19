@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import math
 from pathlib import Path
@@ -15,13 +16,15 @@ import unicodedata
 
 ASR = "mlx-community/Qwen3-ASR-1.7B-8bit"
 ALIGNER = "Qwen/Qwen3-ForcedAligner-0.6B"
+UK_ALIGNER = "Yehor/w2v-xls-r-uk"
 COMMUNITY = "pyannote/speaker-diarization-community-1"
 MOSS = "OpenMOSS-Team/MOSS-Transcribe-Diarize"
 LANGUAGES = ("Chinese", "English", "Cantonese", "French", "German", "Italian",
              "Japanese", "Korean", "Portuguese", "Russian", "Spanish")
 REQUIREMENTS = {"asr": {"mlx-audio", "mlx", "silero-vad", "onnxruntime"}, "alignment": {"qwen-asr", "torch"},
                 "diarization": {"pyannote.audio", "torch"},
-                "cleanup": {"mlx-lm", "mlx"}, "moss": {"mlx-audio", "mlx", "mlx-lm"}}
+                "cleanup": {"mlx-lm", "mlx"}, "moss": {"mlx-audio", "mlx", "mlx-lm"},
+                "uk_alignment": {"torch", "transformers"}}
 
 
 class RuntimeRefusal(Exception):
@@ -122,18 +125,25 @@ class LocalRuntime:
             profile = strict_json(data)
         except (ValueError, UnicodeError):
             raise error("InvalidRuntimeProfile") from None
-        if (not isinstance(profile, dict) or set(profile) not in [{"version", "packages", "asr", "alignment", "diarization", "cleanup"},
-                    {"version", "packages", "asr", "alignment", "diarization", "cleanup", "moss"}]
+        if (not isinstance(profile, dict)
+                or not {"version", "packages", "asr", "alignment", "diarization", "cleanup"} <= set(profile)
+                or not set(profile) <= {"version", "packages", "asr", "alignment", "diarization", "cleanup", "moss", "uk_alignment"}
                 or type(profile["version"]) is not int or profile["version"] != 1
                 or not isinstance(profile["packages"], dict)):
             raise error("InvalidRuntimeProfile")
         profile.setdefault("moss", None)
+        profile.setdefault("uk_alignment", None)
         packages = profile["packages"]
         if any(not isinstance(v, str) or not v.strip() for v in packages.values()):
             raise error("InvalidRuntimeProfile")
         for stage in REQUIREMENTS:
             spec = profile[stage]
             if spec is None:
+                continue
+            if isinstance(spec, dict) and spec.get("backend") == "process":
+                if stage not in {"alignment", "diarization"}:
+                    raise error("UnsupportedProcessPort")
+                process_module().validate_spec(spec, error)
                 continue
             fields = {"model_id", "snapshot", "files", "access_ref"}
             if stage == "moss":
@@ -159,6 +169,8 @@ class LocalRuntime:
                 raise error("UnsupportedAsrModel")
             if stage == "alignment" and spec["model_id"] != ALIGNER:
                 raise error("UnsupportedAligner")
+            if stage == "uk_alignment" and spec["model_id"] != UK_ALIGNER:
+                raise error("UnsupportedAligner")
             if stage == "diarization" and spec["model_id"] != COMMUNITY:
                 raise error("UnsupportedDiarizationModel")
             if stage == "cleanup" and (not isinstance(spec["instructions"], str)
@@ -170,11 +182,16 @@ class LocalRuntime:
         self.profile = profile
         self.profile_digest = expected_digest
         self.checked = set()
+        self.process_capability_cache = {}
+        self.last_alignment_provenance = None
+        self.last_diarization_provenance = None
 
     def available(self, stage):
         spec = self.profile[stage]
         if spec is None:
             return False
+        if spec.get("backend") == "process":
+            return self.process_capabilities(stage)["available"]
         if stage in self.checked:
             return True
         if any(version(name) != value for name, value in self.profile["packages"].items()):
@@ -203,10 +220,52 @@ class LocalRuntime:
         self.checked.add(stage)
         return True
 
+    def process_capabilities(self, stage):
+        spec = self.profile[stage]
+        process_module().check_files(spec, self.error)
+        if stage not in self.process_capability_cache:
+            result = process_module().call(spec, stage, "capabilities", b"", {}, self.error, strict_json)
+            if (type(result.get("available")) is not bool or result.get("stage") != stage
+                    or result.get("model_execution") is not False):
+                raise self.error("InvalidProcessCapabilities")
+            models = result.get("models_by_language")
+            if stage == "alignment" and (not isinstance(models, dict)
+                    or any((language not in LANGUAGES or model != ALIGNER) and (language != "Ukrainian" or model != UK_ALIGNER)
+                           for language, model in models.items())
+                    or result["available"] != bool(models)):
+                raise self.error("InvalidProcessCapabilities")
+            if stage == "diarization" and result["available"] and (result.get("model_id") != COMMUNITY
+                    or not hash_string(result.get("model_files_sha256"))):
+                raise self.error("InvalidProcessCapabilities")
+            self.process_capability_cache[stage] = result
+        return self.process_capability_cache[stage]
+
+    def alignment_models(self):
+        if self.profile["alignment"] is not None and self.profile["alignment"].get("backend") == "process":
+            return self.process_capabilities("alignment")["models_by_language"]
+        models = {language: ALIGNER for language in LANGUAGES} if self.available("alignment") else {}
+        if self.available("uk_alignment"):
+            models["Ukrainian"] = UK_ALIGNER
+        return models
+
+    def alignment_model(self, language):
+        language = self.alignment_language(language)
+        if self.profile["alignment"] is not None and self.profile["alignment"].get("backend") == "process":
+            return self.process_capabilities("alignment")["models_by_language"][language]
+        return self.require("uk_alignment" if language == "Ukrainian" else "alignment")["model_id"]
+
+    def model_identity(self, stage):
+        spec = self.require(stage)
+        if spec.get("backend") == "process":
+            result = self.process_capabilities(stage)
+            return result["model_id"], result["model_files_sha256"]
+        files = json.dumps(spec["files"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        return spec["model_id"], digest(files)
+
     def require(self, stage):
         if not self.available(stage):
             raise self.error({"asr": "AsrModelUnavailable", "alignment": "ForcedAlignmentUnavailable", "diarization": "Community1Unavailable",
-                              "cleanup": "CleanupBackendUnavailable", "moss": "MossBackendUnavailable"}[stage])
+                              "cleanup": "CleanupBackendUnavailable", "moss": "MossBackendUnavailable", "uk_alignment": "ForcedAlignmentUnavailable"}[stage])
         return self.profile[stage]
 
     def instructions(self, spec):
@@ -227,18 +286,42 @@ class LocalRuntime:
     def alignment_language(self, language):
         aliases = {"en": "English", "ja": "Japanese", "zh": "Chinese", "yue": "Cantonese",
                    "fr": "French", "de": "German", "it": "Italian", "ko": "Korean",
-                   "pt": "Portuguese", "ru": "Russian", "es": "Spanish"}
+                   "pt": "Portuguese", "ru": "Russian", "es": "Spanish", "uk": "Ukrainian"}
         language = aliases.get(language, language)
-        if language not in LANGUAGES:
+        supported = (*LANGUAGES, "Ukrainian") if self.profile["uk_alignment"] is not None else LANGUAGES
+        if self.profile["alignment"] is not None and self.profile["alignment"].get("backend") == "process":
+            supported = self.process_capabilities("alignment")["models_by_language"]
+        if language not in supported:
             raise self.error("ForcedAlignmentLanguageUnsupported")
         return language
 
     def align(self, audio, transcript, language, duration_ms):
-        spec = self.require("alignment")
         language = self.alignment_language(language)
+        primary = self.profile["alignment"]
+        external = primary is not None and primary.get("backend") == "process"
+        stage = "uk_alignment" if language == "Ukrainian" and not external else "alignment"
+        spec = self.require(stage)
+        if stage == "uk_alignment":
+            path = Path(__file__).with_name("meeting_audio_ctc.py")
+            module_spec = importlib.util.spec_from_file_location("meeting_audio_ctc", path)
+            module = importlib.util.module_from_spec(module_spec)
+            module_spec.loader.exec_module(module)
+            return checked_process_words(module.align(audio, transcript, spec["snapshot"], self.error), transcript, duration_ms, self.error)
+        if external:
+            body = process_pcm(audio, self.error)
+            result = process_module().call(spec, "alignment", "align_words", body,
+                {"transcript": transcript, "language": language}, self.error, strict_json)
+            model = self.alignment_model(language)
+            provenance = checked_process_provenance(result, body, model, self.error)
+            if (result.get("aligner_model") != model or provenance.get("language") != language
+                    or provenance.get("transcript_sha256") != digest(transcript.encode())):
+                raise self.error("ProcessAlignmentBindingMismatch")
+            words = checked_process_words(result.get("words"), transcript, duration_ms, self.error)
+            self.last_alignment_provenance = {"runtime_binding": result["runtime_binding"], "provenance": provenance}
+            return words
         import torch
         from qwen_asr import Qwen3ForcedAligner
-        model = Qwen3ForcedAligner.from_pretrained(spec["snapshot"], dtype=torch.float32, device_map="cpu")
+        model = Qwen3ForcedAligner.from_pretrained(spec["snapshot"], dtype=torch.float32, device_map="cpu", local_files_only=True)
         output = model.align(audio=(audio, 16000), text=transcript, language=language)
         if len(output) != 1:
             raise self.error("InvalidAlignmentOutput")
@@ -246,6 +329,15 @@ class LocalRuntime:
 
     def diarize(self, audio, duration_ms):
         spec = self.require("diarization")
+        if spec.get("backend") == "process":
+            body = process_pcm(audio, self.error)
+            result = process_module().call(spec, "diarization", "diarize_full_file", body, {}, self.error, strict_json)
+            provenance = checked_process_provenance(result, body, COMMUNITY, self.error)
+            if provenance.get("full_file_samples") != len(audio):
+                raise self.error("ProcessDiarizationBindingMismatch")
+            tracks = checked_process_tracks(result.get("exclusive_tracks"), duration_ms, self.error)
+            self.last_diarization_provenance = {"runtime_binding": result["runtime_binding"], "provenance": provenance}
+            return tracks
         import torch
         from pyannote.audio import Pipeline
         pipeline = Pipeline.from_pretrained(spec["snapshot"])
@@ -329,3 +421,63 @@ def cleanup_texts(text, count, error=RuntimeRefusal):
             or len(output["texts"]) != count or any(not isinstance(t, str) or not t.strip() for t in output["texts"])):
         raise error("InvalidCleanupOutput")
     return output["texts"]
+
+
+def process_module():
+    path = Path(__file__).with_name("meeting_audio_process.py")
+    spec = importlib.util.spec_from_file_location("meeting_audio_process", path)
+    value = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(value)
+    return value
+
+
+def process_pcm(audio, error):
+    import numpy as np
+    samples = np.asarray(audio)
+    scaled = samples * 32768.0
+    if (samples.ndim != 1 or not len(samples) or not np.isfinite(scaled).all()
+            or (scaled < -32768).any() or (scaled > 32767).any()
+            or not (scaled == np.rint(scaled)).all()):
+        raise error("InvalidProcessPcm")
+    return scaled.astype("<i2").tobytes()
+
+
+def checked_process_provenance(result, body, model, error):
+    provenance = result.get("provenance")
+    if (not isinstance(provenance, dict) or provenance.get("model_id") != model
+            or provenance.get("input_sha256") != digest(body) or provenance.get("execution") != "measured"
+            or not isinstance(provenance.get("invocation_id"), str) or not provenance["invocation_id"]):
+        raise error("ProcessProvenanceMismatch")
+    return provenance
+
+
+def checked_process_words(words, transcript, duration_ms, error):
+    if not isinstance(words, list) or not words:
+        raise error("InvalidAlignmentOutput")
+    previous = 0
+    for word in words:
+        if (not isinstance(word, dict) or set(word) != {"start_ms", "end_ms", "text", "confidence"}
+                or type(word["start_ms"]) is not int or type(word["end_ms"]) is not int
+                or not previous <= word["start_ms"] < word["end_ms"] <= duration_ms
+                or not isinstance(word["text"], str) or not word["text"].strip() or word["confidence"] is not None):
+            raise error("InvalidAlignmentOutput")
+        previous = word["end_ms"]
+    compact = lambda text: "".join(unicodedata.normalize("NFC", text).split())
+    if compact("".join(word["text"] for word in words)) != compact(transcript):
+        raise error("AlignmentTextMismatch")
+    return words
+
+
+def checked_process_tracks(tracks, duration_ms, error):
+    if not isinstance(tracks, list) or not tracks:
+        raise error("InvalidExclusiveDiarization")
+    previous = 0
+    for track in tracks:
+        if (not isinstance(track, dict) or set(track) != {"start_ms", "end_ms", "speaker_cluster"}
+                or type(track["start_ms"]) is not int or type(track["end_ms"]) is not int
+                or not previous <= track["start_ms"] < track["end_ms"] <= duration_ms
+                or not isinstance(track["speaker_cluster"], str) or not track["speaker_cluster"].strip()
+                or len(track["speaker_cluster"]) > 128):
+            raise error("InvalidExclusiveDiarization")
+        previous = track["end_ms"]
+    return tracks

@@ -139,3 +139,76 @@ selects each reference word's predicted cluster; missing and wrong principals
 are counted. Scoring verifies captured bytes and output bindings. Its report is
 still evidence for human qualification, never a self-issued pass or a default
 selection. The harness writes no voice-identity claim or consent grant.
+
+## Isolated model ports (current provisioning contract)
+
+`qwen-asr==0.0.6` requires `transformers==4.57.6`. The existing MLX environment
+requires Transformers >=5.14. Do not downgrade it or install with `--no-deps`.
+The main profile's `alignment` and/or `diarization` field may instead be an
+explicit process descriptor:
+
+```json
+{
+  "backend": "process",
+  "interpreter": "/absolute/provisioned/venv/bin/python",
+  "python_version": "exact.provisioned.version",
+  "script": "/absolute/engine/scripts/meeting-audio-worker.py",
+  "code_sha256": {
+    "meeting-audio-worker.py": "64-lowercase-hex",
+    "meeting-audio-native.py": "64-lowercase-hex",
+    "meeting_audio_runtime.py": "64-lowercase-hex",
+    "meeting_audio_process.py": "64-lowercase-hex",
+    "meeting_audio_ctc.py": "64-lowercase-hex"
+  },
+  "profile": "/absolute/worker-profile.json",
+  "profile_sha256": "64-lowercase-hex",
+  "timeout_seconds": 600
+}
+```
+
+These are placeholders, not usable pins. The provisioner emits actual path,
+interpreter/version, code hashes, dependency lock and model file hashes. The
+worker gets its own version-1 profile with only its local model stages enabled;
+its package pins belong to its isolated interpreter, not the parent MLX process.
+A worker cannot delegate to another process. Missing models produce a capability
+refusal, not invented words or a ready runtime. Calls use isolated Python (`-I`),
+offline Hub/Transformers flags, exact PCM16, a bounded request/response protocol
+and a process-group deadline. Neither process installs or resolves dependencies.
+The capability receipt is `model_execution=false`; measured provenance is emitted
+only after the invoked model returns. The parent rechecks code/profile/runtime,
+audio, transcript, language, output bounds and monotone word/track clocks.
+
+Alignment workers accept `align_words`; diarization workers accept one
+`diarize_full_file` request containing the full decoded file. E3 capture now binds
+the worker's actual model-file digest rather than assuming a model lives inside
+the main interpreter. Source component hashes travel with native provenance.
+
+## Explicit Ukrainian CTC timing candidate
+
+The optional `uk_alignment` field has the same local snapshot/file/access shape
+as `alignment`, but its model ID is `Yehor/w2v-xls-r-uk` and its required packages
+are `torch` and `transformers`. It can coexist with the Qwen aligner inside the
+separate worker, or run in its own compatible worker. Preserve the provisioner's
+researched immutable revision `55b6dc09dc1d43fe655018e24e6ff77305ff0879`; newer main
+`e3ced4def0d70be3aab0f2db598a59961fe9ab3b` is not an automatic upgrade.
+
+This port calls local `Wav2Vec2Processor`/`Wav2Vec2ForCTC` safetensors and CPU
+float32 acoustic emissions. A bounded standard CTC recurrence aligns the exact
+transcript; repeated letters require distinct states separated by blank. No
+WhisperX, language model decoder, NLTK download or English sentence splitter is
+required. The LM files in that model repository are not needed for CTC alignment.
+
+Input language is explicitly `uk`/`Ukrainian`. Output keeps original word text;
+case/apostrophe normalization affects acoustic tokens only, and attached unspoken
+punctuation receives no independent acoustic boundary. Digits, Latin/mixed-script
+words, punctuation-only words, unknown characters and impossible/over-budget
+paths refuse. No wildcard or interpolated time is accepted. Frame coordinates
+map to the exact PCM sample interval; these are candidate acoustic boundaries,
+not measured meeting timing quality. The real consented timed cohort is still
+required for qualification.
+
+The pinned Qwen ASR family itself does not declare Ukrainian support. Its native
+port now explicitly refuses Ukrainian hints rather than letting a timing backend
+masquerade as ASR coverage or silently using Russian. E1 must record an unsupported
+arm honestly and/or use an explicitly eligible OF-133 ASR route. Soniox access,
+cohort consent and the post-measurement default-selection act remain separate.
