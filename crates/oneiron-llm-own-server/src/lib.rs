@@ -48,9 +48,10 @@ impl<T: OwnServerTransport> LlmBackend for OwnServerBackend<T> {
     }
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         self.admit(&request, true)?;
-        Ok(oneiron::LlmStream::new(CheckedStream(
-            self.transport.stream(request, lease)?,
-        )))
+        Ok(oneiron::LlmStream::new(CheckedStream {
+            source: self.transport.stream(request, lease)?,
+            parts: BTreeMap::new(),
+        }))
     }
 }
 #[cfg(test)]
@@ -90,7 +91,142 @@ fn validate_terminal(
     }
     Ok(())
 }
-struct CheckedStream<'a>(oneiron::LlmStream<'a>);
+#[derive(Debug, PartialEq, Eq)]
+enum StreamPart {
+    Text,
+    Reasoning,
+    Tool { call_id: String, name: String },
+    Image { media_type: String },
+    Closed,
+}
+struct CheckedStream<'a> {
+    source: oneiron::LlmStream<'a>,
+    parts: BTreeMap<String, StreamPart>,
+}
+impl CheckedStream<'_> {
+    fn start(&mut self, id: &str, part: StreamPart) -> oneiron::LlmResult<()> {
+        if id.trim().is_empty() || self.parts.contains_key(id) {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        self.parts.insert(id.into(), part);
+        Ok(())
+    }
+    fn end(&mut self, id: &str, expected: StreamPart) -> oneiron::LlmResult<()> {
+        if self.parts.get(id) != Some(&expected) {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        self.parts.insert(id.into(), StreamPart::Closed);
+        Ok(())
+    }
+    fn validate_event(&mut self, event: &oneiron::LlmStreamEvent) -> oneiron::LlmResult<()> {
+        use oneiron::LlmStreamEvent as Event;
+        let invalid = match event {
+            Event::TextStart { part_id } => return self.start(part_id, StreamPart::Text),
+            Event::ReasoningStart { part_id, .. } => {
+                return self.start(part_id, StreamPart::Reasoning);
+            }
+            Event::TextDelta { part_id, .. } => self.parts.get(part_id) != Some(&StreamPart::Text),
+            Event::ReasoningDelta { part_id, .. } => {
+                self.parts.get(part_id) != Some(&StreamPart::Reasoning)
+            }
+            Event::TextEnd { part_id } => return self.end(part_id, StreamPart::Text),
+            Event::ReasoningEnd { part_id } => return self.end(part_id, StreamPart::Reasoning),
+            Event::ToolCallStart {
+                part_id,
+                call_id,
+                name,
+            } => {
+                if call_id.trim().is_empty() || name.trim().is_empty() {
+                    true
+                } else {
+                    return self.start(
+                        part_id,
+                        StreamPart::Tool {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                        },
+                    );
+                }
+            }
+            Event::ToolCallDelta { part_id, .. } => {
+                !matches!(self.parts.get(part_id), Some(StreamPart::Tool { .. }))
+            }
+            Event::ToolCallEnd {
+                part_id,
+                call_id,
+                name,
+                input,
+            } => {
+                if !input.is_object() || call_id.trim().is_empty() || name.trim().is_empty() {
+                    true
+                } else {
+                    return self.end(
+                        part_id,
+                        StreamPart::Tool {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                        },
+                    );
+                }
+            }
+            Event::ImageStart {
+                part_id,
+                media_type,
+            } => {
+                if media_type.trim().is_empty() {
+                    true
+                } else {
+                    return self.start(
+                        part_id,
+                        StreamPart::Image {
+                            media_type: media_type.clone(),
+                        },
+                    );
+                }
+            }
+            Event::ImageDelta { part_id, .. } => {
+                !matches!(self.parts.get(part_id), Some(StreamPart::Image { .. }))
+            }
+            Event::ImageEnd {
+                part_id,
+                media_type,
+                image,
+            } => {
+                let empty = match image {
+                    oneiron::ImageContent::Url { url } => url.trim().is_empty(),
+                    oneiron::ImageContent::Base64 { data } => data.trim().is_empty(),
+                };
+                if empty || media_type.trim().is_empty() {
+                    true
+                } else {
+                    return self.end(
+                        part_id,
+                        StreamPart::Image {
+                            media_type: media_type.clone(),
+                        },
+                    );
+                }
+            }
+            Event::ToolResultStart { .. }
+            | Event::ToolResultDelta { .. }
+            | Event::ToolResultEnd { .. } => true,
+            Event::Done {
+                message,
+                finish_reason,
+                ..
+            } => {
+                validate_terminal(message, finish_reason)?;
+                *finish_reason != oneiron::FinishReason::Cancelled
+                    && self.parts.values().any(|part| *part != StreamPart::Closed)
+            }
+        };
+        if invalid {
+            Err(FatalLlmError::InvalidRequest.into())
+        } else {
+            Ok(())
+        }
+    }
+}
 impl futures_core::Stream for CheckedStream<'_> {
     type Item = oneiron::LlmResult<oneiron::LlmStreamEvent>;
     fn poll_next(
@@ -98,15 +234,10 @@ impl futures_core::Stream for CheckedStream<'_> {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         use std::task::Poll;
-        match std::pin::Pin::new(&mut self.get_mut().0).poll_next(cx) {
+        let this = self.get_mut();
+        match std::pin::Pin::new(&mut this.source).poll_next(cx) {
             Poll::Ready(Some(Ok(event))) => {
-                if let oneiron::LlmStreamEvent::Done {
-                    message,
-                    finish_reason,
-                    ..
-                } = &event
-                    && let Err(error) = validate_terminal(message, finish_reason)
-                {
+                if let Err(error) = this.validate_event(&event) {
                     return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Ready(Some(Ok(event)))
