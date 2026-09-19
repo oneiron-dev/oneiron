@@ -252,9 +252,10 @@ fn mcp_setup_health_reads_every_board_omission_axis() {
 /// The capability vocabulary used to be derived from the retired plain-verb
 /// catalog alone, so discovery advertised names both endpoints answer
 /// `unknown_tool` for and advertised none of the names they do accept.
-#[test]
-fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
-    let flags = serde_json::to_value(feature_flags()).expect("feature flags serialize");
+#[tokio::test]
+async fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
+    let (_dir, server) = test_server();
+    let flags = serde_json::to_value(feature_flags(&server)).expect("feature flags serialize");
     let capabilities = flags["capabilities"]
         .as_array()
         .expect("capabilities is an array")
@@ -322,7 +323,7 @@ fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
         "a tool one endpoint registers is not advertised on the other",
     );
 
-    // `execute_code` is registered on neither endpoint in this release, so no
+    // `execute_code` is registered on neither endpoint without a host, so no
     // endpoint token names it.
     for mode in crate::mcp::McpSurfaceMode::ALL {
         assert!(
@@ -339,7 +340,7 @@ fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
 
     // Discovery stays deterministic: the same registrations, the same bytes.
     assert_eq!(
-        serde_json::to_value(feature_flags()).expect("feature flags serialize"),
+        serde_json::to_value(feature_flags(&server)).expect("feature flags serialize"),
         flags,
     );
 }

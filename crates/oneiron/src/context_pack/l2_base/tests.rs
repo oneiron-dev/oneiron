@@ -270,13 +270,86 @@ fn changed_or_erased_evidence_refuses_an_earlier_prefix() -> Result<()> {
     let old = assembly(&vault, subject).run()?.l2_base.unwrap();
     claim(&vault, id, subject, "after")?;
     let txn = vault.store.env.read_txn()?;
-    assert!(!super::revalidate_l2_base(&vault, &txn, &old, None, None)?);
+    assert!(!super::revalidate_l2_base(
+        &vault,
+        &vault.query(),
+        &txn,
+        &old,
+        None,
+        None
+    )?);
     drop(txn);
     let current = assembly(&vault, subject).run()?.l2_base.unwrap();
     vault.delete_entity(&id)?;
     let txn = vault.store.env.read_txn()?;
     assert!(!super::revalidate_l2_base(
-        &vault, &txn, &current, None, None
+        &vault,
+        &vault.query(),
+        &txn,
+        &current,
+        None,
+        None
+    )?);
+    Ok(())
+}
+
+#[test]
+fn hydration_rechecks_candidate_admission_without_changing_evidence() -> Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (_dir, vault, subject) = fixture();
+    let id = crate::test_util::entity(0x31);
+    claim(&vault, id, subject, "unchanged evidence")?;
+    let allowed = AtomicBool::new(true);
+    let admits = |_: &crate::store::Store, _: &heed::RoTxn<'_>, _: &EntityId| {
+        Ok(allowed.load(Ordering::SeqCst))
+    };
+    let pipeline = vault.query().filter_candidates(&admits);
+    let summary = super::produce_l2_base(&vault, &pipeline, &[subject], None, None, true)?.unwrap();
+    let txn = vault.store.env.read_txn()?;
+    assert!(super::revalidate_l2_base(
+        &vault, &pipeline, &txn, &summary, None, None
+    )?);
+    drop(txn);
+    allowed.store(false, Ordering::SeqCst);
+    let txn = vault.store.env.read_txn()?;
+    assert!(!super::revalidate_l2_base(
+        &vault, &pipeline, &txn, &summary, None, None
+    )?);
+    Ok(())
+}
+
+#[test]
+fn unchanged_evidence_expires_at_the_hydration_time() -> Result<()> {
+    let (_dir, vault, subject) = fixture();
+    let id = crate::test_util::entity(0x31);
+    claim(&vault, id, subject, "time-bounded evidence")?;
+    let mut body = vault.get_claim(&id)?.unwrap();
+    body.valid_to = Some(101);
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_CLAIM,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::claim::encode_claim_body(&body)?,
+    )?;
+    let summary = assembly(&vault, subject).run()?.l2_base.unwrap();
+    let txn = vault.store.env.read_txn()?;
+    assert!(super::revalidate_l2_base(
+        &vault,
+        &vault.query().with_temporal_now(100),
+        &txn,
+        &summary,
+        None,
+        None,
+    )?);
+    assert!(!super::revalidate_l2_base(
+        &vault,
+        &vault.query().with_temporal_now(101),
+        &txn,
+        &summary,
+        None,
+        None,
     )?);
     Ok(())
 }

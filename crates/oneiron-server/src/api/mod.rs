@@ -364,7 +364,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok",
         service: "oneiron-server",
-        capabilities: feature_flags(),
+        capabilities: feature_flags(&server),
         formats: supported_formats(),
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),

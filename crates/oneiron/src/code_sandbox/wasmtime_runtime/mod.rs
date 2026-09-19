@@ -31,6 +31,11 @@ pub const GUEST_WIT: &str = include_str!("../../../wit/code-run.wit");
 pub struct ComponentBudget {
     pub fuel: u64,
     pub memory_bytes: usize,
+    /// Guest execution and host-event admission deadline. Trusted synchronous
+    /// host operations must return on their own; they are not preempted mid-call.
+    /// In particular, a gated write must settle and be recorded before returning
+    /// (the same checkpoint-only rule as `WakeCancellation`). This is not a hard
+    /// end-to-end timeout for arbitrary host implementations.
     pub wall_time: Duration,
     pub host_calls: u32,
     pub message_bytes: usize,

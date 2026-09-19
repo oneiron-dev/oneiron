@@ -150,6 +150,7 @@ impl<'a> ContextPackBuilder<'a> {
             self.l2_summary_reader,
             self.session.is_none(),
         )?;
+        let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
         let pipeline_output = pipeline
             .context_pack_budget(retrieval_budget)
             .run_for_pack()?;
@@ -392,9 +393,10 @@ impl<'a> ContextPackBuilder<'a> {
             if let Some(ctx) = clamp {
                 validate_pack_disclosure(&self.vault.store, &rtxn, ctx, &results, &neighbors)?;
             }
-            if let Some(summary) = &l2_base
+            if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline)
                 && !super::super::l2_base::revalidate_l2_base(
                     self.vault,
+                    pipeline,
                     &rtxn,
                     summary,
                     clamp,

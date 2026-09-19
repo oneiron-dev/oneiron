@@ -130,6 +130,25 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
             route_json(server.clone(), mcp_list_request(path, credential, "list")).await;
         assert!(mcp_listed_tool_names(&listing).contains(&"execute_code"));
     }
+    for (path, field) in [
+        ("/api/core/discover", "feature_flags"),
+        ("/api/health", "capabilities"),
+    ] {
+        let (status, body) = route_json(
+            server.clone(),
+            Request::builder().uri(path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let capabilities = body[field]["capabilities"].as_array().unwrap();
+        for token in [
+            "mcp.tool.execute_code",
+            "mcp.endpoint.primary.execute_code",
+            "mcp.endpoint.tool_first.execute_code",
+        ] {
+            assert!(capabilities.contains(&json!(token)), "{path}: {body}");
+        }
+    }
     let args = mcp_merge_args(
         mcp_endpoint_envelope(actor_id, "write_memory"),
         json!({"run_ref":"quickjs-one", "task":"write one claim then finish"}),

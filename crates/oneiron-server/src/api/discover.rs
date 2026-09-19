@@ -448,7 +448,7 @@ pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse,
         },
         personas,
         conversations,
-        feature_flags: feature_flags(),
+        feature_flags: feature_flags(server),
         outbound_capabilities: outbound_capability_discovery(),
         counts,
         predicate_namespaces: predicate_namespaces(&server.vault, &claim_ids)?,
@@ -539,12 +539,12 @@ fn self_verb_capabilities() -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn feature_flags() -> FeatureFlags {
+pub(crate) fn feature_flags(server: &SyncServer) -> FeatureFlags {
     FeatureFlags {
         capabilities: CAPABILITIES
             .iter()
             .map(|capability| (*capability).to_owned())
-            .chain(mcp_surface_capabilities())
+            .chain(mcp_surface_capabilities(server))
             .chain(booking_agent_capabilities())
             .chain(self_verb_capabilities())
             .collect(),
@@ -576,23 +576,20 @@ fn booking_agent_capabilities() -> Vec<String> {
 /// Advertises the MCP tools this process actually REGISTERS, and says which
 /// endpoint each one belongs to (ONE-1704 repair).
 ///
-/// Derived from [`crate::mcp::registered_surface`] — the same two immutable
-/// registrations `tools/list` projects and `tools/call` resolves against — so
-/// every name advertised here is a name one of the endpoints accepts, and a
-/// name registered on neither (this release's `execute_code`) is advertised by
-/// nobody. There is no second catalog to keep coherent: the registration IS the
-/// source, and the surface definitions themselves are untouched.
+/// Derived from the same server-bound registrations as `tools/list` and
+/// `tools/call`. A verified runtime adds `execute_code`; an unbound host never
+/// advertises it. No independent tool catalog is maintained here.
 ///
 /// Two tokens per registered tool, both deterministic and in registration
 /// order: the existing `mcp.tool.<name>` vocabulary, and one
 /// `mcp.endpoint.<mode>.<name>` token that states the endpoint the name is
 /// callable on. A client that must pick an endpoint reads the second; a client
 /// that only asks whether a tool exists keeps reading the first.
-fn mcp_surface_capabilities() -> Vec<String> {
+fn mcp_surface_capabilities(server: &SyncServer) -> Vec<String> {
     let mut advertised = BTreeSet::new();
     let mut tokens = Vec::new();
     for mode in crate::mcp::McpSurfaceMode::ALL {
-        let surface = crate::mcp::registered_surface(mode);
+        let surface = server.mcp_surface(mode);
         for name in surface.tool_names() {
             let tool_token = format!("{MCP_TOOL_CAPABILITY_PREFIX}{name}");
             // One token per NAME even if both endpoints ever register it, so a

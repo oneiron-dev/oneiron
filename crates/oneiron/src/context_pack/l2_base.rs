@@ -119,63 +119,12 @@ pub(super) fn produce_l2_base(
     // producer with this revision, even if it finishes after that write.
     let revision = vault.store.env.info().last_txn_id;
     let txn = vault.store.env.read_txn()?;
-    let visibility = reader
-        .map(|reader| reader.retrieval_visibility_in(&txn, None))
-        .transpose()?;
-    let mut evidence = pipeline.l2_evidence_in(&txn, subjects)?;
-    let quarantine = super::quarantine::load_pack_quarantine_index(&vault.store, &txn)?;
-    let mut bodies = std::collections::HashMap::new();
-    let mut admitted = Vec::new();
-    for (id, body) in evidence.drain(..) {
-        if let Some(visibility) = &visibility
-            && !visibility.ppr_node_visible(&txn, &id)?
-        {
-            continue;
-        }
-        if let Some(clamp) = clamp
-            && !clamp.admits(
-                &vault.store,
-                &txn,
-                &id,
-                crate::registry::ENTITY_TYPE_CLAIM,
-                Some(&body),
-            )?
-        {
-            continue;
-        }
-        bodies.insert(id, body.clone());
-        super::validation::validate_pack_entity_reference(
-            &vault.store,
-            &txn,
-            &id,
-            &mut bodies,
-            &quarantine,
-        )?;
-        admitted.push((id, body));
-    }
+    let admitted = admitted_l2_evidence(vault, pipeline, &txn, subjects, clamp, reader)?;
     if admitted.is_empty() {
         return Ok(None);
     }
-    admitted.sort_unstable_by_key(|(id, _)| *id);
-    let mut digest = blake3::Hasher::new();
-    digest.update(b"oneiron:l2-base:v1");
     let subjects: BTreeSet<_> = subjects.iter().copied().collect();
-    digest.update(&(subjects.len() as u64).to_be_bytes());
-    for subject in &subjects {
-        digest.update(subject.as_bytes());
-    }
-    let mut evidence_bytes = 0usize;
-    for (id, body) in &admitted {
-        let raw = crate::claim::encode_claim_body(body)?;
-        evidence_bytes = evidence_bytes.saturating_add(raw.len());
-        if evidence_bytes > MAX_EVIDENCE_BYTES {
-            return Err(Error::IndexOverflow("L2 evidence bytes"));
-        }
-        digest.update(id.as_bytes());
-        digest.update(&(raw.len() as u64).to_be_bytes());
-        digest.update(&raw);
-    }
-    let content_hash = *digest.finalize().as_bytes();
+    let content_hash = evidence_hash(subjects.iter().copied(), &admitted)?;
     if cache_enabled {
         let cache = vault
             .store
@@ -229,73 +178,89 @@ pub(super) fn produce_l2_base(
     Ok(Some(summary))
 }
 
-/// Re-admit the immutable prefix on the hydration snapshot. Any changed body,
-/// erased row, new clamp or denied read drops the entire optional prefix.
+/// Re-admit through the producer's retrieval gates on the hydration snapshot.
+/// A changed evidence set, body, authority, world or temporal admission drops
+/// the entire optional prefix.
 pub(super) fn revalidate_l2_base(
     vault: &Vault,
+    pipeline: &PipelineBuilder<'_>,
     txn: &heed::RoTxn<'_>,
     summary: &L2BaseSummary,
     clamp: Option<&DisclosureContext>,
     reader: Option<&ScopedRead<'_>>,
 ) -> Result<bool> {
+    let admitted = admitted_l2_evidence(vault, pipeline, txn, &summary.subjects, clamp, reader)?;
+    Ok(evidence_hash(summary.subjects.iter().copied(), &admitted)? == summary.content_hash)
+}
+
+fn admitted_l2_evidence(
+    vault: &Vault,
+    pipeline: &PipelineBuilder<'_>,
+    txn: &heed::RoTxn<'_>,
+    subjects: &[EntityId],
+    clamp: Option<&DisclosureContext>,
+    reader: Option<&ScopedRead<'_>>,
+) -> Result<Vec<(EntityId, crate::claim::ClaimBody)>> {
     let visibility = reader
         .map(|reader| reader.retrieval_visibility_in(txn, None))
         .transpose()?;
+    let evidence = pipeline.l2_evidence_in(txn, subjects)?;
     let quarantine = super::quarantine::load_pack_quarantine_index(&vault.store, txn)?;
-    let mut digest = blake3::Hasher::new();
-    digest.update(b"oneiron:l2-base:v1");
-    digest.update(&(summary.subjects.len() as u64).to_be_bytes());
-    for subject in &summary.subjects {
-        digest.update(subject.as_bytes());
-    }
     let mut bodies = std::collections::HashMap::new();
-    for id in &summary.evidence_ids {
-        let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
-            return Ok(false);
-        };
-        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
-            return Ok(false);
-        };
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-            return Ok(false);
-        }
-        let body = crate::claim::decode_claim_body(
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            true,
-        )?;
-        if !crate::claim::claim_surfaceable(&body) {
-            return Ok(false);
-        }
+    let mut admitted = Vec::new();
+    for (id, body) in evidence {
         if let Some(visibility) = &visibility
-            && !visibility.ppr_node_visible(txn, id)?
+            && !visibility.ppr_node_visible(txn, &id)?
         {
-            return Ok(false);
+            continue;
         }
         if let Some(clamp) = clamp
             && !clamp.admits(
                 &vault.store,
                 txn,
-                id,
+                &id,
                 crate::registry::ENTITY_TYPE_CLAIM,
                 Some(&body),
             )?
         {
-            return Ok(false);
+            continue;
         }
-        let canonical = crate::claim::encode_claim_body(&body)?;
-        digest.update(id.as_bytes());
-        digest.update(&(canonical.len() as u64).to_be_bytes());
-        digest.update(&canonical);
-        bodies.insert(*id, body);
+        bodies.insert(id, body.clone());
         super::validation::validate_pack_entity_reference(
             &vault.store,
             txn,
-            id,
+            &id,
             &mut bodies,
             &quarantine,
         )?;
+        admitted.push((id, body));
     }
-    Ok(digest.finalize().as_bytes() == &summary.content_hash)
+    admitted.sort_unstable_by_key(|(id, _)| *id);
+    Ok(admitted)
+}
+
+fn evidence_hash(
+    subjects: impl ExactSizeIterator<Item = EntityId>,
+    admitted: &[(EntityId, crate::claim::ClaimBody)],
+) -> Result<[u8; 32]> {
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"oneiron:l2-base:v1");
+    digest.update(&(subjects.len() as u64).to_be_bytes());
+    for subject in subjects {
+        digest.update(subject.as_bytes());
+    }
+    let mut evidence_bytes = 0usize;
+    for (id, body) in admitted {
+        let raw = crate::claim::encode_claim_body(body)?;
+        evidence_bytes = evidence_bytes.saturating_add(raw.len());
+        if evidence_bytes > MAX_EVIDENCE_BYTES {
+            return Err(Error::IndexOverflow("L2 evidence bytes"));
+        }
+        digest.update(id.as_bytes());
+        digest.update(&(raw.len() as u64).to_be_bytes());
+        digest.update(&raw);
+    }
+    Ok(*digest.finalize().as_bytes())
 }
 
 fn summary_bytes(summary: &L2BaseSummary) -> usize {
