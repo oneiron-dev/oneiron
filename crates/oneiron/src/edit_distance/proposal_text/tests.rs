@@ -161,10 +161,12 @@ fn an_unregistered_peer_falls_back_to_the_device_peer() {
     // shape ED-02 owns.
     unstamped
         .doc
+        .doc
         .get_text(TEXT_CONTAINER)
         .insert(1, "z")
         .expect("raw insert");
     unstamped
+        .doc
         .doc
         .commit_with(CommitOptions::new().commit_msg("some other layer"));
     let record = unstamped.finalize(&vault).expect("finalize");
@@ -291,15 +293,10 @@ fn a_failed_edit_still_lands_under_its_own_actor() {
     assert_eq!(record.final_text, "Abase!");
 }
 
-/// A SECOND `open` marker fails the artifact closed.
-///
-/// The marker rides a commit message, which replicates: a peer that syncs the
-/// artifact can commit its own `open` stamp, and taking the latest one would
-/// move `proposed_ref` past every edit before it. Replay-equality cannot catch
-/// that — replay starts at the shifted base and reconstructs the final text
-/// perfectly, while the earlier edits simply vanish from the window.
+/// A later opening is retained without shifting the birth window or losing
+/// the peer's earlier text. A forged stamp still cannot claim another actor.
 #[test]
-fn a_second_open_marker_is_refused_rather_than_shifting_the_window() {
+fn a_second_open_marker_preserves_the_birth_window_and_all_attributed_ops() {
     let (_tmp, vault) = temp_vault();
     let human = put_actor(&vault, EdgeActorClass::Human);
 
@@ -324,11 +321,15 @@ fn a_second_open_marker_is_refused_rather_than_shifting_the_window() {
         })
         .expect("later edit");
 
-    let err = forged
+    let record = forged
         .finalize(&vault)
-        .expect_err("two open markers must fail closed");
+        .expect("later writer open keeps the birth base");
+    assert_eq!(record.proposed_text, "seed");
+    assert_eq!(record.final_text, "seed hidden visible");
     assert!(
-        matches!(err, Error::CorruptedIndex(msg) if msg.contains("more than one open commit")),
-        "{err:?}"
+        record
+            .ops_by_actor
+            .iter()
+            .any(|(_, span)| span.after_text == "seed hidden")
     );
 }
