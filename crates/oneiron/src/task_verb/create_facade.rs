@@ -333,6 +333,11 @@ impl Memory<'_> {
             Some(TaskAssignee::Peer { actor_ref }) => {
                 Ok(TaskRouteOutcome::PeerSyncedOnly { actor_ref })
             }
+            // A child is already running. The addressed TASK is its inbox input,
+            // not permission to spawn a second executor for the same child.
+            Some(TaskAssignee::Child { actor_ref }) => {
+                Ok(TaskRouteOutcome::ChildAddressed { actor_ref })
+            }
             // A person is not a worker. The TASK row and its follow-up cursor
             // commit together and NOTHING else is minted: no `tasks.realize`
             // attempt, no task-linked queue row, no dispatcher call. Follow-up

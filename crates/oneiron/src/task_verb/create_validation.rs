@@ -180,7 +180,11 @@ pub(super) fn validate_task_create(
         (
             TaskKind::Consult,
             Some(payload),
-            Some(assignee @ TaskAssignee::Peer { .. }),
+            Some(
+                assignee @ (TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. }
+                | TaskAssignee::Dreamer),
+            ),
             Some(ttl),
         ) if spec.spec == Value::Nil => {
             if ttl.deadline_at <= now {
@@ -356,7 +360,10 @@ pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<O
             Some(TaskAssignee::Human { actor_ref }) => Some(actor_ref),
             None
             | Some(
-                TaskAssignee::Dreamer | TaskAssignee::AgentDef { .. } | TaskAssignee::Peer { .. },
+                TaskAssignee::Dreamer
+                | TaskAssignee::AgentDef { .. }
+                | TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. },
             ) => None,
         }),
     )

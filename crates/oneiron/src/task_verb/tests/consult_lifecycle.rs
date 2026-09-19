@@ -158,7 +158,7 @@ fn invalid_consult_shapes_reject_before_any_write() {
             ))
             .with_assignee(TaskAssignee::Peer { actor_ref: peer })
             .with_ttl(TaskTtl::at(CONSULT_DEADLINE)),
-        // Consult kind without a peer assignee.
+        // Consult kind on the human-only follow-up lane.
         TaskCreateSpec::new(Value::Nil, None, None, Some(CONSULT_NOW))
             .with_kind(TaskKind::Consult)
             .with_consult(ConsultPayload::question(
@@ -166,7 +166,7 @@ fn invalid_consult_shapes_reject_before_any_write() {
                 Vec::new(),
                 EntityId::now(),
             ))
-            .with_assignee(TaskAssignee::Dreamer)
+            .with_assignee(TaskAssignee::Human { actor_ref: peer })
             .with_ttl(TaskTtl::at(CONSULT_DEADLINE)),
     ];
     // The first case is the non-Nil spec; rebuild it with a real payload.

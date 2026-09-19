@@ -65,3 +65,5 @@ mod create_admission;
 mod magistrate_route_result;
 mod presence_scan;
 mod support;
+
+mod addressable_consults;

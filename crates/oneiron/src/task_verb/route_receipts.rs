@@ -13,6 +13,7 @@ pub enum TaskRouteLane {
     Dreamer,
     AgentDefinition,
     PeerActor,
+    ChildActor,
     /// A person was asked. Nothing realizes the task; the Dreamer follows up.
     HumanAssignee,
 }
@@ -32,6 +33,9 @@ pub enum TaskRouteOutcome {
     PeerSyncedOnly {
         actor_ref: EntityId,
     },
+    ChildAddressed {
+        actor_ref: EntityId,
+    },
     HumanFollowup {
         actor_ref: EntityId,
     },
@@ -46,6 +50,7 @@ impl TaskRouteOutcome {
             Self::AgentDispatch { .. } => TaskRouteLane::AgentDefinition,
             Self::PeerSyncedOnly { .. } => TaskRouteLane::PeerActor,
             Self::HumanFollowup { .. } => TaskRouteLane::HumanAssignee,
+            Self::ChildAddressed { .. } => TaskRouteLane::ChildActor,
         }
     }
 
@@ -56,7 +61,9 @@ impl TaskRouteOutcome {
             Self::DreamerAttempt { attempt_ref } | Self::AgentDispatch { attempt_ref, .. } => {
                 Some(attempt_ref)
             }
-            Self::PeerSyncedOnly { .. } | Self::HumanFollowup { .. } => None,
+            Self::PeerSyncedOnly { .. }
+            | Self::ChildAddressed { .. }
+            | Self::HumanFollowup { .. } => None,
         }
     }
 }

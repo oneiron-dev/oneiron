@@ -546,7 +546,8 @@ fn task_page_slot_in(
                 TaskAssignee::Human { .. } => format!("person:{handle}"),
                 TaskAssignee::Dreamer
                 | TaskAssignee::AgentDef { .. }
-                | TaskAssignee::Peer { .. } => handle,
+                | TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. } => handle,
             })
         });
         presence.terminal_disposition = terminal_disposition;
