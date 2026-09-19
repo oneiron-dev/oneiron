@@ -12,13 +12,13 @@ use std::{
     task::{Context, Poll},
 };
 #[derive(Debug, Clone, Default)]
-pub struct GeminiAccumulator {
+pub(super) struct GeminiAccumulator {
     assembly: StreamAssembly,
     usage: Option<LlmUsage>,
     tool_seq: usize,
 }
 impl GeminiAccumulator {
-    pub fn push(&mut self, chunk: Value) -> LlmResult<Vec<LlmStreamEvent>> {
+    pub(super) fn push(&mut self, chunk: Value) -> LlmResult<Vec<LlmStreamEvent>> {
         if self.assembly.is_done() {
             return Ok(vec![]);
         }
@@ -80,6 +80,11 @@ impl GeminiAccumulator {
                     let part_id = format!("tool-{id}");
                     events.extend(self.assembly.tool(&part_id, &id, name, &args.to_string())?);
                     events.push(self.assembly.end(&part_id)?);
+                } else if part.as_object().is_some_and(|fields| fields.len() == 1)
+                    && part.get("thoughtSignature").is_some_and(Value::is_string)
+                {
+                    // Signature-only metadata is not unsupported content.
+                    continue;
                 } else {
                     return Err(FatalLlmError::InvalidRequest.into());
                 }
@@ -102,7 +107,7 @@ impl GeminiAccumulator {
         }
         Ok(events)
     }
-    pub fn abort(&mut self, usage: LlmUsage) -> Vec<LlmStreamEvent> {
+    pub(super) fn abort(&mut self, usage: LlmUsage) -> Vec<LlmStreamEvent> {
         self.assembly.abort(usage)
     }
 }
@@ -139,6 +144,7 @@ impl Stream for GeminiEventStream<'_> {
                     .pending
                     .extend(this.accumulator.abort(usage).into_iter().map(Ok)),
                 Poll::Ready(Some(Ok(GeminiFrame::Status(response)))) => {
+                    if (200..300).contains(&response.status) { continue; }
                     return Poll::Ready(Some(Err(classify_status(
                         response.status,
                         &response.body,

@@ -7,9 +7,10 @@ use oneiron::{
     LlmRequest, LlmStream, LlmStreamResult, ModelId,
 };
 use std::collections::BTreeMap;
-pub use stream::GeminiAccumulator;
+#[cfg(test)]
+use stream::GeminiAccumulator;
 pub use transport::*;
-pub use wire::{build_request, classify_status, parse_response};
+use wire::{build_request, classify_status, parse_response};
 pub struct GeminiBackend<T> {
     transport: T,
     models: BTreeMap<ModelId, LlmCatalogEntry>,

@@ -6,7 +6,7 @@ use oneiron::{
     LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, ResponseFormat, RetryableLlmError,
 };
 use serde_json::{Value, json};
-pub fn build_request(
+pub(super) fn build_request(
     entry: &LlmCatalogEntry,
     request: &LlmRequest,
     stream: bool,
@@ -128,7 +128,7 @@ fn encode_part(
         } => json!({"fileData":{"mimeType":media_type,"fileUri":url}}),
     })
 }
-pub fn parse_response(body: Value) -> LlmResult<LlmResponse> {
+pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
     let events = GeminiAccumulator::default().push(body)?;
     events
         .into_iter()
@@ -146,7 +146,7 @@ pub fn parse_response(body: Value) -> LlmResult<LlmResponse> {
         })
         .ok_or_else(|| FatalLlmError::EmptyResponse.into())
 }
-pub fn classify_status(status: u16, body: &Value) -> LlmError {
+pub(super) fn classify_status(status: u16, body: &Value) -> LlmError {
     if status == 402
         || body.pointer("/error/status").and_then(Value::as_str) == Some("BUDGET_EXCEEDED")
     {

@@ -55,7 +55,11 @@ impl GeminiTransport for Transport {
         assert!(!lease.id().is_empty());
         assert!(request.path.ends_with(":streamGenerateContent?alt=sse"));
         Ok(Box::pin(Sequence(
-            vec![Ok(GeminiFrame::Chunk(fixture()))].into(),
+            vec![
+                Ok(GeminiFrame::Status(GeminiHttpResponse { status: 200, body: Value::Null })),
+                Ok(GeminiFrame::Chunk(json!({"candidates":[{"content":{"parts":[{"thoughtSignature":"metadata"}]}}]}))),
+                Ok(GeminiFrame::Chunk(fixture()))
+            ].into(),
         )))
     }
 }
@@ -259,4 +263,10 @@ impl oneiron::llm::TerminalSink for Ledger {
         self.0.lock().unwrap().push(response.clone());
         Ok(())
     }
+}
+
+#[test]
+fn signature_metadata_does_not_hide_unsupported_content() {
+    let mut accumulator = GeminiAccumulator::default();
+    assert!(accumulator.push(json!({"candidates":[{"content":{"parts":[{"thoughtSignature":"sig","inlineData":{}}]}}]})).is_err());
 }

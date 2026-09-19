@@ -157,7 +157,11 @@ impl AnthropicMessagesStreamAccumulator {
                     if usage.get("output_tokens").is_some() {
                         self.usage.output = parsed.output;
                     }
-                    self.usage.raw_provider = usage.clone();
+                    if let (Some(total), Some(delta)) = (self.usage.raw_provider.as_object_mut(), usage.as_object()) {
+                        total.extend(delta.clone());
+                    } else {
+                        self.usage.raw_provider = usage.clone();
+                    }
                 }
                 if let Some(reason) = event["delta"]["stop_reason"].as_str() {
                     self.finish_reason = anthropic_finish_reason(reason);
