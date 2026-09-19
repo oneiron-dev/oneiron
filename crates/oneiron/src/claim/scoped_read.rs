@@ -500,7 +500,7 @@ impl<'a> ScopedRead<'a> {
         let Ok(actor) = EntityId::from_hex(self.actor_key.actor_ref()) else {
             return Ok(false);
         };
-        if actor != body.author_ref {
+        if actor != body.author_ref || self.vault.archive_tombstone_in_txn(txn, &actor)?.is_some() {
             return Ok(false);
         }
         let Some(class) = self.actor_key.actor_class().and_then(|class| match class {

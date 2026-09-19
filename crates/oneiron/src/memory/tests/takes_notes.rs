@@ -661,6 +661,23 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             .all(|hit| hit.short_id != receipt.entity_ref)
     );
 
+    let dimensions = vault.config.dimensions;
+    let mut query = vec![0.0; dimensions];
+    query[0] = 1.0;
+    vault
+        .put_vector(&id, &query)
+        .expect("private nearest vector");
+    let mut public = query.clone();
+    public[1] = 0.1;
+    vault.put_vector(&other, &public).expect("public vector");
+    public[1] = 0.2;
+    vault
+        .put_vector(&owner, &public)
+        .expect("second public vector");
+    let hits = vault.search_vector(&query, 2).expect("visible top k");
+    assert_eq!(hits.len(), 2);
+    assert!(hits.iter().all(|hit| hit.id != id));
+
     // A caller-supplied assembled pack is checked too, including orphaned
     // neighbors that were reachable only from the excluded diary result.
     let mut injected = vault
@@ -694,6 +711,39 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         .expect("other pack");
     assert!(injected.results.is_empty());
     assert!(injected.neighbors.is_empty());
+    // Seed the retained-row archive state; cleanup nomination is a different law.
+    vault
+        .with_write_txn(|txn| {
+            let marker = crate::deletion::TombstoneValueV2 {
+                reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
+                deleted_at: 200,
+                request_id: [0x71; 16],
+            };
+            vault
+                .store
+                .sync_state
+                .put(txn, &format!("ac:{}", owner.to_hex()), &marker.encode())?;
+            Ok(())
+        })
+        .expect("archive marker");
+    assert!(owner_read.get(&id).expect("archived read").is_none());
+    assert!(
+        owner_read
+            .hydrate_short_id(short, hash)
+            .expect("archived hydrate")
+            .is_none()
+    );
+    assert!(
+        owner_read
+            .memory_timeline(&id)
+            .expect("archived timeline")
+            .records
+            .is_empty()
+    );
+    owner_read
+        .filter_context_pack(&mut owner_pack)
+        .expect("archived pack");
+    assert!(owner_pack.results.is_empty());
 }
 
 #[test]

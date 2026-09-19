@@ -179,14 +179,14 @@ impl Vault {
         let reference = proposal_ref(&canonical_delta, &proposer, &owner_ref, now, expires_at);
         let key = key(&reference)?;
         self.with_write_txn(|txn| {
-            if self
+            let raw = self
                 .store
                 .entities
                 .get(&*txn, actor.entity_ref().as_bytes())?
-                .is_none()
-            {
-                return Err(Error::EntityNotFound);
-            }
+                .ok_or(Error::EntityNotFound)?;
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("entity header"))?;
+            crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
             if let Some(raw) = self.store.vault_meta.get(&*txn, &key)? {
                 return Ok(decode_row(&raw, &reference)?.proposal);
             }

@@ -1728,3 +1728,22 @@ fn agent_widen_parks_canonical_delta_and_only_owner_can_establish_grant() {
             .is_err()
     );
 }
+
+#[test]
+fn widen_rejects_non_actor_entities_before_recording_proposal() {
+    let (_dir, vault, owner) = owner_vault();
+    let id = entity(0x72);
+    vault
+        .put_entity(&id, crate::registry::ENTITY_TYPE_WORLD, at(1), 1, b"world")
+        .unwrap();
+    let error = vault
+        .propose_widen(
+            crate::WriteActor::new(id, EdgeActorClass::Agent),
+            super::widen::WidenKind::Action,
+            action_bound(&id.to_hex(), "claim.put", &["world:home"]),
+            owner.principal_ref(),
+            crate::unix_seconds_now() + 600,
+        )
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::ActorClassMismatch);
+}
