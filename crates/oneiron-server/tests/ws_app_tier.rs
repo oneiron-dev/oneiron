@@ -86,7 +86,7 @@ async fn next(socket: &mut Socket) -> Message {
         .unwrap()
 }
 
-/// The version-8 app envelope the server speaks: TAG + MessagePack
+/// The app envelope the server speaks: TAG + MessagePack
 /// `{type, id, seq, last, payload}`. Requests are terminal at seq zero; RPC
 /// results arrive as `rpc.res` chunks whose payloads concatenate into one
 /// MessagePack value.

@@ -124,12 +124,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         };
 
-        // ONE-1865 arm-pending seal: never mirror a SECRET_CUSTODY row into the
-        // canonical window doc, and scrub any custody carrier that landed
-        // before this pass ran (fail-closed — a resident body is a disclosure,
-        // not a presence). Mirror the companion-local-only branch below: drop
-        // the entity carrier and every incident edge, never the tombstones.
-        if is_secret_custody_record(&raw) || *id == crate::gate::default_policy_manifest_id()? {
+        // Excluded credentials and the local default manifest have no live
+        // carrier or incident edge. Scrub history as well as the live map when
+        // a local dial narrows an existing portable credential.
+        if is_unsyncable_secret_custody(&raw) || *id == crate::gate::default_policy_manifest_id()? {
             let mut removed = false;
             if map_contains_binary(&entities_map, &hex_id) {
                 map_delete(&entities_map, &hex_id)?;
@@ -137,6 +135,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             }
             if delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
                 removed = true;
+            }
+            if removed {
+                super::egress::require_history_free_window(vault, window_key)?;
             }
             wrote_any |= removed;
             continue;
@@ -160,6 +161,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             }
             if delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
                 removed = true;
+            }
+            if removed {
+                super::egress::require_history_free_window(vault, window_key)?;
             }
             wrote_any |= removed;
             continue;
@@ -278,17 +282,12 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
         .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
 }
 
-/// ONE-1865 arms the SECRET_CUSTODY replication dial; until then the type byte
-/// is sealed from every CRDT carrier. This is the canonical-doc mirror twin of
-/// the selector decision (`sync::selector::entity_selector_decision`): any path
-/// that copies a local row's bytes INTO the canonical window doc (reverse
-/// rematerialization) or OUT of it (the export scrub) screens the byte here so
-/// a custody body's `value_bytes` never lands in a doc payload. The custody
-/// module owns the rejection constructor; this is a pure type-byte read, so a
-/// malformed row simply does not skip (it is handled by the ordinary paths).
-pub(super) fn is_secret_custody_record(raw: &[u8]) -> bool {
-    EntityMetadataHeader::parse(raw)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_SECRET_CUSTODY)
+/// Credentials refused by the shared same-vault locality predicate.
+pub(super) fn is_unsyncable_secret_custody(raw: &[u8]) -> bool {
+    EntityMetadataHeader::parse(raw).is_some_and(|header| {
+        header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
+            && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..])
+    })
 }
 
 /// Quarantines every CRDT tombstone aliasing a locally available,

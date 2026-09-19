@@ -16,7 +16,36 @@ use crate::sync::transport;
 use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
 use crate::sync::types::WindowKey;
 
+/// Trust is selected by the authenticated import context, never by claim bytes.
+#[derive(Debug, Clone, Copy)]
+pub enum ImportTier {
+    OwnDevice,
+    Federated(FederationAdmissionRole),
+}
+
 impl SyncClient {
+    /// Replays raw window bytes by their caller-bound tier. Federation is admitted
+    /// once before `put_replicated`; shared crash replay only sees locally admitted
+    /// bytes and must not re-run policy or compound the confidence scale.
+    pub fn import_window_update(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+        tier: ImportTier,
+    ) -> std::result::Result<(), TransportError> {
+        if let ImportTier::Federated(role) = tier {
+            return self.import_federated_window_update(window_key, update, role);
+        }
+        if update.len() > MAX_DECODED_PAYLOAD_BYTES {
+            return Err(TransportError::FrameTooLarge {
+                size: update.len(),
+                max: MAX_DECODED_PAYLOAD_BYTES,
+            });
+        }
+        let window = self.ensure_window(window_key)?;
+        self.import_accepted_window_update(window_key, &window, update)
+    }
+
     /// Builds a selector request frame for a selector-capable caller.
     ///
     /// This builder is pure. Bind the authenticated remote peer in the client

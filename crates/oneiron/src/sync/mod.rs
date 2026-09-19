@@ -32,6 +32,7 @@ pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
 mod diagnostic_ingest;
+pub mod documents;
 pub mod federation_burst;
 pub mod lease;
 pub(crate) mod loro_support;
@@ -39,6 +40,7 @@ pub mod manager;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;
+pub mod replay;
 pub mod schema;
 pub mod selector;
 pub mod server_state;

@@ -273,10 +273,7 @@ fn sync_client_generate_initial_sync() {
     // full-window VV_REQUEST flow; selector-capable callers use the
     // current selector protocol.
     // It MUST be the first frame.
-    assert_eq!(
-        messages[0],
-        transport::encode_legacy_full_window_protocol_hello()
-    );
+    assert_eq!(messages[0], transport::encode_protocol_hello());
 
     // Frame 1: lease request — 105 B pinned layout, client_id BE at
     // offset 1, and the embedded PoP signature verifies over the OD-6
@@ -2588,6 +2585,14 @@ fn federation_import_needs_authenticated_principal_not_an_auth_token_string() {
     let update = remote.export(ExportMode::all_updates()).unwrap();
     assert!(matches!(
         client.import_federated_window_update("2026-01", &update, FederationAdmissionRole::Guest),
+        Err(TransportError::InvalidPayload(_))
+    ));
+    assert!(matches!(
+        client.import_window_update(
+            "2026-01",
+            &update,
+            ImportTier::Federated(FederationAdmissionRole::Guest),
+        ),
         Err(TransportError::InvalidPayload(_))
     ));
     assert!(!client.replay_deferred_federation_update().unwrap());

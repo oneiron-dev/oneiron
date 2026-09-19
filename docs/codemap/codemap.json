@@ -2431,7 +2431,7 @@
      "path": "src/batch/txn_builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 13,
       "struct": 1
      }
@@ -19917,7 +19917,7 @@
      "path": "src/secret_custody/codec.rs",
      "purpose": "MessagePack body codec for custody records, bands, floors, and bindings",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -19928,7 +19928,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -19950,8 +19950,18 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/replication.rs",
+     "purpose": "Name-index planning for admitted same-vault custody replay",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -22386,14 +22396,27 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/documents.rs",
+     "purpose": "Document import and durable local-journal confirmation on the one socket",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ImportTier"
+     ],
      "path": "src/sync/client/federated.rs",
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
       "crate-vis": 1,
-      "fn": 4
+      "enum": 1,
+      "fn": 5
      }
     },
     {
@@ -22424,7 +22447,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -22546,6 +22569,39 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DocumentRegistry",
+      "EntityDocument"
+     ],
+     "path": "src/sync/documents/mod.rs",
+     "purpose": "Per-entity text documents",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 11,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/documents/storage.rs",
+     "purpose": "Snapshot-then-update recovery and transactional text-plane persistence",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/documents/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -22663,6 +22719,17 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/manager/document_api.rs",
+     "purpose": "Entity document access through the vault's canonical window/selector owner",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/sync/manager/tests.rs",
@@ -22677,7 +22744,7 @@
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 1,
-      "mod": 15,
+      "mod": 17,
       "re-export": 14
      }
     },
@@ -22858,6 +22925,19 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReplicatedEntity"
+     ],
+     "path": "src/sync/replay.rs",
+     "purpose": "Explicit-tier entity replay for importers outside the window carrier",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22877,7 +22957,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 2
      }
@@ -22928,7 +23008,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -22975,7 +23055,23 @@
       "enum": 1,
       "fn": 18,
       "mod": 1,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocumentFrame"
+     ],
+     "path": "src/sync/transport/documents.rs",
+     "purpose": "Entity-key frames and bounded, non-nesting document batches",
+     "surface": {
+      "const": 6,
+      "fn": 4,
+      "mod": 1,
+      "struct": 1
      }
     },
     {
@@ -23893,7 +23989,7 @@
      "path": "src/vault/open.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 12
      }
     },
@@ -26337,7 +26433,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "secret_custody": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26505,7 +26601,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 74,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26640,8 +26736,8 @@
    },
    "over_bar": 1,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1534,
-   "test_files": 540
+   "source_files": 1541,
+   "test_files": 541
   },
   "oneiron-bench": {
    "files": [
@@ -30825,6 +30921,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/handler/documents.rs",
+     "purpose": "Per-entity selector admission and scope-filtered document delivery on the sync socket",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/handler/ephemeral.rs",
      "purpose": "Ephemeral presence lane: validation, hub budget, and canonical fan-out frames",
      "surface": {
@@ -31652,6 +31758,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/server/windows/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skills_pack.rs",
@@ -31991,7 +32105,7 @@
      "purpose": "Structured HTTP API errors and their schema catalog"
     },
     "handler": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -32054,7 +32168,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -32084,8 +32198,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 188,
-   "test_files": 71
+   "source_files": 189,
+   "test_files": 72
   },
   "oneiron-uniffi": {
    "files": [

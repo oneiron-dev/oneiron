@@ -13,6 +13,8 @@ use crate::protocol::{self, ProtocolError};
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
 pub(super) struct ConnState {
     windows_touched: HashSet<WindowKey>,
+    pub(super) documents:
+        std::collections::HashMap<oneiron::EntityId, oneiron::sync::SelectorVvRequest>,
     rate_limiter: MessageRateLimiter,
     pub(super) window_sync_mode: WindowSyncMode,
     pub(super) protocol_version: u8,
@@ -24,6 +26,7 @@ impl ConnState {
     pub(super) fn new(max_messages_per_sec: u32, protocol_version: u8) -> Self {
         Self {
             windows_touched: HashSet::new(),
+            documents: std::collections::HashMap::new(),
             rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
             window_sync_mode: WindowSyncMode::Unbound,
             protocol_version,
@@ -68,7 +71,8 @@ impl ConnState {
                 ));
             }
             WindowSyncMode::FullWindow
-                if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION =>
+                if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+                    && self.protocol_version != protocol::PROTOCOL_VERSION =>
             {
                 return Err(ProtocolError::InvalidPayload(
                     "full-window sync requires the current full-window protocol",

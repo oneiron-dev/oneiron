@@ -176,6 +176,9 @@ pub enum SyncProtocolValidation {
     FederationPeerUnbound,
     SelectorVersionVector,
     TombstoneRemovalDelta,
+    DocumentAdmissionDenied,
+    DocumentPendingUpdate,
+    InvalidDocumentKey,
 }
 
 #[cfg(feature = "sync")]
@@ -210,6 +213,9 @@ impl fmt::Display for SyncProtocolValidation {
             Self::FederatedTombstoneAdmission => {
                 f.write_str("federated tombstone updates require delete admission")
             }
+            Self::DocumentAdmissionDenied => f.write_str("entity document not admitted"),
+            Self::DocumentPendingUpdate => f.write_str("document update has missing dependencies"),
+            Self::InvalidDocumentKey => f.write_str("invalid entity document persistence key"),
             Self::TombstoneRemovalDelta => {
                 f.write_str("tombstone removal delta (tombstones are permanent)")
             }

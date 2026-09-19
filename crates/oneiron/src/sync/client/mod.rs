@@ -41,6 +41,7 @@
 //!   loading the window doc.
 
 mod base;
+mod documents;
 mod federated;
 mod federation_replay;
 mod inbound;
@@ -48,6 +49,7 @@ mod sync_frames;
 mod types;
 
 pub use self::base::SyncClient;
+pub use self::federated::ImportTier;
 pub use self::sync_frames::next_backoff;
 pub use self::types::{EphemeralChangeOrigin, SyncClientConfig, SyncEvent, SyncStatus};
 
