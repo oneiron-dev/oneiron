@@ -538,6 +538,9 @@ mod tests {
     #[test]
     fn source_sha_prefers_build_and_executable_provenance_not_caller_state() {
         let root = tempfile::tempdir().expect("tempdir");
+        // TMPDIR may be inside the real checkout. Keep this fixture's missing
+        // build path from inheriting that unrelated ancestor repository.
+        std::fs::create_dir(root.path().join(".git")).expect("isolated fixture git boundary");
         let build_repo = root.path().join("build-repo");
         let executable_repo = root.path().join("executable-repo");
         for (repo, sha) in [(&build_repo, SHA), (&executable_repo, OTHER_SHA)] {
