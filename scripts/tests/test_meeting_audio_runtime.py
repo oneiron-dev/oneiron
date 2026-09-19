@@ -86,6 +86,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual([(w["start_ms"], w["end_ms"], w["confidence"]) for w in words], [(0, 123, None), (123, 500, None)])
         with self.assertRaisesRegex(runtime.RuntimeRefusal, "AlignmentTextMismatch"):
             runtime.aligned_words(items, "Different words", 500)
+        with self.assertRaisesRegex(runtime.RuntimeRefusal, "InvalidAlignmentOutput"):
+            runtime.aligned_words([SimpleNamespace(text="を", start_time=4.0, end_time=4.0)], "を", 6000)
         loaded = self.load()
         for language in [None, "uk", "Ukrainian"]:
             with self.assertRaisesRegex(runtime.RuntimeRefusal, "ForcedAlignmentLanguageUnsupported"):

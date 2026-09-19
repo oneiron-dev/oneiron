@@ -31,3 +31,16 @@ later English-punctuation and MOSS-only changes to the shared runtime helper;
 its unchanged CTC implementation hash is in the receipt. Do not claim that older
 trace executes the later shared-helper bytes. The retained native-audio directory
 is likewise historical and is not overwritten by these newer runs.
+
+## Japanese refusal, not a hidden pass
+
+`japanese-refused-*` is an additional installed Kyoko synthetic Japanese run.
+Qwen forced alignment returns `を` with start=end=4.0 seconds. The production
+adapter rejects this as `InvalidAlignmentOutput`; it does not stretch, interpolate,
+merge away or drop the token to fabricate a positive interval. A direct native
+**diagnostic** captured the raw intervals in `japanese-raw-diagnostic.json`; it
+bypasses output validation only for inspection and is not an accepted alignment.
+The input is `japanese.aiff`. A deterministic regression pins the zero-time refusal.
+This is further evidence that supported-language metadata and the successful
+English smoke are not Japanese timing qualification. A qualified timed route
+still needs actual reference evaluation; these failed timings cannot select it.
