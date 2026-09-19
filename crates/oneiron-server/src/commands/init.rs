@@ -9,10 +9,18 @@ use std::path::{Path, PathBuf};
 const EMBEDDER_DOCS: &str = "https://oneiron.dev/oneiron/agents/oneiron-arch-0036-runtime-v1/";
 
 pub fn init(args: InitArgs) -> anyhow::Result<()> {
-    init_with_env(args, EnvConfig::from_process()?)
+    init_with_env(
+        args,
+        EnvConfig::from_process()?,
+        crate::config::default_config_path(),
+    )
 }
 
-fn init_with_env(mut args: InitArgs, env: EnvConfig) -> anyhow::Result<()> {
+fn init_with_env(
+    mut args: InitArgs,
+    env: EnvConfig,
+    default_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     let choice = match args.embedder {
@@ -39,7 +47,8 @@ fn init_with_env(mut args: InitArgs, env: EnvConfig) -> anyhow::Result<()> {
     let path = args
         .config
         .clone()
-        .or_else(crate::config::default_config_path)
+        .or_else(|| env.config_path.clone())
+        .or(default_path)
         .ok_or_else(|| anyhow::anyhow!("no config location; pass --config"))?;
     let config_text = config_text(&args, choice, &path)?;
     // Validate exactly what serve will read before downloading or creating a vault.
@@ -396,7 +405,7 @@ provider = "local"
             map_size: 64 * 1024 * 1024,
             ..Default::default()
         };
-        init_with_env(args, EnvConfig::default()).unwrap();
+        init_with_env(args, EnvConfig::default(), None).unwrap();
         let config = read_config(&path, EnvConfig::default()).unwrap();
         assert_eq!(config.port, 12345);
         assert!(!config.embedder.unwrap().is_active());
@@ -405,14 +414,16 @@ provider = "local"
     fn init_uses_serve_environment_and_refuses_invalid_overrides_before_writes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("oneiron.toml");
+        let default_path = dir.path().join("unused-default.toml");
         let args = InitArgs {
             path: dir.path().join("vault"),
-            config: Some(path.clone()),
+            config: None,
             embedder: Some(EmbedderProvider::Local),
             map_size: 64 * 1024 * 1024,
             ..Default::default()
         };
         let overrides = [
+            ("ONEIRON_CONFIG", path.to_str().unwrap()),
             ("ONEIRON_EMBEDDER_PROVIDER", "endpoint"),
             ("ONEIRON_EMBEDDER_ENDPOINT", "http://127.0.0.1:8080/v1"),
             ("ONEIRON_EMBEDDER_MODEL_ID", "fixture/embedder@v1"),
@@ -426,22 +437,18 @@ provider = "local"
                 .chain([("ONEIRON_EMBEDDER_DIMENSIONS", "16")]),
         )
         .unwrap();
-        assert!(init_with_env(args.clone(), invalid).is_err());
+        assert!(init_with_env(args.clone(), invalid, Some(default_path.clone())).is_err());
         assert!(!args.path.exists());
         assert!(!path.exists());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 
         let env = EnvConfig::from_pairs(overrides).unwrap();
-        init_with_env(args, env.clone()).unwrap();
-        let serve = crate::config::resolve_serve_config_with_sources(
-            &ServeArgs {
-                config: Some(path),
-                ..Default::default()
-            },
-            env,
-            None,
-        )
-        .unwrap();
+        init_with_env(args, env.clone(), Some(default_path.clone())).unwrap();
+        assert!(path.is_file());
+        assert!(!default_path.exists());
+        let serve =
+            crate::config::resolve_serve_config_with_sources(&ServeArgs::default(), env, None)
+                .unwrap();
         let embedder = serve.embedder.as_ref().unwrap();
         assert_eq!(embedder.provider, EmbedderProvider::Endpoint);
         assert_eq!(embedder.model_id, "fixture/embedder@v1");
