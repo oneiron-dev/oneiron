@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { clampTunerY } from '~/runtime/window-chrome'
 
 /* the tuner · a DEV instrument, not product (owner 08-15 eve). sliders
    bound to the chassis measures and the light-room paper; the math lives
@@ -69,6 +70,13 @@ const SECTIONS: Section[] = [
   },
 ]
 
+function clearWindowChrome(y: number): number {
+  if (typeof document === 'undefined') return y
+  const root = document.documentElement
+  if (root.dataset.windowChrome !== 'macos') return y
+  return clampTunerY(y, root.dataset.windowChrome, getComputedStyle(root).getPropertyValue('--desktop-top-inset'))
+}
+
 export function Tuner({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [values, setValues] = React.useState<Values | null>(null)
   const [copied, setCopied] = React.useState(false)
@@ -78,7 +86,7 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
   React.useEffect(() => {
     try {
       const p = JSON.parse(localStorage.getItem('oneiron-tune-pos') || 'null')
-      if (p && typeof p.x === 'number') setPos(p)
+      if (p && typeof p.x === 'number') setPos({ ...p, y: clearWindowChrome(p.y) })
     } catch {
       /* default corner */
     }
@@ -92,7 +100,7 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     const dy = e.clientY - r.top
     const move = (ev: PointerEvent) => {
       const x = Math.max(0, Math.min(innerWidth - r.width, ev.clientX - dx))
-      const y = Math.max(0, Math.min(innerHeight - 40, ev.clientY - dy))
+      const y = clearWindowChrome(Math.max(0, Math.min(innerHeight - 40, ev.clientY - dy)))
       setPos({ x, y })
     }
     const up = () => {
@@ -409,7 +417,7 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
       className="tuner"
       hidden={!open}
       aria-label="tuner"
-      style={pos ? { left: pos.x, top: pos.y, right: 'auto' } : undefined}
+      style={pos ? { left: pos.x, top: clearWindowChrome(pos.y), right: 'auto' } : undefined}
     >
       <div className="t-head" onPointerDown={onDrag}>
         <span className="label">tune</span>

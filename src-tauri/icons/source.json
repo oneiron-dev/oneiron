@@ -1,0 +1,46 @@
+{
+  "canonicalSource": "oneiron-landing/public/logo.svg",
+  "canonicalSha256": "f24d103021b1e4ed66d50a3c2d79e96918ed207d930ecc60af6686ab3f239925",
+  "layeredSource": "Oneiron.icon",
+  "catalogCompiler": "Xcode 26.5 actool",
+  "nativeRenderer": "Icon Composer 1.5 (98) / actool iconutil fallback exports",
+  "fallbackConverter": "@tauri-apps/cli 2.11.3",
+  "artifactReceipt": {
+    "canonical-logo.svg": "f24d103021b1e4ed66d50a3c2d79e96918ed207d930ecc60af6686ab3f239925",
+    "Oneiron.icon/icon.json": "64eb24c4ecda252dceb74a645ba7cd271773860658d31e9f602049b55779250e",
+    "Oneiron.icon/Assets/Aperture.svg": "e98fb12c7248d319a1f4664c497cf152627efe97d0c90e7b2da7309d431b899b",
+    "compiled/Assets.car": "c209c32e8e05092a23f727440f1bee5cccd75004cd23480eb81a56bbbd01919b",
+    "compiled/Oneiron.icns": "3e3ba2c5e287b358d79d4a3c8c9a2ec21b3b32add374fae38625f5d7164c0433",
+    "compiled/Info.plist": "b3898c14d65a4be3c587ee30e634e588e045f305da917662155fca20ed1a0e99",
+    "exports/oneiron-light-1024.png": "7260ec349e67c8b93a2a073c7c48e08ea561144c2e6a3bad849115fe4a4609d7",
+    "exports/oneiron-dark-1024.png": "f9e7d3e38902ea95a2c390e1c78e4e4cfbf76fdcdf8c8e970a874bd493ebfa83"
+  },
+  "files": {
+    "Assets.car": "c209c32e8e05092a23f727440f1bee5cccd75004cd23480eb81a56bbbd01919b",
+    "Info.plist": "d24b1fea54f94e3687b0ca8f72b7f0a5fe25de1a91f405c708fd4bd4b92e4cc5",
+    "Oneiron.icns": "3e3ba2c5e287b358d79d4a3c8c9a2ec21b3b32add374fae38625f5d7164c0433",
+    "Oneiron.icon/Assets/Aperture.svg": "e98fb12c7248d319a1f4664c497cf152627efe97d0c90e7b2da7309d431b899b",
+    "Oneiron.icon/icon.json": "64eb24c4ecda252dceb74a645ba7cd271773860658d31e9f602049b55779250e",
+    "app-icon-dark.png": "f9e7d3e38902ea95a2c390e1c78e4e4cfbf76fdcdf8c8e970a874bd493ebfa83",
+    "app-icon-light.png": "7260ec349e67c8b93a2a073c7c48e08ea561144c2e6a3bad849115fe4a4609d7",
+    "composer-info.plist": "b3898c14d65a4be3c587ee30e634e588e045f305da917662155fca20ed1a0e99",
+    "icon.icns": "6f2a3187b0c228d582838b9e915acc60b6c7a2e2b8f5845c0cccdaef314facdc",
+    "icon.ico": "b71b966a7fd2841eeb879a229bcfe68833ed4c619397d68f2d2eb80d774054b2",
+    "icon.png": "6fe07537e48d3630019c324335fa9793d27e4f8f0f4736f126ee94d1c11e9f8c",
+    "logo.svg": "f24d103021b1e4ed66d50a3c2d79e96918ed207d930ecc60af6686ab3f239925"
+  },
+  "appearance": {
+    "lightBackground": "#FFFFFF",
+    "lightForeground": "#1A1A1A",
+    "darkBackground": "#1A1A1A",
+    "darkForeground": "#FFFFFF",
+    "foregroundScale": 0.7938,
+    "translationInPoints": [
+      0,
+      0
+    ],
+    "runtimePngPixels": 1024
+  },
+  "receiptDirectory": "modern-macos-icon/neutral-dark-preview",
+  "visualStatus": "Neutral Dark colors owner-accepted for the desktop foundation"
+}

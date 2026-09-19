@@ -2,6 +2,7 @@ import * as React from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { applyTheme, cue, markCued, readTheme, useSound, type Theme } from '~/components/safelight/hooks'
 import { PaneHead, Sheet } from './-shared'
+import { AppIconAppearanceRow } from '~/components/desktop/AppIconAppearance'
 
 export const Route = createFileRoute('/settings/appearance')({
   component: AppearancePage,
@@ -86,6 +87,7 @@ function AppearancePage() {
           </button>
         </span>
       </div>
+      <AppIconAppearanceRow />
     </Sheet>
   )
 }
