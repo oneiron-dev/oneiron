@@ -324,7 +324,7 @@ fn saved_query_registers_dynamically_in_crm_band_without_static_byte() {
     // The byte is not chosen here, so a caller CAN pick a bad one — and the
     // existing registrar, not this module, is what rejects it.
     assert!(matches!(
-        register_saved_query_kind(&vault, 109),
+        register_saved_query_kind(&vault, 110),
         Err(Error::Registry(RegistryError::StructuralKindPrefixCollision(prefix))) if prefix == SAVED_QUERY_SHORT_ID_PREFIX
     ));
     assert!(matches!(

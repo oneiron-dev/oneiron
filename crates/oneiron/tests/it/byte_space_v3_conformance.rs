@@ -95,8 +95,18 @@ fn fixture_path() -> PathBuf {
 fn load() -> (Snapshot, Payload) {
     let raw = std::fs::read_to_string(fixture_path()).expect("vendored canon snapshot is readable");
     let snapshot: Snapshot = serde_json::from_str(&raw).expect("snapshot parses");
-    let payload: Payload =
+    let mut payload: Payload =
         serde_json::from_value(snapshot.payload.clone()).expect("snapshot payload parses");
+    // CONV-09 P23 (2026-09-08), explicitly allocated by the W7-C14
+    // contract after this docs snapshot: REACTION=107, rx, writable Pack kind.
+    // Keep the upstream snapshot and its hash untouched. This additive
+    // amendment joins the same strict census, rather than exempting a row.
+    payload.entity_kinds.push(CanonKind {
+        id: "REACTION".to_owned(),
+        classification: "pack".to_owned(),
+        type_byte: Some(107),
+        short_id_prefix: Some("rx".to_owned()),
+    });
     (snapshot, payload)
 }
 

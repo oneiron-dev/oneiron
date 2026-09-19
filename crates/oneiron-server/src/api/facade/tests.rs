@@ -2,6 +2,7 @@ use super::*;
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use oneiron::memory::caps::{MAX_BATCH_ENTITIES, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES};
+use oneiron::memory::verb_table::dispatch_facade_verb;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 

@@ -8,7 +8,8 @@
 //! exposes the result through a storage-independent [`RecalcEngine`] seam the
 //! docedit pipeline can adopt without taking an engine dependency.
 //!
-//! The pinned native-Excel comparison meets the ARCH-0075 selection threshold.
+//! The compatibility subset clears its threshold; the separate real-workbook
+//! release gate remains unmet. Native recalculation therefore stays opt-in.
 //! Hosts construct the session explicitly. Unsupported features and formulas
 //! needing caller context stay on the precision fallback; the corpus clock is
 //! never substituted for production time. External-link workbooks stay on their
