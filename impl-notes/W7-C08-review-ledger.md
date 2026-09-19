@@ -209,3 +209,35 @@ not new correctness findings. C03/C04 cross-ticket comments are not C08 validati
 Canon clarification: native structured output bypasses the corrective *shim*, not the
 local schema-validation boundary. Stream failure is not caller cancellation. Catalog
 seeds carry no fetched score metadata. No docs-repository edit was made.
+
+### Validation custody and current limit
+
+Repair commit: `8b439482`. All 13 changed Rust files still match the source-hash
+manifest captured before validation. Code-map and `git diff --check` pass.
+The final Rust validation has **not completed** and is not represented as green.
+
+The correctly routed durable service is `w7-c08-bot-routed-validation.service`.
+It explicitly receives the factory wrapper PATH plus `W7_CARGO_WORK` and
+`W7_CARGO_HOSTS`; it holds the C08 ticket lock and obeys existing host-slot locks.
+At this handoff all three MacBook slots and both Arch slots are occupied; the
+mini is below its 30 GiB reserve. No extra build or host-budget bypass was started.
+
+The service runs the unchanged standard nine-crate Cargo command, then owning-crate
+formatting/Clippy, focused featureless regression tests, code-map and diff checks.
+Exact argv and eventual exit receipts are in `bot-recovery-receipts/validation.json`
+and `validation-*.json`, with sibling full logs. Inspect those receipts before
+claiming a pass or replacing the job; do not launch a duplicate.
+
+Two interrupted starts are excluded from evidence. The first lost its process during
+a session handoff. The first durable start had the wrapper PATH but omitted routing
+settings, so it fell through to direct Arch Cargo without acquiring factory locks.
+That service alone was stopped to correct the routing error, not because a test failed
+or exceeded a clock. Its partial log is retained under
+`bot-recovery-receipts/interrupted-unconfigured-service/`. No source or genuine prior
+writer/test/review receipt was discarded. Neither partial run is a terminal pass.
+
+The reply REST endpoint refused new comments while an empty account-owned draft
+review existed. All 40 authorized replies were therefore attached to that same draft
+through the thread API. Before comment-only submission, its body was still empty and
+its comments matched exactly these 40 responses; no other authored draft content was
+published or deleted. No approval, push, merge or close is authorized by this receipt.
