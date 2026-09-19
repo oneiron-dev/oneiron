@@ -89,10 +89,10 @@ pub(super) fn invalid() -> Error {
     Error::InvalidConfig("invalid project or home room".into())
 }
 pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    serde_json::to_vec(value).map_err(|_| invalid())
+    rmp_serde::to_vec_named(value).map_err(|_| invalid())
 }
 pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|_| invalid())
+    rmp_serde::from_slice(bytes).map_err(|_| invalid())
 }
 fn home_room_id(project: EntityId) -> EntityId {
     let hash = blake3::hash(&[b"project.home_room.v1/", project.as_bytes().as_slice()].concat());
