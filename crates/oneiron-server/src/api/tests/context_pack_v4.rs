@@ -15,18 +15,24 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
     let summary = seeded_test_entity_id(0x0012_6303);
     let body_a = rmp_serde::to_vec_named(&json!({
         "txt": "eiri v4 needle alpha",
+        "scopeProjectId": turn_a.to_hex(),
+        "sensitivity": "private",
         "spkr": "user",
         "at": 700_u64
     }))
     .expect("encode turn body");
     let body_b = rmp_serde::to_vec_named(&json!({
         "txt": "eiri v4 needle beta",
+        "scopeProjectId": turn_b.to_hex(),
+        "sensitivity": "private",
         "spkr": "assistant",
         "at": 701_u64
     }))
     .expect("encode turn body");
     let summary_body = rmp_serde::to_vec_named(&json!({
-        "txt": "eiri v4 needle summary"
+        "txt": "eiri v4 needle summary",
+        "scopeProjectId": summary.to_hex(),
+        "sensitivity": "private"
     }))
     .expect("encode summary body");
 
@@ -190,7 +196,7 @@ async fn context_board_asset_text_consumer_hydrates_asset_text_by_ref() {
     let asset_text = seeded_test_entity_id(0x1482_0001);
     // ONE-1517: principal_ref tokens assemble under AbsenceClamp, so the
     // consumer principal is a known contact whose disclosure scope
-    // allowlists the ASSET_TEXT entity — the intended scoped-read shape.
+    // covers the ASSET_TEXT project Scope — the intended scoped-read shape.
     let principal_contact = seeded_test_entity_id(0x1482_0002);
     let principal_ref = principal_contact.to_hex();
     seed_counterparty_contact(
@@ -202,6 +208,8 @@ async fn context_board_asset_text_consumer_hydrates_asset_text_by_ref() {
     let needle = "one1482 text-only asset transcript";
     let body = rmp_serde::to_vec_named(&json!({
         "txt": needle,
+        "scopeProjectId": asset_text.to_hex(),
+        "sensitivity": "private",
         "source_asset_ref": "asset-source-one1482"
     }))
     .expect("encode ASSET_TEXT body");

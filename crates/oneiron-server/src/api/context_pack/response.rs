@@ -1,7 +1,8 @@
 //! Response DTOs and engine-to-wire mapping functions for context-pack assembly.
 
 use super::super::{
-    MemoriesRequest, VadPayload, advance_memories_cursor, core_engine_error, hex_bytes,
+    CoreReactionSignal, MemoriesRequest, VadPayload, advance_memories_cursor, core_engine_error,
+    hex_bytes,
 };
 use super::controls::{ContextPackBudgetControls, CoreDisclosureAssembly, CoreInterlocutorStamp};
 use super::resolve::{ContextPackResponseLimits, apply_context_pack_response_limits};
@@ -228,6 +229,12 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     empty: Option<Value>,
+    /// Reaction signals slot (CONV-09): `reaction.put` / `reaction.revoked`
+    /// rows for the requested person at/after `since`. Present only when the
+    /// request carried a `reaction_signals` block.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Vec<CoreReactionSignal>>)]
+    pub(super) reaction_signals: Option<Vec<super::super::CoreReactionSignal>>,
 }
 
 pub(crate) async fn run_context_pack_builder(
@@ -361,6 +368,7 @@ pub(crate) fn core_context_pack_response(
         empty: pack
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
+        reaction_signals: None,
     }
 }
 

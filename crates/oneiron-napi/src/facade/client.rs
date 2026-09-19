@@ -153,3 +153,51 @@ impl NativeClient {
             .collect()
     }
 }
+
+// The four original DTO-converting methods above remain the numeric/timestamp
+// boundary. All other methods use engine JSON DTOs without a second dialect.
+// This token accumulator emits one napi impl so the proc macro sees every
+// method after macro_rules expansion. No exported engine macro is needed.
+macro_rules! facade_verb_table {
+    ($($variant:ident => {
+        method: $method:ident, wire: $wire:literal, sdk: $sdk:literal, scope: $scope:ident,
+        request: $request:ty, response: $response:ty, doc: $doc:literal,
+    })+) => {
+        facade_napi_methods! { @collect [] $($variant $method $sdk $doc;)+ }
+        #[cfg(test)]
+        #[test]
+        fn generated_napi_census_has_a_method_for_every_engine_row() {
+            let actual = [$($sdk,)+];
+            let expected = oneiron::memory::verb_table::FacadeVerb::ALL.map(|verb| verb.sdk_name());
+            assert_eq!(actual, expected);
+            // References prove expansion emitted real methods, not only names.
+            $(let _ = NativeClient::$method;)+
+        }
+        #[napi]
+        impl NativeClient {
+            /// Complete SDK census generated from the engine table.
+            #[napi]
+            pub fn facade_verbs(&self) -> Vec<String> { vec![$($sdk.to_owned(),)+] }
+        }
+    };
+}
+macro_rules! facade_napi_methods {
+    (@collect [$($out:tt)*]) => { #[napi] impl NativeClient { $($out)* } };
+    (@collect [$($out:tt)*] Witness $method:ident $sdk:literal $doc:literal; $($rest:tt)*) => { facade_napi_methods!(@collect [$($out)*] $($rest)*); };
+    (@collect [$($out:tt)*] ClaimUpsert $method:ident $sdk:literal $doc:literal; $($rest:tt)*) => { facade_napi_methods!(@collect [$($out)*] $($rest)*); };
+    (@collect [$($out:tt)*] Recall $method:ident $sdk:literal $doc:literal; $($rest:tt)*) => { facade_napi_methods!(@collect [$($out)*] $($rest)*); };
+    (@collect [$($out:tt)*] Receipts $method:ident $sdk:literal $doc:literal; $($rest:tt)*) => { facade_napi_methods!(@collect [$($out)*] $($rest)*); };
+    (@collect [$($out:tt)*] $variant:ident $method:ident $sdk:literal $doc:literal; $($rest:tt)*) => {
+        facade_napi_methods!(@collect [$($out)*
+            #[doc = $doc]
+            #[napi(js_name = $sdk)]
+            pub fn $method(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+                self.inner.call(oneiron::memory::verb_table::FacadeVerb::$variant, request).map_err(facade_error)
+            }
+        ] $($rest)*);
+    };
+}
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../oneiron/src/memory/verb_table/table.rs"
+));

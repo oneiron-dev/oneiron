@@ -4026,6 +4026,32 @@
               "kind"
             ],
             "type": "object"
+          },
+          {
+            "type": "object",
+            "required": [
+              "target_ref",
+              "by_ref",
+              "glyph",
+              "kind"
+            ],
+            "properties": {
+              "by_ref": {
+                "type": "string"
+              },
+              "glyph": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "reaction"
+                ]
+              },
+              "target_ref": {
+                "type": "string"
+              }
+            }
           }
         ]
       },

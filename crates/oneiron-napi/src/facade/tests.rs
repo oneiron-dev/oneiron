@@ -476,8 +476,13 @@ fn forget_drains_all_active_matches_beyond_one_page() {
             "seeded claims are all active before forget"
         );
 
-        let receipts =
-            forget_active_matches(&facade, &subject.to_hex(), "profile.city").expect("forget");
+        let receipts = facade
+            .forget(&oneiron::memory::verb_table::ForgetSelector {
+                short_ref: None,
+                subject_ref: Some(subject.to_hex()),
+                predicate: Some("profile.city".into()),
+            })
+            .expect("forget");
         assert_eq!(
             receipts.len(),
             ACTIVE_CLAIMS,

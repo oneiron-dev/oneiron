@@ -288,6 +288,10 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional interlocutor presence controls (OF-365 ILD-1).
     #[serde(default)]
     pub(super) interlocutors: Option<CoreInterlocutorControls>,
+    /// Optional reaction-signals slot (CONV-09): reactions on `person`'s
+    /// messages at/after `since`, surfaced as "signals since your last turn".
+    #[serde(default, rename = "reaction_signals", alias = "reactionSignals")]
+    pub(super) reaction_signals: Option<super::super::ContextPackReactionSignals>,
 }
 
 impl CoreContextPackRequest {

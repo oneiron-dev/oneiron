@@ -32,8 +32,8 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const SECRET: &str = "campaign-surface-oracle-secret";
-const CAMPAIGN_TYPE_BYTE: u8 = 107;
-const SAVED_QUERY_TYPE_BYTE: u8 = 108;
+const CAMPAIGN_TYPE_BYTE: u8 = 108;
+const SAVED_QUERY_TYPE_BYTE: u8 = 109;
 
 // ---------------------------------------------------------------------------
 // Fixtures

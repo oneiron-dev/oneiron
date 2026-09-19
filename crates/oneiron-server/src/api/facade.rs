@@ -8,12 +8,7 @@
 //! types ARE the engine DTOs — so this projection and the in-process N-API
 //! binding cannot drift into two dialects of the same verb.
 //!
-//! L1 ships the canonical quickstart, which is four calls: `witness` →
-//! `claim_upsert` → `recall` → `receipts`. The rest of the §HEAD-CONTRACT
-//! catalog is deliberately ABSENT rather than stubbed. A `501` stub is still a
-//! registered row: it enters the route census, a client's catalog test counts
-//! it as shipped, and the only thing it proves is that somebody meant to write
-//! the verb. An absent route says the same thing without the false positive.
+//! Routes and typed dispatch come from the engine verb table.
 //!
 //! ERRORS are the facade's own, not the server's closed
 //! [`crate::error::ErrorCode`] enum.
@@ -35,20 +30,18 @@ use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::SyncServer;
-use oneiron::memory::caps::{
-    MAX_REMOTE_REQUEST_BYTES, check_claim_input, check_limit, check_query, check_witness_turn,
-};
+use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+use oneiron::memory::verb_table::{FacadeScope, FacadeVerb};
 use oneiron::memory::{
-    ClaimInput, CommitReceipt, Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
-    MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED,
-    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
-    WitnessReceipt, WitnessTurn,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
+    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -59,123 +52,41 @@ use oneiron::{EdgeActorClass, EntityId};
 /// property of the facade projection and no other route's body handling moves.
 const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 
-/// `recall`'s default result count, per §HEAD-CONTRACT.
-const FACADE_DEFAULT_RECALL_LIMIT: usize = 10;
-
-/// `receipts`'s default row count, per §HEAD-CONTRACT.
-const FACADE_DEFAULT_RECEIPTS_LIMIT: usize = 100;
-
-/// The facade route table.
-///
-/// Exactly one row per verb, all `POST`: the read verbs carry structured
-/// request bodies (`recall` has five inputs), and `/v1/core`'s own read
-/// routes — `/query`, `/context-pack`, `/hydrate` — already post their
-/// requests for the same reason. One method per verb also keeps the route
-/// census a flat list a contract test can compare against the catalog.
+/// One concrete POST route per engine table row, not a wildcard endpoint.
 pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/witness", post(facade_witness))
-        .route("/claim_upsert", post(facade_claim_upsert))
-        .route("/recall", post(facade_recall))
-        .route("/receipts", post(facade_receipts))
-        .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+    let mut router = Router::new();
+    for verb in FacadeVerb::ALL {
+        router = router.route(
+            &format!("/{}", verb.wire_name()),
+            post(
+                move |auth: CoreAuth,
+                      State(server): State<Arc<SyncServer>>,
+                      payload: Result<Json<serde_json::Value>, JsonRejection>| async move {
+                    facade_dispatch(auth, server, verb, payload)
+                },
+            ),
+        );
+    }
+    router.layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
 }
 
-/// `POST /v1/core/facade/witness` → `Memory::witness`.
-async fn facade_witness(
+fn facade_dispatch(
     auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WitnessTurn>, JsonRejection>,
-) -> Result<Json<WitnessReceipt>, FacadeApiError> {
-    auth.require(CoreScope::Write)?;
-    let turn = facade_json(payload)?;
-    check_witness_turn(&turn)?;
+    server: Arc<SyncServer>,
+    verb: FacadeVerb,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(match verb.scope() {
+        FacadeScope::Read => CoreScope::Read,
+        FacadeScope::Write => CoreScope::Write,
+    })?;
+    let request = verb.request(facade_json(payload)?)?;
     let (actor, actor_class) = facade_actor(&auth)?;
-    let receipt = server.vault.memory(actor, actor_class).witness(&turn)?;
-    Ok(Json(receipt))
-}
-
-/// `POST /v1/core/facade/claim_upsert` → `Memory::claim_upsert`.
-async fn facade_claim_upsert(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ClaimInput>, JsonRejection>,
-) -> Result<Json<CommitReceipt>, FacadeApiError> {
-    auth.require(CoreScope::Write)?;
-    let claim = facade_json(payload)?;
-    check_claim_input(&claim)?;
-    let (actor, actor_class) = facade_actor(&auth)?;
-    let receipt = server
-        .vault
-        .memory(actor, actor_class)
-        .claim_upsert(&claim)?;
-    Ok(Json(receipt))
-}
-
-/// `recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
-///
-/// Every field but `query` is optional and defaults to the contract's default,
-/// so an omitting client and a spelling-everything client reach the same
-/// engine call.
-#[derive(Debug, Deserialize)]
-struct FacadeRecallRequest {
-    query: String,
-    #[serde(default)]
-    effort: Option<Effort>,
-    #[serde(default)]
-    scope: Option<RecallScope>,
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    format: Option<String>,
-}
-
-/// `POST /v1/core/facade/recall` → `Memory::recall`.
-///
-/// The lease argument is `None` and is not a client input: no lease-issuer
-/// exists, and a bearer slip is not one. `Effort::Deep` therefore returns the
-/// engine's own `LEASE_REQUIRED`, which this projection forwards as that exact
-/// code — the bindings neither mint nor simulate a lease.
-async fn facade_recall(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FacadeRecallRequest>, JsonRejection>,
-) -> Result<Json<MemoryPack>, FacadeApiError> {
-    auth.require(CoreScope::Read)?;
-    let request = facade_json(payload)?;
-    check_query(&request.query)?;
-    let limit = facade_limit(request.limit, FACADE_DEFAULT_RECALL_LIMIT)?;
-    let (actor, actor_class) = facade_actor(&auth)?;
-    let pack = server.vault.memory(actor, actor_class).recall(
-        &request.query,
-        request.effort.unwrap_or(Effort::Standard),
-        &request.scope.unwrap_or_default(),
-        limit,
-        request.format.as_deref(),
-        None,
-    )?;
-    Ok(Json(pack))
-}
-
-/// `receipts`'s one input.
-#[derive(Debug, Deserialize)]
-struct FacadeReceiptsRequest {
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-/// `POST /v1/core/facade/receipts` → `Memory::receipts`.
-async fn facade_receipts(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FacadeReceiptsRequest>, JsonRejection>,
-) -> Result<Json<Vec<MemoryReceipt>>, FacadeApiError> {
-    auth.require(CoreScope::Read)?;
-    let request = facade_json(payload)?;
-    let limit = facade_limit(request.limit, FACADE_DEFAULT_RECEIPTS_LIMIT)?;
-    let (actor, actor_class) = facade_actor(&auth)?;
-    let receipts = server.vault.memory(actor, actor_class).receipts(limit)?;
-    Ok(Json(receipts))
+    Ok(Json(
+        request
+            .run(&server.vault.memory(actor, actor_class))?
+            .body()?,
+    ))
 }
 
 /// Resolves the write identity every facade verb runs as, from the CREDENTIAL
@@ -242,13 +153,6 @@ fn facade_json<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, FacadeAp
             ["Send a JSON body matching this verb's documented input."],
         )
     })
-}
-
-/// Applies the verb default and the shared facade row-count ceiling.
-fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, FacadeApiError> {
-    let limit = requested.unwrap_or(default);
-    check_limit(limit)?;
-    Ok(limit)
 }
 
 /// A facade failure on its way to the wire.

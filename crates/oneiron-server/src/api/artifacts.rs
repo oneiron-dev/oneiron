@@ -44,6 +44,7 @@ pub(crate) const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
 pub(crate) struct ArtifactServeQuery {
     channel: Option<String>,
     fork_hash: Option<String>,
+    version: Option<u64>,
 }
 
 pub(crate) async fn serve_artifact_root(
@@ -77,7 +78,27 @@ pub(crate) fn serve_artifact_file(
     query: ArtifactServeQuery,
     request_headers: &HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
-    let selector = artifact_snapshot_selector(&query)?;
+    let selector = if let Some(version) = query.version {
+        if query.channel.is_some() || query.fork_hash.is_some() || version == 0 {
+            return Err(ApiError::bad_request(
+                "version must be positive and cannot be combined with channel/forkHash",
+                Some("version"),
+            )
+            .into());
+        }
+        let artifact_id = oneiron::EntityId::from_hex(&artifact).map_err(|_| {
+            ApiError::bad_request(
+                "direct version requires a blob artifact id",
+                Some("artifact"),
+            )
+        })?;
+        oneiron::ArtifactSnapshotSelector::BlobVersion {
+            artifact_id,
+            version,
+        }
+    } else {
+        artifact_snapshot_selector(&query)?
+    };
     let path = normalize_artifact_route_path(route_path);
     let Some(file) = server
         .vault
@@ -190,7 +211,8 @@ pub(crate) fn artifact_file_response(
 pub(crate) fn artifact_cache_control(selector: oneiron::ArtifactSnapshotSelector) -> &'static str {
     match selector {
         oneiron::ArtifactSnapshotSelector::Channel(_) => ARTIFACT_POINTER_CACHE_CONTROL,
-        oneiron::ArtifactSnapshotSelector::ForkHash(_) => ARTIFACT_IMMUTABLE_CACHE_CONTROL,
+        oneiron::ArtifactSnapshotSelector::ForkHash(_)
+        | oneiron::ArtifactSnapshotSelector::BlobVersion { .. } => ARTIFACT_IMMUTABLE_CACHE_CONTROL,
         _ => ARTIFACT_POINTER_CACHE_CONTROL,
     }
 }
@@ -220,6 +242,10 @@ pub(crate) fn artifact_content_type(path: &str) -> &'static str {
         Some("webp") => "image/webp",
         Some("ico") => "image/x-icon",
         Some("txt") => "text/plain; charset=utf-8",
+        Some("pdf") => "application/pdf",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         _ => "application/octet-stream",
     }
 }

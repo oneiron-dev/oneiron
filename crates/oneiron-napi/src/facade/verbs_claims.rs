@@ -7,8 +7,7 @@ use super::boundary::{boundary_error, facade_error, ts_from_engine};
 use super::bridge::ActorScopedVault;
 use super::convert::{
     claim_view_from_engine, commit_receipt_from_engine, entity_view_from_engine,
-    forget_active_matches, gate_receipt_from_engine, witness_receipt_from_engine,
-    witness_turn_to_engine,
+    gate_receipt_from_engine, witness_receipt_from_engine, witness_turn_to_engine,
 };
 use super::dtos::{
     NapiClaimInput, NapiClaimListFilter, NapiClaimView, NapiCommitReceipt, NapiDeleteReceipt,
@@ -66,7 +65,10 @@ impl ActorScopedVault {
     /// NO natural-language parsing on this surface (EF-126 out of chain).
     #[napi]
     pub fn remember(&self, claim: NapiClaimInput) -> napi::Result<NapiCommitReceipt> {
-        self.claim_upsert(claim)
+        let input = claim_input_to_engine(&claim).map_err(facade_error)?;
+        Ok(commit_receipt_from_engine(
+            self.facade()?.remember(&input).map_err(facade_error)?,
+        ))
     }
 
     /// Retracts an active claim by ref.
@@ -83,19 +85,14 @@ impl ActorScopedVault {
     /// `{subjectRef, predicate}` selector (all active matches retract).
     #[napi]
     pub fn forget(&self, selector: NapiForgetSelector) -> napi::Result<Vec<NapiCommitReceipt>> {
-        let facade = self.facade()?;
-        if let Some(short_ref) = &selector.short_ref {
-            let receipt = facade.claim_retract(short_ref).map_err(facade_error)?;
-            return Ok(vec![commit_receipt_from_engine(receipt)]);
-        }
-        let (Some(subject_ref), Some(predicate)) = (&selector.subject_ref, &selector.predicate)
-        else {
-            return Err(boundary_error(
-                "forget selector needs shortRef, or subjectRef + predicate".to_owned(),
-            ));
-        };
-        let receipts =
-            forget_active_matches(&facade, subject_ref, predicate).map_err(facade_error)?;
+        let receipts = self
+            .facade()?
+            .forget(&oneiron::memory::verb_table::ForgetSelector {
+                short_ref: selector.short_ref,
+                subject_ref: selector.subject_ref,
+                predicate: selector.predicate,
+            })
+            .map_err(facade_error)?;
         Ok(receipts
             .into_iter()
             .map(commit_receipt_from_engine)

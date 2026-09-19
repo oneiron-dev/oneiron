@@ -87,6 +87,7 @@ pub(super) fn outbound_schedule_context_to_engine(
 /// Page size for `forget`'s active-claim drain. `forget` re-lists `active`
 /// after each page, so this bounds only per-iteration work, never the total
 /// number of claims retracted.
+#[cfg(test)]
 pub(super) const FORGET_PAGE_SIZE: usize = 64;
 
 /// Blob content ceiling for the N-API boundary: 32 MiB raw (double the

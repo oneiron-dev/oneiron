@@ -1,3 +1,4 @@
+mod disclosure_scope_fixture;
 use super::*;
 
 mod depth_quality;
@@ -25,6 +26,7 @@ mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
 mod mcp_write_guards;
+mod reactions;
 mod reactive;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
@@ -844,6 +846,8 @@ pub(super) fn seed_text_turn(server: &SyncServer, text: &str) -> oneiron::Entity
     let turn = oneiron::EntityId::now();
     let body = rmp_serde::to_vec_named(&json!({
         "txt": text,
+        "scopeProjectId": turn.to_hex(),
+        "sensitivity": "private",
         "spkr": "user",
         "at": 100_u64,
     }))
@@ -872,12 +876,9 @@ pub(super) fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
-        .expect("disclosure scope");
-    server
-        .vault
-        .set_counterparty_disclosure_scope(&contact_id, &scope)
-        .expect("set disclosure scope");
+    let scope = disclosure_scope_fixture::projects(entities);
+    disclosure_scope_fixture::authorize(&server.vault, &contact_id, &scope)
+        .expect("set owner-authorized disclosure scope");
 }
 
 // ─── Surface events (ONE-1259) ───────────────────────────────────────────────

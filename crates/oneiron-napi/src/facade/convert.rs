@@ -1,14 +1,11 @@
-//! DTO to/from engine converters plus the forget paging helper.
+//! DTO to/from engine converters.
 
 use oneiron::{
-    CalendarEventView, CalendarSel, ClaimListFilter, Memory, MemoryError, RecallScope,
-    StructuralEdgeSpec, StructuralPutInput, TextIndexField, TimeRange, WitnessAuthor,
-    WitnessMessage, WitnessTurn,
+    CalendarEventView, CalendarSel, RecallScope, StructuralEdgeSpec, StructuralPutInput,
+    TextIndexField, TimeRange, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 
-use super::boundary::{
-    BoundaryResult, FORGET_PAGE_SIZE, ts_from_engine, ts_opt_to_engine, ts_to_engine,
-};
+use super::boundary::{BoundaryResult, ts_from_engine, ts_opt_to_engine, ts_to_engine};
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiClaimView, NapiCommitReceipt,
     NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
@@ -121,34 +118,6 @@ pub(super) fn commit_receipt_from_engine(receipt: oneiron::CommitReceipt) -> Nap
         superseded_short_id: receipt.superseded_short_id,
         receipt_ref: receipt.receipt_ref,
     }
-}
-
-/// Retracts EVERY active claim matching `subject_ref` + `predicate`, not just
-/// the first page. Each retract moves its claim out of the `active`
-/// lifecycle, so re-listing `active` excludes the already-retracted claims and
-/// the loop drains to an empty page with no offset bookkeeping. Engine-typed
-/// so it is unit-testable without the N-API runtime.
-pub(super) fn forget_active_matches(
-    facade: &Memory<'_>,
-    subject_ref: &str,
-    predicate: &str,
-) -> std::result::Result<Vec<oneiron::CommitReceipt>, MemoryError> {
-    let mut receipts = Vec::new();
-    loop {
-        let matches = facade.claim_list(&ClaimListFilter {
-            subject_ref: Some(subject_ref.to_owned()),
-            predicate: Some(predicate.to_owned()),
-            lifecycle: Some("active".to_owned()),
-            limit: FORGET_PAGE_SIZE,
-        })?;
-        if matches.is_empty() {
-            break;
-        }
-        for claim in matches {
-            receipts.push(facade.claim_retract(&claim.claim_ref)?);
-        }
-    }
-    Ok(receipts)
 }
 
 pub(super) fn entity_view_from_engine(view: oneiron::EntityView) -> BoundaryResult<NapiEntityView> {

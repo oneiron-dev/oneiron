@@ -1,3 +1,11 @@
+import { FacadeClient } from "./facade";
+import type { AskRequest, SearchRequest, ExecuteRequest, QueryBuilder, ContextPackBuilder } from "./facade";
+import type { FacadeWireName } from "./catalog";
+export { FACADE_CATALOG } from "./catalog";
+export type { FacadeWireName, FacadeSdkName } from "./catalog";
+export { FacadeClient, QueryBuilder, ContextPackBuilder } from "./facade";
+export type { FacadeHost, FacadeMethods, AskRequest, SearchRequest, ExecuteRequest, FacadeInstruction, QueryPlan, ContextPackPlan, ContextPackDepth, ContextPackBudget } from "./facade";
+
 /**
  * `@oneiron/client` — one hand-written thin HTTP client for the Oneiron API.
  *
@@ -125,6 +133,9 @@ export class HttpBaseClient {
   readonly baseUrl: URL;
   readonly fetch: typeof globalThis.fetch;
   readonly headers: Headers;
+  get facade(): FacadeClient<Promise<Response>> {
+    return new FacadeClient({ call: (verb, body) => this.callFacade(verb, body) });
+  }
 
   constructor(options: HttpBaseClientOptions) {
     this.baseUrl = new URL(
@@ -233,4 +244,16 @@ export class HttpBaseClient {
       body: JSON.stringify(request.body),
     });
   }
+  /** Every generated facade call sends engine DTOs and returns the raw response. */
+  callFacade(verb: FacadeWireName, body: unknown): Promise<Response> {
+    return this.request(`/v1/core/facade/${encodeURIComponent(verb)}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+  }
+  search(request: SearchRequest): Promise<Response> { return this.facade.search(request); }
+  execute(request: ExecuteRequest): Promise<Response> { return this.facade.execute(request); }
+  ask(request: AskRequest): Promise<Response> { return this.facade.ask(request); }
+  query(): QueryBuilder<Promise<Response>> { return this.facade.query(); }
+  contextPack(): ContextPackBuilder<Promise<Response>> { return this.facade.contextPack(); }
+
 }

@@ -621,3 +621,101 @@ async fn local_artifact_route_serves_preview_pointer_and_rejects_ambiguous_selec
     let error: Value = serde_json::from_slice(&body).expect("error JSON");
     assert_error_envelope(&error, "BAD_REQUEST");
 }
+
+#[tokio::test]
+async fn local_artifact_route_serves_pinned_blob_exports() {
+    use oneiron::artifact_hosting::{ArtifactPinnedVersion, ArtifactPublishVerbRequest};
+    let (_dir, server) = test_server();
+    let actor = oneiron::EntityId::now();
+    let id = oneiron::EntityId::now();
+    let at = oneiron::TimeRange { start: 1, end: 1 };
+    server
+        .vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            at,
+            1,
+            b"publisher",
+        )
+        .unwrap();
+    server
+        .vault
+        .put_blob_artifact(
+            &id,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+            at,
+            1,
+        )
+        .unwrap();
+    for bytes in [b"export-one", b"export-two"] {
+        server
+            .vault
+            .append_blob_artifact_version(
+                &id,
+                bytes,
+                &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+                oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
+                at,
+                1,
+            )
+            .unwrap();
+    }
+    server
+        .vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .grant_artifact_publish("report", actor, 2)
+        .unwrap();
+    for (channel, version, intent) in [
+        (
+            oneiron::ArtifactPointerChannel::Published,
+            1,
+            "publish:first",
+        ),
+        (
+            oneiron::ArtifactPointerChannel::Preview,
+            2,
+            "preview:second",
+        ),
+    ] {
+        let result = server
+            .vault
+            .request_artifact_publish(&ArtifactPublishVerbRequest::new(
+                "report",
+                channel,
+                ArtifactPinnedVersion::Blob {
+                    artifact_id: id,
+                    version,
+                },
+                oneiron::outbound::OutboundDispatchActor {
+                    actor_class: "human".into(),
+                    actor_ref: Some(actor.to_hex()),
+                    actor_entity_ref: Some(actor),
+                },
+                intent,
+                3,
+            ))
+            .unwrap();
+        assert!(result.pointer.is_some());
+    }
+    for (url, expected) in [
+        ("/a/report/".to_owned(), b"export-one".as_slice()),
+        (
+            "/a/report/?channel=preview".to_owned(),
+            b"export-two".as_slice(),
+        ),
+        (
+            format!("/a/{}/?version=1", id.to_hex()),
+            b"export-one".as_slice(),
+        ),
+    ] {
+        let (status, headers, bytes) = route_bytes(
+            server.clone(),
+            Request::builder().uri(url).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[CONTENT_TYPE], "application/pdf");
+        assert_eq!(bytes, expected);
+    }
+}

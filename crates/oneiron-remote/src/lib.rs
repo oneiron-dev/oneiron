@@ -10,21 +10,8 @@
 //! engine DTOs, call this client, and convert the result back. Neither of them
 //! branches on backend, holds a route table, or contains an HTTP client.
 //!
-//! # The verb catalog is DECLARED, not implied
-//!
-//! [`FACADE_VERB_CATALOG`] is the ordered, authoritative list of verbs this
-//! SDK ships, and it is the same list the server's `/v1/core/facade` nest
-//! routes and the same list both language export censuses assert against. It
-//! holds the four calls of the canonical quickstart — `witness`,
-//! `claim_upsert`, `recall`, `receipts` — matching the projection L1 landed.
-//!
-//! The remaining §HEAD-CONTRACT verbs are ABSENT rather than stubbed, for the
-//! reason `oneiron-server`'s `api/facade.rs` header already gives: a `501` stub
-//! is still a registered row. It enters the route census, a client's catalog
-//! test counts it as shipped, and the only thing it proves is that somebody
-//! meant to write the verb. Extending the catalog means adding a server
-//! handler, a client row, and both language bindings together — which is a
-//! sequenced follow-on, not a silent partial row here.
+//! The typed engine verb table generates the full facade SDK and wire census.
+//! Use [`OneironClient::facade`] for every typed operation.
 //!
 //! # What this crate never does
 //!
@@ -48,7 +35,6 @@ use oneiron::memory::{
     ClaimInput, CommitReceipt, Effort, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
     WitnessReceipt, WitnessTurn,
 };
-use serde::Serialize;
 
 pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
@@ -75,7 +61,8 @@ pub const DEFAULT_RECEIPTS_LIMIT: usize = 100;
 /// exact slice, so a verb cannot appear in one surface and be forgotten in
 /// another. Every entry is also the wire path segment, which is why the
 /// spelling is the engine's snake_case verb name and not the JavaScript one.
-pub const FACADE_VERB_CATALOG: [&str; 4] = ["witness", "claim_upsert", "recall", "receipts"];
+pub const FACADE_VERB_CATALOG: [&str; oneiron::memory::verb_table::FacadeVerb::COUNT] =
+    oneiron::memory::verb_table::FacadeVerb::WIRE_NAMES;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///
@@ -153,23 +140,6 @@ impl fmt::Debug for OneironClient {
         };
         write!(formatter, "OneironClient {{ backend: {backend} }}")
     }
-}
-
-/// `recall`'s wire request, matching the server handler's body exactly.
-#[derive(Serialize)]
-struct RecallRequest<'a> {
-    query: &'a str,
-    effort: Effort,
-    scope: &'a RecallScope,
-    limit: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<&'a str>,
-}
-
-/// `receipts`'s wire request.
-#[derive(Serialize)]
-struct ReceiptsRequest {
-    limit: usize,
 }
 
 impl OneironClient {
@@ -299,20 +269,14 @@ impl OneironClient {
     pub fn witness(&self, turn: &WitnessTurn) -> Result<WitnessReceipt, MemoryError> {
         self.ensure_dispatch_pid()?;
         check_witness_turn(turn)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().witness(turn),
-            Backend::Remote(remote) => remote.call("witness", turn),
-        }
+        self.facade().witness(turn)
     }
 
     /// Upserts one claim through the gated claim-candidate path.
     pub fn claim_upsert(&self, claim: &ClaimInput) -> Result<CommitReceipt, MemoryError> {
         self.ensure_dispatch_pid()?;
         check_claim_input(claim)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().claim_upsert(claim),
-            Backend::Remote(remote) => remote.call("claim_upsert", claim),
-        }
+        self.facade().claim_upsert(claim)
     }
 
     /// Recalls a memory pack.
@@ -332,30 +296,92 @@ impl OneironClient {
         self.ensure_dispatch_pid()?;
         check_query(query)?;
         check_limit(limit)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded
-                .memory()
-                .recall(query, effort, scope, limit, format, None),
-            Backend::Remote(remote) => remote.call(
-                "recall",
-                &RecallRequest {
-                    query,
-                    effort,
-                    scope,
-                    limit,
-                    format,
-                },
-            ),
-        }
+        self.facade()
+            .recall(&oneiron::memory::verb_table::RecallRequestDto {
+                query: query.to_owned(),
+                effort: Some(effort),
+                scope: Some(scope.clone()),
+                limit: Some(limit),
+                format: format.map(str::to_owned),
+            })
     }
 
     /// Lists governance receipts, newest first.
     pub fn receipts(&self, limit: usize) -> Result<Vec<MemoryReceipt>, MemoryError> {
         self.ensure_dispatch_pid()?;
         check_limit(limit)?;
+        self.facade()
+            .receipts(&oneiron::memory::verb_table::LimitRequest { limit })
+    }
+}
+
+impl oneiron::memory::verb_table::FacadeTransport for OneironClient {
+    fn call(
+        &self,
+        verb: oneiron::memory::verb_table::FacadeVerb,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        // Decode before touching either backend. The server repeats validation.
+        let request = verb.request(body)?;
         match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().receipts(limit),
-            Backend::Remote(remote) => remote.call("receipts", &ReceiptsRequest { limit }),
+            Backend::Embedded(embedded) => request.run(&embedded.memory())?.body(),
+            Backend::Remote(remote) => remote.call(verb.wire_name(), &request.body()?),
         }
+    }
+}
+
+impl OneironClient {
+    /// The entire typed SDK, generated from the engine verb table.
+    pub fn facade(&self) -> oneiron::memory::verb_table::FacadeClient<&Self> {
+        oneiron::memory::verb_table::FacadeClient(self)
+    }
+    /// Runs one table operation. Language bridges pass engine DTOs verbatim.
+    pub fn call(
+        &self,
+        verb: oneiron::memory::verb_table::FacadeVerb,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, MemoryError> {
+        oneiron::memory::verb_table::FacadeTransport::call(self, verb, body)
+    }
+    /// One engine remember, not a client-composed write.
+    pub fn remember(&self, input: &ClaimInput) -> Result<CommitReceipt, MemoryError> {
+        self.facade().remember(input)
+    }
+    /// One engine forget, not a client-side list/retract loop.
+    pub fn forget(
+        &self,
+        selector: &oneiron::memory::verb_table::ForgetSelector,
+    ) -> Result<Vec<CommitReceipt>, MemoryError> {
+        self.facade().forget(selector)
+    }
+    /// Searches the typed SDK's operation documentation.
+    pub fn search(
+        &self,
+        request: &oneiron::memory::verb_table::SearchRequest,
+    ) -> Result<Vec<oneiron::memory::verb_table::SearchHit>, MemoryError> {
+        self.facade().search(request)
+    }
+    /// Runs a bounded typed read program in one host call.
+    pub fn execute(
+        &self,
+        request: &oneiron::memory::verb_table::ExecuteRequest,
+    ) -> Result<oneiron::memory::verb_table::ExecuteResponse, MemoryError> {
+        self.facade().execute(request)
+    }
+    /// Answers from admitted evidence at the extractive tier.
+    pub fn ask(
+        &self,
+        request: &oneiron::memory::verb_table::AskRequest,
+    ) -> Result<oneiron::memory::ChatResponse, MemoryError> {
+        self.facade().ask(request)
+    }
+    /// Starts a query locally. Only `run` calls the embedded or connected host.
+    pub fn query(&self) -> oneiron::memory::verb_table::QueryBuilder<'_, Self> {
+        oneiron::memory::verb_table::QueryBuilder::new(self)
+    }
+    /// Starts a context-pack plan locally. Only `run` calls the host.
+    pub fn context_pack(&self) -> oneiron::memory::verb_table::ContextPackBuilder<'_, Self> {
+        oneiron::memory::verb_table::ContextPackBuilder::new(self)
     }
 }

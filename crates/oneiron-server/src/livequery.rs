@@ -20,7 +20,9 @@ mod reads;
 mod routing;
 mod wire;
 use error::AppError;
-use reads::{Read, read_method};
+use reads::Read;
+#[cfg(test)]
+use reads::read_method;
 
 /// RPC ids never index the subscription table.
 #[derive(Debug, Deserialize)]
@@ -68,7 +70,6 @@ fn rpc_error(request_id: u64, error: AppError) -> Result<Vec<Vec<u8>>, ProtocolE
 
 /// Both identity claims come from the credential, exactly as on the HTTP facade.
 fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory<'a>, AppError> {
-    auth.require(CoreScope::Read)?;
     let principal = auth.principal_ref().ok_or_else(|| {
         AppError::forbidden(
             "facade routes bind writes to an authenticated principal",
@@ -108,11 +109,12 @@ pub(crate) fn bound_rpc(
     request: RpcRequest,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
     let result = (|| {
-        if !read_method(&request.method) {
-            return Err(AppError::bad_request("unknown read RPC", Some("method")));
-        }
-        // HTTP order: scope, request/limit validation, identity, engine call.
-        auth.require(CoreScope::Read)?;
+        let verb = reads::verb(&request.method)
+            .ok_or_else(|| AppError::bad_request("unknown facade RPC", Some("method")))?;
+        auth.require(match verb.scope() {
+            oneiron::memory::verb_table::FacadeScope::Read => CoreScope::Read,
+            oneiron::memory::verb_table::FacadeScope::Write => CoreScope::Write,
+        })?;
         let read = Read::parse(&request.method, request.params)?;
         let memory = bound_memory(vault, auth)?;
         read.run(&memory)

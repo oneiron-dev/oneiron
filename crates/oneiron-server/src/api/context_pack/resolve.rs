@@ -155,10 +155,18 @@ pub(crate) async fn run_context_pack(
             retrieval: retrieval_budget,
         },
         memories,
-        disclosure,
+        disclosure.clone(),
     )
     .await?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
+    if let Some(slot) = req.reaction_signals.as_ref() {
+        response.reaction_signals = Some(resolve_context_pack_reaction_signals(
+            server,
+            auth,
+            slot,
+            disclosure.as_ref(),
+        )?);
+    }
     Ok((response, memories, cursor))
 }
 
@@ -478,4 +486,59 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     } else {
         pack.empty = None;
     }
+}
+
+/// Resolves the CONV-09 reaction-signals slot: reactions on `person`'s
+/// messages at/after `since` ("signals since your last turn").
+fn resolve_context_pack_reaction_signals(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    slot: &super::super::ContextPackReactionSignals,
+    disclosure: Option<&oneiron::DisclosureContext>,
+) -> Result<Vec<super::super::CoreReactionSignal>, ApiError> {
+    use super::super::{CoreReactionSignal, parse_entity_id_param};
+    let person = match slot.person.as_deref() {
+        Some(reference) => parse_entity_id_param(reference, "reaction_signals.person")?,
+        None => match auth.principal_ref() {
+            Some(reference) => parse_entity_id_param(reference, "reaction_signals.person")?,
+            None => {
+                return Err(ApiError::bad_request(
+                    "reaction_signals.person is required without a principal_ref credential",
+                    Some("reaction_signals.person"),
+                ));
+            }
+        },
+    };
+    if let Some(principal) = auth.principal_ref() {
+        if parse_entity_id_param(principal, "principal_ref")? != person {
+            return Err(ApiError::forbidden_scope(
+                "reaction inbox belongs to the bound principal",
+            ));
+        }
+    } else if !auth.is_owner_grade() {
+        return Err(ApiError::forbidden_scope(
+            "reaction signals require a bound principal",
+        ));
+    }
+    // An un-narrowed owner credential may name an inbox explicitly. It still
+    // receives the same roster/Scope-filtered signals as the assembled pack.
+    let signals = server
+        .vault
+        .reactions_since_with_disclosure(&person, slot.since.unwrap_or(0), disclosure)
+        .map_err(|error| {
+            tracing::error!(error = %error, "context-pack reaction signals failed");
+            core_engine_error("context-pack reaction signals failed", error)
+        })?;
+    Ok(signals
+        .into_iter()
+        .map(|signal| CoreReactionSignal {
+            kind: signal.kind.as_str().to_owned(),
+            reaction: signal.reaction,
+            message: signal.message,
+            by: signal.by,
+            glyph: signal.glyph,
+            at: signal.at,
+            recorded_at: signal.recorded_at,
+        })
+        .collect())
 }

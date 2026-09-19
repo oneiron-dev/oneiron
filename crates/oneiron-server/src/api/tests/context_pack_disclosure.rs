@@ -211,14 +211,7 @@ async fn core_context_pack_owner_present_false_narrows_owner_session() {
             "third_parties": [{ "label": "guest", "claimed_owner": true }]
         }
     });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
+    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
     assert_eq!(status, StatusCode::OK);
     let stamps = body["interlocutors"].as_array().expect("stamps echoed");
     assert_eq!(stamps.len(), 1, "narrowing removes the owner entry");
@@ -462,7 +455,7 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
 }
 
 #[tokio::test]
-async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
+async fn core_context_pack_supervised_path_carries_notice_without_bypassing_scope() {
     let (_dir, server) = interlocutor_test_server();
     let identity_ref = seeded_test_entity_id(0x1517_0011);
     let contact_id = seeded_test_entity_id(0x1517_0012);
@@ -503,7 +496,7 @@ async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
         .iter()
         .filter_map(|entity| entity["id"].as_str())
         .any(|id| id == diary_id);
-    assert!(found, "supervised mode keeps Tier B present");
+    assert!(!found, "owner presence cannot widen the contact clearance");
 }
 
 #[tokio::test]
@@ -520,14 +513,7 @@ async fn core_context_pack_n4_spoofed_owner_claim_stays_absence_clamped() {
             "third_parties": [{ "label": "it's me", "claimed_owner": true }]
         }
     });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
+    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["disclosure"]["mode"], Value::from("absence_clamp"));
     let stamps = body["disclosure"]["interlocutors"]
@@ -600,22 +586,15 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
             "entities": [diary.to_hex()]
         }
     });
-    let (clean_status, clean_body) = core_json(
+    let (clean_status, clean_body) = owner_json(
         server.clone(),
         "POST",
         "/v1/core/context-pack",
-        "core:read",
         Some(&clean),
     )
     .await;
-    let (smuggled_status, smuggled_body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&smuggled),
-    )
-    .await;
+    let (smuggled_status, smuggled_body) =
+        owner_json(server, "POST", "/v1/core/context-pack", Some(&smuggled)).await;
     assert_eq!(clean_status, StatusCode::OK);
     assert_eq!(smuggled_status, StatusCode::OK);
     let party_id = party.to_hex();
@@ -808,6 +787,28 @@ async fn core_context_pack_scope_only_token_is_clamped_and_cannot_assert_owner_p
     assert!(
         body["results"].as_array().expect("results").is_empty(),
         "Tier-B memory must not reach a delegated read-only token: {body:?}"
+    );
+
+    let identity_ref = seeded_test_entity_id(0x1517_0061);
+    let contact_id = seeded_test_entity_id(0x1517_0062);
+    seed_counterparty_contact(&server, contact_id, identity_ref, "cleared@example.com");
+    seed_disclosure_scope(&server, contact_id, vec![diary]);
+    let asserted_contact = json!({
+        "query": "needle25",
+        "interlocutors": { "third_parties": [{ "contact_ref": contact_id.to_hex() }] }
+    });
+    let (status, body) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&asserted_contact),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["results"].as_array().expect("results").is_empty(),
+        "a supplied cleared contact must not identify the unknown reader"
     );
 
     // ...and it cannot buy the supervised path back by asserting presence.

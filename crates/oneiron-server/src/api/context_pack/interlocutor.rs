@@ -77,6 +77,14 @@ pub(crate) fn resolve_core_interlocutor_set(
             }
         };
         parties.push(party);
+    } else if !auth.is_owner_grade() {
+        // A scoped bearer is a present reader even without a bound identity.
+        // Do not confuse that unknown party with the genuinely empty roster
+        // whose meet is TOP. Caller-supplied contacts cannot identify it.
+        parties.push(oneiron::InterlocutorPartyInput::UnknownLabel {
+            label: "unidentified scoped principal".to_owned(),
+            claimed_owner: false,
+        });
     }
 
     // Owner presence is a conjunction, never a request assertion: the

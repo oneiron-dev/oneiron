@@ -38,14 +38,6 @@ impl AppError {
         Self::new(oneiron::memory::MEMORY_CODE_FORBIDDEN, message, suggestions)
     }
 
-    pub(super) fn invalid_params() -> Self {
-        Self::new(
-            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
-            "invalid JSON request body",
-            ["Send a JSON body matching this verb's documented input."],
-        )
-    }
-
     pub(super) fn bad_request(message: impl Into<String>, field: Option<&str>) -> Self {
         ApiError::bad_request(message, field).into()
     }

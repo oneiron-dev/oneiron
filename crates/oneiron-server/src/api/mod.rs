@@ -115,6 +115,7 @@ mod params;
 // consumers), so the non-test build sees a contract with no caller — the
 // `protocol::close_codes` posture.
 mod context_board;
+mod reactions;
 #[allow(dead_code)]
 mod reactive;
 mod run_tree;
@@ -146,6 +147,7 @@ use self::params::{
     default_limit, has_json_content_type, hex_bytes, json_payload, parse_entity_id_param,
     parse_optional_entity_id, query_params, unix_seconds_now,
 };
+pub(crate) use self::reactions::*;
 pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
 use self::scoped_auth::{check_api_auth, scoped_read_for_core_auth, scoped_read_for_legacy_api};
@@ -184,6 +186,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .route("/turns/annotate", post(annotate_turn_vad))
         .route("/surface-events", post(submit_core_surface_event))
+        .route(
+            "/conversations/{conversation_id}/records/{message_id}/reactions",
+            post(toggle_conversation_message_reaction),
+        )
         .route_layer(middleware::from_fn_with_state(
             idempotency.clone(),
             idempotency_middleware,
@@ -216,6 +222,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             get(list_core_conversation_turns),
         )
         .route("/turns/{turn_id}", get(get_core_turn))
+        .route(
+            "/conversations/{conversation_id}/records",
+            get(list_conversation_messages),
+        )
+        .route("/persons/{person_id}/reactions", get(list_person_reactions))
         .route("/turns/annotate", get(read_turn_vad_annotation))
         .route(
             "/surface-events/{correlation_id}",

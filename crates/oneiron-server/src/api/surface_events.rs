@@ -104,6 +104,12 @@ impl SurfaceInteractionKindPayload {
 #[schema(example = json!({ "kind": "message" }))]
 pub(crate) enum SurfaceEventActionPayload {
     Message,
+    /// Normalized reaction. Only an authenticated system adapter may submit it.
+    Reaction {
+        target_ref: String,
+        by_ref: String,
+        glyph: String,
+    },
     Interaction {
         /// Interaction the counterparty performed.
         interaction: SurfaceInteractionKindPayload,
@@ -118,6 +124,15 @@ impl SurfaceEventActionPayload {
     fn into_engine(self) -> oneiron::SurfaceEventAction {
         match self {
             Self::Message => oneiron::SurfaceEventAction::Message,
+            Self::Reaction {
+                target_ref,
+                by_ref,
+                glyph,
+            } => oneiron::SurfaceEventAction::Reaction {
+                target_ref,
+                by_ref,
+                glyph,
+            },
             Self::Interaction {
                 interaction,
                 target_ref,
@@ -551,6 +566,26 @@ pub(crate) async fn submit_core_surface_event(
 ) -> Result<SurfaceEventSubmitOutcome, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let req = json_payload(payload)?;
+    if matches!(
+        &req.action,
+        Some(SurfaceEventActionPayload::Reaction { .. })
+    ) {
+        if auth.actor_class() != Some("system") {
+            return Err(
+                ApiError::forbidden_scope("mirrored reactions require a system adapter").into(),
+            );
+        }
+        let principal = auth.principal_ref().ok_or_else(|| {
+            ApiError::forbidden_scope("mirrored reactions require a bound adapter principal")
+        })?;
+        let actor = super::parse_entity_id_param(principal, "principal_ref")?;
+        super::require_entity_type(
+            &server,
+            &actor,
+            oneiron::registry::ENTITY_TYPE_MACHINE,
+            "adapter",
+        )?;
+    }
 
     let admission = server
         .vault

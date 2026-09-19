@@ -1,7 +1,7 @@
 {
   "name": "@oneiron/client",
   "version": "0.1.0",
-  "description": "Hand-written thin fetch client for the Oneiron HTTP API with raw Response passthrough.",
+  "description": "Thin facade client with an engine-generated catalog and raw HTTP Response passthrough.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
