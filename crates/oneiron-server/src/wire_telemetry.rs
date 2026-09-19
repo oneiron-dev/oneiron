@@ -6,8 +6,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 const MANIFEST: &str = "manifest:rc42:wire-observation:v1";
-const RECEIPT: &str = "wire:window:v1:";
-const QUESTION: &str = "wire:question:v1:";
+const RECEIPT: &str = "wire:window:v2:";
+const QUESTION: &str = "wire:question:v2:";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WireThresholds {
@@ -57,6 +57,7 @@ struct Active {
     window: Option<WireWindowReceipt>,
     asked: bool,
     persisted: bool,
+    frozen: bool,
 }
 pub struct WireTelemetry {
     vault: Arc<Vault>,
@@ -79,6 +80,16 @@ impl WireTelemetry {
     }
     pub fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
         thresholds.validate()?;
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
+        if active.frozen {
+            return Err(Error::InvalidConfig(
+                "wire observation frozen for reap".into(),
+            ));
+        }
+        self.flush_active(&mut active)?;
         self.vault.sync_state_put(MANIFEST, &encode(thresholds)?)
     }
     pub fn thresholds(&self) -> Result<WireThresholds> {
@@ -97,26 +108,24 @@ impl WireTelemetry {
         if verb.is_empty() || verb.len() > 256 || actor.is_empty() || actor.len() > 512 {
             return Err(Error::InvalidConfig("invalid wire counter key".into()));
         }
-        let thresholds = self.thresholds()?;
-        let start = now / thresholds.window_secs * thresholds.window_secs;
         let mut active = self
             .active
             .lock()
             .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
+        if active.frozen {
+            return Ok(());
+        }
+        let thresholds = self.thresholds()?;
+        let start = now / thresholds.window_secs * thresholds.window_secs;
+        let end = start.saturating_add(thresholds.window_secs);
         if active.window.as_ref().is_none_or(|w| {
             w.started_at != start || w.ended_at != start.saturating_add(thresholds.window_secs)
         }) {
             if let Some(prior) = &active.window {
                 self.persist(prior)?;
             }
-            active.asked = self
-                .vault
-                .sync_state_get(&format!("{QUESTION}{start:020}"))?
-                .is_some();
-            let end = start.saturating_add(thresholds.window_secs);
-            let restored = self
-                .receipt(start)?
-                .filter(|receipt| receipt.started_at == start && receipt.ended_at == end);
+            active.asked = self.question(start, end)?.is_some();
+            let restored = self.receipt(start, end)?;
             active.window = Some(restored.unwrap_or_else(|| WireWindowReceipt {
                 started_at: start,
                 ended_at: end,
@@ -136,7 +145,7 @@ impl WireTelemetry {
                 kind: WireQuestionKind::InspectCallVolume,
                 evidence: active.window.clone().expect("window"),
             };
-            let key = format!("{QUESTION}{start:020}");
+            let key = format!("{QUESTION}{start:020}:{end:020}");
             self.vault.with_write_txn(|txn| {
                 if self.vault.sync_state_get_in_write_txn(txn, &key)?.is_none() {
                     self.vault
@@ -150,9 +159,18 @@ impl WireTelemetry {
     }
     fn persist(&self, window: &WireWindowReceipt) -> Result<()> {
         self.vault.sync_state_put(
-            &format!("{RECEIPT}{:020}", window.started_at),
+            &format!("{RECEIPT}{:020}:{:020}", window.started_at, window.ended_at),
             &encode(window)?,
         )
+    }
+    fn flush_active(&self, active: &mut Active) -> Result<()> {
+        if !active.persisted
+            && let Some(window) = &active.window
+        {
+            self.persist(window)?;
+            active.persisted = true;
+        }
+        Ok(())
     }
     /// Called at shutdown and by the host's periodic observation tick.
     pub fn flush(&self) -> Result<()> {
@@ -160,12 +178,35 @@ impl WireTelemetry {
             .active
             .lock()
             .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
-        if !active.persisted
-            && let Some(window) = &active.window
-        {
-            self.persist(window)?;
-            active.persisted = true;
+        if active.frozen {
+            return Ok(());
         }
+        self.flush_active(&mut active)
+    }
+    pub(crate) fn flush_if_expired(&self, now: u64) -> Result<()> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
+        if active.frozen || active.window.as_ref().is_none_or(|w| now < w.ended_at) {
+            return Ok(());
+        }
+        self.flush_active(&mut active)
+    }
+    pub(crate) fn freeze_and_flush(&self) -> Result<()> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
+        active.frozen = true;
+        self.flush_active(&mut active)
+    }
+    pub(crate) fn unfreeze(&self) -> Result<()> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
+        active.frozen = false;
         Ok(())
     }
     pub fn snapshot(&self) -> Result<Option<WireWindowReceipt>> {
@@ -176,17 +217,33 @@ impl WireTelemetry {
             .window
             .clone())
     }
-    pub fn receipt(&self, start: u64) -> Result<Option<WireWindowReceipt>> {
-        self.vault
-            .sync_state_get(&format!("{RECEIPT}{start:020}"))?
+    pub fn receipt(&self, start: u64, end: u64) -> Result<Option<WireWindowReceipt>> {
+        let receipt: Option<WireWindowReceipt> = self
+            .vault
+            .sync_state_get(&format!("{RECEIPT}{start:020}:{end:020}"))?
             .map(|b| decode(&b))
-            .transpose()
+            .transpose()?;
+        if receipt
+            .as_ref()
+            .is_some_and(|w| w.started_at != start || w.ended_at != end)
+        {
+            return Err(Error::CorruptedIndex("wire window identity"));
+        }
+        Ok(receipt)
     }
-    pub fn question(&self, start: u64) -> Result<Option<WireQuestion>> {
-        self.vault
-            .sync_state_get(&format!("{QUESTION}{start:020}"))?
+    pub fn question(&self, start: u64, end: u64) -> Result<Option<WireQuestion>> {
+        let question: Option<WireQuestion> = self
+            .vault
+            .sync_state_get(&format!("{QUESTION}{start:020}:{end:020}"))?
             .map(|b| decode(&b))
-            .transpose()
+            .transpose()?;
+        if question
+            .as_ref()
+            .is_some_and(|q| q.evidence.started_at != start || q.evidence.ended_at != end)
+        {
+            return Err(Error::CorruptedIndex("wire question identity"));
+        }
+        Ok(question)
     }
 }
 impl Drop for WireTelemetry {
@@ -245,15 +302,9 @@ pub(crate) fn start_window_receipts(server: &Arc<crate::server::SyncServer>) {
                 break;
             };
             // The tick only writes after the observation window has elapsed.
-            let should_flush = server
+            let _ = server
                 .wire_telemetry
-                .snapshot()
-                .ok()
-                .flatten()
-                .is_some_and(|w| oneiron_vault_contract::now_ts() >= w.ended_at);
-            if should_flush {
-                let _ = server.wire_telemetry.flush();
-            }
+                .flush_if_expired(oneiron_vault_contract::now_ts());
         }
     });
 }

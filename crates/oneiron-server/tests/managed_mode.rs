@@ -1410,7 +1410,7 @@ async fn managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone() {
 
     let fixture = spawn_ctl_fixture();
     // A reap was in flight when the signal landed.
-    fixture.state.freeze();
+    fixture.state.freeze().expect("freeze telemetry and writes");
     assert!(fixture.state.guard_write().is_err());
 
     let shutdown = ManagedShutdown::new();
@@ -1433,7 +1433,10 @@ async fn managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone() {
     assert_eq!(std::fs::metadata(&http_path).unwrap().ino(), inode_before);
 
     // An interrupted reap must not outlive the process that started it.
-    fixture.state.unfreeze();
+    fixture
+        .state
+        .unfreeze()
+        .expect("resume telemetry and writes");
     fixture.state.guard_write().unwrap();
     drop(fixture.server);
 }

@@ -46,11 +46,11 @@ async fn fifty_thousand_agents_are_observed_not_refused_and_manifest_is_live() {
     }
     counter.flush().unwrap();
     let start = counter.snapshot().unwrap().unwrap().started_at;
-    let receipt = counter.receipt(start).unwrap().unwrap();
+    let receipt = counter.receipt(start, start + 86_400).unwrap().unwrap();
     assert_eq!(receipt.by_verb["GET /recall"], 50_000);
     assert_eq!(receipt.by_actor.len(), 50_000);
     assert!(receipt.by_actor.values().all(|count| *count == 1));
-    assert!(counter.question(start).unwrap().is_none());
+    assert!(counter.question(start, start + 86_400).unwrap().is_none());
     counter
         .set_thresholds(&WireThresholds {
             window_secs: 86_400,
@@ -61,18 +61,25 @@ async fn fifty_thousand_agents_are_observed_not_refused_and_manifest_is_live() {
     counter
         .record("GET /recall", "agent:next", start + 1)
         .unwrap();
-    let hook = counter.question(start).unwrap().unwrap();
+    let hook = counter.question(start, start + 86_400).unwrap().unwrap();
     assert_eq!(hook.kind, WireQuestionKind::InspectCallVolume);
     assert_eq!(hook.evidence.by_verb["GET /recall"], 50_001);
     counter
         .record("GET /recall", "agent:again", start + 2)
         .unwrap();
-    assert_eq!(counter.question(start).unwrap().unwrap(), hook);
+    assert_eq!(
+        counter.question(start, start + 86_400).unwrap().unwrap(),
+        hook
+    );
     counter
         .record("write", "agent:again", start + 86_401)
         .unwrap();
     assert_eq!(
-        counter.receipt(start).unwrap().unwrap().by_verb["GET /recall"],
+        counter
+            .receipt(start, start + 86_400)
+            .unwrap()
+            .unwrap()
+            .by_verb["GET /recall"],
         50_002
     );
 }
@@ -122,15 +129,66 @@ fn restart_restores_the_active_wire_window_and_threshold_question() {
     let snapshot = after.snapshot().unwrap().unwrap();
     assert_eq!(snapshot.by_verb["recall"], 3);
     assert_eq!(snapshot.by_actor["reader"], 3);
-    let question = after.question(120).unwrap().unwrap();
+    let question = after.question(120, 180).unwrap().unwrap();
     assert_eq!(question.evidence, snapshot);
     after.flush().unwrap();
-    assert_eq!(after.receipt(120).unwrap(), Some(snapshot));
+    assert_eq!(after.receipt(120, 180).unwrap(), Some(snapshot));
     drop(after);
     let again = WireTelemetry::new(vault);
     again.record("write", "other", 124).unwrap();
     again.flush().unwrap();
-    assert_eq!(again.receipt(120).unwrap().unwrap().by_verb["recall"], 3);
-    assert_eq!(again.receipt(120).unwrap().unwrap().by_actor["other"], 1);
-    assert_eq!(again.question(120).unwrap(), Some(question));
+    assert_eq!(
+        again.receipt(120, 180).unwrap().unwrap().by_verb["recall"],
+        3
+    );
+    assert_eq!(
+        again.receipt(120, 180).unwrap().unwrap().by_actor["other"],
+        1
+    );
+    assert_eq!(again.question(120, 180).unwrap(), Some(question));
+}
+
+#[test]
+fn duration_change_preserves_both_receipts_and_questions_at_shared_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let counter = WireTelemetry::new(vault.clone());
+    counter
+        .set_thresholds(&WireThresholds {
+            window_secs: 60,
+            per_verb: 1,
+            per_actor: 1,
+        })
+        .unwrap();
+    counter.record("old", "reader", 121).unwrap();
+    counter.record("old", "reader", 122).unwrap();
+    counter
+        .set_thresholds(&WireThresholds {
+            window_secs: 120,
+            per_verb: 1,
+            per_actor: 1,
+        })
+        .unwrap();
+    counter.record("new", "writer", 130).unwrap();
+    counter.record("new", "writer", 131).unwrap();
+    counter.flush().unwrap();
+    let old = counter.receipt(120, 180).unwrap().unwrap();
+    let new = counter.receipt(120, 240).unwrap().unwrap();
+    assert_eq!(old.by_verb, BTreeMap::from([("old".to_owned(), 2)]));
+    assert_eq!(new.by_verb, BTreeMap::from([("new".to_owned(), 2)]));
+    let old_question = counter.question(120, 180).unwrap().unwrap();
+    let new_question = counter.question(120, 240).unwrap().unwrap();
+    assert_eq!(old_question.evidence, old);
+    assert_eq!(new_question.evidence, new);
+    drop(counter);
+    let restarted = WireTelemetry::new(vault);
+    restarted.record("new", "writer", 132).unwrap();
+    restarted.flush().unwrap();
+    assert_eq!(restarted.receipt(120, 180).unwrap(), Some(old));
+    assert_eq!(
+        restarted.receipt(120, 240).unwrap().unwrap().by_verb["new"],
+        3
+    );
+    assert_eq!(restarted.question(120, 180).unwrap(), Some(old_question));
+    assert_eq!(restarted.question(120, 240).unwrap(), Some(new_question));
 }

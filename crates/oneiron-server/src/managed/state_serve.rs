@@ -166,15 +166,23 @@ impl ManagedState {
         self.frozen.load(Ordering::SeqCst)
     }
 
-    pub fn freeze(&self) {
+    pub fn freeze(&self) -> Result<(), ManagedError> {
         self.frozen.store(true, Ordering::SeqCst);
+        self.server
+            .wire_telemetry
+            .freeze_and_flush()
+            .map_err(|error| ManagedError::VaultMeta(error.to_string()))
     }
 
-    /// Lifts the freeze. Called by `reap_abort` and again on the shutdown
-    /// path, so a process that dies mid-reap never leaves a frozen vault
-    /// behind for the next boot to inherit.
-    pub fn unfreeze(&self) {
+    /// Lifts the process-local freeze on `reap_abort`. A new process starts
+    /// unfrozen; shutdown must not reactivate observation writes.
+    pub fn unfreeze(&self) -> Result<(), ManagedError> {
+        self.server
+            .wire_telemetry
+            .unfreeze()
+            .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
         self.frozen.store(false, Ordering::SeqCst);
+        Ok(())
     }
 
     /// The write gate a frozen vault refuses at. Typed, so a caller can tell
@@ -258,7 +266,7 @@ impl ManagedState {
             }
             CtlRequest::PrepareReap => self.prepare_reap().await,
             CtlRequest::ReapAbort => {
-                self.unfreeze();
+                self.unfreeze()?;
                 Ok(CtlResponse::Ok { ok: true })
             }
             CtlRequest::AlarmDue { id, reason_tag } => {
@@ -281,7 +289,7 @@ impl ManagedState {
     /// of those may be live this reports `false` and the supervisor reaps
     /// later rather than over a live writer.
     async fn prepare_reap(&self) -> Result<CtlResponse, ManagedError> {
-        self.freeze();
+        self.freeze()?;
         let drained = self.drain_lease_table().await;
         let (ledger_rev, next_wake) = self.ledger.export_at_freeze(&self.server).await?;
         // The reply carries the entries, so they are bounds-checked before
@@ -503,8 +511,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let result = http.serve_until(app, shutdown.triggered()).await;
     host.on_stop()?;
     let _ = ctl_task.await;
-    // An interrupted reap must not outlive the process that started it.
-    state.unfreeze();
+    // Drain observation writes without thawing a previously quiescent process.
+    let telemetry_drained = state.freeze();
     // No new durable background work from here on.
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
@@ -521,6 +529,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
     final_ledger_push(&state, &sync_server).await;
     result?;
+    telemetry_drained?;
     Ok(())
 }
 
@@ -556,6 +565,7 @@ mod shed_tests {
     use super::*;
     use oneiron_vault_contract::{Credentials, DEK_LEN};
     use oneiron_vault_contract::{ShedCause, TOKEN_LEN, supports_slim};
+    use tower::ServiceExt;
 
     #[tokio::test]
     async fn ctl_shed_refusal_preserves_other_verbs() -> Result<(), Box<dyn std::error::Error>> {
@@ -578,7 +588,20 @@ mod shed_tests {
             dir.path().join("supervisor.sock"),
             &credentials,
         )?;
-        let state = ManagedState::new("ctl-test".to_owned(), server, ledger);
+        let state = Arc::new(ManagedState::new(
+            "ctl-test".to_owned(),
+            server.clone(),
+            ledger,
+        ));
+        let router = build_managed_app(server.clone(), state.clone());
+        let counter = &server.wire_telemetry;
+        counter.set_thresholds(&crate::wire_telemetry::WireThresholds {
+            window_secs: 60,
+            per_verb: 1,
+            per_actor: 1,
+        })?;
+        counter.record("rpc:test", "reader", 121)?;
+        let before_reap = counter.snapshot()?.unwrap();
         let revision = state.ledger().rev();
         for cause in [ShedCause::LongOutboundWait, ShedCause::MemoryPressure] {
             for waited_secs in [0, 1] {
@@ -623,11 +646,34 @@ mod shed_tests {
             }
         ));
         assert!(state.is_frozen());
+        assert_eq!(counter.receipt(120, 180)?, Some(before_reap.clone()));
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(axum::body::Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        counter.record("rpc:test", "reader", 122)?;
+        counter.flush_if_expired(200)?;
+        counter.flush()?;
+        assert_eq!(counter.snapshot()?, Some(before_reap.clone()));
+        assert_eq!(counter.receipt(120, 180)?, Some(before_reap));
+        assert!(counter.question(120, 180)?.is_none());
+        assert!(matches!(
+            counter.set_thresholds(&Default::default()),
+            Err(oneiron::Error::InvalidConfig(_))
+        ));
         assert!(matches!(
             state.handle_request(CtlRequest::ReapAbort).await?,
             CtlResponse::Ok { ok: true }
         ));
         assert!(!state.is_frozen());
+        counter.record("rpc:test", "reader", 123)?;
+        counter.flush()?;
+        assert_eq!(counter.receipt(120, 180)?.unwrap().by_verb["rpc:test"], 2);
+        assert!(counter.question(120, 180)?.is_some());
         assert!(matches!(
             state
                 .handle_request(CtlRequest::AlarmDue {
