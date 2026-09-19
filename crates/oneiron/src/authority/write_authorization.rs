@@ -6,10 +6,33 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::write_envelope::WriteActor;
 
-use super::{AuthorityFold, actor_binding_is_active};
+use super::{AuthorityFold, CausalWriteDisposition};
 use crate::error::ClaimError;
 
 impl Vault {
+    /// Captures this host's observed authority frontier for a new local write.
+    /// Transport replay must retain its original frontier instead of calling this door.
+    pub fn observed_write_actor(&self, writer: WriteActor) -> Result<WriteActor> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        for (key, binding) in &fold.actor_bindings {
+            if binding.actor_ref == writer.entity_ref()
+                && binding.actor_class == writer.actor_class().gate_actor_class()
+                && binding.status == super::ActorBindingStatus::Active
+                && let Some(hash) = fold
+                    .actor_write_frontiers
+                    .get(key)
+                    .and_then(|frontiers| frontiers.iter().next_back())
+            {
+                let observed = writer.with_authority_frontier(*hash);
+                self.verify_write_actor_in_txn(&txn, &observed)?;
+                return Ok(observed);
+            }
+        }
+        self.verify_write_actor_in_txn(&txn, &writer)?;
+        Ok(writer)
+    }
+
     /// Resolve the asserted class and current binding in the mutation snapshot.
     /// Unrooted vaults keep the canonical store-truth rule; conflicting or
     /// uncomputable roots never authorize. Callers still check the verb's role.
@@ -35,16 +58,22 @@ impl Vault {
                 "authority log folds to conflicting vault roots",
             ));
         }
-        if fold.vault_id.is_some()
-            && !actor_binding_is_active(
-                &fold,
+        if fold.vault_id.is_some() {
+            match fold.actor_write_disposition(
                 &writer.entity_ref(),
                 writer.actor_class().gate_actor_class(),
-            )
-        {
-            return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
-                reason: "writer has no active authority binding",
-            }));
+                writer.authority_frontier(),
+            ) {
+                CausalWriteDisposition::Admitted => {}
+                CausalWriteDisposition::Unbound => {
+                    return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                        reason: "writer has no active authority binding",
+                    }));
+                }
+                CausalWriteDisposition::Quarantined => {
+                    return Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation));
+                }
+            }
         }
         Ok(fold)
     }

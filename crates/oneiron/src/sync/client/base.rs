@@ -31,10 +31,6 @@ pub struct SyncClient {
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
     pub(crate) client_id: u64,
-    /// This device's Ed25519 attestation key (ONE-1140, OD-2): signs the
-    /// lease-request proof of possession on every connect. Receipt signing
-    /// happens vault-side at mint, not here.
-    pub(crate) device_signing_key: ed25519_dalek::SigningKey,
     pub(crate) config: SyncClientConfig,
     /// Last server VV observed per window from `VV_REQUEST` / `VV_RESPONSE`
     /// frames. This is the convergence witness (ONE-1128): the offline queue
@@ -50,12 +46,8 @@ pub struct SyncClient {
 impl SyncClient {
     /// Creates a new sync client over manager-owned windows.
     ///
-    /// Loads persisted client state first (ARCH-0023b startup step 1): the
-    /// device identity — `m:client_id` (minted once if absent) plus the
-    /// `m:device_sk`/`m:device_pk` attestation keypair (ONE-1140, OD-2) —
-    /// then the root doc from `d:root` + pending `u:root:*` replay.
-    /// Malformed identity rows fail closed — silently re-minting would
-    /// change this device's CRDT identity mid-install.
+    /// Loads the stable CRDT client id, then root state. Transport never
+    /// reads or mints a device signing key; capability pairing owns enrollment.
     pub fn new(
         manager: Arc<WindowManager>,
         config: SyncClientConfig,
@@ -71,8 +63,7 @@ impl SyncClient {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let vault = Arc::clone(manager.vault());
 
-        let identity = crate::identity::ensure_device_identity(&vault)?;
-        let client_id = identity.client_id;
+        let client_id = crate::identity::load_or_mint_client_id(&vault)?;
         let root_doc = load_root_doc(&vault)?;
         // The client never authors root ops in production (meta.windows is
         // server-write-only), so pinning the stable client id as the root
@@ -106,7 +97,6 @@ impl SyncClient {
             manager,
             root_doc,
             client_id,
-            device_signing_key: identity.signing_key,
             config,
             server_vvs: HashMap::new(),
             ephemeral_store,
@@ -254,17 +244,6 @@ impl SyncClient {
             return Err(err);
         }
         Ok(())
-    }
-
-    /// Builds this device's TAG_LEASE_REQUEST frame (ONE-1140, OD-5/OD-6):
-    /// Ed25519 proof of possession over
-    /// `"oneiron/lease-pop/v1" || client_id:8 BE || pubkey:32`.
-    pub(super) fn lease_request_frame(&self) -> Vec<u8> {
-        use ed25519_dalek::Signer;
-        let pubkey = self.device_signing_key.verifying_key().to_bytes();
-        let transcript = crate::sync::lease::lease_pop_transcript(self.client_id, &pubkey);
-        let pop_sig = self.device_signing_key.sign(&transcript).to_bytes();
-        transport::encode_lease_request(self.client_id, &pubkey, &pop_sig)
     }
 }
 

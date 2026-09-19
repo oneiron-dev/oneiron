@@ -18,7 +18,9 @@ use std::time::{Duration, Instant};
 
 mod actor_binding;
 mod basic_fold;
+mod cooperative_deletion;
 mod critical_confirm;
+mod federation_confirm;
 mod federation_lifecycle;
 mod federation_merge;
 mod fork_ancestry;
@@ -26,8 +28,20 @@ mod fork_quarantine;
 mod fork_resolution;
 mod fork_scoping;
 mod foundations;
+mod hosted_consent;
 mod peer_roster;
 mod readonly_fold;
 mod revoke_freeze_bypass;
 mod support;
+mod tier_floor;
 mod widen_veto;
+
+mod recovery_ceremony;
+
+mod history_transfer;
+
+mod checkpoint;
+
+mod retired_ceiling;
+
+mod causal_claim;

@@ -52,6 +52,7 @@ fn hardware_tier_widen_is_instant() {
             AuthorityTier::Hardware,
         ),
         genesis_nonce: [72; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
     };

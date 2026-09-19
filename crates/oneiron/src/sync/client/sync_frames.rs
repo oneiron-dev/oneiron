@@ -58,14 +58,8 @@ impl SyncClient {
 
     /// Generates initial sync messages for the connection flow.
     ///
-    /// Returns messages to send to the server, in wire order (the ONE-1140
-    /// OD-5 connect-sequence literal `[hello][lease_request][…existing]`):
-    /// 1. Protocol-version hello (MUST be the first frame — server checks it)
-    /// 2. Lease request (proof-of-possession over this device's identity;
-    ///    sent on EVERY connect — registration and renewal are one frame)
-    /// 3. Root doc VV (so server knows what we have)
-    /// 4. Default window VV requests (current + previous month), plus any
-    ///    additional already-loaded windows
+    /// Returns protocol hello, root VV and requested window VVs. Device
+    /// lease requests are retired; authentication uses a paired capability.
     ///
     /// All version vectors are Loro binary `VersionVector::encode()` bytes —
     /// the JSON VV encoding is dead (wire break pinned in ONE-1127).
@@ -88,11 +82,7 @@ impl SyncClient {
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         // Phase 0: full-window hello — this client path still uses the
         // pre-FED-002 full-window VV_REQUEST flow.
-        // Frame #2: lease request (ONE-1140, OD-5).
-        let mut messages = vec![
-            transport::encode_legacy_full_window_protocol_hello(),
-            self.lease_request_frame(),
-        ];
+        let mut messages = vec![transport::encode_legacy_full_window_protocol_hello()];
         messages.extend(self.generate_phase_frames()?);
         Ok(messages)
     }

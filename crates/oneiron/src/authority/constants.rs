@@ -72,10 +72,10 @@ pub(super) const OP_KEY_KIND: &str = "kind";
 pub(super) const OP_KIND_GENESIS: &str = "genesis";
 pub(super) const OP_KIND_ENROLL_DEVICE: &str = "enroll_device";
 pub(super) const OP_KIND_REVOKE_DEVICE: &str = "revoke_device";
-pub(super) const OP_KIND_SET_CEILING: &str = "set_ceiling";
+pub(super) const OP_KIND_RETIRED_CEILING: &str = "set_ceiling";
 pub(super) const OP_KIND_ROTATE_KEY: &str = "rotate_key";
 pub(super) const OP_KIND_SET_TIER_FLOOR: &str = "set_tier_floor";
-pub(super) const OP_KIND_RECOVERY_REBOOT: &str = "recovery_reboot";
+pub(super) const OP_KIND_RE_ROOT: &str = "re_root";
 pub(super) const OP_KIND_FEDERATION_CONFIRM: &str = "federation_confirm";
 pub(super) const OP_KIND_CRITICAL_WRITE_CONFIRM: &str = "critical_write_confirm";
 pub(super) const OP_KIND_VETO_PENDING_WIDEN: &str = "veto_pending_widen";
@@ -86,7 +86,7 @@ pub(super) const OP_KIND_REVOKE_ACTOR: &str = "revoke_actor";
 
 /// The EXACT actor-class vocabulary a binding tuple may name (ONE-1604-D2).
 ///
-/// Deliberately narrower than `SetCeiling`'s free-form class string: an
+/// Deliberately narrower than `RetiredCeiling`'s free-form class string: an
 /// approximate class is the ESB-C defect, so anything outside this list fails
 /// closed at `validate_op`. Mirrors `EdgeActorClass::gate_actor_class`.
 pub(super) const ACTOR_BINDING_CLASSES: [&str; 3] = ["human", "agent", "system"];
