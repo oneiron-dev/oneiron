@@ -355,6 +355,11 @@ fn admit_federated_entity_blob(
 #[cfg(feature = "sync")]
 fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
     match entity_type {
+        crate::companion::ENTITY_TYPE_COMPANION_REGISTER => {
+            return Err(Error::Record(RecordError::InvalidCompanionRecordBody(
+                "CompanionRecord storage retired; use PERSON/FACET",
+            )));
+        }
         crate::registry::ENTITY_TYPE_TASK => {
             crate::habit::task_role_from_body_bytes(body)?;
         }

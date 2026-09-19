@@ -1802,6 +1802,7 @@ fn claim_id_scopes_by_credential_scope_identity() {
 
     // Scope alone discriminates, with the credential identity held EQUAL.
     let restated = McpResolvedActor {
+        auth: None,
         scope: McpConnectorScope::scoped(Some(world_b), None),
         ..a.clone()
     };

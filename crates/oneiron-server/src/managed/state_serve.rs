@@ -344,9 +344,16 @@ pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> R
 /// was already open, whose frames no middleware will ever see.
 async fn refuse_frozen_writes(
     State(state): State<Arc<ManagedState>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
+    if state.server.managed_issuer.is_some() {
+        // Bearer authentication terminated at the supervisor. Do not let a
+        // forwarded legacy/dev claim select a principal on secondary routes.
+        for header in ["authorization", "x-oneiron-binding", "x-oneiron-mcp-credential"] {
+            request.headers_mut().remove(header);
+        }
+    }
     if !is_read_only(&request)
         && let Err(error) = state.guard_write()
     {
@@ -434,10 +441,20 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         &credentials,
     )?);
 
-    let sync_server = Arc::new(
-        SyncServer::new(Arc::clone(&vault), config.sync_server_config())
-            .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?,
+    // Stable, domain-separated custody from the verified vault DEK, not the
+    // per-spawn callback token or caller-controlled HTTP identity headers.
+    // A fresh spawn with the same DEK must recover the same logged host root.
+    let mut issuer_key = blake3::derive_key(
+        "oneiron/managed-supervisor-host-authority/v2",
+        &credentials.dek,
     );
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
+    issuer_key.fill(0);
+    vault.ensure_host_root_slip(&issuer)?;
+    let mut sync_server = SyncServer::new(Arc::clone(&vault), config.sync_server_config())
+        .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
+    sync_server.managed_issuer = Some(issuer);
+    let sync_server = Arc::new(sync_server);
 
     // Adoption stays here, after the gates: the listener was only resolved
     // above, and `bind` is what takes the descriptor over.

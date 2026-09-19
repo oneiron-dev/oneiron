@@ -647,8 +647,11 @@ fn scope_and_definition_changes_require_review_not_auto_write() -> Result<()> {
     // world for a widened grant to be observable rather than vacuous.
     let home_world = test_id(0x39);
     place_in_world(&vault, fixture.person, home_world);
+    // Base-reality evidence needs an explicit base grant; the narrow/widened
+    // separation below still comes from the named worlds, not from base.
+    let base = oneiron::claim::base_world_id();
     let narrow = QueryScope {
-        worlds: vec![home_world],
+        worlds: vec![home_world, base],
         facets: Vec::new(),
     };
 
@@ -697,7 +700,7 @@ fn scope_and_definition_changes_require_review_not_auto_write() -> Result<()> {
 
     // The OWNER'S REACH moves; the person still matches. Same answer.
     let widened = QueryScope {
-        worlds: vec![home_world, test_id(0x3A)],
+        worlds: vec![home_world, test_id(0x3A), base],
         facets: Vec::new(),
     };
     let scope_move = detect(&vault, &fixture, &widened, 300);
@@ -969,8 +972,14 @@ fn distinct_pending_transitions_do_not_share_a_dedupe_key() -> Result<()> {
     let fixture = install_fixture(&vault);
     let first_world = test_id(0x3E);
     let second_world = test_id(0x3F);
+    // Base-reality evidence needs an explicit base grant; the two pending
+    // transitions still differ by the person's named-world reach.
     let grants = QueryScope {
-        worlds: vec![first_world, second_world],
+        worlds: vec![
+            first_world,
+            second_world,
+            oneiron::claim::base_world_id(),
+        ],
         facets: Vec::new(),
     };
     place_in_world(&vault, fixture.person, first_world);

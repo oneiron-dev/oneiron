@@ -416,8 +416,6 @@ use super::quarantine::QuarantineContainer;
 #[cfg(test)]
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 #[cfg(test)]
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
-#[cfg(test)]
 use crate::entity_id::EntityId;
 use crate::error::SyncError;
 #[cfg(test)]

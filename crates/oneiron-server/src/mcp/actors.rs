@@ -208,6 +208,9 @@ impl McpConnectorActorRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct McpResolvedActor {
+    /// Proof is attached only after the gateway authenticates the registered
+    /// credential. Registry resolution alone grants no scoped-read authority.
+    pub(crate) auth: Option<crate::auth::CoreAuth>,
     pub actor_ref: EntityId,
     pub actor_class: EdgeActorClass,
     pub gate_actor_class: &'static str,
@@ -225,6 +228,11 @@ pub struct McpResolvedActor {
 }
 
 impl McpResolvedActor {
+    pub(crate) fn has_unrestricted_record_scope(&self) -> bool {
+        self.auth.as_ref().is_some_and(|auth|
+            auth.require_unrestricted_record_scope().is_ok())
+    }
+
     #[must_use]
     pub const fn write_actor(&self) -> WriteActor {
         WriteActor::new(self.actor_ref, self.actor_class)

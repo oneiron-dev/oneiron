@@ -104,9 +104,9 @@ async fn retrieval_quality_depth_search_and_reason_keep_empty_minimal_healthy() 
 
 #[tokio::test]
 async fn retrieval_quality_depth_standard_projects_disabled_ppr_without_changing_confidence() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     seed_text_turn(&server, "qualitydepth retained evidence");
-    let (status, reason) = route_json(
+    let (status, reason) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -129,6 +129,7 @@ async fn retrieval_quality_depth_standard_projects_disabled_ppr_without_changing
         server,
         Request::builder()
             .uri("/api/search/text?query=qualitydepth&depth=standard&view=standard")
+            .header(AUTHORIZATION, owner_bearer())
             .body(Body::empty())
             .unwrap(),
     )
@@ -222,7 +223,7 @@ impl MemoryReasonBackend for DecliningBackend {
 
 #[tokio::test]
 async fn retrieval_quality_depth_composition_fallback_keeps_report_and_actual_spend() {
-    let (_dir, mut server) = test_server();
+    let (_dir, mut server) = auth_test_server();
     seed_text_turn(&server, "qualitydepth retained evidence");
     let guard = BudgetGuard::with_reserve_units(
         "reason-quality",
@@ -238,7 +239,7 @@ async fn retrieval_quality_depth_composition_fallback_keeps_report_and_actual_sp
         guard.clone(),
     )));
     for _ in 0..2 {
-        let (status, response) = route_json(
+        let (status, response) = route_json_auth(
             server.clone(),
             json_request(
                 "POST",

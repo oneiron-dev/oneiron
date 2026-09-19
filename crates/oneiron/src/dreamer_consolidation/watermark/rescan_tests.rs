@@ -8,10 +8,10 @@ use crate::test_util::open_test_vault_with;
 const MESO: DreamerConsolidationScope = DreamerConsolidationScope::Meso;
 
 fn seed_turn(vault: &Vault, ordinal: u64, learned_at: u64) -> EntityId {
-    // Ordinal zero is the smallest valid EntityId, not merely a typical UUID.
+    // Ordinal zero is the smallest mintable EntityId (1 and 2 are reserved scope ids).
     // A made-up exact-key sentinel must not swallow this time-zero turn.
     let mut bytes = [0_u8; 16];
-    bytes[8..].copy_from_slice(&(ordinal + 1).to_be_bytes());
+    bytes[8..].copy_from_slice(&(ordinal + 3).to_be_bytes());
     let id = EntityId::from_bytes(bytes).expect("turn id");
     let body = encode_value(&Value::Map(vec![
         (Value::from("spkr"), Value::from("user")),

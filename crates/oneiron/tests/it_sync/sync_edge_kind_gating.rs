@@ -80,6 +80,9 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     let retracted_tgt = EntityId::now();
     let actor = EntityId::now();
 
+    // TURN(1), not PERSON(4): PERSON writes mint a substrate FACET plus a
+    // `HasFacet` edge, which would add a sixth edge and extra mirrored rows.
+    // This seam pins edge-kind shipping, not identity side effects.
     for (id, body) in [
         (&seed, b"seed".as_slice()),
         (&mentions_tgt, b"mentions-target"),
@@ -89,11 +92,11 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         (&retracted_tgt, b"retracted-target"),
     ] {
         vault_a
-            .put_entity(id, 4, occurred, learned_at, body)
+            .put_entity(id, 1, occurred, learned_at, body)
             .unwrap();
     }
     vault_a
-        .put_entity(&actor, 4, occurred, out_of_window_learned_at, b"actor")
+        .put_entity(&actor, 1, occurred, out_of_window_learned_at, b"actor")
         .unwrap();
 
     vault_a

@@ -1062,6 +1062,15 @@ fn scoped_grant_denial_reads_as_absence() {
 
 /// Seeds one subject plus three admitted, vector-searchable CLAIMs and
 /// returns how many claims are in the vault.
+fn seed_base_read_grant(vault: &Vault) {
+    put_policy_manifest_bytes(
+        vault,
+        entity(0x5F),
+        &scoped_grant_manifest("reader", "base"),
+    )
+    .expect("base core:read grant for retrieval-budget positives");
+}
+
 fn seed_retrieval_budget_vault(vault: &Vault) -> usize {
     let subject = entity(0x5B);
     let occurred = TimeRange {
@@ -1106,6 +1115,7 @@ fn seed_retrieval_budget_vault(vault: &Vault) -> usize {
             .commit()
             .expect("claim vector");
     }
+    seed_base_read_grant(vault);
     seeded
 }
 

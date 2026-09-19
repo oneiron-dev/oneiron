@@ -1127,6 +1127,7 @@ async fn http_bad_entity_id_returns_structured_api_error_body() {
 
 #[tokio::test]
 async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
+    const SECRET: &str = "ws-entity-summary-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let id = EntityId::now();
@@ -1147,12 +1148,13 @@ async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
             &body,
         )
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) =
+        spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let response = http_get_bytes(
         addr,
         &format!("/api/entity/{}?view=summary", id.to_hex()),
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status_bytes(&response, 200);
@@ -1173,6 +1175,7 @@ async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
 
 #[tokio::test]
 async fn http_entity_default_returns_standard_raw_body() {
+    const SECRET: &str = "ws-entity-default-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let id = EntityId::now();
@@ -1190,9 +1193,11 @@ async fn http_entity_default_returns_standard_raw_body() {
             &body,
         )
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) =
+        spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let response = http_get_bytes(addr, &format!("/api/entity/{}", id.to_hex()), None).await;
+    let response =
+        http_get_bytes(addr, &format!("/api/entity/{}", id.to_hex()), Some(SECRET)).await;
     assert_http_status_bytes(&response, 200);
     assert_eq!(http_body(&response), body.as_slice());
 
@@ -1340,6 +1345,7 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
 
 #[tokio::test]
 async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
+    const SECRET: &str = "ws-vector-defaults-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     let id = EntityId::now();
@@ -1362,10 +1368,10 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
         )
         .unwrap();
     vault.put_vector(&id, &[1.0_f32, 0.0, 0.0, 0.0]).unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let summary_response =
-        http_get_bytes(addr, "/api/search/vector?query=1,0,0,0&limit=1", None).await;
+        http_get_bytes(addr, "/api/search/vector?query=1,0,0,0&limit=1", Some(SECRET)).await;
     assert_http_status_bytes(&summary_response, 200);
     let summary = http_json(&summary_response);
     let summary_hit = summary["items"].as_array().unwrap().first().unwrap();
@@ -1415,6 +1421,7 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
 
 #[tokio::test]
 async fn http_edges_default_summary_and_standard_preserves_current_fields() {
+    const SECRET: &str = "ws-edges-summary-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let source = EntityId::now();
@@ -1435,10 +1442,15 @@ async fn http_edges_default_summary_and_standard_preserves_current_fields() {
     vault
         .put_edge(&source, EdgeKind::BelongsTo, &target, 0.5)
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) =
+        spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let summary_response =
-        http_get_bytes(addr, &format!("/api/edges/{}", source.to_hex()), None).await;
+    let summary_response = http_get_bytes(
+        addr,
+        &format!("/api/edges/{}", source.to_hex()),
+        Some(SECRET),
+    )
+    .await;
     assert_http_status_bytes(&summary_response, 200);
     let summary = http_json(&summary_response);
     let summary_edge = summary.as_array().unwrap().first().unwrap();
@@ -1450,7 +1462,7 @@ async fn http_edges_default_summary_and_standard_preserves_current_fields() {
     let standard_response = http_get_bytes(
         addr,
         &format!("/api/edges/{}?view=standard", source.to_hex()),
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status_bytes(&standard_response, 200);
@@ -1509,12 +1521,19 @@ async fn http_search_text_response_defaults_to_estimate_meta() {
 
 #[tokio::test]
 async fn http_search_text_estimate_counts_before_page_truncation() {
+    const SECRET: &str = "ws-search-text-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     seed_text_search_matches(&vault);
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) =
+        spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let response = http_get(addr, "/api/search/text?query=metaneedle&limit=2", None).await;
+    let response = http_get(
+        addr,
+        "/api/search/text?query=metaneedle&limit=2",
+        Some(SECRET),
+    )
+    .await;
     assert_http_status(&response, 200);
     let body = http_json_value(&response);
 
@@ -1580,15 +1599,17 @@ async fn http_search_vector_response_defaults_to_estimate_meta() {
 
 #[tokio::test]
 async fn http_search_vector_estimate_counts_before_page_truncation() {
+    const SECRET: &str = "ws-search-vector-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     seed_vector_search_matches(&vault);
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) =
+        spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let response = http_get(
         addr,
         "/api/search/vector?query=1.0,0.0,0.0,0.0&limit=2",
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status(&response, 200);

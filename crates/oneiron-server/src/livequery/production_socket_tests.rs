@@ -235,7 +235,9 @@ async fn production_read_socket_closes_after_bound_jti_revocation() {
     let read = app(&mut socket, TAG_RPC).await;
     assert_eq!(read["result"][0]["id_hex"], ACTOR);
     assert_eq!(read["last"], true);
-    crate::test_credentials::revoke(&f.server, &token("human"));
+    // Revoke the BOUND credential: each class mints a distinct slip, so
+    // revoking a sibling class must not close this socket.
+    crate::test_credentials::revoke(&f.server, &token("agent"));
     send(
         &mut socket,
         TAG_RPC,

@@ -171,6 +171,20 @@ pub(super) fn scoped_read_actor_key() -> crate::claim::ScopedReadActorKey {
         .expect("oracle scoped-read actor key")
 }
 
+pub(in crate::branch_store_oracle) fn authorize_scoped_reader(vault: &Vault) -> Result<()> {
+    use rmpv::Value;
+    let bytes=crate::gate::default_policy_manifest();
+    let Value::Map(mut entries)=rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {unreachable!()};
+    entries.push((Value::from("scoped_grants"),Value::Array(vec![Value::Map(vec![
+        (Value::from("actor_ref"),Value::from(scoped_read_actor_key().actor_ref())),
+        (Value::from("effector"),Value::from("core:read")),
+        (Value::from("scope"),crate::federation::scope_codec::encode_scope_value(&crate::federation::scope_codec::read_preset())?),
+        (Value::from("receipt_required"),Value::Boolean(false)),
+    ])])));
+    let mut bytes=Vec::new();rmpv::encode::write_value(&mut bytes,&Value::Map(entries)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(vault,crate::gate::default_policy_manifest_id()?,&bytes)
+}
+
 /// Counts the claims `read` surfaces whose subject is `subject`.
 pub(super) fn scoped_read_visible_claim_count(
     read: &crate::claim::ScopedRead<'_>,

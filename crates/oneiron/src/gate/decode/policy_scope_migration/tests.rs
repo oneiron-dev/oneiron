@@ -1,7 +1,7 @@
 //! Stored-row proof for versioned policy Scope, migration, and fail-closed reads/effects.
 
 use super::*;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::claim::ScopedReadActorKey;
 use crate::error::Result;
 use crate::federation::Scope;
@@ -58,8 +58,7 @@ fn append_field(mut row: Value, key: &str, value: Value) -> Value {
 fn stored_manifest(vault: &Vault) -> Result<Vec<u8>> {
     Ok(vault
         .get(&default_policy_manifest_id()?)?
-        .expect("stored manifest")[ENTITY_METADATA_HEADER_LEN..]
-        .to_vec())
+        .expect("stored manifest"))
 }
 
 fn put_manifest(vault: &Vault, data: Vec<u8>) -> Result<()> {

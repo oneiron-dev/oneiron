@@ -124,7 +124,7 @@ fn failing_server(
         lease: Mutex::new(None),
     });
     let (dir, server) =
-        memory_reason_server_with_guard(Some(backend.clone()), backend.guard.clone());
+        memory_reason_server_with_guard_auth(Some(backend.clone()), backend.guard.clone());
     (dir, server, backend)
 }
 
@@ -138,6 +138,7 @@ fn deep_request(reason: bool) -> Request<Body> {
     } else {
         Request::builder()
             .uri("/api/search/text?query=launch&depth=deep")
+            .header("authorization","Bearer secret")
             .body(Body::empty())
             .unwrap()
     }
@@ -154,7 +155,7 @@ async fn deep_api_malformed_rerank_and_spent_errors_settle_before_return() {
             let (_dir, server, backend) = failing_server(point);
             // Run twice to pin additive accounting, not an absolute meter.
             for count in 1..=2 {
-                let (status, response) = route_json(server.clone(), deep_request(reason)).await;
+                let (status, response) = route_json_auth(server.clone(), deep_request(reason)).await;
                 assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
                 assert!(response.get("answer").is_none());
                 assert!(response.get("items").is_none());
@@ -179,7 +180,7 @@ async fn deep_reason_composition_errors_settle_retrieval_and_error_spend() {
         let (_dir, server, backend) = failing_server(point);
         // Retrieval costs 18, leaving only 1 for composition. A failed call's
         // actual usage still counts, even when it exceeds that allowance.
-        let (status, response) = route_json(
+        let (status, response) = route_json_auth(
             server,
             json_request(
                 "POST",
@@ -206,7 +207,11 @@ async fn deep_api_aborted_lease_fails_closed_for_success_and_search_error() {
             FailurePoint::AbortedMalformedRerank,
         ] {
             let (_dir, server, backend) = failing_server(point);
-            let (status, response) = route_json(server, deep_request(reason)).await;
+            let (status, response) = if reason {
+                route_json_auth(server, deep_request(reason)).await
+            } else {
+                route_json_auth(server, deep_request(reason)).await
+            };
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{response}");
             let error = if reason {
                 &response["error"]
@@ -227,7 +232,7 @@ async fn deep_api_aborted_lease_fails_closed_for_success_and_search_error() {
 async fn deep_api_zero_usage_errors_abort_instead_of_settling() {
     for reason in [false, true] {
         let (_dir, server, backend) = failing_server(FailurePoint::FreeDecompose);
-        let (status, response) = route_json(server, deep_request(reason)).await;
+        let (status, response) = route_json_auth(server, deep_request(reason)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
         assert_eq!(backend.guard.read().used_units, 0);
         assert_eq!(backend.guard.read().reserved_units, 0);

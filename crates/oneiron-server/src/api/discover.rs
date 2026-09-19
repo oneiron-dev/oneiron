@@ -17,7 +17,7 @@ use crate::server::SyncServer;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Json;
-use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use oneiron::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -458,7 +458,11 @@ pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse,
 }
 
 pub(crate) fn is_agent_visible_entity_type(entity_type: u8) -> bool {
-    entity_type != ENTITY_TYPE_POLICY_MANIFEST
+    // Host infrastructure rows are not agent memory: the policy manifest is
+    // configuration, and the authority log (genesis, bindings, slips) is the
+    // host's own custody record. Neither belongs in counts, activity, or
+    // personas/conversations.
+    entity_type != ENTITY_TYPE_POLICY_MANIFEST && entity_type != ENTITY_TYPE_AUTHORITY_LOG
 }
 
 pub(crate) fn runtime_status_for_config(config: &SyncServerConfig) -> RuntimeStatus {

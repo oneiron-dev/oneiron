@@ -11,6 +11,9 @@ use axum::http::HeaderMap;
 /// These routes read the whole vault under one actor ref, so they stay a
 /// trust-root surface: scoped `/v1` delegation tokens do not reach them.
 pub(super) fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result<(), ApiError> {
+    if server.managed_issuer.is_some() {
+        return CoreAuth::for_server(headers, server).map(drop);
+    }
     require_owner_auth(headers, &server.config, server.vault().as_ref()).map(drop)
 }
 
@@ -33,6 +36,13 @@ pub(super) fn scoped_read_for_legacy_api(
     server: &SyncServer,
 ) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
     let vault = server.vault().as_ref();
+    if let Some(issuer) = server.managed_issuer.as_ref() {
+        let proof = vault.verified_host_root_slip(issuer)
+            .map_err(|_| ApiError::unauthorized())?;
+        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof)
+            .ok_or_else(ApiError::unauthorized)?;
+        return Ok(vault.scoped_read(actor));
+    }
     if let Some(secret) = server.config.auth_secret.as_deref() {
         let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
             .map_err(|_| ApiError::unauthorized())?;

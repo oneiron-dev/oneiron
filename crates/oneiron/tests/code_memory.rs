@@ -7,7 +7,8 @@
 //! merge-algebra, and crate-seam side-effect coverage lives in
 //! `src/code_memory.rs`'s in-module block instead.
 
-use oneiron::claim::ScopedReadActorKey;
+use oneiron::authority::{HostSlipIssuer, SlipCaveat};
+use oneiron::claim::{ScopedReadActorKey, base_world_id};
 use oneiron::code_memory::{
     AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AttachCodeMemory,
     BlocksWriteContext, CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS, CODE_MEMORY_MAX_VALUES_PER_SLOT,
@@ -17,12 +18,14 @@ use oneiron::code_memory::{
 };
 use oneiron::deletion::DeleteReason;
 use oneiron::error::{CodeError, RegistryError};
+use oneiron::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use oneiron::note::TakeTarget;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EdgeKind, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
 };
 use rmpv::Value;
+use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -263,8 +266,38 @@ fn blocks_context(actor: &WriteActor) -> BlocksWriteContext<'_> {
     }
 }
 
-fn reader_key() -> ScopedReadActorKey {
-    ScopedReadActorKey::new("code-memory-reader").expect("non-blank actor ref")
+/// Explicit base-world read proof for positives: the host root slip
+/// attenuated to base `read` only. Never a wildcard global fixture beyond
+/// base, and never a plain key (plain keys with no grant deny by design).
+fn base_read_scope() -> Scope {
+    Scope {
+        worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())])),
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
+        audience: ScopeAxis::All,
+        verbs: ScopeAxis::Some(BTreeSet::from(["read".to_owned()])),
+        sensitivity: SensitivityCeiling::AtMost(Sensitivity::Restricted),
+    }
+}
+
+fn reader_key_for(vault: &Vault) -> ScopedReadActorKey {
+    let issuer = HostSlipIssuer::from_secret(b"code-memory-test-host-secret").expect("host issuer");
+    let mut slip = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    slip.attenuate(SlipCaveat {
+        scope: Some(base_read_scope()),
+        ..Default::default()
+    })
+    .expect("narrow root to base read");
+    let challenge = b"code-memory-read";
+    let proof_bytes = issuer
+        .binding_proof(&slip, challenge)
+        .expect("binding proof");
+    let verified = vault
+        .verify_capability_slip(&issuer, &slip, challenge, &proof_bytes)
+        .expect("verified base-read slip");
+    ScopedReadActorKey::from_verified_slip(&verified).expect("read key")
 }
 
 // ---------------------------------------------------------------------------
@@ -1296,7 +1329,10 @@ fn blocks_is_excluded_from_default_ppr() {
     .expect("attach downstream");
 
     let pulled = vault
-        .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(vec![seed_symbol]))
+        .pull_code_memory(
+            reader_key_for(&vault),
+            CodeMemoryPullRequest::new(vec![seed_symbol]),
+        )
         .expect("pull");
     assert!(
         pulled.notes.is_empty(),
@@ -1335,7 +1371,7 @@ fn all_pulled_values_are_labelled_data() {
 
     let pulled = vault
         .pull_code_memory(
-            reader_key(),
+            reader_key_for(&vault),
             CodeMemoryPullRequest::new(vec![anchor_symbol]),
         )
         .expect("pull");
@@ -1395,7 +1431,9 @@ fn scoped_read_clamps_before_ranking() {
 
     let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
     request.limit = 2;
-    let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
+    let pulled = vault
+        .pull_code_memory(reader_key_for(&vault), request)
+        .expect("pull");
 
     assert_eq!(pulled.notes.len(), 1);
     assert_eq!(
@@ -1441,14 +1479,14 @@ fn always_on_remains_scoped_through_the_canonical_clamp() {
     .expect("attach the plain note");
 
     let clamp_admits_claim = vault
-        .scoped_read(reader_key())
+        .scoped_read(reader_key_for(&vault))
         .get(&claim_id)
         .expect("canonical clamp")
         .is_some();
 
     let pulled = vault
         .pull_code_memory(
-            reader_key(),
+            reader_key_for(&vault),
             CodeMemoryPullRequest::new(vec![anchor_symbol]),
         )
         .expect("pull");
@@ -1503,7 +1541,7 @@ fn a_header_only_claim_payload_is_skipped_rather_than_failing_the_pull() {
 
     let pulled = vault
         .pull_code_memory(
-            reader_key(),
+            reader_key_for(&vault),
             CodeMemoryPullRequest::new(vec![anchor_symbol]),
         )
         .expect("an unreadable payload must never fail the pull");
@@ -1561,7 +1599,9 @@ fn denied_values_consume_one_global_examined_budget_across_slots() {
     for (limit, expected) in [(2, Vec::new()), (3, vec![first]), (4, vec![first, second])] {
         let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
         request.limit = limit;
-        let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
+        let pulled = vault
+            .pull_code_memory(reader_key_for(&vault), request)
+            .expect("pull");
         assert_eq!(
             pulled_payloads(&pulled),
             expected,
@@ -1614,7 +1654,9 @@ fn bounded_slot_streaming_keeps_canonical_order_and_respects_denial_budget() {
     ] {
         let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
         request.limit = limit;
-        let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
+        let pulled = vault
+            .pull_code_memory(reader_key_for(&vault), request)
+            .expect("pull");
         assert_eq!(
             pulled_payloads(&pulled),
             expected,
@@ -1764,7 +1806,7 @@ fn pull_spanning_symbols_returns_all_registered_contracts() {
 
     let pulled = vault
         .pull_code_memory(
-            reader_key(),
+            reader_key_for(&vault),
             CodeMemoryPullRequest::new(vec![first, second]),
         )
         .expect("pull");
@@ -1810,7 +1852,10 @@ fn relevance_pull_is_bounded() {
     assert_eq!(CODE_MEMORY_PPR_DEPTH, 2, "depth is pinned, not tunable");
 
     let empty = vault
-        .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(Vec::new()))
+        .pull_code_memory(
+            reader_key_for(&vault),
+            CodeMemoryPullRequest::new(Vec::new()),
+        )
         .expect_err("a seedless pull is refused");
     assert!(matches!(
         empty,
@@ -1819,7 +1864,10 @@ fn relevance_pull_is_bounded() {
 
     let not_a_symbol = seed(&vault, 0xC4, ENTITY_TYPE_PERSON);
     let wrong_seed = vault
-        .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(vec![not_a_symbol]))
+        .pull_code_memory(
+            reader_key_for(&vault),
+            CodeMemoryPullRequest::new(vec![not_a_symbol]),
+        )
         .expect_err("a non-CODE_SYMBOL seed is refused");
     assert!(matches!(
         wrong_seed,
@@ -1829,7 +1877,7 @@ fn relevance_pull_is_bounded() {
     let mut over_limit = CodeMemoryPullRequest::new(vec![anchor_symbol]);
     over_limit.limit = 100_000;
     let overflow = vault
-        .pull_code_memory(reader_key(), over_limit)
+        .pull_code_memory(reader_key_for(&vault), over_limit)
         .expect_err("the caller limit is bounded by the hard maximum");
     assert!(matches!(
         overflow,
@@ -1843,7 +1891,7 @@ fn relevance_pull_is_bounded() {
     thresholded.minimum_relevance = 2.0;
     assert!(
         vault
-            .pull_code_memory(reader_key(), thresholded)
+            .pull_code_memory(reader_key_for(&vault), thresholded)
             .expect("pull")
             .notes
             .is_empty(),
@@ -1852,7 +1900,7 @@ fn relevance_pull_is_bounded() {
 
     let pulled = vault
         .pull_code_memory(
-            reader_key(),
+            reader_key_for(&vault),
             CodeMemoryPullRequest::new(vec![anchor_symbol]),
         )
         .expect("pull");

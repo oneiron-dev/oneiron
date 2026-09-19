@@ -191,7 +191,8 @@ fn decode_standing_outbound_grant_value(value: &Value) -> Result<StandingOutboun
             crate::federation::scope_codec::decode_scope_value(required_value(
                 entries,
                 "authority_scope",
-            )?)?
+            )?)
+            .map_err(|_| invalid_grant())?
         },
         principal_ref: decode_non_empty_string(required_value(entries, KEY_PRINCIPAL_REF)?)?,
         origin_component_id: decode_non_empty_string(required_value(

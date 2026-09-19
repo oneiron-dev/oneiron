@@ -224,10 +224,12 @@ pub(crate) struct CoreAuth {
     actor_class: Option<String>,
     org_ref: Option<String>,
     verified_slip: Option<oneiron::authority::VerifiedSlip>,
+    /// Exact authenticated instrument, independent of the verifier's remaining TTL.
+    instrument: Option<[u8; 32]>,
 }
 
 impl CoreAuth {
-    /// Verifies an in-band slip through the existing MAC → claims → live-jti path.
+    /// Refuses an in-band token without its mandatory holder binding proof.
     /// Neither the trust root (even a v2-shaped root) nor dev-mode unverified
     /// credentials may establish app-tier authority. Claim grammar is unchanged.
     #[cfg(test)]
@@ -240,6 +242,17 @@ impl CoreAuth {
         // A token alone cannot bind a session: possession of the connection
         // private key is mandatory, even for an otherwise valid v2 MAC.
         Err(ApiError::unauthorized())
+    }
+
+    pub(crate) fn for_server(headers: &HeaderMap, server: &SyncServer) -> Result<Self, ApiError> {
+        if let Some(issuer) = server.managed_issuer.as_ref() {
+            let proof = server.vault().verified_host_root_slip(issuer)
+                .map_err(|_| ApiError::unauthorized())?;
+            let mut auth = Self::from_verified(proof, true)?;
+            auth.principal = "managed-supervisor".to_owned();
+            return Ok(auth);
+        }
+        Self::from_headers(headers, &server.config, server.vault().as_ref())
     }
 
     pub(crate) fn from_headers(
@@ -281,6 +294,7 @@ impl CoreAuth {
             actor_class: None,
             org_ref: None,
             verified_slip: None,
+            instrument: None,
         })
     }
 
@@ -294,6 +308,7 @@ impl CoreAuth {
             actor_class: None,
             org_ref: None,
             verified_slip: None,
+            instrument: None,
         }
     }
 
@@ -371,6 +386,20 @@ impl CoreAuth {
         self.implicit_all_scopes && (self.verified_slip.is_some() || self.principal_ref.is_none())
     }
 
+    /// Reconnect matches the exact verified instrument and projected principal.
+    /// Holder proofs have fresh nonces; verification-time remaining TTL can change.
+    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+        self.instrument.is_some()
+            && self.instrument == other.instrument
+            && self.principal == other.principal
+            && self.principal_ref == other.principal_ref
+            && self.actor_class == other.actor_class
+            && self.org_ref == other.org_ref
+            && self.scopes == other.scopes
+            && self.implicit_all_scopes == other.implicit_all_scopes
+            && self.jti == other.jti
+    }
+
     pub(crate) fn idempotency_principal(&self) -> String {
         let scopes = if self.implicit_all_scopes {
             IMPLICIT_ALL_IDEMPOTENCY_SCOPES.to_owned()
@@ -391,18 +420,10 @@ impl CoreAuth {
             .as_deref()
             .map(|org| format!(":org_ref={org}"))
             .unwrap_or_default();
-        // All effective caveats partition cached responses, not only HTTP verbs.
-        // Derived Debug contains every typed claim and cannot drop a restriction
-        // through a serializer error. This digest is a private cache key, not wire ABI.
-        let authority = self
-            .verified_slip
-            .as_ref()
-            .map(|proof| {
-                format!(
-                    ":authority={}",
-                    blake3::hash(format!("{:?}", proof.claims()).as_bytes()).to_hex()
-                )
-            })
+        // The exact verified instrument partitions every caveat. Remaining TTL
+        // is a verifier observation, not a new cache or reconnect identity.
+        let authority = self.instrument
+            .map(|fingerprint| format!(":authority={}", blake3::Hash::from(fingerprint).to_hex()))
             .unwrap_or_default();
         format!(
             "core:{}{principal_ref}{org_ref}:scopes={scopes}{authority}",
@@ -418,7 +439,7 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        Self::from_headers(&parts.headers, &server.config, server.vault().as_ref())
+        Self::for_server(&parts.headers, server)
             .map_err(Into::into)
     }
 }
@@ -607,6 +628,7 @@ fn core_auth_for_live_claims(
         actor_class: claims.actor_class,
         org_ref: claims.org_ref,
         verified_slip: None,
+        instrument: None,
     })
 }
 

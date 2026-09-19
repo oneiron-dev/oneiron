@@ -634,6 +634,51 @@ pub(super) fn core_read_world_grant_manifest(actor_ref: &str, world: EntityId) -
     )])
 }
 
+pub(super) fn core_read_grant_map(actor_ref: &str, scope: Value) -> Value {
+    let (authority, selectors) = if matches!(&scope,Value::Map(entries) if entries.iter().any(|(key,_)|key.as_str()==Some("worlds")))
+    {
+        (scope, Value::Nil)
+    } else {
+        (
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+            scope,
+        )
+    };
+    Value::Map(vec![
+        (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+        (
+            Value::from(GRANT_EFFECTOR_KEY),
+            Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+        ),
+        (Value::from(GRANT_SCOPE_KEY), authority),
+        (Value::from("selectors"), selectors),
+        (
+            Value::from(GRANT_RECEIPT_REQUIRED_KEY),
+            Value::Boolean(false),
+        ),
+    ])
+}
+
+pub(super) fn core_read_grants_manifest(grants: Vec<Value>) -> Vec<u8> {
+    encode_policy_manifest(vec![(
+        Value::from(POLICY_SCOPED_GRANTS_KEY),
+        Value::Array(grants),
+    )])
+}
+
+pub(super) fn nonclaim_entity_types_grant_map(actor_ref: &str, types: &[u8]) -> Value {
+    core_read_grant_map(
+        actor_ref,
+        Value::Map(vec![(
+            Value::from("entity_types"),
+            Value::Array(types.iter().copied().map(Value::from).collect()),
+        )]),
+    )
+}
+
 pub(super) fn put_claim_body(vault: &crate::Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
     let data = crate::claim::encode_claim_body(body)?;
     let payload = entity_record(

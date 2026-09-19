@@ -841,7 +841,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         .batch()
         .put(
             &forged_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 12, end: 12 },
             12,
             &encode_companion_record_body(&revived_without_predecessor)?,
@@ -863,7 +863,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         .batch()
         .put(
             &mismatched_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 22, end: 22 },
             22,
             &encode_companion_record_body(&mismatched_revived)?,
@@ -881,7 +881,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         .batch()
         .put(
             &revived_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 22, end: 22 },
             22,
             &encode_companion_record_body(&valid_revived)?,
@@ -917,7 +917,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         .batch()
         .put(
             &duplicate_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 23, end: 23 },
             23,
             &encode_companion_record_body(&valid_revived)?,
@@ -951,14 +951,14 @@ fn companion_register_raw_revived_put_accepts_same_batch_retired_history() -> Re
         .batch()
         .put(
             &revived_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 32, end: 32 },
             32,
             &encode_companion_record_body(&revived)?,
         )
         .put(
             &retired_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 31, end: 31 },
             31,
             &encode_companion_record_body(&retired)?,
@@ -1138,7 +1138,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &entity(0x56),
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 13, end: 13 },
             13,
             &encode_companion_record_body(&personal_created)?,
@@ -1167,7 +1167,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &personal_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 14, end: 14 },
             14,
             &raw_companion_record_body(
@@ -1186,7 +1186,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &personal_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 14, end: 14 },
             14,
             &raw_companion_record_body(
@@ -1207,7 +1207,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &personal_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 14, end: 14 },
             14,
             &encode_companion_record_body(&tampered_personal_history)?,
@@ -1362,7 +1362,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &neutral_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 16, end: 16 },
             16,
             &encode_companion_record_body(&neutral.created_at(16)?)?,

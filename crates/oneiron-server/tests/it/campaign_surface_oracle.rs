@@ -979,16 +979,12 @@ async fn campaign_membership_routes_carry_the_engine_paging_contract() {
         assert_eq!(status, 400, "{malformed}");
 
         // Membership is a READ: a write-only credential does not reach it, and
-        // the route never mutates.
+        // the route never mutates. Mint the probe credential BEFORE the
+        // fingerprint: minting appends to the authority log, so minting after
+        // would look like the read wrote.
+        let write_token = token_for(&vault, principal, "core:write");
         let before = vault_fingerprint(&vault);
-        let (status, write_only) = request(
-            addr,
-            "GET",
-            &path,
-            Some(&token_for(&vault, principal, "core:write")),
-            None,
-        )
-        .await;
+        let (status, write_only) = request(addr, "GET", &path, Some(&write_token), None).await;
         assert_eq!(status, 403, "{write_only}");
         let _ = request(addr, "GET", &path, Some(&token), None).await;
         assert_eq!(

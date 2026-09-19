@@ -355,12 +355,11 @@ fn companion_birth_is_full_person() -> Result<()> {
             .any(|edge| edge.kind == EdgeKind::HasFacet && edge.target == birth.work_facet_ref)
     );
 
-    // Companion-register record.
-    assert!(
-        vault
-            .get_companion_record(&birth.companion_record_ref)?
-            .is_some()
-    );
+    // The persona is a FACET over the companion PERSON, never the actor definition.
+    assert_eq!(vault.get_entity_type(&birth.companion_record_ref)?,Some(ENTITY_TYPE_FACET));
+    let persona=vault.get_companion_record(&birth.companion_record_ref)?.expect("persona facet");
+    assert!(matches!(persona.subject,crate::companion::CompanionSubject::Persona { persona_ref } if persona_ref==birth.person_ref));
+    assert_eq!(type_count(&vault,ENTITY_TYPE_COMPANION_REGISTER),0);
 
     // Exactly the requested companion-profile read, and nothing wider.
     let grant = vault
@@ -369,12 +368,12 @@ fn companion_birth_is_full_person() -> Result<()> {
     assert!(grant.allows_companion_profile_read(
         &entity(MEMBER_PERSON),
         &entity(MEMBER_PERSON),
-        &birth.actor_ref,
+        &birth.person_ref,
     ));
     assert!(!grant.allows_companion_profile_read(
         &entity(OUTSIDER),
         &entity(MEMBER_PERSON),
-        &birth.actor_ref,
+        &birth.person_ref,
     ));
     assert!(!grant.allows_companion_profile_read(
         &entity(MEMBER_PERSON),

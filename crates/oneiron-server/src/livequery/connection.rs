@@ -89,7 +89,7 @@ impl Hub {
     ) -> Result<Arc<Session>, AppError> {
         let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
         if let Some(session) = cursor.and_then(|cursor| sessions.get(&cursor.document)) {
-            if &session.auth != auth {
+            if !session.auth.same_authority(auth) {
                 return Err(AppError::unauthorized());
             }
             session.attached.store(conn_id, Ordering::Release);
@@ -205,7 +205,7 @@ impl Connection {
             }
         }
         let session = self.session.as_ref().ok_or_else(unavailable)?;
-        if &session.auth != auth || session.attached.load(Ordering::Acquire) != self.conn_id {
+        if !session.auth.same_authority(auth) || session.attached.load(Ordering::Acquire) != self.conn_id {
             return Err(AppError::unauthorized());
         }
         if !opening && !self.active.contains(&id) {

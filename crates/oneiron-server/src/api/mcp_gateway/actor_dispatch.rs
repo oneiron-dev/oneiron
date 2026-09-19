@@ -32,7 +32,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
 ) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
     let registry = server.mcp_registry.lock().await;
-    let actor = registry
+    let mut actor = registry
         .resolve(&credential, unix_seconds_now(), |actor_class, actor_ref| {
             server
                 .vault
@@ -40,11 +40,49 @@ pub(crate) async fn resolve_mcp_gateway_actor(
                 .unwrap_or(false)
         })
         .map_err(mcp_actor_resolution_error)?;
+    drop(registry);
+    // The connector header selects a registered instrument, not another
+    // principal. Verify that exact instrument with its holder proof; never
+    // borrow an unrelated Authorization header's owner privileges.
+    let mut proof_headers = headers.clone();
+    proof_headers.insert(AUTHORIZATION, format!("Bearer {credential}").parse()
+        .map_err(|_| mcp_proof_error())?);
+    let auth = crate::auth::CoreAuth::from_headers(
+        &proof_headers, &server.config, server.vault().as_ref(),
+    ).map_err(|_| mcp_proof_error())?;
+    let proof = auth.verified_slip().ok_or_else(mcp_proof_error)?;
+    // Only the actual configured root may act through its host-registered
+    // actor. Every client is bound to the paired holder and verified class.
+    if !(auth.principal_ref().is_none() && auth.is_owner_grade())
+        && (auth.principal_ref() != Some(actor.gate_actor_ref.as_str())
+            || auth.actor_class() != Some(actor.gate_actor_class))
+    {
+        return Err(mcp_proof_error());
+    }
+    if auth.org_ref().is_some() || !proof.allows_verb("read") {
+        return Err(mcp_proof_error());
+    }
+    // The legacy registry can represent only all or one world/facet. Refuse
+    // a wider registration instead of silently projecting away verifier bounds.
+    use oneiron::federation::{ScopeAxis, ScopeId};
+    let axis = |id: Option<oneiron::EntityId>| id.map_or(ScopeAxis::All, |id| ScopeAxis::Some(
+        std::collections::BTreeSet::from([ScopeId(id)])));
+    if !axis(actor.scope.world_ref).is_narrowing_of(&proof.scope().worlds)
+        || !axis(actor.scope.facet_ref).is_narrowing_of(&proof.scope().facets)
+    {
+        return Err(mcp_proof_error());
+    }
+    actor.auth = Some(auth);
     Ok(McpCallContext {
         actor,
         mode,
         request_id: request_id.to_owned(),
     })
+}
+
+fn mcp_proof_error() -> McpGatewayError {
+    McpGatewayError::new(-32001, "mcp_auth_required",
+        "the registered connector requires its live paired holder proof")
 }
 
 pub(crate) fn mcp_connector_credential(headers: &HeaderMap) -> Result<String, McpGatewayError> {
@@ -236,6 +274,31 @@ pub(crate) async fn execute_mcp_tool(
     args: McpValidatedToolArgs,
     actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
+    let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
+    if !auth.credential_is_live(server.vault().as_ref()) {
+        return Err(mcp_proof_error());
+    }
+    // Board/task lists are explicitly filtered row by row. Legacy adapters
+    // and task detail/write facades have no recursive proof projection, so
+    // they require an unrestricted record scope instead of dropping caveats.
+    let filtered_read = matches!(&args, McpValidatedToolArgs::Setup(_))
+        || matches!(&args, McpValidatedToolArgs::Verb(verb) if matches!(verb.tool.binding,
+            crate::mcp::McpVerbBinding::TasksCheck
+            | crate::mcp::McpVerbBinding::BoardExpand
+            | crate::mcp::McpVerbBinding::BoardRefresh
+            | crate::mcp::McpVerbBinding::BoardSubscribe
+            | crate::mcp::McpVerbBinding::BoardUnsubscribe));
+    if !filtered_read {
+        auth.require_unrestricted_record_scope().map_err(|_| McpGatewayError::new(
+            -32020, "mcp_scope_unprojectable", "this facade cannot project the credential's record bounds"))?;
+    }
+    let writes = matches!(&args, McpValidatedToolArgs::Edit(_) | McpValidatedToolArgs::Book(_)
+        | McpValidatedToolArgs::ExecuteCode(_) | McpValidatedToolArgs::Calendar(_))
+        || matches!(&args, McpValidatedToolArgs::Verb(verb) if matches!(verb.tool.binding,
+            crate::mcp::McpVerbBinding::TasksCreate | crate::mcp::McpVerbBinding::TasksAck
+            | crate::mcp::McpVerbBinding::TasksCancel));
+    auth.require(if writes { crate::auth::CoreScope::Write } else { crate::auth::CoreScope::Read })
+        .map_err(|_| mcp_proof_error())?;
     match args {
         McpValidatedToolArgs::Nav(args) => execute_mcp_nav(server, args, actor),
         McpValidatedToolArgs::Read(args) => execute_mcp_read(server, args, actor),

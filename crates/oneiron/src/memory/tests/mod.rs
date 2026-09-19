@@ -205,11 +205,15 @@ pub(super) fn assert_witness_left_nothing(vault: &crate::Vault, refused_text: &s
             "a refused witness left a {label} row behind"
         );
     }
+    let persons=vault.entities_by_type(crate::registry::ENTITY_TYPE_PERSON).expect("persons");
+    for person in &persons {
+        assert!(vault.edge_exists(person,crate::EdgeKind::HasFacet,&crate::claim::substrate_facet_id(*person)).expect("substrate edge"));
+    }
     let rtxn = vault.store.env.read_txn().expect("read txn");
     assert_eq!(
         vault.store.edges_out.len(&rtxn).expect("edge count"),
-        0,
-        "a refused witness left an edge behind"
+        persons.len() as u64,
+        "a refused witness left an edge beyond the pre-existing substrate edges"
     );
     drop(rtxn);
     assert!(

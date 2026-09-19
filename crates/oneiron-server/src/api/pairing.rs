@@ -73,10 +73,45 @@ pub(super) async fn redeem(
             &request.signature,
         )
         .map_err(|_| ApiError::unauthorized())?;
-    Ok(Json(Paired {
-        token: slip.to_token().map_err(|_| ApiError::unauthorized())?,
-    }))
+    let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
+    // The already redeemed/logged slip is the credential. MCP registration
+    // only records its immutable adapter ceiling; it creates no authority.
+    register_paired_mcp(&server, &slip, &token).await?;
+    Ok(Json(Paired { token }))
 }
+async fn register_paired_mcp(
+    server: &SyncServer,
+    slip: &oneiron::authority::CapabilitySlip,
+    token: &str,
+) -> Result<(), ApiError> {
+    use oneiron::federation::{ScopeAxis, ScopeId};
+    let claims = &slip.claims;
+    if claims.org_ref.is_some() || !claims.scope.verbs.contains(&"read".to_owned()) {
+        return Ok(());
+    }
+    let class = match claims.actor_class.as_deref() {
+        Some("human") => oneiron::EdgeActorClass::Human,
+        Some("agent") => oneiron::EdgeActorClass::Agent,
+        Some("system") => oneiron::EdgeActorClass::System,
+        _ => return Ok(()),
+    };
+    // This MCP adapter can represent only all or one id on each legacy axis.
+    // Other paired instruments still work on the canonical /v1 read door.
+    let axis = |axis: &ScopeAxis<ScopeId>| match axis {
+        ScopeAxis::All => Some(None),
+        ScopeAxis::Some(ids) if ids.len() == 1 => ids.first().map(|id| Some(id.0)),
+        _ => None,
+    };
+    let (Some(world), Some(facet)) = (axis(&claims.scope.worlds), axis(&claims.scope.facets)) else {
+        return Ok(());
+    };
+    let actor = oneiron::EntityId::from_hex(&claims.holder_ref).map_err(|_| ApiError::unauthorized())?;
+    server.mcp_registry.lock().await.register(token,
+        crate::mcp::McpConnectorActorRecord::new(actor, class,
+            crate::mcp::McpConnectorScope::scoped(world, facet)).with_expiry(claims.expires_at))
+        .map_err(|_| ApiError::unauthorized())
+}
+
 fn issuer(server: &SyncServer) -> Result<HostSlipIssuer, ApiError> {
     let secret = server
         .config

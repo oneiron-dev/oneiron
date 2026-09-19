@@ -119,9 +119,9 @@ fn person_mints_one_substrate_facet_with_sensitivity_and_replay_is_idempotent() 
         .put_replicated(&person, ENTITY_TYPE_PERSON, AT, 10, b"person")
         .commit()?;
     let raw = vault.get(&facet)?.expect("fixture");
-    assert_eq!(raw[0], ENTITY_TYPE_FACET);
+    assert_eq!(vault.get_entity_type(&facet)?, Some(ENTITY_TYPE_FACET));
     let Value::Map(entries) =
-        rmpv::decode::read_value(&mut &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+        rmpv::decode::read_value(&mut &raw[..])
             .expect("fixture")
     else {
         panic!("map")
@@ -181,7 +181,7 @@ fn legacy_claim_scope_sweep_stamps_explicit_base_once() -> Result<()> {
     })?;
     crate::batch::sweep_scope_stamps(&vault.store)?;
     let first = vault.get(&id)?.expect("fixture");
-    assert!(decode_claim_body(&first[crate::batch::ENTITY_METADATA_HEADER_LEN..], true).is_ok());
+    assert!(decode_claim_body(&first[..], true).is_ok());
     crate::batch::sweep_scope_stamps(&vault.store)?;
     assert_eq!(vault.get(&id)?.expect("fixture"), first);
     Ok(())
@@ -271,8 +271,8 @@ fn identity_facet_replay_and_export_use_content_sensitivity_not_export_classific
         Sensitivity::Private,
     );
     vault.create_companion_record(&facet, &record, 10)?;
-    assert_eq!(vault.get(&facet)?.expect("fixture")[0], ENTITY_TYPE_FACET);
-    assert_eq!(vault.get(&person)?.expect("fixture")[0], ENTITY_TYPE_PERSON);
+    assert_eq!(vault.get_entity_type(&facet)?, Some(ENTITY_TYPE_FACET));
+    assert_eq!(vault.get_entity_type(&person)?, Some(ENTITY_TYPE_PERSON));
     let raw = vault.get(&facet)?.expect("fixture");
     let (_dir2, replayed) = self::vault()?;
     replayed
@@ -282,7 +282,7 @@ fn identity_facet_replay_and_export_use_content_sensitivity_not_export_classific
             ENTITY_TYPE_FACET,
             AT,
             10,
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            &raw[..],
         )
         .commit()?;
     assert_eq!(
@@ -290,8 +290,8 @@ fn identity_facet_replay_and_export_use_content_sensitivity_not_export_classific
         vault.get_companion_record(&facet)?
     );
     assert_eq!(
-        replayed.get(&person)?.expect("fixture")[0],
-        ENTITY_TYPE_PERSON
+        replayed.get_entity_type(&person)?,
+        Some(ENTITY_TYPE_PERSON)
     );
     let register = vault.companion_register()?;
     let expressions = crate::companion::CompanionExpressionRegister::new();

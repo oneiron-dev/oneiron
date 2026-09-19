@@ -20,7 +20,7 @@ pub enum ScopeView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScopedRecord {
     pub id: EntityId,
-    /// Full entity metadata header and body, identical to `Vault::get`.
+    /// Full entity metadata header and body; `Vault::get` returns only the body.
     pub bytes: Vec<u8>,
     pub scope: Option<Scope>,
     /// Only a Debug result may reveal a row suppressed by the normal selector.

@@ -301,7 +301,7 @@ pub(crate) async fn idempotency_middleware(
     let is_core_auth_route = is_core_auth_route(request_path(&request));
     let revoked = state.server.vault().as_ref();
     let core_auth = is_core_auth_route
-        .then(|| CoreAuth::from_headers(request.headers(), &state.server.config, revoked));
+        .then(|| CoreAuth::for_server(request.headers(), &state.server));
     let auth_ok = match &core_auth {
         Some(Ok(auth)) => !auth.principal().is_empty(),
         Some(Err(_)) => false,

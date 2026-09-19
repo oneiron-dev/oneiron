@@ -359,11 +359,11 @@ fn child_of_and_assigned_to_are_never_traversed() -> Result<()> {
     let task = entity(72);
     let machine = entity(73);
 
-    // ONE-1376: a ChildOf parent must be a real row. PERSON keeps the pair
+    // ONE-1376: a ChildOf parent must be a real row. ASSET_TEXT keeps the pair
     // outside the TASK role matrix, which is not what this test is about.
     vault.put_entity(
         &parent,
-        crate::registry::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_ASSET_TEXT,
         TimeRange { start: 1, end: 1 },
         1,
         b"tree node",
@@ -2611,6 +2611,18 @@ fn pull_code_memory_does_not_rank_across_a_denied_claim_bridge() -> Result<()> {
     // Installed LAST: every fixture write above predates the manifest, so this
     // grant governs reads only.
     let manifest = single_reader_policy_manifest("code-memory-reader");
+    let Value::Map(mut entries)=rmpv::decode::read_value(&mut manifest.as_slice()).expect("manifest") else { panic!("map"); };
+    let (_,Value::Array(grants))=entries.iter_mut().find(|(key,_)|key.as_str()==Some("scoped_grants")).expect("grants") else { panic!("grants"); };
+    let mut metadata=crate::federation::scope_codec::read_preset();
+    metadata.bands=crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([crate::registry::ENTITY_TYPE_CODE_SYMBOL,crate::registry::ENTITY_TYPE_NOTE]));
+    grants.push(Value::Map(vec![
+        ("actor_ref".into(),"code-memory-intruder".into()),
+        ("effector".into(),"core:read".into()),
+        ("scope".into(),crate::federation::scope_codec::encode_scope_value(&metadata)?),
+        ("receipt_required".into(),Value::Boolean(false)),
+    ]));
+    let mut manifest=Vec::new();
+    rmpv::encode::write_value(&mut manifest,&Value::Map(entries)).expect("manifest");
     put_policy_manifest_bytes(&vault, entity(0x69), &manifest)?;
 
     let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
@@ -3153,6 +3165,7 @@ fn pull_code_memory_threads_vad_alpha_and_rejects_invalid_config() -> Result<()>
             dominance: 0.0,
         },
     )?;
+    put_policy_manifest_bytes(&vault,entity(0x79),&single_reader_policy_manifest("vad-reader"))?;
     let mut request = CodeMemoryPullRequest::new(vec![seed]);
     request.minimum_relevance = 0.35;
     let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;

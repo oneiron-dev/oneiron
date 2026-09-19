@@ -167,12 +167,13 @@ fn store_calendar_event(
     id
 }
 
-/// Creates a Human actor and facade without granting source permission.
+/// Creates a Human actor and read grant, without granting source permission.
 fn actor_facade(vault: &Vault) -> (EntityId, Memory<'_>) {
     let actor = test_id(ACTOR_SEED);
     vault
         .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
         .expect("put actor");
+    oneiron::calendar::transcript::permit_calendar_read_for_test(vault,actor).expect("grant actor read scope without source permission");
     (actor, vault.memory(actor, EdgeActorClass::Human))
 }
 

@@ -4,9 +4,9 @@ use super::*;
 
 #[tokio::test]
 async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
 
-    let (batch_status, batch_body) = route_json(
+    let (batch_status, batch_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -34,7 +34,7 @@ async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
         .to_owned();
     assert_eq!(batch_body["count"], Value::from(1));
 
-    let (query_status, query_body) = route_json(
+    let (query_status, query_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -55,7 +55,7 @@ async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
     );
     assert_eq!(query_body["meta"]["countMode"], Value::from("estimate"));
 
-    let (pack_status, pack_body) = route_json(
+    let (pack_status, pack_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -86,7 +86,7 @@ async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
         .expect("content hash");
     let short_ref = format!("{short_id}:{content_hash}");
 
-    let (hydrate_status, hydrate_body) = route_json(
+    let (hydrate_status, hydrate_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -109,7 +109,7 @@ async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
 
 #[tokio::test]
 async fn v1_core_memory_timeline_scrubs_filtered_supersession_links() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let subject = seeded_test_entity_id(0x1261_0100);
     let old = seeded_test_entity_id(0x1261_0101);
     let new = seeded_test_entity_id(0x1261_0102);
@@ -131,7 +131,7 @@ async fn v1_core_memory_timeline_scrubs_filtered_supersession_links() {
         .expect("supersede claim");
 
     let path = format!("/v1/core/memory/{}/timeline?view=full", new.to_hex());
-    let (status, body) = route_json(
+    let (status, body) = route_json_auth(
         server,
         Request::builder()
             .uri(path)
@@ -151,7 +151,7 @@ async fn v1_core_memory_timeline_scrubs_filtered_supersession_links() {
 
 #[tokio::test]
 async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let remembered = seeded_test_entity_id(0x1261_0200);
     let remember_request = json!({
         "entity": {
@@ -168,7 +168,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
             "text": [{ "field": "body", "value": "memory verb remembered turn" }]
         }
     });
-    let (remember_status, remember_body) = route_json(
+    let (remember_status, remember_body) = route_json_auth(
         server.clone(),
         json_request("POST", "/v1/core/memory/verbs/remember", remember_request),
     )
@@ -199,7 +199,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     seed_active_claim(&server, new, subject, "after", 320);
     seed_active_claim(&server, retractable, subject, "withdraw", 330);
 
-    let (replace_status, replace_body) = route_json(
+    let (replace_status, replace_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -218,7 +218,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(replace_body["new_id"], Value::from(new.to_hex()));
     assert_eq!(replace_body["old_id"], Value::from(old.to_hex()));
 
-    let (withdraw_status, withdraw_body) = route_json(
+    let (withdraw_status, withdraw_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -235,7 +235,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(withdraw_body["operation"], Value::from("retract_claim"));
     assert_eq!(withdraw_body["id"], Value::from(retractable.to_hex()));
 
-    let (soft_gdpr_status, soft_gdpr_body) = route_json(
+    let (soft_gdpr_status, soft_gdpr_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -250,7 +250,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(soft_gdpr_status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&soft_gdpr_body, "BAD_REQUEST");
 
-    let (soft_hard_status, soft_hard_body) = route_json(
+    let (soft_hard_status, soft_hard_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -265,7 +265,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(soft_hard_status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&soft_hard_body, "BAD_REQUEST");
 
-    let (delete_at_status, delete_at_body) = route_json(
+    let (delete_at_status, delete_at_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -280,7 +280,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(delete_at_status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&delete_at_body, "BAD_REQUEST");
 
-    let (hard_user_status, hard_user_body) = route_json(
+    let (hard_user_status, hard_user_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -295,7 +295,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(hard_user_status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&hard_user_body, "BAD_REQUEST");
 
-    let (forget_status, forget_body) = route_json(
+    let (forget_status, forget_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -313,7 +313,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert!(forget_body.get("at").is_none());
 
     let deleted_path = format!("/v1/core/memory/{}/timeline", remembered.to_hex());
-    let (timeline_status, timeline_body) = route_json(
+    let (timeline_status, timeline_body) = route_json_auth(
         server,
         Request::builder()
             .uri(deleted_path)
@@ -332,7 +332,7 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
 
 #[tokio::test]
 async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let entity_id = oneiron::EntityId::now();
     let body = json!({
         "txt": "hydrate deleted needle",
@@ -365,7 +365,7 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     let entity = pack.results.first().expect("hydrated result");
     let short_ref = format!("{}:{:02x}", entity.short_id, entity.content_hash);
 
-    let (malformed_status, malformed_body) = route_json(
+    let (malformed_status, malformed_body) = route_json_auth(
         server.clone(),
         json_request("POST", "/v1/core/hydrate", json!({ "ref": "bad-ref" })),
     )
@@ -373,7 +373,7 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     assert_eq!(malformed_status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&malformed_body, "BAD_REQUEST");
 
-    let (not_found_status, not_found_body) = route_json(
+    let (not_found_status, not_found_body) = route_json_auth(
         server.clone(),
         json_request("POST", "/v1/core/hydrate", json!({ "ref": "tn999:aa" })),
     )
@@ -409,7 +409,7 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
         "{}:{:02x}",
         empty_entity.short_id, empty_entity.content_hash
     );
-    let (empty_status, empty_body) = route_json(
+    let (empty_status, empty_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -428,7 +428,7 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
         .delete_entity_with_reason(&entity_id, oneiron::DeleteReason::UserDelete)
         .expect("soft delete turn");
 
-    let (deleted_status, deleted_body) = route_json(
+    let (deleted_status, deleted_body) = route_json_auth(
         server.clone(),
         json_request("POST", "/v1/core/hydrate", json!({ "ref": short_ref })),
     )
@@ -459,7 +459,7 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     assert!(deleted_body.get("item").is_none());
 
     let too_many_refs = vec![empty_short_ref.clone(); CORE_MAX_BATCH_ENTITIES + 1];
-    let (too_many_status, too_many_body) = route_json(
+    let (too_many_status, too_many_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -471,7 +471,7 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     assert_eq!(too_many_status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&too_many_body, "BAD_REQUEST");
 
-    let (batch_status, batch_body) = route_json(
+    let (batch_status, batch_body) = route_json_auth(
         server,
         json_request(
             "POST",

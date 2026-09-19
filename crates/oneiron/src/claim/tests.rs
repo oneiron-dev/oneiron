@@ -802,12 +802,14 @@ fn claim_subject_decode_pins_both_encodings() {
 
 /// ARCH-0004 / ARCH-0022 world write-validation, exercised on the claim
 /// body chokepoint with hand-built MessagePack so a wrong impl that stores
-/// arbitrary `world` bytes FAILS: a present `world` must be exactly 16
-/// binary bytes (→ an `EntityId`), an absent key is base reality (`None`),
-/// and a 15-byte blob or a string is a typed `InvalidClaimBody`.
+/// arbitrary `worldId` bytes FAILS: `worldId` is REQUIRED and must be exactly
+/// 16 binary bytes (→ an `EntityId`); the reserved base id decodes to `None`,
+/// a missing key, a 15-byte blob, or a string is a typed `InvalidClaimBody`.
 #[test]
 fn world_value_must_be_16_byte_binary() {
     let subj = EntityId::from_bytes([0x60; 16]).expect("valid subject id");
+    let facet = substrate_facet_id(subj);
+    let project = default_project_id();
     let body_with_world = |world: Option<Value>| -> Vec<u8> {
         let mut entries = vec![
             (Value::from("pred"), Value::from("profile.name")),
@@ -815,11 +817,24 @@ fn world_value_must_be_16_byte_binary() {
             (Value::from("conf"), Value::F32(1.0)),
         ];
         if let Some(world) = world {
-            entries.push((Value::from("world"), world));
+            entries.push((Value::from("worldId"), world));
         }
+        entries.push((
+            Value::from("scopeRelationshipId"),
+            Value::from("all"),
+        ));
         entries.push((Value::from("subj"), Value::Binary(subj.as_bytes().to_vec())));
         entries.push((Value::from("appr"), Value::from("auto")));
         entries.push((Value::from("life"), Value::from("active")));
+        entries.push((
+            Value::from("scopeFacetId"),
+            Value::Binary(facet.as_bytes().to_vec()),
+        ));
+        entries.push((
+            Value::from("scopeProjectId"),
+            Value::Binary(project.as_bytes().to_vec()),
+        ));
+        entries.push((Value::from("scopeVersion"), Value::from(2_u64)));
         let mut out = Vec::new();
         rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode body");
         out
@@ -835,13 +850,20 @@ fn world_value_must_be_16_byte_binary() {
         Some(world_id)
     );
 
-    // Absent key = base reality (None), the elide-the-default pattern.
-    let base = body_with_world(None);
+    // Reserved base id = base reality (None); the wire always stamps it.
+    let base_world = base_world_id();
+    let base = body_with_world(Some(Value::Binary(base_world.as_bytes().to_vec())));
     assert_eq!(
         decode_claim_body(&base, false)
-            .expect("absent world passes")
+            .expect("base worldId passes")
             .world,
         None
+    );
+
+    // Missing key is corruption, not an old-version row.
+    assert_matches!(
+        decode_claim_body(&body_with_world(None), false),
+        Err(Error::InvalidClaimBody(_))
     );
 
     // 15-byte blob rejected fail-closed.
@@ -915,8 +937,21 @@ fn claim_field_profile_slices_are_prefixes_of_the_pinned_keys() {
     assert_eq!(
         CLAIM_FIELDS_FULL,
         &[
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
+            "pred",
+            "val",
+            "conf",
+            "sal",
+            "evid",
+            "from",
+            "to",
+            "src",
+            "worldId",
+            "scopeRelationshipId",
+            "subj",
             "scope",
+            "scopeFacetId",
+            "scopeProjectId",
+            "scopeVersion",
         ],
     );
 }
@@ -4002,6 +4037,45 @@ fn scoped_read_session_edge_fixture(
 fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
     let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let (a, b, c, edge_value) = scoped_read_session_edge_fixture(&vault)?;
+
+    // Explicit PERSON-band grant for the reader: the no-grant lane is
+    // fail-closed for stamped records, so the positive must carry its own
+    // `core:read` row. Bands narrow to PERSON so the incidental substrate
+    // `HasFacet` edge stays filtered and the assertion keeps proving the
+    // session-staged Mentions edge, not the person-substrate mint.
+    {
+        use crate::federation::ScopeAxis;
+        use std::collections::BTreeSet;
+        let mut scope = crate::federation::scope_codec::read_preset();
+        scope.bands = ScopeAxis::Some(BTreeSet::from([
+            crate::registry::ENTITY_TYPE_PERSON,
+        ]));
+        let bytes = crate::gate::default_policy_manifest();
+        let Value::Map(mut entries) =
+            rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
+        else {
+            unreachable!("default policy manifest is a map");
+        };
+        entries.push((
+            Value::from("scoped_grants"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("actor_ref"), Value::from("agent:reader")),
+                (Value::from("effector"), Value::from("core:read")),
+                (
+                    Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(&scope)?,
+                ),
+                (Value::from("receipt_required"), Value::Boolean(false)),
+            ])]),
+        ));
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("grant manifest");
+        crate::test_util::put_policy_manifest_bytes(
+            &vault,
+            crate::gate::default_policy_manifest_id()?,
+            &out,
+        )?;
+    }
 
     let overlay = crate::session_overlay::SessionOverlay::new(64 * 1024);
     let segment = overlay.install_txn_segment()?;

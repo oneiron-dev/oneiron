@@ -8,11 +8,8 @@ use super::kernel::{
 };
 use crate::Vault;
 use crate::companion::{
-    ENTITY_TYPE_COMPANION_REGISTER,
-    {
-        CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
-        decode_companion_record_body,
-    },
+    CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
+    decode_companion_record_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -27,9 +24,12 @@ pub(super) fn companion_lifecycle_receipts(
     scan_entities_by_type(
         vault,
         txn,
-        ENTITY_TYPE_COMPANION_REGISTER,
-        "companion register type index",
+        crate::registry::ENTITY_TYPE_FACET,
+        "identity facet type index",
         |id, header, body| {
+            if !crate::companion::is_identity_facet_body(body) {
+                return Ok(());
+            }
             let record = decode_companion_record_body(body)?;
             for (index, event) in record.lifecycle_events.iter().enumerate() {
                 let receipt =

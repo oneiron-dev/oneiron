@@ -10,7 +10,7 @@ use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::SyncError;
 use crate::off_record::OffRecordBackendClass;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
@@ -391,10 +391,13 @@ fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<
     let local_id = EntityId::from_bytes([0x31; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x32; 16]).unwrap();
     let external_local_id = EntityId::from_bytes([0x35; 16]).unwrap();
-    let local = companion_record(local_id, crate::federation::Sensitivity::Restricted);
-    let portable = companion_record(portable_id, crate::federation::Sensitivity::Public);
+    let local_persona = EntityId::from_bytes([0x3A; 16]).unwrap();
+    let portable_persona = EntityId::from_bytes([0x3B; 16]).unwrap();
+    let external_persona = EntityId::from_bytes([0x3C; 16]).unwrap();
+    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
     let external_local = companion_record(
-        external_local_id,
+        external_persona,
         crate::federation::Sensitivity::Restricted,
     );
 
@@ -411,7 +414,7 @@ fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
     let mut stale_local_blob = Vec::new();
-    stale_local_blob.push(ENTITY_TYPE_COMPANION_REGISTER);
+    stale_local_blob.push(ENTITY_TYPE_FACET);
     stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
     stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
     stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
@@ -463,8 +466,10 @@ fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<
     let learned_at = window_key.start_timestamp().unwrap() + 90;
     let local_id = EntityId::from_bytes([0x33; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x34; 16]).unwrap();
-    let local = companion_record(local_id, crate::federation::Sensitivity::Restricted);
-    let portable = companion_record(portable_id, crate::federation::Sensitivity::Public);
+    let local_persona = EntityId::from_bytes([0x3D; 16]).unwrap();
+    let portable_persona = EntityId::from_bytes([0x3E; 16]).unwrap();
+    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
 
     let doc = create_window_doc("remote", &window_key);
     let entities = doc.get_map("entities");
@@ -473,7 +478,7 @@ fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<
         &entities,
         &local_id.to_hex(),
         &make_entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             learned_at,
             &encode_companion_record_body(&local.created_at(learned_at)?)?,
         ),
@@ -482,7 +487,7 @@ fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<
         &entities,
         &portable_id.to_hex(),
         &make_entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             learned_at,
             &encode_companion_record_body(&portable.created_at(learned_at)?)?,
         ),
@@ -530,8 +535,10 @@ fn companion_register_api_pending_mirror_replay_excludes_local_only_edges() -> R
     let learned_at = window_key.start_timestamp().unwrap() + 120;
     let local_id = EntityId::from_bytes([0x35; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x36; 16]).unwrap();
-    let local = companion_record(local_id, crate::federation::Sensitivity::Restricted);
-    let portable = companion_record(portable_id, crate::federation::Sensitivity::Public);
+    let local_persona = EntityId::from_bytes([0x3F; 16]).unwrap();
+    let portable_persona = EntityId::from_bytes([0x40; 16]).unwrap();
+    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
 
     vault.create_companion_record(&local_id, &local, learned_at)?;
     vault.create_companion_record(&portable_id, &portable, learned_at)?;
@@ -545,7 +552,7 @@ fn companion_register_api_pending_mirror_replay_excludes_local_only_edges() -> R
         &entities,
         &local_id.to_hex(),
         &make_entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             learned_at,
             &encode_companion_record_body(&local.created_at(learned_at)?)?,
         ),

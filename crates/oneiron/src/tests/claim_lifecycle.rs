@@ -524,10 +524,10 @@ fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
     assert_eq!(read.lifecycle, ClaimLifecycleStatus::Retracted);
     assert_eq!(read.valid_to, Some(NOW));
 
-    // Pin the EXACT closed on-disk body: pinned D11 short keys in
-    // canonical order with the lifecycle fields stamped — to = now,
-    // life = "retracted". A long-key / reordered / purging implementation
-    // fails byte equality.
+    // Pin the EXACT closed on-disk body: pinned keys in canonical order
+    // with the lifecycle fields stamped — to = now, life = "retracted" —
+    // plus the REQUIRED v2 scope stamps. A long-key / reordered / purging
+    // implementation fails byte equality.
     let raw = vault.get_raw(&claim)?.ok_or(Error::EntityNotFound)?;
     let expected = rmpv_map_bytes(&[
         ("pred".into(), "profile.lives_in".into()),
@@ -535,11 +535,34 @@ fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
         ("conf".into(), rmpv::Value::F32(0.9)),
         ("to".into(), rmpv::Value::from(NOW)),
         (
+            "worldId".into(),
+            rmpv::Value::Binary(
+                crate::claim::base_world_id().as_bytes().to_vec(),
+            ),
+        ),
+        (
+            "scopeRelationshipId".into(),
+            rmpv::Value::from("all"),
+        ),
+        (
             "subj".into(),
             rmpv::Value::Binary(subject.as_bytes().to_vec()),
         ),
         ("appr".into(), "auto".into()),
         ("life".into(), "retracted".into()),
+        (
+            "scopeFacetId".into(),
+            rmpv::Value::Binary(
+                crate::claim::substrate_facet_id(subject).as_bytes().to_vec(),
+            ),
+        ),
+        (
+            "scopeProjectId".into(),
+            rmpv::Value::Binary(
+                crate::claim::default_project_id().as_bytes().to_vec(),
+            ),
+        ),
+        ("scopeVersion".into(), rmpv::Value::from(2_u64)),
     ]);
     assert_eq!(
         &raw[ENTITY_METADATA_HEADER_LEN..],

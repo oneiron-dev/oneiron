@@ -75,6 +75,12 @@ fn token(actor: &str) -> String {
     format!("scope=core:read;principal_ref={actor};actor_class=human")
 }
 
+/// Classless variant: the credential authenticates but carries no verified
+/// actor class, so facade-bound controls refuse it without a human fallback.
+fn token_classless(actor: &str) -> String {
+    format!("scope=core:read;principal_ref={actor}")
+}
+
 async fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
@@ -173,6 +179,35 @@ async fn connect(f: &Fixture, actor: &str) -> Socket {
         &mut socket,
         TAG_RPC,
         json!({"method":"auth.bind","requestId":7,"params":crate::test_credentials::bind_payload(&f._server,&token(actor))}),
+    )
+    .await;
+    assert_eq!(
+        app(&mut socket, TAG_RPC).await,
+        json!({"requestId":7,"result":null,"last":true})
+    );
+    socket
+}
+async fn connect_classless(f: &Fixture, actor: &str) -> Socket {
+    let mut request = f.url.as_str().into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("authorization", format!("Bearer {SECRET}").parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket
+        .send(Message::Binary(
+            vec![
+                oneiron::sync::transport::TAG_PROTOCOL_HELLO,
+                oneiron::sync::transport::APP_TIER_PROTOCOL_VERSION_VERSION,
+            ]
+            .into(),
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(next(&mut socket).await, Message::Binary(ref bytes) if bytes[0] == 0));
+    send(
+        &mut socket,
+        TAG_RPC,
+        json!({"method":"auth.bind","requestId":7,"params":crate::test_credentials::bind_payload(&f._server,&token_classless(actor))}),
     )
     .await;
     assert_eq!(
@@ -305,7 +340,7 @@ async fn socket_reconnect_cannot_reuse_another_bound_authoritys_cursor() {
 #[tokio::test]
 async fn production_sub_control_refuses_a_missing_verified_class() {
     let f = fixture().await;
-    let mut socket = connect(&f, OTHER).await;
+    let mut socket = connect_classless(&f, OTHER).await;
     send(
         &mut socket,
         TAG_SUB,

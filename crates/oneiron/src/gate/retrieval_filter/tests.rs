@@ -314,14 +314,19 @@ fn floor_uses_resolved_manifest_projection_and_its_fail_closed_diagnostics() -> 
         panic!("manifest must be a map");
     };
     entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+    let authority = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .expect("read preset encodes");
     entries.push((
         Value::from("scoped_grants"),
         Value::Array(vec![scope(vec![
             ("actor_ref", Value::from("agent:reader")),
             ("effector", Value::from("core:read")),
             ("receipt_required", Value::Boolean(false)),
+            ("scope", authority),
             (
-                "scope",
+                "selectors",
                 scope(vec![("include_stale", Value::Boolean(true))]),
             ),
         ])]),

@@ -76,8 +76,9 @@ fn boot_refused(
 #[test]
 fn managed_privacy_flags_are_refused_in_both_cli_forms() {
     for (flag, value) in [
-        ("privacy-posture", "hosted"),
-        ("privacy-posture", "self_host_local"),
+        ("privacy-posture", "managed"),
+        ("privacy-posture", "self-host"),
+        ("privacy-posture", "relay"),
         ("hosted-kms-key-ref", "kms://example/cli-secret-ref"),
         ("hosted-kms-key-ref", ""),
     ] {
@@ -110,6 +111,26 @@ fn managed_privacy_flags_are_refused_in_both_cli_forms() {
             );
             assert!(!stderr.contains("kms://example/cli-secret-ref"));
         }
+    }
+}
+
+#[test]
+fn managed_privacy_posture_rejects_legacy_spellings_before_conflict_check() {
+    // Legacy wire spellings never reach the managed-conflict door: the CLI
+    // grammar rejects them outright, so neither a managed nor a standalone
+    // boot can silently resolve them to a posture.
+    for legacy in ["hosted", "self_host_local", "host_blind", "MANAGED", ""] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut argv = vec!["oneiron-server".to_owned()];
+        argv.extend(managed_argv(dir.path()));
+        argv.extend([
+            "--privacy-posture".to_owned(),
+            legacy.to_owned(),
+        ]);
+        assert!(
+            ArgvProbe::try_parse_from(argv).is_err(),
+            "--privacy-posture {legacy:?} must not parse"
+        );
     }
 }
 

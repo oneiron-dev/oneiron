@@ -46,6 +46,7 @@ fn valid_entries() -> Vec<(Value, Value)> {
                 ),
             ]),
         ),
+        (Value::from("authority_scope"), super::scope_codec::encode_scope_value(&test_grant().authority_scope).expect("membership scope")),
         (
             Value::from(KEY_MEMBER_REF),
             Value::from(member_ref().to_hex()),
@@ -215,6 +216,7 @@ fn valid_delegate_entries() -> Vec<(Value, Value)> {
         match key.as_str() {
             Some(KEY_MEMBER_REF) => *value = Value::from(delegate_member_ref().to_hex()),
             Some(KEY_ROLE | KEY_PRESET) => *value = Value::from("delegate"),
+            Some("authority_scope") => *value=super::scope_codec::encode_scope_value(&test_delegate().authority_scope).expect("delegate scope"),
             _ => {}
         }
     }
@@ -657,8 +659,8 @@ fn delegate_body_decode_fails_closed_on_new_keys() {
 /// than reading a delegate as a non-expiring grant.
 #[test]
 fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
-    assert_eq!(FEDERATION_GRANT_SCHEMA_VERSION, 1);
-    assert_eq!(FEDERATION_GRANT_BODY_KEYS.len(), 7);
+    assert_eq!(FEDERATION_GRANT_SCHEMA_VERSION, 2);
+    assert_eq!(FEDERATION_GRANT_BODY_KEYS.len(), 8);
 
     // Hydration profiles keep their pre-Delegate content and lengths.
     assert_eq!(FEDERATION_GRANT_FIELDS_MINIMAL, ["scope", "role", "preset"]);
@@ -689,24 +691,19 @@ fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
         .filter(|(key, _)| !legacy_keys.contains(&key.as_str().expect("string key")))
         .count();
     assert_eq!(
-        outside_legacy, 2,
+        outside_legacy, 3,
         "a five-key reader's allowlist rejects the delegate body"
     );
 
-    // The same reader sees no new key on a non-delegate body, so pre-Delegate
-    // grants keep round-tripping through it untouched.
+    // Current non-delegate grants carry authority_scope as well. An old
+    // five-key reader must refuse them rather than discard that bound.
     let non_delegate = encode_federation_grant_body(&test_grant())?;
     let mut cursor = Cursor::new(&non_delegate);
     let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode grant body")
     else {
         panic!("grant body must encode as a map");
     };
-    assert!(
-        entries
-            .iter()
-            .all(|(key, _)| legacy_keys.contains(&key.as_str().expect("string key"))),
-        "a non-delegate body must stay inside the five-key set"
-    );
+    assert_eq!(entries.iter().filter(|(key,_)|!legacy_keys.contains(&key.as_str().expect("string key"))).count(),1,"current membership Scope also lies outside the legacy five-key shape");
     Ok(())
 }
 
@@ -860,7 +857,7 @@ fn federation_pact_scope_decode_fails_closed() {
         direction_value(all(), all(), all()),
     );
     let bad_version = encode_value(&Value::Map(vec![
-        (Value::from("schema_version"), Value::from(2_u64)),
+        (Value::from("schema_version"), Value::from(99_u64)),
         (
             Value::from("lo_to_hi"),
             direction_value(all(), all(), all()),
@@ -886,9 +883,9 @@ fn federation_pact_scope_decode_fails_closed() {
         (Value::from("future"), Value::from("permit")),
     ]));
 
+    assert_eq!(decode_federation_pact_scope(&empty_worlds).unwrap().lo_to_hi.worlds,FederationScopeWorlds::Bottom);
     for (case, bytes) in [
         ("empty some", empty_some),
-        ("empty worlds", empty_worlds),
         ("unsorted ids", unsorted_ids),
         ("duplicate ids", duplicate_ids),
         ("foreign world", foreign_world),
@@ -926,7 +923,7 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
         FederationScopeBands::Some(vec![SelectorRange::Semantic]),
     );
     let bottom = direction(
-        FederationScopeWorlds::Base,
+        FederationScopeWorlds::Bottom,
         FederationScopeFacets::Bottom,
         FederationScopeBands::Bottom,
     );
@@ -938,10 +935,16 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
     assert!(all.is_narrowing_of(&all));
     assert!(bottom.is_narrowing_of(&bottom));
 
-    // Worlds: Base ⊑ Worlds(S) ⊑ Worlds(T ⊇ S) ⊑ All.
+    // Bottom ⊑ Worlds(S) ⊑ Worlds(T ⊇ S) ⊑ All; Base is not implicit.
     let one_world = FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]);
     let two_worlds = FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]);
-    assert!(FederationScopeWorlds::Base.is_narrowing_of(&one_world));
+    assert!(!FederationScopeWorlds::Base.is_narrowing_of(&one_world));
+    let explicit_base=FederationScopeWorlds::Worlds(vec![crate::claim::base_world_id(),scope_entity(0x10)]);
+    assert!(FederationScopeWorlds::Base.is_narrowing_of(&explicit_base));
+    let base_direction=direction(FederationScopeWorlds::Base,FederationScopeFacets::All,FederationScopeBands::All);
+    let explicit_direction=direction(explicit_base,FederationScopeFacets::All,FederationScopeBands::All);
+    assert_eq!(base_direction.intersect(&explicit_direction),base_direction);
+    assert_eq!(explicit_direction.intersect(&base_direction),base_direction);
     assert!(one_world.is_narrowing_of(&two_worlds));
     assert!(!two_worlds.is_narrowing_of(&one_world));
     assert!(!FederationScopeWorlds::All.is_narrowing_of(&two_worlds));
@@ -962,9 +965,8 @@ fn federation_direction_scope_disjoint_meet_is_bottom_not_all() {
     );
 
     let met = left.intersect(&right);
-    // Disjoint worlds meet at Base (worlds always include base reality);
-    // disjoint facet/band sets meet at the kind-tagged ⊥ — NEVER at ⊤.
-    assert_eq!(met.worlds, FederationScopeWorlds::Base);
+    // Every disjoint axis meets at Bottom, with no implicit base world.
+    assert_eq!(met.worlds, FederationScopeWorlds::Bottom);
     assert_eq!(
         met.facets,
         FederationScopeFacets::Some(vec![scope_entity(0x22)])
@@ -3684,5 +3686,28 @@ fn federation_grant_scope_u64_max_round_trip() -> Result<()> {
         FederationGrantScope::Vault { vault_id: u64::MAX },
         "the vault scope carrier must survive its full u64 range"
     );
+    Ok(())
+}
+
+#[test]
+fn membership_scope_migration_never_ignores_a_carried_scope() -> Result<()> {
+    for grant in [test_grant(),test_delegate()] {
+        let bytes=encode_federation_grant_body(&grant)?;
+        let Value::Map(entries)=rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {panic!("map")};
+        let mut legacy=entries.clone();
+        legacy.retain(|(k,_)|k.as_str()!=Some("authority_scope"));
+        assert_grant_rejected("current missing scope",&grant_map(legacy.clone()));
+        legacy[0].1=Value::from(1_u64);
+        let mut expected=grant.clone();
+        if expected.role==FederationGrantRole::Delegate {expected.authority_scope=super::scope_codec::read_preset();}
+        assert_eq!(decode_federation_grant_body(&grant_map(legacy))?,expected);
+        for scope in [Value::Nil,super::scope_codec::encode_scope_value(&Scope::default())?] {
+            let mut changed=entries.clone();
+            changed.iter_mut().find(|(k,_)|k.as_str()==Some("authority_scope")).unwrap().1=scope.clone();
+            if scope==Value::Nil {assert_grant_rejected("malformed scope",&grant_map(changed.clone()));}
+            changed[0].1=Value::from(1_u64);
+            assert_grant_rejected("legacy cannot discard scope",&grant_map(changed));
+        }
+    }
     Ok(())
 }

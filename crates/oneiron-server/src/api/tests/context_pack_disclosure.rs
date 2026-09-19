@@ -4,8 +4,8 @@ use super::*;
 
 #[tokio::test]
 async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
-    let (_dir, server) = test_server();
-    let (batch_status, batch_body) = route_json(
+    let (_dir, server) = auth_test_server();
+    let (batch_status, batch_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -33,7 +33,7 @@ async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
         .expect("written id")
         .to_owned();
 
-    let (status, body) = route_json(
+    let (status, body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",

@@ -148,7 +148,7 @@ pub(super) fn validate_workspace_references(
             (companion.actor_ref, ENTITY_TYPE_AGENT_DEF),
             (
                 companion.companion_record_ref,
-                crate::companion::ENTITY_TYPE_COMPANION_REGISTER,
+                ENTITY_TYPE_FACET,
             ),
             (
                 companion.profile_grant_ref,
@@ -628,7 +628,7 @@ pub(super) fn ensure_companion_record(
     );
     let record = CompanionRecord::persona(
         CompanionScope::personal(intent.person_ref),
-        companion.actor_ref,
+        companion.person_ref,
         Value::Map(vec![
             (
                 Value::from("schema_version"),
@@ -654,7 +654,7 @@ pub(super) fn ensure_companion_record(
         {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("companion entity header"))?;
-            if header.entity_type != crate::companion::ENTITY_TYPE_COMPANION_REGISTER {
+            if header.entity_type != ENTITY_TYPE_FACET {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
             let existing =
@@ -694,7 +694,7 @@ pub(super) fn ensure_companion_profile_grant(
     let expected = AccessGrant::companion_profile_read(
         intent.person_ref,
         intent.person_ref,
-        companion.actor_ref,
+        companion.person_ref,
         intent.occurred_at,
     );
     let id = companion.profile_grant_ref;

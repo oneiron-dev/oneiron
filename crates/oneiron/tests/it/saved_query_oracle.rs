@@ -768,6 +768,11 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
     place_in_world(&vault, &person, &world);
     put_claim(&vault, &test_id(0x4E), person, SENIORITY, "director");
 
+    // Base-reality evidence needs an explicit base grant: a named world no
+    // longer implies base. Both the declared scope and the owner's reach
+    // name the world AND base, so the effective scope honestly covers the
+    // base claim this positive reads.
+    let base = oneiron::claim::base_world_id();
     let mut request = create_request(
         claim_term(SENIORITY, ClaimComparison::Eq, json!("director")),
         MatcherSpec::Hard {
@@ -775,7 +780,7 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
         },
     );
     request.scope = QueryScope {
-        worlds: vec![world],
+        worlds: vec![world, base],
         facets: Vec::new(),
     };
     let record = oneiron::saved_query::create_saved_query(&vault, owner, &request, 10)?;
@@ -783,7 +788,7 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
     // Two different viewers read the SAME stored query and get the same
     // membership: the evaluator takes no viewer principal.
     let in_reach = QueryScope {
-        worlds: vec![world],
+        worlds: vec![world, base],
         facets: Vec::new(),
     };
     let matched = block_on(
@@ -866,6 +871,10 @@ fn declared_scope_is_applied_to_the_candidate_entity() -> Result<()> {
     place_in_world(&vault, &inside, &world);
     place_in_world(&vault, &outside, &elsewhere);
 
+    // Base-reality evidence needs an explicit base grant; the candidate
+    // separation below still comes from per-entity world membership, not
+    // from claim scope.
+    let base = oneiron::claim::base_world_id();
     let mut request = create_request(
         claim_term(SENIORITY, ClaimComparison::Eq, json!("director")),
         MatcherSpec::Hard {
@@ -873,7 +882,7 @@ fn declared_scope_is_applied_to_the_candidate_entity() -> Result<()> {
         },
     );
     request.scope = QueryScope {
-        worlds: vec![world],
+        worlds: vec![world, base],
         facets: Vec::new(),
     };
     let record = oneiron::saved_query::create_saved_query(&vault, owner, &request, 10)?;
@@ -881,7 +890,7 @@ fn declared_scope_is_applied_to_the_candidate_entity() -> Result<()> {
     // The owner HOLDS the world grant throughout: the intersection is open, so
     // only per-candidate scope application can separate these three.
     let grants = QueryScope {
-        worlds: vec![world],
+        worlds: vec![world, base],
         facets: Vec::new(),
     };
     let evaluate = |person| {
@@ -926,7 +935,8 @@ fn declared_scope_is_applied_to_the_candidate_entity() -> Result<()> {
 
 /// Evidence is read at the effective scope too: a claim scoped to a world the
 /// query cannot reach is not evidence this query may act on. Base-reality
-/// claims read everywhere, mirroring the engine's scoped-read world rule.
+/// claims read only when base is explicitly in scope, mirroring the engine's
+/// scoped-read world rule.
 #[test]
 fn out_of_scope_claim_evidence_does_not_satisfy_the_filter() -> Result<()> {
     let (_dir, vault) = oracle_vault();
@@ -941,6 +951,10 @@ fn out_of_scope_claim_evidence_does_not_satisfy_the_filter() -> Result<()> {
     foreign.world = Some(elsewhere);
     put_claim_body(&vault, &test_id(0x94), foreign);
 
+    // Base is explicitly in scope alongside the named world, so the
+    // foreign-world negative below still fails on world mismatch while the
+    // base positive reads honestly.
+    let base = oneiron::claim::base_world_id();
     let mut request = create_request(
         claim_term(SENIORITY, ClaimComparison::Eq, json!("director")),
         MatcherSpec::Hard {
@@ -948,12 +962,12 @@ fn out_of_scope_claim_evidence_does_not_satisfy_the_filter() -> Result<()> {
         },
     );
     request.scope = QueryScope {
-        worlds: vec![world],
+        worlds: vec![world, base],
         facets: Vec::new(),
     };
     let record = oneiron::saved_query::create_saved_query(&vault, owner, &request, 10)?;
     let grants = QueryScope {
-        worlds: vec![world],
+        worlds: vec![world, base],
         facets: Vec::new(),
     };
     let evaluator = SavedQueryEvaluator {
@@ -969,7 +983,7 @@ fn out_of_scope_claim_evidence_does_not_satisfy_the_filter() -> Result<()> {
         "a claim scoped to an unreachable world is not evidence for this query"
     );
 
-    // The same claim in base reality DOES read.
+    // The same claim in base reality DOES read when base is in scope.
     put_claim(&vault, &test_id(0x95), person, SENIORITY, "director");
     assert_eq!(
         block_on(evaluator.evaluate_entity(&evaluation(&record, person)))?

@@ -3765,11 +3765,13 @@ fn explicitly_surfaced_stale_world_carries_the_pinned_marker() -> Result<()> {
         "engine diagnostic contract text is matched verbatim by readers"
     );
 
-    let base = pack
+    assert!(!pack.results.iter().any(|entity|entity.id==base_claim));
+    let base_pack=vault.context_pack().search_vector(&[1.0,0.0,0.0,0.0],10).world(WorldScope::Base).run()?;
+    let base = base_pack
         .results
         .iter()
         .find(|entity| entity.id == base_claim)
-        .expect("base reality is surfaced under every scope");
+        .expect("base reality surfaces under explicit base scope");
     assert_eq!(
         stale_marker_of(base),
         None,
@@ -3836,10 +3838,15 @@ fn stale_world_claims_never_re_enter_a_pack_through_edge_expansion() -> Result<(
         4,
     )?;
 
+    // A named-world read needs its own in-scope anchor; base is not implicit.
+    let explicit_seed=EntityId::from_bytes([0x63;16])?;
+    put_world_claim(&vault,explicit_seed,[0.0,0.0,0.0,1.0],Some(stale_world))?;
+    vault.put_edge(&explicit_seed,crate::edge::EdgeKind::Supports,&stale_neighbor,1.0)?;
     let pack_of = |scope: WorldScope| {
+        let vector=if matches!(scope,WorldScope::World(_)) {[0.0,0.0,0.0,1.0]} else {[1.0,0.0,0.0,0.0]};
         vault
             .context_pack()
-            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .search_vector(&vector, 1)
             .edge_hop(1)
             .world(scope)
             .run()

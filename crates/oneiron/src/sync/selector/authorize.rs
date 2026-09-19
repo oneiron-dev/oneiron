@@ -241,6 +241,11 @@ pub(super) fn filter_window_doc(
         return Err(selector_err(SelectorError::GrantWrongType));
     }
     let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
+    // One read snapshot for the whole export: facet scope, coreference
+    // consent, causal admission, and record stamps all read through this
+    // `rtxn`. Opening nested read txns on this thread would fail with
+    // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
+    // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
     let mut scope_error = None;
     let out = create_window_doc("selector", key);
@@ -256,8 +261,9 @@ pub(super) fn filter_window_doc(
         tombstoned.insert(id);
     });
 
-    let facet_scope = facet_scope_by_source(vault, &source_entities, &source_edges, selector)?;
-    let coreference = coreference_export_context(vault, source, selector)?;
+    let facet_scope =
+        facet_scope_by_source(vault, &rtxn, &source_entities, &source_edges, selector)?;
+    let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -272,15 +278,26 @@ pub(super) fn filter_window_doc(
         if id.to_hex() != raw_key {
             return;
         }
-        if tombstoned.contains(&id) {
-            return;
-        }
+        // Tombstoned rows still evaluate scope: their live bytes must not
+        // replicate (excluded from `out_entities` below), but an in-scope
+        // tombstone must be retained to propagate the delete, while an
+        // out-of-scope one is dropped to avoid leaking counts. Skipping
+        // scope here would retain nothing under any filtered selector.
+        let is_tombstoned = tombstoned.contains(&id);
         if scope_error.is_some() {
             return;
         }
         match crate::authority::row_causal_admitted(vault, &rtxn, blob) {
             Ok(true) => {}
             Ok(false) => return,
+            // An undecodable CLAIM is a withheld row, not a failed export:
+            // the window carries peer-controlled bytes (quarantine records a
+            // rejected row but does not remove it from the CRDT), so one bad
+            // row must not fail the whole filter closed. Every other decode
+            // site on this path (`scope_for_blob`, `coreference_claim_passes`,
+            // `world_passes`) already withholds; the causal check is the only
+            // one that propagates, and it propagates only for CLAIM bodies.
+            Err(crate::error::Error::InvalidClaimBody(_)) => return,
             Err(error) => {
                 scope_error = Some(error);
                 return;
@@ -318,7 +335,13 @@ pub(super) fn filter_window_doc(
                 kept.insert(id);
             }
             if decision.facet_seed {
-                seeds.insert(id);
+                // A deleted seed's own tombstone is retained (it is kept),
+                // but it does not pull neighbors: deletion ends closure.
+                if is_tombstoned {
+                    kept.insert(id);
+                } else {
+                    seeds.insert(id);
+                }
             }
         } else {
             kept.insert(id);

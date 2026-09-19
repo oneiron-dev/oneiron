@@ -88,7 +88,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
 }
 
 #[test]
-fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
+fn companion_export_checks_channel_ceiling_and_lifecycle() -> Result<()> {
     let neutral = CompanionScope::neutral();
     let personal = CompanionScope::personal(entity(0x61));
     let shared = CompanionScope::shared_vault(7);
@@ -107,7 +107,7 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         provenance(0xB2),
         crate::federation::Sensitivity::Restricted,
     );
-    let shared_classified = CompanionRecord::relationship(
+    let shared_private = CompanionRecord::relationship(
         shared.clone(),
         entity(0x64),
         entity(0x65),
@@ -115,10 +115,10 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         provenance(0xB3),
         crate::federation::Sensitivity::Private,
     );
-    let shared_misclassified = CompanionRecord::persona(
+    let shared_public = CompanionRecord::persona(
         shared,
         entity(0x66),
-        Value::from("shared scope with portable flag"),
+        Value::from("public shared-scope persona"),
         provenance(0xB4),
         crate::federation::Sensitivity::Public,
     );
@@ -136,8 +136,8 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
     for record in [
         included.clone(),
         private.clone(),
-        shared_classified.clone(),
-        shared_misclassified.clone(),
+        shared_private.clone(),
+        shared_public.clone(),
         closed.clone(),
     ] {
         records.register(record)?;
@@ -146,9 +146,9 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
     let mut expressions = CompanionExpressionRegister::new();
     expressions.update(included.key(), CompanionExpression::Warm)?;
     expressions.update(private.key(), CompanionExpression::Unrestricted)?;
-    expressions.update(shared_classified.key(), CompanionExpression::Unrestricted)?;
+    expressions.update(shared_private.key(), CompanionExpression::Unrestricted)?;
     expressions.update(
-        shared_misclassified.key(),
+        shared_public.key(),
         CompanionExpression::Unrestricted,
     )?;
     expressions.update(closed.key(), CompanionExpression::Professional)?;
@@ -164,8 +164,8 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         },
     );
 
-    assert_eq!(layer.len(), 1);
-    assert_eq!(layer.personas().len(), 1);
+    assert_eq!(layer.len(), 2);
+    assert_eq!(layer.personas().len(), 2);
     assert!(layer.relationships().is_empty());
     assert_eq!(layer.personas()[0].record(), &included);
     assert_eq!(
@@ -173,7 +173,8 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         Some(CompanionExpression::Warm)
     );
     assert_ne!(layer.personas()[0].record(), &private);
-    assert_ne!(layer.personas()[0].record(), &shared_misclassified);
+    assert!(layer.personas().iter().any(|item|item.record()==&shared_public));
+    assert!(layer.personas().iter().all(|item|item.record()!=&private));
     Ok(())
 }
 
@@ -1438,10 +1439,13 @@ mod staged_content_gc {
             &claim_id,
             &claim,
             &companion_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             &companion_body_without_pinned_keys(),
         );
 
+        let retired=claim_and_entity_update(&claim_id,&claim,&companion_id,ENTITY_TYPE_COMPANION_REGISTER,&valid_companion_body());
+        assert!(matches!(admit_federated_window_update(&vault,&WindowKey::new("2026-01"),&retired,FederationAdmissionRole::Guest),Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))));
+        assert!(matches!(stage_prebuilt_update(&vault,0x7A,&retired),Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))));
         // Admission refuses the whole artifact, as it already does for TASK.
         let err = admit_federated_window_update(
             &vault,
@@ -1503,7 +1507,7 @@ mod staged_content_gc {
             &claim_id,
             &claim,
             &test_entity_id(0x7E),
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             &valid_companion_body(),
         );
 

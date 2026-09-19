@@ -712,7 +712,8 @@ fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
     vault.put_edge(&child, EdgeKind::AssignedTo, &machine, 0.8)?;
 
     let out = vault.edges_out(&child)?;
-    assert_eq!(out.len(), 2);
+    assert_eq!(out.len(), 3);
+    assert!(out.iter().any(|e| e.kind == EdgeKind::HasFacet && e.target == crate::claim::substrate_facet_id(child)));
     assert!(
         out.iter()
             .any(|e| e.kind == EdgeKind::ChildOf && e.target == parent)

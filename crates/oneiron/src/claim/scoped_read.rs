@@ -159,6 +159,13 @@ impl<'a> ScopedRead<'a> {
         Ok(fold.slip_is_live(&claims.slip_id))
     }
 
+    fn deletion_metadata_allowed_in(&self, txn:&heed::RoTxn<'_>, policy:&PolicyManifestResolution, id:&EntityId)->Result<bool> {
+        // The row's old position cannot be proved. Only authority covering every
+        // possible position may reveal deletion metadata, never a narrow grant.
+        let all_positions=crate::federation::scope_codec::read_preset();
+        Ok(self.credential_allows_id(id) && self.proof_live_in(txn)? && crate::gate::scoped_read_record_allowed(policy,&self.actor_key,&all_positions))
+    }
+
     #[must_use]
     pub fn vault(&self) -> &'a crate::Vault {
         self.vault
@@ -360,6 +367,11 @@ impl<'a> ScopedRead<'a> {
         let Some(result) = self.vault.hydrate_short_id(short_id, content_hash)? else {
             return Ok(None);
         };
+        if result.body.is_none() && result.deletion.is_some() {
+            let txn = self.vault.store.env.read_txn()?;
+            let policy = self.policy_manifest_in(&txn)?;
+            return Ok(self.deletion_metadata_allowed_in(&txn,&policy,&result.id)?.then_some(result));
+        }
         if self.is_entity_readable(&result.id)? {
             Ok(Some(result))
         } else {
@@ -369,10 +381,12 @@ impl<'a> ScopedRead<'a> {
 
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
         if !self.is_entity_readable(anchor)? {
-            return Ok(MemoryTimeline {
-                anchor: *anchor,
-                records: Vec::new(),
-            });
+            let txn=self.vault.store.env.read_txn()?;
+            let policy=self.policy_manifest_in(&txn)?;
+            if self.vault.archive_tombstone_in_txn(&txn,anchor)?.is_none()
+                || !self.deletion_metadata_allowed_in(&txn,&policy,anchor)? {
+                return Ok(MemoryTimeline {anchor:*anchor,records:Vec::new()});
+            }
         }
         let mut timeline = self.vault.memory_timeline(anchor)?;
         timeline.records = self.filter_memory_timeline_records(timeline.records)?;
@@ -523,7 +537,7 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
-        if raw.len() == ENTITY_METADATA_HEADER_LEN && self.vault.is_deleted_shell(id)? {
+        if raw.len() == ENTITY_METADATA_HEADER_LEN && self.vault.archive_tombstone_in_txn(rtxn,id)?.is_some() {
             return Ok(false);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
@@ -672,6 +686,7 @@ impl<'a> ScopedRead<'a> {
         for record in records {
             let readable = match (record.state, record.entity_type) {
                 (MemoryTimelineRecordState::Missing, _) => false,
+                (MemoryTimelineRecordState::Deleted, _) => self.deletion_metadata_allowed_in(&rtxn,&policy,&record.id)?,
                 (_, Some(_)) => {
                     self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
                 }

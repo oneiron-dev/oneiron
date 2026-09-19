@@ -58,7 +58,7 @@ pub(super) async fn mcp_endpoint_result(
     structured: Value,
     policy: McpCarrierPolicy,
 ) -> Value {
-    let carrier = if actor.scope.is_narrow() {
+    let carrier = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
         None
     } else {
         let mut registry = server.mcp_registry.lock().await;
@@ -273,17 +273,14 @@ fn mcp_board_sections(
 
 /// Narrows one TASKS section to the credential's registered world/facet.
 ///
-/// A vault-wide credential is unchanged and pays nothing. A NARROWED one keeps
-/// only rows the store itself says the scope covers; the count it removed is
-/// returned so the page metadata can state the omission instead of hiding it.
+/// Every row passes the verified slip and registered world/facet checks,
+/// including slips whose record, kind, project or sensitivity bounds the old
+/// two-axis registry cannot express. The removed count states the omission.
 pub(super) fn mcp_scoped_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
     section: oneiron::context_board::TasksSection,
 ) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
-    if !actor.scope.is_narrow() {
-        return Ok((section, 0));
-    }
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
     let mut kept = Vec::with_capacity(section.rows.len());
     let mut omitted = 0_usize;

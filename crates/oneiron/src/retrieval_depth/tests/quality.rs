@@ -51,6 +51,7 @@ fn score_bits(hits: &[ScoredEntity]) -> Vec<(EntityId, u32)> {
 #[test]
 fn retrieval_quality_depth_minimal_records_completed_empty_channels() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    super::authorize_readers(&vault, &["depth-reader"]);
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
     for (probe, signal) in [
         (
@@ -90,6 +91,7 @@ fn retrieval_quality_depth_minimal_records_completed_empty_channels() -> TestRes
 #[test]
 fn retrieval_quality_depth_minimal_preserves_direct_score_bits_and_order() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    super::authorize_readers(&vault, &["depth-reader"]);
     let first = put_text(&vault, 0x61, "qualitydepth qualitydepth")?;
     let second = put_text(&vault, 0x62, "qualitydepth other")?;
     vault.put_vector(&first, &[1.0, 0.0, 0.0, 0.0])?;
@@ -115,6 +117,7 @@ fn retrieval_quality_depth_minimal_preserves_direct_score_bits_and_order() -> Te
 #[test]
 fn retrieval_quality_depth_standard_uses_real_disabled_ppr_without_false_miss() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    super::authorize_readers(&vault, &["depth-reader"]);
     let seed = put_text(&vault, 0x63, "qualitydepth")?;
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
     let direct = scoped.search_text("qualitydepth", 10, None)?;
@@ -165,6 +168,7 @@ fn retrieval_quality_depth_standard_uses_real_disabled_ppr_without_false_miss() 
 #[test]
 fn retrieval_quality_depth_empty_standard_does_not_invent_graph_or_full_completion() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    super::authorize_readers(&vault, &["depth-reader"]);
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
     let result = scoped.search_with_effort(&request(
         SearchProbe::Text {
@@ -238,6 +242,7 @@ impl DeepSearchBackend for ReverseBackend {
 #[test]
 fn retrieval_quality_depth_deep_tracks_rerank_without_rewriting_engine_scores() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    super::authorize_readers(&vault, &["depth-reader"]);
     put_text(&vault, 0x64, "qualitydepth qualitydepth")?;
     put_text(&vault, 0x65, "qualitydepth other")?;
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
@@ -287,6 +292,7 @@ fn retrieval_quality_depth_deep_tracks_rerank_without_rewriting_engine_scores() 
 #[test]
 fn retrieval_quality_depth_session_narrows_before_backend_and_diagnostics() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    super::authorize_readers(&vault, &["depth-reader"]);
     let included = put_text(&vault, 0x66, "qualitydepth")?;
     put_text(&vault, 0x67, "qualitydepth qualitydepth")?;
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
@@ -367,6 +373,7 @@ fn retrieval_quality_depth_report_finish_preserves_full_and_degraded_no_data() {
 #[test]
 fn retrieval_quality_depth_deep_still_refuses_missing_lease_before_channels() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    super::authorize_readers(&vault, &["depth-reader"]);
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
     let error = scoped
         .search_with_effort(&text_request(Effort::Deep))

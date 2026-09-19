@@ -701,11 +701,15 @@ fn env_config_debug_redacts_hosted_kms_key_ref() {
 #[test]
 fn unknown_privacy_posture_values_are_rejected() {
     for raw in [
+        "hosted",
+        "self_host_local",
+        "host_blind",
         "private_hosted",
         "e2e_hosted",
         "encrypted_hosted",
         "unreadable_hosted",
         "Hosted",
+        "MANAGED",
         "cloud",
         "",
     ] {
@@ -792,14 +796,17 @@ fn privacy_posture_has_exactly_three_variants_with_blind_relay() {
 
     for (config, serialized) in [(hosted, hosted_privacy), (self_host, self_host_privacy)] {
         let debug = format!("{config:?}");
+        // The `hosted_kms_key_ref` FIELD name is not a tier name; strip it so
+        // the legacy-tier scan only sees values and variant names.
+        let debug_tiers = debug.replace("hosted_kms_key_ref", "");
         for token in LEGACY_TOKENS {
             assert!(
                 !serialized.contains(token),
                 "resolved privacy config must not name a {token:?} tier: {serialized}"
             );
             assert!(
-                !debug.contains(token),
-                "resolved serve config must not name a {token:?} tier"
+                !debug_tiers.contains(token),
+                "resolved serve config must not name a {token:?} tier: {debug}"
             );
         }
     }

@@ -337,7 +337,7 @@ fn scope_admits_only_entities_holding_the_restricted_axis() {
     }));
 }
 
-/// Claim evidence is admitted by WORLD: base reality reads everywhere, a
+/// Claim evidence is admitted by WORLD: base must be explicitly included; a
 /// claim scoped to an out-of-reach world reads nowhere.
 #[test]
 fn claim_world_scope_admission_mirrors_the_gate_rule() {
@@ -357,7 +357,9 @@ fn claim_world_scope_admission_mirrors_the_gate_rule() {
         worlds: vec![id(0x33)],
         facets: Vec::new(),
     };
-    assert!(claim_in_scope(&scoped_to(None), &scope));
+    assert!(!claim_in_scope(&scoped_to(None), &scope));
+    let with_base=QueryScope { worlds:vec![id(0x33),crate::claim::base_world_id()], facets:Vec::new() };
+    assert!(claim_in_scope(&scoped_to(None), &with_base));
     assert!(claim_in_scope(&scoped_to(Some(id(0x33))), &scope));
     assert!(!claim_in_scope(&scoped_to(Some(id(0x34))), &scope));
     // An unrestricted world axis admits every claim world.

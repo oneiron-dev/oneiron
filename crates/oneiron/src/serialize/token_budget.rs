@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Number, Value};
 
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::context_pack::ContextPack;
 use crate::context_pack::PackFormat;
 use crate::context_pack::PackItemTokenStats;
@@ -76,7 +76,7 @@ pub(super) fn token_budget_droppable_count(groups: &[(GroupKey, Vec<PreparedEnti
 
 pub(super) fn type_fraction(key: GroupKey, allocation: &TokenAllocation) -> f32 {
     match key {
-        GroupKey::Kind(ENTITY_TYPE_CLAIM | ENTITY_TYPE_COMPANION_REGISTER) => allocation.claims,
+        GroupKey::Kind(ENTITY_TYPE_CLAIM | ENTITY_TYPE_FACET) => allocation.claims,
         GroupKey::Kind(ENTITY_TYPE_TURN) => allocation.turns,
         GroupKey::Kind(ENTITY_TYPE_SUMMARY) => allocation.summaries,
         GroupKey::Kind(_) | GroupKey::Other => allocation.other,

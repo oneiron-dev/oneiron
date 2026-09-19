@@ -56,6 +56,9 @@ pub struct SyncServer {
     pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
+    /// Set only by managed boot after inherited-credential and DEK checks.
+    /// The supervisor authenticates callers before routing its private socket.
+    pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
     /// Process-local connector actor registry for the MCP gateway.
@@ -102,7 +105,10 @@ impl SyncServer {
         config.validate()?;
         // Genuine host authority must exist before any scoped-read fail-closed
         // policy applies. Dev/no-secret and blind-relay modes mint nothing.
-        if let Some(secret) = config.auth_secret.as_deref() {
+        // An empty configured secret mints nothing either: it carries no key
+        // material, and every upgrade bearing it (or nothing) still 401s at
+        // the auth door, so booting rootless here is fail-closed, not open.
+        if let Some(secret) = config.auth_secret.as_deref().filter(|s| !s.is_empty()) {
             let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
             vault.ensure_host_root_slip(&issuer)?;
         }
@@ -181,6 +187,7 @@ impl SyncServer {
             lifecycle_in_flight: Mutex::new(HashSet::new()),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             config,
+            managed_issuer: None,
             mcp_registry,
             deep_retrieval: None,
             embedder: None,

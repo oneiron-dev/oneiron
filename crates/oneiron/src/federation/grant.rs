@@ -430,13 +430,16 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    validate_body_keys(entries)?;
 
     let legacy = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() == Some(1);
+    validate_body_keys(entries, legacy)?;
     if !legacy
         && required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
             != Some(FEDERATION_GRANT_SCHEMA_VERSION)
     {
+        return Err(invalid_grant());
+    }
+    if !legacy && optional_value(entries, "authority_scope").is_none() {
         return Err(invalid_grant());
     }
 
@@ -462,7 +465,8 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         authority_scope: if legacy {
             super::grant_scope::membership_preset(role)
         } else {
-            super::scope_codec::decode_scope_value(required_value(entries, "authority_scope")?)?
+            super::scope_codec::decode_scope_value(required_value(entries, "authority_scope")?)
+                .map_err(|_| invalid_grant())?
         },
         scope,
         member_ref,
@@ -517,10 +521,16 @@ fn decode_scope(value: &Value) -> Result<FederationGrantScope> {
 ///
 /// Presence of the two role-conditional tail keys is not decided here — that
 /// is [`FederationGrant::validate`]'s job, because it depends on the role.
-fn validate_body_keys(entries: &[(Value, Value)]) -> Result<()> {
+/// A schema-1 body must not carry `authority_scope`: legacy decodes to the
+/// role's membership preset, so accepting a carried value would silently
+/// widen a narrowed scope.
+fn validate_body_keys(entries: &[(Value, Value)], legacy: bool) -> Result<()> {
     let mut seen = [false; FEDERATION_GRANT_BODY_KEYS.len()];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_grant)?;
+        if legacy && key == "authority_scope" {
+            return Err(invalid_grant());
+        }
         let Some(index) = FEDERATION_GRANT_BODY_KEYS
             .iter()
             .position(|known| *known == key)

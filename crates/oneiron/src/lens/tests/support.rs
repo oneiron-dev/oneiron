@@ -5,6 +5,94 @@ use super::*;
 use crate::test_util::entity as test_entity_id;
 use crate::{Error, Result, claim::ScopedReadActorKey, entity_id::EntityId};
 
+/// Schema-1.2 base `core:read` grant for one actor ref: authority is the
+/// `read_preset` and the selector names base reality, so world-scoped rows
+/// stay denied. Installed per positive fixture; negatives keep no grant.
+pub(super) fn base_read_grant(actor_ref: &str) -> rmpv::Value {
+    rmpv::Value::Map(vec![
+        (rmpv::Value::from("actor_ref"), rmpv::Value::from(actor_ref)),
+        (
+            rmpv::Value::from("effector"),
+            rmpv::Value::from("core:read"),
+        ),
+        (
+            rmpv::Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("scope fixture"),
+        ),
+        (
+            rmpv::Value::from("selectors"),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("world_ref"),
+                rmpv::Value::from("base"),
+            )]),
+        ),
+        (
+            rmpv::Value::from("receipt_required"),
+            rmpv::Value::Boolean(false),
+        ),
+    ])
+}
+
+fn encode_base_manifest(actor_ref: &str) -> Vec<u8> {
+    let value = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("schema_version"),
+            rmpv::Value::from("1.2"),
+        ),
+        (rmpv::Value::from("pack_id"), rmpv::Value::from("lens-test")),
+        (rmpv::Value::from("pack_version"), rmpv::Value::from("1")),
+        (
+            rmpv::Value::from("min_engine_version"),
+            rmpv::Value::from("0.0.0"),
+        ),
+        (rmpv::Value::from("defaults"), rmpv::Value::Map(Vec::new())),
+        (rmpv::Value::from("rules"), rmpv::Value::Array(Vec::new())),
+        (
+            rmpv::Value::from("actor_ceilings"),
+            rmpv::Value::Array(Vec::new()),
+        ),
+        (
+            rmpv::Value::from("scoped_grants"),
+            rmpv::Value::Array(vec![base_read_grant(actor_ref)]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &value).expect("policy manifest encodes");
+    data
+}
+
+/// Installs the base `core:read` grant for `viewer` via the batch write door.
+pub(super) fn install_viewer_base_grant(vault: &crate::Vault) -> Result<()> {
+    use crate::batch::{BatchOp, apply_ops};
+    use crate::temporal::TimeRange;
+    let ops = vec![BatchOp::Put {
+        id: test_entity_id(60),
+        entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+        occurred: TimeRange { start: 1, end: 1 },
+        learned_at: 1,
+        data: encode_base_manifest("viewer"),
+        allow_maintenance: true,
+        allow_reserved_predicate: false,
+        hub_sync_imported: false,
+    }];
+    let mut wtxn = vault.store.env.write_txn()?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut wtxn,
+        ops,
+        true,
+        false,
+        true,
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
+
 pub(super) fn id(value: &str) -> LensAtomId {
     LensAtomId::new(value).expect("valid atom id")
 }
@@ -454,6 +542,7 @@ pub(super) fn selection_fixture(
     role: LensHandleRole,
 ) -> Result<(ScopedReadActorKey, LensRenderFrame, String)> {
     put_person(vault, target_id)?;
+    install_viewer_base_grant(vault)?;
     let (viewer_key, mut frame) = viewer_frame("card-1")?;
     let target = backing_target_for(vault, target_id, LensBackingTargetKind::Entity)?;
     let short_ref = target.short_ref();
@@ -576,6 +665,7 @@ pub(super) fn result_set_fixture(
     put_profile_claim(vault, &claim_a, &subject)?;
     put_profile_claim(vault, &claim_b, &subject)?;
     put_person(vault, &people)?;
+    install_viewer_base_grant(vault)?;
 
     let (viewer_key, mut frame) = viewer_frame("card-1")?;
     let scoped_read = vault.scoped_read(viewer_key.clone());

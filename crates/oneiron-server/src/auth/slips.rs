@@ -75,7 +75,9 @@ impl CoreAuth {
         if verified.claims().single_use {
             return Err(ApiError::unauthorized());
         }
-        Self::from_verified(verified, slip.caveats.is_empty())
+        let mut auth = Self::from_verified(verified, slip.caveats.is_empty())?;
+        auth.instrument = Some(*blake3::hash(token.as_bytes()).as_bytes());
+        Ok(auth)
     }
     /// Admit a fresh transport binding once. Repeated authorization checks
     /// inside the admitted request keep using the read-only verifier.
@@ -164,6 +166,8 @@ impl CoreAuth {
             jti: Some(hex_id(&claims.slip_id)),
             actor_class: claims.actor_class.clone(),
             org_ref: claims.org_ref.clone(),
+            // Local host proofs have no caveats. Their logged mint id is stable.
+            instrument: Some(claims.slip_id),
             verified_slip: Some(verified),
         })
     }

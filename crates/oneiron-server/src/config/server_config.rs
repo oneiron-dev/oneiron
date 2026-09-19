@@ -243,8 +243,8 @@ pub struct ServeConfig {
     pub embedder: Option<EmbedderConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
-    /// Opaque host-managed KMS key reference. `Some` only for the hosted
-    /// posture; self-host/local keeps no host reference at all. Never key
+    /// Opaque host-managed KMS key reference. `Some` only for the managed
+    /// posture; relay and self-host keep no host reference at all. Never key
     /// material, and redacted in this struct's `Debug`.
     pub hosted_kms_key_ref: Option<String>,
 }

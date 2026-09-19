@@ -155,7 +155,8 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
             crate::federation::scope_codec::decode_scope_value(required_value(
                 entries,
                 "authority_scope",
-            )?)?
+            )?)
+            .map_err(|_| invalid_grant())?
         },
         principal_ref,
         scope,

@@ -184,7 +184,22 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     assert_eq!(roots[0]["events"][0]["kind"], Value::from("created"));
     assert_eq!(roots[0]["events"][1]["sequence"], Value::from(1));
     assert_eq!(roots[0]["events"][1]["kind"], Value::from("paused"));
-    assert_eq!(roots[0]["events"][1]["actor"], Value::from("bearer"));
+    // The intervene actor is the authenticated slip principal, not the legacy
+    // bearer label. It is deterministic for this recipe, so pin it exactly.
+    let (write_slip, _) = crate::test_credentials::credential(&server, "scope=core:write");
+    let expected_actor = format!(
+        "slip:{}",
+        write_slip
+            .claims
+            .slip_id
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    assert_eq!(
+        roots[0]["events"][1]["actor"],
+        Value::from(expected_actor.as_str())
+    );
     assert_eq!(roots[0]["events"][1]["note"], Value::from("hold branch"));
 
     let repeated = json!({

@@ -5,9 +5,9 @@ use oneiron::companion::{
     decode_companion_record_body,
 };
 use oneiron::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
-    ENTITY_TYPE_TURN, entity_type_registry_entry,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, entity_type_registry_entry,
 };
 use oneiron::{EdgeInfo, EntityId, FieldProfile, SKILL_RECORD_BODY_KEYS, Vault};
 use serde::de::{self, Visitor};
@@ -246,10 +246,24 @@ fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {
             )])
         });
     }
+    // Companion records now live on FACET rows: a body that decodes as a
+    // companion record projects through the redacting companion shape, never
+    // the generic MessagePack shape that would leak private values. A FACET
+    // body that is neither a valid companion record nor valid MessagePack is
+    // redacted rather than exposed as raw bytes.
+    if entity_type == ENTITY_TYPE_FACET
+        && let Some(fields) = decode_companion_register_fields(body)
+    {
+        return fields;
+    }
 
     match rmp_serde::from_slice::<Value>(body) {
         Ok(Value::Object(fields)) => fields,
         Ok(value) => Map::from_iter([("body".to_owned(), value)]),
+        Err(_) if entity_type == ENTITY_TYPE_FACET => Map::from_iter([(
+            "redacted".to_owned(),
+            Value::String("invalid_companion_register_body".to_owned()),
+        )]),
         Err(_) => Map::from_iter([(
             "bodyBytes".to_owned(),
             Value::Array(body.iter().map(|byte| json!(byte)).collect()),

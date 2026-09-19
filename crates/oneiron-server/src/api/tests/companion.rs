@@ -871,8 +871,10 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         assert_eq!(body["record"]["lifecycle"], Value::from("active"));
     }
 
-    let mut shared_scope_portable_export = shared_record.clone();
-    shared_scope_portable_export["export"] = Value::from("portable");
+    // The retired export-classification spellings are not sensitivity rungs:
+    // they fail closed on the sensitivity door, never resolving to a rung.
+    let mut shared_scope_bad_sensitivity = shared_record.clone();
+    shared_scope_bad_sensitivity["sensitivity"] = Value::from("portable");
     let (status, body) = route_json(
         server.clone(),
         core_request(
@@ -881,7 +883,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             "companion:register:write",
             Some(&json!({
                 "id": seeded_test_entity_id(0x1219_0009).to_hex(),
-                "record": shared_scope_portable_export
+                "record": shared_scope_bad_sensitivity
             })),
         ),
     )
@@ -890,11 +892,11 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
         error_envelope(&body)["details"]["field"],
-        Value::from("record.export")
+        Value::from("record.sensitivity")
     );
 
-    let mut neutral_scope_shared_export = neutral_record.clone();
-    neutral_scope_shared_export["export"] = Value::from("shared_vault");
+    let mut neutral_scope_bad_sensitivity = neutral_record.clone();
+    neutral_scope_bad_sensitivity["sensitivity"] = Value::from("shared_vault");
     let (status, body) = route_json(
         server.clone(),
         core_request(
@@ -903,7 +905,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             "companion:register:write",
             Some(&json!({
                 "id": seeded_test_entity_id(0x1219_000A).to_hex(),
-                "record": neutral_scope_shared_export
+                "record": neutral_scope_bad_sensitivity
             })),
         ),
     )
@@ -912,7 +914,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
         error_envelope(&body)["details"]["field"],
-        Value::from("record.export")
+        Value::from("record.sensitivity")
     );
 
     let mut retired_create_record = personal_record.clone();
