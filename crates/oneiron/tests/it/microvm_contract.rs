@@ -13,11 +13,9 @@
 //!   `FakeSandboxAdapter` and the dev microVM adapter yields the same shape.
 
 use oneiron::{
-    ErrorKind,
-    code_sandbox::SandboxBoundaryContract,
-    code_sandbox::SandboxGuestTier,
+    ErrorKind, code_sandbox::SandboxBoundaryContract, code_sandbox::SandboxGuestTier,
+    code_sandbox::microvm::firecracker_backend_compiled,
     code_sandbox::microvm::select_backend_for_tier,
-    code_sandbox::microvm::{dev_backend_compiled, firecracker_backend_compiled},
 };
 
 #[test]
@@ -42,16 +40,14 @@ fn microvm_contract_isolating_tiers_route_or_fail_closed() {
             Ok(selected) => {
                 let backend = selected.expect("an isolating tier never routes to `None`");
                 assert!(
-                    dev_backend_compiled() || firecracker_backend_compiled(),
+                    firecracker_backend_compiled(),
                     "a backend was handed out with none compiled into this build"
                 );
-                assert!(!backend.name().is_empty(), "backends carry a stable label");
+                assert_eq!(backend.name(), "firecracker");
             }
             Err(error) => {
-                assert!(
-                    !dev_backend_compiled(),
-                    "routing can refuse only when the dev fallback is not compiled"
-                );
+                // Debug/test availability of the dev reference backend does
+                // not authorize routing a foreign guest outside a real VMM.
                 assert_eq!(error.kind(), ErrorKind::MicroVmBackendUnavailable);
             }
         }
@@ -89,7 +85,7 @@ mod dev_backend {
         code_sandbox::microvm::{
             CredentialAllowlist, CredentialDestination, CredentialResolver, DevProcessBackend,
             ExecutionBudget, GuestImage, MicroVmBackend, MicroVmSandboxAdapter,
-            SANDBOX_EGRESS_ABI_KEY_HOST, SANDBOX_EGRESS_ABI_KEY_SCHEME, select_backend_for_tier,
+            SANDBOX_EGRESS_ABI_KEY_HOST, SANDBOX_EGRESS_ABI_KEY_SCHEME,
         },
     };
     use rmpv::Value;
@@ -231,24 +227,6 @@ mod dev_backend {
                 out.insert(relative, fs::read(entry.path()).expect("read tree file"));
             }
         }
-    }
-
-    #[test]
-    fn microvm_contract_foreign_tier_routes_to_a_named_backend() {
-        let backend = select_backend_for_tier(SandboxGuestTier::Foreign)
-            .expect("routing")
-            .expect("foreign code requires an isolating backend");
-        #[cfg(not(feature = "microvm-firecracker"))]
-        assert_eq!(
-            backend.name(),
-            "dev-process-isolation",
-            "without Firecracker support, Foreign uses the dev fallback backend"
-        );
-        #[cfg(feature = "microvm-firecracker")]
-        assert!(
-            matches!(backend.name(), "firecracker" | "dev-process-isolation"),
-            "Foreign routing is Firecracker-first with dev-process-isolation fallback"
-        );
     }
 
     #[test]
