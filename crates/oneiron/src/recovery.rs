@@ -338,3 +338,9 @@ fn remove_original_if_unchanged(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+mod privacy_kit;
+pub use privacy_kit::{
+    BackupShareLocation, PrivacyBackupError, PrivacyBackupShare, RestoredVaultKey,
+    issue_privacy_backup_kit, restore_privacy_backup_kit,
+};
