@@ -27,6 +27,7 @@ use crate::registry::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
+use crate::secret_custody::plan_replicated_name_index;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
@@ -102,6 +103,8 @@ pub(in crate::batch) fn apply_put(
     // Registered maintenance kinds with pinned body schemas get the same
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
+    let custody_name_index =
+        plan_replicated_name_index(store, wtxn, &id, entity_type, data, replicated)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
     let mut new_agent_definition = None;
@@ -645,6 +648,7 @@ pub(in crate::batch) fn apply_put(
             crate::task_verb::note_task_write(store, wtxn, id, data)?;
         }
     }
+    crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
             store,
