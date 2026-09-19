@@ -478,3 +478,55 @@ fn historical_copied_knowledge_is_scrubbed_without_foreign_edge_authority() -> R
     assert!(doc.get_map("edges").get(&edge).is_some());
     Ok(())
 }
+
+#[test]
+fn cyclic_archive_input_references_retire_payloads_without_recursing_through_agents() -> Result<()>
+{
+    let (_dir, vault) = open();
+    let children = [EntityId::now(), EntityId::now()];
+    let assets = [
+        birth_source_id(&children[0])?,
+        birth_source_id(&children[1])?,
+    ];
+    let at = crate::TimeRange { start: 10, end: 10 };
+    for (index, child) in children.iter().enumerate() {
+        let mut def = definition(&format!("birth.cycle.{index}"), None);
+        def.source = ClaimSource::Imported;
+        def.approval_status = ClaimApprovalStatus::Proposed;
+        def.ceiling = AgentCeiling::Proposed;
+        def.enabled = false;
+        vault.put_agent_definition(child, &def, at, 10)?;
+        // An archive's copied claim references are untrusted data, not an
+        // authority to turn this other payload ASSET into a CLAIM row.
+        let body = crate::ClaimBody::new(
+            "test.source_note",
+            crate::ClaimSubject::Entity(*child),
+            Value::from("untrusted copied note"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        );
+        let knowledge = ExportEntity {
+            id: assets[1 - index].to_hex(),
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred_start: 10,
+            occurred_end: 10,
+            learned_at: 10,
+            body: ExportBody::from_bytes(
+                &crate::claim::encode_claim_body(&body)?,
+                crate::registry::ENTITY_TYPE_CLAIM,
+            ),
+        };
+        let tree = crate::serialize::export_source_tree(
+            &super::super::portable::agent_pack_files(child, &def, &[], &[knowledge])?,
+        )?;
+        let (asset, bytes) = encode_birth_source(child, &def, child, &def, tree)?;
+        vault.put_entity(&asset, ENTITY_TYPE_ASSET, at, 10, &bytes)?;
+    }
+    vault.batch().delete(&assets[0]).commit()?;
+    for (child, asset) in children.iter().zip(assets) {
+        assert_eq!(vault.get_entity_type(child)?, Some(ENTITY_TYPE_AGENT_DEF));
+        assert!(vault.get_raw(&asset)?.is_none());
+    }
+    Ok(())
+}
