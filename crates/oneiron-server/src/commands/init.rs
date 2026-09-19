@@ -432,10 +432,10 @@ provider = "local"
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 
         let env = EnvConfig::from_pairs(overrides).unwrap();
-        init_with_env(args.clone(), env.clone()).unwrap();
+        init_with_env(args, env.clone()).unwrap();
         let serve = crate::config::resolve_serve_config_with_sources(
             &ServeArgs {
-                config: Some(path.clone()),
+                config: Some(path),
                 ..Default::default()
             },
             env,
