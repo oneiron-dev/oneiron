@@ -91,10 +91,12 @@ pub(super) fn render(
         let rendered = String::from_utf8(render_component(vault, &event, uid, sequence, now)?)
             .map_err(|_| ingest_error("calendar renderer did not return UTF-8"))?;
         let start = rendered
-            .find("BEGIN:VEVENT")
+            .find("\r\nBEGIN:VEVENT\r\n")
+            .map(|at| at + 2)
             .ok_or_else(|| ingest_error("calendar renderer omitted event"))?;
         let end = rendered
-            .find("END:VEVENT")
+            .find("\r\nEND:VEVENT\r\n")
+            .map(|at| at + 2)
             .ok_or_else(|| ingest_error("calendar renderer omitted event end"))?;
         out.push_str(&rendered[start..end]);
         let mut has_rrule = false;
@@ -179,7 +181,7 @@ mod tests {
     fn resource_render_keeps_master_exception_uid_timezone_and_full_hash() {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-        let text = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@test\r\nDTSTART;TZID=America/New_York:20261030T090000\r\nDTEND;TZID=America/New_York:20261030T100000\r\nRRULE:FREQ=DAILY;COUNT=5\r\nSEQUENCE:3\r\nSUMMARY:Daily\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:series@test\r\nRECURRENCE-ID;TZID=America/New_York:20261031T090000\r\nDTSTART;TZID=America/New_York:20261031T110000\r\nDTEND;TZID=America/New_York:20261031T120000\r\nSEQUENCE:4\r\nSUMMARY:Moved\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let text = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@test\r\nDTSTART;TZID=America/New_York:20261030T090000\r\nDTEND;TZID=America/New_York:20261030T100000\r\nRRULE:FREQ=DAILY;COUNT=5\r\nSEQUENCE:3\r\nSUMMARY:Daily END:VEVENT review\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:series@test\r\nRECURRENCE-ID;TZID=America/New_York:20261031T090000\r\nDTSTART;TZID=America/New_York:20261031T110000\r\nDTEND;TZID=America/New_York:20261031T120000\r\nSEQUENCE:4\r\nSUMMARY:Moved\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         let parsed = crate::calendar::ics::parse_ics_feed(text.as_bytes()).unwrap();
         for event in &parsed.events {
             crate::calendar::ingest::admit_connector_event(
@@ -202,6 +204,7 @@ mod tests {
         let bytes = render(&vault, &master, "series@test", 5, 1_800_000_001).unwrap();
         let again = crate::calendar::ics::parse_ics_feed(&bytes).unwrap();
         assert_eq!(again.events.len(), 2);
+        assert_eq!(again.events[0].summary, parsed.events[0].summary);
         assert_eq!(
             again.events[0].properties.rrule,
             parsed.events[0].properties.rrule
