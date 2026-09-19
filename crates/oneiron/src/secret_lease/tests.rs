@@ -27,7 +27,10 @@ const VALUE_V2: &[u8] = b"wave5-lease-test-value-v2";
 const EFFECTOR: &str = "connector:test";
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+    // macOS's default temp root contains /var, a symlink. Resolve only the
+    // fixture root so T2 tests reach the intended file policy check.
+    let temp_root = std::env::temp_dir().canonicalize().expect("real temp root");
+    let tmp = tempfile::tempdir_in(temp_root).expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
     (tmp, vault)
 }
@@ -1128,8 +1131,9 @@ fn register_local_refuses_symlinked_parent_directory() {
         .expect_err("a symlinked parent denies");
     assert!(
         matches!(
-            err,
-            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            &err,
+            Error::Secret(SecretError::SecretLeasePathRefused { path: refused, .. })
+                if std::path::Path::new(refused) == parent
         ),
         "got {err:?}"
     );
