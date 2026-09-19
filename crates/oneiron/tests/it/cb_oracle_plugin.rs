@@ -744,42 +744,47 @@ mod cb_x_props {
         .prop_map(|parts| parts.concat())
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(48))]
+    /// Every hostile leaf set preserves the structure of its benign twin.
+    /// Admission is fixed across cases; rendering performs only reads.
+    #[test]
+    fn no_generated_claim_value_alters_board_structure() {
+        let fixture = PluginFixture::open();
+        let registry = fixture.admit_crm_section();
+        let config = ProptestConfig {
+            cases: 48,
+            source_file: Some(file!()),
+            test_name: Some(concat!(
+                module_path!(),
+                "::no_generated_claim_value_alters_board_structure"
+            )),
+            ..ProptestConfig::default()
+        };
+        let strategy = prop::collection::vec(hostile_leaf(), plugin_fixture::SECTIONS_UNDER_FUZZ);
+        proptest::test_runner::TestRunner::new(config)
+            .run(&strategy, |leaves| {
+                let benign: Vec<String> = plugin_fixture::BENIGN_VALUES
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect();
+                let clean = fixture.render_all_owned(&registry, &benign);
+                let hostile = fixture.render_all_owned(&registry, &leaves);
 
-        /// The keystone property. For any hostile leaf set, the rendered
-        /// block is structurally IDENTICAL to its benign twin: same physical
-        /// line count, exactly one canonical wrapper pair, the same five
-        /// section headers, the same row count, and no raw `</memory>` other
-        /// than the engine's own close.
-        #[test]
-        fn no_generated_claim_value_alters_board_structure(
-            leaves in prop::collection::vec(hostile_leaf(), plugin_fixture::SECTIONS_UNDER_FUZZ)
-        ) {
-            let fixture = PluginFixture::open();
-            let registry = fixture.admit_crm_section();
-
-            let benign: Vec<String> = plugin_fixture::BENIGN_VALUES
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect();
-            let clean = fixture.render_all_owned(&registry, &benign);
-            let hostile = fixture.render_all_owned(&registry, &leaves);
-
-            prop_assert_eq!(hostile.text.lines().count(), clean.text.lines().count());
-            prop_assert_eq!(hostile.open_wrappers, 1);
-            prop_assert_eq!(hostile.close_wrappers, 1);
-            prop_assert_eq!(hostile.open_angles, 2);
-            prop_assert_eq!(hostile.close_angles, 2);
-            prop_assert_eq!(hostile.legend_lines, 1);
-            prop_assert_eq!(hostile.section_headers, plugin_fixture::SECTIONS_UNDER_FUZZ);
-            prop_assert_eq!(hostile.section_headers, clean.section_headers);
-            prop_assert_eq!(hostile.rendered_rows, clean.rendered_rows);
-            // Every physical row stays one physical row.
-            for line in hostile.text.lines() {
-                prop_assert!(!line.contains('\n') && !line.contains('\r'));
-            }
-        }
+                prop_assert_eq!(hostile.text.lines().count(), clean.text.lines().count());
+                prop_assert_eq!(hostile.open_wrappers, 1);
+                prop_assert_eq!(hostile.close_wrappers, 1);
+                prop_assert_eq!(hostile.open_angles, 2);
+                prop_assert_eq!(hostile.close_angles, 2);
+                prop_assert_eq!(hostile.legend_lines, 1);
+                prop_assert_eq!(hostile.section_headers, plugin_fixture::SECTIONS_UNDER_FUZZ);
+                prop_assert_eq!(hostile.section_headers, clean.section_headers);
+                prop_assert_eq!(hostile.rendered_rows, clean.rendered_rows);
+                // Every physical row stays one physical row.
+                for line in hostile.text.lines() {
+                    prop_assert!(!line.contains('\n') && !line.contains('\r'));
+                }
+                Ok(())
+            })
+            .expect("hostile leaves cannot change board structure");
     }
 }
 
