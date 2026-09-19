@@ -16,6 +16,7 @@ use rmpv::Value;
 
 fn test_config() -> VaultConfig {
     VaultConfig {
+        store_clock: crate::ports::StoreClock::default(),
         ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
         ppr_community: crate::config::PprCommunityConfig::default(),
         map_size: 16 * 1024 * 1024,

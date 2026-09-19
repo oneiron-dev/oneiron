@@ -15,7 +15,6 @@ const KEY_MARKDOWN: &str = NOTE_BODY_KEYS[2];
 const KEY_DOCUMENT_HEAD: &str = NOTE_BODY_KEYS[3];
 
 pub(crate) mod documents;
-mod id_wire;
 mod kinds;
 mod proposals;
 mod verbs;

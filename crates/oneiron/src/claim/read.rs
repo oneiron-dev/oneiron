@@ -58,15 +58,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<ClaimBody>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
-            return Ok(None);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
-        }
-        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+        crate::ports::ClaimStore::port_claim_get(self, rtxn, id)
     }
 
     pub(crate) fn session_claim_bundle_members_in_txn(
@@ -130,14 +122,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         subject: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        self.filtered_edge_peers(
-            rtxn,
-            &self.store.edges_in,
-            subject,
-            EdgeKind::ClaimOf,
-            Some(ENTITY_TYPE_CLAIM),
-            "claims for subject",
-        )
+        crate::ports::ClaimStore::port_claim_list(self, rtxn, subject)
     }
 
     /// Walks the CLAIMs attached to `subject` via inbound `claim_of` edges and
@@ -245,30 +230,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         predicate: &str,
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
-        let mut rows = Vec::new();
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
-        {
-            let (key, _) = entry?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let raw = self
-                .store
-                .entities
-                .get(rtxn, id.as_bytes())?
-                .ok_or(Error::CorruptedIndex("claim type index"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CLAIM {
-                return Err(Error::CorruptedIndex("claim type index"));
-            }
-            let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if body.predicate == predicate {
-                rows.push((id, body));
-            }
-        }
-        Ok(rows)
+        crate::ports::ClaimStore::port_claim_list_by_predicate(self, rtxn, predicate)
     }
 
     pub(crate) fn claim_bodies_for_subjects_matching(

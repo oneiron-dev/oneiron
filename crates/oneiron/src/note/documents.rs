@@ -10,9 +10,9 @@ const TEXT: &str = "body";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteAnchor {
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub(super) note: EntityId,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub(super) head: EntityId,
     pub(super) cursor: Vec<u8>,
 }
@@ -20,9 +20,9 @@ pub struct NoteAnchor {
 /// The version against which a writer prepared whole-text output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteVersion {
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     note: EntityId,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     head: EntityId,
     frontier: Vec<u8>,
 }

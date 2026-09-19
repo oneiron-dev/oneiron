@@ -40,6 +40,19 @@ impl<'a> TxnBatchBuilder<'a> {
         }
     }
 
+    /// Stages a vector without acquiring a second writer.
+    pub fn vector(mut self, id: &EntityId, vector: &[f32]) -> Self {
+        if self.validation_error.is_none() {
+            self.validation_error = Error::invalid_vector_component(vector);
+        }
+        self.ops.push(BatchOp::Vector {
+            id: *id,
+            vector: vector.to_vec(),
+            pending_embedding_token: None,
+        });
+        self
+    }
+
     /// Stages lexical text in the same transaction as its owning record/document.
     pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
         self.ops.push(BatchOp::Text {

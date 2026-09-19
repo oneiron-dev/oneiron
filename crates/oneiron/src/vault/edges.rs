@@ -10,7 +10,6 @@ use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
 use crate::overlay_db::OverlayDb;
-use crate::ppr;
 use crate::store::Store;
 
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
@@ -35,25 +34,6 @@ pub(crate) const SUPERSEDES_DEFAULT_WEIGHT: f32 = match EdgeKind::Supersedes.def
 
 /// Cap for `targets`/`sources` to prevent unbounded allocation.
 pub(crate) const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
-
-fn scan_edges(
-    database: &OverlayDb,
-    rtxn: &heed::RoTxn<'_>,
-    prefix: &[u8; 16],
-) -> Result<Vec<EdgeInfo>> {
-    let mut edges = Vec::new();
-    for entry in database.prefix_iter(rtxn, prefix.as_slice())? {
-        if edges.len() >= MAX_EDGE_QUERY_RESULTS {
-            // Fail loud — sync mirror paths (replay_pending_mirrors,
-            // reverse_rematerialize) must not silently truncate edges
-            // for high-degree nodes.
-            return Err(Error::IndexOverflow("scan_edges"));
-        }
-        let (key, value) = entry?;
-        edges.push(parse_edge_record(&key, &value)?);
-    }
-    Ok(edges)
-}
 
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
 /// no ChildOf edge (i.e. it is a root).
@@ -139,7 +119,9 @@ impl Vault {
         tgt: &EntityId,
         weight: f32,
     ) -> Result<()> {
-        self.batch().edge(src, kind, tgt, weight).commit()
+        self.with_write_txn(|txn| {
+            crate::ports::EdgeStore::port_edge_upsert(self, txn, src, kind, tgt, weight)
+        })
     }
 
     /// Stores a directed edge with explicit VAD scores.
@@ -217,42 +199,35 @@ impl Vault {
 
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
-        // Reserved redirect-shell kinds (merged_into / split_into) are writable
-        // and deletable ONLY through the identity-topology apply/undo door — a
-        // public delete could tear a real shell edge without a ledger
-        // counter-event (ARCH-0055). Mirrors the batch-builder guard, which this
-        // convenience door bypasses (direct store delete, not a staged op).
-        crate::edge::validate_public_edge_kind(kind)?;
-        let key_out = Store::encode_edge_key(src, kind, tgt);
-        let key_in = Store::encode_edge_key(tgt, kind, src);
-
-        self.with_write_txn(|wtxn| {
-            let existed_out = self.store.edges_out.delete(wtxn, &key_out)?;
-            let deleted_in = self.store.edges_in.delete(wtxn, &key_in)?;
-
-            if !existed_out {
-                // Inbound-only rows are opportunistic cleanup for an inconsistent
-                // reverse index and do not affect the outbound graph PPR uses.
-                let _ = deleted_in;
-                return Ok(false);
-            }
-
-            ppr::invalidate_ppr_for_edge(&self.store, wtxn, src, tgt)?;
-            ppr::increment_graph_version(&self.store, wtxn)?;
-            Ok(true)
+        self.with_write_txn(|txn| {
+            crate::ports::EdgeStore::port_edge_delete(self, txn, src, kind, tgt)
         })
     }
 
     /// Returns outbound edges for `src`.
     pub fn edges_out(&self, src: &EntityId) -> Result<Vec<EdgeInfo>> {
-        let rtxn = self.store.env.read_txn()?;
-        scan_edges(&self.store.edges_out, &rtxn, src.as_bytes())
+        let txn = self.store.env.read_txn()?;
+        crate::ports::EdgeStore::port_edge_neighbors(
+            self,
+            &txn,
+            src,
+            crate::ports::EdgeDirection::Out,
+            None,
+            MAX_EDGE_QUERY_RESULTS,
+        )
     }
 
     /// Returns inbound edges for `tgt`.
     pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<EdgeInfo>> {
-        let rtxn = self.store.env.read_txn()?;
-        scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
+        let txn = self.store.env.read_txn()?;
+        crate::ports::EdgeStore::port_edge_neighbors(
+            self,
+            &txn,
+            tgt,
+            crate::ports::EdgeDirection::In,
+            None,
+            MAX_EDGE_QUERY_RESULTS,
+        )
     }
 
     /// Outbound edge targets filtered by kind and optional target entity type.

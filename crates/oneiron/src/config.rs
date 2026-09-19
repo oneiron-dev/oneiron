@@ -263,6 +263,8 @@ impl Default for HnswConfig {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct VaultConfig {
+    /// Injected engine clock and id source; each opened store gets its own floor.
+    pub store_clock: crate::store::ports::StoreClock,
     /// Stored-edge VAD salience for PPR. Validated at query time in `0..=0.4`.
     /// Nonzero use requires the pinned BEAM recall and latency gate.
     pub ppr_vad_alpha: f32,
@@ -532,6 +534,7 @@ impl VaultConfig {
     #[must_use]
     pub fn device() -> Self {
         Self {
+            store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             ppr_community: PprCommunityConfig::default(),
             dimensions: 1024,
@@ -554,6 +557,7 @@ impl VaultConfig {
     #[must_use]
     pub fn server() -> Self {
         Self {
+            store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             ppr_community: PprCommunityConfig::default(),
             dimensions: 4096,

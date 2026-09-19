@@ -87,7 +87,7 @@ impl Store {
             // environment instead of being dropped with the transaction.
             rtxn.commit()?;
             drop(db_open_guard);
-            Self::assemble(env, raw, registered_path)?
+            Self::assemble(env, raw, registered_path, &config.store_clock)?
         };
 
         verify_existing_hnsw_config(&store, config)?;
@@ -105,10 +105,24 @@ impl Store {
         env: OwnedEnv,
         raw: RawDatabases,
         registered_path: RegisteredPath,
+        clock: &crate::ports::StoreClock,
     ) -> Result<Self> {
         let vault_meta_view = OverlayDb::canonical(raw.vault_meta);
         let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
 
+        let clock = clock.for_store();
+        {
+            let txn = env.read_txn()?;
+            if let Some(bytes) = vault_meta_view.get(&txn, crate::ports::CLOCK_FLOOR)? {
+                let floor = u64::from_be_bytes(
+                    bytes
+                        .as_ref()
+                        .try_into()
+                        .map_err(|_| Error::CorruptedIndex("recorded clock floor"))?,
+                );
+                clock.observe_floor(floor)?;
+            }
+        }
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
             env: shared_env,
@@ -117,6 +131,7 @@ impl Store {
             off_record_sessions: OffRecordSessionRegistry::default(),
             retrieval_blend_tuning_lock: Mutex::new(()),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
+            clock,
             diagnostics: Diagnostics::default(),
             #[cfg(feature = "sync")]
             staged_import_admission_lock: Mutex::new(()),

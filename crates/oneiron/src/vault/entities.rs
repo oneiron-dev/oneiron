@@ -1,17 +1,14 @@
 //! Vault entity, vector, short-id and type-index reads and writes.
 
 use super::Vault;
-use crate::batch::{
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, encode_short_id_forward_key,
-    parse_short_id_value,
-};
-use crate::deletion::{HydratedShortIdDeletion, HydratedShortIdDeletionSource};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::deletion::HydratedShortIdDeletion;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::le_bytes_to_f32_vec;
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::store::{RetrievalSignal, ShortIdAliasTarget, Store};
 use crate::temporal::TimeRange;
-use crate::{hnsw, le_bytes_to_f32_vec, unix_seconds_now};
 use std::time::Instant;
 
 /// Cap for `entities_by_type` to prevent unbounded allocation on large indexes.
@@ -155,9 +152,19 @@ impl Vault {
         learned_at: u64,
         data: &[u8],
     ) -> Result<()> {
-        self.batch()
-            .put(id, entity_type, occurred, learned_at, data)
-            .commit()
+        self.with_write_txn(|txn| {
+            crate::ports::EntityStore::port_entity_put(
+                self,
+                txn,
+                id,
+                &crate::ports::EntityRecord {
+                    entity_type,
+                    occurred,
+                    learned_at,
+                    body: data.to_vec(),
+                },
+            )
+        })
     }
 
     /// Retrieves an entity blob by ID.
@@ -167,23 +174,8 @@ impl Vault {
     /// `Vault::get_secret_value_in_txn`. The value-less projection is
     /// [`Vault::get_secret_metadata`].
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
-        let rtxn = self.store.env.read_txn()?;
-        let value = self.store.entities.get(&rtxn, id.as_bytes())?;
-        let Some(bytes) = value else {
-            return Ok(None);
-        };
-
-        let Some(header) = EntityMetadataHeader::parse(&bytes) else {
-            return Err(Error::CorruptedIndex("entity header"));
-        };
-        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
-        }
-
-        if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
-            return Ok(None);
-        }
-        Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
+        let txn = self.store.env.read_txn()?;
+        crate::ports::safe_read_text(self, &txn, id)
     }
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
@@ -198,7 +190,9 @@ impl Vault {
 
     /// Stores a vector for an entity.
     pub fn put_vector(&self, id: &EntityId, vector: &[f32]) -> Result<()> {
-        self.batch().vector(id, vector).commit()
+        self.with_write_txn(|txn| {
+            crate::ports::RetrievalIndex::port_retrieval_upsert(self, txn, id, Some(vector), None)
+        })
     }
 
     /// Retrieves a vector for an entity.
@@ -249,7 +243,7 @@ impl Vault {
             return Err(error);
         }
 
-        let started_at = unix_seconds_now();
+        let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
         let results = {
             let rtxn = self.store.env.read_txn()?;
@@ -257,14 +251,7 @@ impl Vault {
             // full-length queries; the skip-rescore hot lane is a pipeline
             // feature (a `fast_dims`-length query is inherently prefix-only
             // on every path — no full query exists to rescore).
-            hnsw::hnsw_search(
-                &self.store,
-                &self.config,
-                &rtxn,
-                query,
-                limit,
-                /* skip_rescore = */ false,
-            )?
+            crate::ports::RetrievalIndex::port_retrieval_vector_search(self, &rtxn, query, limit)?
         };
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Vector,
@@ -394,90 +381,7 @@ impl Vault {
         content_hash: u8,
     ) -> Result<Option<HydratedShortId>> {
         let rtxn = self.store.env.read_txn()?;
-        let forward_key = encode_short_id_forward_key(short_id, content_hash);
-        let raw_id = match self.store.short_ids.get(&rtxn, &forward_key)? {
-            Some(raw_id) => raw_id.to_vec(),
-            None => {
-                let Some(ShortIdAliasTarget::EntityForwardKey(canonical_key)) =
-                    self.store.resolve_short_id_alias(&rtxn, short_id)?
-                else {
-                    // No alias, or one naming a vault — neither resolves to an
-                    // entity here.
-                    return Ok(None);
-                };
-                // An alias relocates a NAME; it does not waive the content-hash
-                // check that makes a short ref a versioned reference.
-                let (_, target_hash) = parse_short_id_value(&canonical_key)?;
-                if target_hash != content_hash {
-                    return Ok(None);
-                }
-                let Some(raw_id) = self.store.short_ids.get(&rtxn, &canonical_key)? else {
-                    return Ok(None);
-                };
-                raw_id.to_vec()
-            }
-        };
-        require_key_len(&raw_id, ENTITY_ID_LEN, "short id entity id")?;
-        let id = EntityId::from_bytes(
-            raw_id
-                .as_slice()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("short id entity id"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("short id entity id"))?;
-
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
-            return Ok(Some(HydratedShortId {
-                id,
-                entity_type: 0,
-                learned_at: 0,
-                deletion: Some(HydratedShortIdDeletion {
-                    source: HydratedShortIdDeletionSource::DanglingShortId,
-                    reason: None,
-                    deleted_at: None,
-                    request_id: None,
-                    // No entity row remains to inspect, so hydrate treats this
-                    // as an effectively hard deletion and keeps the source explicit.
-                    hard: true,
-                }),
-                body: None,
-            }));
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        let entity_type = header.entity_type;
-        let learned_at = header.learned_at;
-        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-        if self.archive_tombstone_in_txn(&rtxn, &id)?.is_some() {
-            return Ok(Some(HydratedShortId {
-                id,
-                entity_type,
-                learned_at,
-                deletion: None,
-                body: None,
-            }));
-        }
-        drop(rtxn);
-
-        if body.is_empty()
-            && let Some(deletion) = self.entity_deletion_metadata(&id, learned_at)?
-        {
-            return Ok(Some(HydratedShortId {
-                id,
-                entity_type,
-                learned_at,
-                deletion: Some(deletion),
-                body: None,
-            }));
-        }
-
-        Ok(Some(HydratedShortId {
-            id,
-            entity_type,
-            learned_at,
-            deletion: None,
-            body: Some(body),
-        }))
+        crate::ports::ShortIdStore::port_short_id_resolve(self, &rtxn, short_id, content_hash)
     }
 
     /// Returns true when an entity row is a soft-delete shell, not a live
@@ -489,26 +393,8 @@ impl Vault {
     /// whether [`Self::restore_archived`] will undo it — is
     /// [`Self::archived_entity`]'s question, not this one's.
     pub fn is_deleted_shell(&self, id: &EntityId) -> Result<bool> {
-        let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
-            return Ok(false);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        // Checked inside the SAME read txn as the row, and before the
-        // window-doc path below, exactly as `entity_deletion_present_in_txn`
-        // orders its own three sources.
-        if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
-            return Ok(true);
-        }
-        if raw.len() != ENTITY_METADATA_HEADER_LEN {
-            return Ok(false);
-        }
-        drop(rtxn);
-
-        Ok(self
-            .entity_deletion_metadata(id, header.learned_at)?
-            .is_some())
+        let txn = self.store.env.read_txn()?;
+        crate::ports::TombstoneStore::port_tombstone_is_deleted(self, &txn, id)
     }
 
     /// Resolves one entity id to its [`LiveEntityRow`] in a read transaction

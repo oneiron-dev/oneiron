@@ -7,6 +7,7 @@ mod doctor_manifest;
 mod edges;
 mod entities;
 mod open;
+mod places;
 mod search_retrieval;
 mod transactions;
 

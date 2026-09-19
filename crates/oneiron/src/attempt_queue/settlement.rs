@@ -56,7 +56,7 @@ impl AttemptQueue<'_> {
     }
 
     /// Transaction-composable [`Self::fail`], including its terminal pack receipt.
-    pub(crate) fn fail_in_txn(
+    pub(crate) fn fail_storage_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: FailAttempt,
@@ -96,5 +96,15 @@ impl AttemptQueue<'_> {
             }
             state => Err(invalid_transition("fail", state.as_str())),
         }
+    }
+}
+
+impl AttemptQueue<'_> {
+    pub(crate) fn fail_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: FailAttempt,
+    ) -> Result<FailOutcome> {
+        crate::ports::JobQueue::port_job_fail(self, txn, input)
     }
 }

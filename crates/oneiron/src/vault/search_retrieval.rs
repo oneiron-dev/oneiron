@@ -146,7 +146,20 @@ impl Vault {
         limit: usize,
         profile: &crate::config::Bm25RankProfile,
     ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
-        let results = self.search_text_scored(&self.store, query, limit, profile)?;
+        let results = if profile == &crate::config::Bm25RankProfile::default() {
+            let started_at = self.store.clock.now_recorded_at();
+            let started = Instant::now();
+            let txn = self.store.env.read_txn()?;
+            let scores =
+                crate::ports::RetrievalIndex::port_retrieval_text_search(self, &txn, query, limit)?;
+            TimedSearch {
+                scores,
+                started_at,
+                started,
+            }
+        } else {
+            self.search_text_scored(&self.store, query, limit, profile)?
+        };
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Text,
             results.started_at,

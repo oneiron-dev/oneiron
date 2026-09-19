@@ -5,7 +5,6 @@ use uuid::Uuid;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::unix_seconds_now;
 
 use super::super::erase::sweep_extras;
 use super::super::gate::{
@@ -67,7 +66,7 @@ impl Vault {
                 "cleanup archives require the cleanup proposal/decision door",
             ));
         }
-        let requested_at = unix_seconds_now();
+        let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
         };
@@ -88,7 +87,7 @@ impl Vault {
         // ONE-1149: minted only AFTER the header read proves there is
         // something to erase — a delete that finds nothing must never mint a
         // request id (the headerless leg mints after its own scope probe).
-        let request_uuid = Uuid::now_v7();
+        let request_uuid = Uuid::from_bytes(self.store.clock.ulid());
 
         let tombstone = TombstoneValueV2 {
             reason: reason.into(),
@@ -225,7 +224,7 @@ impl Vault {
             id,
             gate_decision.as_ref().map(|decision| decision.decision_id),
         );
-        let tombstone_complete_at = unix_seconds_now();
+        let tombstone_complete_at = self.store.clock.now_recorded_at();
 
         // Is there a linearization point BEHIND us? `crdt_persisted` says a
         // publish commit happened; when it did not (the sync-disabled build's
@@ -320,7 +319,7 @@ impl Vault {
                 authority_settled = true;
             }
             wtxn.commit()?;
-            unix_seconds_now()
+            self.store.clock.now_recorded_at()
         } else {
             tombstone_complete_at
         };
@@ -432,7 +431,7 @@ impl Vault {
             tombstone.reason,
         )?;
 
-        let hard_purge_complete_at = unix_seconds_now();
+        let hard_purge_complete_at = self.store.clock.now_recorded_at();
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             &mut wtxn,
             &receipt_id,

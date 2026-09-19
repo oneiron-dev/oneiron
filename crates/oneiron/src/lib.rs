@@ -22,6 +22,7 @@ pub(crate) mod limits;
 pub mod maintain;
 pub mod off_record;
 pub(crate) mod overlay_db;
+pub(crate) mod ports;
 pub mod recovery;
 pub mod registry;
 pub(crate) mod session_overlay;

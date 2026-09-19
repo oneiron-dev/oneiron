@@ -1,17 +1,17 @@
-//! Validated entity-id representation for NOTE documents and receipts.
+//! Validated entity-id representation for opt-in domain records.
 use crate::EntityId;
 use serde::{Deserialize, Deserializer, Serializer};
-pub(super) fn serialize<S: Serializer>(id: &EntityId, serializer: S) -> Result<S::Ok, S::Error> {
+pub(crate) fn serialize<S: Serializer>(id: &EntityId, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&id.to_hex())
 }
-pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<EntityId, D::Error> {
     EntityId::from_hex(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
 }
-pub(super) mod optional {
+pub(crate) mod optional {
     use super::*;
-    pub(in crate::note) fn serialize<S: Serializer>(
+    pub(crate) fn serialize<S: Serializer>(
         id: &Option<EntityId>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
@@ -20,7 +20,7 @@ pub(super) mod optional {
             None => serializer.serialize_none(),
         }
     }
-    pub(in crate::note) fn deserialize<'de, D: Deserializer<'de>>(
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<EntityId>, D::Error> {
         Option::<String>::deserialize(deserializer)?

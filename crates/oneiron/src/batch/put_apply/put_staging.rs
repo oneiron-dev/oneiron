@@ -49,6 +49,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.extend_from_slice(&learned_at.to_be_bytes());
     payload.extend_from_slice(data);
     store.entities().put(wtxn, id.as_bytes(), &payload)?;
+    crate::ports::record_source_frontiers_in_txn(store, wtxn, id, data)?;
     Ok(())
 }
 
@@ -159,5 +160,8 @@ pub(in crate::batch) fn stage_edge_rows(
     let key_in = Store::encode_edge_key(tgt, kind, src);
     store.edges_out().put(wtxn, &key_out, value)?;
     store.edges_in().put(wtxn, &key_in, value)?;
+    if kind == EdgeKind::DerivedFrom {
+        crate::ports::record_derived_edge_in_txn(store, wtxn, src, tgt)?;
+    }
     Ok(())
 }

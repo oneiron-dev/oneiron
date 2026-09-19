@@ -10,17 +10,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteFork {
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub note: EntityId,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub fork: EntityId,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub parent: EntityId,
     pub frontier: Vec<u8>,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub actor: EntityId,
     pub rewrite: bool,
-    #[serde(with = "super::id_wire::optional")]
+    #[serde(with = "crate::entity_id::serde_hex::optional")]
     pub proposal: Option<EntityId>,
     pub decided: bool,
 }
@@ -32,24 +32,24 @@ pub enum NoteVerdict {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteLandingReceipt {
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub id: EntityId,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub note: EntityId,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub fork: EntityId,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub previous_head: EntityId,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub head: EntityId,
     pub verdict: NoteVerdict,
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub actor: EntityId,
     pub at: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteReviewBundle {
-    #[serde(with = "super::id_wire")]
+    #[serde(with = "crate::entity_id::serde_hex")]
     pub id: EntityId,
     pub waiting: Vec<NoteFork>,
     pub landed: Vec<NoteLandingReceipt>,

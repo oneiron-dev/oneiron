@@ -16,6 +16,7 @@ mod cancel;
 mod completion;
 mod encoding;
 mod engine;
+mod ports;
 mod result;
 mod settlement;
 mod telemetry;
