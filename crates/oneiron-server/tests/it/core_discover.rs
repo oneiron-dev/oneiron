@@ -490,9 +490,21 @@ async fn context_board_returns_latest_pending_notification_over_type_cap() {
 }
 
 #[tokio::test]
-async fn discover_requires_auth_and_returns_empty_contract() {
+async fn discover_requires_auth_and_returns_bootstrap_contract() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+    let root = vault
+        .project(vault.root_project().unwrap())
+        .unwrap()
+        .unwrap();
+    let expected_counts = [
+        (oneiron::registry::ENTITY_TYPE_AGENT_DEF, 7u64),
+        (oneiron::registry::ENTITY_TYPE_SKILL, 4),
+        (oneiron::registry::ENTITY_TYPE_CLAIM, 8),
+        (oneiron::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR, 4),
+        (oneiron::registry::ENTITY_TYPE_CONVERSATION, 1),
+        (vault.project_type_byte().unwrap(), 1),
+    ];
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
 
     let missing = http_get(addr, "/api/core/discover", None).await;
@@ -604,20 +616,21 @@ async fn discover_requires_auth_and_returns_empty_contract() {
     assert!(body["bound"]["persona"].is_null());
     assert!(body["bound"]["conversation"].is_null());
     assert!(body["personas"].as_array().unwrap().is_empty());
-    assert!(body["conversations"].as_array().unwrap().is_empty());
-    // ONE-1890: a fresh vault is no longer entity-empty — opening one seeds
-    // the system AGENT_DEF rows (six, then a seventh with ONE-1709's
-    // sys.team_lead). Nothing ELSE is written, so the census is asserted
-    // exhaustively: type 17 with exactly seven rows, and no other type.
-    let counts = body["counts"].as_object().expect("counts object");
-    let agent_def_key = oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string();
+    let conversations = body["conversations"].as_array().unwrap();
+    assert_eq!(conversations.len(), 1);
     assert_eq!(
-        counts.keys().collect::<Vec<_>>(),
-        vec![&agent_def_key],
-        "an unwritten vault carries only the seeded system agent rows, got {counts:?}"
+        conversations[0]["id"].as_str(),
+        Some(root.home_room.as_str())
     );
-    assert_eq!(counts[&agent_def_key].as_u64(), Some(7));
-    assert!(body["predicate_namespaces"].as_array().unwrap().is_empty());
+    let counts = body["counts"].as_object().expect("counts object");
+    assert_eq!(counts.len(), expected_counts.len());
+    for (kind, count) in expected_counts {
+        assert_eq!(counts[&kind.to_string()].as_u64(), Some(count));
+    }
+    assert_eq!(
+        str_array_set(&body["predicate_namespaces"]),
+        BTreeSet::from(["skill"])
+    );
     // Same cause: the seeded rows carry the pinned deterministic seed
     // timestamp 0 (byte-identical cross-vault), so the activity scan reports
     // that floor rather than "no activity at all".
@@ -730,6 +743,14 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
 
+    let initial_claims = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+        .unwrap()
+        .len() as u64;
+    let initial_conversations = vault
+        .entities_by_type(ENTITY_TYPE_CONVERSATION)
+        .unwrap()
+        .len() as u64;
     let turn_a = EntityId::now();
     let turn_b = EntityId::now();
     let persona = EntityId::now();
@@ -778,22 +799,28 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
     assert_http_status(&response, 200);
     let body = http_json(&response);
 
-    assert_eq!(body["counts"]["0"].as_u64(), Some(1));
+    assert_eq!(body["counts"]["0"].as_u64(), Some(initial_claims + 1));
     assert_eq!(body["counts"]["1"].as_u64(), Some(2));
     assert_eq!(body["counts"]["4"].as_u64(), Some(1));
-    assert_eq!(body["counts"]["11"].as_u64(), Some(1));
+    assert_eq!(
+        body["counts"]["11"].as_u64(),
+        Some(initial_conversations + 1)
+    );
     assert_eq!(body["last_activity"].as_u64(), Some(50));
     assert_eq!(
         str_array_set(&body["predicate_namespaces"]),
-        BTreeSet::from(["profile"])
+        BTreeSet::from(["profile", "skill"])
     );
     assert_eq!(
         body["personas"][0]["id"].as_str(),
         Some(persona.to_hex().as_str())
     );
-    assert_eq!(
-        body["conversations"][0]["id"].as_str(),
-        Some(conversation.to_hex().as_str())
+    assert!(
+        body["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"].as_str() == Some(conversation.to_hex().as_str()))
     );
     assert_eq!(
         str_array_set(&body["feature_flags"]["modes"]),

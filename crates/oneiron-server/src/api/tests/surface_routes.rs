@@ -46,6 +46,14 @@ async fn context_board_hides_fresh_default_policy_manifest() {
         counts,
         &serde_json::Map::from_iter([
             (
+                oneiron::registry::ENTITY_TYPE_CLAIM.to_string(),
+                Value::from(8)
+            ),
+            (
+                oneiron::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR.to_string(),
+                Value::from(4)
+            ),
+            (
                 oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string(),
                 Value::from(7)
             ),
