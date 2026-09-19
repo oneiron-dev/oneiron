@@ -1713,3 +1713,45 @@ fn signal_ready_writes_the_contract_byte() {
     signal_ready(fd).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), vec![READY_BYTE]);
 }
+
+#[test]
+fn managed_failure_signal_environment_is_refused_before_configuration() {
+    const CHILD_CASE: &str = "W7_TEST_MANAGED_SIGNAL_ENV";
+    const SIGNAL_VARS: [&str; 2] = [
+        "ONEIRON_FAILURE_SIGNAL_EXPORT",
+        "ONEIRON_FAILURE_SIGNAL_TRAINING",
+    ];
+    if let Ok(expected) = std::env::var(CHILD_CASE) {
+        assert!(SIGNAL_VARS.contains(&expected.as_str()));
+        let dir = tempfile::tempdir().unwrap();
+        let error = ManagedArgs::from_serve_args(&parse_serve(&managed_argv(dir.path())))
+            .expect_err("an explicit environment layer is not argv");
+        assert!(
+            matches!(error, ManagedError::ConflictingEnvironment { env, .. } if env == expected)
+        );
+        return;
+    }
+    // Isolate environment changes in children, not in the parallel test process.
+    for name in SIGNAL_VARS {
+        for value in ["true", "false", ""] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "managed_failure_signal_environment_is_refused_before_configuration",
+                ])
+                .env_remove("ONEIRON_PRIVACY_POSTURE")
+                .env_remove("ONEIRON_HOSTED_KMS_KEY_REF")
+                .env_remove("ONEIRON_CONFIG")
+                .env_remove(SIGNAL_VARS[0])
+                .env_remove(SIGNAL_VARS[1])
+                .env(CHILD_CASE, name)
+                .env(name, value)
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "isolated managed configuration assertion failed"
+            );
+        }
+    }
+}
