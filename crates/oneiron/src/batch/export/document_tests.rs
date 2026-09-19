@@ -95,6 +95,19 @@ fn whole_vault_all_five_formats_null_credentials_and_encoded_payloads() -> Resul
                 .collect(),
             ),
         ),
+        (
+            Value::from("json_encoded_bytes"),
+            Value::from(
+                serde_json::json!({"payload": credential.bytes().collect::<Vec<_>>()}).to_string(),
+            ),
+        ),
+        (
+            Value::from("json_encoded_map"),
+            Value::from(
+                serde_json::json!({"payload": br#"{"password":"array-wrapped-secret"}"#.to_vec()})
+                    .to_string(),
+            ),
+        ),
         (Value::from("signature"), Value::Binary(vec![1, 2, 3])),
     ]));
     // Simulate residual credentials already on disk, bypassing only the TEST
@@ -150,6 +163,8 @@ fn whole_vault_all_five_formats_null_credentials_and_encoded_payloads() -> Resul
                 "byte_array",
                 "json_bytes",
                 "byte_map",
+                "json_encoded_bytes",
+                "json_encoded_map",
                 "signature",
             ] {
                 assert_eq!(field(&body, name), &Value::Nil);

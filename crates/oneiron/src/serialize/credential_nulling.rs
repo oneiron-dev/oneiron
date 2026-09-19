@@ -45,6 +45,7 @@ fn null_at_depth(key: &str, value: &Value, depth: usize) -> Value {
     }
     match value {
         Value::String(text) if scan_file_content("", text.as_bytes()).is_some() => Value::Null,
+        Value::Array(values) if encoded_credentials(values, depth) => Value::Null,
         Value::Array(values) => Value::Array(
             values
                 .iter()
@@ -65,4 +66,36 @@ fn null_at_depth(key: &str, value: &Value, depth: usize) -> Value {
         ),
         _ => value.clone(),
     }
+}
+
+// JSON byte arrays must be inspected as bytes, not as harmless decimal digits.
+// Retain ordinary numeric arrays, but refuse encoded secrets and opaque nested
+// containers just as the MessagePack serializer does.
+fn encoded_credentials(values: &[Value], depth: usize) -> bool {
+    if values.is_empty() {
+        return false;
+    }
+    let Some(bytes): Option<Vec<u8>> = values
+        .iter()
+        .map(|value| value.as_u64().and_then(|v| u8::try_from(v).ok()))
+        .collect()
+    else {
+        return false;
+    };
+    if scan_file_content("", &bytes).is_some() {
+        return true;
+    }
+    if let Ok(value @ (Value::Object(_) | Value::Array(_))) = serde_json::from_slice(&bytes)
+        && null_at_depth("", &value, depth + 1) != value
+    {
+        return true;
+    }
+    let mut cursor = std::io::Cursor::new(&bytes);
+    matches!(
+        rmpv::decode::read_value(&mut cursor),
+        Ok(rmpv::Value::Map(_)
+            | rmpv::Value::Array(_)
+            | rmpv::Value::Binary(_)
+            | rmpv::Value::Ext(_, _))
+    ) && cursor.position() == bytes.len() as u64
 }
