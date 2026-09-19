@@ -82,3 +82,16 @@ The C allocator handles limit subtraction without wrapping, non-byte bridge
 lists have an element cap, the guest interrupt backstop is one million ticks,
 and SDK/bootstrap internals live in one closure. Artifact-based acceptance is
 still pending the exact provisioned build tools, not substituted by WAT or Node.
+
+## Provisioned build receipt
+
+The owner provisioned the exact MacBook toolchain on 2026-09-19. Both tiers
+are now checked in under `components/code-run-quickjs/artifacts/`, with pinned
+manifest and upstream license. The build version parser accepts official
+commit-stamped release output but still requires the exact version. The only
+additional upstream patch removes the unused dtoa `setjmp.h` include, guarded
+against any actual API usage; this avoids experimental WASM exception features.
+A second build in another output directory is byte-identical for both binaries.
+The manifest pins patched dtoa and QuickJS source separately. CI verifies
+component/file/source/WIT hashes. Real native interpreter qualification remains
+pending in `target/w7-validation/quickjs-native-qualification.*`.

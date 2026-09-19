@@ -38,6 +38,13 @@ def patch_function(source, name, body):
     return source[:start] + "{\n" + body + "\n}" + source[end:]
 
 
+def tool_version_matches(tool, version, reported):
+    """Release CLIs may append a commit/date after their exact version token."""
+    fields = reported.split()
+    return (len(fields) >= 2 and fields[0] in {tool, tool + "-cli"}
+            and fields[1] == version)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=ROOT / "target/code-run-quickjs")
@@ -50,7 +57,7 @@ def main():
     for tool, version in [("wit-bindgen", "0.46.0"), ("wasm-tools", "1.239.0")]:
         if not shutil.which(tool): parser.error(f"missing {tool} {version}; no tools are installed by this script")
         found = run([tool, "--version"], capture_output=True, text=True).stdout.strip()
-        if found.split()[-1:] != [version]: parser.error(f"expected {tool} {version}, got {found}")
+        if not tool_version_matches(tool, version, found): parser.error(f"expected {tool} {version}, got {found}")
         versions[tool] = found
     versions["clang"] = run([Path(sdk) / "bin/clang", "--version"], capture_output=True, text=True).stdout.strip()
     out = args.out.resolve()
@@ -70,6 +77,13 @@ def main():
     quickjs = quickjs.replace("gettimeofday(", "oneiron_gettimeofday(")
     quickjs = quickjs.replace('#include "quickjs.h"', '#include "quickjs.h"\nextern int oneiron_gettimeofday(struct timeval *, void *);')
     (source / "quickjs.c").write_text(quickjs)
+    # This pinned dtoa release includes setjmp.h but never uses its API.
+    # WASI intentionally rejects the header without experimental exception
+    # support; remove only the unused include, not an error-handling path.
+    dtoa = (source / "dtoa.c").read_text()
+    if dtoa.count("#include <setjmp.h>") != 1 or re.search(r"\b(?:setjmp|longjmp|jmp_buf)\b", dtoa.replace("#include <setjmp.h>", "")):
+        raise SystemExit("unexpected dtoa setjmp dependency")
+    (source / "dtoa.c").write_text(dtoa.replace("#include <setjmp.h>", ""))
     wit = (ROOT / "crates/oneiron/wit/code-run.wit").read_text()
     sdk_js = (ROOT / "crates/oneiron/wit/generated/code-run.mjs").read_text()
     bootstrap = "(() => {\n" + sdk_js.replace("export function createHostSdk", "function createHostSdk") + "\nreturn " + (HERE / "bootstrap.js").read_text() + "\n})();"
@@ -113,6 +127,7 @@ def main():
     manifest = {"schema_version":1, "component_name":"oneiron.plain-js.quickjs-component", "world":"oneiron:code-run/guest@1.0.0",
                 "engine":"quickjs-2025-09-13-2", "upstream_url":URL,
                 "upstream_sha256":SOURCE_SHA256, "toolchain":versions, "patched_quickjs_sha256":sha(source / "quickjs.c"),
+                "patched_dtoa_sha256":sha(source / "dtoa.c"),
                 "wit_sha256":sha(ROOT / "crates/oneiron/wit/code-run.wit"),
                 "sources":{p.name:sha(p) for p in [HERE / "guest.c", HERE / "libc_denials.c", HERE / "bootstrap.js", HERE / "generate_bridge.py", HERE / "build.py"]},
                 "artifacts":artifacts}

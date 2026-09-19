@@ -43,8 +43,10 @@ another protocol. `run-step` and every record/variant stay byte-identical.
 Do not install the first-party artifact in a foreign VM. The foreign linker
 refuses it before guest code runs.
 
-For release, copy both component files, the emitted manifest, and the upstream
-LICENSE into `components/code-run-quickjs/artifacts/` in the reviewed change.
+The checked-in `components/code-run-quickjs/artifacts/` contains both component
+files, the emitted manifest and upstream LICENSE. A second controlled build in
+a different output directory produced byte-identical component SHA-256 values.
+For each source change, rebuild and replace all four files together.
 Review the binary SHA-256 values. Deploy those exact bytes and pass their pin
 to `QuickJsRuntimeFactory::from_component`. The loader rejects WAT, wrong pins,
 wrong exports/imports and a failed real-JS readiness probe. There is no fallback.
