@@ -79,3 +79,6 @@ impl<B: EdgeBackend> Host for MicroVmHost<B> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod wasm_harness_tests;
