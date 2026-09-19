@@ -269,8 +269,7 @@ fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<
         claim,
         body: vault.get(&claim)?.unwrap(),
     };
-    let report =
-        vault.refresh_indexed_at_idle(crate::unix_seconds_now().saturating_mul(1000), &idle)?;
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &idle)?;
     assert_eq!(report.refreshed.len(), 1);
     assert!(!has_pending_embedding_marker(&vault, &claim)?);
     assert_eq!(
