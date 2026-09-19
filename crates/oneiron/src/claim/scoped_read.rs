@@ -15,6 +15,7 @@ use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
 mod graph_reads;
+mod pinned_reads;
 mod point_reads;
 mod receipt;
 mod retrieval_visibility;

@@ -76,6 +76,14 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// Rendering pins follow declared critical classes, not the fail-closed
+    /// write fallback for unknown predicates. Only trusted folded policy can pin.
+    #[must_use]
+    pub(crate) fn pins_predicate(&self, predicate: &str) -> bool {
+        !self.is_fail_closed()
+            && self.axes_for_predicate(predicate).criticality == Some(PolicyCriticality::Critical)
+    }
+
     #[must_use]
     pub(crate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
         if self.is_fail_closed() {

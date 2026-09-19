@@ -305,6 +305,21 @@ pub(crate) async fn run_context_pack_builder(
                         disclosure.as_ref(),
                     )
                     .map_err(|error| core_engine_error("memory pin read failed", error))?;
+                let automatic = scoped_read
+                    .manifest_pinned_refs()
+                    .map_err(|error| core_engine_error("manifest pin read failed", error))?;
+                pin_narrowing.push(automatic.receipt);
+                pin_narrowing.extend(
+                    section
+                        .include_pinned_refs_with_disclosure(
+                            scoped_read,
+                            &automatic.value,
+                            disclosure.as_ref(),
+                        )
+                        .map_err(|error| {
+                            core_engine_error("manifest pin disclosure failed", error)
+                        })?,
+                );
             }
             let cursor = advance_memories_cursor(
                 vault,
