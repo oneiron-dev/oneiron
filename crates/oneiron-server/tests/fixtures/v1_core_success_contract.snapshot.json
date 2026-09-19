@@ -266,8 +266,8 @@
             "notice": null
           },
           "empty": {
-            "hint": "Try removing filters or widening the world, type, or time scope",
-            "reason": "filter_matched_none",
+            "hint": "Add data to the vault or broaden the query scope",
+            "reason": "no_data",
             "retrievalQuality": {
               "confidenceAdjustment": -0.35,
               "quality": "passthrough"
@@ -291,9 +291,9 @@
           "quality": "passthrough",
           "results": [],
           "state": {
-            "hint": "Try removing filters or widening the world, type, or time scope",
+            "hint": "Add data to the vault or broaden the query scope",
             "kind": "missing_data",
-            "reason": "filter_matched_none",
+            "reason": "no_data",
             "total_in_scope": 0
           },
           "stats": {
