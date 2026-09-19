@@ -184,3 +184,65 @@ fn live_note_projection_validates_birth_abi_in_every_feature_mode() {
         &[0xff],
     );
 }
+
+#[test]
+fn brief_kind_round_trip_is_person_stamped_and_fail_closed() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let actor = actor(0x61);
+    vault
+        .put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    let memory = vault.memory(actor, crate::EdgeActorClass::Human);
+    let contract = memory.bless_brief_kind().unwrap();
+    assert_eq!(contract.person(), actor);
+    assert_eq!(contract.extraction, NoteExtractionDefault::Disabled);
+    assert_eq!(contract.context, NoteContextDefault::RelationshipScoped);
+    assert_eq!(contract.retention, NoteRetentionDefault::Durable);
+    assert_eq!(vault.brief_kind_contract().unwrap(), Some(contract.clone()));
+    assert_eq!(
+        BriefKindContract::decode(&contract.encode().unwrap()).unwrap(),
+        contract
+    );
+    let value: serde_json::Value = serde_json::from_slice(&contract.encode().unwrap()).unwrap();
+    for (field, invalid) in [
+        ("version", serde_json::json!(2)),
+        ("person", serde_json::json!("not-an-entity-id")),
+        ("extraction", serde_json::json!("allowed")),
+        ("context", serde_json::json!("global")),
+        ("retention", serde_json::json!("ephemeral")),
+        ("grant", serde_json::json!("owner")),
+    ] {
+        let mut malformed = value.clone();
+        malformed[field] = invalid;
+        assert!(matches!(
+            BriefKindContract::decode(&serde_json::to_vec(&malformed).unwrap()),
+            Err(Error::Record(RecordError::InvalidNoteBody(_)))
+        ));
+    }
+    for field in ["version", "person", "extraction", "context", "retention"] {
+        let mut malformed = value.clone();
+        malformed.as_object_mut().unwrap().remove(field);
+        assert!(matches!(
+            BriefKindContract::decode(&serde_json::to_vec(&malformed).unwrap()),
+            Err(Error::Record(RecordError::InvalidNoteBody(_)))
+        ));
+    }
+    for tag in ["brief", "unknown.pack"] {
+        let body = NoteBody {
+            kind: NoteKind::Plugin(tag.into()),
+            author_ref: actor,
+            markdown: "authored".into(),
+        };
+        assert_eq!(
+            decode_note_body(&encode_note_body(&body).unwrap()).unwrap(),
+            body
+        );
+    }
+    assert_eq!(NOTE_BODY_KEYS, ["kind", "author_ref", "markdown"]);
+}

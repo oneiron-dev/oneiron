@@ -96,34 +96,6 @@ fn concurrent_note_batches_converge_with_durable_actor_stamps_and_cursors() {
     );
 }
 
-#[test]
-fn brief_kind_round_trip_is_person_stamped_and_fail_closed() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let actor = person(&vault, 0x61);
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    let contract = memory.bless_brief_kind().unwrap();
-    assert_eq!(contract.person(), actor);
-    assert_eq!(
-        BriefKindContract::decode(&contract.encode().unwrap()).unwrap(),
-        contract
-    );
-    let mut value: serde_json::Value = serde_json::from_slice(&contract.encode().unwrap()).unwrap();
-    value["extraction"] = serde_json::json!("allowed");
-    assert!(BriefKindContract::decode(&serde_json::to_vec(&value).unwrap()).is_err());
-    for tag in ["brief", "unknown.pack"] {
-        let body = NoteBody {
-            kind: NoteKind::Plugin(tag.into()),
-            author_ref: actor,
-            markdown: "authored".into(),
-        };
-        assert_eq!(
-            decode_note_body(&encode_note_body(&body).unwrap()).unwrap(),
-            body
-        );
-    }
-    assert_eq!(NOTE_BODY_KEYS, ["kind", "author_ref", "markdown"]);
-}
-
 fn claim_input(id: EntityId, subject: EntityId, value: &str) -> crate::memory::ClaimInput {
     crate::memory::ClaimInput {
         id: Some(id.to_hex()),
