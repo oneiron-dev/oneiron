@@ -6,6 +6,15 @@ and lockfile. Full-tier nextest commands are unchanged. `--show-stats` records
 hit counts. Do not infer speedup from the existence of the configuration: retain
 repeat-build logs and compare clean-checkout wall times.
 
+`python3 scripts/audit/cache.py` measures three serial `cargo check` builds of
+oneiron-server (including the core): uncached, cache population, and repeat. Each
+starts with an empty run-owned artifact directory at the same path. It uses a
+private cache/socket and saves timings plus repeat-only Rust hit counts. This is
+a cold-artifact comparison, not a claim that caching beats a no-op warm target.
+The script freezes a source copy and uses its own target; run it on an approved
+build host within the host job budget; wrapper shells that redirect Cargo to another host
+cannot collect that host's files. No installation or shared-target cleanup runs.
+
 `python3 scripts/audit/mutation.py` runs pinned cargo-mutants over touched engine
 crates, then checks outcomes. The initial checked-in corpus mutates the GPU
 health conjunction and manifest tripwire bounds. This is a deterministic sentinel
@@ -32,3 +41,15 @@ No tool is installed by the local scripts. Provision the pinned tools on the
 approved audit host first. Tooling fixtures run without Cargo:
 
     python3 -m unittest discover -s scripts/audit -p 'test_*.py' -v
+
+If the installed nightly is below this workspace's MSRV, coverage may use the
+pinned stable compiler with the tool's supported rustdoc-only unstable opt-in:
+
+    LLVM_COV=/path/to/llvm-cov LLVM_PROFDATA=/path/to/llvm-profdata python3 scripts/audit/coverage.py --collect --toolchain 1.96 --unstable-doctests
+
+Both LLVM binaries must match the compiler's LLVM major version. The collector
+sets `CARGO_LLVM_COV_SETUP=no`, so missing components fail rather than installing.
+`RUSTC_BOOTSTRAP=1` is scoped to the doctest lane and its report, not production
+checks or other test lanes. On macOS only the seven named UnsupportedPlatform
+benchmark cases already excluded by CI are excluded here. Cargo and test threads
+are bounded separately to two.

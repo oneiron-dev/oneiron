@@ -12,6 +12,15 @@ def score(report):
     outcomes = report.get("outcomes")
     if not isinstance(outcomes, list):
         raise ValueError("missing outcomes")
+    if not report.get("end_time"):
+        raise ValueError("unfinished mutation audit")
+    baselines = [o for o in outcomes if o.get("scenario") == "Baseline"]
+    if len(baselines) != 1 or baselines[0].get("summary") != "Success":
+        raise ValueError("missing successful baseline")
+    mutants = [o for o in outcomes if isinstance(o.get("scenario"), dict)
+               and "Mutant" in o["scenario"]]
+    if len(mutants) + 1 != len(outcomes) or report.get("total_mutants") != len(mutants):
+        raise ValueError("incomplete mutation inventory")
     caught = missed = 0
     for outcome in outcomes:
         if outcome.get("scenario") == "Baseline" or "Baseline" in outcome.get("scenario", {}):
@@ -27,6 +36,8 @@ def score(report):
     return caught, missed
 
 def enforce(report, baseline):
+    if "cargo-mutants " + report.get("cargo_mutants_version", "") != baseline["runner"]:
+        raise ValueError("report runner does not match the pinned baseline")
     caught, missed = score(report)
     tested = caught + missed
     value = caught / tested if tested else 0.0

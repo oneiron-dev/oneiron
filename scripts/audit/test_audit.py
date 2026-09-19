@@ -6,15 +6,34 @@ from coverage import merge
 from mutation import enforce
 
 class AuditTests(unittest.TestCase):
+    def audit(self):
+        baseline = {"minimum_score": 0.8, "minimum_tested": 1, "runner": "cargo-mutants 27.1.0"}
+        report = {"cargo_mutants_version": "27.1.0", "end_time": "2026-09-19T00:00:00Z",
+                  "total_mutants": 1, "outcomes": [
+                      {"scenario": "Baseline", "summary": "Success"},
+                      {"scenario": {"Mutant": {}}, "summary": "CaughtMutant"}]}
+        return report, baseline
+
     def test_surviving_mutant_fails_gate(self):
-        baseline = {"minimum_score": 0.8, "minimum_tested": 1}
-        caught = {"outcomes": [{"scenario": {"Mutant": {}}, "summary": "CaughtMutant"}]}
+        caught, baseline = self.audit()
         self.assertEqual(enforce(caught, baseline)["score"], 1.0)
-        caught["outcomes"][0]["summary"] = "MissedMutant"
+        caught["outcomes"][1]["summary"] = "MissedMutant"
         with self.assertRaises(ValueError):
             enforce(caught, baseline)
-        with self.assertRaises(ValueError):
-            enforce({"outcomes": []}, baseline)
+
+    def test_interrupted_or_partial_audit_never_passes(self):
+        for field, value in [("end_time", None), ("total_mutants", 2),
+                             ("outcomes", []), ("cargo_mutants_version", "0.0")]:
+            report, baseline = self.audit()
+            report[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                enforce(report, baseline)
+        for index, summary in [(0, "Failure"), (1, "Timeout")]:
+            report, baseline = self.audit()
+            report["outcomes"][index]["summary"] = summary
+            with self.subTest(summary=summary), self.assertRaises(ValueError):
+                enforce(report, baseline)
+
     def test_lanes_count_overlapping_lines_once(self):
         with tempfile.TemporaryDirectory() as root:
             files = []
