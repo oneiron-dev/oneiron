@@ -521,7 +521,7 @@ Example response:
   "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
   "rate_limit": {
     "api_enforced": false,
-    "websocket_enforced": true,
+    "websocket_enforced": false,
     "max_messages_per_sec": 30,
     "max_windows_per_connection": 16,
     "max_frame_size_bytes": 1048576,
@@ -722,7 +722,7 @@ Request body:
 - `limit` optional: max returned items, default `10`.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
-- `depth` optional: `minimal`, `standard`, or `deep`; default `minimal`.
+- `depth` optional: `light`, `medium`, `high`, `xhigh`, or `max`; default `light`.
 
 Response:
 
