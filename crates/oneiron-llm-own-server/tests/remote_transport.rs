@@ -306,8 +306,8 @@ fn dropping_stalled_stream_closes_the_connection() {
         started.send(()).unwrap();
         let mut byte = [0];
         match socket.read(&mut byte) {
-            Ok(0) => {},
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {},
+            Ok(0) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
             outcome => panic!("cancel must close peer socket, got {outcome:?}"),
         }
     });
