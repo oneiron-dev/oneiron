@@ -2559,7 +2559,7 @@
      "path": "src/batch/put_apply/put_entity_update.rs",
      "purpose": "SKILL body validators shared by the put and update arms",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
