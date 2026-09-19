@@ -249,7 +249,10 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // retain the value-agnostic, entity-canonical delete-wins gate.
         let protected_tombstone =
             quarantine_outbound_protected_tombstones(vault, window_key, &tombstones_map, id, &raw)?;
-        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
+        if !protected_tombstone
+            && tombstone_map_contains_id(&tombstones_map, id)
+            && !crate::conversation::reaction::soft_audit_blob(&tombstones_map, id, &raw)
+        {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())

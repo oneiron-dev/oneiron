@@ -353,6 +353,15 @@ pub(super) fn materialize_entity_blob_in_txn(
     // Presence is ANY-value (fail closed): non-binary tombstones gate too —
     // and entity-canonical: a case-shifted hex key still names this id.
     if !delete_protected && tombstone_map_contains_id(tombstones_map, &id) {
+        if crate::conversation::reaction::materialize_soft_audit(
+            vault,
+            wtxn,
+            tombstones_map,
+            &id,
+            blob,
+        )? {
+            return Ok(true);
+        }
         tracing::debug!(entity = %key, "observer-b: entity tombstoned in CRDT, skipping put");
         return Ok(false);
     }

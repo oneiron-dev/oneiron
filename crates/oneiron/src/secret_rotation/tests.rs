@@ -853,23 +853,15 @@ fn publish_refuses_stale_tainted_exhaust_then_stamps_the_pointer_when_the_dial_o
         .publish_artifact_pointer("site", ArtifactPointerChannel::Published, &fork_hash)
         .expect("live taint is not stale taint: it publishes");
 
-    // The pointer row is still EXACTLY the 32-byte fork hash — unchanged
-    // from every pointer written before SECRET-04.
-    let key = {
-        let rtxn = vault.store.env.read_txn().expect("read txn");
-        let mut found = None;
-        for entry in vault
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, b"artifact:pointer:v1:")
-            .expect("prefix iter")
-        {
-            let (k, v) = entry.expect("entry");
-            found = Some((k.to_vec(), v.to_vec()));
-        }
-        found.expect("pointer row")
-    };
-    assert_eq!(key.1.len(), 32, "an ordinary publish adds no bytes");
+    let live = vault
+        .artifact_pointer("site", ArtifactPointerChannel::Published)
+        .expect("read live pointer")
+        .expect("published pointer");
+    assert_eq!(
+        live.version,
+        crate::artifact_hosting::ArtifactPinnedVersion::Code(fork_hash)
+    );
+    assert!(!live.stale_taint_override);
 
     // Rotate: the exhaust goes stale, and the gate refuses.
     vault
@@ -919,7 +911,10 @@ fn publish_refuses_stale_tainted_exhaust_then_stamps_the_pointer_when_the_dial_o
         read_back.stale_taint_override,
         "the override is durable on the row, not merely remembered in process"
     );
-    assert_eq!(read_back.fork_hash, fork_hash);
+    assert_eq!(
+        read_back.version,
+        crate::artifact_hosting::ArtifactPinnedVersion::Code(fork_hash)
+    );
 
     // The unstamped pointer still decodes exactly as before.
     let unstamped = vault
@@ -927,7 +922,10 @@ fn publish_refuses_stale_tainted_exhaust_then_stamps_the_pointer_when_the_dial_o
         .expect("read published")
         .expect("pointer present");
     assert!(!unstamped.stale_taint_override);
-    assert_eq!(unstamped.fork_hash, fork_hash);
+    assert_eq!(
+        unstamped.version,
+        crate::artifact_hosting::ArtifactPinnedVersion::Code(fork_hash)
+    );
 }
 
 // ---------------------------------------------------------------------------

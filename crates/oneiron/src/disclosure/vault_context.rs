@@ -14,7 +14,7 @@ use crate::claim::{
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{Error, Result};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
 use crate::store::Store;
@@ -22,9 +22,10 @@ use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 
 use super::disclosure_tier;
-use super::scope_codec::{
-    DisclosureScope, DisclosureScopeStatus, decode_disclosure_scope_body,
-    disclosure_scope_body_value, encode_disclosure_scope_body,
+use super::position::scope_admits_record;
+use super::scope::{
+    ScopeCeiling, decode_scope_ceiling_body, encode_scope_ceiling_body, meet_all,
+    scope_ceiling_body_value,
 };
 use super::tier_classification::{
     DISCLOSURE_TIER_VALUE_TIER_A, DisclosureMode, DisclosureTier, PREDICATE_DISCLOSURE_SCOPE,
@@ -34,7 +35,7 @@ use super::tier_classification::{
 
 /// `vault_meta` row key prefix for per-contact scope rows (enforcement truth;
 /// one O(1) read per non-owner interlocutor, the off-record-fence shape).
-const DISCLOSURE_SCOPE_KEY_PREFIX: &[u8] = b"disclosure.scope.v1:";
+const DISCLOSURE_SCOPE_KEY_PREFIX: &[u8] = b"disclosure.scope.v2:";
 
 /// `vault_meta` row key prefix for owner Tier-A mark rows.
 const DISCLOSURE_TIER_A_KEY_PREFIX: &[u8] = b"disclosure.tier_a.v1:";
@@ -80,27 +81,66 @@ fn derive_disclosure_claim_id(prefix: &[u8], subject: &EntityId) -> Result<Entit
 }
 
 pub(super) fn disclosure_scope_claim_id(contact_id: &EntityId) -> Result<EntityId> {
-    derive_disclosure_claim_id(b"disclosure.scope.claim.v1:", contact_id)
+    derive_disclosure_claim_id(b"disclosure.scope.claim.v2:", contact_id)
 }
 
 pub(super) fn disclosure_tier_claim_id(id: &EntityId) -> Result<EntityId> {
     derive_disclosure_claim_id(b"disclosure.tier.claim.v1:", id)
 }
 
+fn ceiling_updated_at() -> u64 {
+    crate::unix_seconds_now()
+}
+
 impl Vault {
-    /// Sets (or replaces — dial-not-wall) the disclosure scope for a CID-7
-    /// contact record: dual-writes the `vault_meta` enforcement row and the
-    /// owner-visible `disclosure.scope` claim in one wtxn. Widening is one
-    /// owner call, but only through this owner-session write path (I6 — no
-    /// HTTP exposure in this chain).
+    /// Narrows a contact clearance and atomically updates its claim mirror.
+    /// Missing or corrupt prior clearance is bottom. Widening requires
+    /// `authorize_counterparty_disclosure_scope` and an exact signed intent.
     pub fn set_counterparty_disclosure_scope(
         &self,
         contact_id: &EntityId,
-        scope: &DisclosureScope,
+        ceiling: &ScopeCeiling,
     ) -> Result<()> {
-        scope.validate()?;
-        let data = encode_disclosure_scope_body(scope)?;
+        self.write_counterparty_disclosure_scope(contact_id, ceiling, None)
+    }
+
+    /// Applies an exact owner-signed, one-shot clearance change. Unlike the
+    /// unsigned setter, this door may widen the existing clearance.
+    pub fn authorize_counterparty_disclosure_scope(
+        &self,
+        contact_id: &EntityId,
+        ceiling: &ScopeCeiling,
+        authorization: &super::DisclosureScopeAuthorization,
+    ) -> Result<()> {
+        self.write_counterparty_disclosure_scope(contact_id, ceiling, Some(authorization))
+    }
+
+    fn write_counterparty_disclosure_scope(
+        &self,
+        contact_id: &EntityId,
+        ceiling: &ScopeCeiling,
+        authorization: Option<&super::DisclosureScopeAuthorization>,
+    ) -> Result<()> {
+        ceiling.validate()?;
+        let data = encode_scope_ceiling_body(ceiling)?;
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(authorization) = authorization {
+            authorization.consume(self, &mut wtxn, contact_id, ceiling)?;
+        } else {
+            let previous = self
+                .store
+                .vault_meta
+                .get(&wtxn, &disclosure_scope_meta_key(contact_id))?
+                .and_then(|raw| decode_scope_ceiling_body(&raw).ok())
+                .unwrap_or_else(ScopeCeiling::bottom);
+            if ceiling.meet(&previous) != *ceiling {
+                return Err(Error::Gate(
+                    crate::error::GateError::DisclosureClampViolation(
+                        "clearance widening requires owner-signed intent",
+                    ),
+                ));
+            }
+        }
         let raw = self
             .store
             .entities
@@ -118,23 +158,63 @@ impl Vault {
         let claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_SCOPE,
             ClaimSubject::Entity(*contact_id),
-            disclosure_scope_body_value(scope),
+            scope_ceiling_body_value(ceiling),
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         );
-        self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, scope.updated_at)?;
+        self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, ceiling_updated_at())?;
         wtxn.commit()?;
         Ok(())
     }
 
-    /// Reads the enforcement-truth scope row for a contact. Missing row ->
-    /// `Ok(None)`; a Revoked scope decodes fine — `DisclosureContext::resolve`
-    /// maps it to deny-all.
+    /// Revokes a contact's disclosure clearance: deletes the enforcement row
+    /// and supersedes the owner-visible `disclosure.scope` claim mirror. A
+    /// missing row resolves to [`ScopeCeiling::bottom`] (fail-closed), so
+    /// revocation-by-delete and storing bottom are equivalent at every
+    /// enforcement point.
+    pub fn clear_counterparty_disclosure_scope(
+        &self,
+        contact_id: &EntityId,
+        cleared_at: u64,
+    ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        if self
+            .store
+            .entities
+            .get(&wtxn, contact_id.as_bytes())?
+            .is_none()
+        {
+            return Err(Error::EntityNotFound);
+        }
+        self.store
+            .vault_meta
+            .delete(&mut wtxn, &disclosure_scope_meta_key(contact_id))?;
+        let claim_id = disclosure_scope_claim_id(contact_id)?;
+        if let Some(raw) = self.store.entities.get(&wtxn, claim_id.as_bytes())? {
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type == ENTITY_TYPE_CLAIM
+                && let Some(payload) = raw.get(ENTITY_METADATA_HEADER_LEN..)
+                && let Ok(mut body) = decode_claim_body(payload, true)
+                && body.predicate == PREDICATE_DISCLOSURE_SCOPE
+                && body.lifecycle == ClaimLifecycleStatus::Active
+            {
+                body.lifecycle = ClaimLifecycleStatus::Superseded;
+                body.valid_to = Some(cleared_at);
+                self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &body, cleared_at)?;
+            }
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Reads the enforcement-truth clearance row for a contact. Missing row
+    /// -> `Ok(None)`; resolution maps it to [`ScopeCeiling::bottom`].
     pub fn counterparty_disclosure_scope(
         &self,
         contact_id: &EntityId,
-    ) -> Result<Option<DisclosureScope>> {
+    ) -> Result<Option<ScopeCeiling>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(bytes) = self
             .store
@@ -143,7 +223,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        decode_disclosure_scope_body(&bytes).map(Some)
+        decode_scope_ceiling_body(&bytes).map(Some)
     }
 
     /// Owner-marks an entity Tier A (design §7 rule 5): meta row plus the
@@ -181,8 +261,18 @@ impl Vault {
     /// caller can compute it and write there through the normal gated
     /// `put_claim` door) is left untouched rather than re-written through
     /// the engine-internal door below.
-    pub fn clear_disclosure_tier_a(&self, id: &EntityId, cleared_at: u64) -> Result<()> {
+    pub fn clear_disclosure_tier_a(
+        &self,
+        id: &EntityId,
+        cleared_at: u64,
+        authorization: &super::DisclosureScopeAuthorization,
+    ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        authorization.consume_transcript(
+            self,
+            &mut wtxn,
+            authorization.clear_tier_a_transcript(id, cleared_at),
+        )?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_none() {
             return Err(Error::EntityNotFound);
         }
@@ -225,7 +315,7 @@ impl Vault {
     /// consent gate's criticality floor does not re-ask the owner.
     ///
     /// PREDICATE CONTAINMENT (load-bearing): the door refuses any predicate
-    /// outside [`DISCLOSURE_CLAIM_PREDICATES`] before it writes. That makes
+    /// outside [`crate::disclosure::DISCLOSURE_CLAIM_PREDICATES`] before it writes. That makes
     /// the safety argument for skipping the write gate STRUCTURAL rather
     /// than a call-site convention — no body reaching this door can carry a
     /// caller-chosen predicate through the gate-exempt path. The strict
@@ -285,63 +375,100 @@ impl Vault {
 }
 
 /// The resolved disclosure state one context assembly is clamped against:
-/// mode, interlocutor set, and (owner-absent only) the DEC-0005-intersected
-/// scope. One value feeds builder, board, and response so the response can
+/// mode, interlocutor set, and the five-axis non-owner clearance meet. One value feeds builder, board, and response so the response can
 /// never describe a different clamp than the one applied (design §11 rule 6).
 #[derive(Debug, Clone)]
 pub struct DisclosureContext {
     mode: DisclosureMode,
     interlocutors: InterlocutorSet,
-    pub(super) scope: Option<DisclosureScope>,
+    pub(super) scope: ScopeCeiling,
+    pub(super) generation: Option<super::generation::GenerationStamp>,
 }
 
 impl DisclosureContext {
-    /// Derives the mode and, under `AbsenceClamp`, loads and intersects every
-    /// non-owner interlocutor's scope. Fail-closed: an unknown party, a
-    /// revoked scope, a missing row, or a row that FAILS TO DECODE
-    /// contributes the EMPTY scope, so the intersection denies everything.
-    /// Corruption never propagates as an error from this path (§14.5: the
-    /// clamp only ever narrows — an abort here could surface partial state
-    /// or be swallowed by a caller into a wider-than-intended pack); only
-    /// storage I/O failures stay loud. The owner-facing read
+    /// Resolves the room's disclosable set: `public ∪ (∩ clearances of all
+    /// non-owner present)` (ILDF2 room rule). P1: branches on
+    /// `non_owner(roster).is_empty()` BEFORE any fold — an empty non-owner
+    /// roster resolves to [`ScopeCeiling::top`], never ∅, never first().
+    /// Fail-closed: an unknown party, a revoked or missing clearance, or a
+    /// row that FAILS TO DECODE contributes [`ScopeCeiling::bottom`] as a
+    /// roster MEMBER (V3 — never roster-absence), so the meet denies
+    /// everything but public. Corruption never propagates as an error from
+    /// this path (§14.5: the clamp only ever narrows); only storage I/O
+    /// failures stay loud. The owner-facing read
     /// (`Vault::counterparty_disclosure_scope`) keeps erroring loudly so
     /// corruption stays visible on the consent surface.
+    ///
+    /// This resolves a snapshot. In-flight generation uses `DisclosureSession`
+    /// so roster changes invalidate both context packs and transcript turns,
+    /// and each output chunk crosses its generation's publication barrier.
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
         let mode = DisclosureMode::from_set(&set);
-        let scope = if mode == DisclosureMode::AbsenceClamp && set.has_non_owner() {
-            let now = crate::unix_seconds_now();
-            let mut folded: Option<DisclosureScope> = None;
-            for entry in set.non_owner() {
-                let entry_scope = match entry.contact_ref() {
-                    Some(hex) => {
-                        let contact_id = EntityId::from_hex(hex)?;
-                        match vault.counterparty_disclosure_scope(&contact_id) {
-                            Ok(Some(scope)) if scope.status == DisclosureScopeStatus::Active => {
-                                scope
-                            }
-                            Ok(_) => DisclosureScope::deny_all(now),
-                            Err(error) if error.kind() == ErrorKind::InvalidDisclosureScope => {
-                                DisclosureScope::deny_all(now)
-                            }
-                            Err(error) => return Err(error),
-                        }
-                    }
-                    None => DisclosureScope::deny_all(now),
-                };
-                folded = Some(match folded {
-                    None => entry_scope,
-                    Some(accumulated) => accumulated.intersect(&entry_scope),
-                });
-            }
-            folded
+        // P1: the empty-family branch comes BEFORE any fold.
+        let non_owner: Vec<_> = set.non_owner().collect();
+        let scope = if non_owner.is_empty() {
+            // P1: absence of non-owner members is TOP, not an unknown member.
+            ScopeCeiling::top()
         } else {
-            None
+            let txn = vault.store.env.read_txn()?;
+            let mut ceilings = Vec::with_capacity(non_owner.len());
+            for entry in non_owner {
+                ceilings.push(Self::member_ceiling(&vault.store, &txn, entry)?);
+            }
+            meet_all(&ceilings)
         };
         Ok(Self {
             mode,
             interlocutors: set,
             scope,
+            generation: None,
         })
+    }
+
+    /// One roster member's clearance contribution: the stored ceiling for a
+    /// known contact, else [`ScopeCeiling::bottom`]. A present-but-unknown
+    /// party is a bottom-clearance MEMBER (V3), never roster-absence.
+    fn member_ceiling(
+        store: &Store,
+        txn: &RoTxn<'_>,
+        entry: &crate::interlocutor::Interlocutor,
+    ) -> Result<ScopeCeiling> {
+        let Some(hex) = entry.contact_ref() else {
+            return Ok(ScopeCeiling::bottom());
+        };
+        let Ok(contact_id) = EntityId::from_hex(hex) else {
+            return Ok(ScopeCeiling::bottom());
+        };
+        let Some(raw) = store.entities.get(txn, contact_id.as_bytes())? else {
+            return Ok(ScopeCeiling::bottom());
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            return Ok(ScopeCeiling::bottom());
+        };
+        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+            return Ok(ScopeCeiling::bottom());
+        }
+        let Ok(record) = crate::counterparty_contact::decode_counterparty_contact_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        ) else {
+            return Ok(ScopeCeiling::bottom());
+        };
+        if record.status != crate::counterparty_contact::CounterpartyContactStatus::Active {
+            return Ok(ScopeCeiling::bottom());
+        }
+        Ok(store
+            .vault_meta
+            .get(txn, &disclosure_scope_meta_key(&contact_id))?
+            .and_then(|bytes| decode_scope_ceiling_body(&bytes).ok())
+            .unwrap_or_else(ScopeCeiling::bottom))
+    }
+
+    /// The private-room meet (TOP for an empty non-owner roster). Admission
+    /// unions its downset with the independent public downset. An axis-wise
+    /// join would erase private world/project/facet restrictions.
+    #[must_use]
+    pub fn disclosable_set(&self) -> &ScopeCeiling {
+        &self.scope
     }
 
     #[must_use]
@@ -354,11 +481,14 @@ impl DisclosureContext {
         &self.interlocutors
     }
 
-    /// The clamp's admission predicate: `OwnerAlone` admits everything;
-    /// `Supervised` admits everything not Tier A; `AbsenceClamp` admits only
-    /// non-Tier-A entities on the intersected allowlist, or claims ABOUT an
-    /// allowlisted entity. Tier is checked FIRST so scope can never override
-    /// tier (never-widen, I2).
+    /// Rejects a generation snapshot invalidated by a roster update.
+    pub(crate) fn ensure_current(&self) -> Result<()> {
+        if let Some(generation) = &self.generation {
+            generation.ensure_current()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn admits(
         &self,
         store: &Store,
@@ -367,7 +497,11 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
+        self.ensure_current()?;
         if self.mode == DisclosureMode::OwnerAlone {
+            if let Some(generation) = &self.generation {
+                generation.observe(*id)?;
+            }
             return Ok(true);
         }
         let decoded;
@@ -385,21 +519,26 @@ impl DisclosureContext {
         if disclosure_tier(store, rtxn, id, entity_type, body)? == DisclosureTier::TierA {
             return Ok(false);
         }
-        if self.mode == DisclosureMode::Supervised {
-            return Ok(true);
+        let admitted = scope_admits_record(
+            store,
+            rtxn,
+            &self.live_ceiling(store, rtxn)?,
+            id,
+            entity_type,
+            body,
+        )?;
+        if admitted && let Some(generation) = &self.generation {
+            generation.observe(*id)?;
         }
-        let Some(scope) = self.scope.as_ref() else {
-            return Ok(false);
-        };
-        if scope.allows_entity(id) {
-            return Ok(true);
+        Ok(admitted)
+    }
+
+    pub(super) fn live_ceiling(&self, store: &Store, txn: &RoTxn<'_>) -> Result<ScopeCeiling> {
+        let mut live_ceiling = self.scope.clone();
+        for member in self.interlocutors.non_owner() {
+            live_ceiling = live_ceiling.meet(&Self::member_ceiling(store, txn, member)?);
         }
-        if let Some(body) = body
-            && let ClaimSubject::Entity(subject) = body.subject
-        {
-            return Ok(scope.allows_entity(&subject));
-        }
-        Ok(false)
+        Ok(live_ceiling)
     }
 
     /// Builds the agent-visible assembly block for this clamp.

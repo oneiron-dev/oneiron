@@ -3204,7 +3204,7 @@ fn put_disclosure_turn(vault: &Vault, id: &EntityId, text: &str) {
         id,
         ENTITY_TYPE_TURN,
         text,
-        serde_json::json!({ "txt": text }),
+        serde_json::json!({ "txt": text, "scopeProjectId": id.to_hex(), "sensitivity": "private" }),
     )
     .expect("put turn");
 }
@@ -3319,9 +3319,8 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
     vault.set_disclosure_tier_a(&marked, 100)?;
     put_disclosure_turn(&vault, &diary, "private diary entry needle");
 
-    let scope =
-        crate::disclosure::DisclosureScope::task_scoped("party planning", vec![party], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let scope = crate::disclosure::test_support::projects(vec![party]);
+    crate::disclosure::test_support::authorize(&vault, &contact_id, &scope)?;
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
     let run = vault
@@ -3385,8 +3384,8 @@ fn n2_out_of_scope_neighbor_absent_from_neighbors_and_edge_lists() -> Result<()>
     put_disclosure_turn(&vault, &diary, "private diary tangent");
     vault.put_edge(&party, crate::edge::EdgeKind::Mentions, &diary, 0.9)?;
 
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![party], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let scope = crate::disclosure::test_support::projects(vec![party]);
+    crate::disclosure::test_support::authorize(&vault, &contact_id, &scope)?;
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
     let pack = vault
@@ -3450,8 +3449,8 @@ fn n7_owner_drop_flips_on_next_assembly_with_no_sticky_state() -> Result<()> {
     seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
     let diary = disclosure_id(0xDA);
     put_disclosure_turn(&vault, &diary, "tier b private memory needle7");
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let scope = crate::disclosure::test_support::projects(vec![]);
+    crate::disclosure::test_support::authorize(&vault, &contact_id, &scope)?;
 
     // Assembly 1 — supervised: Tier B present.
     let supervised = supervised_ctx_for_contact(&vault, contact_id);
@@ -3460,7 +3459,7 @@ fn n7_owner_drop_flips_on_next_assembly_with_no_sticky_state() -> Result<()> {
         .search_text("needle7", 10)
         .disclosure_context(supervised)
         .run()?;
-    assert!(pack_ids(&pack).contains(&diary), "supervised admits Tier B");
+    assert_id_absent_everywhere(&pack, &diary, "owner presence does not widen Scope");
 
     // Assembly 2 — owner dropped: same query, id absent.
     let clamped = absence_ctx_for_contact(&vault, contact_id);
@@ -3479,7 +3478,7 @@ fn n7_owner_drop_flips_on_next_assembly_with_no_sticky_state() -> Result<()> {
         .search_text("needle7", 10)
         .disclosure_context(supervised)
         .run()?;
-    assert!(pack_ids(&pack).contains(&diary), "flip back is stateless");
+    assert_id_absent_everywhere(&pack, &diary, "owner return does not widen Scope");
     Ok(())
 }
 
@@ -3498,13 +3497,15 @@ fn n8_disjoint_scopes_intersect_most_restrictive_wins() -> Result<()> {
     put_disclosure_turn(&vault, &event_b, "event beta needle8");
     put_disclosure_turn(&vault, &event_c, "event gamma needle8");
 
-    vault.set_counterparty_disclosure_scope(
+    crate::disclosure::test_support::authorize(
+        &vault,
         &contact_a,
-        &crate::disclosure::DisclosureScope::task_scoped("ab", vec![event_a, event_b], 100)?,
+        &crate::disclosure::test_support::projects(vec![event_a, event_b]),
     )?;
-    vault.set_counterparty_disclosure_scope(
+    crate::disclosure::test_support::authorize(
+        &vault,
         &contact_b,
-        &crate::disclosure::DisclosureScope::task_scoped("bc", vec![event_b, event_c], 100)?,
+        &crate::disclosure::test_support::projects(vec![event_b, event_c]),
     )?;
 
     let ctx = DisclosureContext::resolve(
@@ -3541,9 +3542,8 @@ fn n10_tier_a_never_traversed_into_even_from_in_scope_seed() -> Result<()> {
     // The target is IN scope but owner-marked Tier A: tier supremacy blocks
     // the walk regardless of the allowlist (I2).
     vault.set_disclosure_tier_a(&vaulted, 100)?;
-    let scope =
-        crate::disclosure::DisclosureScope::task_scoped("party", vec![party, vaulted], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let scope = crate::disclosure::test_support::projects(vec![party, vaulted]);
+    crate::disclosure::test_support::authorize(&vault, &contact_id, &scope)?;
 
     let ctx = absence_ctx_for_contact(&vault, contact_id);
     let pack = vault
@@ -3661,8 +3661,8 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
     let diary = disclosure_id(0xE5);
     put_disclosure_turn(&vault, &party, "party trace needle25");
     put_disclosure_turn(&vault, &diary, "private trace needle25");
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![party], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let scope = crate::disclosure::test_support::projects(vec![party]);
+    crate::disclosure::test_support::authorize(&vault, &contact_id, &scope)?;
 
     // Control: an owner-alone assembly with capture on records a stage trace.
     let run = vault

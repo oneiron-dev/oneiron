@@ -1654,3 +1654,33 @@ mod vad_deferral_tests {
         Ok(())
     }
 }
+
+#[test]
+fn promotion_stamps_private_turn_floor_despite_public_candidate() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let mut promoted = candidate(
+        &fixture,
+        "profile.private_source",
+        "private derivation",
+        vec![fixture.turn],
+    );
+    promoted.candidate = promoted.candidate.with_scope(Mp::Map(vec![
+        (Mp::from("sensitivity"), Mp::from("public")),
+        (Mp::from("invariant"), Mp::from("invariant")),
+    ]));
+    let id = promoted.claim_id;
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+    assert_eq!(outcome.landed, vec![id]);
+    let stored = vault.get_claim(&id)?.expect("landed claim");
+    assert_eq!(crate::claim::claim_sensitivity_band(&stored), Some(2));
+    let context = crate::disclosure::DisclosureContext::resolve(
+        &vault,
+        crate::interlocutor::InterlocutorSet::without_owner(vec![
+            crate::interlocutor::Interlocutor::unknown("guest", false),
+        ]),
+    )?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(!context.admits(&vault.store, &txn, &id, ENTITY_TYPE_CLAIM, Some(&stored))?);
+    Ok(())
+}

@@ -2,9 +2,9 @@ mod effect_consent;
 mod effect_contacts;
 mod effect_grants;
 
+pub(crate) use self::effect_consent::external_effect_composed_effect;
 pub(super) use self::effect_consent::{
-    external_effect_action_requirement, external_effect_composed_effect,
-    external_effect_consent_context,
+    external_effect_action_requirement, external_effect_consent_context,
 };
 use self::effect_contacts::hydrate_external_effect_contact;
 use self::effect_grants::{
@@ -181,6 +181,7 @@ pub(crate) fn evaluate_external_effect_policy(
     let mut input = hydrated_effect.gate_input(agent_definition_ceiling, consent);
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
+        effect.approve_once_authorization = approve_once;
         // ONE-1752: the same post-conversion seam. Hydration cannot reach a
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.

@@ -379,6 +379,16 @@ impl PolicyManifestResolution {
         if !effect.has_opted_in {
             return false;
         }
+        // Artifact publication has a single-intent approval door as well as
+        // standing grants. The proof comes only from the store-backed exact
+        // digest lookup, never from a caller permission bit. Keep all ordinary
+        // actor, consent and connector walls; do not widen other verbs here.
+        if effect.channel == "artifact"
+            && effect.verb == "publish"
+            && effect.approve_once_authorization.is_some()
+        {
+            return true;
+        }
 
         self.scoped_grants().iter().any(|grant| {
             grant.budget.is_none() && external_effect_grant_matches(grant, &input.actor, effect)

@@ -369,6 +369,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        crate::conversation::reaction::purge_signals(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
         // ONE-1741 removed the verdict relocation that this hook also carried.
         //
@@ -424,7 +425,13 @@ impl Vault {
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
-        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        // CONV-09 reactions keep their immutable audit record. Their tombstone
+        // is the revoked mark; other kinds keep the existing empty-shell law.
+        let payload = if header.entity_type == crate::registry::ENTITY_TYPE_REACTION {
+            entity_record.to_vec()
+        } else {
+            entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec()
+        };
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
@@ -539,6 +546,20 @@ impl Vault {
         let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
 
         if !decoded.is_hard() {
+            if let Some(header) = self.read_entity_header_in_txn(wtxn, id)?
+                && header.entity_type == crate::registry::ENTITY_TYPE_REACTION
+            {
+                let window = super::tombstone::window_label_from_timestamp(header.learned_at);
+                let key = super::tombstone::pending_tombstone_key(&window, id);
+                self.store.sync_state.put(wtxn, &key, raw_value)?;
+                crate::conversation::reaction::stage_revoked(
+                    &self.store,
+                    wtxn,
+                    id,
+                    decoded.deleted_at,
+                )?;
+            }
+
             let had_body = self
                 .store
                 .entities

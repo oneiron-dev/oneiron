@@ -24,12 +24,8 @@ use crate::error::{RecordError, SecretError};
 const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
 const MAX_DELEGATED_GRANT_SCOPES: usize = 8;
 
-/// Read-only OAuth scope classes a `delegated_grant` row may carry.
-///
-/// There is deliberately no send, reply, delete, or modify variant. Scoped-read
-/// is not a policy setting that a caller could widen: the absence of the variant
-/// is what makes a delegated row structurally incapable of naming a write scope,
-/// including through a decoded body.
+/// OAuth scope classes a delegated mailbox may carry. Sending is separately
+/// gated by live custody scope and one engine-recorded human approval per message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum DelegatedGrantScope {
@@ -37,6 +33,8 @@ pub enum DelegatedGrantScope {
     MailRead,
     /// Read message headers/metadata only.
     MailMetadata,
+    /// Send mail as the member; never implies modify or delete.
+    MailSend,
 }
 
 impl DelegatedGrantScope {
@@ -45,6 +43,7 @@ impl DelegatedGrantScope {
         match self {
             Self::MailRead => "mail.read",
             Self::MailMetadata => "mail.metadata",
+            Self::MailSend => "mail.send",
         }
     }
 
@@ -53,6 +52,7 @@ impl DelegatedGrantScope {
         match value {
             "mail.read" => Some(Self::MailRead),
             "mail.metadata" => Some(Self::MailMetadata),
+            "mail.send" => Some(Self::MailSend),
             _ => None,
         }
     }
@@ -97,7 +97,7 @@ impl DelegatedGrant {
         }
         if self.scopes.is_empty() || self.scopes.len() > MAX_DELEGATED_GRANT_SCOPES {
             return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
-                "delegated grant must declare 1..=8 read scopes",
+                "delegated grant must declare 1..=8 scopes",
             )));
         }
         for (index, scope) in self.scopes.iter().enumerate() {
@@ -205,6 +205,7 @@ pub struct DelegatedCustodyProof<'txn> {
     address: String,
     custody_record_ref: String,
     effector: &'static str,
+    scopes: Vec<DelegatedGrantScope>,
     _txn: PhantomData<&'txn ()>,
 }
 
@@ -243,6 +244,7 @@ impl DelegatedCustodyProof<'_> {
         self.channel == channel
             && self.address == address
             && self.custody_record_ref == grant.custody_record_ref
+            && grant.scopes.iter().all(|scope| self.scopes.contains(scope))
     }
 }
 
@@ -263,7 +265,7 @@ impl DelegatedCustodyProof<'_> {
 ///
 /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody), [`SecretError::SecretRefNotFound`](crate::error::SecretError::SecretRefNotFound),
 /// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive), or [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied).
-pub(super) fn verify_delegated_custody_in_txn<'txn>(
+pub(crate) fn verify_delegated_custody_in_txn<'txn>(
     store: &Store,
     txn: &'txn heed::RoTxn<'_>,
     channel: &str,
@@ -308,7 +310,14 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
         })
     };
     let binding = admission.binding_for(effector).ok_or_else(denied)?;
-    if !binding.grants_read() || !binding_names_subject(binding, &subject) {
+    if !binding.grants_read()
+        || !binding_names_subject(binding, &subject)
+        || (grant.scopes.contains(&DelegatedGrantScope::MailSend)
+            && !binding
+                .scopes
+                .iter()
+                .any(|scope| scope == DelegatedGrantScope::MailSend.as_str()))
+    {
         return Err(denied());
     }
     Ok(DelegatedCustodyProof {
@@ -316,6 +325,7 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
         address: address.to_owned(),
         custody_record_ref: grant.custody_record_ref.clone(),
         effector,
+        scopes: grant.scopes.clone(),
         _txn: PhantomData,
     })
 }

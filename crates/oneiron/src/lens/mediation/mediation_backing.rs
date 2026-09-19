@@ -202,6 +202,11 @@ pub struct LensReadHandle {
     /// disclosing it widens nothing. The stored body it locates is never disclosed.
     pub(super) short_ref: String,
     pub(super) backing_token: LensBackingRefToken,
+    /// The span grain, present only on span-selected handles. Skipped on the wire
+    /// when absent, so the atom handle this module has always issued keeps its
+    /// exact six-key object.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) span: Option<super::LensSpanGrain>,
 }
 
 impl LensReadHandle {
@@ -228,6 +233,12 @@ impl LensReadHandle {
     #[must_use]
     pub fn short_ref(&self) -> &str {
         &self.short_ref
+    }
+
+    /// The span grain, or `None` on an atom-selected handle.
+    #[must_use]
+    pub fn span(&self) -> Option<&super::LensSpanGrain> {
+        self.span.as_ref()
     }
 }
 

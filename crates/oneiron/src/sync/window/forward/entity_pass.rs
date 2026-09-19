@@ -151,6 +151,19 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // that REMOVES the tombstone from the map cannot resurrect the
             // body either. A failed marker read fails CLOSED (skip).
             if !delete_protected && tombstone_map_contains_id(tombstones_map, &id) {
+                if crate::conversation::reaction::soft_audit_blob(tombstones_map, &id, blob)
+                    && let Err(error) = vault.with_write_txn(|txn| {
+                        crate::conversation::reaction::materialize_soft_audit(
+                            vault,
+                            txn,
+                            tombstones_map,
+                            &id,
+                            blob,
+                        )
+                    })
+                {
+                    entity_error = Some(error);
+                }
                 return;
             }
             let locally_hard_deleted = !delete_protected
@@ -495,7 +508,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 Ok(false) => {}
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
                     let subject_pending =
-                        crate::subject_model::subject_model_dependency_pending(&err);
+                        crate::subject_model::subject_model_dependency_pending(&err)
+                            || crate::artifact_hosting::artifact_birth_dependency_pending(&err);
                     if subject_pending {
                         pending_subject_model_dependencies.insert(id);
                     }

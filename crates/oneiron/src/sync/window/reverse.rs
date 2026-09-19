@@ -157,7 +157,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // restore the carrier. Ordinary rows retain delete-wins semantics,
         // including non-binary values and case-shifted aliases.
         let protected_tombstone = protected_tombstones.contains(id);
-        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
+        if !protected_tombstone
+            && tombstone_map_contains_id(&tombstones_map, id)
+            && !crate::conversation::reaction::soft_audit_blob(&tombstones_map, id, &raw)
+        {
             continue;
         }
 

@@ -378,6 +378,40 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Adds the actor-attributed REACTION put behind the CONV-09 reaction
+    /// door — the only door that may write `ENTITY_TYPE_REACTION`, since the
+    /// raw put rejects the type outright.
+    ///
+    /// Like `put_authored_note`, the typed door earns the bypass: it decodes
+    /// the body under the pinned REACTION ABI and requires the stored `by` to
+    /// be `reactor`, the actor the caller verified against the store in this
+    /// transaction.
+    pub(crate) fn put_reaction(
+        mut self,
+        id: &EntityId,
+        reactor: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        if self.validation_error.is_none()
+            && let Err(e) = validate_reaction_body_for_reactor(reactor, data)
+        {
+            self.validation_error = Some(e);
+        }
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type: crate::registry::ENTITY_TYPE_REACTION,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        });
+        self
+    }
+
     /// Adds the actor-attributed NOTE put behind
     /// [`Memory::author_take`](crate::memory::Memory::author_take)
     /// — the only door that may write `ENTITY_TYPE_NOTE`, since the raw put

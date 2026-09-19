@@ -1059,7 +1059,7 @@ fn gmail_delegated_doors_refuse_a_row_that_is_not_this_adapters() -> Result<()> 
 }
 
 #[test]
-fn gmail_delegated_grant_admits_read_scopes_only() -> Result<()> {
+fn gmail_delegated_grant_maps_narrow_read_and_send_scopes() -> Result<()> {
     let config = GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?;
     assert_eq!(config.mailbox_address(), "member@member-owned.example");
     assert_eq!(config.scopes(), &[DelegatedGrantScope::MailRead]);
@@ -1068,10 +1068,9 @@ fn gmail_delegated_grant_admits_read_scopes_only() -> Result<()> {
         .with_google_oauth_scopes(&[GMAIL_METADATA_OAUTH_SCOPE])?;
     assert_eq!(narrowed.scopes(), &[DelegatedGrantScope::MailMetadata]);
 
-    let widened = GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?
-        .with_google_oauth_scopes(&["https://www.googleapis.com/auth/gmail.send"])
-        .expect_err("an over-broad consent screen fails closed");
-    assert!(matches!(widened, Error::InvalidConfig(_)));
+    let send = GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?
+        .with_google_oauth_scopes(&["https://www.googleapis.com/auth/gmail.send"])?;
+    assert_eq!(send.scopes(), &[DelegatedGrantScope::MailSend]);
     assert_eq!(
         delegated_scope_for_google_oauth_scope("https://mail.google.com/"),
         None,

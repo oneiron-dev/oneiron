@@ -111,6 +111,12 @@ pub enum SurfaceInteractionKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SurfaceEventAction {
     Message,
+    /// A provider reaction after the adapter resolves message and person refs.
+    Reaction {
+        target_ref: String,
+        by_ref: String,
+        glyph: String,
+    },
     Interaction {
         interaction: SurfaceInteractionKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -124,13 +130,24 @@ impl SurfaceEventAction {
     pub const fn dispatch_route(&self) -> SurfaceEventDispatchRoute {
         match self {
             Self::Message => SurfaceEventDispatchRoute::ActorSelf,
-            Self::Interaction { .. } => SurfaceEventDispatchRoute::ObservedSourceEnrichment,
+            Self::Interaction { .. } | Self::Reaction { .. } => {
+                SurfaceEventDispatchRoute::ObservedSourceEnrichment
+            }
         }
     }
 
     fn validate(&self) -> Result<()> {
         match self {
             Self::Message => Ok(()),
+            Self::Reaction {
+                target_ref,
+                by_ref,
+                glyph,
+            } => {
+                EntityId::from_hex(target_ref)?;
+                EntityId::from_hex(by_ref)?;
+                crate::conversation::reaction::validate_reaction_glyph(glyph)
+            }
             Self::Interaction { target_ref, .. } => target_ref.as_deref().map_or(Ok(()), |value| {
                 validate_non_blank(value, "surface interaction target ref must be non-empty")
             }),

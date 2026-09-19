@@ -9,15 +9,14 @@ use crate::attempt_queue::{
     FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
 };
 use crate::blob_artifact::{
-    BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
-    read_blob_artifact_head_in_txn,
+    BlobArtifactBody, BlobVersionProvenance, read_blob_artifact_head_in_txn,
 };
 use crate::checkout::{
     CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLeaseState, CheckoutLiveness,
 };
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::code_sandbox::microvm::ExecutionBudget;
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::llm::{BudgetLease, LlmBackend, LlmRequest};
 use crate::temporal::TimeRange;
@@ -561,16 +560,35 @@ where
             },
         };
         let actor = ensure_byoa_runtime_actor(self.vault, wtxn, occurred, request.now)?;
-        self.vault
-            .batch_in()
-            .put(
-                &artifact_id,
-                crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
-                occurred,
-                request.now,
-                &encode_blob_artifact_body(&body)?,
-            )
-            .apply(wtxn)?;
+        let input = self.vault.artifact_input_in_txn(
+            wtxn,
+            artifact_id,
+            &record.payload,
+            occurred,
+            request.now,
+        )?;
+        let run_ref = provenance.run_ref().expect("BYOA uses AgentRun").to_owned();
+        let trigger = match record.task_ref.as_deref() {
+            Some(task) => crate::artifact_hosting::ArtifactTrigger::Task(EntityId::from_hex(task)?),
+            None => crate::artifact_hosting::ArtifactTrigger::Run(run_ref.clone()),
+        };
+        let birth = self.vault.artifact_birth_for_input_in_txn(
+            wtxn,
+            trigger,
+            input,
+            Some(run_ref),
+            "oneiron/byoa",
+            crate::artifact_hosting::ArtifactPurpose::Deliverable,
+        )?;
+        self.vault.create_artifact_with_birth_in_txn(
+            wtxn,
+            artifact_id,
+            crate::artifact_hosting::ArtifactBirthBody::Blob(&body),
+            &birth,
+            actor,
+            occurred,
+            request.now,
+        )?;
         let version = self.vault.append_blob_artifact_version_in_txn(
             wtxn,
             &artifact_id,

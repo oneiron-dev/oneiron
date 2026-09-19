@@ -13,9 +13,10 @@ use super::type_bytes::{
     ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
     ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
     ENTITY_TYPE_PLACE, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SECRET_CUSTODY,
-    ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SUMMARY,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_REACTION, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_RELATIONSHIP,
+    ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
+    ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
 use super::zones::{EntityClassification, TypeByteZone};
 
@@ -273,6 +274,14 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "NOTE",
         type_byte: ENTITY_TYPE_NOTE,
         short_id_prefix: Some("no"),
+        legacy_short_id_prefixes: &[],
+        classification: EntityClassification::Pack,
+        zone: TypeByteZone::CompiledProduct,
+    },
+    EntityTypeRegistryEntry {
+        kind: "REACTION",
+        type_byte: ENTITY_TYPE_REACTION,
+        short_id_prefix: Some("rx"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::CompiledProduct,

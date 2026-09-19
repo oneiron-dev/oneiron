@@ -80,3 +80,24 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     cleanup.neighbors.dedup();
     Ok(cleanup)
 }
+
+impl crate::Vault {
+    /// Imports artifact metadata with an immutable causal upload record.
+    pub fn put_blob_artifact(
+        &self,
+        id: &EntityId,
+        body: &super::BlobArtifactBody,
+        occurred: crate::temporal::TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.with_write_txn(|txn| {
+            self.import_artifact_in_txn(
+                txn,
+                *id,
+                crate::artifact_hosting::ArtifactBirthBody::Blob(body),
+                occurred,
+                learned_at,
+            )
+        })
+    }
+}

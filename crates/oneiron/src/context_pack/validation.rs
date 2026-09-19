@@ -62,6 +62,7 @@ pub(super) fn disclosure_admits_target(
     let Some(ctx) = clamp else {
         return Ok(true);
     };
+    ctx.ensure_current()?;
     if ctx.mode() == DisclosureMode::OwnerAlone {
         return Ok(true);
     }
@@ -86,6 +87,7 @@ pub(super) fn validate_pack_disclosure(
     results: &[ContextEntity],
     neighbors: &[ContextEntity],
 ) -> Result<()> {
+    ctx.ensure_current()?;
     if ctx.mode() == DisclosureMode::OwnerAlone {
         return Ok(());
     }

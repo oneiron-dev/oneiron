@@ -148,14 +148,14 @@ fn type_byte_zone_allocation_matches_contract() {
     }
     // COMPANION_REGISTER (78) shares the system zone with the records above and
     // is still a StructuralKind: classification, not zone, decides.
-    for byte in [78_u8, 100, 101, 102, 103, 104, 105, 106] {
+    for byte in [78_u8, 100, 101, 102, 103, 104, 105, 106, 107] {
         assert!(is_structural_kind(byte), "pack byte {byte}");
     }
 
     // Unregistered bytes — including bytes INSIDE structural zones — are not
     // StructuralKinds, and the write-path gate still rejects them with the
     // same typed error.
-    for byte in [63_u8, 72, 74, 75, 85, 99, 107, 125, 128, 247, 255] {
+    for byte in [63_u8, 72, 74, 75, 85, 99, 108, 125, 128, 247, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -232,7 +232,7 @@ fn validate_entity_type_zone_rules_are_mode_aware() {
         assert!(validate_entity_type_for_mode(0, dev).is_ok());
         assert!(validate_entity_type_for_mode(64, dev).is_ok());
         assert!(validate_entity_type_for_mode(100, dev).is_ok());
-        assert!(validate_entity_type_for_mode(107, dev).is_err());
+        assert!(validate_entity_type_for_mode(108, dev).is_err());
     }
 }
 
@@ -771,7 +771,7 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     // 74 CLAIM_CLASS_DESCRIPTOR, 75 SKILL_HUB), free bytes inside
     // otherwise-live zones, the PackByteMap half (128–247), and the 255
     // sentinel.
-    for unknown in [72_u8, 74, 75, 99, 107, 125, 130, 200, 255] {
+    for unknown in [72_u8, 74, 75, 99, 108, 125, 130, 200, 255] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")

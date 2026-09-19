@@ -233,7 +233,7 @@ fn promote_one(
     // machine-readable record of WHICH answer TURN and consult TASK the
     // claim descends from. `refs` is exactly the post-admission survivors.
     let evidence_value = encode_consolidation_evidence(&ConsolidationEvidenceEnvelope {
-        refs: surviving,
+        refs: surviving.clone(),
         chain: candidate.provenance_chain,
         source_meet: source,
     });
@@ -241,6 +241,15 @@ fn promote_one(
     // `ClaimCandidate` exposes no scope accessor, so the probe body is how
     // the writer reads the candidate's own scope before re-stamping it.
     let probe_body = candidate.candidate.clone().into_claim_body(&envelope);
+    let inherited_scope = {
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| error.to_string())?;
+        crate::disclosure::inherited_claim_scope(&vault.store, &txn, &probe_body, &surviving)
+            .map_err(|error| format!("scope inheritance failed: {error}"))?
+    };
     let claim_candidate = candidate
         .candidate
         .with_evidence(evidence_value)
@@ -248,7 +257,7 @@ fn promote_one(
         // classes (§4): the central lineage guard compares src against this
         // key, so leaving it absent would leave a claim whose lineage
         // nothing can check.
-        .with_scope(scope_with_taint(probe_body.scope.clone(), source));
+        .with_scope(scope_with_taint(Some(inherited_scope), source));
 
     // Defence in depth (§5): the runtime validator at the write chokepoint
     // is authoritative; this catches an internal regression that lets the
@@ -281,6 +290,23 @@ fn promote_one(
                 .ok_or(Error::InvalidClaimBody(
                     "consolidation claim is missing inside its own write transaction",
                 ))?;
+        let live_scope =
+            crate::disclosure::inherited_claim_scope(&vault.store, wtxn, &landed, &surviving)?;
+        if let (Some(Value::Map(stored)), Value::Map(live)) = (&landed.scope, &live_scope) {
+            for key in ["scope_position", "sensitivity"] {
+                let read = |entries: &[(Value, Value)]| {
+                    entries
+                        .iter()
+                        .find(|(name, _)| name.as_str() == Some(key))
+                        .map(|(_, value)| value.clone())
+                };
+                if read(stored) != read(live) {
+                    return Err(Error::InvalidClaimBody(
+                        "source exposure changed during promotion",
+                    ));
+                }
+            }
+        }
         if landed.approval != ClaimApprovalStatus::Auto {
             return Err(Error::InvalidClaimBody(
                 "consolidation write was not granted Auto; no approval queue is created",

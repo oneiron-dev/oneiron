@@ -112,7 +112,11 @@ fn hits_ignore_unrelated_version_metadata_and_do_not_read_content() {
             })
             .collect()
     };
-    assert_eq!(assets.len(), 2);
+    assert_eq!(
+        assets.len(),
+        3,
+        "two export blobs and the causal import record"
+    );
     let mut txn = vault.store.env.write_txn().expect("write txn");
     for (key, _) in unrelated {
         vault

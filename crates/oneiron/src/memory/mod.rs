@@ -23,6 +23,9 @@
 //! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
+mod artifact_birth;
+pub use artifact_birth::ArtifactBirthView;
+mod artifact_publish;
 mod booking;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
@@ -34,11 +37,14 @@ mod claims;
 mod dreamer;
 mod error;
 mod expression_preference;
+mod gmail;
 mod outbound;
+mod react;
 mod reads;
 mod recall;
 mod structural;
 mod support;
+pub mod verb_table;
 mod witness;
 
 #[cfg(test)]
@@ -46,6 +52,10 @@ mod tests;
 #[cfg(test)]
 mod tests_regressions;
 
+pub use crate::conversation::reaction::{
+    ReactionExternalId, ReactionGrouping, ReactionPill, ReactionSignal, ReactionSignalKind,
+    ReactionsOutbound,
+};
 pub use booking::EmergencyInstructionInput;
 pub use chat::{
     ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
@@ -71,6 +81,7 @@ pub use outbound::{
     CalendarInviteSurfaceMethod, OutboundDraftInput, OutboundIntentReceipt,
     OutboundScheduleContext,
 };
+pub use react::{ReactToMessageInput, ReactionReceipt};
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
 pub use recall::{
     Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance, RecallScope,

@@ -6,8 +6,9 @@ use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT, ENTITY_TYPE_FEDERATION_GRANT,
     ENTITY_TYPE_MACHINE, ENTITY_TYPE_NOTE, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REACTION,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
+    ENTITY_TYPE_TURN,
 };
 
 pub(super) fn fields_for_profile(
@@ -90,6 +91,11 @@ pub(super) fn fields_for_profile(
         (ENTITY_TYPE_NOTE, FieldProfile::Minimal) => &["kind", "author_ref"],
         (ENTITY_TYPE_NOTE, FieldProfile::Standard | FieldProfile::Full) => {
             &["kind", "author_ref", "markdown"]
+        }
+
+        (ENTITY_TYPE_REACTION, FieldProfile::Minimal) => &["glyph", "by"],
+        (ENTITY_TYPE_REACTION, FieldProfile::Standard | FieldProfile::Full) => {
+            &["msg", "by", "glyph", "at"]
         }
 
         (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal) => {

@@ -41,33 +41,11 @@ pub(super) fn persist_content_in(
         start: now,
         end: now,
     };
-    if vault
-        .store
-        .entities
-        .get(txn, artifact.as_bytes())
-        .map_err(storage_failure)?
-        .is_none()
-    {
-        let body = crate::blob_artifact::encode_blob_artifact_body(
-            &crate::blob_artifact::BlobArtifactBody::new(name, media_type),
-        )
-        .map_err(|error| BookingError::Boundary(Box::new(error.into())))?;
-        vault
-            .batch_in()
-            .put(
-                &artifact,
-                crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
-                occurred,
-                now,
-                &body,
-            )
-            .apply(txn)
-            .map_err(|error| BookingError::Boundary(Box::new(error.into())))?;
-    }
     vault
-        .append_blob_artifact_version_in_txn(
+        .persist_blob_with_birth_in_txn(
             txn,
-            &artifact,
+            artifact,
+            &crate::blob_artifact::BlobArtifactBody::new(name, media_type),
             bytes,
             &crate::blob_artifact::BlobVersionProvenance::UserUpload,
             crate::write_envelope::WriteActor::new(

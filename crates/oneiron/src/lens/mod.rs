@@ -17,6 +17,13 @@
 mod atom;
 mod generated_ui;
 mod mediation;
+mod mounts;
+mod vault_lens;
+pub use mounts::{LensIntentRegenerator, LensMountId, LensMountRegistry};
+pub use vault_lens::{
+    VAULT_LENS_MAX_ROWS, VAULT_ON_THIS_DAY_ACTION, VaultLensAction, VaultLensProjection,
+    VaultLensRequest, today_last_year,
+};
 mod self_ui;
 mod validate;
 mod wire_ids;
@@ -63,4 +70,8 @@ pub use wire_ids::{
     LensAtomId, LensBackingRefId, LensHandleName, LensHandleRef, LensHandleRole, LensMediaHandle,
     LensRenderId, LensResultSetRowId, SelfUiActionId, SelfUiControlId, SelfUiOptionValue,
     SelfUiStateKey,
+};
+
+pub use mediation::{
+    LensQuoteRange, LensQuoteTriple, LensResolvedSpan, LensSpanGrain, LensSpanSelectionRequest,
 };

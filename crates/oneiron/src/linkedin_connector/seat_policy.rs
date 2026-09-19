@@ -8,10 +8,10 @@ use crate::error::{Error, Result};
 
 use super::normalize_keys::bounded_ref;
 use super::{
-    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
-    LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS, LINKEDIN_DEFAULT_DAILY_DM_CAP,
-    LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_SEAT_VERB_CATALOG, LINKEDIN_SEND_DM_VERB,
-    LinkedInSandboxHostConfig,
+    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY, LINKEDIN_CONNECT_REQUEST_VERB,
+    LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS, LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS,
+    LINKEDIN_DEFAULT_DAILY_DM_CAP, LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP,
+    LINKEDIN_SEAT_VERB_CATALOG, LINKEDIN_SEND_DM_VERB, LinkedInSandboxHostConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,7 +249,7 @@ impl LinkedInSeatSandboxPolicy {
         if !self.state.session_active {
             return LinkedInSeatPolicyDecision::hold("linkedin.session_inactive", fields);
         }
-        if verb == LINKEDIN_SEND_DM_VERB {
+        if matches!(verb, LINKEDIN_SEND_DM_VERB | LINKEDIN_CONNECT_REQUEST_VERB) {
             if self.state.dm_sends_today >= self.limits.daily_dm_cap {
                 return LinkedInSeatPolicyDecision::hold("linkedin.daily_dm_cap", fields);
             }

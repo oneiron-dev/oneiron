@@ -90,6 +90,11 @@ pub(super) fn validate_public_raw_put(
                 ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE,
             )));
         }
+        crate::registry::ENTITY_TYPE_REACTION => {
+            return Err(Error::Record(RecordError::InvalidReactionBody(
+                ERR_RAW_REACTION_PUT_REQUIRES_REACT,
+            )));
+        }
         // ONE-1686 (RT-04): a MESSAGE body IS the six-axis witness envelope —
         // author, message type, content, metadata, visibility, order — and the
         // approval-ceiling door authorizes exactly those axes against an
@@ -152,6 +157,16 @@ pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Res
     if body.author_ref != *author {
         return Err(Error::Record(RecordError::InvalidNoteBody(
             "NOTE author_ref must be the verified bound actor",
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_reaction_body_for_reactor(reactor: &EntityId, data: &[u8]) -> Result<()> {
+    let body = crate::conversation::reaction::decode_reaction_body(data)?;
+    if body.by != *reactor {
+        return Err(Error::Record(RecordError::InvalidReactionBody(
+            "REACTION by must be the verified bound actor",
         )));
     }
     Ok(())

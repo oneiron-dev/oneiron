@@ -1466,3 +1466,66 @@ fn subject_stamp_uses_event_received_at_not_processing_time() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn normalized_reaction_surface_event_commits_same_record_once() -> Result<()> {
+    let (_dir, vault, _) = admitting_vault("reaction@example.com", 0x70, 0x71);
+    let author = seed(&vault, entity(0x72), crate::registry::ENTITY_TYPE_PERSON);
+    let by = seed(&vault, entity(0x73), crate::registry::ENTITY_TYPE_PERSON);
+    let room = entity(0x74);
+    let memory = vault.memory(author, crate::edge::EdgeActorClass::Human);
+    let turn = memory
+        .witness(&crate::memory::WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: None,
+            occurred_at: 100,
+            messages: vec![crate::memory::WitnessMessage {
+                id: None,
+                author: crate::memory::WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "surface reaction target".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+        })
+        .unwrap();
+    let message = memory
+        .get_entity(&turn.message_short_ids[0])
+        .unwrap()
+        .unwrap()
+        .id_hex;
+    vault
+        .batch()
+        .edge_with_created_at(&by, crate::edge::EdgeKind::ParticipatesIn, &room, 1.0, 50)
+        .edge_with_created_at(
+            &author,
+            crate::edge::EdgeKind::ParticipatesIn,
+            &room,
+            1.0,
+            50,
+        )
+        .commit()?;
+    let submit = || {
+        input(
+            "reaction@example.com",
+            SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+        )
+        .with_action(SurfaceEventAction::Reaction {
+            target_ref: message.clone(),
+            by_ref: by.to_hex(),
+            glyph: "👀".into(),
+        })
+    };
+    let first = accepted(vault.enqueue_inbound_surface_event(submit(), 1_800_005_000)?);
+    let second = accepted(vault.enqueue_inbound_surface_event(submit(), 1_800_005_100)?);
+    assert_eq!(first.attempt_ref, second.attempt_ref);
+    assert!(second.replayed);
+    let rows = vault.entities_by_type(crate::registry::ENTITY_TYPE_REACTION)?;
+    assert_eq!(rows.len(), 1);
+    let body = crate::conversation::reaction::decode_reaction_body(&vault.get(&rows[0])?.unwrap())?;
+    assert_eq!(body.by, by);
+    assert_eq!(body.ext.unwrap().id, "evt-reaction@example.com");
+    assert_eq!(vault.reactions_since(&author, 0)?.len(), 1);
+    Ok(())
+}

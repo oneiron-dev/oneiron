@@ -30,6 +30,25 @@ pub(super) fn replay_record<T: OutboundTransport>(
     now_ms: u64,
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
+    // Artifact publication commits its pointer and share receipt atomically.
+    // A crash can leave that durable effect ahead of OF-327's acknowledgement.
+    // Reconcile only the exact stored ledger id: this is receipt recovery, not
+    // a send, so it neither rechecks/spends consent nor re-enters the sink. In
+    // particular it cannot restore a pointer after repoint or unpublish.
+    if record.state == IntentState::Pending
+        && record.recorded_outcome.is_none()
+        && vault
+            .committed_artifact_publication_for_outbound(&record)?
+            .is_some()
+    {
+        let done = complete_record(vault, record.id, now_ms)?;
+        return Ok(effect_result(
+            &done,
+            Some(OutboundSendOutcome::Acked),
+            true,
+            None,
+        ));
+    }
     match (record.state, record.recorded_outcome) {
         (IntentState::Done, Some(RecordedOutboundOutcome::Acked)) => Ok(effect_result(
             &record,

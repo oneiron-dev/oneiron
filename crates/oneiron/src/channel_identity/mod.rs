@@ -30,6 +30,7 @@ mod vault_doors;
 pub use address::{
     AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr, normalize_email_domain,
 };
+pub(crate) use custody::verify_delegated_custody_in_txn;
 pub use custody::{
     DelegatedCustodyProof, DelegatedGrant, DelegatedGrantScope, delegated_custody_effector,
     delegated_custody_scopes, delegated_custody_subject_scope,

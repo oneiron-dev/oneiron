@@ -645,10 +645,12 @@ fn repo_ref_change_records_version_history_edges_and_consent_record() -> Result<
         vault.targets(&second_revision_id, EdgeKind::Supersedes, None)?,
         vec![first_revision_id]
     );
-    assert_eq!(
-        vault.claims_for_subject(&second_revision_id)?,
-        vec![provenance_claim_id]
-    );
+    let birth = vault
+        .artifact_birth(second_revision_id)?
+        .ok_or(Error::EntityNotFound)?;
+    let mut expected = vec![provenance_claim_id, birth.ledger_ref];
+    expected.sort_unstable();
+    assert_eq!(vault.claims_for_subject(&second_revision_id)?, expected);
     let provenance = vault
         .get_claim(&provenance_claim_id)?
         .ok_or(Error::EntityNotFound)?;
@@ -1033,7 +1035,7 @@ fn local_repo_ingest_is_idempotent_and_mounts_files() -> Result<()> {
     assert_eq!(second.snapshot.fork_hash, first.snapshot.fork_hash);
     assert_eq!(second.snapshot.scope_key, first.snapshot.scope_key);
     assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_CODE_ARTIFACT)?, 1);
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 3); // two blobs plus the causal import record
     assert_eq!(
         vault.codebase_snapshots_by_fork_hash(&first.snapshot.fork_hash)?,
         vec![first.code_artifact_id]
@@ -1216,7 +1218,7 @@ fn local_repo_ingest_does_not_persist_blobs_for_declared_secret_paths() -> Resul
         vault.get_entity_type(&retained_asset)?,
         Some(ENTITY_TYPE_ASSET)
     );
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 3); // two blobs plus the causal import record
 
     // No symbols may be derived from the excluded source either.
     assert!(
@@ -1287,7 +1289,7 @@ fn local_repo_ingest_quarantines_detector_hit_without_persisting_its_blob() -> R
         None,
         "quarantined blob must not persist as an ASSET body"
     );
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 3); // two blobs plus the causal import record
     assert!(
         vault
             .code_symbol_definitions(&result.code_artifact_id, "LEAKED_TOKEN")?

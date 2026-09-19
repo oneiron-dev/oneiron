@@ -17,12 +17,11 @@ use super::types::{
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
+use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{
@@ -46,13 +45,15 @@ pub(super) fn log_terminal_step(
     payload: &[u8],
 ) -> DurableStepResult<EntityId> {
     let params_hash = request_params_hash(request)?;
+    let birth_input = request.canonical_bytes()?;
     let claim_id = EntityId::now();
     let occurred = TimeRange {
         start: ctx.now_ms,
         end: ctx.now_ms,
     };
     let envelope = dreamer_runtime_envelope(ctx)?;
-    let inline = payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES;
+    let inline = payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES
+        && ctx.vault.get_entity_type(&ctx.subject)? != Some(crate::registry::ENTITY_TYPE_SKILL);
     let inline_response = if inline {
         Some(String::from_utf8(payload.to_vec()).map_err(|_| {
             Error::InvalidClaimBody("dreamer step response encoding must be UTF-8 JSON")
@@ -70,21 +71,56 @@ pub(super) fn log_terminal_step(
             } else {
                 let artifact_id = EntityId::now();
                 let body = BlobArtifactBody::new("dreamer.step.response", "application/json");
-                let encoded = encode_blob_artifact_body(&body)?;
-                ctx.vault
-                    .batch_in()
-                    .put(
-                        &artifact_id,
-                        ENTITY_TYPE_BLOB_ARTIFACT,
-                        occurred,
-                        ctx.now_ms,
-                        &encoded,
+                let input = ctx.vault.artifact_input_in_txn(
+                    wtxn,
+                    artifact_id,
+                    &birth_input,
+                    occurred,
+                    ctx.now_ms,
+                )?;
+                let run_ref = ctx.run_id.clone().unwrap_or_else(|| {
+                    format!(
+                        "dreamer-step:{}",
+                        bytes_to_hex_lower(ctx.attempt_id.as_bytes())
                     )
-                    .apply(wtxn)?;
-                let run_ref = format!(
-                    "dreamer-step:{}",
-                    bytes_to_hex_lower(ctx.attempt_id.as_bytes())
-                );
+                });
+                let trigger = match ctx.vault.get_entity_type_in_txn(wtxn, &ctx.subject)? {
+                    Some(crate::registry::ENTITY_TYPE_TASK) => {
+                        crate::artifact_hosting::ArtifactTrigger::Task(ctx.subject)
+                    }
+                    Some(crate::registry::ENTITY_TYPE_SKILL) => {
+                        crate::artifact_hosting::ArtifactTrigger::Skill(ctx.subject)
+                    }
+                    _ => crate::artifact_hosting::ArtifactTrigger::Run(run_ref.clone()),
+                };
+                let purpose =
+                    if matches!(trigger, crate::artifact_hosting::ArtifactTrigger::Skill(_)) {
+                        crate::artifact_hosting::ArtifactPurpose::SkillReport
+                    } else {
+                        crate::artifact_hosting::ArtifactPurpose::Deliverable
+                    };
+                let mut birth = ctx.vault.artifact_birth_for_input_in_txn(
+                    wtxn,
+                    trigger,
+                    input,
+                    Some(run_ref.clone()),
+                    request.model.as_str(),
+                    purpose,
+                )?;
+                birth.params_hash =
+                    *blake3::hash(&canonical_json_bytes(&request.params).map_err(|_| {
+                        Error::InvalidClaimBody("artifact parameters encode failed")
+                    })?)
+                    .as_bytes();
+                ctx.vault.create_artifact_with_birth_in_txn(
+                    wtxn,
+                    artifact_id,
+                    crate::artifact_hosting::ArtifactBirthBody::Blob(&body),
+                    &birth,
+                    ctx.envelope_actor,
+                    occurred,
+                    ctx.now_ms,
+                )?;
                 ctx.vault.append_blob_artifact_version_in_txn(
                     wtxn,
                     &artifact_id,

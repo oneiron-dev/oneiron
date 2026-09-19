@@ -94,6 +94,12 @@ pub enum SkillEditDraft {
 /// `SkillRefiner` / `AttributionJudge` posture). What the author returns is a
 /// PROPOSAL either way — nothing it can say reaches canon without a human.
 pub trait SkillOptimizeAuthor {
+    /// The concrete model used to author the candidate, recorded in made_by.
+    fn model_id(&self) -> &str;
+
+    /// Hash of the exact host-owned authoring parameters, not an engine guess.
+    fn params_hash(&self) -> [u8; 32];
+
     /// Drafts the edit `brief` supports.
     ///
     /// # Errors

@@ -1,10 +1,20 @@
-//! Local artifact hosting over pinned CODE_ARTIFACT snapshots.
+//! Local artifact hosting over pinned code snapshots and blob exports.
 //!
 //! The serving surface is intentionally pointer-shaped: `published` and
 //! `preview` point at immutable fork hashes. Removing a pointer kills the
 //! channel URL, while direct fork-hash mounts remain read-only and replayable.
 
-use heed::RwTxn;
+mod provenance;
+#[cfg(feature = "sync")]
+pub(crate) use provenance::artifact_birth_dependency_pending;
+pub(crate) use provenance::guard_artifact_put;
+pub use provenance::{
+    ArtifactBirthBody, ArtifactBirthEnvelope, ArtifactBirthProjection, ArtifactPurpose,
+    ArtifactTrigger,
+};
+
+mod version;
+pub use version::ArtifactPinnedVersion;
 
 use crate::Vault;
 use crate::code_artifact::CodeArtifactClass;
@@ -25,17 +35,6 @@ pub const ARTIFACT_PUBLISH_VERB_FEATURE: &str = "artifact-publish-verb";
 const ARTIFACT_POINTER_KEY_PREFIX: &[u8] = b"artifact:pointer:v1:";
 const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
 const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
-
-/// The pointer row's value framing.
-///
-/// A pointer row was, and by default still is, EXACTLY the 32-byte fork
-/// hash. SECRET-04 (ONE-1922) needs one more fact on the row — that this
-/// publish went through the stale-taint override — and the row has no
-/// framing slack, so the stamp is a single trailing byte and both read paths
-/// accept both lengths. An ordinary publish writes 32 bytes and is
-/// byte-identical to every pointer written before this change; only an
-/// overridden publish writes 33.
-const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -78,6 +77,7 @@ impl ArtifactPointerChannel {
 pub enum ArtifactSnapshotSelector {
     Channel(ArtifactPointerChannel),
     ForkHash(CodebaseForkHash),
+    BlobVersion { artifact_id: EntityId, version: u64 },
 }
 
 impl Default for ArtifactSnapshotSelector {
@@ -91,8 +91,8 @@ impl Default for ArtifactSnapshotSelector {
 pub struct ArtifactPointer {
     pub artifact: String,
     pub channel: ArtifactPointerChannel,
-    pub fork_hash: CodebaseForkHash,
-    pub code_artifact_id: EntityId,
+    pub version: ArtifactPinnedVersion,
+    pub artifact_id: EntityId,
     /// Whether this pointer was published over a `TaintedStale` refusal
     /// through the `secret.taint.allow_stale_publish` dial (SECRET-04).
     ///
@@ -116,55 +116,20 @@ pub struct ArtifactSnapshotRef {
 pub struct ArtifactServedFile {
     pub artifact: String,
     pub selector: ArtifactSnapshotSelector,
-    pub fork_hash: CodebaseForkHash,
-    pub code_artifact_id: EntityId,
+    pub version: ArtifactPinnedVersion,
+    pub artifact_id: EntityId,
     pub path: String,
     pub content_hash: [u8; 32],
     pub size_bytes: u64,
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ArtifactPublishVerbRequest {
-    pub artifact: String,
-    pub channel: ArtifactPointerChannel,
-    pub fork_hash: CodebaseForkHash,
-    pub standing_grant: bool,
-}
-
-impl ArtifactPublishVerbRequest {
-    #[must_use]
-    pub fn new(
-        artifact: impl Into<String>,
-        channel: ArtifactPointerChannel,
-        fork_hash: CodebaseForkHash,
-        standing_grant: bool,
-    ) -> Self {
-        Self {
-            artifact: artifact.into(),
-            channel,
-            fork_hash,
-            standing_grant,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ArtifactPublishVerbStatus {
-    Proposed,
-    Published,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ArtifactPublishVerbOutcome {
-    pub status: ArtifactPublishVerbStatus,
-    pub pointer: Option<ArtifactPointer>,
-    pub dispatcher_feature_enabled: bool,
-    pub reason: &'static str,
-}
+mod publish;
+mod publish_receipt;
+pub use publish::{
+    ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus,
+};
+pub(crate) use publish_receipt::artifact_publish_receipts;
 
 impl Vault {
     /// Publishes a channel pointer at a resolved snapshot.
@@ -187,21 +152,44 @@ impl Vault {
     /// cannot slip a stale pointer past a check taken against an older
     /// reading. No receipt plane is minted here — the publish gate is the
     /// whole of this ticket's business in this module.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn publish_artifact_pointer(
         &self,
         artifact: &str,
         channel: ArtifactPointerChannel,
         fork_hash: &CodebaseForkHash,
     ) -> Result<ArtifactPointer> {
-        let snapshot_ref = self
-            .resolve_artifact_snapshot_by_fork(artifact, fork_hash)?
+        self.publish_pinned_artifact(artifact, channel, ArtifactPinnedVersion::Code(*fork_hash))
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    fn publish_pinned_artifact(
+        &self,
+        artifact: &str,
+        channel: ArtifactPointerChannel,
+        version: ArtifactPinnedVersion,
+    ) -> Result<ArtifactPointer> {
+        let artifact_id = self
+            .resolve_pinned_artifact(artifact, version)?
             .ok_or(Error::EntityNotFound)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        let refs = exhaust_taint_refs_in_txn(&self.store, &wtxn, &snapshot_ref.code_artifact_id)?;
-        let stale_taint_override = match taint_state_for_refs_in_txn(&self.store, &wtxn, &refs)? {
+        self.with_write_txn(|wtxn| {
+            self.publish_pointer_in_txn(wtxn, artifact, channel, version, artifact_id)
+        })
+    }
+
+    fn publish_pointer_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact: &str,
+        channel: ArtifactPointerChannel,
+        version: ArtifactPinnedVersion,
+        artifact_id: EntityId,
+    ) -> Result<ArtifactPointer> {
+        let refs = exhaust_taint_refs_in_txn(&self.store, wtxn, &artifact_id)?;
+        let stale_taint_override = match taint_state_for_refs_in_txn(&self.store, wtxn, &refs)? {
             ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
             ArtifactTaintState::TaintedStale => {
-                if !allow_stale_publish_in_txn(&self.store, &wtxn)? {
+                if !allow_stale_publish_in_txn(&self.store, wtxn)? {
                     return Err(Error::Secret(SecretError::TaintedArtifactStale {
                         artifact: artifact.to_owned(),
                     }));
@@ -209,20 +197,15 @@ impl Vault {
                 true
             }
         };
-        put_artifact_pointer_in_txn(
-            &self.store,
-            &mut wtxn,
-            artifact,
-            channel,
-            fork_hash,
-            stale_taint_override,
-        )?;
-        wtxn.commit()?;
+        let bytes = version.encode(stale_taint_override);
+        self.store
+            .vault_meta
+            .put(wtxn, &artifact_pointer_key(artifact, channel)?, &bytes)?;
         Ok(ArtifactPointer {
             artifact: artifact.to_owned(),
             channel,
-            fork_hash: *fork_hash,
-            code_artifact_id: snapshot_ref.code_artifact_id,
+            version,
+            artifact_id,
             stale_taint_override,
         })
     }
@@ -258,18 +241,50 @@ impl Vault {
         let Some(raw) = raw else {
             return Ok(None);
         };
-        let (fork_hash, stale_taint_override) = decode_artifact_pointer_row(&raw)?;
-        let Some(snapshot_ref) = self.resolve_artifact_snapshot_by_fork(artifact, &fork_hash)?
-        else {
+        let (version, stale_taint_override) = ArtifactPinnedVersion::decode(&raw)?;
+        let Some(artifact_id) = self.resolve_pinned_artifact(artifact, version)? else {
             return Ok(None);
         };
         Ok(Some(ArtifactPointer {
             artifact: artifact.to_owned(),
             channel,
-            fork_hash,
-            code_artifact_id: snapshot_ref.code_artifact_id,
+            version,
+            artifact_id,
             stale_taint_override,
         }))
+    }
+
+    fn resolve_pinned_artifact(
+        &self,
+        artifact: &str,
+        version: ArtifactPinnedVersion,
+    ) -> Result<Option<EntityId>> {
+        validate_artifact_id(artifact)?;
+        match version {
+            ArtifactPinnedVersion::Code(hash) => Ok(self
+                .resolve_artifact_snapshot_by_fork(artifact, &hash)?
+                .map(|s| s.code_artifact_id)),
+            ArtifactPinnedVersion::Blob {
+                artifact_id,
+                version,
+            } => {
+                if version == 0 {
+                    return Err(Error::InvalidConfig(
+                        "Artifact versions start at one".into(),
+                    ));
+                }
+                if self
+                    .get_entity_type(&artifact_id)?
+                    .and_then(crate::registry::artifact_family_kind)
+                    != Some(crate::registry::ArtifactFamilyKind::Blob)
+                {
+                    return Ok(None);
+                }
+                Ok(self
+                    .blob_artifact_version_metadata(&artifact_id, version)?
+                    .map(|_| artifact_id))
+            }
+        }
     }
 
     pub fn resolve_artifact_snapshot_by_fork(
@@ -279,6 +294,13 @@ impl Vault {
     ) -> Result<Option<ArtifactSnapshotRef>> {
         validate_artifact_id(artifact)?;
         for code_artifact_id in self.codebase_snapshots_by_fork_hash(fork_hash)? {
+            if self
+                .get_entity_type(&code_artifact_id)?
+                .and_then(crate::registry::artifact_family_kind)
+                != Some(crate::registry::ArtifactFamilyKind::Code)
+            {
+                continue;
+            }
             let Some(snapshot) = self.get_codebase_snapshot(&code_artifact_id)? else {
                 continue;
             };
@@ -307,72 +329,64 @@ impl Vault {
         selector: ArtifactSnapshotSelector,
         path: &str,
     ) -> Result<Option<ArtifactServedFile>> {
+        validate_artifact_id(artifact)?;
         validate_artifact_path(path)?;
-        let fork_hash = match selector {
+        let version = match selector {
             ArtifactSnapshotSelector::Channel(channel) => {
                 let Some(pointer) = self.artifact_pointer(artifact, channel)? else {
                     return Ok(None);
                 };
-                pointer.fork_hash
+                pointer.version
             }
-            ArtifactSnapshotSelector::ForkHash(fork_hash) => fork_hash,
+            ArtifactSnapshotSelector::ForkHash(hash) => ArtifactPinnedVersion::Code(hash),
+            ArtifactSnapshotSelector::BlobVersion {
+                artifact_id,
+                version,
+            } => ArtifactPinnedVersion::Blob {
+                artifact_id,
+                version,
+            },
         };
-        let Some(snapshot_ref) = self.resolve_artifact_snapshot_by_fork(artifact, &fork_hash)?
-        else {
+        let Some(artifact_id) = self.resolve_pinned_artifact(artifact, version)? else {
             return Ok(None);
         };
-        let Some(entry) = snapshot_file_entry(&snapshot_ref.snapshot, path) else {
-            return Ok(None);
+        let (path, bytes) = match version {
+            ArtifactPinnedVersion::Code(hash) => {
+                let snapshot = self
+                    .resolve_artifact_snapshot_by_fork(artifact, &hash)?
+                    .ok_or(Error::EntityNotFound)?;
+                if snapshot_file_entry(&snapshot.snapshot, path).is_none() {
+                    return Ok(None);
+                }
+                let mount = self
+                    .mount_codebase_snapshot(&artifact_id)?
+                    .ok_or(Error::EntityNotFound)?;
+                let bytes = mount.read_file(path)?.ok_or(Error::EntityNotFound)?;
+                (path.to_owned(), bytes)
+            }
+            ArtifactPinnedVersion::Blob { version, .. } => {
+                let body = self
+                    .get_blob_artifact(&artifact_id)?
+                    .ok_or(Error::EntityNotFound)?;
+                if path != "index.html" && path != body.name {
+                    return Ok(None);
+                }
+                let bytes = self
+                    .read_blob_artifact_version(&artifact_id, version)?
+                    .ok_or(Error::EntityNotFound)?;
+                (body.name, bytes)
+            }
         };
-        let content_hash = entry.content_hash;
-        let size_bytes = entry.size_bytes;
-        let mount = self
-            .mount_codebase_snapshot(&snapshot_ref.code_artifact_id)?
-            .ok_or(Error::EntityNotFound)?;
-        let bytes = mount.read_file(path)?.ok_or(Error::EntityNotFound)?;
         Ok(Some(ArtifactServedFile {
             artifact: artifact.to_owned(),
             selector,
-            fork_hash,
-            code_artifact_id: snapshot_ref.code_artifact_id,
-            path: path.to_owned(),
-            content_hash,
-            size_bytes,
+            version,
+            artifact_id,
+            path,
+            content_hash: *blake3::hash(&bytes).as_bytes(),
+            size_bytes: bytes.len() as u64,
             bytes,
         }))
-    }
-
-    pub fn request_artifact_publish(
-        &self,
-        request: &ArtifactPublishVerbRequest,
-    ) -> Result<ArtifactPublishVerbOutcome> {
-        validate_artifact_id(&request.artifact)?;
-        self.resolve_artifact_snapshot_by_fork(&request.artifact, &request.fork_hash)?
-            .ok_or(Error::EntityNotFound)?;
-        if request.standing_grant && cfg!(feature = "artifact-publish-verb") {
-            let pointer = self.publish_artifact_pointer(
-                &request.artifact,
-                request.channel,
-                &request.fork_hash,
-            )?;
-            return Ok(ArtifactPublishVerbOutcome {
-                status: ArtifactPublishVerbStatus::Published,
-                pointer: Some(pointer),
-                dispatcher_feature_enabled: true,
-                reason: "standing grant accepted under artifact-publish-verb; artifact pointer published locally",
-            });
-        }
-        let reason = if request.standing_grant {
-            "standing grant present, but artifact-publish-verb is disabled; publish verb parks as Proposed"
-        } else {
-            "standing grant required; OF-327 outbound dispatcher is not landed; publish verb parks as Proposed"
-        };
-        Ok(ArtifactPublishVerbOutcome {
-            status: ArtifactPublishVerbStatus::Proposed,
-            pointer: None,
-            dispatcher_feature_enabled: cfg!(feature = "artifact-publish-verb"),
-            reason,
-        })
     }
 }
 
@@ -407,28 +421,6 @@ pub fn artifact_hex(bytes: &[u8]) -> String {
     out
 }
 
-fn put_artifact_pointer_in_txn(
-    store: &crate::store::Store,
-    wtxn: &mut RwTxn<'_>,
-    artifact: &str,
-    channel: ArtifactPointerChannel,
-    fork_hash: &CodebaseForkHash,
-    stale_taint_override: bool,
-) -> Result<()> {
-    validate_artifact_id(artifact)?;
-    let key = artifact_pointer_key(artifact, channel)?;
-    if stale_taint_override {
-        let mut value = Vec::with_capacity(CODEBASE_FORK_HASH_LEN + 1);
-        value.extend_from_slice(fork_hash);
-        value.push(ARTIFACT_POINTER_STALE_OVERRIDE_STAMP);
-        store.vault_meta.put(wtxn, &key, &value)?;
-    } else {
-        // Byte-identical to every pointer row written before SECRET-04.
-        store.vault_meta.put(wtxn, &key, fork_hash)?;
-    }
-    Ok(())
-}
-
 fn artifact_pointer_key(artifact: &str, channel: ArtifactPointerChannel) -> Result<Vec<u8>> {
     validate_artifact_id(artifact)?;
     let len = u16::try_from(artifact.len())
@@ -439,30 +431,6 @@ fn artifact_pointer_key(artifact: &str, channel: ArtifactPointerChannel) -> Resu
     key.extend_from_slice(&len.to_be_bytes());
     key.extend_from_slice(artifact.as_bytes());
     Ok(key)
-}
-
-/// Reads one pointer row into its fork hash and its stale-taint override,
-/// branching ONCE on the framing the row length declares.
-///
-/// The bare 32-byte row is every pointer written before SECRET-04 and
-/// carries no override; a 33-byte row must carry the one defined stamp byte,
-/// because a pointer row asserting an override nobody minted is corruption,
-/// not a default. Any other length is a corrupted row.
-fn decode_artifact_pointer_row(raw: &[u8]) -> Result<(CodebaseForkHash, bool)> {
-    let stale_taint_override = match raw.len() {
-        CODEBASE_FORK_HASH_LEN => false,
-        len if len == CODEBASE_FORK_HASH_LEN + 1 => {
-            if raw[CODEBASE_FORK_HASH_LEN] != ARTIFACT_POINTER_STALE_OVERRIDE_STAMP {
-                return Err(Error::CorruptedIndex("artifact pointer taint stamp"));
-            }
-            true
-        }
-        _ => return Err(Error::CorruptedIndex("artifact pointer fork hash")),
-    };
-    let fork_hash = raw[..CODEBASE_FORK_HASH_LEN]
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("artifact pointer fork hash"))?;
-    Ok((fork_hash, stale_taint_override))
 }
 
 fn snapshot_file_entry<'a>(

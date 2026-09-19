@@ -108,7 +108,7 @@ use rmpv::Value;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
+use crate::disclosure::ScopeCeiling;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]

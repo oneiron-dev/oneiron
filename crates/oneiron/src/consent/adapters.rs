@@ -3,7 +3,7 @@ use rmpv::Value;
 use crate::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
-use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
+use crate::disclosure::ScopeCeiling;
 use crate::error::Result;
 use crate::gate::PolicyScopedGrant;
 use crate::outbound_grant::{StandingOutboundGrant, StandingOutboundGrantScope};
@@ -122,6 +122,11 @@ pub(super) fn outbound_scope_axes(
     scope: &StandingOutboundGrantScope,
 ) -> (String, Vec<String>, Option<String>) {
     match scope {
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => (
+            "publish".into(),
+            vec!["channel:artifact".into(), format!("artifact:{artifact}")],
+            Some(artifact.clone()),
+        ),
         StandingOutboundGrantScope::ChannelIdentityEnvelope {
             identity_ref,
             envelope_ref,
@@ -246,35 +251,68 @@ fn policy_value_selectors(label: &str, value: Option<&Value>) -> Vec<String> {
     selectors
 }
 
-/// Projects a [`DisclosureScope`] into a [`DisclosureGrant`] for one resolved
-/// interlocutor.
+/// Projects a [`ScopeCeiling`] clearance into a [`DisclosureGrant`] for one
+/// resolved interlocutor.
 ///
-/// The resolved interlocutor/contact is the audience; entity/topic/purpose
-/// selectors are the envelope. A missing or malformed scope remains HIDE:
-/// callers with no scope must not call this at all, and a scope that fails
-/// validation returns an error rather than an empty-but-permissive bound.
+/// The resolved interlocutor/contact is the audience; the five Scope axes
+/// are the envelope. A missing clearance remains HIDE: callers with no
+/// clearance must not call this at all, and a ceiling that fails validation
+/// returns an error rather than an empty-but-permissive bound. Revocation
+/// is row deletion (or bottom), not a status flag: a bottom ceiling
+/// projects to a bound whose envelope admits nothing.
 pub fn disclosure_grant_from_disclosure_scope(
-    scope: &DisclosureScope,
+    ceiling: &ScopeCeiling,
     interlocutor_ref: &str,
     class: &str,
 ) -> Result<DisclosureGrant> {
-    scope.validate()?;
-    if scope.status != DisclosureScopeStatus::Active {
+    ceiling.validate()?;
+    if matches!(ceiling.worlds, crate::disclosure::ScopeIdAxis::Bottom)
+        || matches!(ceiling.facets, crate::disclosure::ScopeIdAxis::Bottom)
+        || matches!(ceiling.projects, crate::disclosure::ScopeIdAxis::Bottom)
+        || matches!(ceiling.kinds, crate::disclosure::ScopeKindAxis::Bottom)
+    {
         return Err(invalid_bound(
-            "revoked disclosure scope projects to no bound; the fail-safe is hide",
+            "bottom clearance cannot authorize a disclosure grant",
         ));
     }
     let audience = AudienceBound::singleton(interlocutor_ref)?;
-    let mut selectors: Vec<String> = scope
-        .entities
-        .iter()
-        .map(|entity| format!("entity:{}", entity.to_hex()))
-        .collect();
-    selectors.extend(scope.topics.iter().map(|topic| format!("topic:{topic}")));
-    selectors.push(format!("purpose:{}", scope.purpose));
+    let mut selectors = vec![
+        format!("worlds:{}", scope_id_axis_selector(&ceiling.worlds)),
+        format!("facets:{}", scope_id_axis_selector(&ceiling.facets)),
+        format!("kinds:{}", scope_kind_axis_selector(&ceiling.kinds)),
+        format!("projects:{}", scope_id_axis_selector(&ceiling.projects)),
+        format!("sensitivity<={}", ceiling.sensitivity),
+    ];
+    selectors.sort();
     DisclosureGrant::new(GrantBound::disclosure(
         audience,
         DisclosureClass::new(class)?,
         DisclosureEnvelope::new(selectors)?,
     )?)
+}
+
+fn scope_id_axis_selector(axis: &crate::disclosure::ScopeIdAxis) -> String {
+    use crate::disclosure::ScopeIdAxis;
+    match axis {
+        ScopeIdAxis::All => "all".to_owned(),
+        ScopeIdAxis::Bottom => "bottom".to_owned(),
+        ScopeIdAxis::Some(ids) => ids
+            .iter()
+            .map(|id| id.to_hex())
+            .collect::<Vec<_>>()
+            .join("+"),
+    }
+}
+
+fn scope_kind_axis_selector(axis: &crate::disclosure::ScopeKindAxis) -> String {
+    use crate::disclosure::ScopeKindAxis;
+    match axis {
+        ScopeKindAxis::All => "all".to_owned(),
+        ScopeKindAxis::Bottom => "bottom".to_owned(),
+        ScopeKindAxis::Some(kinds) => kinds
+            .iter()
+            .map(|kind| kind.to_string())
+            .collect::<Vec<_>>()
+            .join("+"),
+    }
 }

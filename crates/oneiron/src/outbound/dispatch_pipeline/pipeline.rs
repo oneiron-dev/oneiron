@@ -147,27 +147,7 @@ impl OutboundDispatchPipeline {
                 _ => request.delivery_window_apns_interruption_level,
             };
         }
-        let effect = ExternalEffectGateInput {
-            actor: request.actor.gate_actor(),
-            provenance: request.actor.provenance(),
-            verb: verb_contract.kind.clone(),
-            channel: request.intent.channel.clone(),
-            channel_identity_ref: request.channel_identity_ref,
-            counterparty: request
-                .counterparty_ref
-                .clone()
-                .or_else(|| Some(request.intent.target.clone())),
-            brief_ref: request.intent.job_ref.clone(),
-            send_ref: Some(request.intent_ref.clone()),
-            standing_grant_ref: None,
-            scoped_mcp_call: None,
-            counterparty_first_touch: None,
-            counterparty_opted_out: false,
-            counterparty_opt_out_receipt_reason: None,
-            has_opted_in: request.gate.has_opted_in,
-            has_permission: request.gate.has_permission,
-            policy_risk,
-        };
+        let effect = request.external_effect(&verb_contract.kind, policy_risk);
 
         // Budget debits must not outrun the pipeline: a dispatch the window
         // parks (Hold/Degrade/LetGo) or the seat policy stops never becomes
@@ -593,5 +573,49 @@ impl OutboundDispatchPipeline {
             effector_budget,
             budget_ladder_events,
         })
+    }
+}
+
+impl OutboundDispatchRequest {
+    /// Computes the same consent identity the admission gate will consume.
+    /// This digest is not authority; only an authenticated approve-once marker is.
+    pub(crate) fn approval_digest(
+        &self,
+    ) -> std::result::Result<crate::consent::EffectDigest, OutboundDispatchError> {
+        let contract = outbound_verb_contract(&self.intent.channel, &self.intent.verb)?;
+        let risk = outbound_dispatch_policy_risk(self.gate, contract);
+        gate::external_effect_composed_effect(&self.external_effect(&contract.kind, risk))
+            .map(|effect| effect.digest())
+            .ok_or_else(|| {
+                Error::InvalidConfig("outbound approval effect cannot be composed".into()).into()
+            })
+    }
+
+    fn external_effect(
+        &self,
+        verb: &str,
+        policy_risk: ExternalEffectPolicyRisk,
+    ) -> ExternalEffectGateInput {
+        ExternalEffectGateInput {
+            actor: self.actor.gate_actor(),
+            provenance: self.actor.provenance(),
+            verb: verb.to_owned(),
+            channel: self.intent.channel.clone(),
+            channel_identity_ref: self.channel_identity_ref,
+            counterparty: self
+                .counterparty_ref
+                .clone()
+                .or_else(|| Some(self.intent.target.clone())),
+            brief_ref: self.intent.job_ref.clone(),
+            send_ref: Some(self.intent_ref.clone()),
+            standing_grant_ref: None,
+            scoped_mcp_call: None,
+            counterparty_first_touch: None,
+            counterparty_opted_out: false,
+            counterparty_opt_out_receipt_reason: None,
+            has_opted_in: self.gate.has_opted_in,
+            has_permission: self.gate.has_permission,
+            policy_risk,
+        }
     }
 }

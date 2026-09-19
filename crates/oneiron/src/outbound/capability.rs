@@ -124,9 +124,21 @@ pub struct OutboundVerbContract {
     pub capability_vs_permission: OutboundCapabilityPermission,
 }
 
+/// Reaction glyphs accepted by a connector. Unsupported is explicit: a client
+/// must not infer tapback support from ordinary message support.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OutboundReactionVocabulary {
+    Unsupported,
+    Unicode { max_scalars: usize },
+    Tapback { glyphs: &'static [&'static str] },
+    ProviderDefined,
+}
+
 /// Per-connector capability manifest.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct OutboundCapabilityManifest {
+    pub reaction_vocabulary: OutboundReactionVocabulary,
     pub manifest_version: &'static str,
     pub connector: String,
     pub connector_family: String,

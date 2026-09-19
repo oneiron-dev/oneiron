@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::capability::{
     OUTBOUND_CAPABILITY_MANIFEST_VERSION, OutboundCapabilityManifest, OutboundCapabilityPermission,
     OutboundDeliverySemantics, OutboundDeliverySemanticsKind, OutboundInterruptionClass,
-    OutboundPermissionState, OutboundRetryClass, OutboundVerbContract,
+    OutboundPermissionState, OutboundReactionVocabulary, OutboundRetryClass, OutboundVerbContract,
 };
 
 fn line_reply_quota() -> Value {
@@ -27,6 +27,23 @@ fn line_push_quota() -> Value {
 
 pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
     vec![
+        manifest(
+            "artifact",
+            "artifact",
+            "Local pinned exports; public hosting is not enabled.",
+            vec![verb(
+                "publish",
+                "artifact.publish",
+                json!({"artifact": "artifact ref", "version": "pinned export ref", "channel": "published|preview"}),
+                OutboundInterruptionClass::Ambient,
+                OutboundDeliverySemanticsKind::Replaceable,
+                None,
+                OutboundRetryClass::IdempotentEmulated,
+                OutboundPermissionState::Conditional,
+                false,
+                "Publishing requires per-artifact outbound authority; an unapproved request remains Proposed.",
+            )],
+        ),
         manifest(
             "line",
             "chat",
@@ -346,6 +363,18 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
             "Local iMessage bridge schema; capability is local and should be treated as permission-sensitive.",
             vec![
                 verb(
+                    "react",
+                    "local_messages_tapback",
+                    json!({"chat_id": "string", "message_id": "string", "glyph": "tapback glyph", "remove": "boolean"}),
+                    OutboundInterruptionClass::Ambient,
+                    OutboundDeliverySemanticsKind::ReactionTarget,
+                    None,
+                    OutboundRetryClass::IdempotentEmulated,
+                    OutboundPermissionState::Conditional,
+                    true,
+                    "Requires message visibility, a tapback-capable bridge and host-device consent.",
+                ),
+                verb(
                     "send",
                     "local_messages_send",
                     json!({"chat_id": "string", "text": "string"}),
@@ -370,6 +399,23 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "Media sends require explicit file access and host-device consent.",
                 ),
             ],
+        ),
+        manifest(
+            "in_app",
+            "first_party",
+            "First-party reactions follow the target message audience.",
+            vec![verb(
+                "react",
+                "reaction.put",
+                json!({"message_id": "entity ref", "glyph": "non-empty Unicode string, <=64 scalars", "remove": "boolean"}),
+                OutboundInterruptionClass::Ambient,
+                OutboundDeliverySemanticsKind::ReactionTarget,
+                None,
+                OutboundRetryClass::IdempotentEmulated,
+                OutboundPermissionState::Conditional,
+                false,
+                "Requires read access to the target message.",
+            )],
         ),
         manifest(
             "linkedin",
@@ -501,6 +547,14 @@ fn manifest(
     verbs: Vec<OutboundVerbContract>,
 ) -> OutboundCapabilityManifest {
     OutboundCapabilityManifest {
+        reaction_vocabulary: match connector {
+            "imessage_bridge" => OutboundReactionVocabulary::Tapback {
+                glyphs: &["❤️", "👍", "👎", "😂", "‼️", "❓"],
+            },
+            "in_app" => OutboundReactionVocabulary::Unicode { max_scalars: 64 },
+            "telegram" | "slack" | "discord" => OutboundReactionVocabulary::ProviderDefined,
+            _ => OutboundReactionVocabulary::Unsupported,
+        },
         manifest_version: OUTBOUND_CAPABILITY_MANIFEST_VERSION,
         connector: connector.to_owned(),
         connector_family: connector_family.to_owned(),

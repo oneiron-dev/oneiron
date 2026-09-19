@@ -176,7 +176,7 @@ fn internal_source_trust_claim(source: ClaimSource) -> ClaimBody {
     let mut body = source_trust_claim(source);
     body.scope = Some(rmpv::Value::Map(vec![(
         rmpv::Value::from("sensitivity"),
-        rmpv::Value::from("internal"),
+        rmpv::Value::from("private"),
     )]));
     body
 }

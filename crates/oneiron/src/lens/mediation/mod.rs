@@ -24,3 +24,9 @@ pub use self::mediation_principal::{
     GeneratedUiAgentCallback, GeneratedUiValidatedAction, LensActingPrincipalKind,
     LensPrincipalBinding,
 };
+
+mod span_handles;
+
+pub use self::span_handles::{
+    LensQuoteRange, LensQuoteTriple, LensResolvedSpan, LensSpanGrain, LensSpanSelectionRequest,
+};

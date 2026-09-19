@@ -38,6 +38,7 @@ use crate::store::GateDecisionId;
 /// different vault and cannot see it.
 #[derive(Default)]
 pub(crate) struct TestHooks {
+    reaction_reads: Mutex<Option<Vec<&'static str>>>,
     /// The one-shot delete rendezvous: the step and target entity a delete must
     /// park at, and the two `sync_channel(0)` halves that park it.
     delete_rendezvous: Mutex<Option<DeleteRendezvousChannels>>,
@@ -51,9 +52,44 @@ pub(crate) struct TestHooks {
     /// sync on this vault. The durability fence is what the count proves, so
     /// the reader wants an exact delta and now gets one.
     force_sync_calls: AtomicUsize,
+    edit_settle_after_bytes: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
+    pub(crate) fn trace_reaction_reads(&self) {
+        *self.reaction_reads.lock().unwrap() = Some(Vec::new());
+    }
+    pub(crate) fn note_reaction_read(&self, operation: &'static str) {
+        if let Some(trace) = self.reaction_reads.lock().unwrap().as_mut() {
+            trace.push(operation);
+        }
+    }
+    pub(crate) fn take_reaction_reads(&self) -> Vec<&'static str> {
+        self.reaction_reads
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn install_edit_settle_after_bytes(&self, hook: impl FnOnce() + Send + 'static) {
+        *self
+            .edit_settle_after_bytes
+            .lock()
+            .expect("settle hook poisoned") = Some(Box::new(hook));
+    }
+
+    pub(crate) fn run_edit_settle_after_bytes(&self) {
+        let hook = self
+            .edit_settle_after_bytes
+            .lock()
+            .expect("settle hook poisoned")
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
     /// Installs the one-shot rendezvous consumed when a delete of `target`
     /// reaches `step` on this vault. Any other step, or any other entity,
     /// passes straight through.

@@ -8,7 +8,9 @@
 
 mod inbox_sync;
 mod normalize_keys;
+mod sandbox_host;
 mod seat_policy;
+mod verified_connect;
 mod verified_send;
 
 use std::collections::HashSet;
@@ -36,6 +38,10 @@ use self::normalize_keys::{
     reference_kind_is, section_references, thread_id_from_payload_url, thread_id_from_reference,
     vault_scoped_secret_ref,
 };
+pub use self::sandbox_host::{
+    LinkedInContainerCommandRuntime, LinkedInContainerRuntime, LinkedInContainerSpec,
+    LinkedInRemoteLogin, ProductionLinkedInSandboxHost,
+};
 pub use self::seat_policy::{
     LinkedInAccountRiskLimits, LinkedInConsentScreenCopy, LinkedInKillSwitchState,
     LinkedInSandboxHostHarness, LinkedInSeatDispatchState, LinkedInSeatPolicyAction,
@@ -45,6 +51,11 @@ pub use self::seat_policy::{
 pub use self::verified_send::{
     LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink,
     LinkedInVerifiedSendPlan,
+};
+
+pub use self::verified_connect::{
+    LinkedInConnectionState, LinkedInMcpConnectRequest, LinkedInMcpConnectTransport,
+    LinkedInMcpVerifiedConnectSink, LinkedInVerifiedConnectPlan,
 };
 
 /// Stable Oneiron channel key for LinkedIn.

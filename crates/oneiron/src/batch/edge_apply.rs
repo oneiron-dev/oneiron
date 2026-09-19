@@ -132,6 +132,7 @@ pub(super) fn apply_set_edge_weight(
     tgt: EntityId,
     weight: f32,
 ) -> Result<()> {
+    crate::conversation::reaction::validate_edge(store, wtxn, &src, kind, &tgt, false)?;
     validate_edge_weight(weight)?;
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
@@ -196,6 +197,7 @@ pub(super) fn apply_edge_with_created_at(
     vad: Vad,
     provenance: Option<EdgeProvenanceFlags>,
 ) -> Result<()> {
+    crate::conversation::reaction::validate_edge(store, wtxn, &src, kind, &tgt, false)?;
     validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
@@ -230,6 +232,7 @@ pub(super) fn apply_delete_edge(
     kind: EdgeKind,
     tgt: EntityId,
 ) -> Result<bool> {
+    crate::conversation::reaction::validate_edge(store, wtxn, &src, kind, &tgt, true)?;
     if kind == EdgeKind::Blocks {
         return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }

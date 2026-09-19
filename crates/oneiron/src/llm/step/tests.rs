@@ -1019,6 +1019,29 @@ fn oversize_response_lands_in_blob_artifact() -> Result<()> {
     );
     let artifact_id = decoded.response_ref.expect("response_ref artifact id");
     assert!(vault.get_blob_artifact(&artifact_id)?.is_some());
+    let birth = vault
+        .artifact_birth(artifact_id)?
+        .expect("response artifact birth");
+    assert_eq!(
+        birth.approval_status,
+        crate::claim::ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(birth.made_by.run_ref.as_deref(), Some("run-test"));
+    assert_eq!(
+        vault.artifacts_born_from(
+            &crate::artifact_hosting::ArtifactTrigger::Run("run-test".into()),
+            10
+        )?,
+        vec![birth.clone()]
+    );
+    assert_eq!(
+        vault.get(&birth.made_by.prompt_ref)?,
+        Some(
+            request_fixture()
+                .canonical_bytes()
+                .expect("canonical input")
+        )
+    );
     let head = vault
         .blob_artifact_head(&artifact_id)?
         .expect("response_ref artifact head");
@@ -2188,6 +2211,59 @@ fn untrusted_active_step_claim_is_not_memo_indexed() -> Result<()> {
     assert!(
         step_index_lookup(&vault, fixture.attempt_id, &malformed_hash)?.is_none(),
         "an unusable model binding must not enter the memo index"
+    );
+    Ok(())
+}
+
+#[test]
+fn short_skill_report_is_a_proposed_artifact_with_a_skill_reverse_view() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let skill = EntityId::now();
+    let record = crate::skill::SkillRecord::new(
+        "fixture.report",
+        "Produce a report",
+        "1",
+        crate::claim::ClaimApprovalStatus::Proposed,
+        crate::skill::SkillLifecycle::Candidate,
+        crate::claim::ClaimSource::Generated,
+        0.5,
+        true,
+        false,
+        Vec::new(),
+        rmpv::Value::Map(vec![("source".into(), "fixture".into())]),
+    );
+    vault.put_skill_record(&skill, &record, occurred(10), 10)?;
+    let mut context = ctx(&vault, &fixture, 10_000);
+    context.subject = skill;
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("short report"))]);
+    let guard = guard_with_limit(10_000);
+    let request = request_fixture();
+    let hash = request.canonical_hash().expect("hash");
+    block_on(call_as_step(&context, &backend, &guard, request)).expect("skill report execution");
+    let claim = step_index_lookup(&vault, fixture.attempt_id, &hash)?.expect("step claim");
+    let body = vault.get_claim(&claim)?.expect("step body");
+    let decoded = decode_step_claim_value(&body.value)?;
+    assert!(decoded.response.is_none());
+    let artifact = decoded
+        .response_ref
+        .expect("even a short skill report is an artifact");
+    let birth = vault.artifact_birth(artifact)?.expect("birth ledger");
+    assert_eq!(
+        birth.made_by.trigger,
+        crate::artifact_hosting::ArtifactTrigger::Skill(skill)
+    );
+    assert_eq!(
+        birth.made_by.purpose,
+        crate::artifact_hosting::ArtifactPurpose::SkillReport
+    );
+    assert_eq!(
+        birth.approval_status,
+        crate::claim::ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        vault.artifacts_born_from(&birth.made_by.trigger, 10)?,
+        vec![birth]
     );
     Ok(())
 }

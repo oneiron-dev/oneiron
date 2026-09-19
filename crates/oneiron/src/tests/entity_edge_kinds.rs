@@ -509,6 +509,13 @@ fn all_entity_type_prefixes() {
             TypeByteZone::CompiledProduct,
         ),
         (
+            "REACTION",
+            107,
+            Some("rx"),
+            EntityClassification::Pack,
+            TypeByteZone::CompiledProduct,
+        ),
+        (
             "SECRET_CUSTODY",
             77,
             None,

@@ -12,6 +12,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use super::{
     GeneratedUiAgentCallback, LensAtomSelectionRequest, LensBackingRefToken, LensBackingTarget,
     LensBackingTargetKind, LensHostBackingRef, LensPrincipalBinding, LensReadHandle, LensReadReach,
+    LensSpanGrain,
 };
 
 #[derive(Debug, Clone)]
@@ -154,6 +155,30 @@ impl LensRenderFrame {
                 "lens selection handle role must match its host backing row".to_string(),
             ));
         }
+        self.issue_span_handle(render, atom_id, resolved, None)
+    }
+
+    /// The handle that selecting `atom_id` onto `resolved` proves *right now*, with
+    /// the span grain attached.
+    ///
+    /// The atom path passes `span: None` and the span path the freshly proved grain;
+    /// [`Self::resolve_read_handle`] passes the re-derived grain. All three pass
+    /// through here, so the whole-handle comparison there re-proves the span fields
+    /// exactly as it re-proves the short ref, target kind, and reach.
+    pub(super) fn issue_span_handle(
+        &self,
+        render: &GeneratedUiRender,
+        atom_id: &LensAtomId,
+        resolved: &LensHostBackingRef,
+        span: Option<LensSpanGrain>,
+    ) -> Result<LensReadHandle> {
+        // The host row names the handle; the client's copy never gets a vote.
+        let role = Self::declared_binding_role(render, atom_id, &resolved.handle)?;
+        if role != resolved.role {
+            return Err(Error::InvalidConfig(
+                "lens selection handle role must match its host backing row".to_string(),
+            ));
+        }
         Ok(LensReadHandle {
             render_id: self.render_id.clone(),
             atom_id: atom_id.clone(),
@@ -161,6 +186,7 @@ impl LensRenderFrame {
             target_kind: resolved.target.kind(),
             short_ref: resolved.target.short_ref(),
             backing_token: resolved.token.clone(),
+            span,
         })
     }
 
@@ -183,7 +209,8 @@ impl LensRenderFrame {
         self.ensure_scoped_read_actor(scoped_read)?;
         self.ensure_render_is_ours(render)?;
         let resolved = self.resolve_backing_ref_token(scoped_read, &handle.backing_token)?;
-        if self.issue_read_handle(render, &handle.atom_id, &resolved)? != *handle {
+        let span = self.reresolve_span_grain(scoped_read, handle, &resolved)?;
+        if self.issue_span_handle(render, &handle.atom_id, &resolved, span)? != *handle {
             return Err(Error::InvalidConfig(
                 "lens read handle no longer matches the reach this render issues".to_string(),
             ));

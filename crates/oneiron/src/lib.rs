@@ -60,6 +60,7 @@ pub mod actor_claims;
 pub mod affect;
 pub mod claim;
 pub mod companion;
+pub mod conversation;
 pub mod corpus;
 pub mod extraction_eval;
 pub mod note;

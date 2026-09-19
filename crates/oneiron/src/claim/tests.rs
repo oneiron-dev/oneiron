@@ -4381,7 +4381,7 @@ fn corpus_id_round_trips_through_the_claim_codec() -> Result<()> {
         EntityId::from_bytes([0x72; 16]).expect("valid id"),
     );
     let existing = Value::Map(vec![
-        (Value::from("sensitivity"), Value::from("internal")),
+        (Value::from("sensitivity"), Value::from("private")),
         (
             Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
             Value::from(ClaimSource::ToolOutput.as_str()),

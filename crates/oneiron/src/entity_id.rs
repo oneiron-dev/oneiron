@@ -39,6 +39,15 @@ impl EntityId {
         Self(bytes)
     }
 
+    /// The base-reality world id for the Scope lattice (OF-453 R13): the
+    /// all-zero bytes, reserved as a live entity id and borrowed as the
+    /// ordinary base member of world axes. Base is membership, never a kind
+    /// arm — ceilings name this id explicitly, and unstamped records read it.
+    #[must_use]
+    pub(crate) fn scope_base_world() -> Self {
+        Self([0x00; ENTITY_ID_LEN])
+    }
+
     /// Returns the raw identifier bytes.
     pub fn as_bytes(&self) -> &[u8; 16] {
         &self.0

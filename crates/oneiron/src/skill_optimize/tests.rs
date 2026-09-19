@@ -273,6 +273,12 @@ impl StubAuthor {
 }
 
 impl SkillOptimizeAuthor for StubAuthor {
+    fn model_id(&self) -> &str {
+        "fixture/skill-author"
+    }
+    fn params_hash(&self) -> [u8; 32] {
+        *blake3::hash(b"fixture-parameters").as_bytes()
+    }
     fn draft(&self, brief: &SkillOptimizeBrief) -> Result<SkillEditDraft> {
         self.seen.borrow_mut().push(brief.clone());
         Ok(self.answer.clone())
@@ -283,6 +289,12 @@ impl SkillOptimizeAuthor for StubAuthor {
 struct UnreachableAuthor;
 
 impl SkillOptimizeAuthor for UnreachableAuthor {
+    fn model_id(&self) -> &str {
+        "fixture/skill-author"
+    }
+    fn params_hash(&self) -> [u8; 32] {
+        *blake3::hash(b"fixture-parameters").as_bytes()
+    }
     fn draft(&self, _brief: &SkillOptimizeBrief) -> Result<SkillEditDraft> {
         panic!("a healthy library must not reach the authoring tier");
     }
@@ -616,6 +628,30 @@ fn a_losing_skill_drafts_one_gated_proposal_citing_its_defect_evidence() -> Resu
         proposal.governance_tier,
         Some(SkillGovernanceTier::Standard),
         "the successor carries the tier forward explicitly"
+    );
+
+    let artifacts =
+        vault.artifacts_born_from(&crate::artifact_hosting::ArtifactTrigger::Skill(skill), 10)?;
+    assert_eq!(artifacts.len(), 1);
+    let artifact = &artifacts[0];
+    assert_eq!(
+        artifact.made_by.purpose,
+        crate::artifact_hosting::ArtifactPurpose::SkillCandidate
+    );
+    assert_eq!(artifact.approval_status, ClaimApprovalStatus::Proposed);
+    assert_eq!(
+        vault.artifact_birth(artifact.artifact_id)?,
+        Some(artifact.clone())
+    );
+    assert_eq!(
+        vault.read_blob_artifact_version(&artifact.artifact_id, 1)?,
+        Some(crate::skill::encode_skill_record(&proposal)?)
+    );
+    assert!(
+        vault
+            .edges_out(&artifact.artifact_id)?
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::About && edge.target == proposal_id)
     );
 
     // NOT A MUTATION: the Active record is byte-identical to what it was.

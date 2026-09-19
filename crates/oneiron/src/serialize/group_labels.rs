@@ -187,6 +187,11 @@ pub(super) fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "PERSONA_SNAPSHOT_EXPORTS",
             title: "Persona Snapshot Exports",
         }),
+        crate::registry::ENTITY_TYPE_REACTION => Some(GroupLabels {
+            key: "reactions",
+            name: "REACTIONS",
+            title: "Reactions",
+        }),
         _ => None,
     }
 }

@@ -160,7 +160,7 @@ fn raw_vault() -> (tempfile::TempDir, Vault) {
 /// entities of its dynamically registered kind.
 fn oracle_vault() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = raw_vault();
-    register_crm_pack(&vault, 107, 108).unwrap();
+    register_crm_pack(&vault, 108, 109).unwrap();
     (dir, vault)
 }
 
@@ -171,7 +171,7 @@ fn vector_oracle_vault() -> (tempfile::TempDir, Vault) {
     let mut config = test_config();
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open_unseeded_for_test(dir.path(), config).unwrap();
-    register_crm_pack(&vault, 107, 108).unwrap();
+    register_crm_pack(&vault, 108, 109).unwrap();
     (dir, vault)
 }
 
@@ -302,9 +302,9 @@ fn evaluation(record: &SavedQueryRecord, entity_ref: EntityId) -> EvaluationRequ
 #[test]
 fn saved_query_registers_dynamically_in_crm_band_without_static_byte() {
     let (_dir, vault) = raw_vault();
-    let pack = register_crm_pack(&vault, 107, 108).unwrap();
+    let pack = register_crm_pack(&vault, 108, 109).unwrap();
 
-    assert_eq!(pack.saved_query.type_byte, 108);
+    assert_eq!(pack.saved_query.type_byte, 109);
     assert_eq!(
         pack.saved_query.short_id_prefix,
         SAVED_QUERY_SHORT_ID_PREFIX
@@ -316,7 +316,7 @@ fn saved_query_registers_dynamically_in_crm_band_without_static_byte() {
         "one pack identity, not two"
     );
     assert_eq!(
-        vault.structural_kind_registration(108),
+        vault.structural_kind_registration(109),
         Some(pack.saved_query),
         "the registration must survive as vault-scoped state"
     );
@@ -345,14 +345,14 @@ fn crm_pack_registration_never_leaves_half_a_pack() {
 
     // A CRM-band byte for SAVED_QUERY that collides with CAMPAIGN's own slot.
     assert!(matches!(
-        register_crm_pack(&vault, 107, 107),
+        register_crm_pack(&vault, 108, 108),
         Err(Error::Registry(
-            RegistryError::StructuralKindTypeByteCollision(107)
+            RegistryError::StructuralKindTypeByteCollision(108)
         ))
     ));
     // An out-of-band SAVED_QUERY byte.
     assert!(matches!(
-        register_crm_pack(&vault, 107, 50),
+        register_crm_pack(&vault, 108, 50),
         Err(Error::Registry(
             RegistryError::StructuralKindZoneViolation { .. }
         ))
@@ -365,13 +365,13 @@ fn crm_pack_registration_never_leaves_half_a_pack() {
 
     // A half-install that DID happen (a bare CAMPAIGN registration) is repaired
     // by the whole-pack entry point rather than colliding with itself.
-    let campaign = oneiron::campaign::register_campaign_kind(&vault, 107).unwrap();
-    let pack = register_crm_pack(&vault, 107, 108).unwrap();
+    let campaign = oneiron::campaign::register_campaign_kind(&vault, 108).unwrap();
+    let pack = register_crm_pack(&vault, 108, 109).unwrap();
     assert_eq!(pack.campaign, campaign, "the existing slot is reused");
-    assert_eq!(pack.saved_query.type_byte, 108);
+    assert_eq!(pack.saved_query.type_byte, 109);
 
     // And the whole call is idempotent once both slots are installed.
-    assert_eq!(register_crm_pack(&vault, 107, 108).unwrap(), pack);
+    assert_eq!(register_crm_pack(&vault, 108, 109).unwrap(), pack);
 }
 
 #[test]
@@ -393,7 +393,7 @@ fn saved_query_crud_round_trips_and_archives_without_delete() -> Result<()> {
     );
     assert_eq!(
         vault.get_entity_type(&created.query_ref)?,
-        Some(108),
+        Some(109),
         "the definition is a real entity of the registered SAVED_QUERY kind, \
          not a node-local sidecar that no peer would ever receive"
     );

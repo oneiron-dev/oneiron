@@ -58,7 +58,7 @@ fn scope_with_corpus_id_starts_a_map_when_scope_is_absent() -> Result<()> {
 #[test]
 fn scope_with_corpus_id_preserves_every_sibling_entry() -> Result<()> {
     let existing = Value::Map(vec![
-        (Value::from("sensitivity"), Value::from("internal")),
+        (Value::from("sensitivity"), Value::from("private")),
         (
             Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
             Value::from(ClaimSource::ToolOutput.as_str()),
@@ -136,7 +136,7 @@ fn scope_with_corpus_id_collapses_a_duplicated_corpus_entry() -> Result<()> {
             Value::from(CLAIM_SCOPE_CORPUS_ID_KEY),
             Value::Binary(corpus(0x61).entity_id().as_bytes().to_vec()),
         ),
-        (Value::from("sensitivity"), Value::from("internal")),
+        (Value::from("sensitivity"), Value::from("private")),
         (
             Value::from(CLAIM_SCOPE_CORPUS_ID_KEY),
             Value::Binary(corpus(0x62).entity_id().as_bytes().to_vec()),
@@ -172,7 +172,7 @@ fn corpus_id_from_scope_reads_absence_as_unscoped() -> Result<()> {
     assert_eq!(
         corpus_id_from_scope(Some(&Value::Map(vec![(
             Value::from("sensitivity"),
-            Value::from("internal"),
+            Value::from("private"),
         )])))?,
         None
     );

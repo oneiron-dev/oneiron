@@ -16,7 +16,7 @@ use crate::gate::input::{ConsentGateContext, ExternalEffectGateInput};
 /// requirement pair (a verb or channel that fails the bound-ref rules) — the
 /// door then keeps its pre-DEC-0006 criticality behaviour rather than
 /// fabricate a bound no grant could ever cover or could always cover.
-pub(in crate::gate) fn external_effect_composed_effect(
+pub(crate) fn external_effect_composed_effect(
     effect: &ExternalEffectGateInput,
 ) -> Option<crate::consent::ComposedEffect> {
     let facts = external_effect_facts(effect);

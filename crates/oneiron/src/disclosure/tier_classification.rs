@@ -17,7 +17,9 @@ use crate::registry::{
 use crate::store::Store;
 
 use super::disclosure_tier_a_marked_in;
-use super::scope_codec::{MAX_DISCLOSURE_SCOPE_TOPIC_BYTES, decode_disclosure_scope_value};
+use super::scope::decode_scope_ceiling_value;
+
+pub(super) const MAX_DISCLOSURE_SCOPE_TOPIC_BYTES: usize = 128;
 
 /// Pinned `disclosure.*` claim predicates.
 pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 3] =
@@ -138,7 +140,15 @@ pub(crate) fn disclosure_tier(
         // reads band 2 (the ONE-1645 unstamped floor), so a claim with no
         // recorded provenance is never disclosed to a non-owner party; only a
         // positive `"sensitivity": public|0` stamp reaches Tier B here.
-        match claim_sensitivity_band(body) {
+        let sensitivity = if store.entities.get(rtxn, id.as_bytes())?.is_some() {
+            Some(
+                super::position::record_scope_position(store, rtxn, id, entity_type, Some(body))?
+                    .sensitivity,
+            )
+        } else {
+            claim_sensitivity_band(body)
+        };
+        match sensitivity {
             None => return Ok(DisclosureTier::TierA),
             Some(band) if band >= 2 => return Ok(DisclosureTier::TierA),
             Some(_) => {}
@@ -185,7 +195,7 @@ pub(crate) fn validate_disclosure_claim_structure(body: &ClaimBody) -> Result<()
         ));
     }
     match body.predicate.as_str() {
-        PREDICATE_DISCLOSURE_SCOPE => decode_disclosure_scope_value(&body.value)
+        PREDICATE_DISCLOSURE_SCOPE => decode_scope_ceiling_value(&body.value)
             .map(|_| ())
             .map_err(|_| Error::InvalidClaimBody("disclosure.scope value invalid")),
         PREDICATE_DISCLOSURE_TIER => {

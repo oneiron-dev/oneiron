@@ -201,3 +201,5 @@ use crate::skill_reliability::skill_reliability_prior;
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
+
+mod artifact;

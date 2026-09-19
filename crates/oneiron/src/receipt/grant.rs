@@ -545,6 +545,10 @@ fn append_outbound_grant_scope_fields(
                 endpoint_allowlist.join("\n"),
             );
         }
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => {
+            fields.insert("scope".to_owned(), "artifact_publish".to_owned());
+            fields.insert("artifact".to_owned(), artifact.clone());
+        }
         StandingOutboundGrantScope::BookingPageInvites { page_ref } => {
             // Token parity with the codec's `SCOPE_KIND_BOOKING_PAGE_INVITES`:
             // the audit surface and the stored row spell the scope the same

@@ -14,7 +14,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
-use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
+use super::body::{BlobArtifactBody, decode_blob_artifact_body};
 use super::provenance::{
     BLOB_VERSION_CLAIM_PREDICATE, BlobVersionProvenance, blob_version_claim_value,
     validate_provenance, write_provenance_value,
@@ -36,15 +36,17 @@ pub struct BlobArtifactVersion {
     pub provenance: BlobVersionProvenance,
     pub claim_id: EntityId,
     pub created_at: u64,
+    pub engine: oneiron_docedit::calc::EngineId,
 }
 
-pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 6] = [
+pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 7] = [
     "version",
     "content_hash",
     "provenance",
     "run_ref",
     "claim_id",
     "created_at",
+    "engine_stamp",
 ];
 
 pub(super) const KEY_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[0];
@@ -58,19 +60,9 @@ pub(super) const KEY_RUN_REF: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[3];
 const KEY_CLAIM_ID: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[4];
 
 const KEY_CREATED_AT: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[5];
+const KEY_ENGINE_STAMP: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[6];
 
 impl Vault {
-    pub fn put_blob_artifact(
-        &self,
-        id: &EntityId,
-        body: &BlobArtifactBody,
-        occurred: TimeRange,
-        learned_at: u64,
-    ) -> Result<()> {
-        let data = encode_blob_artifact_body(body)?;
-        self.put_entity(id, ENTITY_TYPE_BLOB_ARTIFACT, occurred, learned_at, &data)
-    }
-
     pub fn get_blob_artifact(&self, id: &EntityId) -> Result<Option<BlobArtifactBody>> {
         let rtxn = self.store.env.read_txn()?;
         self.get_blob_artifact_in_txn(&rtxn, id)
@@ -145,6 +137,32 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactVersion> {
+        self.append_stamped_blob_artifact_version_in_txn(
+            wtxn,
+            artifact_id,
+            bytes,
+            provenance,
+            &oneiron_docedit::calc::EngineId::imported(),
+            actor,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Same append transaction, with the checked document producer identity.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_stamped_blob_artifact_version_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        engine: &oneiron_docedit::calc::EngineId,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
+        engine.validate()?;
         validate_provenance(provenance)?;
         if bytes.is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
@@ -200,6 +218,7 @@ impl Vault {
             provenance: provenance.clone(),
             claim_id,
             created_at: learned_at,
+            engine: engine.clone(),
         };
         let encoded = encode_blob_artifact_version_record(&record)?;
         self.store.vault_meta.put(wtxn, &version_key, &encoded)?;
@@ -319,6 +338,7 @@ impl Vault {
 }
 
 fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<Vec<u8>> {
+    record.engine.validate()?;
     let value = Value::Map(vec![
         (
             Value::from(KEY_VERSION),
@@ -339,6 +359,19 @@ fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<V
         (
             Value::from(KEY_CLAIM_ID),
             Value::Binary(record.claim_id.as_bytes().to_vec()),
+        ),
+        (
+            Value::from(KEY_ENGINE_STAMP),
+            Value::Map(vec![
+                (
+                    Value::from("engine"),
+                    Value::from(record.engine.engine.as_str()),
+                ),
+                (
+                    Value::from("version"),
+                    Value::from(record.engine.version.as_str()),
+                ),
+            ]),
         ),
         (
             Value::from(KEY_CREATED_AT),
@@ -362,6 +395,7 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
     let mut run_ref: Option<Option<String>> = None;
     let mut claim_id = None;
     let mut created_at = None;
+    let mut engine = None;
     let mut seen = [false; BLOB_ARTIFACT_VERSION_RECORD_KEYS.len()];
 
     for (key, value) in &entries {
@@ -409,6 +443,7 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
             }
             KEY_CLAIM_ID => claim_id = Some(entity_value(value, "claim_id")?),
             KEY_CREATED_AT => created_at = Some(u64_value(value, "created_at")?),
+            KEY_ENGINE_STAMP => engine = Some(decode_engine_stamp(value)?),
             _ => unreachable!("index resolved from BLOB_ARTIFACT_VERSION_RECORD_KEYS"),
         }
     }
@@ -441,6 +476,7 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
         claim_id: claim_id.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key claim_id",
         )))?,
+        engine: engine.unwrap_or_else(oneiron_docedit::calc::EngineId::imported),
         created_at: created_at.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key created_at",
         )))?,
@@ -490,4 +526,34 @@ pub(super) fn blob_artifact_asset_entity_id(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<EntityId> {
     entity_id_from_hash_material(BLOB_ARTIFACT_ASSET_ID_DOMAIN, &[content_hash])
+}
+
+fn decode_engine_stamp(value: &Value) -> Result<oneiron_docedit::calc::EngineId> {
+    let invalid = || {
+        Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+            "invalid engine stamp",
+        ))
+    };
+    let Value::Map(entries) = value else {
+        return Err(invalid());
+    };
+    if entries.len() != 2 {
+        return Err(invalid());
+    }
+    let mut engine = None;
+    let mut version = None;
+    for (key, value) in entries {
+        let slot = match key.as_str() {
+            Some("engine") if engine.is_none() => &mut engine,
+            Some("version") if version.is_none() => &mut version,
+            _ => return Err(invalid()),
+        };
+        *slot = Some(value.as_str().ok_or_else(invalid)?.to_owned());
+    }
+    let stamp = oneiron_docedit::calc::EngineId {
+        engine: engine.ok_or_else(invalid)?,
+        version: version.ok_or_else(invalid)?,
+    };
+    stamp.validate().map_err(|_| invalid())?;
+    Ok(stamp)
 }

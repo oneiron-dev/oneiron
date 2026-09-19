@@ -24,6 +24,7 @@ pub(super) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 pub(super) const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
 pub(super) const ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE: &str = "raw NOTE put requires author_take";
+pub(super) const ERR_RAW_REACTION_PUT_REQUIRES_REACT: &str = "raw REACTION put requires react";
 pub(super) type CompanionRetiredHistoryOverlay =
     HashSet<(CompanionRecordKey, Vec<CompanionLifecycleEvent>)>;
 

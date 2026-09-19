@@ -235,12 +235,12 @@ pub(crate) fn claim_generated_origin(body: &ClaimBody) -> bool {
 
 pub(crate) fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
     if let Some(raw) = value.as_u64() {
-        return u8::try_from(raw).ok();
+        return u8::try_from(raw).ok().filter(|band| *band <= 3);
     }
 
     match value.as_str()? {
         "public" => Some(0),
-        "internal" => Some(1),
+        "private" => Some(1),
         "sensitive" => Some(2),
         "restricted" => Some(3),
         _ => None,

@@ -77,6 +77,10 @@ pub enum RecordError {
     /// (`crate::note::NOTE_BODY_KEYS`). Nothing was written.
     #[error("invalid NOTE body: {0}")]
     InvalidNoteBody(&'static str),
+    /// A REACTION entity body failed the pinned ABI validation
+    /// (`crate::conversation::reaction::REACTION_BODY_KEYS`). Nothing was written.
+    #[error("invalid REACTION body: {0}")]
+    InvalidReactionBody(&'static str),
     /// A MESSAGE entity body is not the canonical six-axis witness envelope
     /// `gate::witness_message` authorizes, or it arrived at a door that cannot
     /// authorize one (a public raw put, or a replicated carry of an
@@ -200,6 +204,7 @@ impl RecordError {
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
             Self::InvalidPersonaSnapshot(_) => ErrorKind::InvalidPersonaSnapshot,
             Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,
+            Self::InvalidReactionBody(_) => ErrorKind::InvalidReactionBody,
             Self::InvalidWitnessMessageBody(_) => ErrorKind::InvalidWitnessMessageBody,
             Self::AuthorityLogAppendOnlyViolation { .. } => {
                 ErrorKind::AuthorityLogAppendOnlyViolation

@@ -349,6 +349,26 @@ fn admit_surface_event_once(
         });
     }
 
+    if let super::SurfaceEventAction::Reaction {
+        target_ref,
+        by_ref,
+        glyph,
+    } = &event.action
+    {
+        let by = crate::EntityId::from_hex(by_ref)?;
+        let input = crate::conversation::reaction::ReactInput {
+            message: crate::EntityId::from_hex(target_ref)?,
+            by,
+            glyph: glyph.clone(),
+            at: event.received_at,
+            ext: Some(crate::conversation::reaction::ReactionExternalId {
+                connector: event.channel.clone(),
+                id: event.event_id.clone(),
+            }),
+        };
+        // Mirrored additions never produce a first-party tombstone or send.
+        vault.react_in_txn(&mut wtxn, &by, &input, now)?;
+    }
     let outcome = queue.enqueue_in_txn(
         &mut wtxn,
         EnqueueAttempt {

@@ -227,6 +227,7 @@ impl Vault {
         let key_in = Store::encode_edge_key(tgt, kind, src);
 
         self.with_write_txn(|wtxn| {
+            crate::conversation::reaction::validate_edge(&self.store, wtxn, src, kind, tgt, true)?;
             let existed_out = self.store.edges_out.delete(wtxn, &key_out)?;
             let deleted_in = self.store.edges_in.delete(wtxn, &key_in)?;
 
@@ -245,12 +246,16 @@ impl Vault {
 
     /// Returns outbound edges for `src`.
     pub fn edges_out(&self, src: &EntityId) -> Result<Vec<EdgeInfo>> {
+        #[cfg(test)]
+        self.test_hooks().note_reaction_read("edges_out");
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_out, &rtxn, src.as_bytes())
     }
 
     /// Returns inbound edges for `tgt`.
     pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<EdgeInfo>> {
+        #[cfg(test)]
+        self.test_hooks().note_reaction_read("edges_in");
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
     }
@@ -265,6 +270,8 @@ impl Vault {
         kind: EdgeKind,
         target_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
+        #[cfg(test)]
+        self.test_hooks().note_reaction_read("targets");
         let rtxn = self.store.env.read_txn()?;
         self.filtered_edge_peers(
             &rtxn,
@@ -286,6 +293,8 @@ impl Vault {
         kind: EdgeKind,
         source_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
+        #[cfg(test)]
+        self.test_hooks().note_reaction_read("sources");
         let rtxn = self.store.env.read_txn()?;
         self.filtered_edge_peers(
             &rtxn,

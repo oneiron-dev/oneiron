@@ -53,6 +53,8 @@ pub(super) const SEND_VERB_CLASS: &str = "send";
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StandingOutboundGrantScope {
+    /// Publish only this artifact, never a different artifact or outbound verb.
+    ArtifactPublish { artifact: String },
     /// Always allow matching sends to one contact/counterparty.
     Contact { contact_ref: String },
     /// Always allow matching sends for one outbound verb class.
@@ -141,6 +143,7 @@ impl StandingOutboundGrantScope {
     #[must_use]
     pub const fn dial_label(&self) -> &'static str {
         match self {
+            Self::ArtifactPublish { .. } => "artifact_publish",
             Self::Contact { .. } => "always_this_contact",
             Self::VerbClass { .. } => "always_this_verb_class",
             Self::Channel { .. } => "always_this_channel",
@@ -185,7 +188,13 @@ impl StandingOutboundGrantScope {
         if is_mcp_channel(channel) {
             return false;
         }
+        // Publishing is never authorized by a broad contact/channel grant.
+        if channel == "artifact" {
+            return matches!(self, Self::ArtifactPublish { artifact }
+                if verb == "publish" && counterparty == Some(artifact.as_str()));
+        }
         match self {
+            Self::ArtifactPublish { .. } => false,
             Self::Contact { contact_ref } => {
                 counterparty.is_some_and(|counterparty| refs_match(contact_ref, counterparty))
             }
@@ -212,6 +221,12 @@ impl StandingOutboundGrantScope {
 
 pub(super) fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
     match scope {
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => {
+            canonical_non_empty_str(artifact)?;
+            if artifact.len() > 256 || artifact.chars().any(char::is_control) {
+                return Err(invalid_grant());
+            }
+        }
         StandingOutboundGrantScope::Contact { contact_ref } => non_empty_str(contact_ref)?,
         StandingOutboundGrantScope::VerbClass { verb_class } => non_empty_str(verb_class)?,
         StandingOutboundGrantScope::Channel { channel } => non_empty_str(channel)?,

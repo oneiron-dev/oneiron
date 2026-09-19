@@ -15,6 +15,7 @@ use crate::skill_convert::PROVENANCE_BIRTH_KEY;
 use crate::skill_reliability::SkillReliabilityPosterior;
 use crate::temporal::TimeRange;
 
+use super::artifact::{encode_brief, persist_candidate_artifact};
 use super::brief::{
     SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
     optimize_brief,
@@ -121,6 +122,7 @@ pub fn run_skill_optimize(
         });
     };
     let brief = optimize_brief(vault, &candidate)?;
+    let birth_input = encode_brief(&brief)?;
     let (desc, rationale) = match author.draft(&brief)? {
         SkillEditDraft::Decline { rationale } => {
             validate_text(
@@ -193,6 +195,18 @@ pub fn run_skill_optimize(
             tier_verdict_in_txn(vault, &*wtxn, &candidate.skill, &target)?,
         )?;
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
+        persist_candidate_artifact(
+            vault,
+            wtxn,
+            proposal_id,
+            candidate.skill,
+            &record,
+            &birth_input,
+            &drafted_in,
+            author,
+            occurred,
+            learned_at,
+        )?;
         Ok(())
     })?;
 

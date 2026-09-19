@@ -65,6 +65,11 @@ pub const ENTITY_TYPE_BLOB_ARTIFACT: u8 = 105;
 /// ride the pinned `crate::note::NOTE_BODY_KEYS` ABI.
 pub const ENTITY_TYPE_NOTE: u8 = 106;
 
+/// OF-372 CONV-09 REACTION primitive (ONE-1991): the glyph-on-a-message
+/// record. Pack-registered in the compiled-product zone; bodies ride the
+/// pinned `crate::conversation::reaction::REACTION_BODY_KEYS` ABI.
+pub const ENTITY_TYPE_REACTION: u8 = 107;
+
 /// ARCH-0069 S1/S2 secret custody (SECRET-01, ONE-1919): the `SecretCustodyRecord`
 /// is the secret VALUE's home — plaintext bytes at rest under the vault DEK
 /// plane, never claims / CRDT / export / logs. Maintenance classification in

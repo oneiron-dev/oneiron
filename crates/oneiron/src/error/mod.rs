@@ -109,6 +109,7 @@ pub enum ErrorKind {
     InvalidBlobArtifactBody,
     InvalidLfsObject,
     InvalidNoteBody,
+    InvalidReactionBody,
     InvalidWitnessMessageBody,
     InvalidAnchor,
     AnnotationThreadNotFound,
@@ -272,6 +273,8 @@ pub enum ErrorKind {
     VaultCleanupProposalNotFound,
     VaultCleanupWakeTriggerRejected,
     VaultRead,
+    EditProposalCommitMismatch,
+    InvalidArtifactBirth,
 }
 
 /// Crate error type.

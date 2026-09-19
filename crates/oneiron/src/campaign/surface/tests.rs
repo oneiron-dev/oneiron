@@ -13,8 +13,8 @@ use crate::saved_query::{
 
 // Free dynamic slots in the compiled-product zone. 100-106 are statically
 // allocated after byte-space v3, so the CRM pack registers above them.
-const CAMPAIGN_BYTE: u8 = 107;
-const SAVED_QUERY_BYTE: u8 = 108;
+const CAMPAIGN_BYTE: u8 = 108;
+const SAVED_QUERY_BYTE: u8 = 109;
 
 /// Unseeded, like CA-01's and CA-02's oracles: the default policy manifest
 /// declares axes for `profile.`, `calendar.`, `booking.`, and `affect.vad`

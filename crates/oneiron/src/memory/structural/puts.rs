@@ -13,8 +13,8 @@ use crate::memory::support::{
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{
-    ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
+    ENTITY_TYPE_PERSON,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -189,10 +189,14 @@ impl Memory<'_> {
                 return Ok(true);
             }
             ensure_structural_create_in_txn(self.vault, &*wtxn, &id)?;
-            let mut batch = self
-                .vault
-                .batch_in()
-                .put(&id, type_byte, occurred, learned_at, &data);
+            let mut batch = self.vault.batch_in();
+            if crate::registry::artifact_family_kind(type_byte).is_some() {
+                self.create_structural_artifact_in_txn(
+                    wtxn, id, type_byte, &data, occurred, learned_at,
+                )?;
+            } else {
+                batch = batch.put(&id, type_byte, occurred, learned_at, &data);
+            }
             for (kind, target, weight) in &resolved_edges {
                 batch = batch.edge(&id, *kind, target, *weight);
             }
@@ -294,10 +298,26 @@ impl Memory<'_> {
             {
                 return Ok(true);
             }
-            self.vault
-                .batch_in()
-                .put(&id, ENTITY_TYPE_BLOB_ARTIFACT, occurred, learned_at, &data)
-                .apply(wtxn)?;
+            let input_ref = self
+                .vault
+                .artifact_input_in_txn(wtxn, id, &data, occurred, learned_at)?;
+            let birth = self.vault.artifact_birth_for_input_in_txn(
+                wtxn,
+                crate::artifact_hosting::ArtifactTrigger::Ask(input_ref),
+                input_ref,
+                None,
+                "oneiron/memory-upload",
+                crate::artifact_hosting::ArtifactPurpose::Deliverable,
+            )?;
+            self.vault.create_artifact_with_birth_in_txn(
+                wtxn,
+                id,
+                crate::artifact_hosting::ArtifactBirthBody::Blob(&body),
+                &birth,
+                WriteActor::new(self.actor, self.actor_class),
+                occurred,
+                learned_at,
+            )?;
             Ok(false)
         })?;
         if refused {

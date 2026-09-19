@@ -85,6 +85,7 @@ pub(super) fn apply_ops_with_origin(
     let staged_claim_gate = gate_mode.staged_claim_gate;
 
     secret_scan::scan_batch_ops(&ops)?;
+    let rejoin_reaction_inbox = crate::conversation::reaction::batch_needs_inbox_rejoin(&ops);
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
     // parent slot BEFORE the overlay is built, so the winner add and the stored
     // losers' deletes are one atomic strict batch — cardinality is already one
@@ -604,6 +605,10 @@ pub(super) fn apply_ops_with_origin(
         return Err(Error::InvariantViolation(
             "unconsumed preflight gate decision identity",
         ));
+    }
+
+    if rejoin_reaction_inbox {
+        crate::conversation::reaction::rebuild_inbox_in_txn(store, wtxn)?;
     }
 
     // STO-03: derived Habit counters, recomputed from the FINAL child state of

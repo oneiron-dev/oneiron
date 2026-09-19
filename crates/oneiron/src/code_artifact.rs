@@ -254,8 +254,15 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let data = encode_code_artifact_body(body)?;
-        self.put_entity(id, ENTITY_TYPE_CODE_ARTIFACT, occurred, learned_at, &data)
+        self.with_write_txn(|txn| {
+            self.import_artifact_in_txn(
+                txn,
+                *id,
+                crate::artifact_hosting::ArtifactBirthBody::Code(body),
+                occurred,
+                learned_at,
+            )
+        })
     }
 
     pub fn get_code_artifact(&self, id: &EntityId) -> Result<Option<CodeArtifactBody>> {

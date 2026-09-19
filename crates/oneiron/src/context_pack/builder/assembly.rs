@@ -110,6 +110,9 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub(in crate::context_pack) fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
+        if let Some(context) = &self.disclosure {
+            context.ensure_current()?;
+        }
         let started = Instant::now();
         let retrieval_budget = self.retrieval_budget.unwrap_or_else(|| {
             ContextPackRetrievalBudget::from_limit(

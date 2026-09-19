@@ -70,6 +70,14 @@ pub(in crate::batch) fn apply_put(
     } else {
         None
     };
+    crate::artifact_hosting::guard_artifact_put(
+        store,
+        wtxn,
+        id,
+        entity_type,
+        data,
+        incoming_claim_body.as_ref(),
+    )?;
     crate::booking::publication::guard_publication_put(
         store,
         wtxn,
@@ -267,6 +275,15 @@ pub(in crate::batch) fn apply_put(
         } else {
             crate::gate::validate_canonical_witness_message_body(data)?;
         }
+    } else if entity_type == crate::registry::ENTITY_TYPE_REACTION {
+        // CONV-09 (OF-372): the REACTION body law, at the one arm every road
+        // to a REACTION body converges on. Authority (which actor may react
+        // as whom) is answered before staging by the reaction door's
+        // `put_reaction` binding; the chokepoint proves the bytes ARE the
+        // pinned body those axes encode — on the local road and the
+        // replicated road alike (a peer's row is storage convergence, but a
+        // malformed reaction body still fails typed rather than persisting).
+        crate::conversation::reaction::validate_put(store, wtxn, &id, data, learned_at)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
@@ -670,7 +687,11 @@ pub(in crate::batch) fn apply_put(
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
+    crate::disclosure::stage_record_exposure(store, wtxn, &id, entity_type, data)?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    if entity_type == crate::registry::ENTITY_TYPE_REACTION {
+        crate::conversation::reaction::stage_put(store, wtxn, &id, data, learned_at)?;
+    }
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
             store,

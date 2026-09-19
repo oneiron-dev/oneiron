@@ -264,9 +264,9 @@ impl Vault {
             snapshot.fork_hash,
             repo_ref.canonical(),
         );
-        let code_body = crate::code_artifact::encode_code_artifact_body(&code_body)?;
 
-        let mut batch = self.batch();
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut batch = self.batch_in();
         for blob in &blobs {
             if !retained_paths.contains(blob.path.as_str()) {
                 continue;
@@ -280,16 +280,14 @@ impl Vault {
                 &blob.data,
             );
         }
-        batch
-            .put(
-                &code_artifact_id,
-                ENTITY_TYPE_CODE_ARTIFACT,
-                occurred,
-                learned_at,
-                &code_body,
-            )
-            .commit()?;
-        let mut wtxn = self.store.env.write_txn()?;
+        batch.apply(&mut wtxn)?;
+        self.import_artifact_in_txn(
+            &mut wtxn,
+            code_artifact_id,
+            crate::artifact_hosting::ArtifactBirthBody::Code(&code_body),
+            occurred,
+            learned_at,
+        )?;
         self.put_filtered_codebase_snapshot_in_txn(
             &mut wtxn,
             &code_artifact_id,

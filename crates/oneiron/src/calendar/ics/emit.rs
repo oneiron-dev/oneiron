@@ -167,26 +167,23 @@ pub fn persist_imip_blob(
         start: occurred_at,
         end: occurred_at,
     };
-    if vault
-        .get_blob_artifact(artifact_id)
-        .map_err(|err| imip_emit(format!("blob artifact read failed: {err}")))?
-        .is_none()
-    {
-        vault
-            .put_blob_artifact(
-                artifact_id,
+    vault
+        .with_write_txn(|txn| {
+            vault.persist_blob_with_birth_in_txn(
+                txn,
+                *artifact_id,
                 &crate::blob_artifact::BlobArtifactBody::new(
                     name,
                     super::invite::CALENDAR_INVITE_MEDIA_TYPE,
                 ),
+                ics,
+                provenance,
+                actor,
                 occurred,
                 occurred_at,
             )
-            .map_err(|err| imip_emit(format!("blob artifact create failed: {err}")))?;
-    }
-    vault
-        .append_blob_artifact_version(artifact_id, ics, provenance, actor, occurred, occurred_at)
-        .map_err(|err| imip_emit(format!("blob artifact append failed: {err}")))?;
+        })
+        .map_err(|err| imip_emit(format!("blob artifact persist failed: {err}")))?;
     Ok(format!("blob:{}", artifact_id.to_hex()))
 }
 

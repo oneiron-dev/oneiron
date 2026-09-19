@@ -15,6 +15,7 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFi
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod as_of;
 mod retrieval_visibility;
 
 /// Actor key bound to a scoped read lane over the `core:read` surface.

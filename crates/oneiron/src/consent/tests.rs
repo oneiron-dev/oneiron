@@ -974,10 +974,7 @@ fn consent_fail_safe_hides_disclosure_and_asks_writes() {
 
     // A revoked (or malformed) disclosure scope remains HIDE at the adapter
     // too: it yields no bound at all rather than a permissive one.
-    let revoked = DisclosureScope {
-        status: DisclosureScopeStatus::Revoked,
-        ..DisclosureScope::task_scoped("purpose", vec![entity(0x71)], 5).expect("scope")
-    };
+    let revoked = ScopeCeiling::bottom();
     assert_eq!(
         disclosure_grant_from_disclosure_scope(&revoked, "contact:doctor", "health")
             .expect_err("revoked scope")
@@ -1256,18 +1253,18 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
     );
 
     // DisclosureScope → DisclosureGrant.
-    let scope = DisclosureScope::task_scoped("q3 planning", vec![entity(0x71)], 5).expect("scope");
-    let before = crate::disclosure::encode_disclosure_scope_body(&scope).expect("encode");
+    let scope = ScopeCeiling::public();
+    let before = crate::disclosure::encode_scope_ceiling_body(&scope).expect("encode");
     let projected = disclosure_grant_from_disclosure_scope(&scope, "contact:doctor", "health")
         .expect("project");
     assert_eq!(projected.bound().domain(), ConsentDomain::Disclosure);
-    let after = crate::disclosure::encode_disclosure_scope_body(&scope).expect("encode");
+    let after = crate::disclosure::encode_scope_ceiling_body(&scope).expect("encode");
     assert_eq!(
         before, after,
         "projection must not rewrite the source bytes"
     );
     assert_eq!(
-        crate::disclosure::decode_disclosure_scope_body(&after).expect("decode"),
+        crate::disclosure::decode_scope_ceiling_body(&after).expect("decode"),
         scope
     );
 }

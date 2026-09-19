@@ -239,6 +239,11 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
                 .filter(|receipt| query.matches(receipt)),
         );
     }
+    if query.includes_kind(ReceiptKind::Share) {
+        records.extend(crate::artifact_hosting::artifact_publish_receipts(
+            vault, query,
+        )?);
+    }
     if query.includes_kind(ReceiptKind::Gate) {
         records.extend(gate_receipts(vault, query)?);
         // The SECOND Gate projector (ONE-1748): consent-graduation

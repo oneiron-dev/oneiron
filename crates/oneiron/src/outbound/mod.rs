@@ -26,9 +26,9 @@ pub use self::capability::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
     OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics,
     OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState,
-    OutboundRetryClass, OutboundVerbContract, UnsupportedOutboundCapability,
-    outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
-    unsupported_outbound_connector,
+    OutboundReactionVocabulary, OutboundRetryClass, OutboundVerbContract,
+    UnsupportedOutboundCapability, outbound_capability_manifest, outbound_capability_manifests,
+    outbound_verb_contract, unsupported_outbound_connector,
 };
 pub use self::connector_task::{
     CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, connector_actor_id,

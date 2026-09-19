@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::VaultConfig;
-use crate::disclosure::DisclosureScope;
+use crate::disclosure::ScopeCeiling;
 use crate::interlocutor::{InterlocutorPartyInput, InterlocutorResolutionInput};
 use crate::registry::{
     ENTITY_TYPE_COUNTERPARTY_CONTACT, EntityClassification, TypeByteZone,
@@ -273,8 +273,8 @@ fn disclosure_and_interlocutor_reads_identical() -> Result<()> {
     let record = CounterpartyContactRecord::user_introduction(identity, "mika@example.com", 10)?;
     vault.create_counterparty_contact(&contact_id, &record)?;
 
-    let scope = DisclosureScope::task_scoped("party", vec![entity(0x63)], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let scope = ScopeCeiling::public();
+    crate::disclosure::test_support::authorize(&vault, &contact_id, &scope)?;
     let input = InterlocutorResolutionInput {
         owner_session: true,
         parties: vec![InterlocutorPartyInput::ContactRef(contact_id)],
@@ -292,9 +292,8 @@ fn disclosure_and_interlocutor_reads_identical() -> Result<()> {
     );
     assert_eq!(vault.resolve_interlocutors(&input)?, before_set);
     // And the disclosure writer still accepts the rebuilt row.
-    let mut wider = DisclosureScope::task_scoped("party and travel", vec![entity(0x63)], 100)?;
-    wider.updated_at = 200;
-    vault.set_counterparty_disclosure_scope(&contact_id, &wider)?;
+    let wider = ScopeCeiling::top();
+    crate::disclosure::test_support::authorize(&vault, &contact_id, &wider)?;
     assert_eq!(
         vault.counterparty_disclosure_scope(&contact_id)?,
         Some(wider)

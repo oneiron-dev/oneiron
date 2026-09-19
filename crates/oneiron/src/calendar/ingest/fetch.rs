@@ -213,31 +213,26 @@ pub(super) fn archive_raw_feed(
 ) -> Result<String, CalendarError> {
     let feed_ref = ics_feed_poll_dedupe_key(config);
     let artifact_id = derive_entity_id(ICS_FEED_BLOB_ID_DOMAIN, feed_ref.as_bytes())?;
-    if vault.get_blob_artifact(&artifact_id)?.is_none() {
-        vault.put_blob_artifact(
-            &artifact_id,
+    let actor = ensure_ics_import_actor(vault, now)?;
+    let version = vault.with_write_txn(|txn| {
+        vault.persist_blob_with_birth_in_txn(
+            txn,
+            artifact_id,
             &crate::blob_artifact::BlobArtifactBody::new(
                 format!("ics-feed:{}", config.system),
                 "text/calendar",
             ),
+            body,
+            &crate::blob_artifact::BlobVersionProvenance::AgentRun {
+                run_ref: feed_ref.clone(),
+            },
+            WriteActor::new(actor, crate::edge::EdgeActorClass::System),
             TimeRange {
                 start: now,
                 end: now,
             },
             now,
-        )?;
-    }
-    let actor = ensure_ics_import_actor(vault, now)?;
-    let version = vault.append_blob_artifact_version(
-        &artifact_id,
-        body,
-        &crate::blob_artifact::BlobVersionProvenance::AgentRun { run_ref: feed_ref },
-        WriteActor::new(actor, crate::edge::EdgeActorClass::System),
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-    )?;
+        )
+    })?;
     Ok(format!("{}#v{}", artifact_id.to_hex(), version.version))
 }

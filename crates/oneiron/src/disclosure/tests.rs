@@ -174,7 +174,7 @@ fn tier_rule_3_sensitivity_band_fails_closed() -> Result<()> {
         DisclosureTier::TierA
     );
     // Controls: bands 0/1 stay Tier B.
-    for band in ["public", "internal"] {
+    for band in ["public", "private"] {
         let body = claim_with_scope("profile.hobby", Some(sensitivity_scope(band)));
         assert_eq!(
             disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&body))?,
@@ -256,6 +256,16 @@ fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
     }
     // Public sensitivity isolates rule 4 from the unstamped rule-3 floor.
     let control = claim_with_scope("profile.hobby", Some(sensitivity_scope("public")));
+    // Admission needs stored exposure, not a caller-supplied body for an absent id.
+    drop(rtxn);
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_CLAIM,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &encode_claim_body(&control)?,
+    )?;
+    let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
         disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&control))?,
         DisclosureTier::TierB
@@ -287,7 +297,7 @@ fn tier_rule_5_owner_mark_round_trips_through_vault_methods() -> Result<()> {
     assert_eq!(claim.value.as_str(), Some("tier_a"));
     assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
 
-    vault.clear_disclosure_tier_a(&marked, 200)?;
+    test_support::clear_tier(&vault, &marked, 200)?;
     assert!(!vault.disclosure_tier_a_marked(&marked)?);
     {
         let rtxn = vault.store.env.read_txn()?;
@@ -316,204 +326,173 @@ fn tier_rule_5_owner_mark_round_trips_through_vault_methods() -> Result<()> {
 
 #[test]
 fn scope_codec_round_trips_and_rejects_malformed_bodies() -> Result<()> {
-    let scope = DisclosureScope::task_scoped(
-        "hanami party planning",
-        vec![test_id(0x22), test_id(0x21), test_id(0x22)],
-        100,
-    )?;
-    // task_scoped sorted and deduped.
-    assert_eq!(scope.entities, vec![test_id(0x21), test_id(0x22)]);
-
-    let encoded = encode_disclosure_scope_body(&scope)?;
-    assert_eq!(decode_disclosure_scope_body(&encoded)?, scope);
-
-    // Trailing bytes rejected.
-    let mut trailing = encoded;
-    trailing.push(0x00);
-    assert!(decode_disclosure_scope_body(&trailing).is_err());
-
-    // Extra key rejected.
-    let mut extra = disclosure_scope_body_value(&scope);
-    if let Value::Map(entries) = &mut extra {
-        entries.push((Value::from("widen"), Value::from(true)));
-    }
-    let mut extra_bytes = Vec::new();
-    rmpv::encode::write_value(&mut extra_bytes, &extra).expect("encode");
-    assert!(decode_disclosure_scope_body(&extra_bytes).is_err());
-
-    // Duplicate key rejected.
-    let mut duplicate = disclosure_scope_body_value(&scope);
-    if let Value::Map(entries) = &mut duplicate {
-        entries.push((Value::from("purpose"), Value::from("second")));
-    }
-    let mut duplicate_bytes = Vec::new();
-    rmpv::encode::write_value(&mut duplicate_bytes, &duplicate).expect("encode");
-    assert!(decode_disclosure_scope_body(&duplicate_bytes).is_err());
-
-    // Missing key rejected.
-    let mut missing = disclosure_scope_body_value(&scope);
-    if let Value::Map(entries) = &mut missing {
-        entries.retain(|(key, _)| key.as_str() != Some("topics"));
-    }
-    let mut missing_bytes = Vec::new();
-    rmpv::encode::write_value(&mut missing_bytes, &missing).expect("encode");
-    assert!(decode_disclosure_scope_body(&missing_bytes).is_err());
-
-    // Bad schema version rejected.
-    let mut versioned = disclosure_scope_body_value(&scope);
-    if let Value::Map(entries) = &mut versioned {
-        for (key, value) in entries.iter_mut() {
-            if key.as_str() == Some("schema_version") {
-                *value = Value::from(2_u64);
+    for scope in [
+        ScopeCeiling::top(),
+        ScopeCeiling::bottom(),
+        ScopeCeiling::public(),
+        test_support::projects(vec![test_id(1), test_id(2)]),
+    ] {
+        let bytes = encode_scope_ceiling_body(&scope)?;
+        assert_eq!(decode_scope_ceiling_body(&bytes)?, scope);
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(decode_scope_ceiling_body(&trailing).is_err());
+        for key in SCOPE_BODY_KEYS {
+            let Value::Map(entries) = scope_ceiling_body_value(&scope) else {
+                unreachable!()
+            };
+            let missing = Value::Map(
+                entries
+                    .iter()
+                    .filter(|(name, _)| name.as_str() != Some(key))
+                    .cloned()
+                    .collect(),
+            );
+            let mut duplicate = entries.clone();
+            duplicate.push(
+                entries
+                    .iter()
+                    .find(|(name, _)| name.as_str() == Some(key))
+                    .unwrap()
+                    .clone(),
+            );
+            for bad in [missing, Value::Map(duplicate)] {
+                let mut bytes = Vec::new();
+                rmpv::encode::write_value(&mut bytes, &bad).unwrap();
+                assert!(decode_scope_ceiling_body(&bytes).is_err());
             }
         }
     }
-    let mut versioned_bytes = Vec::new();
-    rmpv::encode::write_value(&mut versioned_bytes, &versioned).expect("encode");
-    assert!(decode_disclosure_scope_body(&versioned_bytes).is_err());
+    let position = ScopePosition {
+        worlds: ScopeIdAxis::Some(vec![EntityId::scope_base_world()]),
+        facets: ScopeIdAxis::Bottom,
+        kinds: ScopeKindAxis::Some(vec![ENTITY_TYPE_TURN]),
+        projects: ScopeIdAxis::All,
+        sensitivity: 1,
+    };
+    assert_eq!(
+        decode_scope_position_body(&encode_scope_position_body(&position)?)?,
+        position
+    );
     Ok(())
 }
 
 #[test]
 fn scope_validation_enforces_pinned_bounds() {
-    let mut scope = DisclosureScope::deny_all(100);
-    assert!(scope.validate().is_ok());
-
-    scope.entities = vec![test_id(0x22), test_id(0x21)];
-    assert!(scope.validate().is_err(), "unsorted entities rejected");
-    scope.entities = vec![test_id(0x21), test_id(0x21)];
-    assert!(scope.validate().is_err(), "duplicate entities rejected");
-    scope.entities.clear();
-
-    scope.purpose = String::new();
-    assert!(scope.validate().is_err(), "empty purpose rejected");
-    scope.purpose = " padded ".to_owned();
-    assert!(scope.validate().is_err(), "untrimmed purpose rejected");
-    scope.purpose = "x".repeat(513);
-    assert!(scope.validate().is_err(), "oversize purpose rejected");
-    scope.purpose = "deny_all".to_owned();
-
-    scope.topics = vec!["x".repeat(129)];
-    assert!(scope.validate().is_err(), "oversize topic rejected");
-    scope.topics = vec![String::new()];
-    assert!(scope.validate().is_err(), "empty topic rejected");
-    scope.topics.clear();
-
-    scope.updated_at = 99;
-    assert!(scope.validate().is_err(), "updated_at before created_at");
-    scope.updated_at = 100;
-    assert!(scope.validate().is_ok());
-
-    let too_many: Vec<EntityId> = (0..257_u16)
-        .map(|index| {
-            let mut bytes = [0x60_u8; 16];
-            bytes[14..].copy_from_slice(&index.to_be_bytes());
-            EntityId::from_bytes(bytes).expect("distinct test id")
-        })
-        .collect();
+    for axis in [
+        ScopeIdAxis::Some(vec![]),
+        ScopeIdAxis::Some(vec![test_id(1), test_id(1)]),
+        ScopeIdAxis::Some(vec![test_id(2), test_id(1)]),
+    ] {
+        assert!(
+            encode_scope_ceiling_body(&ScopeCeiling {
+                worlds: axis,
+                ..ScopeCeiling::top()
+            })
+            .is_err()
+        );
+    }
+    for kinds in [vec![], vec![3, 3], vec![4, 3]] {
+        assert!(
+            encode_scope_ceiling_body(&ScopeCeiling {
+                kinds: ScopeKindAxis::Some(kinds),
+                ..ScopeCeiling::top()
+            })
+            .is_err()
+        );
+    }
     assert!(
-        DisclosureScope::task_scoped("p", too_many, 1).is_err(),
-        "entity allowlist cap enforced"
+        encode_scope_ceiling_body(&ScopeCeiling {
+            sensitivity: 4,
+            ..ScopeCeiling::top()
+        })
+        .is_err()
     );
+    assert!(decode_scope_ceiling_body(b"").is_err());
 }
 
-// ─── Intersection algebra (DEC-0005) ────────────────────────────────────────
-
 #[test]
-fn intersection_algebra_is_commutative_empty_absorbing_and_revoked_propagating() -> Result<()> {
-    let a = DisclosureScope::task_scoped("alpha", vec![test_id(1), test_id(2)], 100)?;
-    let b = DisclosureScope::task_scoped("beta", vec![test_id(2), test_id(3)], 50)?;
-
-    let ab = a.intersect(&b);
-    let ba = b.intersect(&a);
-    assert_eq!(ab.entities, vec![test_id(2)], "most-restrictive-wins");
-    assert_eq!(ab.entities, ba.entities, "commutative on entity sets");
-    assert_eq!(ab.created_at, 50, "earliest created_at");
-    assert_eq!(ab.updated_at, 100, "latest updated_at");
-    assert_eq!(ab.purpose, "alpha ∩ beta");
-    assert_eq!(ab.status, DisclosureScopeStatus::Active);
-
-    // Empty scope is the absorbing element.
-    let deny = DisclosureScope::deny_all(10);
-    assert!(a.intersect(&deny).entities.is_empty());
-    assert!(deny.intersect(&a).entities.is_empty());
-
-    // Revoked propagates.
-    let mut revoked = b;
-    revoked.status = DisclosureScopeStatus::Revoked;
-    assert_eq!(a.intersect(&revoked).status, DisclosureScopeStatus::Revoked);
-
-    // Purpose join truncates at a char boundary within 512 bytes.
-    let long_a = DisclosureScope::task_scoped("あ".repeat(170), vec![], 1)?;
-    let long_b = DisclosureScope::task_scoped("い".repeat(170), vec![], 1)?;
-    let joined = long_a.intersect(&long_b);
-    assert!(joined.purpose.len() <= 512);
-    assert!(joined.purpose.is_char_boundary(joined.purpose.len()));
-    Ok(())
+fn scope_meet_keeps_disjoint_worlds_bottom_and_kind_sets_open_ended() {
+    let a = ScopeCeiling {
+        worlds: ScopeIdAxis::Some(vec![test_id(1)]),
+        kinds: ScopeKindAxis::Some(vec![0, 107, 200]),
+        ..ScopeCeiling::top()
+    };
+    let b = ScopeCeiling {
+        worlds: ScopeIdAxis::Some(vec![test_id(2)]),
+        kinds: ScopeKindAxis::Some(vec![107, 200, 250]),
+        ..ScopeCeiling::top()
+    };
+    assert_eq!(a.meet(&b), b.meet(&a));
+    assert_eq!(a.meet(&ScopeCeiling::top()), a);
+    assert_eq!(a.meet(&ScopeCeiling::bottom()), ScopeCeiling::bottom());
+    assert_eq!(a.meet(&b).worlds, ScopeIdAxis::Bottom);
+    assert_eq!(a.meet(&b).kinds, ScopeKindAxis::Some(vec![107, 200]));
 }
 
-// ─── Vault scope storage (dual write) ───────────────────────────────────────
-
 #[test]
-fn scope_dual_write_requires_contact_and_supersedes_prior_claim() -> Result<()> {
+fn scope_dual_write_requires_signed_intent_and_preserves_atomic_mirror() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let contact_id = test_id(0x31);
-    seed_contact(&vault, contact_id, "kenji@example.com");
-
-    // Non-132 entity rejected.
-    let turn = test_id(0x32);
-    put_turn(&vault, &turn);
-    let scope = DisclosureScope::task_scoped("party", vec![test_id(0x41)], 100)?;
-    assert_eq!(
+    let contact = test_id(0x31);
+    seed_contact(&vault, contact, "contact");
+    let scope = test_support::projects(vec![test_id(0x41)]);
+    assert!(
         vault
-            .set_counterparty_disclosure_scope(&turn, &scope)
-            .expect_err("non-contact rejected")
-            .kind(),
-        crate::error::ErrorKind::InvalidEntityType
+            .set_counterparty_disclosure_scope(&contact, &scope)
+            .is_err()
     );
-    // Missing entity rejected.
-    assert_eq!(
+    let authorization = test_support::authorization(&vault, &contact, &scope)?;
+    let mut forged = authorization.clone();
+    forged.epoch += 1;
+    assert!(
         vault
-            .set_counterparty_disclosure_scope(&test_id(0x33), &scope)
-            .expect_err("missing contact rejected")
-            .kind(),
-        crate::error::ErrorKind::EntityNotFound
+            .authorize_counterparty_disclosure_scope(&contact, &scope, &forged)
+            .is_err()
     );
-
-    // Missing row reads None.
-    assert_eq!(vault.counterparty_disclosure_scope(&contact_id)?, None);
-
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let wrong_scope = ScopeCeiling::top();
+    assert!(
+        vault
+            .authorize_counterparty_disclosure_scope(&contact, &wrong_scope, &authorization)
+            .is_err()
+    );
+    assert_eq!(vault.counterparty_disclosure_scope(&contact)?, None);
+    vault.authorize_counterparty_disclosure_scope(&contact, &scope, &authorization)?;
     assert_eq!(
-        vault.counterparty_disclosure_scope(&contact_id)?,
+        vault.counterparty_disclosure_scope(&contact)?,
         Some(scope.clone())
     );
-
-    // Owner-visible claim mirror exists.
-    let claim_id = disclosure_scope_claim_id(&contact_id)?;
-    let claim = vault.get_claim(&claim_id)?.expect("scope claim mirror");
-    assert_eq!(claim.predicate, PREDICATE_DISCLOSURE_SCOPE);
-    assert_eq!(claim.subject, ClaimSubject::Entity(contact_id));
-    assert_eq!(claim.value, disclosure_scope_body_value(&scope));
-    validate_disclosure_claim_structure(&claim)?;
-
-    // Re-set (dial-not-wall) replaces the row AND supersedes the prior claim
-    // value — exactly one owner-visible scope claim, carrying the new value.
-    let mut wider =
-        DisclosureScope::task_scoped("party and travel", vec![test_id(0x41), test_id(0x53)], 100)?;
-    wider.updated_at = 200;
-    vault.set_counterparty_disclosure_scope(&contact_id, &wider)?;
     assert_eq!(
-        vault.counterparty_disclosure_scope(&contact_id)?,
-        Some(wider.clone())
+        vault
+            .get_claim(&disclosure_scope_claim_id(&contact)?)?
+            .unwrap()
+            .value,
+        scope_ceiling_body_value(&scope)
     );
-    let claim = vault.get_claim(&claim_id)?.expect("rewritten scope claim");
-    assert_eq!(claim.value, disclosure_scope_body_value(&wider));
-    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+    assert!(
+        vault
+            .authorize_counterparty_disclosure_scope(&contact, &scope, &authorization)
+            .is_err()
+    );
+    vault.set_counterparty_disclosure_scope(&contact, &ScopeCeiling::bottom())?;
+    assert!(
+        vault
+            .authorize_counterparty_disclosure_scope(&contact, &scope, &authorization)
+            .is_err()
+    );
+    assert_eq!(
+        vault.counterparty_disclosure_scope(&contact)?,
+        Some(ScopeCeiling::bottom())
+    );
+    test_support::authorize(&vault, &contact, &ScopeCeiling::top())?;
+    assert_eq!(
+        vault
+            .get_claim(&disclosure_scope_claim_id(&contact)?)?
+            .unwrap()
+            .value,
+        scope_ceiling_body_value(&ScopeCeiling::top())
+    );
     Ok(())
 }
-
-// ─── Claim family validation ────────────────────────────────────────────────
 
 #[test]
 fn disclosure_claim_family_dispatch_and_structure() {
@@ -550,7 +529,7 @@ fn disclosure_claim_family_dispatch_and_structure() {
     // disclosure.scope value must decode as a scope body.
     let mut scope_claim = tier.clone();
     scope_claim.predicate = PREDICATE_DISCLOSURE_SCOPE.to_owned();
-    scope_claim.value = disclosure_scope_body_value(&DisclosureScope::deny_all(1));
+    scope_claim.value = scope_ceiling_body_value(&ScopeCeiling::bottom());
     assert!(validate_disclosure_claim_structure(&scope_claim).is_ok());
     scope_claim.value = Value::from("not a scope");
     assert!(validate_disclosure_claim_structure(&scope_claim).is_err());
@@ -575,184 +554,81 @@ fn disclosure_claim_family_dispatch_and_structure() {
 #[test]
 fn resolve_folds_scopes_fail_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let contact_a = test_id(0x51);
-    let contact_b = test_id(0x52);
-    seed_contact(&vault, contact_a, "a@example.com");
-    seed_contact(&vault, contact_b, "b@example.com");
-    let entities = [test_id(0x61), test_id(0x62), test_id(0x63)];
-    for id in &entities {
-        put_turn(&vault, id);
+    let a = test_id(0x31);
+    let b = test_id(0x32);
+    seed_contact(&vault, a, "a");
+    seed_contact(&vault, b, "b");
+    assert_eq!(
+        DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?.disclosable_set(),
+        &ScopeCeiling::top()
+    );
+    assert_eq!(
+        DisclosureContext::resolve(&vault, InterlocutorSet::without_owner(vec![]))?
+            .disclosable_set(),
+        &ScopeCeiling::top()
+    );
+    test_support::authorize(&vault, &a, &test_support::projects(vec![test_id(1)]))?;
+    test_support::authorize(&vault, &b, &test_support::projects(vec![test_id(2)]))?;
+    let disjoint = DisclosureContext::resolve(
+        &vault,
+        InterlocutorSet::without_owner(vec![known(a, "a"), known(b, "b")]),
+    )?;
+    assert_eq!(disjoint.disclosable_set().projects, ScopeIdAxis::Bottom);
+    for roster in [
+        vec![known(a, "a"), Interlocutor::unknown("unidentified", false)],
+        vec![known(test_id(0x33), "missing")],
+    ] {
+        assert_eq!(
+            DisclosureContext::resolve(&vault, InterlocutorSet::without_owner(roster))?
+                .disclosable_set(),
+            &ScopeCeiling::bottom()
+        );
     }
-    let check_admission = |ctx: &DisclosureContext, expected: [bool; 3]| -> Result<()> {
-        let rtxn = vault.store.env.read_txn()?;
-        for (id, allowed) in entities.iter().zip(expected) {
-            assert_eq!(
-                ctx.admits(&vault.store, &rtxn, id, ENTITY_TYPE_TURN, None)?,
-                allowed,
-            );
-        }
-        Ok(())
-    };
-
-    // OwnerAlone and Supervised do not require a contact allowlist.
-    let ctx = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
-    assert_eq!(ctx.mode(), DisclosureMode::OwnerAlone);
-    check_admission(&ctx, [true, true, true])?;
-    let ctx = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::with_session_owner(vec![known(contact_a, "a@example.com")]),
-    )?;
-    assert_eq!(ctx.mode(), DisclosureMode::Supervised);
-    check_admission(&ctx, [true, true, true])?;
-
-    // Unknown party -> deny-all.
-    let ctx = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![Interlocutor::unknown("guest", true)]),
-    )?;
-    assert_eq!(ctx.mode(), DisclosureMode::AbsenceClamp);
-    check_admission(&ctx, [false, false, false])?;
-
-    // Contact without a scope row -> deny-all.
-    let ctx = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![known(contact_a, "a@example.com")]),
-    )?;
-    check_admission(&ctx, [false, false, false])?;
-
-    // Active scopes admit only their shared allowlist when folded.
-    let scope_a = DisclosureScope::task_scoped("alpha", vec![test_id(0x61), test_id(0x62)], 100)?;
-    let scope_b = DisclosureScope::task_scoped("beta", vec![test_id(0x62), test_id(0x63)], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_a, &scope_a)?;
-    vault.set_counterparty_disclosure_scope(&contact_b, &scope_b)?;
-    let ctx = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![known(contact_a, "a@example.com")]),
-    )?;
-    check_admission(&ctx, [true, true, false])?;
-    let ctx = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![
-            known(contact_a, "a@example.com"),
-            known(contact_b, "b@example.com"),
-        ]),
-    )?;
-    check_admission(&ctx, [false, true, false])?;
-
-    // A revoked scope contributes deny-all.
-    let mut revoked = scope_b;
-    revoked.status = DisclosureScopeStatus::Revoked;
-    revoked.updated_at = 200;
-    vault.set_counterparty_disclosure_scope(&contact_b, &revoked)?;
-    let ctx = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![known(contact_b, "b@example.com")]),
-    )?;
-    check_admission(&ctx, [false, false, false])?;
+    vault.clear_counterparty_disclosure_scope(&a, 100)?;
+    assert_eq!(
+        DisclosureContext::resolve(&vault, InterlocutorSet::without_owner(vec![known(a, "a")]))?
+            .disclosable_set(),
+        &ScopeCeiling::bottom()
+    );
     Ok(())
 }
 
 #[test]
 fn admits_truth_table_checks_tier_before_scope() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let contact_id = test_id(0x71);
-    seed_contact(&vault, contact_id, "kenji@example.com");
-    let party = test_id(0x72);
-    let diary = test_id(0x73);
-    put_turn(&vault, &party);
-    put_turn(&vault, &diary);
-    // The party turn is IN scope but owner-marked Tier A: scope can never
-    // override tier (I2 never-widen).
-    let scope = DisclosureScope::task_scoped("party", vec![party], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
-    vault.set_disclosure_tier_a(&party, 100)?;
-
-    let owner_alone = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
-    let supervised = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::with_session_owner(vec![known(contact_id, "kenji@example.com")]),
-    )?;
-    let clamped = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![known(contact_id, "kenji@example.com")]),
-    )?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    // OwnerAlone admits everything, Tier A included.
-    assert!(owner_alone.admits(&vault.store, &rtxn, &party, ENTITY_TYPE_TURN, None)?);
-    // Supervised and AbsenceClamp never admit Tier A — even in-scope.
-    assert!(!supervised.admits(&vault.store, &rtxn, &party, ENTITY_TYPE_TURN, None)?);
-    assert!(!clamped.admits(&vault.store, &rtxn, &party, ENTITY_TYPE_TURN, None)?);
-    // Supervised admits Tier B without a scope check.
-    assert!(supervised.admits(&vault.store, &rtxn, &diary, ENTITY_TYPE_TURN, None)?);
-    // AbsenceClamp requires scope membership: the diary is out of scope.
-    assert!(!clamped.admits(&vault.store, &rtxn, &diary, ENTITY_TYPE_TURN, None)?);
-    // A PSYCH_PROFILE id is never admitted in either non-owner mode (rule 2).
-    let psych = test_id(0x74);
-    assert!(!supervised.admits(
-        &vault.store,
-        &rtxn,
-        &psych,
-        crate::registry::ENTITY_TYPE_PSYCH_PROFILE,
-        None
-    )?);
-    assert!(!clamped.admits(
-        &vault.store,
-        &rtxn,
-        &psych,
-        crate::registry::ENTITY_TYPE_PSYCH_PROFILE,
-        None
-    )?);
+    let contact = test_id(0x31);
+    seed_contact(&vault, contact, "a");
+    test_support::authorize(&vault, &contact, &ScopeCeiling::top())?;
+    let id = test_id(0x32);
+    put_turn(&vault, &id);
+    vault.set_disclosure_tier_a(&id, 1)?;
+    for set in [
+        InterlocutorSet::without_owner(vec![known(contact, "a")]),
+        InterlocutorSet::with_session_owner(vec![known(contact, "a")]),
+    ] {
+        let ctx = DisclosureContext::resolve(&vault, set)?;
+        let txn = vault.store.env.read_txn()?;
+        assert!(!ctx.admits(&vault.store, &txn, &id, ENTITY_TYPE_TURN, None)?);
+    }
+    let owner = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(owner.admits(&vault.store, &txn, &id, ENTITY_TYPE_TURN, None)?);
     Ok(())
 }
 
 #[test]
-fn admits_accepts_claims_about_allowlisted_entities() -> Result<()> {
+fn missing_position_axes_are_unknown_not_public_or_bottom() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let contact_id = test_id(0x81);
-    seed_contact(&vault, contact_id, "kenji@example.com");
-    let party = test_id(0x82);
-    let diary = test_id(0x83);
-    put_turn(&vault, &party);
-    put_turn(&vault, &diary);
-    let scope = DisclosureScope::task_scoped("party", vec![party], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
-
-    let party_fact = test_id(0x84);
-    let mut fact = ClaimBody::new(
-        "event.headcount",
-        ClaimSubject::Entity(party),
-        Value::from("12"),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
-    fact.scope = Some(sensitivity_scope("public"));
-    vault.put_claim(&party_fact, &fact, TimeRange { start: 1, end: 1 }, 1)?;
-    let diary_fact = test_id(0x85);
-    let about_diary = ClaimBody::new(
-        "event.note",
-        ClaimSubject::Entity(diary),
-        Value::from("private"),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
-    vault.put_claim(&diary_fact, &about_diary, TimeRange { start: 1, end: 1 }, 1)?;
-
-    let clamped = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![known(contact_id, "kenji@example.com")]),
-    )?;
-    let rtxn = vault.store.env.read_txn()?;
-    // Claims ABOUT an allowlisted entity are the payload.
-    assert!(clamped.admits(&vault.store, &rtxn, &party_fact, ENTITY_TYPE_CLAIM, None)?);
-    // Claims about out-of-scope entities are not.
-    assert!(!clamped.admits(&vault.store, &rtxn, &diary_fact, ENTITY_TYPE_CLAIM, None)?);
+    let id = test_id(0x40);
+    put_turn(&vault, &id);
+    let txn = vault.store.env.read_txn()?;
+    let position = record_scope_position(&vault.store, &txn, &id, ENTITY_TYPE_TURN, None)?;
+    assert!(!ScopeCeiling::public().admits(&position));
+    assert!(!ScopeCeiling::bottom().admits(&position));
+    assert!(!test_support::projects(vec![test_id(0x41)]).admits(&position));
+    assert_eq!(position.sensitivity, 2);
     Ok(())
 }
-
-// ─── Notice, assembly, receipt stamp (design §10) ───────────────────────────
 
 #[test]
 fn presence_discretion_notice_matches_pinned_template() {
@@ -773,8 +649,18 @@ fn presence_discretion_notice_matches_pinned_template() {
     let ctx = DisclosureContext::resolve(&vault, set).expect("resolve supervised context");
     assert_eq!(ctx.mode(), DisclosureMode::Supervised);
     assert!(ctx.assembly(0).notice.is_some());
-    let rtxn = vault.store.env.read_txn().expect("read transaction");
     let id = test_id(0x15);
+    let public = claim_with_scope("profile.hobby", Some(sensitivity_scope("public")));
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_claim_body(&public).expect("body"),
+        )
+        .expect("stored public claim");
+    let rtxn = vault.store.env.read_txn().expect("read transaction");
     let protected = claim_with_scope("affect.trigger", Some(sensitivity_scope("public")));
     assert!(
         !ctx.admits(
@@ -901,7 +787,7 @@ fn clear_tier_a_leaves_a_foreign_claim_squatting_the_mirror_id_untouched() -> Re
     );
     vault.put_claim(&claim_id, &squatter, TimeRange { start: 1, end: 1 }, 1)?;
 
-    vault.clear_disclosure_tier_a(&marked, 200)?;
+    test_support::clear_tier(&vault, &marked, 200)?;
 
     let stored = vault.get_claim(&claim_id)?.expect("squatter survives");
     assert_eq!(stored, squatter, "foreign claim is left exactly as written");
@@ -931,8 +817,8 @@ fn corrupt_scope_row_fails_closed_to_absence_clamp_not_error() -> Result<()> {
         .text(&party, &[("body", "party corrupt needle")])
         .commit()?;
     // A valid scope allowlists the party...
-    let scope = DisclosureScope::task_scoped("party", vec![party], 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let scope = test_support::projects(vec![party]);
+    test_support::authorize(&vault, &contact_id, &scope)?;
     // ...then the enforcement row is corrupted in place (adversarial or
     // bit-rotted vault_meta bytes).
     {
@@ -1037,5 +923,485 @@ fn receipt_stamp_escapes_delimiters_and_round_trips_the_exact_labels() -> Result
             ("unknown", control.to_owned()),
         ]
     );
+    Ok(())
+}
+
+fn put_positioned_claim(
+    vault: &Vault,
+    id: EntityId,
+    ceiling_axes: &ScopeCeiling,
+    evidence: Option<Value>,
+    invariant: bool,
+) -> Result<()> {
+    if vault.get_entity_type(&test_id(0x77))?.is_none() {
+        put_turn(vault, &test_id(0x77));
+    }
+    let mut body = claim_with_scope(
+        "profile.scope_test",
+        Some(Value::Map(vec![
+            (
+                Value::from(RECORD_SCOPE_POSITION_KEY),
+                scope_ceiling_body_value(ceiling_axes),
+            ),
+            (
+                Value::from("sensitivity"),
+                Value::from(ceiling_axes.sensitivity),
+            ),
+        ])),
+    );
+    if invariant && let Some(Value::Map(ref mut entries)) = body.scope {
+        entries.push((
+            Value::from(CLAIM_SCOPE_INVARIANT_KEY),
+            Value::from("invariant"),
+        ));
+    }
+    body.evidence = evidence;
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_claim_body(&body)?,
+        )
+        .text(&id, &[("body", "scopeprobe")])
+        .commit()?;
+    Ok(())
+}
+
+#[test]
+fn assembled_scope_union_keeps_public_floor_separate_from_private_axes() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let a = test_id(0x31);
+    let b = test_id(0x32);
+    seed_contact(&vault, a, "a");
+    seed_contact(&vault, b, "b");
+    let allowed = ScopeCeiling {
+        worlds: ScopeIdAxis::Some(vec![EntityId::scope_base_world()]),
+        facets: ScopeIdAxis::Some(vec![test_id(0x60)]),
+        kinds: ScopeKindAxis::Some(vec![ENTITY_TYPE_CLAIM]),
+        projects: ScopeIdAxis::Some(vec![test_id(0x61)]),
+        sensitivity: 1,
+    };
+    test_support::authorize(&vault, &a, &allowed)?;
+    let private_ok = test_id(0x40);
+    put_positioned_claim(&vault, private_ok, &allowed, None, false)?;
+    let outside = ScopeCeiling {
+        worlds: ScopeIdAxis::Some(vec![test_id(0x62)]),
+        facets: ScopeIdAxis::Some(vec![test_id(0x63)]),
+        projects: ScopeIdAxis::Some(vec![test_id(0x64)]),
+        ..allowed.clone()
+    };
+    let private_outside = test_id(0x41);
+    put_positioned_claim(&vault, private_outside, &outside, None, false)?;
+    let public_outside = test_id(0x44);
+    put_positioned_claim(
+        &vault,
+        public_outside,
+        &ScopeCeiling {
+            sensitivity: 0,
+            ..outside.clone()
+        },
+        None,
+        false,
+    )?;
+    let unstamped = test_id(0x43);
+    let body = claim_with_scope("profile.scope_test", None);
+    vault
+        .batch()
+        .put(
+            &unstamped,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_claim_body(&body)?,
+        )
+        .text(&unstamped, &[("body", "scopeprobe")])
+        .commit()?;
+    for owner_present in [false, true] {
+        let parties = vec![known(a, "a")];
+        let roster = if owner_present {
+            InterlocutorSet::with_session_owner(parties)
+        } else {
+            InterlocutorSet::without_owner(parties)
+        };
+        let pack = vault
+            .context_pack()
+            .search_text("scopeprobe", 20)
+            .disclosure_context(DisclosureContext::resolve(&vault, roster)?)
+            .run()?;
+        let ids: Vec<_> = pack.results.iter().map(|row| row.id).collect();
+        assert!(ids.contains(&private_ok));
+        assert!(ids.contains(&public_outside));
+        assert!(!ids.contains(&private_outside));
+        assert!(!ids.contains(&unstamped));
+    }
+    test_support::authorize(&vault, &b, &outside)?;
+    for parties in [
+        vec![known(a, "a"), known(b, "b")],
+        vec![known(a, "a"), Interlocutor::unknown("unknown", false)],
+        vec![known(test_id(0x33), "missing")],
+    ] {
+        let ctx = DisclosureContext::resolve(&vault, InterlocutorSet::without_owner(parties))?;
+        let pack = vault
+            .context_pack()
+            .search_text("scopeprobe", 20)
+            .disclosure_context(ctx)
+            .run()?;
+        assert_eq!(
+            pack.results.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![public_outside]
+        );
+    }
+    let owner = vault
+        .context_pack()
+        .search_text("scopeprobe", 20)
+        .disclosure_context(DisclosureContext::resolve(
+            &vault,
+            InterlocutorSet::owner_alone(),
+        )?)
+        .run()?;
+    for id in [private_ok, private_outside, public_outside, unstamped] {
+        assert!(owner.results.iter().any(|row| row.id == id));
+    }
+    Ok(())
+}
+
+#[test]
+fn private_source_and_missing_links_cannot_become_invariant() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let source = test_id(0x50);
+    put_turn(&vault, &source);
+    let claim = test_id(0x51);
+    let public = ScopeCeiling::public();
+    let evidence = Value::Map(vec![(
+        Value::from("refs"),
+        Value::Array(vec![Value::Binary(source.as_bytes().to_vec())]),
+    )]);
+    put_positioned_claim(&vault, claim, &public, Some(evidence), true)?;
+    let no_source = test_id(0x52);
+    put_positioned_claim(&vault, no_source, &public, None, true)?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(!claim_is_invariant(
+        &vault.store,
+        &txn,
+        &claim,
+        ENTITY_TYPE_CLAIM,
+        None
+    )?);
+    assert!(!claim_is_invariant(
+        &vault.store,
+        &txn,
+        &no_source,
+        ENTITY_TYPE_CLAIM,
+        None
+    )?);
+    assert!(!scope_admits_record(
+        &vault.store,
+        &txn,
+        &ScopeCeiling::bottom(),
+        &claim,
+        ENTITY_TYPE_CLAIM,
+        None
+    )?);
+    drop(txn);
+    let ctx = DisclosureContext::resolve(
+        &vault,
+        InterlocutorSet::without_owner(vec![Interlocutor::unknown("guest", false)]),
+    )?;
+    let pack = vault
+        .context_pack()
+        .search_text("scopeprobe", 20)
+        .disclosure_context(ctx)
+        .run()?;
+    assert!(!pack.results.iter().any(|row| row.id == claim));
+    // An explicit public source is positive evidence, not absence.
+    let public_source = test_id(0x53);
+    let public_claim = test_id(0x54);
+    vault.put_entity(
+        &public_source,
+        ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &rmp_serde::to_vec_named(
+            &serde_json::json!({"txt":"public source","sensitivity":"public"}),
+        )
+        .unwrap(),
+    )?;
+    let public_evidence = Value::Map(vec![(
+        Value::from("refs"),
+        Value::Array(vec![Value::Binary(public_source.as_bytes().to_vec())]),
+    )]);
+    put_positioned_claim(&vault, public_claim, &public, Some(public_evidence), true)?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(claim_is_invariant(
+        &vault.store,
+        &txn,
+        &public_claim,
+        ENTITY_TYPE_CLAIM,
+        None
+    )?);
+    Ok(())
+}
+
+#[test]
+fn roster_widening_aborts_inflight_generation_and_redacts_transcript_turns() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let private = test_id(0x50);
+    put_turn(&vault, &private);
+    let public = test_id(0x51);
+    vault.put_entity(
+        &public,
+        ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &rmp_serde::to_vec_named(&serde_json::json!({"txt":"public turn","sensitivity":"public"}))
+            .unwrap(),
+    )?;
+    let session = DisclosureSession::new(&vault, InterlocutorSet::owner_alone())?;
+    let old = session.begin_generation()?;
+    assert_eq!(
+        old.transcript_records(&vault, &[private, public])?,
+        vec![private, public]
+    );
+    session.update_roster(
+        &vault,
+        InterlocutorSet::with_session_owner(vec![Interlocutor::unknown("arrival", false)]),
+    )?;
+    let mut released = false;
+    assert!(old.publish(&vault, || released = true).is_err());
+    assert!(!released);
+    assert!(old.transcript_records(&vault, &[private, public]).is_err());
+    assert!(
+        vault
+            .context_pack()
+            .search_text("missing", 10)
+            .disclosure_context(old.context().clone())
+            .run()
+            .is_err()
+    );
+    let current = session.begin_generation()?;
+    assert_eq!(
+        current.transcript_records(&vault, &[private, public])?,
+        vec![public]
+    );
+    current.publish(&vault, || released = true)?;
+    assert!(released);
+    Ok(())
+}
+
+#[test]
+fn public_restamp_requires_exact_owner_intent_not_a_raw_rewrite() -> Result<()> {
+    use ed25519_dalek::Signer;
+    use sha2::{Digest, Sha256};
+    let (_tmp, vault) = temp_vault();
+    let turn = test_id(0x55);
+    put_turn(&vault, &turn);
+    let body =
+        rmp_serde::to_vec_named(&serde_json::json!({"txt":"changed turn","sensitivity":"public"}))
+            .unwrap();
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &body,
+    )?;
+    let session = DisclosureSession::new(
+        &vault,
+        InterlocutorSet::without_owner(vec![Interlocutor::unknown("guest", false)]),
+    )?;
+    assert!(
+        session
+            .begin_generation()?
+            .transcript_records(&vault, &[turn])?
+            .is_empty()
+    );
+    let position = ScopePosition {
+        worlds: ScopeIdAxis::All,
+        facets: ScopeIdAxis::All,
+        projects: ScopeIdAxis::All,
+        kinds: ScopeKindAxis::Some(vec![ENTITY_TYPE_TURN]),
+        sensitivity: 0,
+    };
+    let mut authorization = test_support::authorization(&vault, &turn, &ScopeCeiling::public())?;
+    assert!(
+        vault
+            .restamp_disclosure_position(&turn, &position, &authorization)
+            .is_err()
+    );
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]);
+    authorization.signature.signature = signing
+        .sign(&authorization.restamp_transcript(&turn, &position, Sha256::digest(&body).into())?)
+        .to_bytes()
+        .to_vec();
+    vault.restamp_disclosure_position(&turn, &position, &authorization)?;
+    assert_eq!(
+        session
+            .begin_generation()?
+            .transcript_records(&vault, &[turn])?,
+        vec![turn]
+    );
+    assert!(
+        vault
+            .restamp_disclosure_position(&turn, &position, &authorization)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn unconfirmed_departure_never_widens_the_next_generation() -> Result<()> {
+    use ed25519_dalek::Signer;
+    let (_tmp, vault) = temp_vault();
+    let private = test_id(0x56);
+    put_turn(&vault, &private);
+    let session = DisclosureSession::new(
+        &vault,
+        InterlocutorSet::with_session_owner(vec![Interlocutor::unknown("guest", false)]),
+    )?;
+    session.update_roster(&vault, InterlocutorSet::owner_alone())?;
+    assert!(
+        session
+            .begin_generation()?
+            .transcript_records(&vault, &[private])?
+            .is_empty()
+    );
+    let roster = InterlocutorSet::owner_alone();
+    let mut authorization = test_support::authorization(&vault, &private, &ScopeCeiling::top())?;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]);
+    authorization.signature.signature = signing
+        .sign(&session.roster_change_transcript(&roster, &authorization)?)
+        .to_bytes()
+        .to_vec();
+    session.confirm_roster(&vault, roster, &authorization)?;
+    assert_eq!(
+        session
+            .begin_generation()?
+            .transcript_records(&vault, &[private])?,
+        vec![private]
+    );
+    Ok(())
+}
+
+#[test]
+fn generation_publish_rechecks_clearance_revocation_without_host_refresh() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let contact = test_id(0x31);
+    seed_contact(&vault, contact, "a");
+    test_support::authorize(&vault, &contact, &ScopeCeiling::top())?;
+    let private = test_id(0x57);
+    put_turn(&vault, &private);
+    let session = DisclosureSession::new(
+        &vault,
+        InterlocutorSet::without_owner(vec![known(contact, "a")]),
+    )?;
+    let generation = session.begin_generation()?;
+    assert_eq!(
+        generation.transcript_records(&vault, &[private])?,
+        vec![private]
+    );
+    vault.clear_counterparty_disclosure_scope(&contact, 100)?;
+    let mut released = false;
+    assert!(generation.publish(&vault, || released = true).is_err());
+    assert!(!released);
+    Ok(())
+}
+
+#[test]
+fn transcript_messages_inherit_their_live_turn_position() -> Result<()> {
+    use ed25519_dalek::Signer;
+    use sha2::{Digest, Sha256};
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x65);
+    let room = test_id(0x66);
+    let turn = test_id(0x67);
+    let message = test_id(0x68);
+    for (id, kind) in [(actor, crate::registry::ENTITY_TYPE_PERSON)] {
+        vault.put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, &[0x80])?;
+    }
+    vault
+        .memory(actor, crate::EdgeActorClass::Human)
+        .witness(&crate::WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            occurred_at: 1,
+            messages: vec![crate::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "a witnessed message".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+        })
+        .expect("witnessed transcript");
+    let session = DisclosureSession::new(
+        &vault,
+        InterlocutorSet::without_owner(vec![Interlocutor::unknown("guest", false)]),
+    )?;
+    assert!(
+        session
+            .begin_generation()?
+            .transcript_records(&vault, &[turn, message])?
+            .is_empty()
+    );
+    let position = ScopePosition {
+        worlds: ScopeIdAxis::All,
+        facets: ScopeIdAxis::All,
+        projects: ScopeIdAxis::All,
+        kinds: ScopeKindAxis::Some(vec![ENTITY_TYPE_TURN]),
+        sensitivity: 0,
+    };
+    let raw = vault.get_raw(&turn)?.expect("turn");
+    let mut authorization = test_support::authorization(&vault, &turn, &ScopeCeiling::public())?;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]);
+    authorization.signature.signature = signing
+        .sign(&authorization.restamp_transcript(
+            &turn,
+            &position,
+            Sha256::digest(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]).into(),
+        )?)
+        .to_bytes()
+        .to_vec();
+    vault.restamp_disclosure_position(&turn, &position, &authorization)?;
+    assert_eq!(
+        session
+            .begin_generation()?
+            .transcript_records(&vault, &[turn, message])?,
+        vec![turn, message]
+    );
+    Ok(())
+}
+
+#[test]
+fn base_world_scope_codec_roundtrips_without_making_reserved_entity_ids_public() -> Result<()> {
+    let mut ceiling = ScopeCeiling::top();
+    ceiling.worlds = ScopeIdAxis::Some(vec![EntityId::scope_base_world()]);
+    let encoded = encode_scope_ceiling_body(&ceiling)?;
+    assert_eq!(decode_scope_ceiling_body(&encoded)?, ceiling);
+    assert!(EntityId::from_hex("00000000000000000000000000000000").is_err());
+    ceiling.facets = ceiling.worlds.clone();
+    assert!(encode_scope_ceiling_body(&ceiling).is_err());
+    let mut forged =
+        rmpv::decode::read_value(&mut std::io::Cursor::new(&encoded)).expect("scope value");
+    if let rmpv::Value::Map(entries) = &mut forged {
+        let base = entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("worlds"))
+            .unwrap()
+            .1
+            .clone();
+        entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("projects"))
+            .unwrap()
+            .1 = base;
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &forged).expect("encode forged axis");
+    assert!(decode_scope_ceiling_body(&bytes).is_err());
     Ok(())
 }

@@ -173,9 +173,17 @@ fn delegated_bodies_fail_closed_on_version_shape_key_and_scope_drift() {
     unknown_shape[3].1 = Value::from("delegated_mailbox");
     reject(unknown_shape, "unknown shape string must fail closed");
 
-    // A write scope has no variant to decode into. Consent screens that
-    // over-grant cannot become a row that claims send.
-    for scope in ["mail.send", "mail.delete", "mail.modify", ""] {
+    // Sending has its own narrow class; broad mutation scopes still fail closed.
+    let mut send_scope =
+        delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
+    send_scope[GRANT_SCOPES_IDX].1 = Value::Array(vec![Value::from("mail.send")]);
+    let decoded =
+        decode_channel_identity_body(&encode_entries(send_scope)).expect("MailSend codec");
+    assert_eq!(
+        decoded.grant.unwrap().scopes,
+        vec![DelegatedGrantScope::MailSend]
+    );
+    for scope in ["mail.delete", "mail.modify", ""] {
         let mut write_scope =
             delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
         write_scope[GRANT_SCOPES_IDX].1 = Value::Array(vec![Value::from(scope)]);

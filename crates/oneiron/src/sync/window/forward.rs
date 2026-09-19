@@ -223,5 +223,6 @@ pub fn forward_rematerialize(
         );
     }
 
+    vault.rebuild_reaction_inbox()?;
     Ok(ledger.count)
 }

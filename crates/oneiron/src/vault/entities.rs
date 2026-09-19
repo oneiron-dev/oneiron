@@ -167,6 +167,8 @@ impl Vault {
     /// `Vault::get_secret_value_in_txn`. The value-less projection is
     /// [`Vault::get_secret_metadata`].
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        #[cfg(test)]
+        self.test_hooks().note_reaction_read("get");
         let rtxn = self.store.env.read_txn()?;
         let value = self.store.entities.get(&rtxn, id.as_bytes())?;
         let Some(bytes) = value else {
@@ -292,6 +294,8 @@ impl Vault {
     /// value. SECRET_CUSTODY (byte 77) is denied for the same reason `get()`
     /// denies it: the body carries the secret value in the clear.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        #[cfg(test)]
+        self.test_hooks().note_reaction_read("get_raw");
         let Some(bytes) = self.get_raw_unsealed(id)? else {
             return Ok(None);
         };
