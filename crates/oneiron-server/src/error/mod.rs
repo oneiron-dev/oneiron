@@ -564,7 +564,7 @@ impl IntoResponse for ApiError {
 pub struct ApiErrorEnvelope {
     error: ApiErrorEnvelopeBody,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<crate::api::core::read_receipt::ReadReceiptSchema>)]
+    #[schema(value_type = Option<crate::api::read_receipt::ReadReceiptSchema>)]
     narrowing: Option<oneiron::claim::ScopedReadReceipt>,
 }
 

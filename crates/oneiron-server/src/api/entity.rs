@@ -115,39 +115,98 @@ pub(crate) async fn get_entity(
     })?;
 
     let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
-    let blob = scoped_read
-        .get(&id)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "get entity failed");
-        })
+    let read = scoped_read
+        .get_entity_parts_with_receipt(&id, None)
+        .inspect_err(|error| tracing::error!(%error,"get entity failed"))
         .map_err(|_| ApiError::internal_server_error("get entity failed"))?;
-
-    let Some(data) = blob else {
-        return Err(ApiError::not_found("entity", Some(&id_hex)));
+    let response = match read.value {
+        None => ApiError::not_found("entity", Some(&id_hex)).into_response(),
+        Some((_, _, data)) if view == View::Standard => {
+            (StatusCode::OK, redacted_payload(data)?).into_response()
+        }
+        Some((entity_type, updated_at, data)) => (
+            StatusCode::OK,
+            Json(projection::project_entity_parts(
+                &id,
+                entity_type,
+                updated_at,
+                &data,
+                view,
+            )),
+        )
+            .into_response(),
     };
+    attach_read_receipt(response, &read.receipt)
+}
 
-    if view == View::Standard {
-        return Ok((StatusCode::OK, data).into_response());
+/// Preserve the legacy raw transport, but never return surviving credentials.
+fn redacted_payload(bytes: Vec<u8>) -> Result<Vec<u8>, ApiError> {
+    if let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) {
+        if !oneiron::batch::export::redact_credentials(&mut value) {
+            return Ok(bytes);
+        }
+        return serde_json::to_vec(&value)
+            .map_err(|_| ApiError::internal_server_error("redaction serialization failed"));
     }
+    let mut cursor = std::io::Cursor::new(&bytes);
+    if let Ok(value) = rmpv::decode::read_value(&mut cursor)
+        && cursor.position() == bytes.len() as u64
+    {
+        let mut value = oneiron::companion_value_to_json(&value);
+        if !oneiron::batch::export::redact_credentials(&mut value) {
+            return Ok(bytes);
+        }
+        return rmp_serde::to_vec_named(&value)
+            .map_err(|_| ApiError::internal_server_error("redaction serialization failed"));
+    }
+    let mut text = Value::String(String::from_utf8_lossy(&bytes).into_owned());
+    if oneiron::batch::export::redact_credentials(&mut text) {
+        Ok(b"[redacted]".to_vec())
+    } else {
+        Ok(bytes)
+    }
+}
 
-    let entity_type = server
-        .vault
-        .get_entity_type(&id)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "get entity type failed");
-        })
-        .map_err(|_| ApiError::internal_server_error("get entity type failed"))?
-        .ok_or_else(|| ApiError::not_found("entity", Some(&id_hex)))?;
-    let updated_at = server
-        .vault
-        .get_learned_at(&id)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "get entity learned_at failed");
-        })
-        .map_err(|_| ApiError::internal_server_error("get entity learned_at failed"))?;
-    let response = projection::project_entity_parts(&id, entity_type, updated_at, &data, view);
+fn attach_read_receipt(
+    mut response: Response,
+    receipt: &oneiron::claim::ScopedReadReceipt,
+) -> Result<Response, ApiError> {
+    let value = serde_json::to_string(receipt)
+        .map_err(|_| ApiError::internal_server_error("read receipt serialization failed"))?;
+    let value = axum::http::HeaderValue::from_str(&value)
+        .map_err(|_| ApiError::internal_server_error("read receipt header failed"))?;
+    response
+        .headers_mut()
+        .insert("x-oneiron-read-receipt", value);
+    Ok(response)
+}
 
-    Ok((StatusCode::OK, Json(response)).into_response())
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    #[test]
+    fn raw_entity_transport_filters_credentials_and_preserves_safe_bytes() {
+        assert_eq!(
+            redacted_payload(b"safe opaque text".to_vec()).unwrap(),
+            b"safe opaque text"
+        );
+        for json in [true, false] {
+            let value = serde_json::json!({"safe":"kept","nested":{"password":"legacy-value"}});
+            let encoded = if json {
+                serde_json::to_vec(&value).unwrap()
+            } else {
+                rmp_serde::to_vec_named(&value).unwrap()
+            };
+            let bytes = redacted_payload(encoded).unwrap();
+            let got: Value = if json {
+                serde_json::from_slice(&bytes).unwrap()
+            } else {
+                rmp_serde::from_slice(&bytes).unwrap()
+            };
+            assert_eq!(got["safe"], "kept");
+            assert_eq!(got["nested"]["password"], "[redacted]");
+        }
+    }
 }
 
 /// Get outbound edges for an entity.

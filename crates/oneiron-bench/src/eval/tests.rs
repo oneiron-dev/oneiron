@@ -1028,7 +1028,7 @@ fn scoped_read_receipt_drives_a_non_widening_replan() {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = open_vault(dir.path());
     let reader = vault.scoped_read(oneiron::claim::ScopedReadActorKey::new("eval-reader").unwrap());
-    let request = oneiron::gate::RetrievalFilter {
+    let request = oneiron::RetrievalFilter {
         include_stale: Some(true),
         ..Default::default()
     };
