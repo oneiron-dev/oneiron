@@ -206,3 +206,20 @@ Complete PR939 comments/reviews/inline threads are retained in the 17:15:06 UTC 
 - `4053957186` — VALID, repaired: both activity decode doors validate review/proposal ordering before any subtraction or mutation. Added a pure decoder regression and a stored-corruption test for aggregation and review. All four repairs await current-candidate validation; vault-dependent regressions still need host capacity recovery.
 
 The narrow `sync,test-hooks` test binaries compile at `949f006b`. Python collection initially failed because the validation runner's next source sync removed the editable extension; installing and checking in the same snapshot fixes that setup failure. All 146 Python tests collect; the 10 no-vault export/error tests pass. Vault-dependent tests and full gates remain pending POSIX semaphore recovery. These are not waived.
+
+### Guarded portable validation and Codex review at `6520275f`
+
+Mac compilation and three pure regressions passed at `6520275f`. The owner authorized only portable Rust runtime tests through the normal guarded fallback with MacBook excluded; host slots, reserves, and thread settings were not overridden. The first Arch run (`af79b6a4-14bd-4dfc-bca1-7a1c38959457`) ran 66 focused tests: **65 passed, one telemetry fixture failed**. Metadata publication/pins, healer corruption refusal, the seven previous Codex regressions, and the retained benchmark/open-gate assertions passed. The telemetry fixture must expect the pipeline's typed `InvalidConfig` refusal, then still prove that a later valid row persists. Broader stages did not run after this failure.
+
+Complete latest PR939 receipts include Codex review `5256826790` at `6520275f`, completed 17:51 UTC; raw findings are retained in `codex-6520275f-findings.json`:
+- `4054092606` — VALID: grant touches, connector-key rewrites, and sweep finalization now capture revisions before replacing bytes. Erasure of identity-event author stamps instead removes retained history, so a prior pin cannot recover erased authorship. Existing public-door fixtures now pin before and after these operations. Revision capture remains lazy for opaque, unpinned rows.
+- `4054092614` — VALID: score encode/decode rejects negative mass, including subnormal values; the decoder used by legacy and state rows shares this check. Zero and positive mass remain valid.
+- `4054092620` — VALID: idempotent intake verifies that the live deterministic ASSET exists, has the right type, and still contains the exact submitted bytes. Missing/replaced evidence returns typed `CorruptedIndex`, without resurrecting erased bytes. A regression covers deletion and replacement.
+- `4054092623` — VALID: the shared decoded frame dispatch resumes SLIM after the sync revocation gate and before RPC/subscription/sync work. Keepalive ping/pong and invalid frames do not resume. A real established-socket test sheds during a journaled outbound call, keeps SLIM through a ping/pong, then resumes on an app request.
+- `4054092629` — VALID repository scheduling rule: the fleet workflow now selects generic OS/architecture labels. The performance receipt still requires the exact approved measured host/build fingerprint; a different machine requires a new approved floor and does not silently inherit another machine's performance claim. No runner labels or host settings were changed.
+
+All earlier findings remain in this ledger. No full runtime or full-gate pass is claimed.
+
+The five latest repairs and corrected telemetry expectation await candidate-bound validation. No newly repaired finding is marked proved before its runtime result.
+
+Pre-runtime checks for these repairs: formatting passed; code-map regeneration reported no changed artifacts; ratchet stayed `2 / 98 / 91 / 33`; root surface stayed 701; all seven fleet-receipt fixture tests passed. These fixtures validate rejection/comparison logic, not new measured benchmark throughput.
