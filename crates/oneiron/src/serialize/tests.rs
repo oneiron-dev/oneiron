@@ -2661,9 +2661,19 @@ fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation(
             "txt".into(),
             serde_json::json!("ghp_0123456789abcdefghijklmnopqrstuvwxyz"),
         );
+        let fields = pack.results[1].fields.as_mut().unwrap();
+        for key in ["apiKey", "accessToken", "refreshToken", "privateKey", "ssh_key", "API-KEY"] {
+            fields.insert(key.into(), serde_json::json!("must-not-export"));
+        }
+        fields.insert("nested".into(), serde_json::json!([
+            {"private_key": "must-not-export"},
+            {"note": "-----BEGIN RSA PRIVATE KEY-----\nbody\n-----END RSA PRIVATE KEY-----"}
+        ]));
         let wire = serialize_pack(&pack, &config(format));
         let text = String::from_utf8(wire).unwrap();
         assert!(!text.contains("ghp_"));
+        assert!(!text.contains("must-not-export"));
+        assert!(!text.contains("BEGIN RSA PRIVATE KEY"));
         let value: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(value["secrets_nulled"], serde_json::json!(true));
         assert!(value[field].as_array().is_some_and(|v| !v.is_empty()));

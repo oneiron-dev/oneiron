@@ -34,14 +34,16 @@ pub(super) fn serialize_provider(format: PackFormat, prepared: PreparedPack) -> 
     serde_json::to_vec(&body).expect("provider value is serializable")
 }
 fn scrub(key: &str, value: &mut Value) {
-    let lower = key.to_ascii_lowercase();
+    let lower: String = key.chars().filter(char::is_ascii_alphanumeric).flat_map(char::to_lowercase).collect();
     if [
         "secret",
         "password",
         "credential",
-        "api_key",
-        "access_token",
-        "refresh_token",
+        "apikey",
+        "accesstoken",
+        "refreshtoken",
+        "privatekey",
+        "sshkey",
         "authorization",
     ]
     .iter()
@@ -52,7 +54,7 @@ fn scrub(key: &str, value: &mut Value) {
     }
     match value {
         Value::String(text)
-            if crate::batch::secret_scan::scan_file_content("provider-export", text.as_bytes())
+            if contains_private_key(text) || crate::batch::secret_scan::scan_file_content("provider-export", text.as_bytes())
                 .is_some() =>
         {
             *value = Value::Null;
@@ -61,6 +63,13 @@ fn scrub(key: &str, value: &mut Value) {
         Value::Object(values) => values.iter_mut().for_each(|(k, v)| scrub(k, v)),
         _ => {}
     }
+}
+
+fn contains_private_key(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("-----BEGIN ") && line.ends_with("PRIVATE KEY-----")
+    })
 }
 
 pub(super) fn sanitize_pack(

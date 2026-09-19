@@ -45,12 +45,16 @@ impl IngestSource for ProviderSource {
         if matches!(self.0, ProviderWire::Anthropic)
             && let Some(system) = root.get("system")
         {
+            let text = blocks_text(system).ok_or_else(|| self.invalid("system"))?;
+            if text.trim().is_empty() {
+                return Err(IngestError::EmptyText { source_id: self.id(), line: 0 });
+            }
             records.push(NormalizedIngestRecord {
                 source_record_id: "system".into(),
                 thread_id: None,
                 speaker: Some("system".into()),
                 occurred_at: None,
-                text: blocks_text(system).ok_or_else(|| self.invalid("system"))?,
+                text,
             });
         }
         for (index, message) in messages.iter().enumerate() {
@@ -69,11 +73,10 @@ impl IngestSource for ProviderSource {
             } else {
                 "content"
             };
-            let mut text = message
-                .get(body)
-                .filter(|v| !v.is_null())
-                .and_then(blocks_text)
-                .unwrap_or_default();
+            let mut text = match message.get(body).filter(|v| !v.is_null()) {
+                Some(value) => blocks_text(value).ok_or_else(|| self.invalid(body))?,
+                None => String::new(),
+            };
             for key in ["reasoning_content", "tool_calls"] {
                 if let Some(value) = message.get(key) {
                     if !text.is_empty() {
@@ -118,13 +121,32 @@ fn blocks_text(value: &Value) -> Option<String> {
         if !block.is_object() {
             return None;
         }
-        text.push(
-            block
-                .get("text")
-                .or_else(|| block.get("thinking"))
-                .and_then(Value::as_str)
-                .map_or_else(|| block.to_string(), str::to_owned),
-        );
+        let kind = block.get("type").and_then(Value::as_str);
+        let value = if kind == Some("text") || block.get("text").is_some() {
+            block.get("text")?.as_str()?.to_owned()
+        } else if kind == Some("thinking") || block.get("thinking").is_some() {
+            block.get("thinking")?.as_str()?.to_owned()
+        } else if kind == Some("tool_use") {
+            block.get("id")?.as_str()?;
+            block.get("name")?.as_str()?;
+            block.get("input")?.as_object()?;
+            block.to_string()
+        } else if kind == Some("tool_result") {
+            block.get("tool_use_id")?.as_str()?;
+            blocks_text(block.get("content")?)?;
+            block.to_string()
+        } else if let Some(call) = block.get("functionCall") {
+            call.get("name")?.as_str()?;
+            call.get("args")?.as_object()?;
+            block.to_string()
+        } else if let Some(result) = block.get("functionResponse") {
+            result.get("name")?.as_str()?;
+            result.get("response")?.as_object()?;
+            block.to_string()
+        } else {
+            return None;
+        };
+        text.push(value);
     }
     Some(text.join("\n"))
 }

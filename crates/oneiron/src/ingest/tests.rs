@@ -823,3 +823,19 @@ fn provider_sources_normalize_same_conversation_at_imported_trust() {
     }
     assert_eq!(INGEST_SOURCE_REGISTRY.entries().len(), 8);
 }
+
+#[test]
+fn provider_ingest_rejects_malformed_blocks_and_empty_system() {
+    for source in ["openai-compat", "anthropic-messages", "gemini"] {
+        for block in [serde_json::json!({"type":"text"}), serde_json::json!({"text":42}), serde_json::json!({"unknown":"value"})] {
+            let doc = if source == "gemini" {
+                serde_json::json!({"contents":[{"role":"user","parts":[block]}]})
+            } else { serde_json::json!({"messages":[{"role":"user","content":[block]}]}) };
+            assert!(INGEST_SOURCE_REGISTRY.normalize(source, &doc.to_string()).is_err());
+        }
+    }
+    for system in [serde_json::json!("  "), serde_json::json!([{ "type":"text", "text":"\n" }])] {
+        let doc = serde_json::json!({"system":system,"messages":[]});
+        assert!(matches!(INGEST_SOURCE_REGISTRY.normalize("anthropic-messages", &doc.to_string()), Err(IngestError::EmptyText { .. })));
+    }
+}
