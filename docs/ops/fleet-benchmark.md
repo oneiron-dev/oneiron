@@ -152,8 +152,12 @@ host/build settings changes and profile changes cannot pass. Revision and binary
 digest may change; workload, host, and optimization output must not.
 
 A new machine, kernel, FD limit, storage label, build setting or workload needs
-new measured baseline approval. Nothing in this command edits a CI workflow or
-a shared host's settings. Wire it into the runner that owns the floor artifact.
+new measured baseline approval. Nothing in this command edits a CI workflow or a shared host's settings.
+The dispatch-only `.github/workflows/fleet-regression.yml` runs it on the selected
+approved host, honours `CI_PAUSED`, and retains candidate/comparison artifacts.
+It uses the committed `docs/ops/evidence/W7-C10/fleet-<host>-floor.json`, never a
+floor regenerated from the candidate. The job prepares only the scratch path
+explicitly approved in that floor; workload/host mismatches fail closed.
 
 ## Residual miss scaling (separate receipt)
 
