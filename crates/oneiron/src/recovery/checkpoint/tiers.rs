@@ -59,6 +59,11 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"counterparty_contact.index.v1:",
                 b"counterparty.contact.party_channel.v1:",
                 b"connector_key/connector/v1\0",
+                b"gate_pending:run_index:v1:",
+                b"gate_pending:group_index:v1:",
+                b"gate_pending:hash_index:v1:",
+                b"gate_pending:sequence_index:v1:",
+                b"gate_pending:critical_confirm_by_id:v1:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

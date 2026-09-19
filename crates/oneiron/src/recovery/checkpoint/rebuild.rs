@@ -163,6 +163,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
         }
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
+        vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
         // Runtime budget rows were excluded from the image, not refunded in the billing ledger.
         Ok((rows.len(), texts, embeddings))
     })

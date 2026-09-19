@@ -21350,7 +21350,7 @@
      "path": "src/store/pending_gate_consent/indexes.rs",
      "purpose": "Run/group/hash index sidecars, group-alias refresh, and the critical-confirm confirm-id sidecar",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {

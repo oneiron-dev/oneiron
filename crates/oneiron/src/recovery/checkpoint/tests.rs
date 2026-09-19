@@ -168,3 +168,105 @@ fn corrupt_checkpoint_and_existing_destination_are_refused_without_overwrite() {
     );
     assert!(!root.path().join("fresh").exists());
 }
+
+#[test]
+fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let mut expected = Vec::new();
+    for _ in 0..2 {
+        let record = crate::store::PendingGateConsentRecord {
+            version: crate::store::PENDING_GATE_CONSENT_VERSION,
+            claim_id: *EntityId::now().as_bytes(),
+            decision_id: crate::store::GateDecisionId::now(),
+            created_at: 100,
+            diff_handle: vec![1],
+            read_frontier_hash: [2; 32],
+            reason_codes: vec!["gate.pending.test".into()],
+            dreamer_run_id: Some("pending-run".into()),
+        };
+        source
+            .with_write_txn(|txn| source.store.put_pending_gate_consent_in_txn(txn, &record))
+            .unwrap();
+        expected.push(record);
+    }
+    // Damage only rebuildable sidecars, including an orphan. The primary
+    // pending records, original index-state witness and sequence are intact.
+    source
+        .with_write_txn(|txn| {
+            for prefix in [
+                b"gate_pending:run_index:v1:".as_slice(),
+                b"gate_pending:group_index:v1:",
+                b"gate_pending:hash_index:v1:",
+                b"gate_pending:sequence_index:v1:",
+                b"gate_pending:critical_confirm_by_id:v1:",
+            ] {
+                let keys = source
+                    .store
+                    .vault_meta
+                    .prefix_iter(&*txn, prefix)?
+                    .map(|r| r.map(|(k, _)| k.to_vec()))
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                for key in keys {
+                    source.store.vault_meta.delete(txn, &key)?;
+                }
+                source
+                    .store
+                    .vault_meta
+                    .put(txn, &[prefix, b"orphan"].concat(), b"corrupt")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let image = root.path().join("checkpoint");
+    source.snapshot_checkpoint(&image, 110).unwrap();
+    let (restored, _) = Vault::restore_checkpoint(
+        &image,
+        &root.path().join("restored"),
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    )
+    .unwrap();
+    assert_eq!(
+        restored
+            .store
+            .pending_gate_consents_for_run("pending-run")
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        restored
+            .store
+            .pending_gate_consents_for_group_key("pending-run")
+            .unwrap(),
+        expected
+    );
+    let txn = restored.store.env.read_txn().unwrap();
+    let page = restored
+        .store
+        .pending_gate_consents_page_in_txn(&txn, None, None, 10)
+        .unwrap();
+    assert_eq!(
+        page.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(page.iter().map(|(s, _)| *s).collect::<Vec<_>>(), vec![1, 2]);
+    drop(txn);
+    // Rebuilt deletion witnesses still support normal lifecycle operations.
+    restored
+        .with_write_txn(|txn| {
+            restored.store.delete_pending_gate_consent_in_txn(
+                txn,
+                &EntityId::from_bytes(expected[0].claim_id).unwrap(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        restored
+            .store
+            .pending_gate_consents_for_run("pending-run")
+            .unwrap(),
+        expected[1..]
+    );
+}
