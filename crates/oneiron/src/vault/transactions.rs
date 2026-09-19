@@ -333,13 +333,8 @@ impl Vault {
     where
         E: From<Error>,
     {
-        for row in self
-            .store
-            .sync_state
-            .prefix_iter(txn, prefix)
-            .map_err(Error::from)?
-        {
-            let (key, value) = row.map_err(Error::from)?;
+        for row in self.store.sync_state.prefix_iter(txn, prefix)? {
+            let (key, value) = row?;
             visit(&key, &value)?;
         }
         Ok(())

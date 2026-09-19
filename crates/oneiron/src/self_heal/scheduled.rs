@@ -83,11 +83,11 @@ impl Vault {
             return Ok(None);
         }
         let txn = self.store.env.read_txn()?;
-        if !self
+        if self
             .store
             .sync_state
             .get(&txn, crate::identity::KEY_DEVICE_PK)?
-            .is_some_and(|pk| pk.as_ref() == run.public_key)
+            .is_none_or(|pk| pk.as_ref() != run.public_key)
         {
             return Ok(None);
         }

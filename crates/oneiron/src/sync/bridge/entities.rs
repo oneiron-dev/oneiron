@@ -390,13 +390,8 @@ pub(super) fn materialize_entity_blob_in_txn(
     }
 
     if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
-        return super::diagnostic_ingest::ingest_diagnostic_in_txn(
-            vault,
-            wtxn,
-            &id,
-            blob,
-            lease_vault_id,
-        );
+        // T1 observations and eligibility receipts are local to their account.
+        return Ok(false);
     }
 
     // ONE-1134 + ONE-1140: REDACTION_AUDIT replay door. Receipts

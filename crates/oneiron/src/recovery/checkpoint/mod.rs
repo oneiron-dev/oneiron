@@ -14,12 +14,14 @@ use std::{
     path::Path,
 };
 pub use tiers::{StorageTier, storage_tier};
+type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckpointImage {
     version: u16,
     created_at: u64,
-    databases: BTreeMap<String, Vec<(Vec<u8>, Vec<u8>)>>,
+    databases: BTreeMap<String, CanonicalRows>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RestoreReason {

@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use super::bridge::{self, Materializer, ObserverAState, OutboundSink};
-use super::diagnostic_ingest;
 use super::loro_support::{
     self, doc_from_snapshot, doc_version_vector, export_snapshot, import_doc,
 };

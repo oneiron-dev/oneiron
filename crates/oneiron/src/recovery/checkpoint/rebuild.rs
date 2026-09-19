@@ -78,7 +78,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                         txn,
                         id,
                         body,
-                    )?
+                    )?;
                 }
                 crate::registry::ENTITY_TYPE_CONNECTOR_KEY => {
                     crate::connector_key::rebuild_checkpoint_connector_index(
@@ -86,7 +86,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                         txn,
                         id,
                         body,
-                    )?
+                    )?;
                 }
                 crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
                     crate::outbound_grant::rebuild_checkpoint_grant_index(
@@ -94,7 +94,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                         txn,
                         id,
                         body,
-                    )?
+                    )?;
                 }
                 _ => {}
             }

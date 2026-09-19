@@ -149,10 +149,13 @@ pub struct PredicateDriftDetector {
     pub window_end: u64,
     pub actor: EntityId,
 }
-fn window_event(
-    id: &str,
-    kind: &str,
+struct WindowRule {
+    id: &'static str,
+    kind: &'static str,
     class: DiagnosticEventClass,
+}
+fn window_event(
+    rule: WindowRule,
     input: &DiagnosticWorkingSet<'_>,
     bounds: TripwireBounds,
     end: u64,
@@ -166,7 +169,7 @@ fn window_event(
         .observations
         .iter()
         .filter(|o| {
-            o.kind == kind
+            o.kind == rule.kind
                 && o.observed_at > end.saturating_sub(bounds.window_secs)
                 && o.observed_at <= end
         })
@@ -177,7 +180,13 @@ fn window_event(
     let Some(last) = observations.last() else {
         return vec![];
     };
-    let mut event = draft(id, class, DiagnosticSourceKind::Receipt, input, last);
+    let mut event = draft(
+        rule.id,
+        rule.class,
+        DiagnosticSourceKind::Receipt,
+        input,
+        last,
+    );
     event.actor_ref = actor;
     event.expected = Value::from(threshold);
     event.actual = Value::from(observations.len() as u64);
@@ -197,9 +206,11 @@ impl DeterministicDetector for ConsentStormDetector {
     }
     fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent> {
         window_event(
-            self.detector_id(),
-            "consent_pending",
-            DiagnosticEventClass::ConsentDenied,
+            WindowRule {
+                id: self.detector_id(),
+                kind: "consent_pending",
+                class: DiagnosticEventClass::ConsentDenied,
+            },
             input,
             self.bounds,
             self.window_end,
@@ -214,9 +225,11 @@ impl DeterministicDetector for PredicateDriftDetector {
     }
     fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent> {
         window_event(
-            self.detector_id(),
-            "predicate_drift",
-            DiagnosticEventClass::ConsolidationError,
+            WindowRule {
+                id: self.detector_id(),
+                kind: "predicate_drift",
+                class: DiagnosticEventClass::ConsolidationError,
+            },
             input,
             self.bounds,
             self.window_end,
@@ -245,7 +258,7 @@ impl DiagnosticObservation {
             || run.claims_suppressed > run.total_in_scope
             || !run.result_ids.is_empty()
             || run.total_in_scope <= run.claims_suppressed
-            || run.empty_reason.as_ref().is_none_or(|s| s.is_empty())
+            || run.empty_reason.as_ref().is_none_or(String::is_empty)
         {
             return None;
         }

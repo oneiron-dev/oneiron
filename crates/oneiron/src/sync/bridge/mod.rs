@@ -24,9 +24,7 @@ mod entities;
 mod observers;
 mod tombstones;
 
-// Anchor for the unchanged `super::diagnostic_ingest` body path in entities.rs:
 // it resolves through this import, so the moved body stays byte-identical.
-use super::diagnostic_ingest;
 
 #[cfg(test)]
 pub(in crate::sync) use self::companion_identity::INJECT_LOCAL_ENDPOINT_FAILURE;
