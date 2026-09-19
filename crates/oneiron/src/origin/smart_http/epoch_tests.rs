@@ -54,8 +54,9 @@ fn epoch_intent(
     stamp.operation_id()
 }
 
-fn empty_pack() -> Vec<u8> {
+fn empty_pack(root: &Path) -> Vec<u8> {
     let output = Command::new("git")
+        .current_dir(root)
         .args(["pack-objects", "--stdout"])
         .stdin(Stdio::null())
         .output()
@@ -64,14 +65,14 @@ fn empty_pack() -> Vec<u8> {
     output.stdout
 }
 
-fn push_existing_object(oid: &GitOid, name: &str) -> Vec<u8> {
+fn push_existing_object(root: &Path, oid: &GitOid, name: &str) -> Vec<u8> {
     let command = format!(
         "{} {} {name}\0report-status\n",
         "0".repeat(40),
         oid.as_str()
     );
     let mut bytes = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
-    bytes.extend(empty_pack());
+    bytes.extend(empty_pack(root));
     bytes
 }
 
@@ -93,7 +94,7 @@ fn epoch_receive_pack_host_is_not_the_pusher_and_new_authority_lands() {
     // Even a pusher whose actor id equals the configured host cannot provide
     // host authority through REMOTE_USER. Refusal precedes reading any bytes.
     let request = epoch_request(old_host);
-    let bytes = push_existing_object(&first, "refs/heads/rejected");
+    let bytes = push_existing_object(&root, &first, "refs/heads/rejected");
     let mut body = io::Cursor::new(bytes);
     let mut sink = CapturingSink::default();
     assert!(matches!(
@@ -133,7 +134,7 @@ fn epoch_receive_pack_host_is_not_the_pusher_and_new_authority_lands() {
     ));
     assert_eq!(body.position(), 0);
 
-    let bytes = push_existing_object(&first, "refs/heads/epoch-two");
+    let bytes = push_existing_object(&root, &first, "refs/heads/epoch-two");
     let mut body = io::Cursor::new(bytes);
     let report = serve_with_authority(
         &vault,
