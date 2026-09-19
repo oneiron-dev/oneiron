@@ -193,3 +193,65 @@ fn catalog_with(capabilities: impl IntoIterator<Item = LlmCapability>) -> LlmCat
         metadata: BTreeMap::new(),
     }
 }
+
+#[test]
+fn interleaved_reasoning_and_tools_reconstruct_executable_message() {
+    let mut stream = OpenAiCompatStreamAccumulator::new();
+    let mut events = stream.push_chunk(json!({"choices":[{"delta":{"reasoning_content":"plan", "content":"look", "tool_calls":[{"index":0,"id":"call-1","function":{"name":"double","arguments":"{\"n\":"}}]}}]})).unwrap();
+    events.extend(stream.push_chunk(json!({"choices":[{"delta":{"content":" up", "tool_calls":[{"index":0,"function":{"arguments":"4}"}}]},"finish_reason":"tool_calls"}]})).unwrap());
+    let start = events.iter().position(|e| matches!(e, LlmStreamEvent::ToolCallStart { part_id, call_id, .. } if part_id == "tool-0" && call_id == "call-1")).unwrap();
+    let end = events.iter().position(|e| matches!(e, LlmStreamEvent::ToolCallEnd { part_id, input, .. } if part_id == "tool-0" && input == &json!({"n":4}))).unwrap();
+    assert!(start < end);
+    assert!(events[start + 1..end].iter().any(
+        |e| matches!(e, LlmStreamEvent::ToolCallDelta { part_id, .. } if part_id == "tool-0")
+    ));
+    assert!(events.iter().any(
+        |e| matches!(e, LlmStreamEvent::ReasoningStart { part_id, .. } if part_id == "reasoning-0")
+    ));
+    assert!(events.iter().any(
+        |e| matches!(e, LlmStreamEvent::ReasoningEnd { part_id } if part_id == "reasoning-0")
+    ));
+    let LlmStreamEvent::Done { message, .. } = events.last().unwrap() else {
+        panic!("missing terminal")
+    };
+    assert_eq!(
+        message.content,
+        vec![
+            ContentPart::Text {
+                text: "look up".into()
+            },
+            ContentPart::Reasoning {
+                text: "plan".into(),
+                signature: None
+            },
+            ContentPart::ToolCall {
+                call_id: "call-1".into(),
+                name: "double".into(),
+                input: json!({"n":4})
+            }
+        ]
+    );
+    let ContentPart::ToolCall { name, input, .. } = &message.content[2] else {
+        panic!("tool missing")
+    };
+    let result = match name.as_str() {
+        "double" => input["n"].as_i64().unwrap() * 2,
+        _ => panic!("unknown tool"),
+    };
+    assert_eq!(result, 8);
+}
+
+#[test]
+fn malformed_tool_json_is_rejected_only_at_end_and_cancel_never_executes_it() {
+    let mut stream = OpenAiCompatStreamAccumulator::new();
+    stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"f","arguments":"{"}}]}}]})).unwrap();
+    let mut cancelled = stream.clone();
+    assert!(matches!(
+        stream.push_chunk(json!({"choices":[{"finish_reason":"tool_calls"}]})),
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    ));
+    let events = cancelled.abort_with_usage(LlmUsage::zero());
+    assert!(
+        matches!(&events[0], LlmStreamEvent::Done { message, finish_reason: FinishReason::Cancelled, .. } if message.content.is_empty())
+    );
+}

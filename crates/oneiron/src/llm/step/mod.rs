@@ -11,6 +11,8 @@
 
 mod codec;
 mod execute;
+mod schema;
+pub use schema::validate_json_schema;
 mod peer_wait;
 mod step_claim;
 mod step_state;
@@ -22,7 +24,7 @@ mod types;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
-pub use self::execute::call_as_step;
+pub use self::execute::{call_as_step, call_as_step_with_fallbacks};
 pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
     send_peer_result_signal,

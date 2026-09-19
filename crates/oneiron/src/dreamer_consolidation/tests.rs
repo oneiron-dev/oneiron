@@ -2422,3 +2422,106 @@ pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
     }
     Ok(predicates)
 }
+
+#[test]
+fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let scope = DreamerConsolidationScope::Micro;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let conversation = seed_session(&vault, 0x27, 1);
+    let _turn = seed_turn(&vault, &conversation, "user", "my name is Oleksii", 10);
+    let actor = EntityId::now();
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
+
+    let watermark = read_watermark(&vault, scope)?;
+    let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
+    enqueue_partition_attempts(&vault, scope, &turns, &watermark, "run-1", 20)?;
+
+    let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+        admitted,
+    )) = store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope,
+        local_node_id: node_id,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "consolidation-test".to_owned(),
+            now: 21,
+            budget_id: "wake".to_owned(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            started_milestone: None,
+        },
+    })?
+    else {
+        panic!("expected admitted consolidation attempt");
+    };
+
+    let backend = ScriptedBackend::new(vec![Err(crate::FatalLlmError::Auth.into())]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+    };
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+    };
+    let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
+    assert!(matches!(
+        execution,
+        DreamerAttemptExecution::Completed {
+            completed_units: 0
+        }
+    ));
+
+    // The sink received the decoded candidates…
+    assert!(sink.accepted.is_empty());
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+
+    // …and the module wrote ZERO belief claims itself: the only claims in
+    // the store are the step layer's dreamer.step runtime records.
+    let predicates = claim_predicates_in_store(&vault)?;
+    assert!(
+        predicates
+            .iter()
+            .all(|predicate| predicate == "dreamer.step"),
+        "unexpected claim predicates: {predicates:?}"
+    );
+    Ok(())
+}
+
+
+#[test]
+fn injected_ner_shadow_reports_mentions_without_landing_claims_or_turn_changes() -> Result<()> {
+    use crate::llm::tagger::*;
+    struct Ner(EntityId);
+    impl OneironerTagger for Ner {
+        fn model(&self) -> crate::ModelId { crate::ModelId::new("test/ner-checkpoint@1").expect("model") }
+        fn tag(&self, text: &str) -> Result<RetrievalTags> {
+            assert_eq!(text,"Ada works here");
+            Ok(RetrievalTags { mentions: vec![MentionTag { start:0,end:3,entity:self.0,weight:1.0 }], ppr_seeds:vec![PprSeed {entity:self.0,weight:1.0}], affect:[0.0;3],coreference:vec![] })
+        }
+    }
+    let (_dir,vault)=open_vault();let conversation=seed_session(&vault,0x27,1);let turn=seed_turn(&vault,&conversation,"user","Ada works here",10);
+    let before=vault.get_raw(&turn)?;let claims=claim_predicates_in_store(&vault)?;
+    let report=shadow_tag_turn(&vault,turn,&Ner(conversation),&[conversation])?;
+    assert_eq!(report.common,vec![conversation]);assert!(report.tag_only.is_empty());assert_eq!(report.tags.mentions.len(),1);
+    let roundtrip: RetrievalTags=serde_json::from_slice(&serde_json::to_vec(&report.tags).expect("encode")).expect("decode");assert_eq!(roundtrip,report.tags);
+    assert_eq!(vault.get_raw(&turn)?,before);assert_eq!(claim_predicates_in_store(&vault)?,claims);Ok(())
+}

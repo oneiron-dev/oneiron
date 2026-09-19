@@ -94,8 +94,12 @@ impl PolicyClassifyPrompt {
                 tier: crate::llm::TierPrecedence {
                     per_call: None,
                     vault_policy: Some(config.safeguard_binding.tier_ref()),
-                    purpose_default: Some(ModelTierRef(DEFAULT_SAFEGUARD_MODEL_BINDING.to_owned())),
-                    global_default: ModelTierRef(DEFAULT_SAFEGUARD_MODEL_BINDING.to_owned()),
+                    ..crate::llm::TierPrecedence::for_purpose(
+                        &CallPurpose::Other {
+                            name: "policy_model_classify".into(),
+                        },
+                        ModelTierRef(DEFAULT_SAFEGUARD_MODEL_BINDING.into()),
+                    )
                 },
                 response_format: self
                     .output_contract

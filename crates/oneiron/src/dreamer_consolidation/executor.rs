@@ -79,13 +79,18 @@ impl ConsolidationExecutor<'_> {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 purpose: CallPurpose::Extraction,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence {
-                    per_call: None,
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: ModelTierRef("consolidation".to_owned()),
+                class: CallClass::Durable {
+                    fallback: crate::llm::DeterministicFallback {
+                        name: "json_rules_v1".into(),
+                        config: Some(
+                            serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"candidates":[],"people":[],"fallback":"model_unavailable"}}]}),
+                        ),
+                    },
                 },
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Extraction,
+                    ModelTierRef("consolidation".into()),
+                ),
                 response_format: ResponseFormat::Json {
                     schema: super::extracted_people::extraction_response_schema(),
                 },
@@ -235,7 +240,8 @@ impl ConsolidationExecutor<'_> {
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
         };
-        let request = self.extraction_request(&partition, &transcript);
+        let mut request = self.extraction_request(&partition, &transcript);
+        ctx.vault.bind_model_role(crate::llm::manifest::ModelRole::ExtractionTeacher, &mut request)?;
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await?;
         let (response, spent) = match outcome {
             StepOutcome::Finished { response, .. } => {
@@ -305,7 +311,8 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|index| &candidates[*index])
                 .collect();
-            let request = self.merge_request(&conflict.identity, &members)?;
+            let mut request = self.merge_request(&conflict.identity, &members)?;
+            ctx.vault.bind_model_role(crate::llm::manifest::ModelRole::GenerativeReasoner, &mut request)?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,
@@ -395,13 +402,18 @@ impl ConsolidationExecutor<'_> {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 purpose: CallPurpose::Consolidation,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence {
-                    per_call: None,
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: ModelTierRef("consolidation".to_owned()),
+                class: CallClass::Durable {
+                    fallback: crate::llm::DeterministicFallback {
+                        name: "json_rules_v1".into(),
+                        config: Some(
+                            serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"resolution":"escalate"}}]}),
+                        ),
+                    },
                 },
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Consolidation,
+                    ModelTierRef("consolidation".into()),
+                ),
                 response_format: ResponseFormat::Json {
                     schema: serde_json::json!({"type": "object"}),
                 },

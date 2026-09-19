@@ -69,6 +69,11 @@ impl Stream for LlmStream<'_> {
 /// type signature. Budget policy, retry policy, durable memoization, and agent
 /// loop behavior live above this trait.
 pub trait LlmBackend: Send + Sync {
+    /// Capability lookup for step policy; adapters resolve this from catalog data.
+    fn supports(&self, _model: &super::ModelId, _capability: super::LlmCapability) -> bool {
+        false
+    }
+
     fn generate<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease)
     -> LlmGenerateFuture<'a>;
 

@@ -17,10 +17,15 @@ use super::{
 pub struct AnthropicMessagesConfig {
     pub endpoint_path: String,
     pub anthropic_version: String,
-    pub models: BTreeMap<ModelId, LlmCatalogEntry>,
+    models: BTreeMap<ModelId, LlmCatalogEntry>,
 }
 
 impl AnthropicMessagesConfig {
+    pub fn from_registry(vault: &oneiron::Vault) -> oneiron::Result<Self> {
+        Ok(Self::with_models(vault.model_catalog_entries(oneiron::llm::registry::ModelWireFormat::AnthropicMessages)?))
+    }
+
+    #[cfg(test)]
     #[must_use]
     pub fn new(model: LlmCatalogEntry) -> Self {
         let mut models = BTreeMap::new();
@@ -33,7 +38,7 @@ impl AnthropicMessagesConfig {
     }
 
     #[must_use]
-    pub fn with_models(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
+    fn with_models(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
         Self {
             endpoint_path: "/v1/messages".to_owned(),
             anthropic_version: "2023-06-01".to_owned(),
@@ -90,6 +95,11 @@ impl<T> LlmBackend for AnthropicMessagesBackend<T>
 where
     T: AnthropicMessagesTransport,
 {
+    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
+        self.config
+            .catalog_entry(model)
+            .is_ok_and(|entry| entry.supports(&capability))
+    }
     fn generate<'a>(
         &'a self,
         request: LlmRequest,

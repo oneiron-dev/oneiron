@@ -33,6 +33,9 @@ pub(super) const DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION: f32 = 0.5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum PackFormat {
+    OpenaiCompat,
+    AnthropicMessages,
+    Gemini,
     #[default]
     Json,
     Yaml,

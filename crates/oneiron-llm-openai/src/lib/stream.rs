@@ -1,38 +1,29 @@
-//! Chunk accumulation into LlmStreamEvent sequences with abort and empty-content rules.
-
+//! OpenAI chunk decoding with correlated text, reasoning, and tool fragments.
 use super::{
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, classify_openai_status,
     wire::{openai_finish_reason, parse_openai_usage},
 };
 use futures_core::Stream;
-use oneiron::{
-    ContentPart, FatalLlmError, FinishReason, LlmMessage, LlmMessageRole, LlmResult,
-    LlmStreamEvent, LlmUsage,
-};
+use oneiron::llm::StreamAssembly;
+use oneiron::{FatalLlmError, LlmResult, LlmStreamEvent, LlmUsage};
 use serde_json::Value as JsonValue;
-use std::collections::VecDeque;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-#[derive(Debug, Clone)]
-pub struct OpenAiCompatStreamAccumulator {
-    text_part_id: String,
-    text: String,
-    text_started: bool,
-    usage: Option<LlmUsage>,
-    done: bool,
+#[derive(Debug, Clone, Default)]
+struct ToolHeader {
+    call_id: String,
+    name: String,
 }
 
-impl Default for OpenAiCompatStreamAccumulator {
-    fn default() -> Self {
-        Self {
-            text_part_id: "text-0".to_owned(),
-            text: String::new(),
-            text_started: false,
-            usage: None,
-            done: false,
-        }
-    }
+#[derive(Debug, Clone, Default)]
+pub struct OpenAiCompatStreamAccumulator {
+    assembly: StreamAssembly,
+    tools: BTreeMap<u64, ToolHeader>,
+    usage: Option<LlmUsage>,
 }
 
 impl OpenAiCompatStreamAccumulator {
@@ -42,117 +33,80 @@ impl OpenAiCompatStreamAccumulator {
     }
 
     pub fn push_chunk(&mut self, chunk: JsonValue) -> LlmResult<Vec<LlmStreamEvent>> {
-        if self.done {
+        if self.assembly.is_done() {
             return Ok(Vec::new());
         }
-
-        if let Some(usage) = chunk.get("usage") {
+        if let Some(usage) = chunk.get("usage").filter(|v| !v.is_null()) {
             self.usage = Some(parse_openai_usage(usage));
         }
-
         let mut events = Vec::new();
         let Some(choice) = chunk
             .get("choices")
             .and_then(JsonValue::as_array)
-            .and_then(|choices| choices.first())
+            .and_then(|v| v.first())
         else {
             return Ok(events);
         };
-
-        if let Some(text) = choice
-            .get("delta")
-            .and_then(|delta| delta.get("content"))
-            .and_then(JsonValue::as_str)
-            && !text.is_empty()
+        if choice
+            .get("index")
+            .and_then(JsonValue::as_u64)
+            .is_some_and(|n| n != 0)
         {
-            self.push_text_delta(text, &mut events);
+            return Err(FatalLlmError::InvalidRequest.into());
         }
-
+        if let Some(delta) = choice.get("delta") {
+            if let Some(text) = delta
+                .get("content")
+                .and_then(JsonValue::as_str)
+                .filter(|v| !v.is_empty())
+            {
+                events.extend(self.assembly.text("text-0", text)?);
+            }
+            if let Some(text) = delta
+                .get("reasoning_content")
+                .or_else(|| delta.get("reasoning"))
+                .and_then(JsonValue::as_str)
+                .filter(|v| !v.is_empty())
+            {
+                events.extend(self.assembly.reasoning("reasoning-0", text, None)?);
+            }
+            if let Some(tools) = delta.get("tool_calls").and_then(JsonValue::as_array) {
+                for tool in tools {
+                    let index = tool
+                        .get("index")
+                        .and_then(JsonValue::as_u64)
+                        .ok_or(FatalLlmError::InvalidRequest)?;
+                    let header = self.tools.entry(index).or_default();
+                    if let Some(id) = tool.get("id").and_then(JsonValue::as_str) {
+                        header.call_id.push_str(id);
+                    }
+                    let function = &tool["function"];
+                    if let Some(name) = function.get("name").and_then(JsonValue::as_str) {
+                        header.name.push_str(name);
+                    }
+                    if let Some(fragment) = function.get("arguments").and_then(JsonValue::as_str) {
+                        events.extend(self.assembly.tool(
+                            &format!("tool-{index}"),
+                            &header.call_id,
+                            &header.name,
+                            fragment,
+                        )?);
+                    }
+                }
+            }
+        }
         if let Some(finish) = choice.get("finish_reason").and_then(JsonValue::as_str) {
-            events.extend(self.finish(openai_finish_reason(finish))?);
+            events.extend(self.assembly.finish(
+                self.usage.clone().unwrap_or_else(LlmUsage::zero),
+                openai_finish_reason(finish),
+            )?);
         }
-
         Ok(events)
     }
 
     #[must_use]
     pub fn abort_with_usage(&mut self, usage: LlmUsage) -> Vec<LlmStreamEvent> {
-        if self.done {
-            return Vec::new();
-        }
-        self.usage = Some(usage);
-        self.done = true;
-
-        let mut events = Vec::new();
-        if self.text_started {
-            events.push(LlmStreamEvent::TextEnd {
-                part_id: self.text_part_id.clone(),
-            });
-        }
-        events.push(LlmStreamEvent::Done {
-            message: LlmMessage {
-                role: LlmMessageRole::Assistant,
-                content: self.partial_content(),
-            },
-            usage: self.usage.clone().unwrap_or_else(LlmUsage::zero),
-            finish_reason: FinishReason::Cancelled,
-        });
-        events
-    }
-
-    fn push_text_delta(&mut self, text: &str, events: &mut Vec<LlmStreamEvent>) {
-        if !self.text_started {
-            self.text_started = true;
-            events.push(LlmStreamEvent::TextStart {
-                part_id: self.text_part_id.clone(),
-            });
-        }
-        self.text.push_str(text);
-        events.push(LlmStreamEvent::TextDelta {
-            part_id: self.text_part_id.clone(),
-            text: text.to_owned(),
-        });
-    }
-
-    fn finish(&mut self, finish_reason: FinishReason) -> LlmResult<Vec<LlmStreamEvent>> {
-        if self.done {
-            return Ok(Vec::new());
-        }
-        self.done = true;
-
-        if self.text.is_empty() {
-            return Err(if matches!(finish_reason, FinishReason::ContentFiltered) {
-                FatalLlmError::ContentFiltered.into()
-            } else {
-                FatalLlmError::EmptyResponse.into()
-            });
-        }
-
-        let mut events = Vec::new();
-        if self.text_started {
-            events.push(LlmStreamEvent::TextEnd {
-                part_id: self.text_part_id.clone(),
-            });
-        }
-        events.push(LlmStreamEvent::Done {
-            message: LlmMessage {
-                role: LlmMessageRole::Assistant,
-                content: self.partial_content(),
-            },
-            usage: self.usage.clone().unwrap_or_else(LlmUsage::zero),
-            finish_reason,
-        });
-        Ok(events)
-    }
-
-    fn partial_content(&self) -> Vec<ContentPart> {
-        if self.text.is_empty() {
-            Vec::new()
-        } else {
-            vec![ContentPart::Text {
-                text: self.text.clone(),
-            }]
-        }
+        self.assembly.abort(usage)
     }
 }
 

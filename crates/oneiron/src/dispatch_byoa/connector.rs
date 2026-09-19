@@ -340,6 +340,8 @@ impl ByoaConnectorSpec {
 /// A request to dispatch one foreign agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchByoa {
+    /// Host-stamped credential ownership. User CLI logins cannot run on hosted nodes.
+    pub user_login: bool,
     pub connector: ByoaConnectorSpec,
     pub task_ref: Option<EntityId>,
     pub parent_attempt_id: Option<AttemptId>,
@@ -381,6 +383,7 @@ impl ByoaDispatchOutcome {
 /// no BYOA-shaped fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ByoaAttemptPayload {
+    pub user_login: bool,
     pub schema_version: u8,
     pub connector: ByoaConnectorSpec,
     /// The attempt that asked for this one, when there was one.

@@ -5,6 +5,7 @@
 //! before it is written; `json_format`, `toon_format`, `markdown_plaintext_format`
 //! and `yaml_format` are the writers.
 
+mod provider_codecs;
 mod field_profile_table;
 mod group_labels;
 mod item_budget;

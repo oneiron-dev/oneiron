@@ -52,6 +52,7 @@ pub(super) const AUTO_CHECK_HOLD_REASON_MAX_BYTES: usize = 256;
 /// The tier an auto check asks for by PURPOSE default: the cheap one. The
 /// per-call and vault-policy slots stay empty so a vault that pins its own
 /// tier still wins through [`TierPrecedence::resolved`].
+#[cfg(test)]
 pub(super) const AUTO_CHECK_PURPOSE_DEFAULT_TIER: &str = "cheap";
 
 /// The floor under the purpose default, used only if a caller clears it.
@@ -129,6 +130,7 @@ impl From<&AutoCheckCandidate<'_>> for AutoCheckCandidateOwned {
 /// could not name its reasons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutoCheckOutcome {
+    Verdict(super::manifest::CalibratedVerdict),
     Allow,
     Hold { reasons: Vec<String> },
     Unavailable,
@@ -295,12 +297,10 @@ pub fn auto_check_llm_request(
                     config: None,
                 },
             },
-            tier: TierPrecedence {
-                per_call: None,
-                vault_policy: None,
-                purpose_default: Some(ModelTierRef(AUTO_CHECK_PURPOSE_DEFAULT_TIER.to_owned())),
-                global_default: ModelTierRef(AUTO_CHECK_GLOBAL_DEFAULT_TIER.to_owned()),
-            },
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AutoCheck,
+                ModelTierRef(AUTO_CHECK_GLOBAL_DEFAULT_TIER.into()),
+            ),
             response_format: ResponseFormat::Json {
                 schema: auto_check_verdict_schema(),
             },

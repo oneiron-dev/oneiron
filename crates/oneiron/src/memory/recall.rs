@@ -654,6 +654,9 @@ fn hedge_bucket_for(confidence: f32) -> &'static str {
 /// serializer formats.
 pub(super) fn parse_pack_format(format: &str) -> MemoryResult<PackFormat> {
     match format {
+        "openai-compat" => Ok(PackFormat::OpenaiCompat),
+        "anthropic-messages" => Ok(PackFormat::AnthropicMessages),
+        "gemini" => Ok(PackFormat::Gemini),
         "json" => Ok(PackFormat::Json),
         "yaml" => Ok(PackFormat::Yaml),
         "toon" => Ok(PackFormat::Toon),
@@ -661,7 +664,7 @@ pub(super) fn parse_pack_format(format: &str) -> MemoryResult<PackFormat> {
         "txt" => Ok(PackFormat::Plaintext),
         other => Err(MemoryError::bad_request_with(
             format!("unknown pack format {other:?}"),
-            &["Use one of: toon, md, json, yaml, txt."],
+            &["Use one of: toon, md, json, yaml, txt, openai-compat, anthropic-messages, gemini."],
         )),
     }
 }

@@ -30,7 +30,7 @@ pub fn build_openai_chat_request(
     }
     body.insert(
         "model".to_owned(),
-        JsonValue::String(request.model.name().to_owned()),
+        JsonValue::String(catalog.metadata.get("wire_model").and_then(JsonValue::as_str).unwrap_or_else(|| request.model.name()).to_owned()),
     );
     body.insert(
         "messages".to_owned(),

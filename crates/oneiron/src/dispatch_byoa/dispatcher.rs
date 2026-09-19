@@ -144,8 +144,10 @@ where
     /// Returns [`ByoaError::Store`] when the connector fails the door or the
     /// queue refuses the row.
     pub fn dispatch(&mut self, request: DispatchByoa) -> ByoaResult<ByoaDispatchOutcome> {
+        self.check_login_placement(request.user_login)?;
         validate_connector(&request.connector)?;
         let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
+            user_login: request.user_login,
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             connector: request.connector,
             parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
@@ -187,11 +189,19 @@ where
         self.endpoint_factory.resolve_backend(spec)
     }
 
+    fn check_login_placement(&self, user_login: bool) -> ByoaResult<()> {
+        if user_login && self.vault.config.privacy.posture == crate::config::HostingPrivacyPosture::Hosted {
+            return Err(ByoaError::CloudLoginRefused);
+        }
+        Ok(())
+    }
+
     fn execution_record(&self, fence: &ByoaExecutionFence) -> ByoaResult<AttemptRecord> {
         let record = AttemptQueue::new(self.vault)
             .get(fence.attempt_id)?
             .ok_or_else(|| invalid(ERR_ATTEMPT_MISSING))?;
-        decode_byoa_record(&record)?;
+        let payload = decode_byoa_record(&record)?;
+        self.check_login_placement(payload.user_login)?;
         AttemptQueue::check_result_lease(
             &record,
             &fence.lease_owner,

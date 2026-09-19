@@ -785,3 +785,16 @@ fn named_speaker_file_drop_turns_decode_to_gate_10_admissible_roles() {
         );
     }
 }
+
+
+#[test]
+fn provider_sources_normalize_same_conversation_at_imported_trust() {
+    let fixtures=[("openai-compat",serde_json::json!({"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]})),("anthropic-messages",serde_json::json!({"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]},{"role":"assistant","content":[{"type":"text","text":"hi"}]}]})),("gemini",serde_json::json!({"contents":[{"role":"user","parts":[{"text":"hello"}]},{"role":"model","parts":[{"text":"hi"}]}]}))];
+    for (source,fixture) in fixtures {
+        let batch=INGEST_SOURCE_REGISTRY.normalize(source,&fixture.to_string()).unwrap();
+        assert_eq!(batch.records.iter().map(|r|r.text.as_str()).collect::<Vec<_>>(),vec!["hello","hi"]);
+        assert_eq!(batch.records[1].speaker.as_deref(),Some("assistant"));assert!(batch.claims.is_empty());
+        let config=INGEST_SOURCE_REGISTRY.get_config(source).unwrap();assert_eq!(config.trust_ceiling.claim_source,ClaimSource::Imported);assert_eq!(config.default_admission,ClaimApprovalStatus::Proposed);assert!(!config.trust_ceiling.permits_auto(Some(0)));
+    }
+    assert_eq!(INGEST_SOURCE_REGISTRY.entries().len(),8);
+}

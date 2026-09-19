@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/lib/abort.rs` | src | s | 1 struct · 3 fn | LocalAbortHandle | Abort handle shared between a generation and its event stream |
-| `src/lib/backend.rs` | src | s | 1 struct · 1 trait · 3 fn | LocalLlmBackend, LocalLlmRuntime | LlmBackend adapter over a LocalLlmRuntime with abort-wired streaming |
+| `src/lib/backend.rs` | src | s | 1 struct · 1 trait · 4 fn | LocalLlmBackend, LocalLlmRuntime | LlmBackend adapter over a LocalLlmRuntime with abort-wired streaming |
 | `src/lib/capabilities.rs` | src | s | 6 crate-vis | — | Request validation and metadata capability probing with key normalization |
 | `src/lib/metadata.rs` | src | s | 1 struct · 6 fn | LocalModelMetadata | Loaded-model metadata, catalog descriptor, and capability detection |
 | `src/lib/mod.rs` | src | s | 4 re-export | — | Local in-process adapter for Oneiron's `LlmBackend` seam |

@@ -147,19 +147,16 @@ pub type DurableStepResult<T> = std::result::Result<T, DurableStepError>;
 /// Typed failure surface of the durable-step layer.
 #[derive(Debug, thiserror::Error)]
 pub enum DurableStepError {
+    #[error("JSON schema validation failed after {attempts} attempts: {errors:?}")]
+    SchemaValidation { attempts: u8, errors: Vec<String> },
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]
     Llm(#[from] LlmError),
     #[error("durable step canonicalization failed: {0}")]
     Canonical(#[from] serde_json::Error),
-    /// Fatal terminal failure on a `CallClass::Durable` request: the caller
-    /// must execute its declared deterministic fallback — silent-empty
-    /// results are FORBIDDEN (ruling L6).
-    #[error(
-        "durable step fatal LLM error; execute declared deterministic fallback {fallback:?}: {source}"
-    )]
-    FallbackDemanded { fallback: String, source: LlmError },
+    #[error(transparent)]
+    Fallback(#[from] super::super::FallbackError),
     /// NEW steps are refused once the wake pass enters its graceful-wrap
     /// finalize window (ONE-1305); memoized hits still return.
     #[error("durable step refused: wake pass is in its finalize window")]

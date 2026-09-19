@@ -9548,7 +9548,26 @@
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
-      "re-export": 5
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaudeCodeRunner",
+      "CodexRunner",
+      "DreamerProviderAdapter",
+      "DreamerProviderInput",
+      "OpenCodeRunner",
+      "ProviderAdapterRegistry"
+     ],
+     "path": "src/dispatch_byoa/provider.rs",
+     "purpose": "Named propose-only Dreamer runners over the existing foreign CLI sandbox",
+     "surface": {
+      "fn": 3,
+      "struct": 5,
+      "trait": 1
      }
     },
     {
@@ -9761,7 +9780,7 @@
      "path": "src/dreamer_consolidation/watermark.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 5,
       "struct": 2
      }
@@ -13908,6 +13927,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/provider.rs",
+     "purpose": "Provider conversation decoders",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -13949,7 +13978,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/tests.rs",
@@ -14740,6 +14769,19 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StreamAssembly"
+     ],
+     "path": "src/llm/assembly.rs",
+     "purpose": "Shared typed stream assembly",
+     "surface": {
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -14916,6 +14958,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LlmEventBus",
+      "StreamSubscription",
+      "TerminalSink"
+     ],
+     "path": "src/llm/bus.rs",
+     "purpose": "Ephemeral one-producer fanout",
+     "surface": {
+      "fn": 5,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CallClass",
       "CallEnvelope",
       "CallPurpose",
@@ -14958,6 +15016,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PurposeDefault"
+     ],
+     "path": "src/llm/defaults.rs",
+     "purpose": "Central purpose policy",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BudgetDenied",
       "FatalLlmError",
       "LlmError",
@@ -14974,12 +15046,90 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DeterministicRunner",
+      "FallbackError",
+      "FallbackRegistry"
+     ],
+     "path": "src/llm/fallback.rs",
+     "purpose": "Named deterministic non-LLM fallback runners",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ImageBackend",
+      "ImageBytes",
+      "ImageCatalog",
+      "ImageCatalogRow",
+      "ImageIntent",
+      "ImageResponse"
+     ],
+     "path": "src/llm/image.rs",
+     "purpose": "Provider-neutral image generation and reference-edit intent",
+     "surface": {
+      "fn": 2,
+      "struct": 5,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/image/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalibratedVerdict",
+      "ConfidenceBand",
+      "ModelBinding",
+      "ModelManifest",
+      "ModelRole",
+      "ModelSlot",
+      "VerdictBasis",
+      "VerdictBinding",
+      "VerdictMode"
+     ],
+     "path": "src/llm/manifest.rs",
+     "purpose": "Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 5,
+      "fn": 10,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/manifest/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 4,
-      "re-export": 10
+      "mod": 5,
+      "re-export": 15
      }
     },
     {
@@ -15028,6 +15178,34 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CatalogSeed",
+      "ModelRegistryRow",
+      "ModelScoreDiff",
+      "ModelWireFormat",
+      "ScoreObservation",
+      "ScoreSnapshot"
+     ],
+     "path": "src/llm/registry.rs",
+     "purpose": "Vault-persisted, priced model catalogs",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 10,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/registry/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SafeguardModelBinding",
       "SafeguardModelBindingError"
      ],
@@ -15037,6 +15215,23 @@
       "const": 2,
       "enum": 2,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScoreFetch",
+      "ScoreScraper",
+      "ScoreScraperConfig",
+      "ScoreSourceConfig"
+     ],
+     "path": "src/llm/score_scraper.rs",
+     "purpose": "Config-driven benchmark scraping",
+     "surface": {
+      "fn": 4,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -15056,7 +15251,8 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration plus deadline-race, retry, and lease-settle…",
      "surface": {
-      "fn": 1
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -15067,7 +15263,7 @@
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
       "crate-vis": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -15082,6 +15278,17 @@
       "crate-vis": 4,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/schema.rs",
+     "purpose": "One-shot structured-output policy",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -15154,6 +15361,51 @@
       "fn": 3,
       "struct": 2,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/streaming_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProgressSnapshot",
+      "ProgressSubscriber",
+      "VoiceChunker"
+     ],
+     "path": "src/llm/subscribers.rs",
+     "purpose": "Pure clock-injected progress and voice stages",
+     "surface": {
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoreferenceTag",
+      "GatedRender",
+      "InputDelta",
+      "MentionTag",
+      "OneironerTagger",
+      "PprSeed",
+      "RenderReceipt",
+      "RetrievalTags",
+      "ShadowTagReport"
+     ],
+     "path": "src/llm/tagger.rs",
+     "purpose": "Host-injected retrieval tags and a write-free shadow comparison",
+     "surface": {
+      "fn": 4,
+      "struct": 8,
+      "trait": 1
      }
     },
     {
@@ -19876,6 +20128,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/provider_codecs.rs",
+     "purpose": "Provider read formats share prepared rows and always null credential-bearing fields",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -23453,8 +23715,18 @@
      "path": "src/voice_cascade.rs",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
-      "mod": 2,
+      "mod": 3,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_cascade/budget.rs",
+     "purpose": "Generation-owned budget reservation",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -23564,9 +23836,24 @@
      "purpose": "Session transitions only",
      "surface": {
       "enum": 1,
-      "fn": 17,
+      "fn": 19,
       "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SonioxAsrClient",
+      "SonioxTransport"
+     ],
+     "path": "src/voice_cascade/soniox.rs",
+     "purpose": "Soniox streaming ASR wire client",
+     "surface": {
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -23753,7 +24040,25 @@
      "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching",
      "surface": {
       "crate-vis": 1,
+      "mod": 1,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerVoiceRefPack",
+      "VoiceRefOrigin",
+      "VoiceRegisterClip",
+      "VoiceTargetClone"
+     ],
+     "path": "src/voice_identity/ref_bank.rs",
+     "purpose": "Private per-vault owner reference bank",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -25184,7 +25489,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25429,7 +25734,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25478,8 +25783,8 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 32,
-     "impl_vault": false,
+     "files": 47,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
@@ -25744,7 +26049,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25954,14 +26259,14 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 20,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26005,8 +26310,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1487,
-   "test_files": 532
+   "source_files": 1504,
+   "test_files": 536
   },
   "oneiron-bench": {
    "files": [
@@ -27321,14 +27626,14 @@
       "AnthropicMessagesStreamAccumulator"
      ],
      "path": "src/lib/stream.rs",
-     "purpose": "SSE accumulation into LlmStreamEvent sequences with abort and empty-content rules",
+     "purpose": "Anthropic block-indexed SSE decoder, including thinking and tool input",
      "surface": {
       "fn": 4,
       "struct": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/lib/tests.rs",
@@ -27405,7 +27710,7 @@
      "path": "src/lib/backend.rs",
      "purpose": "LlmBackend adapter over a LocalLlmRuntime with abort-wired streaming",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 1,
       "trait": 1
      }
@@ -27541,7 +27846,7 @@
       "OpenAiCompatStreamAccumulator"
      ],
      "path": "src/lib/stream.rs",
-     "purpose": "Chunk accumulation into LlmStreamEvent sequences with abort and empty-content rules",
+     "purpose": "OpenAI chunk decoding with correlated text, reasoning, and tool fragments",
      "surface": {
       "fn": 4,
       "struct": 2

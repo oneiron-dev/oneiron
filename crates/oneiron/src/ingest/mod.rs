@@ -5,6 +5,7 @@
 //! only mint claim writes through an explicit admission helper that requires
 //! entity resolution and routes through the normal Gate-backed candidate path.
 
+mod provider;
 mod admission;
 pub mod image;
 mod registry;

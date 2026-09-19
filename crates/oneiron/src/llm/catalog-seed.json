@@ -1,0 +1,1846 @@
+{
+  "version": 1,
+  "rows": [
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "aion-labs/aion-3.0-mini@catalog-2026-09-19",
+        "display_name": "AionLabs: Aion-3.0-Mini",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 32768,
+        "cost": {
+          "input_per_million": "0.7000000",
+          "output_per_million": "1.4000000",
+          "cache_read_per_million": "0.18000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "aion-labs/aion-3.0-mini",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "aion-labs"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "amazon/nova-2-lite-v1@catalog-2026-09-19",
+        "display_name": "Amazon: Nova 2 Lite",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 65535,
+        "cost": {
+          "input_per_million": "0.3000000",
+          "output_per_million": "2.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "amazon/nova-2-lite-v1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "amazon"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "anthracite-org/magnum-v4-72b@catalog-2026-09-19",
+        "display_name": "Magnum v4 72B",
+        "locality": "third_party",
+        "context_window_tokens": 32768,
+        "max_output_tokens": 4096,
+        "cost": {
+          "input_per_million": "2.5000000",
+          "output_per_million": "5.000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "anthracite-org/magnum-v4-72b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "anthracite-org"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "anthropic/claude-fable-5.1@catalog-2026-09-19",
+        "display_name": "Anthropic: Claude Fable 5.1",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "10.00000",
+          "output_per_million": "50.00000",
+          "cache_read_per_million": "0.25000000",
+          "cache_write_per_million": "12.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "anthropic/claude-fable-5.1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "anthropic"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "arcee-ai/trinity-large-thinking@catalog-2026-09-19",
+        "display_name": "Arcee AI: Trinity Large Thinking",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 80000,
+        "cost": {
+          "input_per_million": "0.25000000",
+          "output_per_million": "0.8000000",
+          "cache_read_per_million": "0.06000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "arcee-ai/trinity-large-thinking",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "arcee-ai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "baidu/ernie-4.5-vl-424b-a47b@catalog-2026-09-19",
+        "display_name": "Baidu: ERNIE 4.5 VL 424B A47B ",
+        "locality": "third_party",
+        "context_window_tokens": 123000,
+        "max_output_tokens": 16000,
+        "cost": {
+          "input_per_million": "0.42000000",
+          "output_per_million": "1.25000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "baidu/ernie-4.5-vl-424b-a47b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "baidu"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "bytedance/ui-tars-1.5-7b@catalog-2026-09-19",
+        "display_name": "ByteDance: UI-TARS 7B ",
+        "locality": "third_party",
+        "context_window_tokens": 128000,
+        "max_output_tokens": 2048,
+        "cost": {
+          "input_per_million": "0.1000000",
+          "output_per_million": "0.2000000",
+          "cache_read_per_million": "0.1000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "bytedance/ui-tars-1.5-7b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "bytedance"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "bytedance-seed/seed-2-1-turbo@catalog-2026-09-19",
+        "display_name": "ByteDance Seed: Seed 2.1 Turbo",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 235929,
+        "cost": {
+          "input_per_million": "0.5000000",
+          "output_per_million": "2.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "bytedance-seed/seed-2-1-turbo",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "bytedance-seed"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "cognitivecomputations/dolphin-mistral-24b-venice-edition@catalog-2026-09-19",
+        "display_name": "Venice: Uncensored",
+        "locality": "third_party",
+        "context_window_tokens": 128000,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0.2000000",
+          "output_per_million": "0.9000000"
+        },
+        "capabilities": [
+          "streaming"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "cognitivecomputations"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "cohere/north-mini-code:free@catalog-2026-09-19",
+        "display_name": "Cohere: North Mini Code (free)",
+        "locality": "third_party",
+        "context_window_tokens": 256000,
+        "max_output_tokens": 64000,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "cohere/north-mini-code:free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "cohere"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "deepseek/deepseek-v4.1-flash@catalog-2026-09-19",
+        "display_name": "DeepSeek: DeepSeek V4.1 Flash",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 384000,
+        "cost": {
+          "input_per_million": "0.15000000",
+          "output_per_million": "0.6000000",
+          "cache_read_per_million": "0.003000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "deepseek/deepseek-v4.1-flash",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "deepseek"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "dots-studio/dots-3-note-preview:free@catalog-2026-09-19",
+        "display_name": "Dots Studio: Dots3-Note Preview (free)",
+        "locality": "third_party",
+        "context_window_tokens": 512000,
+        "max_output_tokens": 460800,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "dots-studio/dots-3-note-preview:free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "dots-studio"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "google/gemini-3.8-flash@catalog-2026-09-19",
+        "display_name": "Google: Gemini 3.8 Flash",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 65536,
+        "cost": {
+          "input_per_million": "0.75000000",
+          "output_per_million": "3.75000000",
+          "cache_read_per_million": "0.075000000",
+          "cache_write_per_million": "0.0416666666666667000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "google/gemini-3.8-flash",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "google"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "gryphe/mythomax-l2-13b@catalog-2026-09-19",
+        "display_name": "MythoMax 13B",
+        "locality": "third_party",
+        "context_window_tokens": 8192,
+        "max_output_tokens": 3686,
+        "cost": {
+          "input_per_million": "0.08000000",
+          "output_per_million": "0.11000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "gryphe/mythomax-l2-13b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "gryphe"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "ibm-granite/granite-4.2-8b@catalog-2026-09-19",
+        "display_name": "IBM: Granite 4.2 8B",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 117964,
+        "cost": {
+          "input_per_million": "0.06000000",
+          "output_per_million": "0.25000000",
+          "cache_read_per_million": "0.015000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "ibm-granite/granite-4.2-8b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "ibm-granite"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "inception/mercury-2.5@catalog-2026-09-19",
+        "display_name": "Inception: Mercury 2.5",
+        "locality": "third_party",
+        "context_window_tokens": 260000,
+        "max_output_tokens": 65536,
+        "cost": {
+          "input_per_million": "0.04000000",
+          "output_per_million": "0.15000000",
+          "cache_read_per_million": "0.004000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "inception/mercury-2.5",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "inception"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "inclusionai/ling-3.0-flash-vl@catalog-2026-09-19",
+        "display_name": "inclusionAI: Ling 3.0 Flash VL",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 32768,
+        "cost": {
+          "input_per_million": "0.06000000",
+          "output_per_million": "0.18000000",
+          "cache_read_per_million": "0.012000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "inclusionai/ling-3.0-flash-vl",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "inclusionai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "inference-net/schematron-v2-turbo@catalog-2026-09-19",
+        "display_name": "Inference.net: Schematron V2 Turbo",
+        "locality": "third_party",
+        "context_window_tokens": 128000,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0.03000000",
+          "output_per_million": "0.15000000",
+          "cache_read_per_million": "0.03000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "inference-net/schematron-v2-turbo",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "inference-net"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "kwaipilot/kat-coder-pro-v2.5@catalog-2026-09-19",
+        "display_name": "Kwaipilot: KAT-Coder-Pro V2.5",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 235929,
+        "cost": {
+          "input_per_million": "0.74000000",
+          "output_per_million": "2.96000000",
+          "cache_read_per_million": "0.15000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "kwaipilot/kat-coder-pro-v2.5",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "kwaipilot"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "liquid/lfm-2.5-2.6b:free@catalog-2026-09-19",
+        "display_name": "LiquidAI: LFM2.5-2.6B (free)",
+        "locality": "third_party",
+        "context_window_tokens": 65536,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "liquid/lfm-2.5-2.6b:free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "liquid"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "mancer/weaver@catalog-2026-09-19",
+        "display_name": "Mancer: Weaver (alpha)",
+        "locality": "third_party",
+        "context_window_tokens": 8000,
+        "max_output_tokens": 6000,
+        "cost": {
+          "input_per_million": "0.4000000",
+          "output_per_million": "0.75000000"
+        },
+        "capabilities": [
+          "streaming"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "mancer/weaver",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "mancer"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "meituan/longcat-2.0@catalog-2026-09-19",
+        "display_name": "Meituan: LongCat 2.0",
+        "locality": "third_party",
+        "context_window_tokens": 1048756,
+        "max_output_tokens": 262144,
+        "cost": {
+          "input_per_million": "0.3000000",
+          "output_per_million": "1.2000000",
+          "cache_read_per_million": "0.006000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "meituan/longcat-2.0",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "meituan"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "meta/muse-spark-1.3-contributor@catalog-2026-09-19",
+        "display_name": "Meta: Muse Spark 1.3 Contributor",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 943718,
+        "cost": {
+          "input_per_million": "0.1000000",
+          "output_per_million": "0.2000000",
+          "cache_read_per_million": "0.002000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "meta/muse-spark-1.3-contributor",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "meta"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "meta-llama/llama-guard-4-12b@catalog-2026-09-19",
+        "display_name": "Meta: Llama Guard 4 12B",
+        "locality": "third_party",
+        "context_window_tokens": 163840,
+        "max_output_tokens": 16384,
+        "cost": {
+          "input_per_million": "0.18000000",
+          "output_per_million": "0.18000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "meta-llama/llama-guard-4-12b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "meta-llama"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "microsoft/phi-4@catalog-2026-09-19",
+        "display_name": "Microsoft: Phi 4",
+        "locality": "third_party",
+        "context_window_tokens": 16384,
+        "max_output_tokens": 14745,
+        "cost": {
+          "input_per_million": "0.07000000",
+          "output_per_million": "0.14000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "microsoft/phi-4",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "microsoft"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "minimax/minimax-m3@catalog-2026-09-19",
+        "display_name": "MiniMax: MiniMax M3",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 512000,
+        "cost": {
+          "input_per_million": "0.3000000",
+          "output_per_million": "1.2000000",
+          "cache_read_per_million": "0.06000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "minimax/minimax-m3",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "minimax"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "mistralai/mistral-medium-3-5@catalog-2026-09-19",
+        "display_name": "Mistral: Mistral Medium 3.5",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 209715,
+        "cost": {
+          "input_per_million": "1.5000000",
+          "output_per_million": "7.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "mistralai/mistral-medium-3-5",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "mistralai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "moonshotai/kimi-k3@catalog-2026-09-19",
+        "display_name": "MoonshotAI: Kimi K3",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 943718,
+        "cost": {
+          "input_per_million": "2.1000000",
+          "output_per_million": "10.95000000",
+          "cache_read_per_million": "0.23000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "moonshotai/kimi-k3",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "moonshotai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "morph/morph-v3-large@catalog-2026-09-19",
+        "display_name": "Morph: Morph V3 Large",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.9000000",
+          "output_per_million": "1.9000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "morph/morph-v3-large",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "morph"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "nex-agi/nex-n2.5-mini:free@catalog-2026-09-19",
+        "display_name": "Nex AGI: Nex-N2.5-Mini (free)",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 235929,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "nex-agi/nex-n2.5-mini:free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "nex-agi"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "nousresearch/hermes-4-405b@catalog-2026-09-19",
+        "display_name": "Nous: Hermes 4 405B",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 117964,
+        "cost": {
+          "input_per_million": "1.000000",
+          "output_per_million": "3.000000"
+        },
+        "capabilities": [
+          "streaming",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "nousresearch/hermes-4-405b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "nousresearch"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "nvidia/nemotron-3.5-lightning@catalog-2026-09-19",
+        "display_name": "NVIDIA: Nemotron 3.5 Lightning",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 235929,
+        "cost": {
+          "input_per_million": "0.07000000",
+          "output_per_million": "0.2000000",
+          "cache_read_per_million": "0.04000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "nvidia/nemotron-3.5-lightning",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "nvidia"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "openai/gpt-6-astra@catalog-2026-09-19",
+        "display_name": "OpenAI: GPT-6 Astra",
+        "locality": "third_party",
+        "context_window_tokens": 1050000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "10.00000",
+          "output_per_million": "50.00000",
+          "cache_read_per_million": "1.000000",
+          "cache_write_per_million": "12.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "openai/gpt-6-astra",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "openai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "openrouter/free@catalog-2026-09-19",
+        "display_name": "Free Models Router",
+        "locality": "third_party",
+        "context_window_tokens": 200000,
+        "max_output_tokens": null,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "openrouter/free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "openrouter"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "perceptron/perceptron-mk1@catalog-2026-09-19",
+        "display_name": "Perceptron: Perceptron Mk1",
+        "locality": "third_party",
+        "context_window_tokens": 32768,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0.15000000",
+          "output_per_million": "1.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "perceptron/perceptron-mk1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "perceptron"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "perplexity/sonar-pro-search@catalog-2026-09-19",
+        "display_name": "Perplexity: Sonar Pro Search",
+        "locality": "third_party",
+        "context_window_tokens": 200000,
+        "max_output_tokens": 8000,
+        "cost": {
+          "input_per_million": "3.000000",
+          "output_per_million": "15.000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "perplexity/sonar-pro-search",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "perplexity"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "poolside/laguna-s-2.1@catalog-2026-09-19",
+        "display_name": "Poolside: Laguna S 2.1",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.09000000",
+          "output_per_million": "0.18000000",
+          "cache_read_per_million": "0.009000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "poolside/laguna-s-2.1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "poolside"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "prism-ml/ternary-bonsai-2-27b@catalog-2026-09-19",
+        "display_name": "PrismML: Ternary Bonsai 2 27B",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 32768,
+        "cost": {
+          "input_per_million": "0.075000000",
+          "output_per_million": "0.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "prism-ml/ternary-bonsai-2-27b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "prism-ml"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "qwen/qwen3.8-max-0902@catalog-2026-09-19",
+        "display_name": "Qwen: Qwen3.8 Max (0902)",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "2.000000",
+          "output_per_million": "6.000000",
+          "cache_read_per_million": "0.25000000",
+          "cache_write_per_million": "2.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "qwen/qwen3.8-max-0902",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "qwen"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "rekaai/reka-edge@catalog-2026-09-19",
+        "display_name": "Reka Edge",
+        "locality": "third_party",
+        "context_window_tokens": 16384,
+        "max_output_tokens": 14745,
+        "cost": {
+          "input_per_million": "0.1000000",
+          "output_per_million": "0.1000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "rekaai/reka-edge",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "rekaai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "relace/relace-search@catalog-2026-09-19",
+        "display_name": "Relace: Relace Search",
+        "locality": "third_party",
+        "context_window_tokens": 256000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "1.000000",
+          "output_per_million": "3.000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "relace/relace-search",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "relace"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "sakana/fugu-ultra-v2@catalog-2026-09-19",
+        "display_name": "Sakana: Fugu Ultra v2",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "5.000000",
+          "output_per_million": "30.00000",
+          "cache_read_per_million": "0.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "sakana/fugu-ultra-v2",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "sakana"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "sao10k/l3.3-euryale-70b@catalog-2026-09-19",
+        "display_name": "Sao10K: Llama 3.3 Euryale 70B",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 16384,
+        "cost": {
+          "input_per_million": "0.65000000",
+          "output_per_million": "0.75000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "sao10k/l3.3-euryale-70b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "sao10k"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "stepfun/step-3.7-flash@catalog-2026-09-19",
+        "display_name": "StepFun: Step 3.7 Flash",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 230400,
+        "cost": {
+          "input_per_million": "0.2000000",
+          "output_per_million": "1.15000000",
+          "cache_read_per_million": "0.04000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "stepfun/step-3.7-flash",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "stepfun"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "tencent/hy4-preview@catalog-2026-09-19",
+        "display_name": "Tencent: Hy4 preview",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 64000,
+        "cost": {
+          "input_per_million": "0.834000000",
+          "output_per_million": "2.501000000",
+          "cache_read_per_million": "0.042000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "tencent/hy4-preview",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "tencent"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "thedrummer/cydonia-24b-v4.1@catalog-2026-09-19",
+        "display_name": "TheDrummer: Cydonia 24B V4.1",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 117964,
+        "cost": {
+          "input_per_million": "0.3000000",
+          "output_per_million": "0.5000000",
+          "cache_read_per_million": "0.15000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "thedrummer/cydonia-24b-v4.1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "thedrummer"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "thinkingmachines/inkling-small@catalog-2026-09-19",
+        "display_name": "Thinking Machines: Inkling Small",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 262144,
+        "cost": {
+          "input_per_million": "0.45000000",
+          "output_per_million": "1.2000000",
+          "cache_read_per_million": "0.1000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "thinkingmachines/inkling-small",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "thinkingmachines"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "unbiased/pareto@catalog-2026-09-19",
+        "display_name": "Pareto",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "2.5000000",
+          "output_per_million": "7.5000000",
+          "cache_read_per_million": "0.25000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "unbiased/pareto",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "unbiased"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "undi95/remm-slerp-l2-13b@catalog-2026-09-19",
+        "display_name": "ReMM SLERP 13B",
+        "locality": "third_party",
+        "context_window_tokens": 6144,
+        "max_output_tokens": 5529,
+        "cost": {
+          "input_per_million": "0.35000000",
+          "output_per_million": "0.65000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "undi95/remm-slerp-l2-13b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "undi95"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "upstage/solar-pro4@catalog-2026-09-19",
+        "display_name": "Upstage: Solar Pro 4",
+        "locality": "third_party",
+        "context_window_tokens": 524288,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.09000000",
+          "output_per_million": "0.36000000",
+          "cache_read_per_million": "0.018000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "upstage/solar-pro4",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "upstage"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "writer/palmyra-x5@catalog-2026-09-19",
+        "display_name": "Writer: Palmyra X5",
+        "locality": "third_party",
+        "context_window_tokens": 1040000,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0.6000000",
+          "output_per_million": "6.000000"
+        },
+        "capabilities": [
+          "streaming"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "writer/palmyra-x5",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "writer"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "x-ai/grok-4.6@catalog-2026-09-19",
+        "display_name": "SpaceXAI: Grok 4.6",
+        "locality": "third_party",
+        "context_window_tokens": 500000,
+        "max_output_tokens": 450000,
+        "cost": {
+          "input_per_million": "2.000000",
+          "output_per_million": "6.000000",
+          "cache_read_per_million": "0.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "x-ai/grok-4.6",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "x-ai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "xiaomi/mimo-v2.5-pro@catalog-2026-09-19",
+        "display_name": "Xiaomi: MiMo-V2.5-Pro",
+        "locality": "third_party",
+        "context_window_tokens": 1050000,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.435000000",
+          "output_per_million": "0.87000000",
+          "cache_read_per_million": "0.0036000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "xiaomi/mimo-v2.5-pro",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "xiaomi"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "z-ai/glm-5.3-flash@catalog-2026-09-19",
+        "display_name": "Z.ai: GLM 5.3 Flash",
+        "locality": "third_party",
+        "context_window_tokens": 1310720,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.09000000",
+          "output_per_million": "0.3000000",
+          "cache_read_per_million": "0.018000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "z-ai/glm-5.3-flash",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "z-ai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "~anthropic/claude-fable-latest@catalog-2026-09-19",
+        "display_name": "Anthropic: Claude Fable Latest",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "10.00000",
+          "output_per_million": "50.00000",
+          "cache_read_per_million": "0.25000000",
+          "cache_write_per_million": "12.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "~anthropic/claude-fable-latest",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "~anthropic"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "~deepseek/deepseek-pro-latest@catalog-2026-09-19",
+        "display_name": "DeepSeek: DeepSeek Pro Latest",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 393216,
+        "cost": {
+          "input_per_million": "0.57816000000",
+          "output_per_million": "1.73448000000",
+          "cache_read_per_million": "0.018396000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "~deepseek/deepseek-pro-latest",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "~deepseek"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "~google/gemini-pro-latest@catalog-2026-09-19",
+        "display_name": "Google: Gemini Pro Latest",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 65536,
+        "cost": {
+          "input_per_million": "2.000000",
+          "output_per_million": "12.000000",
+          "cache_read_per_million": "0.2000000",
+          "cache_write_per_million": "0.375000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "~google/gemini-pro-latest",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "~google"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "~moonshotai/kimi-latest@catalog-2026-09-19",
+        "display_name": "MoonshotAI: Kimi Latest",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 943718,
+        "cost": {
+          "input_per_million": "2.1000000",
+          "output_per_million": "10.95000000",
+          "cache_read_per_million": "0.23000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "~moonshotai/kimi-latest",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "~moonshotai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "~openai/gpt-astra-latest@catalog-2026-09-19",
+        "display_name": "OpenAI: GPT Astra Latest",
+        "locality": "third_party",
+        "context_window_tokens": 1050000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "10.00000",
+          "output_per_million": "50.00000",
+          "cache_read_per_million": "1.000000",
+          "cache_write_per_million": "12.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "~openai/gpt-astra-latest",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "~openai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "~x-ai/grok-latest@catalog-2026-09-19",
+        "display_name": "xAI: Grok Latest",
+        "locality": "third_party",
+        "context_window_tokens": 500000,
+        "max_output_tokens": 450000,
+        "cost": {
+          "input_per_million": "2.000000",
+          "output_per_million": "6.000000",
+          "cache_read_per_million": "0.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "~x-ai/grok-latest",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "~x-ai"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "~z-ai/glm-flash-latest@catalog-2026-09-19",
+        "display_name": "Z.ai: GLM Flash Latest",
+        "locality": "third_party",
+        "context_window_tokens": 1310720,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.075000000",
+          "output_per_million": "0.25000000",
+          "cache_read_per_million": "0.015000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "~z-ai/glm-flash-latest",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "~z-ai"
+        }
+      }
+    }
+  ]
+}

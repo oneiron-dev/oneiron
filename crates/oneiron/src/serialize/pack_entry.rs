@@ -82,6 +82,11 @@ pub(crate) struct SerializedPackTelemetry {
 }
 
 pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
+    let sanitized;
+    let pack = if matches!(config.format, PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini) {
+        sanitized = super::provider_codecs::sanitize_pack(pack);
+        &sanitized
+    } else { pack };
     let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
     serialize_prepared_pack(pack, config, prepared)
 }
@@ -90,6 +95,11 @@ pub(crate) fn serialize_pack_with_telemetry(
     pack: &ContextPack,
     config: &SerializeConfig,
 ) -> (Vec<u8>, SerializedPackTelemetry) {
+    let sanitized;
+    let pack = if matches!(config.format, PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini) {
+        sanitized = super::provider_codecs::sanitize_pack(pack);
+        &sanitized
+    } else { pack };
     let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
     let telemetry = serialize_prepared_pack_telemetry(&prepared);
     let bytes = serialize_prepared_pack(pack, config, prepared);
@@ -164,6 +174,7 @@ pub(super) fn serialize_prepared_pack(
     prepared: PreparedPack,
 ) -> Vec<u8> {
     match config.format {
+        PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini => super::provider_codecs::serialize_provider(config.format, prepared),
         PackFormat::Json => serialize_json(pack, config, prepared),
         PackFormat::Yaml => serialize_yaml(config, prepared).into_bytes(),
         PackFormat::Toon => serialize_toon(config, prepared).into_bytes(),
