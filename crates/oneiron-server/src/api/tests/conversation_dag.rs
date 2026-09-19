@@ -107,10 +107,10 @@ async fn dag_routes_roundtrip_trunk_thread_fork_scope_migration_and_auth() {
         json!({"path": {"branch": trunk["id"]}, "include_forks": true}),
     )
     .await;
-    let records = expanded["records"].as_array().unwrap();
-    assert_eq!(records.len(), 3);
+    let expanded_records = expanded["records"].as_array().unwrap();
+    assert_eq!(expanded_records.len(), 3);
     assert_eq!(
-        records
+        expanded_records
             .iter()
             .map(|id| id.as_str().unwrap())
             .collect::<std::collections::BTreeSet<_>>(),
