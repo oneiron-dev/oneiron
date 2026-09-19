@@ -22,7 +22,8 @@
 //!   + `ra:` tombstone re-assertion markers (ONE-1156)
 //! - `lease` — device-lease registry + receipt origin attestation (ONE-1140)
 //! - `selector` — grant-backed closed-subgraph window export selectors
-//! - `quota` — per-federated-connection quota plus local maintenance-ingest quota
+//! - `quota` — local maintenance-ingest security bounds
+//! - `federation_burst` — authenticated peer observations and durable defer/replay
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
@@ -31,6 +32,7 @@ pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
 mod diagnostic_ingest;
+pub mod federation_burst;
 pub mod lease;
 pub(crate) mod loro_support;
 pub mod manager;
@@ -64,13 +66,10 @@ pub use quarantine::{
 };
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use quota::{
-    AllowBlock, DEFAULT_FEDERATION_FLOOD_PAUSE_SECS,
     DEFAULT_MAINTENANCE_INGEST_MAX_OPS_PER_PEER_WINDOW,
-    DEFAULT_MAINTENANCE_INGEST_QUOTA_WINDOW_SECS, DEFAULT_MAX_FEDERATION_WINDOWS_PER_CONNECTION,
-    FederationBlockReason, FederationConnectionQuota, FederationPauseReason, FederationQuotaConfig,
-    FederationQuotaSnapshot, MaintenanceIngestQuotaConfig, MaintenanceIngestQuotaSnapshot,
-    maintenance_ingest_quota_config, maintenance_ingest_quota_snapshots,
-    set_maintenance_ingest_quota_config,
+    DEFAULT_MAINTENANCE_INGEST_QUOTA_WINDOW_SECS, MaintenanceIngestQuotaConfig,
+    MaintenanceIngestQuotaSnapshot, maintenance_ingest_quota_config,
+    maintenance_ingest_quota_snapshots, set_maintenance_ingest_quota_config,
 };
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;

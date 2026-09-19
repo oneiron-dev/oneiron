@@ -3,6 +3,11 @@
 /// Client-side sync configuration.
 #[derive(Debug, Clone)]
 pub struct SyncClientConfig {
+    /// Federation principal/grant supplied by the authenticated transport host.
+    /// Never inferred from `auth_token` or untrusted CRDT peer ids.
+    pub federation_peer: Option<crate::sync::federation_burst::FederationPeer>,
+    /// Explicit role for selector UPDATE frames on a bound federation lane.
+    pub federation_admission_role: crate::sync::FederationAdmissionRole,
     /// WebSocket server URL (e.g., "wss://user-{id}.fly.dev/ws").
     pub server_url: String,
     /// Auth token (WorkOS JWT for production, shared secret for Phase 1).
@@ -22,6 +27,8 @@ pub struct SyncClientConfig {
 impl Default for SyncClientConfig {
     fn default() -> Self {
         Self {
+            federation_peer: None,
+            federation_admission_role: crate::sync::FederationAdmissionRole::Guest,
             server_url: String::new(),
             auth_token: String::new(),
             default_window_count: 2,
@@ -64,6 +71,12 @@ pub enum SyncEvent {
         added: Vec<String>,
         updated: Vec<String>,
         removed: Vec<String>,
+    },
+    /// Inbound bytes are durably retained, not materialized or discarded.
+    FederationDeferred {
+        window_key: String,
+        request_id: [u8; 32],
+        inputs: crate::llm::NormalizedBurstInputs,
     },
     Error(String),
 }

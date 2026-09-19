@@ -269,6 +269,7 @@ fn put_imported_source_trust(vault: &Vault) {
     let payload = entity_blob(ENTITY_TYPE_POLICY_MANIFEST, &body);
     vault
         .with_write_txn(|wtxn| {
+            crate::gate::stamp_manifest_origin(&vault.store, wtxn, &id, &body, false)?;
             vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
             let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
             vault.store.type_index.put(wtxn, &type_key, &[])?;
@@ -455,7 +456,22 @@ fn test_client_with_grant(
         Arc::new(crate::sync::bridge::Materializer::new()),
         "selector-test",
     ));
-    let (client, _rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    let selector = SyncSelector::new(grant_id, member_ref, SyncSelectorWorld::All, vec![], vec![]);
+    let peer = crate::sync::federation_burst::FederationPeer::authorize(
+        &vault,
+        member_ref,
+        test_selector_scope(),
+        &selector,
+    )
+    .unwrap();
+    let (client, _rx) = SyncClient::new(
+        manager,
+        SyncClientConfig {
+            federation_peer: Some(peer),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     // LOADED, not cold: this is the arm a federated import materializes
     // through synchronously.
     client.ensure_window(window).unwrap();
@@ -473,6 +489,7 @@ fn import_federated(
     client
         .import_federated_window_update(window, &update, role)
         .unwrap_or_else(|e| panic!("{role:?}: federated import must not fail closed: {e:?}"));
+    client.replay_deferred_federation_update().unwrap();
 }
 
 #[test]

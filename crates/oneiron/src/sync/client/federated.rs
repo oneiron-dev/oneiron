@@ -5,6 +5,9 @@ use crate::batch::export::{
     StagedVaultImport, VaultImportConfirmation, VaultImportStageReceipt, VaultImportStageStatus,
 };
 use crate::error::SyncProtocolValidation;
+use crate::sync::federation_burst::{
+    FederationBurstDecision, WorkKind, admit_work, record_outcome,
+};
 use crate::sync::selector::{
     FederationAdmissionRole, SyncSelector, admit_federated_window_update,
     encode_selector_vv_request, revalidate_admitted_federated_claims,
@@ -16,11 +19,10 @@ use crate::sync::types::WindowKey;
 impl SyncClient {
     /// Builds a selector request frame for a selector-capable caller.
     ///
-    /// This is deliberately pure: a generic `UPDATE` response has no selector
-    /// discriminator, so `handle_window_sync` cannot safely classify the next
-    /// same-window update as federated. A selector-capable caller that has
-    /// explicit member/guest context must route the selected response bytes
-    /// through [`SyncClient::import_federated_selector_window_update`].
+    /// This builder is pure. Bind the authenticated remote peer in the client
+    /// config (or `bind_federation_peer`) before receiving selector `UPDATE`
+    /// frames. Bound lanes automatically route those frames through federation
+    /// admission and reject full-window vector/bulk fallback.
     pub fn federated_selector_vv_request(
         &self,
         window_key: &str,
@@ -42,9 +44,9 @@ impl SyncClient {
     /// Imports a selector response whose caller already bound the request to
     /// an explicit member/guest admission role.
     ///
-    /// The role is explicit; it is not inferred from grant role names, and it
-    /// is intentionally not stored as global "next update" state because
-    /// same-window full-window updates share the same wire `UPDATE` tag.
+    /// The role is explicit and is not inferred from grant role names. The
+    /// client must also have a transport-authenticated peer/grant binding;
+    /// the request's claimed member is never used as authentication.
     pub fn import_federated_selector_window_update(
         &mut self,
         window_key: &str,
@@ -74,10 +76,56 @@ impl SyncClient {
             });
         }
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
-        let admitted = admit_federated_window_update(&self.vault, &key, update, role)
+        let peer = self.config.federation_peer.clone().ok_or_else(|| {
+            map_federated_admission_err(crate::Error::sync_protocol(
+                SyncProtocolValidation::FederationPeerUnbound,
+            ))
+        })?;
+        peer.revalidate(&self.vault)
             .map_err(map_federated_admission_err)?;
+        // Validate before retaining bytes. Malformed rows never become durable
+        // deferred work, and they cannot reach an observed Loro document.
+        let admitted = match admit_federated_window_update(&self.vault, &key, update, role) {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                let error = map_federated_admission_err(error);
+                if matches!(error, TransportError::InvalidPayload(_)) {
+                    record_outcome(&self.vault, &peer, true)
+                        .map_err(map_federated_admission_err)?;
+                }
+                return Err(error);
+            }
+        };
+        let kind = match role {
+            FederationAdmissionRole::Member => WorkKind::MemberUpdate,
+            FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
+        };
+        let admitted_doc = loro::LoroDoc::new();
+        admitted_doc
+            .import(&admitted)
+            .map_err(|_| TransportError::InvalidPayload("admitted update decode failed"))?;
+        let writes = (admitted_doc.get_map("entities").len() as u64)
+            .saturating_add(admitted_doc.get_map("edges").len() as u64)
+            .max(1);
+        let (decision, work) = admit_work(&self.vault, &peer, &key, kind, update, writes)
+            .map_err(map_federated_admission_err)?;
+        if let FederationBurstDecision::Defer { request_id, inputs } = decision {
+            let _ = self
+                .event_tx
+                .send(crate::sync::SyncEvent::FederationDeferred {
+                    window_key: window_key.to_owned(),
+                    request_id,
+                    inputs,
+                });
+            return Ok(());
+        }
         let window = self.ensure_window(window_key)?;
-        self.import_accepted_window_update(window_key, &window, &admitted)
+        self.import_accepted_window_update(window_key, &window, &admitted)?;
+        match work {
+            Some(work) => work.complete(&self.vault, &peer),
+            None => record_outcome(&self.vault, &peer, false),
+        }
+        .map_err(map_federated_admission_err)
     }
 
     pub fn confirm_staged_vault_import(

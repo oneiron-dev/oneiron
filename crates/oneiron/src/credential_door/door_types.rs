@@ -11,7 +11,7 @@ pub(super) const DOOR_SCAN_ALWAYS_ON: bool = true;
 pub(super) const DOOR_MAX_LEASE_TTL_SECS: u64 = 3600;
 
 /// The hard ceiling on a one-shot credential's lifetime, in seconds.
-pub(super) const DOOR_ONE_SHOT_MAX_LIFETIME_SECS: u64 = 300;
+pub(crate) const DOOR_ONE_SHOT_MAX_LIFETIME_SECS: u64 = 300;
 
 /// The receive-pack door's effector — the scope every door-issued lease and
 /// door injection is bound to by default.
@@ -60,7 +60,7 @@ const DOOR_FLOOR_NAMES: [&str; 3] = [
 const DOOR_FLOOR_KEY_PREFIXES: [&str; 2] = ["secret.door.floor.", "secret.door.scan"];
 
 /// True when `token` names a catastrophe floor.
-pub(super) fn names_a_floor(token: &str) -> bool {
+pub(crate) fn names_a_floor(token: &str) -> bool {
     let lower = token.to_ascii_lowercase();
     let mut names = DOOR_FLOOR_NAMES.iter();
     let mut prefixes = DOOR_FLOOR_KEY_PREFIXES.iter();
@@ -74,7 +74,7 @@ pub(super) fn custody<E: Into<crate::error::Error>>(err: E) -> CredentialDoorErr
 
 /// Any failure to READ the authority log is the same answer: the door cannot
 /// witness a single-use caveat, so it refuses one.
-pub(super) fn log_unreachable<E>(_err: E) -> CredentialDoorError {
+pub(crate) fn log_unreachable<E>(_err: E) -> CredentialDoorError {
     CredentialDoorError::AuthorityLogUnreachable
 }
 
@@ -169,11 +169,15 @@ pub(crate) enum CredentialDoorError {
     /// witnessed. A verifier that cannot reach the log refuses the caveat.
     #[error("credential door could not reach the authority log")]
     AuthorityLogUnreachable,
-    /// No landed authority-log surface admits slip-mint bodies, and this
-    /// ticket may not invent one. The mint arm stops here, honestly, instead
-    /// of growing a private ledger.
-    #[error("credential door cannot mint: no landed authority-log mint surface")]
-    MintUnavailable,
+    /// Signed authority does not admit this mint, handle, or use.
+    #[error("credential door authority refused the operation")]
+    AuthorityRejected,
+    /// Third outcome: scope is valid but the verb needs an owner grant.
+    #[error("credential door asks for verb-class consent")]
+    Ask {
+        reason: DoorDenyReason,
+        effect: Box<crate::consent::ComposedEffect>,
+    },
     /// A landed custody/vault refusal, passed through unchanged.
     #[error(transparent)]
     Custody(#[from] crate::error::Error),
@@ -198,6 +202,8 @@ pub(crate) enum DoorDenyReason {
     ParentRevoked,
     /// `verb ∈ slip` failed.
     VerbNotInSlip,
+    /// Unknown class identifiers never ask or authorize.
+    UnknownVerbClass,
     /// `record ⊑ slip` failed.
     RecordOutsideSlip,
     /// `record ⊑ channel` failed.

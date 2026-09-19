@@ -65,6 +65,24 @@ impl AuthenticatedOwner {
         self.decision_id
     }
 
+    pub(crate) fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let human = vault
+            .store
+            .entities
+            .get(txn, self.actor.as_bytes())?
+            .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON);
+        if !human
+            || vault.entity_lifecycle_state_in_txn(txn, &self.actor)?
+                != crate::identity_topology::EntityLifecycleState::Active
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "authenticated owner is no longer active",
+            )));
+        }
+        Ok(())
+    }
+
     fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,

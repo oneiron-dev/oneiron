@@ -19,9 +19,7 @@ use crate::companion::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
-use crate::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
-};
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY};
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
 /// Reverse re-materialization: LMDB→CRDT (insert-missing only).
@@ -69,9 +67,6 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let Some(raw) = vault.get_raw_unsealed(&id)? else {
             continue;
         };
-        if reverse_remat_skip_policy_manifest_mirror(&raw) {
-            continue;
-        }
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
@@ -129,16 +124,12 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         };
 
-        if reverse_remat_skip_policy_manifest_mirror(&raw) {
-            continue;
-        }
-
         // ONE-1865 arm-pending seal: never mirror a SECRET_CUSTODY row into the
         // canonical window doc, and scrub any custody carrier that landed
         // before this pass ran (fail-closed — a resident body is a disclosure,
         // not a presence). Mirror the companion-local-only branch below: drop
         // the entity carrier and every incident edge, never the tombstones.
-        if is_secret_custody_record(&raw) {
+        if is_secret_custody_record(&raw) || *id == crate::gate::default_policy_manifest_id()? {
             let mut removed = false;
             if map_contains_binary(&entities_map, &hex_id) {
                 map_delete(&entities_map, &hex_id)?;
@@ -392,11 +383,6 @@ pub(super) fn delete_edges_touching_entities(
         map_delete(edges_map, key)?;
     }
     Ok(!edge_keys.is_empty())
-}
-
-fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
-    EntityMetadataHeader::parse(raw)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
 }
 
 /// ONE-1604-D1 dominance on the outbound door: `true` when the LOCAL row is a

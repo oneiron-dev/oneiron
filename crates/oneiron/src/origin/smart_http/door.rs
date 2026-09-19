@@ -175,6 +175,9 @@ impl DoorHook for CredentialDoorService {
             admit_receive_pack_effector(self)?;
             return Ok(DoorAdmissionStamp::from_principal(principal_ref, now));
         };
+        if credential.holder_ref() != principal_ref {
+            return Err(door_refused(&CredentialDoorError::AuthorityRejected));
+        }
         self.authenticate_receive_pack(Some(credential), repo, peer_addr)
             .map_err(|error| door_refused(&error))?;
         Ok(DoorAdmissionStamp::from_credential(

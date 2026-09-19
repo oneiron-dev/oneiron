@@ -477,23 +477,13 @@ pub(super) fn materialize_entity_blob_in_txn(
             )?;
             return Ok(false);
         }
-        let validation = crate::batch::validate_replicated_authority_log_for_local_vault(
+        crate::batch::validate_replicated_authority_log_for_local_vault(
             &vault.store,
             wtxn,
             &id,
             data,
         )?;
-        let peer_key = if validation.signer_known {
-            quota::peer_key_from_authority_key(&validation.signer_key)
-        } else {
-            quota::peer_key_from_unknown_authority_signer(validation.local_vault_id)
-        };
-        quota::try_accept_maintenance_ingest_peer_in_txn(
-            vault,
-            wtxn,
-            peer_key,
-            crate::unix_seconds_now(),
-        )?
+        None
     } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         // ARCH-0055 identity-topology ledger events route through the ONE
         // shared fail-closed ingest door (validation, per-stream quota,

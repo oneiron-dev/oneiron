@@ -122,6 +122,22 @@ pub fn serve_with_provenance(
     }
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
+    let mut tickets = request
+        .query_string
+        .split('&')
+        .filter_map(|pair| pair.strip_prefix("checkout-lease="));
+    if let Some(ticket) = tickets.next() {
+        if tickets.next().is_some() || seam != DoorSeam::Landed {
+            return Err(serve_failed("invalid checkout lease route"));
+        }
+        let principal = request
+            .remote_user
+            .as_deref()
+            .ok_or_else(|| serve_failed("checkout lease requires a registered principal"))?;
+        CredentialDoorService::new(Arc::clone(vault))
+            .checkout_credential(ticket, principal, &unpinned_repo_ref(&repo_dir))
+            .map_err(|error| super::paths::door_refused(&error))?;
+    }
     let hooks = DoorHooksDir::materialize(&origin_door_root(vault)?)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
     let admission = stamp_admission(vault, request, &repo_dir, seam)?;
@@ -232,15 +248,31 @@ pub(super) fn stamp_admission(
     let now = now_secs();
     let stamp = match seam {
         DoorSeam::Noop => {
+            if request
+                .query_string
+                .split('&')
+                .any(|part| part.starts_with("checkout-lease="))
+            {
+                return Err(serve_failed("checkout lease requires the credential door"));
+            }
             NoopDoorHook.admit_receive_pack(None, principal_ref, &repo, peer_addr, now)?
         }
-        DoorSeam::Landed => CredentialDoorService::new(Arc::clone(vault)).admit_receive_pack(
-            None,
-            principal_ref,
-            &repo,
-            peer_addr,
-            now,
-        )?,
+        DoorSeam::Landed => {
+            let door = CredentialDoorService::new(Arc::clone(vault));
+            let mut tickets = request
+                .query_string
+                .split('&')
+                .filter_map(|part| part.strip_prefix("checkout-lease="));
+            let ticket = tickets.next();
+            if tickets.next().is_some() {
+                return Err(serve_failed("ambiguous checkout lease"));
+            }
+            let credential = ticket
+                .map(|ticket| door.checkout_credential(ticket, principal_ref, &repo))
+                .transpose()
+                .map_err(|error| super::paths::door_refused(&error))?;
+            door.admit_receive_pack(credential.as_ref(), principal_ref, &repo, peer_addr, now)?
+        }
     };
     Ok(Some(stamp))
 }

@@ -31,6 +31,13 @@ impl SyncClient {
         }
 
         let tag = data[0];
+        if self.config.federation_peer.is_some()
+            && matches!(tag, TAG_BULK_TRANSFER | TAG_BULK_TRANSFER_DONE)
+        {
+            return Err(TransportError::InvalidPayload(
+                "full-window bulk transfer on federation lane",
+            ));
+        }
         let payload = &data[1..];
         let mut responses = Vec::new();
 
@@ -132,6 +139,12 @@ impl SyncClient {
             _ => return Err(TransportError::UnknownTag(tag)),
         }
 
+        // A successfully decoded control/root frame can advance one retained
+        // update. Malformed/oversized messages never trigger replay side effects.
+        // Window updates leave newly deferred bytes for the next timer tick.
+        if tag != TAG_WINDOW_SYNC {
+            self.replay_deferred_federation_update()?;
+        }
         Ok(responses)
     }
 
@@ -141,7 +154,43 @@ impl SyncClient {
         sub_tag: u8,
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        if self.config.federation_peer.is_some()
+            && matches!(
+                sub_tag,
+                window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE
+            )
+        {
+            return Err(TransportError::InvalidPayload(
+                "full-window vector exchange on federation lane",
+            ));
+        }
         match sub_tag {
+            window_sub_tags::SELECTOR_DEFERRED => {
+                if payload.len() > MAX_DECODED_PAYLOAD_BYTES || payload.len() <= 32 {
+                    return Err(TransportError::InvalidPayload(
+                        "invalid selector defer response",
+                    ));
+                }
+                let request =
+                    crate::sync::decode_selector_vv_request(&payload[32..]).map_err(|_| {
+                        TransportError::InvalidPayload("invalid deferred selector request")
+                    })?;
+                let vv = VersionVector::decode(&request.remote_vv)
+                    .map_err(|_| TransportError::VersionVectorDecode)?;
+                if !vv.is_empty() {
+                    return Err(TransportError::InvalidPayload(
+                        "nonempty deferred selector vector",
+                    ));
+                }
+                Ok(vec![
+                    transport::encode_window_sync(
+                        window_key,
+                        window_sub_tags::SELECTOR_RETRY,
+                        payload,
+                    )
+                    .into_result()?,
+                ])
+            }
             window_sub_tags::VV_REQUEST => {
                 // Peer sent its binary VV (SyncStep1) — reply with the delta it
                 // is missing (SyncStep2), then our own VV so it can push its
@@ -179,6 +228,14 @@ impl SyncClient {
                         size: payload.len(),
                         max: MAX_DECODED_PAYLOAD_BYTES,
                     });
+                }
+                if self.config.federation_peer.is_some() {
+                    self.import_federated_window_update(
+                        window_key,
+                        payload,
+                        self.config.federation_admission_role,
+                    )?;
+                    return Ok(Vec::new());
                 }
                 let window = self.ensure_window(window_key)?;
                 self.import_accepted_window_update(window_key, &window, payload)?;

@@ -77,7 +77,8 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// v7 = Loro-native ephemeral tag 1 payloads for selector-capable clients,
 /// kept distinct from v6 for broadcast filtering.
 /// v8 = in-band bound app-tier RPC and subscription frames.
-pub const PROTOCOL_VERSION: u8 = 8;
+/// v9 = authenticated selector peers and durable selector defer/retry.
+pub const PROTOCOL_VERSION: u8 = 9;
 /// Sync version that introduces app-tier tags and their close codes.
 pub const APP_TIER_PROTOCOL_VERSION_VERSION: u8 = 8;
 /// Selector-capable sync-only peers retain the v7 wire semantics.
@@ -123,6 +124,11 @@ pub mod window_sub_tags {
     /// selected subgraph. Full-window `VV_REQUEST`/`VV_RESPONSE` remain
     /// unchanged and backward compatible.
     pub const SELECTOR_VV_REQUEST: u8 = 4;
+    /// Durable selector deferral. Payload is the 32-byte request identity.
+    pub const SELECTOR_DEFERRED: u8 = 5;
+    /// Retry a durable selector request under the currently bound principal.
+    /// Payload is the 32-byte identity from `SELECTOR_DEFERRED`.
+    pub const SELECTOR_RETRY: u8 = 6;
 }
 
 /// Maximum window key length (YYYY-MM = 7 bytes).

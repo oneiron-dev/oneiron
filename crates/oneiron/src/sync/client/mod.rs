@@ -42,6 +42,7 @@
 
 mod base;
 mod federated;
+mod federation_replay;
 mod inbound;
 mod sync_frames;
 mod types;

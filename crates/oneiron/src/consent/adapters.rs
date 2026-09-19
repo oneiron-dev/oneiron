@@ -1,8 +1,6 @@
 use rmpv::Value;
 
-use crate::access_grant::{
-    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-};
+use crate::access_grant::{AccessGrant, AccessGrantCapability, AccessGrantScope};
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
 use crate::error::Result;
 use crate::gate::PolicyScopedGrant;
@@ -47,6 +45,11 @@ pub fn disclosure_grant_from_access_grant(grant: &AccessGrant) -> Result<Disclos
 
 fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>> {
     match scope {
+        AccessGrantScope::Messages { space_ref }
+        | AccessGrantScope::Summaries { space_ref }
+        | AccessGrantScope::RelationshipClaims { space_ref } => {
+            Ok(vec![format!("space:{}", space_ref.to_hex())])
+        }
         AccessGrantScope::CompanionProfile {
             person_ref,
             persona_ref,
@@ -73,10 +76,13 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
 /// only [`crate::Vault::resolve_share_for_view`] can resolve its live view authority.
 #[must_use]
 pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
-    grant.status == AccessGrantStatus::Active
+    grant.is_active()
         && matches!(
             grant.capability,
-            AccessGrantCapability::CompanionProfileRead
+            AccessGrantCapability::MessagesRead
+                | AccessGrantCapability::SummariesRead
+                | AccessGrantCapability::RelationshipClaimsRead
+                | AccessGrantCapability::CompanionProfileRead
                 | AccessGrantCapability::CalendarDisclosureRead
         )
 }

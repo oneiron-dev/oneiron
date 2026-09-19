@@ -101,7 +101,7 @@ impl SyncClient {
                 true
             }));
 
-        let client = Self {
+        let mut client = Self {
             vault,
             manager,
             root_doc,
@@ -115,6 +115,9 @@ impl SyncClient {
             event_tx,
         };
 
+        client
+            .replay_deferred_federation_update()
+            .map_err(|e| Error::sync_engine(SyncEngineContext::FederationReplayStartup, e))?;
         Ok((client, event_rx))
     }
 

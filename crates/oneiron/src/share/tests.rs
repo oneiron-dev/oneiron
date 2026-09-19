@@ -21,6 +21,7 @@ pub(crate) fn fixture() -> Result<(tempfile::TempDir, Vault, WriteActor, Share)>
         status: AccessGrantStatus::Active,
         created_at: 42,
         revoked_at: None,
+        expires_at: None,
     };
     vault.put_entity(
         &issuer.entity_ref(),

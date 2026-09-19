@@ -151,6 +151,9 @@ impl SyncConnection {
                 // Loro's Rust EphemeralStore has no internal timer.
                 _ = ephemeral_housekeeping.tick() => {
                     client.remove_outdated_ephemeral();
+                    if let Err(error) = client.replay_deferred_federation_update() {
+                        return LoopExit::Disconnected(format!("federation replay: {error}"));
+                    }
                 }
 
                 // Shutdown signal

@@ -398,23 +398,11 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         // so parity alone must not discharge an `rm:` marker.
                         return Ok(false);
                     }
-                    let validation =
-                        crate::batch::validate_replicated_authority_log_for_local_vault(
-                            &vault.store,
-                            wtxn,
-                            &id,
-                            data,
-                        )?;
-                    let peer_key = if validation.signer_known {
-                        quota::peer_key_from_authority_key(&validation.signer_key)
-                    } else {
-                        quota::peer_key_from_unknown_authority_signer(validation.local_vault_id)
-                    };
-                    let _quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
-                        vault,
+                    crate::batch::validate_replicated_authority_log_for_local_vault(
+                        &vault.store,
                         wtxn,
-                        peer_key,
-                        crate::unix_seconds_now(),
+                        &id,
+                        data,
                     )?;
                     vault
                         .batch_in()

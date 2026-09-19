@@ -40,6 +40,8 @@ pub struct Share {
     pub created_at: u64,
     /// Revocation time in Unix seconds.
     pub revoked_at: Option<u64>,
+    /// Exclusive expiry in Unix seconds.
+    pub expires_at: Option<u64>,
 }
 
 /// Optional request narrowing, never evidence of the recipient's current authority.
@@ -78,6 +80,7 @@ impl Share {
             status: self.status,
             created_at: self.created_at,
             revoked_at: self.revoked_at,
+            expires_at: self.expires_at,
         }
     }
 
@@ -100,6 +103,7 @@ impl Share {
             status: grant.status,
             created_at: grant.created_at,
             revoked_at: grant.revoked_at,
+            expires_at: grant.expires_at,
         })
     }
 
@@ -551,7 +555,7 @@ impl Vault {
         let Some((share, _)) = read_share_in_txn(&self.store, &txn, share_id)? else {
             return Ok(None);
         };
-        if share.status != AccessGrantStatus::Active || share.recipient_ref != *viewer {
+        if !share.grant().is_active() || share.recipient_ref != *viewer {
             return Ok(None);
         }
         let Some(actor) = share_viewer_actor_in_txn(self, &txn, viewer)? else {
