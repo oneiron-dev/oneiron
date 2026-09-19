@@ -79,10 +79,16 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
         return Err(secret_scan_error(reason));
     }
     let mut cursor = std::io::Cursor::new(data);
-    if let Ok(value) = rmpv::decode::read_value(&mut cursor)
+    let structured = if let Ok(value) = serde_json::from_slice(data) {
+        structured_secret(&value)
+    } else if let Ok(mut value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == data.len() as u64
-        && structured_secret(&crate::companion::companion_value_to_json(&value))
     {
+        sanitize_messagepack_credentials(&mut value, false)
+    } else {
+        false
+    };
+    if structured {
         return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
     }
     Ok(secrets_nulled)
@@ -181,6 +187,60 @@ pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) ->
             } else {
                 sanitize_credentials(value, null) | changed
             }
+        }),
+        _ => false,
+    }
+}
+
+/// Scan MessagePack before any lossy JSON projection. Safe binary and extension
+/// values retain their original type on raw transports.
+pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bool) -> bool {
+    use rmpv::Value;
+    let replacement = || {
+        if null {
+            Value::Nil
+        } else {
+            Value::from("[redacted]")
+        }
+    };
+    match value {
+        Value::String(text) if scan_file_content("", text.as_bytes()).is_some() => {
+            *value = replacement();
+            true
+        }
+        Value::Binary(bytes) | Value::Ext(_, bytes) if scan_file_content("", bytes).is_some() => {
+            *value = replacement();
+            true
+        }
+        Value::Array(values) => {
+            let bytes: Option<Vec<u8>> = values
+                .iter()
+                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
+                .collect();
+            if bytes
+                .as_ref()
+                .is_some_and(|bytes| scan_file_content("", bytes).is_some())
+            {
+                *value = replacement();
+                true
+            } else {
+                values.iter_mut().fold(false, |changed, value| {
+                    sanitize_messagepack_credentials(value, null) | changed
+                })
+            }
+        }
+        Value::Map(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
+            let sensitive = key.as_str().is_some_and(shapes::sensitive_key)
+                && !value.is_nil()
+                && !value.as_str().is_some_and(shapes::placeholder);
+            let key_changed = sanitize_messagepack_credentials(key, null);
+            let value_changed = if sensitive {
+                *value = replacement();
+                true
+            } else {
+                sanitize_messagepack_credentials(value, null)
+            };
+            changed | key_changed | value_changed
         }),
         _ => false,
     }
@@ -288,6 +348,26 @@ fn is_ascii_token_body(byte: u8) -> bool {
 mod tests {
     use super::*;
     use crate::error::GateError;
+
+    #[test]
+    fn credential_fields_cannot_hide_behind_messagepack_binary_or_json_escapes() {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(
+            &mut bytes,
+            &rmpv::Value::Map(vec![(
+                rmpv::Value::from("password"),
+                rmpv::Value::Binary(b"private fixture".to_vec()),
+            )]),
+        )
+        .unwrap();
+        for payload in [&bytes[..], &br#"{"pass\u0077ord":"private fixture"}"#[..]] {
+            let error = scan_payload(payload).expect_err("typed credential field");
+            assert!(
+                matches!(error, Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
+                if reason_codes.contains(&"gate.secret_scan.sensitive_env"))
+            );
+        }
+    }
 
     #[test]
     fn scan_payload_rejects_known_secret_fixture() {

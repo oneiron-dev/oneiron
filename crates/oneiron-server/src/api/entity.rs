@@ -141,30 +141,8 @@ pub(crate) async fn get_entity(
 
 /// Preserve the legacy raw transport, but never return surviving credentials.
 fn redacted_payload(bytes: Vec<u8>) -> Result<Vec<u8>, ApiError> {
-    if let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) {
-        if !oneiron::batch::export::redact_credentials(&mut value) {
-            return Ok(bytes);
-        }
-        return serde_json::to_vec(&value)
-            .map_err(|_| ApiError::internal_server_error("redaction serialization failed"));
-    }
-    let mut cursor = std::io::Cursor::new(&bytes);
-    if let Ok(value) = rmpv::decode::read_value(&mut cursor)
-        && cursor.position() == bytes.len() as u64
-    {
-        let mut value = oneiron::companion_value_to_json(&value);
-        if !oneiron::batch::export::redact_credentials(&mut value) {
-            return Ok(bytes);
-        }
-        return rmp_serde::to_vec_named(&value)
-            .map_err(|_| ApiError::internal_server_error("redaction serialization failed"));
-    }
-    let mut text = Value::String(String::from_utf8_lossy(&bytes).into_owned());
-    if oneiron::batch::export::redact_credentials(&mut text) {
-        Ok(b"[redacted]".to_vec())
-    } else {
-        Ok(bytes)
-    }
+    oneiron::batch::export::redacted_memory_payload(bytes)
+        .map_err(|_| ApiError::internal_server_error("redaction serialization failed"))
 }
 
 fn attach_read_receipt(
