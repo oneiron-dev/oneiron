@@ -290,9 +290,37 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<HubSyncDisposition> {
+        self.sync_skill_from_hub_with_query(
+            entity,
+            hub_ref,
+            package,
+            sync_policy,
+            occurred,
+            learned_at,
+            &super::osv::OsvDevClient,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "typed hub update plus an injectable dependency advisory transport"
+    )]
+    pub(super) fn sync_skill_from_hub_with_query(
+        &self,
+        entity: &EntityId,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        sync_policy: HubSyncPolicy,
+        occurred: TimeRange,
+        learned_at: u64,
+        query: &dyn super::osv::OsvQuery,
+    ) -> Result<HubSyncDisposition> {
         hub_ref.validate()?;
         encode_skill_record(&package.record)?;
         let content_hash = package.content_hash()?;
+        let inventory = super::osv::dependency_inventory(package)?;
+        let (_, _, scans) =
+            self.dependency_advisories(content_hash, &inventory, query, learned_at)?;
         let mut wtxn = self.store.env.write_txn()?;
         let current = self.read_skill_record_in_txn(&wtxn, entity)?;
         if current.source != ClaimSource::Imported
@@ -461,6 +489,25 @@ impl Vault {
             occurred,
             learned_at,
         )?;
+        for receipt in &scans {
+            self.ingest_skill_scan_verdict_in_txn(
+                &mut wtxn,
+                entity,
+                content_hash,
+                receipt,
+                occurred,
+                learned_at,
+            )?;
+        }
+        if matches!(
+            crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, &wtxn, content_hash)?,
+            crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+        ) && updated.lifecycle_status == SkillLifecycle::Active
+        {
+            // The old bytes' approval cannot authorize a newly unvetted update.
+            updated.approval_status = ClaimApprovalStatus::Proposed;
+            self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
+        }
         wtxn.commit()?;
         Ok(HubSyncDisposition::Applied)
     }

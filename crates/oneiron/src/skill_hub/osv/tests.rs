@@ -92,3 +92,101 @@ fn vulnerable_install_lands_and_existing_write_gate_reads_advisory_clean_emits_n
     );
     Ok(())
 }
+
+struct UnavailableQuery(bool);
+impl OsvQuery for UnavailableQuery {
+    fn query(&self, _: &[DependencyCoordinate]) -> Result<Vec<Vec<String>>> {
+        if self.0 { Ok(vec![]) } else { Err(invalid()) }
+    }
+}
+#[test]
+fn unavailable_advisories_persist_and_clean_retry_clears_the_hold() -> Result<()> {
+    for malformed in [false, true] {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let package = package("4.17.21");
+        let inventory = dependency_inventory(&package)?;
+        let reference = HubRef::new(EntityId::now(), "skills/osv-fixture", HubPin::None)?;
+        let result = vault.install_skill_with_advisories(
+            &reference,
+            &package,
+            &inventory,
+            &UnavailableQuery(malformed),
+            TimeRange { start: 10, end: 10 },
+            10,
+        )?;
+        assert_eq!(result.status, DependencyScanStatus::Unavailable);
+        let rows = vault.skill_scan_verdicts_for_content_hash(package.content_hash()?)?;
+        let receipt = rows
+            .iter()
+            .find(|body| {
+                super::super::support::map_text(&body.value, "provider") == Some(OSV_SCAN_PROVIDER)
+            })
+            .unwrap();
+        assert_eq!(
+            super::super::support::map_text(&receipt.value, "verdict"),
+            Some("unknown")
+        );
+        assert_eq!(
+            super::super::support::map_text(&receipt.value, "completeness"),
+            Some("partial")
+        );
+        assert!(matches!(
+            crate::skill_scan::scan_gate_for_activation(&vault, package.content_hash()?)?,
+            crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+        ));
+        vault.install_skill_with_advisories(
+            &reference,
+            &package,
+            &inventory,
+            &FixtureQuery,
+            TimeRange { start: 11, end: 11 },
+            11,
+        )?;
+        assert_eq!(
+            crate::skill_scan::scan_gate_for_activation(&vault, package.content_hash()?)?,
+            crate::skill_scan::ActivationPosture::AutoEligible
+        );
+    }
+    Ok(())
+}
+#[test]
+fn hub_updates_scan_new_dependencies_before_exposing_them() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let initial = package("4.17.21");
+    let reference = HubRef::new(EntityId::now(), "skills/osv-fixture", HubPin::None)?;
+    let installed = vault.install_skill_with_advisories(
+        &reference,
+        &initial,
+        &dependency_inventory(&initial)?,
+        &FixtureQuery,
+        TimeRange { start: 10, end: 10 },
+        10,
+    )?;
+    let mut active = vault.get_skill_record(&installed.entity)?.unwrap();
+    active.lifecycle_status = SkillLifecycle::Active;
+    active.approval_status = ClaimApprovalStatus::Auto;
+    vault.update_skill_record(
+        &installed.entity,
+        &active,
+        TimeRange { start: 11, end: 11 },
+        11,
+    )?;
+    let incoming = package("4.17.20");
+    vault.sync_skill_from_hub_with_query(
+        &installed.entity,
+        &reference,
+        &incoming,
+        super::super::HubSyncPolicy::MirrorOfHub,
+        TimeRange { start: 20, end: 20 },
+        20,
+        &FixtureQuery,
+    )?;
+    let stored = vault.get_skill_record(&installed.entity)?.unwrap();
+    assert_eq!(stored.content_hash, Some(incoming.content_hash()?));
+    assert_eq!(stored.approval_status, ClaimApprovalStatus::Proposed);
+    assert!(matches!(
+        crate::skill_scan::scan_gate_for_activation(&vault, incoming.content_hash()?)?,
+        crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+    ));
+    Ok(())
+}

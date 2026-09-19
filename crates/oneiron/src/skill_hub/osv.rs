@@ -135,6 +135,78 @@ pub struct SkillInstallAdvisories {
     pub status: DependencyScanStatus,
 }
 impl Vault {
+    pub(super) fn dependency_advisories(
+        &self,
+        hash: crate::skill::SkillContentHash,
+        coordinates: &[DependencyCoordinate],
+        query: &dyn OsvQuery,
+        learned_at: u64,
+    ) -> Result<(DependencyScanStatus, Vec<String>, Vec<SkillScanReceipt>)> {
+        validate_coordinates(coordinates)?;
+
+        // No network call holds a storage transaction. The scan evidence and
+        // imported skill co-commit, so activation cannot race the advisory.
+        let response = if coordinates.is_empty() {
+            None
+        } else {
+            Some(query.query(coordinates))
+        };
+        let (status, advisory_ids) = match response {
+            None => (DependencyScanStatus::NoCoordinates, Vec::new()),
+            Some(Ok(lists))
+                if lists.len() == coordinates.len()
+                    && lists.iter().flatten().all(|id| token(id, false)) =>
+            {
+                (
+                    DependencyScanStatus::Complete,
+                    lists
+                        .into_iter()
+                        .flatten()
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                )
+            }
+            _ => (DependencyScanStatus::Unavailable, Vec::new()),
+        };
+        let mut scans = Vec::new();
+        if status == DependencyScanStatus::Unavailable {
+            scans.push(SkillScanReceipt::new(
+                OSV_SCAN_PROVIDER,
+                learned_at,
+                ScanVerdict::Unknown,
+                ScanRiskLevel::None,
+                ScanCompleteness::Partial,
+                SkillGovernance::Recommended,
+            )?);
+        } else if status == DependencyScanStatus::Complete {
+            let prior = self
+                .skill_scan_verdicts_for_content_hash(hash)?
+                .iter()
+                .any(|body| {
+                    super::support::map_text(&body.value, "provider") == Some(OSV_SCAN_PROVIDER)
+                });
+            if !advisory_ids.is_empty() || prior {
+                scans.push(SkillScanReceipt::new(
+                    OSV_SCAN_PROVIDER,
+                    learned_at,
+                    if advisory_ids.is_empty() {
+                        ScanVerdict::Clean
+                    } else {
+                        ScanVerdict::Suspicious
+                    },
+                    if advisory_ids.is_empty() {
+                        ScanRiskLevel::None
+                    } else {
+                        ScanRiskLevel::High
+                    },
+                    ScanCompleteness::Complete,
+                    SkillGovernance::Recommended,
+                )?);
+            }
+        }
+        Ok((status, advisory_ids, scans))
+    }
     /// Dynamic dependency install door. Coordinates are host-resolved package
     /// identities, never SKILL instructions, files, credentials or vault data.
     pub fn install_skill_with_advisories(
@@ -170,60 +242,8 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SkillInstallAdvisories> {
-        validate_coordinates(coordinates)?;
-        let hash = package.content_hash()?;
-        // No network call holds a storage transaction. The scan evidence and
-        // imported skill co-commit, so activation cannot race the advisory.
-        let response = if coordinates.is_empty() {
-            None
-        } else {
-            Some(query.query(coordinates))
-        };
-        let (status, advisory_ids) = match response {
-            None => (DependencyScanStatus::NoCoordinates, Vec::new()),
-            Some(Ok(lists))
-                if lists.len() == coordinates.len()
-                    && lists.iter().flatten().all(|id| token(id, false)) =>
-            {
-                (
-                    DependencyScanStatus::Complete,
-                    lists
-                        .into_iter()
-                        .flatten()
-                        .collect::<BTreeSet<_>>()
-                        .into_iter()
-                        .collect::<Vec<_>>(),
-                )
-            }
-            _ => (DependencyScanStatus::Unavailable, Vec::new()),
-        };
-        let mut scans = Vec::new();
-        if status == DependencyScanStatus::Complete {
-            let prior = self
-                .skill_scan_verdicts_for_content_hash(hash)?
-                .iter()
-                .any(|body| {
-                    super::support::map_text(&body.value, "provider") == Some(OSV_SCAN_PROVIDER)
-                });
-            if !advisory_ids.is_empty() || prior {
-                scans.push(SkillScanReceipt::new(
-                    OSV_SCAN_PROVIDER,
-                    learned_at,
-                    if advisory_ids.is_empty() {
-                        ScanVerdict::Clean
-                    } else {
-                        ScanVerdict::Suspicious
-                    },
-                    if advisory_ids.is_empty() {
-                        ScanRiskLevel::None
-                    } else {
-                        ScanRiskLevel::High
-                    },
-                    ScanCompleteness::Complete,
-                    SkillGovernance::Recommended,
-                )?);
-            }
-        }
+        let (status, advisory_ids, scans) =
+            self.dependency_advisories(package.content_hash()?, coordinates, query, learned_at)?;
         let entity = self
             .import_skill_from_hub_with_scans(hub_ref, package, id, &scans, occurred, learned_at)?;
         Ok(SkillInstallAdvisories {
