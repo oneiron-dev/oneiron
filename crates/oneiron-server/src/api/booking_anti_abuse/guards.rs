@@ -183,8 +183,13 @@ pub(crate) async fn enforce_hold(
     else {
         return Ok(BookingHttpDisposition::Continue);
     };
-    match observe_hold_request(vault, &facts.ip_hash, per_minute_per_ip, server.booking_now_secs()?)
-        .map_err(engine_error)?
+    match observe_hold_request(
+        vault,
+        &facts.ip_hash,
+        per_minute_per_ip,
+        server.booking_now_secs()?,
+    )
+    .map_err(engine_error)?
     {
         BookingRateDecision::Allowed => Ok(BookingHttpDisposition::Continue),
         BookingRateDecision::Exceeded { retry_after_secs } => {
@@ -236,8 +241,14 @@ pub(crate) async fn enforce_book(
     if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
         // This one engine door serializes exact-retry lookup, aggregate quota,
         // and first durable quarantine write.
-        match admit_quarantine_submission(vault, &facts, reason, per_minute_per_ip, server.booking_now_secs()?)
-            .map_err(engine_error)?
+        match admit_quarantine_submission(
+            vault,
+            &facts,
+            reason,
+            per_minute_per_ip,
+            server.booking_now_secs()?,
+        )
+        .map_err(engine_error)?
         {
             BookingQuarantineAdmission::Accepted(receipt) => {
                 tracing::info!(

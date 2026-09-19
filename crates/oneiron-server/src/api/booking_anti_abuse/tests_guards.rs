@@ -435,5 +435,4 @@ pub(crate) mod tests {
             "the configured 45-second cache expires exactly at its TTL"
         );
     }
-
 }
