@@ -421,7 +421,7 @@
      "path": "src/agent_def/portable_source.rs",
      "purpose": "Immutable captured agent source",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {

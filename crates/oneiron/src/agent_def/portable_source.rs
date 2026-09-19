@@ -146,6 +146,57 @@ pub(crate) fn validate_birth_source_put(
 }
 /// Read frozen bytes by the CHILD identity, never by a guess at today's parent
 /// hash. Neither the carrier nor this function can mint author or execution rights.
+/// Archive payload visibility follows the live child and every captured
+/// selected-knowledge/skill input. Standalone ASSET enumeration cannot bypass
+/// the originating rows' off-record, deletion or taint exclusions.
+pub(crate) fn birth_source_exportable(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    bytes: &[u8],
+) -> Result<bool> {
+    let Some(source) = decode_birth_source(bytes)? else {
+        return Ok(true);
+    };
+    let child = EntityId::from_hex(&source.child_id)?;
+    if read_birth_source(store, txn, &child)?.is_none() {
+        return Ok(false);
+    }
+    let files = source.tree.import_files()?;
+    let knowledge = files
+        .iter()
+        .find(|file| file.path == "knowledge/selected.json")
+        .ok_or_else(|| invalid("knowledge facet"))?;
+    let knowledge: Vec<ExportEntity> =
+        serde_json::from_slice(&knowledge.content).map_err(|_| invalid("knowledge facet"))?;
+    let mut dependencies = vec![EntityId::from_hex(&source.source_id)?];
+    for row in knowledge {
+        dependencies.push(EntityId::from_hex(&row.id)?);
+    }
+    let skills = files
+        .iter()
+        .find(|file| file.path == "skills.json")
+        .ok_or_else(|| invalid("skill facet"))?;
+    #[derive(Deserialize)]
+    struct Ref {
+        entity_id: String,
+    }
+    let skills: Vec<Ref> =
+        serde_json::from_slice(&skills.content).map_err(|_| invalid("skill facet"))?;
+    for skill in skills {
+        dependencies.push(EntityId::from_hex(&skill.entity_id)?);
+    }
+    for dependency in dependencies {
+        if store.off_record_sessions.contains_entity(&dependency)?
+            || !crate::vault::live_entity_row_in_txn(store, txn, &dependency)?.is_live()
+            || !crate::secret_rotation::exhaust_taint_refs_in_txn(store, txn, &dependency)?
+                .is_empty()
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn read_birth_source(
     store: &Store,
     txn: &heed::RoTxn<'_>,

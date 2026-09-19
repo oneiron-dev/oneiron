@@ -61,6 +61,15 @@ impl Vault {
             {
                 continue;
             }
+            if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
+                && !crate::agent_def::birth_source_exportable(
+                    &self.store,
+                    &rtxn,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?
+            {
+                continue;
+            }
             if header.entity_type == crate::registry::ENTITY_TYPE_SKILL
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {

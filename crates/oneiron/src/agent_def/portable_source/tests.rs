@@ -105,6 +105,16 @@ fn captured_fork_source_replays_after_parent_edits_and_stays_untrusted() -> Resu
             .commit()
             .is_err()
     );
+    target.batch().delete(&child).commit()?;
+    let archive = target.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let document = target.read_whole_vault_json(archive.bytes())?;
+    assert!(
+        !document
+            .evidence_ledger
+            .entities
+            .iter()
+            .any(|row| row.id == asset.to_hex())
+    );
     Ok(())
 }
 #[test]

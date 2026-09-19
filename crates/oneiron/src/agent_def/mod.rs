@@ -120,4 +120,6 @@ pub(crate) use portable_binding::{
 };
 
 mod portable_source;
-pub(crate) use portable_source::{read_birth_source, validate_birth_source_put};
+pub(crate) use portable_source::{
+    birth_source_exportable, read_birth_source, validate_birth_source_put,
+};
