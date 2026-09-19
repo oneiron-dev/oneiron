@@ -28,7 +28,13 @@
     "license": "CC BY 4.0",
     "download_status": "HTTP 504 (retried)",
     "measurement": "blocked on source download",
-    "macbook_status": "HEAD also returned HTTP 504"
+    "macbook_status": "HEAD also returned HTTP 504",
+    "recovery": {
+      "url": "https://zenodo.org/api/records/581678/files/fuse.zip/content",
+      "size": 9392830118,
+      "published_md5": "13e955c44f0b77d1c36088c0bbb3366d",
+      "status": "exact-range download in progress; not yet hash-verified"
+    }
   },
   "truth_status": "Upstream Excel recalculated truth workbooks are not distributed; original saved caches are not equivalent to a fresh same-corpus Excel oracle. Do not use cached-source diagnostics to select a production default."
 }
