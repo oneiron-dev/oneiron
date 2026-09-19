@@ -182,3 +182,29 @@ fn managed_privacy_files_are_refused_at_each_explicit_config_door() {
         }
     }
 }
+
+#[test]
+fn managed_export_flags_are_refused_in_both_cli_forms() {
+    for value in ["false", "true"] {
+        for joined in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let extra = if joined {
+                vec![format!("--failure-signal-export={value}")]
+            } else {
+                vec!["--failure-signal-export".to_owned(), value.to_owned()]
+            };
+            let mut argv = vec!["oneiron-server".to_owned()];
+            argv.extend(managed_argv(dir.path()));
+            argv.extend(extra.iter().cloned());
+            let args = ArgvProbe::try_parse_from(argv).unwrap().serve;
+            assert!(matches!(
+                ManagedArgs::from_serve_args(&args),
+                Err(ManagedError::ConflictingFlag {
+                    flag: "failure-signal-export",
+                    ..
+                })
+            ));
+            boot_refused(dir.path(), &extra, &[]).unwrap();
+        }
+    }
+}

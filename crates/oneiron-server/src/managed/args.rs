@@ -365,6 +365,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.allowed_origins.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
+    (
+        "failure-signal-export",
+        |args| args.failure_signal_export.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
     // Contract v1 has no managed privacy override: refuse instead of dropping it.
     (
         "privacy-posture",
