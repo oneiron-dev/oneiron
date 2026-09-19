@@ -119,6 +119,49 @@ mod tests {
             section.rows[0].tier,
             crate::context_board::MemoryTier::Pinned
         );
+
+        // Pinning bypasses relevance only: a manifest ceiling that excludes
+        // CLAIM still suppresses the same stored critical row, with a receipt.
+        let rmpv::Value::Map(fields) = &mut policy else {
+            unreachable!()
+        };
+        fields.push((
+            rmpv::Value::from("scoped_grants"),
+            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("actor_ref"),
+                    rmpv::Value::from("pin-reader"),
+                ),
+                (
+                    rmpv::Value::from("effector"),
+                    rmpv::Value::from("core:read"),
+                ),
+                (
+                    rmpv::Value::from("scope"),
+                    rmpv::Value::Map(vec![(
+                        rmpv::Value::from("entity_types"),
+                        rmpv::Value::Array(vec![rmpv::Value::from(
+                            crate::registry::ENTITY_TYPE_PERSON,
+                        )]),
+                    )]),
+                ),
+                (
+                    rmpv::Value::from("receipt_required"),
+                    rmpv::Value::Boolean(false),
+                ),
+            ])]),
+        ));
+        bytes.clear();
+        rmpv::encode::write_value(&mut bytes, &policy).unwrap();
+        crate::test_util::put_policy_manifest_bytes(
+            &vault,
+            crate::gate::default_policy_manifest_id()?,
+            &bytes,
+        )?;
+        let hidden = reader.manifest_pinned_refs()?;
+        assert!(hidden.value.is_empty());
+        assert_eq!(hidden.receipt.suppressed_count, 1);
+        assert!(!hidden.receipt.narrowed_axes.is_empty());
         Ok(())
     }
 }
