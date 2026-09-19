@@ -8,7 +8,9 @@
 
 use crate::error::{Error, Result};
 
+mod cc_intake;
 mod handoff;
+pub use cc_intake::CcAgentIntakeOutcome;
 mod inbound;
 
 pub use self::handoff::{

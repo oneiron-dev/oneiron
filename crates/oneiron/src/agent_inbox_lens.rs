@@ -59,7 +59,18 @@ impl Vault {
                 "inbox receipt scan is incomplete".to_owned(),
             ));
         }
-        project_approval_required(&scan.records, query)
+        let mut items = project_receipts(
+            &scan.records,
+            AgentInboxLensQuery {
+                identity_ref: query.identity_ref,
+                limit: usize::MAX,
+                before: None,
+            },
+            true,
+        )?;
+        items.extend(self.inbound_inbox_items(query.identity_ref)?);
+        sort_page(&mut items, &query);
+        Ok(items)
     }
 }
 
@@ -70,13 +81,22 @@ pub fn project_approval_required(
     receipts: &[ReceiptRecord],
     query: AgentInboxLensQuery,
 ) -> Result<Vec<AgentInboxLensItem>> {
+    project_receipts(receipts, query, false)
+}
+
+fn project_receipts(
+    receipts: &[ReceiptRecord],
+    query: AgentInboxLensQuery,
+    unified: bool,
+) -> Result<Vec<AgentInboxLensItem>> {
     let mut latest: BTreeMap<(EntityId, EntityId, String), &ReceiptRecord> = BTreeMap::new();
     for receipt in receipts {
         let field = |key: &str| receipt.fields.get(key).map(String::as_str);
         if receipt.receipt_kind != ReceiptKind::Outbound {
             continue;
         }
-        let is_send = field("verb") == Some("mail.send")
+        let is_send = unified && field("verb") == Some("mail.draft")
+            || field("verb") == Some("mail.send")
             || field("verb") == Some("send") && matches!(field("channel"), Some("mail" | "email"));
         if !is_send {
             continue;
@@ -107,20 +127,26 @@ pub fn project_approval_required(
     }
     let mut items = Vec::new();
     for ((identity_ref, actor_ref, intent), receipt) in latest {
-        if !held_send(receipt)
-            || !(receipt
+        let pending = receipt
+            .fields
+            .get("gate_outcome")
+            .is_some_and(|v| v == "pending")
+            || receipt
                 .fields
-                .get("gate_outcome")
-                .is_some_and(|v| v == "pending")
-                || receipt
-                    .fields
-                    .get("hold_reason")
-                    .is_some_and(|v| v.starts_with("gate.pending."))
-                || receipt
-                    .policy_trace
-                    .iter()
-                    .any(|v| v.starts_with("gate.pending.")))
-        {
+                .get("hold_reason")
+                .is_some_and(|v| v.starts_with("gate.pending."))
+            || receipt
+                .policy_trace
+                .iter()
+                .any(|v| v.starts_with("gate.pending."));
+        let approval = pending
+            && (held_send(receipt)
+                || unified
+                    && receipt
+                        .fields
+                        .get("verb")
+                        .is_some_and(|v| v == "mail.draft"));
+        if !approval && (!unified || held_send(receipt)) {
             continue;
         }
         let impact = receipt
@@ -132,11 +158,16 @@ pub fn project_approval_required(
             .unwrap_or(0);
         items.push(AgentInboxLensItem {
             item_id: format!(
-                "approval:{}:{}:{intent}",
+                "{}:{}:{}:{intent}",
+                if approval { "approval" } else { "coordination" },
                 identity_ref.to_hex(),
                 actor_ref.to_hex()
             ),
-            kind: AgentInboxItemKind::ApprovalRequired,
+            kind: if approval {
+                AgentInboxItemKind::ApprovalRequired
+            } else {
+                AgentInboxItemKind::CoordinationUpdate
+            },
             thread_ref: receipt.fields.get("thread_ref").cloned(),
             identity_ref,
             actor_ref,
@@ -155,6 +186,11 @@ pub fn project_approval_required(
                 .cloned(),
         });
     }
+    sort_page(&mut items, &query);
+    Ok(items)
+}
+
+fn sort_page(items: &mut Vec<AgentInboxLensItem>, query: &AgentInboxLensQuery) {
     items.sort_by(|a, b| {
         b.impact
             .cmp(&a.impact)
@@ -169,7 +205,6 @@ pub fn project_approval_required(
         });
     }
     items.truncate(query.limit);
-    Ok(items)
 }
 
 fn held_send(receipt: &ReceiptRecord) -> bool {
@@ -194,6 +229,8 @@ fn receipt_order(receipt: &ReceiptRecord) -> (u64, bool, &str) {
         &receipt.receipt_id,
     )
 }
+
+mod inbound;
 
 #[cfg(test)]
 mod tests;

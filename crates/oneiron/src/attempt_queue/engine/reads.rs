@@ -160,6 +160,28 @@ impl AttemptQueue<'_> {
         Ok(records)
     }
 
+    /// Complete kind view for a projection that must not silently truncate.
+    pub(crate) fn list_kind_bounded(
+        &self,
+        kind: &str,
+        max_scanned: usize,
+    ) -> Result<Vec<AttemptRecord>> {
+        let txn = self.store.env.read_txn()?;
+        let mut records = Vec::new();
+        for (scanned, row) in self.store.attempt_records.iter(&txn)?.enumerate() {
+            if scanned >= max_scanned {
+                return Err(Error::IndexOverflow("attempt kind projection"));
+            }
+            let (key, raw) = row?;
+            let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
+            if record.kind == kind {
+                records.push(record);
+            }
+        }
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
     /// Reads persisted attempt rows for one run id in deterministic creation order.
     pub fn list_run(&self, run_id: &str) -> Result<Vec<AttemptRecord>> {
         validate_optional_run_id(Some(run_id))?;

@@ -1466,3 +1466,5 @@ fn subject_stamp_uses_event_received_at_not_processing_time() -> Result<()> {
     }
     Ok(())
 }
+
+mod cc_intake;

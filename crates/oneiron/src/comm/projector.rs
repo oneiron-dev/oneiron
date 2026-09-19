@@ -136,18 +136,37 @@ pub fn record_comm_thread_event(
     joined: bool,
     occurred_at: u64,
 ) -> CommResult<()> {
-    record_event(
-        vault,
-        party,
-        None,
-        Some(thread_ref),
-        if joined {
+    vault.try_with_write_txn(|txn| {
+        record_comm_thread_event_in_txn(vault, txn, thread_ref, party, joined, occurred_at)
+    })
+}
+
+pub(crate) fn record_comm_thread_event_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    thread_ref: &str,
+    party: &str,
+    joined: bool,
+    occurred_at: u64,
+) -> CommResult<()> {
+    validate_key_string(thread_ref).map_err(|_| CommError::InvalidRecord)?;
+    let thread = crate::thread_passport::canonical_thread_ref_in_txn(vault, txn, thread_ref)?;
+    let party_ref = resolve_or_create_party_in_txn(vault, txn, party)?;
+    let sequence = next_event_sequence_in_txn(vault, txn)?;
+    let record = CommRecord::Event {
+        sequence,
+        kind: if joined {
             CommEventKind::ThreadJoined
         } else {
             CommEventKind::ThreadLeft
         },
+        party_ref,
+        channel_class: None,
+        thread_ref: Some(thread),
         occurred_at,
-    )
+        projected: false,
+    };
+    put_comm_record_in_txn(vault, txn, EntityId::now(), &record)
 }
 
 fn record_event(
